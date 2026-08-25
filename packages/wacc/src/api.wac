@@ -569,7 +569,25 @@ export string diagnoseGraphIn(string[] paths, string[] sources, Res res, string 
     subCounts[n] = counts[paths.len()];
     subLexes[n] = lexes[paths.len()];
     subProgs[n] = progs[paths.len()];
-    out = out + diagnoseFilesWithIn(subPaths, subSources, res, paths[i], subCounts,
+    // **The roots have to be re-indexed with the paths**, because `Res.rootAt` pairs `roots[i]` with
+    // `paths[i]` — a *positional* key. Everything above builds a closure array in `seen` order and
+    // this call handed it the graph's `Res` unchanged, so every file read some other file's project
+    // root, and usually "". `@/` then resolved against nothing, the import landed on a key nobody
+    // supplied, and the names it brings in were declared *unknown* — which this checker is silent
+    // about by design. So a mistake behind a `@/` import in any file but the entry was invisible.
+    //
+    // `issues/lang/0175a` fixed the entry's own case by threading the `Res` this far;
+    // `issues/lang/0267c` is this sibling, which the thread reached and the indexing did not.
+    //
+    // The mappings are keyed by path *string* — `mappedTo` compares `mapFrom[i] == from` — so they
+    // survive the subsetting unchanged and only `roots` needs rebuilding.
+    string[] subRoots = string[n](fill: "");
+    for (i32 k = 0; k < n; k++) {
+      i32 at = seen[k];
+      subRoots[k] = at < res.roots.len() ? res.roots[at] : "";
+    }
+    Res subRes = Res(subRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base);
+    out = out + diagnoseFilesWithIn(subPaths, subSources, subRes, paths[i], subCounts,
                                     subLexes, subProgs);
   }
   return out;
@@ -1275,7 +1293,10 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
           // is the one a checker may not be wrong in.
           bool relative = spec.len() >= 2 && spec.slice(0, 2) == "./"
                        || spec.len() >= 3 && spec.slice(0, 3) == "../";
-          if (relative && !isBuiltinSpec(spec) && !supplied) { c.addUnresolved(spec); }
+          // `res.base` is "" for a caller with no filesystem — the one that cannot resolve a `@/`
+          // or a mapped specifier at all, and so may judge a relative path and nothing else.
+          bool canJudge = relative || res.base != "";
+          if (canJudge && !isBuiltinSpec(spec) && !supplied) { c.addUnresolved(spec); }
         }
         for (i32 i = 0; i < items.len(); i++) {
           if (n >= wantName.len()) { continue; }

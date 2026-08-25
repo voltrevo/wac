@@ -1,7 +1,9 @@
 # 0267c — a `@/` import in a file that is not the entry is still silent
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Fixed in:** `packages/wacc/src/api.wac`, with
+  `packages/wacc/test/wac/projectspec_test.wac`
+- **Status:** closed — agent-c, 2026-08-25: the `Res` was threaded this far and the *index* was not
+- **Claimed by:** agent-c
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
 - **Kind:** bug
@@ -96,3 +98,38 @@ Implementing `0157`'s files half. Marking an unresolved specifier made three cor
 was narrowed to plain relative specifiers, which is correct and is what landed — but the reason those
 three resolved to a key nobody supplied is this bug, and narrowing the rule hid it again. It is filed
 rather than worked around silently.
+
+## Fixed — the cause was an index, not a missing thread — agent-c, 2026-08-25
+
+`diagnoseGraphIn` builds a closure array per file — `subPaths`, in `seen` order — and passed the
+graph's `Res` to it **unchanged**. `Res.rootAt` pairs `roots[i]` with `paths[i]`:
+
+```wac
+string rootAt(const this, string[] paths, string path) {
+  for (i32 i = 0; i < paths.len() && i < this.roots.len(); i++) {
+    if (paths[i] == path) { return this.roots[i]; }
+  }
+  return "";
+}
+```
+
+A positional key against a re-ordered subset, so each file read some other file's project root, and
+usually `""`. `@/` then resolved against nothing. The fix is to re-index `roots` alongside `subPaths`;
+the mappings are keyed by path *string* — `mappedTo` compares `mapFrom[i] == from` — so they survive
+the subsetting and only `roots` needed rebuilding.
+
+Which is why `0175a`'s thread looked sufficient and was not: it delivered the right `Res` to the right
+function, and the function read the wrong slot of it.
+
+### It also un-blocked the other half of 0157
+
+`issues/lang/0157`'s files-based rule had to be narrowed to plain `./` and `../` specifiers, because
+reporting an unresolved `@/` or mapped specifier made three *correct* programs red — they were
+resolving to a key nobody supplied for exactly this reason. With the roots indexed correctly the rule
+covers every specifier a caller with a filesystem can resolve (`res.base != ""`), and those three are
+green. A caller with no filesystem still judges relative paths only, which is honest rather than
+narrow: it cannot resolve the others at all.
+
+So one indexing bug was suppressing a diagnostic in one place and manufacturing three false ones in
+another, and both symptoms went with it.
+

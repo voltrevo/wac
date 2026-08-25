@@ -443,10 +443,17 @@ are indistinguishable from the fault this rule is for. Reporting them made **thr
 red** — two in `projectspec_test.wac`, one in `mappedspec_test.wac` — each importing a file that is
 supplied and reached another way. That is the false-alarm direction.
 
-Gating on `res.base != ""` instead — a caller that has a filesystem — was tried and does not work
-either: the same three go red, because those callers **do** carry a real `Res` and the resolution still
-misses. That is not this issue's fault and it is not fixed by tightening this rule: it is
-`issues/lang/0267c`, a `@/` import in a file that is not the entry being invisible to the checker
-entirely. Narrowing to relative specifiers is correct on its own terms, and it also stops this rule
-from hiding that one.
+Gating on `res.base != ""` instead — a caller that has a filesystem — was tried and failed the same
+three, because those callers **do** carry a real `Res` and the resolution still missed. That turned
+out to be a bug of its own: `issues/lang/0267c`, `diagnoseGraphIn` handing a per-file closure array
+the graph's `Res` unchanged, so `Res.rootAt`'s positional key read some other file's project root.
+
+**With that fixed the rule is wide again.** A caller that has a filesystem judges every specifier it
+can resolve; one that has none judges plain relative paths only, which is honest rather than narrow —
+it cannot resolve the others at all. The three programs are green either way.
+
+So the false alarms this rule produced were never this rule's: one indexing bug was suppressing a
+diagnostic in `0267c`'s case and manufacturing three here, and finding it needed the second symptom.
+Worth remembering the shape — a new rule going red on correct programs is evidence about the *program
+under it* as often as about the rule.
 

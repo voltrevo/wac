@@ -84,6 +84,70 @@ export string test_a_project_specifier_resolves_against_its_own_project(Core cor
   return t.report();
 }
 
+/**
+ * `issues/lang/0267c` — a mistake behind a `@/` import in a file that is **not** the entry.
+ *
+ * `issues/lang/0175a` threaded the `Res` down so the entry's own `@/` import resolves, and measured
+ * what the gap had cost: *"every mistake reachable only through a `@/` import was invisible to
+ * `wac check`, and the build emitted an invalid module instead of refusing."* The sibling one file
+ * further in was still invisible, and the cause was an *index* rather than a missing thread.
+ *
+ * `diagnoseGraphIn` builds a closure array per file — `subPaths`, in `seen` order — and handed the
+ * graph's `Res` to it unchanged. `Res.rootAt` pairs `roots[i]` with `paths[i]`, a positional key, so
+ * each file read some other file's project root and usually `""`. `@/` resolved against nothing, the
+ * import landed on a key nobody supplied, and the names it brings in were declared **unknown** —
+ * which this checker is silent about by design, because that is what keeps a single-file check from
+ * calling every imported name undefined.
+ *
+ * So the test is: the same error, in the same file, spelled both ways. The relative spelling was
+ * always caught; the `@/` one is the regression guard.
+ */
+export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_file(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "atspec-nonentry");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest");
+  t.isTrue(put(cli, dir + "/src/point.wac",
+               "export struct Point {\n  i32 x;\n" +
+               "  Point create(i32 x) { return Point(x); }\n}\n"), "point");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { take } from \"./b.wac\";\nimport { Point } from \"./point.wac\";\n" +
+               "export i32 main() { return take(Point.create(1)); }\n"), "main");
+
+  // `b.wac` is not the entry, and asks for a field `Point` does not have.
+  string[] spelling = string[]("@/src/point.wac", "./point.wac");
+  for (i32 i = 0; i < spelling.len(); i++) {
+    t.isTrue(put(cli, dir + "/src/b.wac",
+                 "import { Point } from \"" + spelling[i] + "\";\n" +
+                 "export i32 take(Point p) { return p.nofield; }\n"), "b via " + spelling[i]);
+    Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+    t.isTrue(w.ran(), "wac did not run — " + w.error);
+    if (!w.ran()) { continue; }
+    string said = string.fromBytes(w.stdout) + string.fromBytes(w.stderr);
+    t.isTrue(contains(said, "no such field"),
+             "a field that does not exist was not reported through `" + spelling[i] + "` — " + said);
+    t.isTrue(contains(said, "b.wac"),
+             "the diagnostic does not name the file it is in, through `" + spelling[i] + "` — " + said);
+  }
+
+  // And the same program without the mistake, so neither row is met by refusing `@/` outright.
+  t.isTrue(put(cli, dir + "/src/b.wac",
+               "import { Point } from \"@/src/point.wac\";\n" +
+               "export i32 take(Point p) { return p.x; }\n"), "b, corrected");
+  Exec ok = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  t.isTrue(ok.ran(), "wac did not run — " + ok.error);
+  if (ok.ran()) {
+    t.eqI32(ok.status, 0, "refused a correct program: " +
+            string.fromBytes(ok.stdout) + string.fromBytes(ok.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
 export string test_the_root_is_the_importing_files_project_not_the_entrys(Core core, Cli cli) {
   // **The case that distinguishes D7 from the easy reading of it.** `appA` imports a file from
   // `libB` by relative path; that file writes `@/deep/five.wac`. Both projects have a
