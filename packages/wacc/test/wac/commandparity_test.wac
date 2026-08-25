@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Twenty-eight invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
+// Twenty-nine invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
@@ -56,8 +56,8 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **39s warm, measured at twenty-six cases; twenty-eight now** — up from 2–3s, for three hosts instead
-// of two and twenty-eight cases instead of six, fifteen of which compile, run or test a program rather
+// **39s warm, measured at twenty-six cases; twenty-nine now** — up from 2–3s, for three hosts instead
+// of two and twenty-nine cases instead of six, fifteen of which compile, run or test a program rather
 // than only checking one, plus three module builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
@@ -180,12 +180,13 @@ string[][] cases() {
     // for a directory. This said it was "still the native binary's alone" for two days after it
     // stopped being true, twenty lines above the rows that compare it.
     //
-    // `--coverage` is the one part of `test` that really is the native command's alone: its counters
-    // are reached through exports the instrumentation injects and no manifest lists, so `Cli.call`
-    // cannot find them (`issues/system/0243c`). The wac program refuses it rather than printing the
-    // zeroes it would otherwise get. **So there is no `--coverage` row here** — the two do not agree,
-    // and a row would be red rather than informative. This said they refused it alike, which is the
-    // shape a missing row invites: a claim about a comparison nobody is making.
+    // **`--coverage` has a row now, and the row is the point.** Its counters are reached through
+    // `__cov_init`/`__cov_len`/`__cov_get`, which the instrumentation injects and no source names, so
+    // no manifest listed them and `Cli.call` — which finds an export's signature in the manifest —
+    // answered "no export named `__cov_len`" for a function the module plainly exports. The wac
+    // program refused the flag rather than print the zeroes it would otherwise get, and this comment
+    // said so. `issues/system/0243c` is closed: the compiler declares the three it injected, and the
+    // three hosts agree on `6 of 279 points (2%)` and every line of the table beneath it.
     string[]("test", "--allow-read", "src/one_test.wac"),     // 3 pass, 2 fail, and which
     string[]("test", "--allow-read", "--filter", "passes", "src/one_test.wac"),
     string[]("test", "--allow-read", "--filter", "zzz", "src/one_test.wac"),   // matches nothing
@@ -212,6 +213,7 @@ string[][] cases() {
     // spelled correctly and did nothing — while the native printed a line per passing test. A flag
     // that is refused is a bad answer and a flag that is silently dropped is a worse one.
     string[]("test", "--allow-read", "--verbose", "src/one_test.wac"),
+    string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
     // part: `ok`, `not run (--ignore)`, `with failures`, `needing a grant`, `with nothing matching
@@ -364,7 +366,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
   // returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 9, "nine of these twenty-eight succeed on the native host; a different count " +
+  t.eqI32(zeroes, 9, "nine of these twenty-nine succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

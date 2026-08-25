@@ -1394,6 +1394,32 @@ struct Tally {
   i32 ungrantedCount;
 }
 
+/**
+ * The compiler's export table, plus the three the *instrumentation* injected.
+ *
+ * **`--coverage` was the native command's alone until 2026-08-24**, and this is why:
+ * `__cov_init`, `__cov_len` and `__cov_get` are emitted by the coverage pass rather than written in
+ * any source, so nothing put them in the export table and nothing put them in the manifest --
+ * and `Cli.call` looks an export up in the manifest to find its signature. It answered "no export
+ * named `__cov_len`" for a function the module plainly exports, so a JavaScript-hosted `wac test
+ * --coverage` printed `branch coverage: 0 of 270 points (0%)` beside the native's `6 of 270 (2%)`:
+ * the table and the totals right and every counter zero, which is a wrong number rather than a
+ * missing one. `issues/system/0243c` refused the flag rather than print that.
+ *
+ * The signatures are not read back out of the module and are not guessed. The instrumentation is
+ * this repository's, and `compiler/wasmBuildBin.ts` states them in one line:
+ * `__cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32`. All three are inside the closed
+ * set `Cli.call` accepts, which is not luck -- that set exists to cover what these commands need.
+ *
+ * A `name<TAB>ret<TAB>params` line each, with an empty return cell meaning void. Declaring them here
+ * rather than teaching the platform about coverage keeps the boundary generic: the compiler is what
+ * knows what the compiler injected.
+ */
+string sigsWithCounters(string sigs, bool covered) {
+  if (!covered) { return sigs; }
+  return sigs + "__cov_init\t\t\n__cov_len\ti32\t\n__cov_get\ti32\ti32\n";
+}
+
 /** ` (12 ms)`, the way the native runner spells a test's wall time under `--verbose`. */
 string tookMs(Core core, i64 began) {
   i64 took = (core.monotonicNanos().wait() - began) / 1000000;
@@ -2176,24 +2202,8 @@ export i32 main(Core core, Cli cli) {
     // the native command's alone, and for its reason rather than mine: the counters are per module and
     // the table is written beside it, so one aggregate would report the first file's positions for all
     // of them. That path needs a build per file, which this command does not do yet.
-    // **`--coverage` cannot work here yet, and says so rather than answering 0%.**
-    //
-    // The counters are read through `__cov_init`, `__cov_len` and `__cov_get`, which are *injected* by
-    // the instrumentation — no source names them, so the manifest does not list them, and `Cli.call`
-    // dispatches on the manifest. The native host reads the module's exports directly and is fine.
-    //
-    // Written after watching this print `branch coverage: 0 of 270 points (0%)` beside the native's
-    // `6 of 270 (2%)`: the table and the totals were right and every counter read zero, which is a
-    // wrong number rather than a missing one. A wrong number is the worst of the three answers here.
-    // `issues/system/0243c`.
-    if (covered) {
-      core.warn("wac: --coverage is the native command's alone — its counters are reached through "
-                + "exports the instrumentation injects, which no manifest lists. "
-                + "`issues/system/0243c`");
-      return 2;
-    }
     i32 grants = grantsIn(cli, argc);
-    string manifest = manifestWire(wasm, types, sigs, entry,
+    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered), entry,
                                   baseName(stem(entry)) + ".wasm", grants);
     i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,

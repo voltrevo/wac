@@ -6,7 +6,6 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0255c](open/0255c-relayd-tells-a-client-its-stream-closed-normally-when-the-stream-failed.md) | `relayd` ends a stream with `REASON_DONE` in seven places and five of them are failures — a connect that failed, a send that failed, two malformed BEGINs, a BEGIN_DIR it does not serve. `socks5.wac` maps RELAY_END reasons to SOCKS replies with a docstring about why the distinction matters, and the only reason it is ever handed falls through to "general failure"; its own test feeds the mapping hand-made bytes, so nothing compares producer with consumer | bug | wrong answer |
-| [0243c](open/0243c-cli-call-dispatches-on-the-manifest-so-an-injected-export-is-unreachable.md) | `Cli.call` looks an export up in the manifest, and `__cov_init`/`__cov_len`/`__cov_get` are injected by the instrumentation so no manifest lists them — `wac test --coverage` on a JavaScript host printed `0 of 270 points (0%)` against the native's `6 of 270 (2%)`, with the table and the totals right and every counter zero | missing feature | wrong answer |
 | [0252a](open/0252a-a-frames-output-is-capped-on-two-hosts-and-unbounded-on-the-others.md) | a frame's output is capped at 8 MiB on the JavaScript hosts and grows without limit on the native one, so `Captured.truncated` is always false there — bounded-and-honest against unbounded-and-complete, and `std/platform.wac` documented the cap as the language's | decision | wrong answer |
 | [0251b](open/0251b-an-sctp-association-ignores-the-peers-advertised-receive-window.md) | `initWindow` — the receive window a peer announces in its INIT — is parsed and never read, so nothing does receiver-side flow control and `send` is bounded only by our own `cwnd`; its twin `initTsn` was unread in the same branch and was a *bug* rather than a gap, fixed the same day | missing feature | not implemented |
 | [0250b](open/0250b-wacc-can-say-what-a-host-reaches-but-not-what-a-file-declares.md) | `tools/docSignatures.test.ts` resolves a README's backticked `` `foo(…)` `` against every name a declaration introduces — "functions, types, variants, fields, methods" — and `packages/wacc`'s API answers only what crosses the host boundary: `exportSigsFiles` gives exported functions, `bindTypesFiles` host-holdable types, and nothing gives methods, enum variants or unexported functions, so porting that check onto our own parser would silently narrow the half that found both bugs it was written for | missing feature | not implemented |
@@ -66,7 +65,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-258 issues, 204 closed.
+258 issues, 205 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

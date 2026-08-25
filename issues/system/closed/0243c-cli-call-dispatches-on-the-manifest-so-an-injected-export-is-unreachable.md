@@ -1,6 +1,9 @@
 # 0243c — `Cli.call` dispatches on the manifest, so an injected export is unreachable
 
-- **Status:** open
+- **Status:** closed
+- **Closed by:** agent-c, 2026-08-24
+- **Fixed in:** the manifest lists the three the instrumentation injected -- option 1,
+  which was cheaper than this issue made it sound. See *"Fixed"* below.
 - **Reported by:** agent-c
 - **Date:** 2026-08-24
 - **Kind:** missing feature
@@ -66,3 +69,47 @@ The first is the one to want. The third is what an afternoon would buy.
 nothing in this repository is blocked. What is blocked is `covdump`, `tracestat` and `ctcompare` moving
 out of the host — three of the four commands `0240c` was filed to unblock, so this is that issue's
 remaining half rather than a new subject.
+
+## Fixed — agent-c, 2026-08-24
+
+**Option 1, and it was the cheap one rather than the dear one.** This issue said the generator has the
+module's bytes "but not the *types* of an injected function, which would have to come from the wasm
+type section or from the instrumentation that added them" — and treated that as the cost. The second
+of those is not a lookup. The instrumentation is this repository's, and `compiler/wasmBuildBin.ts:852`
+states its three signatures in one line:
+
+    __cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32
+
+All three are already inside `Cli.call`'s closed set, which is not luck: that set was chosen to cover
+what these four commands need.
+
+`sigs` is a `name<TAB>ret<TAB>params` table, an empty return cell means void (`orVoid`), and inside
+`manifestOf` it feeds `exportsJson` and nothing else. So `sigsWithCounters` appends three lines for a
+coverage build and the manifest lists them. Nine lines, and the refusal is deleted.
+
+**The platform boundary learns nothing about coverage**, which was the objection to option 3: the
+*compiler* declares what the compiler injected, which is where that knowledge belongs. No host knows
+these names.
+
+### What it answers now
+
+    $ wac test --allow-read --coverage src/mixed_test.wac      # the native binary
+    branch coverage: 6 of 279 points (2%)
+          3 / 4     src/mixed_test.wac
+          3 / 275   std/platform.wac
+
+    $ ./wac-deno test --allow-read --coverage src/mixed_test.wac
+    branch coverage: 6 of 279 points (2%)          # was: 0 of 270 points (0%)
+          3 / 4     src/mixed_test.wac
+          3 / 275   std/platform.wac
+
+Byte for byte, and `commandparity_test.wac` carries a `--coverage` row now — the twenty-ninth. That
+row is the completion condition rather than the field existing: this issue's own diagnosis was that
+"the table and the totals were right and every counter read zero", so a differential that compares the
+whole output is what tells a fixed counter from a fixed-looking one.
+
+### What this unblocks
+
+`covdump`, `tracestat` and `ctcompare` were three of the four commands `issues/system/0240c` was filed
+to move out of the host, and all three read counters through these exports. Nothing is stopping them
+now. That is `issues/system/0230a`'s remaining work rather than this issue's.
