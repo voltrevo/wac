@@ -1,6 +1,6 @@
 # 0154 — an exported struct name that collides in a link breaks other modules' exports
 
-- **Status:** open
+- **Status:** closed — unreachable, 2026-08-25
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** bug
@@ -428,3 +428,40 @@ neighbours are refused"* is probably moot with it — it was a symptom of the sa
 Worth doing before anything else here: a case that *pins* the current behaviour, so the next change to
 `keyAt` cannot quietly restore the old one. `privatename_test.wac` covers the private half; the
 ambiguity half has no case of its own, which is why this could stop reproducing without anybody noticing.
+
+## Closed: the checker gets there first, and that is specified — agent-c, 2026-08-25
+
+The permissive path in `keyAt` — resolve a name the file neither declares nor imports, and refuse only
+when two candidates match — cannot be reached from source anybody writes, because the **checker** refuses
+the name before the emitter sees it:
+
+    import { makeCase } from "./a.wac";      // `Case` itself is not imported
+    export i32 main() { Case c = makeCase(); return c.v; }
+
+    error: expected type
+      --> col/e2.wac:3:21
+       |
+     3 | export i32 main() { Case c = makeCase(); return c.v; }
+       |                     ^^^^ unknown type 'Case'
+       = help: import the type, or check the spelling
+
+Measured with two candidates and with one: **both are refused**, so this is not the ambiguity rule, it is
+`spec/spec/imports.md`'s *"A written type name must be in scope"* — `[§wac-type-name-scope-8vqk3mn]`,
+whose own example is this exact shape. `issues/lang/0048` is the closed issue that established it, and it
+is the same defect one layer up: *"a type name resolves outside the file that wrote it, and picks wrong
+when two match"*.
+
+So the sequence is: `0048` closed the door in the checker; `9b4f2c4b` removed private declarations from
+the candidate count; and the aggregate that reached the emitter's copy of the rule stopped producing it.
+What is left in `keyAt` is defensive rather than live — a name that arrives through a *signature* is keyed
+in the file that declared it, and one a file *writes* has to be imported.
+
+**What would make it reachable again is relaxing that clause**, which is the rule question this issue has
+carried since 2026-08-18: whether a name two of a file's imports declare should be qualified further
+rather than refused. That question survives; the bug does not. `§wac-type-name-scope-8vqk3mn` is the
+guard, it is held by a case, and `spectags_test.wac` counts it among 435 of 435.
+
+Closed as unreachable rather than as fixed, because nobody fixed it — two other changes made it
+unreachable, and six days passed before anyone re-measured. That is the thing worth carrying forward: a
+bug whose reproduction depends on a second bug should say so, so that closing the second one prompts a
+re-measure of the first.
