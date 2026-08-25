@@ -57,7 +57,9 @@
 // ## What it costs, measured 2026-08-25
 //
 // **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
-// three hosts instead of two and thirty-four cases instead of six. Twenty-eight of them run
+// three hosts instead of two and thirty-six cases instead of six. (The wall figure is older than the
+// count: since the command became one program containing the shell and the fetcher it is 83.7s wall
+// and 97.4s of CPU, because each host now builds a 219-file program rather than a 44-file one.) Twenty-eight of them run
 // something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
 // `bindgen` rows stop at the diagnostics and one names a subcommand that does not exist. Six `build`
 // invocations besides: three writing the module fixtures, and three more comparing what `build`
@@ -248,6 +250,12 @@ string[][] cases() {
     // spelled correctly and did nothing — while the native printed a line per passing test. A flag
     // that is refused is a bad answer and a flag that is silently dropped is a worse one.
     string[]("test", "--allow-read", "--verbose", "src/one_test.wac"),
+    // **`tracestat`, which was a host command until it was not.** Two rows: the journal it reads, and
+    // the sentence it says about a file that is not an instrumented module. The second is the one that
+    // would have caught the move being half done — a host that still intercepted the command would
+    // answer its own wording, and a host that never had it would answer `unknown command`.
+    string[]("tracestat", "traced.wasm"),
+    string[]("tracestat", "src/hello.wac"),
     string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
     // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
     // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
@@ -413,6 +421,21 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
 
   string native = wacBinary(cli);
   t.isTrue(cli.stat(native).wait().isFile, "the native binary is built: " + native);
+
+  // **A traced artefact, built once by the native binary and read by all three.** `tracestat` moved
+  // out of `native/v8/src/main.rs` into the program on 2026-08-25 — `issues/system/0257c`'s rule that
+  // a host implements *running a module* and not the command surface — so the three hosts now read a
+  // counter journal through `Cli.load`/`Cli.call` rather than through a second engine driver, and
+  // whether they agree is exactly what this file is for.
+  //
+  // Built here rather than written as bytes: the artefact has to be a *real* traced module, and the
+  // number `tracestat` reports depends on the instrumentation rather than on the source. Small slots
+  // on purpose, so `wanted` and `slots` are both small numbers a reader can check by eye.
+  Exec traced = cli.exec(native,
+                         string[]("build", dir + "/src/hello.wac", "--trace", "--trace-slots", "8",
+                                  "-o", dir + "/traced", "--quiet"), u8[0]()).wait();
+  t.isTrue(traced.ran() && traced.status == 0,
+           "the traced fixture built: " + traced.error + string.fromBytes(traced.stderr));
   string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
                              "--allow-net");
   string deno = builtByDeno(cli, ENTRY, "wac-deno-cli", grants, "deno", false);
@@ -483,7 +506,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
   // returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 14, "fourteen of these thirty-four succeed on the native host; a different count " +
+  // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
+  // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
+  t.eqI32(zeroes, 15, "fifteen of these thirty-six succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

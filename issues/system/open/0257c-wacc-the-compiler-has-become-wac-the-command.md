@@ -290,3 +290,33 @@ Verified by doing what `covdump` does, from a wac program: `cli.load` then
 So the three commands are ordinary work now rather than blocked work. `tools/wac/covdump_test.wac`
 carries the regression test, with a canary that a plain build does *not* declare counter exports — so
 the fix cannot be "list these three always".
+
+## `tracestat` is the program's — 2026-08-25
+
+First of the three, and the pattern for the other two. `native/v8/src/main.rs` lost
+`tracestat_command` and its intercept; `packages/wac/src/counters.wac` reads a module's counters
+through `Cli.load`/`Cli.call`, and `wac.wac` dispatches the command.
+
+**What the host was doing was a second engine driver.** `counters_of` compiled the module itself,
+instantiated it with no imports, called `__cov_init`, called `main` inside a `TryCatch`, then read
+`__cov_len`/`__cov_get` — the whole sequence `run_as_with` already does, written again for one command.
+Through the boundary it is thirty lines of wac and the `TryCatch` is unnecessary: `Cli.call` answers
+`status == 1` for a trap, so the hazard that comment describes — V8 announcing a trap on **stdout**,
+the stream `tracestat` prints its numbers to — cannot happen at all.
+
+**One capability given up, deliberately.** `counters_of` could read a `wac compile`d module because it
+instantiated by hand; `Cli.load` needs a manifest, because that is where an export's signature comes
+from. Nothing feeds these commands such a module — every test builds with `wac build` — and a module
+with no manifest has no grants either, so anything needing a capability was unreadable that way
+regardless. What it must not cost is the diagnosis, so `counters.wac` asks `manifestIn` itself and says
+*"carries no wac.manifest section, so it cannot be loaded — build an instrumented module with
+`wac build --coverage` or `wac build --trace`"* rather than passing the boundary's own sentence through.
+
+Two parity rows, and the second is the one that matters: `tracestat traced.wasm` for the journal, and
+`tracestat src/hello.wac` for the sentence about a file that is not a module. A host that still
+intercepted the command would answer its own wording; a host that never had it would answer *unknown
+command*. Thirty-six rows now, fifteen of them exiting 0.
+
+`covdump` and `ctcompare` are next and are bigger: `covdump` has the named-export sweep and its own
+world, `ctcompare` compares two journals with path-split detection. The reader they both need is
+written.

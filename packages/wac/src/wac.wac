@@ -65,6 +65,7 @@ import { Shell } from "../../sh/src/exec.wac";
 import { shellMain } from "../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../box/src/shrun.wac";
 import { Asked, Parsed, askedFrom, forCommand, narrowed } from "./grants.wac";
+import { Counters, read } from "./counters.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -1025,6 +1026,33 @@ export i32 main(Core core, Cli cli) {
   // `$WAC_HOME` rather than `fetch.wac`'s own `.wac` default: the compiler reads the cache from
   // there, so defaulting to a relative directory puts a fetched tree where nothing looks for it —
   // `wac update` says *1 fetched* and `wac run` says *not in the cache*, both truthfully.
+  // **`tracestat`, moved out of the host.** `issues/system/0257c`'s rule: a host may implement
+  // running a module and must not implement the command surface. Reading a journal's size is a
+  // command — `native/v8/src/main.rs` did it by instantiating the module by hand through V8, a second
+  // engine driver beside the one the program already goes through.
+  //
+  // `events` is what was recorded, `wanted` is what happened whether or not there was room, and
+  // `slots` is the room there was. They differ exactly when the journal overflowed, and `wanted` is
+  // the number to pass to `--trace-slots` to make the next run fit — which is why it is reported
+  // rather than left for a caller to double and try again.
+  if (cmd == "tracestat") {
+    if (argc < 2) {
+      core.warn("usage: wac tracestat <module.wasm>");
+      return 2;
+    }
+    Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), grantsIn(cli, argc));
+    if (c.error != "") { core.warn("wac: " + c.error); return 1; }
+    if (c.values.len() < 2) {
+      core.warn("wac: a journal is at least two slots; got " + itoa(c.values.len()));
+      return 1;
+    }
+    i32 cursor = c.values.get(0);
+    core.log("events " + itoa((cursor > 0 ? cursor : 0) / 2) +
+             " wanted " + itoa(c.values.get(c.values.len() - 1)) +
+             " slots " + itoa(c.values.len()));
+    return 0;
+  }
+
   if (cmd == "update") {
     string dir = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".";
     string home = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wacHomeOf(cli);

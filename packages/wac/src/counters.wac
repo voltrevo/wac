@@ -1,0 +1,106 @@
+// Reading an instrumented module's counters, through the boundary rather than through a host.
+//
+// **This is the last row of `issues/system/0257c`'s table.** `covdump`, `tracestat` and `ctcompare`
+// were implemented in `native/v8/src/main.rs` — a second engine driver, instantiating the module by
+// hand and reaching its exports through V8 — because `Cli.call` could not reach an injected export.
+// It can since `issues/system/0243c` and, for a `wac build --coverage` artefact, since the day this
+// file was written: the manifest declares the three the instrumentation injects, so the *program* can
+// do what the host was doing.
+//
+// The operator's rule is what makes that worth doing: a host may implement **running a module**, and
+// must not implement the command surface. Reading a counter table is not running a module — it is a
+// command, and one that every host should answer the same way.
+//
+// ## What the three exports mean
+//
+// `__cov_init()` allocates the array, `__cov_len()` is its length and `__cov_get(i)` reads a slot.
+// Under `--coverage` a slot is a count per branch point; under `--trace` the same array is a journal —
+// slot 0 is the cursor, the last slot is how many events *wanted* to be recorded, and the pairs
+// between are `(site, value)`. One array, two readings, which is why one reader serves both.
+
+import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { manifestIn } from "../../wacc/src/manifest.wac";
+
+/** A module's counters, or why there are none. */
+export struct Counters {
+  /** Empty when the read worked; otherwise the sentence to print. */
+  string error;
+  Vec<i32> values;
+  /** Whether the exercise trapped, which is **not** a failure — see `read`. */
+  bool trapped;
+  /** What the trap said, empty for an engine trap that said nothing. */
+  string trapText;
+}
+
+/**
+ * Load `path`, run it, and read the counters it recorded.
+ *
+ * **The run is the point, and a trap in it is tolerated.** A counter table is what the module wrote
+ * *while running*, so reading without running answers zeroes; and a traced or covered run of something
+ * that traps has still recorded everything up to the trap, which is what a caller asked about. The
+ * native command said the same thing in a comment about `TryCatch` and for a sharper reason: without
+ * catching, V8 announced the trap on **stdout**, which is the stream `tracestat` prints its numbers to
+ * and `packages/crypto/test/wac/constanttime_test.wac` parses.
+ *
+ * Here the trap cannot escape at all — `Cli.call` answers `status == 1` and a sentence — so the hazard
+ * is gone rather than handled. That is one of the two things this move buys.
+ *
+ * `grants` is passed to `load` and is the loader's own ceiling intersected with what is asked, so this
+ * cannot hand a module more than the command holds.
+ */
+export Counters read(Core core, Cli cli, string path, i32 grants) {
+  Vec<i32> none = Vec.create();
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return Counters("cannot read " + path + " — " + f.error, none, false, ""); }
+  // **Asked here rather than inferred from the load's refusal.** `Cli.load` needs a manifest — it is
+  // where an export's signature comes from — so a `wac compile`d module cannot be loaded at all, and
+  // the boundary's own sentence for that ("carries no wac.manifest section") is true and unhelpful:
+  // the thing the caller got wrong is *which command built the artefact*.
+  //
+  // The native command could read such a module, because it instantiated by hand with no imports and
+  // reached the exports directly. That is the one capability this move gives up, and it costs nothing
+  // real — every test that feeds these commands builds with `wac build`, and a module compiled without
+  // a manifest has no grants either, so anything needing a capability could not have been read that
+  // way regardless. What it must not cost is the diagnosis, hence this.
+  if (manifestIn(f.bytes) == "") {
+    return Counters(path + " carries no wac.manifest section, so it cannot be loaded — build an " +
+                    "instrumented module with `wac build --coverage` or `wac build --trace`",
+                    none, false, "");
+  }
+  LoadedModule m = cli.load(f.bytes, grants);
+  if (m.handle < 0) { return Counters(path + " could not be loaded — " + m.error, none, false, ""); }
+
+  // **`__cov_init` before anything else, and its absence is the diagnosis.** The counters are
+  // allocated by this call rather than by instantiation, so a module without it is not an instrumented
+  // module — and every instrumented function would trap on its first branch, which reads as a fault in
+  // the program rather than as the wrong artefact having been handed over.
+  CallResult started = cli.call(m.handle, "__cov_init", 0);
+  if (started.status == 2) {
+    cli.unload(m.handle);
+    return Counters(path + " carries no counters — was it built with --coverage or --trace?",
+                    none, false, "");
+  }
+
+  // The exercise. `main` is what the native ran and what a built module has; a module without one has
+  // nothing to record and answers an empty table, which is a true answer rather than an error.
+  bool trapped = false;
+  string trapText = "";
+  CallResult ran = cli.call(m.handle, "main", 0);
+  if (ran.status == 1) { trapped = true; trapText = ran.text; }
+
+  CallResult n = cli.call(m.handle, "__cov_len", 0);
+  if (n.status != 0) {
+    cli.unload(m.handle);
+    return Counters(path + " has __cov_init and no __cov_len", none, trapped, trapText);
+  }
+  Vec<i32> out = Vec.create();
+  for (i32 i = 0; i < n.value; i++) {
+    CallResult v = cli.call(m.handle, "__cov_get", i);
+    // -1 for a slot that would not answer, which is what the native reader records. A negative count
+    // is impossible for a real slot, so it reads as "this one is missing" rather than as a value.
+    out.push(v.status == 0 ? v.value : 0 - 1);
+  }
+  cli.unload(m.handle);
+  return Counters("", out, trapped, trapText);
+}

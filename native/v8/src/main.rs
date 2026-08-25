@@ -2145,9 +2145,10 @@ fn main() {
     if SEED.is_some() && stem == "ctcompare" {
         std::process::exit(ctcompare_command(&args[2..]));
     }
-    if SEED.is_some() && stem == "tracestat" {
-        std::process::exit(tracestat_command(&args[2..]));
-    }
+    // **No `tracestat` here.** It is `packages/wac/src/wac.wac`'s, as of 2026-08-25 —
+    // `issues/system/0257c`'s rule is that a host may implement *running a module* and must not
+    // implement the command surface, and reading a journal's size is a command. It reaches the seed
+    // through the fall-through below, like `check` and `build`.
     // **A stem is no longer a program.** `wac <stem>` used to run `<stem>.wasm` against a
     // `<stem>.json` beside it, which was the pair form: two files, and a manifest that could be
     // separated from the module it describes. `wac build` writes one artefact now — the manifest is a
@@ -2725,37 +2726,6 @@ fn covdump_command(rest: &[String]) -> i32 {
     // printed a table succeeded at the thing it was asked to do, whatever the exercise returned;
     // one that printed none failed, and `run_as_with` has already said why.
     if COUNTERS_PRINTED.with(|p| p.get()) { 0 } else if code == 0 { 1 } else { code }
-}
-
-/// `wac tracestat <module.wasm>` — one traced run's size, without shipping the journal out.
-///
-/// `events` is what was recorded, `wanted` is what happened whether or not there was room, and `slots`
-/// is the room there was. They differ exactly when the journal overflowed, and `wanted` is the number
-/// to pass to `--trace-slots` to make the next run fit — which is the whole reason it is reported
-/// rather than left for a caller to double and try again.
-fn tracestat_command(rest: &[String]) -> i32 {
-    let Some(path) = rest.first() else {
-        eprintln!("usage: wac tracestat <module.wasm>");
-        return 2;
-    };
-    let counters = match counters_of(path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("wac: {e}");
-            return 1;
-        }
-    };
-    if counters.len() < 2 {
-        eprintln!("wac: a journal is at least two slots; got {}", counters.len());
-        return 1;
-    }
-    println!(
-        "events {} wanted {} slots {}",
-        counters[0].max(0) / 2,
-        counters[counters.len() - 1],
-        counters.len()
-    );
-    0
 }
 
 /// `wac ctcompare <a.wasm> <b.wasm>` — two traced runs, and where their journals first differ.
