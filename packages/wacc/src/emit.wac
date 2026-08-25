@@ -8081,7 +8081,7 @@ void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
  * local. V8 and wasmtime both run it. Binaryen refuses to *validate* it: its IR is structured rather
  * than stacked, so a body whose last instruction is a void `global.set` with a value stranded beneath
  * it is `block with value and last element with value must match types`. `wac build --optimize` runs
- * every module through `wasm-opt`, and `packages/box/test/wac/optimize_test.wac` is what said so.
+ * every module through `wasm-opt`, and `packages/platform/test/wac/optimize_test.wac` is what said so.
  */
 void emitTrapHelper(B funcs, B code, Env env) {
   funcs.u32leb(env.sigType("fn[string()]"));
