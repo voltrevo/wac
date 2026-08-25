@@ -2137,6 +2137,18 @@ fn main() {
     if SEED.is_some() && stem == "test" {
         std::process::exit(test_command(&args[2..]));
     }
+    // **`covdump` is back here, and `issues/system/0264c` is why.** It ran in the program from
+    // `issues/system/0257c` until 2026-08-25, and that broke thirteen coverage ratchets: the program
+    // reaches an exercise through `cli.load`, and a loaded module is granted `run: false` by a policy
+    // `load_module` states in its own words. An exercise that asks an oracle could no longer ask it, so
+    // every ledger measured a fraction of its package and said *the operand oracle did not answer*.
+    //
+    // Running a module and reading the counters it leaves behind is the host's job in a way a command
+    // surface is not — the counters are in the instance, and nothing outside it can see them. This
+    // stays here until a command-line grant can reach a baked program.
+    if SEED.is_some() && stem == "covdump" {
+        std::process::exit(covdump_command(&args[2..]));
+    }
     // **Whether the engine accepts a module, without running it.** `WebAssembly.validate` has no
     // equivalent in wac, so a test that emits modules and wants to know they are well-formed had to
     // run each one — a fork per module. `packages/wacc/test/wac/corpusemit_test.wac` compiles the
@@ -2219,6 +2231,19 @@ enum Entry {
 /// What makes a child's world different from its parent's. `None` everywhere is the parent.
 #[derive(Default)]
 struct AsChild {
+    /// Call `__cov_init`, then the exports, then print the counters — `covdump`'s whole job.
+    ///
+    /// **Through the ordinary program path, not a bare instantiate.** The world is built from the
+    /// manifest and the grants are the ones it declares, which is what an exercise reading a corpus
+    /// off disk needs; a bare instantiate failed to *instantiate* rather than being refused, because
+    /// the imports were absent rather than denied. `issues/system/0221`.
+    dump_counters: bool,
+    /// The exports to call, in order, each with its trap caught. Empty means `main`.
+    ///
+    /// A trap ends the function it is in, so an exercise holding several trapping cases in one `main`
+    /// loses every one after the first. `Some(n)` calls `name(i)` for `i` in `0..n`; `None` calls
+    /// `name()` once.
+    cov_exports: Vec<(String, Option<i32>)>,
     /// What is called after the world is built. A child is always `Main`.
     entry: Entry,
     /// The coverage table of an instrumented build — `index<TAB>line<TAB>col<TAB>kind<TAB>file` per
@@ -2454,6 +2479,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
     let loud = as_child.loud;
+    let dump_counters = as_child.dump_counters;
+    let cov_exports = as_child.cov_exports.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -2705,6 +2732,19 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                          file_suffix.as_deref(), shown_entry.as_deref().unwrap_or(&m.entry),
                          loud, core, cli);
     }
+    // **The counters are allocated by a call, not by instantiation.** Skip this and every
+    // instrumented function traps on its first branch, with a message about the program rather
+    // than about the omission.
+    if dump_counters {
+        match get_export(scope, exports, "__cov_init") {
+            Some(f) => { f.call(scope, exports.into(), &[]); }
+            None => {
+                eprintln!("wac: {} carries no counters — was it built with coverage or tracing?",
+                          m.entry);
+                return 1;
+            }
+        }
+    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -2798,10 +2838,21 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             } else {
                 eprintln!("wac: {} trapped: {said}", m.entry);
             }
+            // **The counters still stand after a trap**, and they are the answer `covdump` was
+            // asked for: an exercise whose last case is meant to trap has done its work by the
+            // time it does.
+            if dump_counters {
+                call_for_counters(scope, exports, m, &cov_exports);
+                print_counters(scope, exports);
+            }
             return 1;
         }
     };
     let code = r.to_int32(scope).map(|i| i.value()).unwrap_or(0);
+    if dump_counters {
+        call_for_counters(scope, exports, m, &cov_exports);
+        print_counters(scope, exports);
+    }
 
     // **Work scheduled and never run is an error.** `main` returning is the program saying it is
     // done, and a continuation still waiting says it was not — the answer would simply never arrive,
@@ -4068,6 +4119,8 @@ fn dispatch(
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
+                dump_counters: false,
+                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -4213,6 +4266,8 @@ fn dispatch(
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
+                dump_counters: false,
+                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -6417,4 +6472,282 @@ fn run_host_program(
             }
         }
     }
+}
+
+// ── Restored 2026-08-25: `covdump` cannot live in the program ─────────────────────────────
+//
+// `issues/system/0257c` moved this into `packages/wac/src/wac.wac`, and that broke **thirteen**
+// coverage ratchets. The program's version loads the exercise with `cli.load`, and a loaded module
+// is granted `run: false` by deliberate policy — `load_module` says so in its own words, and that
+// line predates all of this. So every ledger whose exercise asks an oracle got
+// *the operand oracle did not answer* and measured a fraction of its package.
+//
+// Running a module and reading its counters afterwards is the host's job in a way a command surface
+// is not: the counters live in the instance. It goes back until a command-line grant can reach a
+// baked program — `issues/system/0264c` is that question, and this is the second thing waiting on it.
+fn counters_of(path: &str) -> Result<Vec<i32>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {path} — {e}"))?;
+    start_v8();
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let handle_scope, isolate);
+    let context = v8::Context::new(handle_scope, Default::default());
+    let scope = &mut v8::ContextScope::new(handle_scope, context);
+
+    let Some(module) = v8::WasmModuleObject::compile(scope, &bytes) else {
+        return Err(format!("{path} was rejected by the engine"));
+    };
+    let imports = v8::Object::new(scope);
+    let global = context.global(scope);
+    let mod_key = v8::String::new(scope, "__mod").unwrap();
+    global.set(scope, mod_key.into(), module.into()).unwrap();
+    let imp_key = v8::String::new(scope, "__imports").unwrap();
+    global.set(scope, imp_key.into(), imports.into()).unwrap();
+    let src = v8::String::new(scope, "new WebAssembly.Instance(__mod, __imports).exports").unwrap();
+    let Some(exports) = v8::Script::compile(scope, src, None)
+        .and_then(|sc| sc.run(scope))
+        .and_then(|v| v.to_object(scope))
+    else {
+        return Err(format!("{path} did not instantiate — an import it wants is missing"));
+    };
+
+    // The counters are allocated by a call, not by instantiation: skip this and every instrumented
+    // function traps on its first branch with a message about the program rather than the omission.
+    let Some(init) = get_export(scope, exports, "__cov_init") else {
+        return Err(format!("{path} carries no counters — was it built with coverage or tracing?"));
+    };
+    init.call(scope, exports.into(), &[]);
+    if let Some(main) = get_export(scope, exports, "main") {
+        // **A `TryCatch`, because a trap here is expected and tolerated.** The next lines say so: the
+        // counters stand after a trap and they are what was asked for. Without one, V8's default
+        // handler announces the trap on **stdout** — which is the stream `tracestat` prints its one
+        // line of numbers to and `ctcompare` prints its verdict to, and `ct.wac` and
+        // `packages/crypto/test/wac/constanttime_test.wac` both parse. Measured before the fix: a
+        // trapping module gave `tracestat` one stray line and `ctcompare` two, since it reads two
+        // modules through here.
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        main.call(&mut tc, exports.into(), &[]);
+        tc.reset();
+    }
+
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
+        return Err(format!("{path} has __cov_init and no __cov_len"));
+    };
+    let len = len_fn
+        .call(scope, exports.into(), &[])
+        .and_then(|v| v.to_int32(scope))
+        .map(|v| v.value())
+        .unwrap_or(0);
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
+        return Err(format!("{path} has __cov_len and no __cov_get"));
+    };
+    let mut out = Vec::with_capacity(len.max(0) as usize);
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        out.push(
+            get_fn
+                .call(scope, exports.into(), &[idx.into()])
+                .and_then(|v| v.to_int32(scope))
+                .map(|v| v.value())
+                .unwrap_or(-1),
+        );
+    }
+    Ok(out)
+}
+
+thread_local! {
+    /// Whether a counter table has been printed this process — read by `covdump_command`.
+    ///
+    /// **`covdump`'s exit status is about the dump, not about the program.** Running through the
+    /// ordinary program path means `run_as_with` hands back what `main` returned, and a coverage
+    /// exercise returns an accumulator: `packages/codec`'s came back as 205, which `covreport` read as
+    /// a failed `covdump` and reported with an empty message. The old bare-instantiate `covdump`
+    /// always exited 0 and every caller was written against that.
+    static COUNTERS_PRINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
+///
+/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
+/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
+/// The aggregated report `--coverage` prints answers a different question — how much was reached —
+/// and cannot say how often.
+///
+/// Written from inside a live run, because the counters are in the instance and the instance is gone
+/// once `run_as_with` has returned. `issues/system/0221`.
+fn print_counters(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) {
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
+        eprintln!("wac: the module has __cov_init and no __cov_len");
+        return;
+    };
+    let len = len_fn
+        .call(scope, exports.into(), &[])
+        .and_then(|v| v.to_int32(scope))
+        .map(|v| v.value())
+        .unwrap_or(0);
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
+        eprintln!("wac: the module has __cov_len and no __cov_get");
+        return;
+    };
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        let n = get_fn
+            .call(scope, exports.into(), &[idx.into()])
+            .and_then(|v| v.to_int32(scope))
+            .map(|v| v.value())
+            .unwrap_or(0);
+        println!("{i}\t{n}");
+    }
+    println!("{len} counter(s)");
+    COUNTERS_PRINTED.with(|p| p.set(true));
+}
+
+/// Call each named export in turn, **each trap caught** — after `main`, not instead of it.
+///
+/// A trap ends the function it is in and nothing else: the instance stays usable, which is what lets
+/// a trapping branch be counted as covered at all. So seven bounds cases are seven calls rather than
+/// seven runs, which is what the TypeScript did from the host and what a single `main` cannot express.
+///
+/// `call` answering `None` *is* the trap and is not an error here. A name that is not an export is,
+/// and is reported after the counters so a mistyped name cannot look like a package with no coverage.
+fn call_for_counters(
+    scope: &mut v8::PinScope,
+    exports: v8::Local<v8::Object>,
+    m: &Manifest,
+    names: &[(String, Option<i32>)],
+) {
+    let mut missing: Vec<&str> = Vec::new();
+    for (name, cases) in names {
+        match get_export(scope, exports, name) {
+            Some(f) => {
+                // **A `TryCatch` per call, and it is not optional** — the same reason
+                // `validate_command` has one per module, one paragraph over: a throw leaves an
+                // exception on the isolate, and the next operation meets V8's own check that a null
+                // result and a pending exception agree. That comment says "nothing else in this file
+                // needs one because nothing else compiles twice"; this calls twelve functions that
+                // are *meant* to trap, which is the same thing for calls.
+                //
+                // Without it `packages/bytes` measured 69 covered on one run and 73 on the next from
+                // an unchanged tree, which is what a swallowed call looks like from the outside.
+                //
+                // **A sweep is the same thing per case, and the `TryCatch` is per *call*.** One for
+                // the whole loop would leave the first trap pending through every case after it,
+                // which is the arrangement the paragraph above says aborts the process.
+                //
+                // The argument is passed only for a sweep. A wac export taking no parameter is a wasm
+                // function of arity zero, and handing it an extra value is harmless; handing a
+                // one-parameter function *no* value is not, so "call it once" and "call it with 0"
+                // stay distinct rather than being the same case spelled two ways.
+                match cases {
+                    None => {
+                        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                        let mut tc = tc.init();
+                        f.call(&tc, exports.into(), &[]);
+                        tc.reset();
+                    }
+                    Some(n) => {
+                        for i in 0..*n {
+                            let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                            let mut tc = tc.init();
+                            let arg = v8::Integer::new(&tc, i);
+                            f.call(&tc, exports.into(), &[arg.into()]);
+                            tc.reset();
+                        }
+                    }
+                }
+            }
+            None => missing.push(name),
+        }
+    }
+    if !missing.is_empty() {
+        // Named and not silent: a mistyped export would otherwise read as a package whose trapping
+        // branches are simply uncovered, which is the same number a real gap gives.
+        eprintln!("wac: {} exports no {}", m.entry, missing.join(", "));
+    }
+}
+
+/// `wac covdump <module.wasm> [export…]` — run an instrumented module and print each counter.
+///
+/// **Through the ordinary program path**, which is the whole of `issues/system/0221`. This used to
+/// instantiate with an empty imports object and call `main` with no arguments, so a coverage exercise
+/// could declare no capabilities: `main(Core, Cli)` was not refused, it *failed to instantiate*,
+/// because the imports were absent rather than denied. No exercise could read a corpus off disk, and
+/// `packages/json`'s needs a directory listing. Now the world is built from the manifest and the
+/// grants are the ones baked into it, exactly as for `wac prog.wasm`.
+///
+/// With export names, each is called with its trap caught — see `call_for_counters`. Without, `main`
+/// runs, and a trap in it still prints what was reached.
+fn covdump_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac covdump <module.wasm> [export|export:<cases>…]");
+        eprintln!("       no export names runs `main`; several are called in order, traps caught");
+        eprintln!("       `name:<n>` calls name(0)…name(n-1), each trap caught, for a sweep");
+        return 2;
+    };
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("wac: cannot read {path} — {e}");
+            return 1;
+        }
+    };
+    // **No manifest is not an error here.** `wac compile` and the trace instrumentation write a plain
+    // module, and `tools/wac/ctcompare_test.wac` and `coverage_test.wac` hand those straight to this
+    // command. A module with no manifest declares no capabilities, so instantiating it with no imports
+    // is not a limitation for it — it is the correct world. That is the path this command used to take
+    // for *everything*, which is what `issues/system/0221` was about.
+    let Some(text) = manifest_in(&bytes) else {
+        if rest.len() > 1 {
+            eprintln!("wac: {path} carries no wac.manifest section, so it has no world to call \
+                       {} in — build it with `wac build`", rest[1..].join(", "));
+            return 2;
+        }
+        match counters_of(path) {
+            Ok(counters) => {
+                for (i, n) in counters.iter().enumerate() {
+                    println!("{i}\t{n}");
+                }
+                println!("{} counter(s)", counters.len());
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("wac: {e}");
+                return 1;
+            }
+        }
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the manifest inside {path} is not one — {e}");
+            return 1;
+        }
+    };
+    // **Parsed here, so a bad count is a usage error rather than a missing export.** Left to
+    // `call_for_counters`, `sweep:many` would come back as "exports no sweep:many" — a message about
+    // the module, naming a fault in the command line.
+    let mut cov_exports: Vec<(String, Option<i32>)> = Vec::new();
+    for a in &rest[1..] {
+        match a.split_once(':') {
+            None => cov_exports.push((a.clone(), None)),
+            Some((name, count)) => match count.parse::<i32>() {
+                Ok(n) if n > 0 => cov_exports.push((name.to_string(), Some(n))),
+                _ => {
+                    eprintln!("wac: {a} — `{count}` is not a case count; a sweep is \
+                               `name:<n>` for some n above zero");
+                    return 2;
+                }
+            },
+        }
+    }
+    start_v8();
+    let code = run_as_with(&manifest, &bytes, &text, AsChild {
+        dump_counters: true,
+        cov_exports,
+        ..Default::default()
+    });
+    // The program's own status is not this command's answer — see `COUNTERS_PRINTED`. A run that
+    // printed a table succeeded at the thing it was asked to do, whatever the exercise returned;
+    // one that printed none failed, and `run_as_with` has already said why.
+    if COUNTERS_PRINTED.with(|p| p.get()) { 0 } else if code == 0 { 1 } else { code }
 }
