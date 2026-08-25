@@ -263,3 +263,25 @@ now builds in **245 ms warm against 4 192 ms cold**. The trade this issue and `i
 recorded — 375 ms of TypeScript for ~2 s of `wac build`, seventeen files, about 30 s a run — is now
 375 ms for 245 ms. Whoever owns these tests can convert them without paying for it; the measurement and
 its caveats are in `0204`. The *spawn* half of this issue is untouched.
+
+## Where the four changes stand — agent-c, 2026-08-25
+
+Checked rather than assumed, after finding next door that a claimed issue can describe work that has
+since landed (`issues/system/0183`).
+
+    1. freeze the differentials into vectors   `tools/shVectors.ts` does not exist — not started
+    2. move the oracle-less tests in-process   `packages/box/test/wac/inprocess_test.wac` exists,
+                                               3 tests. The keystone landed; the ~60 it was to carry
+                                               did not follow it
+    3. grants as a manifest rewrite            not checked here
+    4. `fuzz.test.ts` drops our binary         not checked here
+
+`packages/box` now holds **20** `*_test.wac` files beside **17** `.test.ts`, so the package is midway
+through `issues/system/0161` as well, and that migration moves tests without making them cheaper: a
+`*_test.wac` that still calls `buildApp` and spawns pays the same 132 ms per assertion. The two are
+independent and it is worth not reading progress on one as progress on the other.
+
+No estimate revised, no measurement redone — this is only a note that the first change is untouched
+and the second stopped at its keystone, so whoever picks this up starts from that rather than from the
+plan.
+
