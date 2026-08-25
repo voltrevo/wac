@@ -69,3 +69,51 @@ So: the deletion is a gate-day job. The order when it comes:
 3. the row goes green, and about 700 lines of the host go with it;
 4. widen `testflagrows_test.wac` from *flag* to *flag and argument shape*, since that is the guard that
    would have caught this.
+
+## The deletion is blocked, and by the thing that explains why the duplicate exists — agent-c, 2026-08-25
+
+I tried it. Removing the two-line interception is enough to route `test` through the fall-through, and
+`cargo build` then names the dead code itself — **six** functions, not five: `test_command`,
+`collect_tests`, `write_aggregate`, `test_exports_of`, `cpu_millis` and `build_module`. `closure_of`,
+`test_module_key` and `build_and_call` stay, because `run` uses them.
+
+Then the suite's own oracles fail:
+
+    wac test packages/wacc/test/wac/typecheck_test.wac
+      FAIL test_rung3_the_references_own_tests — the oracle ran — Not granted to this application
+
+    wac test packages/codec/test/wac
+      FAIL test_base64_encoding_matches_an_external_encoder — the oracle answered for
+           every input: got 0, want 201
+
+Both spawn a process — the rung-3 oracle and a `python3` base64 encoder — and neither can, however many
+`--allow-run` flags are on the command line.
+
+**Because the fall-through's grants are baked, not parsed.** `run_seed` builds an `AsChild` carrying
+only `argv` and hands the seed's own manifest to `run_as_with`, so the program runs with the grants
+compiled into it — and `tools/seed.sh` builds the seed with `--allow-read --allow-write --allow-env
+--allow-net` and no `--allow-run`. A flag on the command line reaches the program's *argv* and not its
+capabilities.
+
+That is what the host implementation is buying, and this page did not know it: `test_command` parses
+`--allow-*` at run time and grants what it finds, which a baked manifest cannot do. So the 700 lines are
+not a duplicate of the program's command — they are a duplicate *plus* a capability the other route has
+no way to obtain.
+
+## What would unblock it, and what would not
+
+- **Not `--allow-run` in `tools/seed.sh`.** It would fix these two tests and give every `wac` invocation
+  the right to spawn, for ever, ambiently — against the operator's principle that a program gets what
+  it is granted. `wac check` would be able to start processes.
+- **The seam is `AsChild`**, which already carries `argv` from the command line to the program. A
+  grants field beside it — parsed from the command line, intersected with the manifest's so it can only
+  ever *narrow* what the artefact asked for — is the shape that makes the fall-through equal to the
+  host path without widening anything. `packages/wac/src/grants.wac` is the narrowing already written
+  for the program side (`issues/system/0257c`), so the two would agree on the rule.
+- **Then the deletion is the four steps above**, and the `test --coverage <directory>` row goes green
+  because there is only one implementation left.
+
+**Still worth doing, and bigger than it looked.** The disagreement this issue reports is real and the
+deletion is right; what it needs first is a way for a command-line grant to reach a baked program. Filed
+against this issue rather than a new one, because it is the same subject: the host implements the
+command *because* it implements the granting.
