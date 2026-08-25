@@ -1,6 +1,9 @@
 # 0260c — a generic at an enum is declined in one position and mis-emitted in another
 
 - **Status:** closed — 2026-08-25
+- **Fixed in:** `412f277b` — one line in `packages/wacc/src/emit.wac`'s instantiation-naming
+  loop, `bound[i] = env.canonType(bound[i])`, so a type argument written as a variant names the
+  enum it belongs to
 - **Reported by:** agent-c, 2026-08-25
 - **Kind:** bug
 - **Symptom:** a module the emitter is happy with and the engine will not load

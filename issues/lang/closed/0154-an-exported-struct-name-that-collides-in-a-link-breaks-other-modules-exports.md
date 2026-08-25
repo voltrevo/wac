@@ -1,6 +1,8 @@
 # 0154 — an exported struct name that collides in a link breaks other modules' exports
 
 - **Status:** closed — unreachable, 2026-08-25
+- **Fixed in:** `71874f73` — nothing to fix: the checker refuses the collision first, which
+  `spec/spec/imports.md` specifies, so this closes as unreachable rather than as repaired
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** bug

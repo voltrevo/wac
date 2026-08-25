@@ -35,7 +35,10 @@
 // Default is every package's `src`, matching what `design/lang/0008` measured.
 import { wacLex } from "wac/wacLex.ts";
 import { wacParse } from "wac/wacParse.ts";
-import type { Block, Expr, Func, Param, Stmt } from "wac/wacParse.ts";
+// `FuncDecl`, which is what the parser calls it — a `Func` was a guess and the type-check said
+// so. `MethodDecl` is a separate type, so the list below is widened rather than cast: a method
+// and a function are the same subject for this question and differ in what else they carry.
+import type { Block, Expr, FuncDecl, MethodDecl, Param, Stmt } from "wac/wacParse.ts";
 
 /** The root identifier of a reference expression, or null when it is not rooted in a name. */
 function rootName(e: Expr): string | null {
@@ -89,7 +92,8 @@ function visit(s: Stmt, constNames: Set<string>, out: (s: Stmt) => void) {
 }
 
 function hitsIn(file: string, src: string): Hit[] {
-  const lexed = wacLex(src, file);
+  // One argument: `wacLex` takes the source and nothing else.
+  const lexed = wacLex(src);
   const parsed = wacParse(lexed.tokens, file);
   const hits: Hit[] = [];
   // deno-lint-ignore no-explicit-any
@@ -97,12 +101,12 @@ function hitsIn(file: string, src: string): Hit[] {
   // guessed `decls` and reported **0 over 376 files** — a scan that had walked nothing, and would have
   // been read as "the shape does not occur". The canary below is why that was caught in a minute.
   const decls = (parsed as any).program?.items ?? [];
-  const funcs: Func[] = [];
+  const funcs: (FuncDecl | MethodDecl)[] = [];
   for (const d of decls) {
     // deno-lint-ignore no-explicit-any
     const x = d as any;
-    if (x.tag === "func") funcs.push(x as Func);
-    for (const m of x.methods ?? []) funcs.push(m as Func);
+    if (x.tag === "func") funcs.push(x as FuncDecl);
+    for (const m of x.methods ?? []) funcs.push(m as MethodDecl);
   }
   for (const f of funcs) {
     // deno-lint-ignore no-explicit-any

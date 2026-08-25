@@ -1,6 +1,8 @@
 # 0155 — a build that emitted no code reports success
 
 - **Status:** closed — 2026-08-25
+- **Fixed in:** `0f35f2f2` — `hollowWhy` in `packages/wacc/src/manifest.wac`, asked by the build
+  before it writes, with `packages/wacc/test/wac/manifestsection_test.wac`
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
