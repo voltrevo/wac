@@ -216,20 +216,25 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // *because* the thing they were watching for had been achieved. A canary that fires on success is
   // worse than no canary, because the natural fix is to stop believing it.
   //
-  // So the walk is checked against a file that **must** be declined rather than against the corpus
-  // happening to contain one. Four lines, no imports, and the reason it is declined is a language
-  // construct — which was the property this rung was always asserting.
-  string[] canaryPaths = string[]("/canary/m.wac");
-  string[] canarySources = string[](
-      "struct Hold<T> { T v; }\n" +
-      "enum Colour { Red, Green }\n" +
-      "Hold<T> hold<T>(T v) { return Hold(v); }\n" +
-      "export Hold<Colour> mk() { return hold(Colour.Red); }\n");
-  string canaryWhy = blockedFiles(canaryPaths, canarySources, "/canary/m.wac");
+  // **Finding a replacement subject was the interesting part.** Every construct tried first is caught
+  // by the *checker* now, which is `issues/lang/0170a` working: an ill-typed body, a generic method
+  // called without its type arguments, a mixed construction — none of them reaches the emitter. The
+  // first version of this canary used a generic instantiated at an enum, which was declined when it
+  // was written and *compiles* an hour later, because `issues/lang/0260c` got fixed in between.
+  //
+  // So the subject is a **cap** rather than a construct: `capsPerLambda()` is 32, the checker has no
+  // opinion about it, and a lambda capturing 33 locals is declined by name. If that number is ever
+  // raised this fails loudly and says so, which is the right way for a canary to break.
+  string caps = "export i32 f() {\n";
+  for (i32 i = 0; i < 33; i++) { caps = caps + "  i32 v" + itoa(i) + " = " + itoa(i) + ";\n"; }
+  caps = caps + "  fn[i32()] g = () => v0";
+  for (i32 i = 1; i < 33; i++) { caps = caps + " + v" + itoa(i); }
+  caps = caps + ";\n  return g();\n}\n";
+  string canaryWhy = blockedFiles(string[]("/canary/m.wac"), string[](caps), "/canary/m.wac");
   t.isTrue(canaryWhy != "", "a file this emitter cannot emit was not declined — the emittability " +
                             "walk is not running, so the counts above mean nothing");
-  t.isTrue(contains(canaryWhy, "reference types"),
-           "the decline did not name a language construct: " + canaryWhy);
+  t.isTrue(contains(canaryWhy, "captures in one lambda"),
+           "the decline did not say what it ran out of: " + canaryWhy);
 
   // **The scan found something.** `short_` is a count of names that are declared and missing, so a
   // scanner that declared nothing would report zero of them and this whole check would be a comment.

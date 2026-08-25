@@ -586,6 +586,20 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
           // A parameter no argument mentions cannot be inferred, and guessing would compile a
           // different function from the one that was called.
           if (bound[i] == "") { return ""; }
+          // **Canonicalised, or an enum gets two instantiations of one generic.** `typeOfE` of
+          // `Colour.Red` is the *variant*, so `hold(Colour.Red)` inferred `T = Colour.Red` and built
+          // `Hold<Colour.Red>` — a different struct from the `Hold<Colour>` the caller's signature
+          // names, and a different type index. The function then returned `(ref null 387)` where its
+          // own signature said `(ref null 336)`: a module the emitter was happy with and the engine
+          // would not load. `issues/lang/0260c`.
+          //
+          // `canonType` is the right instrument and its docstring says why — "a variant and its enum
+          // are one struct … everywhere a wac type name reaches wasm, it goes through here first".
+          // An instantiation *name* is such a place; it was the one that did not.
+          //
+          // Done here rather than in the name only, so the substitution inside the body agrees: the
+          // instance is `Hold<Colour>` and `T` stands for `Colour` throughout it.
+          bound[i] = env.canonType(bound[i]);
           if (i > 0) { inst = inst + ","; }
           inst = inst + bound[i];
         }

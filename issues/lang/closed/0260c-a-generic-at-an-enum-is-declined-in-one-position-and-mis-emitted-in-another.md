@@ -1,6 +1,6 @@
 # 0260c — a generic at an enum is declined in one position and mis-emitted in another
 
-- **Status:** open — the mis-emission is fixed; the generic still does not work
+- **Status:** closed — 2026-08-25
 - **Reported by:** agent-c, 2026-08-25
 - **Kind:** bug
 - **Symptom:** a module the emitter is happy with and the engine will not load
@@ -94,3 +94,38 @@ it.
 The walk is now checked against the four lines above — a file that must be declined, held inline —
 rather than against the corpus happening to contain a defect. README, `Home.tsx` and `Stack.tsx`
 carried "702 of 729" and "twenty-seven it cannot compile whole"; all three say 1075 now.
+
+## Closed: the type argument was the variant, not the enum
+
+`typeOfE(Colour.Red)` is the **variant**, so `hold(Colour.Red)` inferred `T = Colour.Red` and built
+`Hold<Colour.Red>` — a different struct from the `Hold<Colour>` the caller's signature names, with a
+type index of its own. Hence `(ref null 387)` where the signature said `(ref null 336)`.
+
+One line, in the loop that builds an instantiation's name from the inferred bindings:
+
+    bound[i] = env.canonType(bound[i]);
+
+`canonType` is exactly the right instrument and its own docstring says so — *"a variant and its enum
+are one struct … everywhere a wac type name reaches wasm, it goes through here first"*. An
+instantiation name is such a place, and it was the one that did not go through it. Applied to `bound`
+rather than to the name alone, so the substitution inside the body agrees: the instance is
+`Hold<Colour>` and `T` stands for `Colour` throughout it.
+
+All three reproductions now **compile and run** rather than being declined:
+
+    export Hold<Colour> mk() { return hold(Colour.Red); }        compiles, 2670 bytes
+    Hold<Colour> h = mk();                                        runs, prints ok
+    Pending<Read> noRecv(i32 h) { return ready(Read.End); }       runs, prints ok
+
+So the `return`-position check added earlier is no longer what makes this fail — it makes nothing fail
+today, and it stays as the guard the `Var` case has always had. `packages/wac/src/grants.wac`'s
+explicit `Pending.of(0, resolveEnd, …)` could go back to `ready(Read.End)` now; left alone because it
+is working code and the explicit form is what `probe.wac` uses.
+
+**And it cost a canary.** `corpusemit_test.wac`'s harness check used this very construct — declined
+when written, compiling an hour later. Its subject is a *cap* now (`capsPerLambda()` is 32, and the
+checker has no opinion about it), because a test subject that is a bug has a shelf life. The wider
+problem that turned up on the way is `issues/lang/0262c`: the per-function decline path has no
+reachable test at all, and the test that claims it passes on the `f` in "of".
+
+Verified: the compiler is a fixed point with the change in, at 1,666,689 bytes.
