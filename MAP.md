@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-39 packages, 134,983 lines of wac, 2785 tests,
+39 packages, 135,009 lines of wac, 2785 tests,
 82 command-line programs and 11 browser pages.
 
 ## Packages
@@ -47,8 +47,8 @@ In dependency order: nothing here imports anything below it.
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 32 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,435 | 200 | `bytes` `codec` `crypto` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,375 | 318 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `tls` `wactest` |
-| [`wac`](packages/wac/) |  | 828 | 0 | `fmt` `fs` `json` `wacc` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 36,888 | 341 | `bytes` `codec` `crypto` `fmt` `fs` `json` `wac` `wacpkg` |
+| [`wac`](packages/wac/) |  | 1,093 | 0 | `fmt` `fs` `json` `wacc` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 36,649 | 341 | `bytes` `codec` `crypto` `fmt` `fs` `json` `wac` `wacpkg` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,769 | 48 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 2,287 | 35 | `bytes` `crypto` `fmt` `json` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,754 | 79 | `crypto` `fmt` `gzip` `tls` |
