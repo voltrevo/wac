@@ -105,11 +105,18 @@ no way to obtain.
 - **Not `--allow-run` in `tools/seed.sh`.** It would fix these two tests and give every `wac` invocation
   the right to spawn, for ever, ambiently — against the operator's principle that a program gets what
   it is granted. `wac check` would be able to start processes.
-- **The seam is `AsChild`**, which already carries `argv` from the command line to the program. A
-  grants field beside it — parsed from the command line, intersected with the manifest's so it can only
-  ever *narrow* what the artefact asked for — is the shape that makes the fall-through equal to the
-  host path without widening anything. `packages/wac/src/grants.wac` is the narrowing already written
-  for the program side (`issues/system/0257c`), so the two would agree on the rule.
+- **The seam is `AsChild`**, which already carries `argv` from the command line to the program, and a
+  grants field beside it is the shape. **But not "intersected with the manifest's"**, which is what I
+  first wrote here and is impossible: the seed's manifest has no `run`, so an intersection can never
+  produce one — it would leave both tests failing exactly as they do now.
+
+  What it has to be is the arrangement `test_command` already has: **the seed is built maximal and the
+  host narrows to the command line.** Then `wac test --allow-run` grants run, `wac check` grants
+  nothing it was not asked for, and the effective set is `requested` rather than `manifest ∩
+  requested`. That is a real change to what the *toolchain* binary carries — the seed's manifest stops
+  being the limit and the command line becomes it — so it wants deciding rather than assuming, which is
+  why this stays filed. `packages/wac/src/grants.wac` is the per-command narrowing already written for
+  the program side (`issues/system/0257c`) and would be the rule the host mirrors.
 - **Then the deletion is the four steps above**, and the `test --coverage <directory>` row goes green
   because there is only one implementation left.
 
