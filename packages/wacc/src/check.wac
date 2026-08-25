@@ -8031,7 +8031,17 @@ void checkImportCollisions(C c, Program prog) {
     match (prog.decls[d].kind) {
       case Import(pathTok, prefixTok, items): {
         for (i32 i = 0; i < items.len(); i++) {
+          // **An item the parse did not finish has no alias, and `""` is not a name.** A failed import
+          // — `import * as p from "./p.wac";`, which the parser refuses with *expected '{', found '*'* —
+          // leaves `aliasTok` at -1 and `tokenText` answers `""`. That empty string then compared equal
+          // to `declaredNameOf` for every declaration that introduces no name, so the item "collided"
+          // and the report below indexed the token table at **-1**: *array element access out of
+          // bounds*, a trap rather than a diagnostic. No user path reached it, because `wac check` and
+          // `wac build` stop at the parse error; `dumpTypeErrors` does not stop, and every harness that
+          // asks the checker about generated input goes through it.
+          if (items[i].aliasTok < 0) { continue; }
           string alias = tokenText(c, items[i].aliasTok);
+          if (alias == "") { continue; }
           bool clash = false;
           for (i32 k = 0; k < n; k++) {
             if (seen[k] == alias) { clash = true; }

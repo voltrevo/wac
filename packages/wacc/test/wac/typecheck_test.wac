@@ -272,6 +272,45 @@ export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
   return t.report();
 }
 
+/**
+ * A malformed import does not **trap** the checker.
+ *
+ * `import * as p from "./p.wac";` is not wac — the parser says *expected '{', found '*'* — and
+ * `wac check` and `wac build` both stop there, so no user path reaches this. `dumpTypeErrors` does not
+ * stop, and it trapped: *array element access out of bounds*, inside `checkImportCollisions`.
+ *
+ * **The route is a false clash.** That walk reads `items[i].aliasTok`, which the failed parse left at
+ * -1, so the alias came out `""` — and `""` compares equal to `declaredNameOf` for any declaration
+ * that introduces no name. So a malformed item "collides" with something, and the report that follows
+ * indexes the token table at -1. Two bugs on one line: an empty alias should match nothing, and a
+ * token that does not exist should not be reported against.
+ *
+ * Other bad input was already fine — a bare spec (`from core`, which the parser reports and recovers
+ * from by recording the word) and an ordinary `return ;` both answer one diagnostic — so this is the
+ * shape where recovery leaves a hole rather than anything about parse errors in general.
+ */
+export string test_a_malformed_import_does_not_trap_the_checker() {
+  T t = T.create();
+  // Each of these is refused by the parser. What is asserted is only that asking the checker about
+  // them answers rather than trapping — the count is not the point and is not pinned.
+  string[] bad = string[](
+    "import * as p from \"./p.wac\";\nexport i32 f() { return 0; }",
+    "import * from \"./p.wac\";\nexport i32 f() { return 0; }",
+    "import { Read } from core;\nexport i32 f() { return 0; }",
+    "export i32 f() { return ; }");
+  for (i32 i = 0; i < bad.len(); i++) {
+    // `ours` goes through `dumpTypeErrors`; a trap here fails the test rather than returning.
+    i32 n = ours(bad[i]).len();
+    t.isTrue(n >= 0, "unreachable, but names the case if the call above traps: " + bad[i]);
+  }
+  // The control: a program with two imports of one name really does collide, so the walk that traps
+  // above is still doing its job. Without this, deleting the collision check would pass this test.
+  t.isTrue(ours("import { A } from \"./x.wac\";\nimport { A } from \"./y.wac\";\n" +
+                "export i32 f() { return 0; }").len() > 0,
+           "a name imported twice was not reported");
+  return t.report();
+}
+
 export string test_a_triple_from_dumptypeerrors_is_a_checker_code_and_reads_as_one() {
   // The two phases number from the same place, and nothing in a triple says which space it is in —
   // so this pins the one that has already misled somebody. 20 is the checker's `errBuiltinArg`; the
