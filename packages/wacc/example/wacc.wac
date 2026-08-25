@@ -2243,7 +2243,13 @@ export i32 main(Core core, Cli cli) {
     // From the metadata already in hand: `bindgenFiles` would build two more front ends to derive
     // exactly these two strings.
     string glue = bindgenWire(wasm, sigs, types, js ? "js" : "ts");
-    string out = stem(entry) + (js ? ".gen.js" : ".gen.ts");
+    // **The positional output the usage line has always advertised.** `wac check|compile|bindgen
+    // <entry.wac> [out]` — `compile` reads `pos[1]` twelve lines down and this did not, so a caller
+    // who wrote one was handed `main.gen.ts` beside the entry and no word about the path they asked
+    // for. Reported against an external project on 2026-08-25, with "the help text and actual
+    // interface should agree" — they agree by the interface catching up, because `compile` already
+    // does this and two commands on one usage line should not mean two things.
+    string out = pos.len() > 1 ? pos[1] : stem(entry) + (js ? ".gen.js" : ".gen.ts");
     Change wroteGlue = fs.writeFile(out, glue.toBytes());
     if (!wroteGlue.ok()) {
       core.warn("wacc: cannot write " + out + " — " + wroteGlue.message);
