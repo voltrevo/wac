@@ -67,7 +67,7 @@ Options two and three, which is the combination this asked for.
 
 **`build` takes grants on either side.** Its entry was the argument at position 1, so a leading flag
 was read as a filename — *cannot read --allow-read*. It is the first argument that is not a flag now
-(`positionals` in `packages/wacc/example/wacc.wac`, which skips `-o`'s value along with the flag).
+(`positionals` in `packages/wac/example/wac.wac`, which skips `-o`'s value along with the flag).
 The scans for grants, `--quiet` and an unknown flag started at argument 2 for the same reason and
 start at 1, or a grant written first would have been read by nobody and the artefact would have come
 out sealed without a word — the loud failure was, oddly, load-bearing.

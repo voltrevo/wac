@@ -9,7 +9,7 @@ a property of the build rather than something tests have to keep proving.
     src/runprog.wac     `wac prog.wasm` and the relaying half of `run`, and which grants each gets
 
 **It is not the compiler.** `packages/wacc` is, and this imports it — `issues/system/0257c` is the day
-that stopped being the other way around, when the command was `packages/wacc/example/wacc.wac` and the
+that stopped being the other way around, when the command was packages/wacc/example/wacc.wac and the
 compiler's example was what every host ran. The consequence was not academic: `sh` and `update` were
 described, twice and in writing, as things a hosted `wac` could not have, when what was true is that a
 command built out of the compiler carries what the compiler carries.

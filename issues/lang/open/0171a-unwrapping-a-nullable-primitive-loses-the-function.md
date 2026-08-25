@@ -346,7 +346,7 @@ nullable — `§wac-packed-nullable-2knq6wv` — turned out to be an `i32?[]`, a
 primitives, not a `u8?`; reading the program rather than the tag name is what settled it.
 
 Verified: seed a fixed point after one round at each step; `packages/crypto`, `packages/tor`,
-`std/platform` and `packages/wacc/example/wacc.wac` all build; emit, declined, typecheck, genericenum,
+`std/platform` and `packages/wac/example/wac.wac` all build; emit, declined, typecheck, genericenum,
 downcast and checkalone lanes green; `deno task check` clean.
 
 **Why this issue stays open:** the host boundary still refuses a nullable primitive, so the spec's own

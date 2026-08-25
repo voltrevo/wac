@@ -504,7 +504,7 @@ the code rather than about the driver — and all twenty-five sat in three place
 
 **`manifestWhy` was twenty-three of them**, an uncovered *entry* with its eleven rows. It turns a
 refusal code into a sentence and exists because `wacc` used to print `m.detail` alone. Its only caller
-is `packages/wacc/example/wacc.wac`.
+is `packages/wac/example/wac.wac`.
 
 That is the **fourth** export this issue has found tested only through a consumer in another package,
 after `regex`'s two ignore-case compilers, `http`'s `Outgoing` builder and `json`'s `parseJson5`. The

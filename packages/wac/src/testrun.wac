@@ -1,7 +1,7 @@
 // Everything `wac test` is: finding the files, building one module for them, calling their exports
 // and counting what happened.
 //
-// **This was 800 lines of `packages/wacc/example/wacc.wac`** — the *compiler's* example — because
+// **This was 800 lines of packages/wacc/example/wacc.wac** — the *compiler's* example — because
 // when `issues/system/0230a` asked for subcommands to live in "the wac program", the compiler's
 // example was the only program there was. `issues/system/0257c` is the operator's ruling that this
 // was the wrong reading: `wac` contains the compiler plus more, and running tests is not something a

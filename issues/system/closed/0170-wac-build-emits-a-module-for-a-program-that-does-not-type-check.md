@@ -53,7 +53,7 @@ a second look.
 ## Where to start
 
 Whatever `run` and `test` call between parsing and emitting, `build` does not. The three share a
-front end in `packages/wacc/example/wacc.wac`, so the difference is likely to be one call in the
+front end in `packages/wac/example/wac.wac`, so the difference is likely to be one call in the
 `build` arm rather than a separate pipeline.
 
 Worth checking at the same time whether `build` reports *any* diagnostic class — a build that

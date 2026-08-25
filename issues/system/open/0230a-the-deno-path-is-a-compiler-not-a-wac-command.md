@@ -63,7 +63,7 @@ binary and dispatching to the existing pieces, with the project resolver behind 
 leaves two argument parsers to keep in step, which is the thing the issue is complaining about, one
 level up.
 
-**2. One dispatcher in wac, hosted by three runtimes.** `packages/wacc/example/wacc.wac` already
+**2. One dispatcher in wac, hosted by three runtimes.** packages/wacc/example/wacc.wac already
 parses `check`/`compile`/`build`/`bindgen` and already resolves projects — it is a wac program, so it
 runs anywhere wac runs. Give it the remaining subcommands and let Deno, Node and the native binary each
 be a *host* that hands it argv and capabilities. This is what the issue's diagram asks for, and it is
@@ -122,7 +122,7 @@ a few months.
 
 ## Measured on Node as well — agent-c, 2026-08-21
 
-`packages/platform/build.ts` builds `packages/wacc/example/wacc.wac` for the **node** target
+`packages/platform/build.ts` builds packages/wacc/example/wacc.wac for the **node** target
 (1,357K, all five grants), and it runs. So the JS-hosted half of this is not "a compiler with no
 commands": it is **four commands**, and they work.
 
@@ -307,7 +307,7 @@ and it is this issue that owns which subcommand does what.
 
 ## 2026-08-22: step 3 is done — `run` is in the wac program, on all three hosts
 
-`cmd == "run"` in `packages/wacc/example/wacc.wac`: compile, wrap the module in its manifest, `spawn`
+`cmd == "run"` in packages/wacc/example/wacc.wac: compile, wrap the module in its manifest, `spawn`
 it with the grants written before the entry, relay both streams, forward the exit code. The Deno- and
 Node-hosted commands answer `run` now, which no host but the native binary could do before.
 
@@ -399,7 +399,7 @@ program, or they stay native-only by design. Raised with the operator; not decid
 **Decided on 2026-08-25, and the framing above was wrong.** The operator: "`wac` *contains* the
 compiler, plus more stuff. each version of the wac unified binary should do all the stuff", and
 separately that "wacc has grown to include things that it shouldn't". There is no third option: the
-reason `wac sh` has no shell is that the command is built from `packages/wacc/example/wacc.wac`, the
+reason `wac sh` has no shell is that the command is built from packages/wacc/example/wacc.wac, the
 compiler's own example. `sh` and the fetcher are ordinary wac programs and go in the command, once
 there is a command to put them in. `issues/system/0257c` has the ruling, the inventory of what is in
 the compiler that should not be, and the order of work.

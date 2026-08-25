@@ -10,7 +10,7 @@
 ## Closed — the difference does not reproduce, 2026-08-19
 
 `packages/platform/native.ts` and `wac build` emit **byte-identical** artefacts, module and manifest
-both, on `packages/platform/example/wc.wac` (233,661 bytes) and on `packages/wacc/example/wacc.wac`
+both, on `packages/platform/example/wc.wac` (233,661 bytes) and on `packages/wac/example/wac.wac`
 (960,311). So there is no decision to take: the question this issue existed to ask has no subject.
 
 **Why the old number was not a pipeline difference.** `tools/seed.sh` already recorded that the output

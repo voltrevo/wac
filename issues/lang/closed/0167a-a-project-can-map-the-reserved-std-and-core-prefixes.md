@@ -39,7 +39,7 @@ fetch, and `std/nope.wac` would then be that repository's file. The same holds f
 ## Why it happens
 
 The reservation is implemented per built-in **file**, not per namespace. `isMappingCandidate` in
-`packages/wacc/example/wacc.wac` is `return !isBuiltinSpec(spec);`, and `isBuiltinSpec` asks whether
+`packages/wac/example/wac.wac` is `return !isBuiltinSpec(spec);`, and `isBuiltinSpec` asks whether
 the tree holds a file of exactly that name — `coreFile(spec) != "" || stdFile(spec) != ""`. So
 `std/platform.wac` is protected because it exists, and `std/nope.wac` is a mapping candidate because
 it does not.

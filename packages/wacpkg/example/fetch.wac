@@ -298,7 +298,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
  *
  * **The cache has to hold files, not a pack, because the compiler reads files.** `wac build` resolves
  * a mapped specifier to `cachePath(repo, commit)` plus the repository-relative path and opens it —
- * see `packages/wacc/example/wacc.wac`. A pack there would mean the compiler doing git, which is the
+ * see `packages/wac/example/wac.wac`. A pack there would mean the compiler doing git, which is the
  * opposite of the split `design/lang/0009` D11 draws: fetching is wac, and what it leaves behind is
  * an ordinary directory anything can read.
  *

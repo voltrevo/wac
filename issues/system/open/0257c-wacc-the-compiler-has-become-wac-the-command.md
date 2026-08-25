@@ -16,10 +16,10 @@ Two sentences from the operator, and the second sharpens the first:
 > this also gives me a related concern that wacc has grown to include things that it shouldn't.
 
 **Both are about one structural mistake.** There is no `wac` entry in this repository. The seed, the
-native binary and every hosted build are made from `packages/wacc/example/wacc.wac` — the *compiler's*
+native binary and every hosted build are made from packages/wacc/example/wacc.wac — the *compiler's*
 example — so the compiler's CLI is the unified command, and the seed artefact is even called
 `wacc.wasm`. `tools/seedFresh.test.ts` says it in passing: "the seed is built from
-`packages/wacc/example/wacc.wac` — whose closure is `src/`, yes, but also the example itself".
+packages/wacc/example/wacc.wac — whose closure is `src/`, yes, but also the example itself".
 
 That produced the wrong answer I gave twice, in `docs/your-own-project.md` and in `issues/system/0230a`:
 that `sh` and `update` are the native binary's alone "because a hosted `wac` is built from `wacc.wac`
@@ -29,7 +29,7 @@ need correcting wherever they were written.**
 
 ## What is in there that is not the compiler
 
-`packages/wacc/example/wacc.wac` is 2,460 lines and 65 top-level functions. The compiler's own
+packages/wacc/example/wacc.wac is 2,460 lines and 65 top-level functions. The compiler's own
 commands are `check`, `compile`, `build` and `bindgen`. Everything below is the *command*:
 
 - `run` — build to a temporary file, start it, relay its streams and status.
