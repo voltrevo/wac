@@ -3233,30 +3233,11 @@ export string typeOfExpr(C c, Expr e) {
       //
       // `withoutNull` answers `""` for a type that is not nullable, so the bases are taken explicitly
       // rather than by comparing its output — which would call `P` and `Q` the same thing.
-      if (t != typeNone() && other != typeNone() && t != "" && other != "") {
-        string tb = endsWith(t, "?") ? withoutNull(t) : t;
-        string ob = endsWith(other, "?") ? withoutNull(other) : other;
-        if (tb == ob) { return endsWith(t, "?") ? t : other; }
-        // **And branches related by the hierarchy unify to the parent** — `c ? sub : base` is a `Base`,
-        // so `Sub r = c ? sub : base;` is a mistake, and it was the other half of the same queue row.
-        // Whichever type accepts the other is the common one.
-        //
-        // **Asked after the nullability case and not instead of it**, because `assignable` is
-        // deliberately blind to a `?` — that is what `nullableIntoNonNull` exists for — so both
-        // directions answer true for `P` against `P?` and whichever was asked first would win. The
-        // pair above decides that one; this decides the rest.
-        //
-        // **And only at equal nullability, for that same blindness.** `Sub?` against `Base` has
-        // different bases, so the pair above does not fire, and `assignable` then answers true in the
-        // `Base` direction — which would make this unify them to `Base` and lose the `?`. The
-        // reference calls that pair *"ternary branches have incompatible types: Sub? and Base"*, and
-        // an unknown type is silent while an invented one can suppress a complaint or raise a wrong
-        // one. So the `?`s have to match, and a mixed pair answers nothing until something reports it.
-        if (endsWith(t, "?") == endsWith(other, "?")) {
-          if (assignable(c, other, t)) { return other; }
-          if (assignable(c, t, other)) { return t; }
-        }
-      }
+      // **The arms' common type, by the function a `match` expression uses too.** Sharing it is what
+      // `spec/spec/enums.md` §enum-match-expr-4wnq7bk asks for — *"and by the same code"* — and the day
+      // these were two copies is the day they disagreed.
+      string joined = unifyArms(c, t, other);
+      if (joined != typeNone()) { return joined; }
       return typeNone();
     }
     // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
@@ -3280,7 +3261,11 @@ export string typeOfExpr(C c, Expr e) {
         if (litFamily(c, arms[i].value!) != litNone()) { continue; }
         string at = typeOfExpr(c, arms[i].value!);
         if (at == typeNone() || at == "") { return typeNone(); }
-        if (mt == "") { mt = at; } else if (at != mt) { return typeNone(); }
+        // The same unification a ternary's branches get — `unifyArms`, shared rather than restated.
+        // This required the arms to be *equal*, so a nullable arm or a subtype pair answered unknown,
+        // and unknown is silent: the identical program was refused with `?:` and accepted here.
+        if (mt == "") { mt = at; } else { mt = unifyArms(c, mt, at); }
+        if (mt == typeNone()) { return typeNone(); }
       }
       // Every arm was a literal, so the whole match takes its type from wherever it is going — which
       // is the slot's business and not this function's.
@@ -3560,6 +3545,39 @@ i32 literalDigits(C c, Expr e) {
     case Unary(op, operand): { return literalDigits(c, operand); }
     else: { return 0; }
   }
+}
+
+/**
+ * The common type of two arms, or `typeNone()` — the rule a ternary's branches and a `match`
+ * expression's arms **share**.
+ *
+ * `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
+ * branches are … and by the same code"*, and for a day it was not the same code: the ternary learned
+ * these two cases and the match kept requiring equality, so `P r = c ? a : b;` was refused and the
+ * identical `match` was accepted. One function now, which is what makes that sentence true
+ * structurally rather than by anyone remembering to change both.
+ *
+ * Two cases, in this order and not the other:
+ *
+ *   - **differing only in nullability** unify to the nullable one — `P` with `P?` is a `P?`;
+ *   - **at equal nullability**, whichever type accepts the other — `Sub` with `Base` is a `Base`.
+ *
+ * The order matters because `assignable` is deliberately blind to a `?` (see `nullableIntoNonNull`),
+ * so both directions answer true for `P` against `P?` and whichever ran first would win. And the
+ * hierarchy case is asked only at equal nullability for the same reason: `Sub?` against `Base` would
+ * otherwise unify to `Base` and lose the `?`, which the reference calls *incompatible types*.
+ */
+string unifyArms(C c, string a, string b) {
+  if (a == b) { return a; }
+  if (a == typeNone() || b == typeNone() || a == "" || b == "") { return typeNone(); }
+  string ab = endsWith(a, "?") ? withoutNull(a) : a;
+  string bb = endsWith(b, "?") ? withoutNull(b) : b;
+  if (ab == bb) { return endsWith(a, "?") ? a : b; }
+  if (endsWith(a, "?") == endsWith(b, "?")) {
+    if (assignable(c, b, a)) { return b; }
+    if (assignable(c, a, b)) { return a; }
+  }
+  return typeNone();
 }
 
 string naturalTypeOf(C c, Expr e) {

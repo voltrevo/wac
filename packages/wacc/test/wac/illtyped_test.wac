@@ -275,6 +275,48 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
  * **The `i32` rows are why this is a gap and not a slot that checks nothing**, and the well-typed rows
  * are why the fix is not "refuse everything": four controls for two claims.
  */
+/**
+ * A `match` expression's arms unify **exactly as a ternary's branches do**, which the spec requires.
+ *
+ * `spec/spec/enums.md` §enum-match-expr-4wnq7bk: the arms unify *"exactly as a ternary's two branches
+ * are … and by the same code"*. It was not the same code. The ternary learned to unify a nullability
+ * difference (`P` with `P?` is a `P?`) and a subtype pair (`Sub` with `Base` is a `Base`) on
+ * 2026-08-25; the match kept requiring the arms to be *equal*, and unknown is silent — so
+ * `P r = c ? a : b;` was refused and the identical `match` was accepted.
+ *
+ * **wacc is its own oracle**, as for JSX: `§enum-*` is a wacc-only clause family, so no rung-3
+ * differential covers it and a divergence can sit here indefinitely. The property that needs no second
+ * compiler is the one the spec states — one rule, two spellings, one answer.
+ */
+export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
+  T t = T.create();
+  const string NULLABLE_DECL = "struct P { i32 x; }\nenum E { A, B }\n";
+  i32 tern1 = dumpTypeErrors((NULLABLE_DECL +
+    "export i32 f(bool c, P a, P? b) { P r = c ? a : b; return r.x; }\n").toBytes()).len() / 3;
+  i32 match1 = dumpTypeErrors((NULLABLE_DECL +
+    "export i32 f(E e, P a, P? b) { P r = match (e) { case A: a, else: b }; return r.x; }\n").toBytes()).len() / 3;
+  t.isTrue(tern1 > 0, "the ternary stopped refusing a nullable arm in a non-null slot");
+  t.eqI32(match1, tern1, "a match and a ternary disagree about a nullable arm");
+
+  const string SUB_DECL = "struct Base { i32 b; }\nstruct Sub : Base { i32 s; }\nenum E { A, B }\n";
+  i32 tern2 = dumpTypeErrors((SUB_DECL +
+    "export i32 f(bool c, Sub a, Base b) { Sub r = c ? a : b; return r.s; }\n").toBytes()).len() / 3;
+  i32 match2 = dumpTypeErrors((SUB_DECL +
+    "export i32 f(E e, Sub a, Base b) { Sub r = match (e) { case A: a, else: b }; return r.s; }\n").toBytes()).len() / 3;
+  t.isTrue(tern2 > 0, "the ternary stopped refusing a parent arm in a child slot");
+  t.eqI32(match2, tern2, "a match and a ternary disagree about a subtype pair");
+
+  // The controls, both spellings: the same programs where the slot *is* the common type are ordinary,
+  // so neither fix can be "refuse a match whose arms differ".
+  i32 okTern = dumpTypeErrors((SUB_DECL +
+    "export i32 f(bool c, Sub a, Base b) { Base r = c ? a : b; return r.b; }\n").toBytes()).len() / 3;
+  i32 okMatch = dumpTypeErrors((SUB_DECL +
+    "export i32 f(E e, Sub a, Base b) { Base r = match (e) { case A: a, else: b }; return r.b; }\n").toBytes()).len() / 3;
+  t.eqI32(okTern, 0, "a ternary widening to the parent was refused");
+  t.eqI32(okMatch, 0, "a match widening to the parent was refused");
+  return t.report();
+}
+
 export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
   T t = T.create();
   const string HEAD = "import { Attr, Node } from \"core\";\n";
