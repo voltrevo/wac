@@ -383,6 +383,31 @@ bool usableSig(G g, string ret, string params, bool nestedOk) {
   return true;
 }
 
+/**
+ * Whether a *field* is something the glue can carry.
+ *
+ * **Struct fields had no such test, and that is what `issues/system/0265c` was.** `supported` guards an
+ * exported function's signature and `bindgenDeclined` walks the same list; a field whose type is a
+ * callback the boundary cannot carry was emitted anyway, with the type `ann` gives it — and for
+ * `fn[fn[i32(i32)](bool)]`, a callback *returning* a function, that type is `(a0: boolean) => number`.
+ * A lie a caller type-checks against and then trips over at the boundary, where the dispatcher throws.
+ *
+ * The reference omits such a member and records it. This is the test that lets us do the same.
+ */
+bool usableField(G g, string ft) {
+  // **Only a field that *is* a callback is judged here**, and everything else keeps whatever it did
+  // before. The first version asked `okType` first and declined anything it did not recognise — which
+  // included `Sched.handlers`, an *array* of funcrefs that both generators carry as an opaque number.
+  // `bindgenwac_test.wac`'s two-generator differential caught it in one run: the reference wrote
+  // `static $of(ids, handlers, drops, n)` and this had stopped writing `$of` at all.
+  //
+  // So the predicate is narrow on purpose. A funcref field whose signature the boundary cannot carry
+  // is the defect; a field this generator merely has no opinion about is not.
+  i32 c = callbackIndex(g, ft);
+  if (c < 0) { return true; }
+  return usableSig(g, g.cRet[c], g.cParams[c], true);
+}
+
 /** Whether one type is something the glue can carry. */
 bool okType(G g, string t0) {
   string t = endsWith(t0, "?") ? t0.slice(0, t0.len() - 1) : t0;
@@ -866,19 +891,36 @@ void classFor(Out o, G g, i32 t) {
     string[] fs = g.tPayload[t] == "" ? string[0](fill: "") : splitTop(g.tPayload[t], ",");
     string args = "";
     string conv = "";
+    // **A field the glue cannot carry is left out of `$of` as well as out of the accessors.** Emitting
+    // it would put a parameter in the constructor whose type is wrong in the same way the accessor's
+    // was — see `usableField`.
+    bool anySkipped = false;
     for (i32 i = 0; i < fs.len(); i++) {
-      if (i > 0) { args = args + ", "; conv = conv + ", "; }
+      if (!usableField(g, fieldType(fs[i]))) { anySkipped = true; continue; }
+      if (args != "") { args = args + ", "; conv = conv + ", "; }
       args = args + fieldName(fs[i]) + ann(g, fieldType(fs[i]));
       conv = conv + toWasm(g, fieldType(fs[i]), fieldName(fs[i]));
     }
+    // **No `$of` at all when a field was left out**, because one that takes fewer arguments than the
+    // struct has fields would build a value with the rest defaulted — silently, and to whatever the
+    // module's constructor does with a missing argument. `bindgenDeclined` names the field instead.
+    if (anySkipped) {
+      line(o, "  // `$of` is not generated: a field of this struct is a type the glue cannot carry.");
+    }
     // `classNameOf`, not the wac name: an instance's *type* is `Pending<i32>` and its class is
     // `Pending$i32`, which in code position is what has to be written.
-    line(o, "  static $of(" + args + ")" + annRaw(g, cls) + " {");
-    line(o, "    return new " + cls + "(($exports.$bind$s_" + bind + "_new" + cf(g) + ")(" + conv + "));");
-    line(o, "  }");
+    if (!anySkipped) {
+      line(o, "  static $of(" + args + ")" + annRaw(g, cls) + " {");
+      line(o, "    return new " + cls + "(($exports.$bind$s_" + bind + "_new" + cf(g) + ")(" + conv + "));");
+      line(o, "  }");
+    }
     for (i32 i = 0; i < fs.len(); i++) {
       string fname = fieldName(fs[i]);
       string ft = fieldType(fs[i]);
+      if (!usableField(g, ft)) {
+        line(o, "  // `" + fname + ": " + ft + "` is not generated: the glue cannot carry it.");
+        continue;
+      }
       line(o, "  get " + fname + "()" + ann(g, ft) + " {");
       line(o, "    return " + fromWasm(g, ft, "($exports.$bind$s_" + bind + "_get_" + fname + cf(g)
               + ")(this.$ref)") + ";");
@@ -928,6 +970,11 @@ void classFor(Out o, G g, i32 t) {
       for (i32 k = 0; k < fs.len(); k++) {
         string fname = fieldName(fs[k]);
         string ft = fieldType(fs[k]);
+        if (!usableField(g, ft)) {
+          line(o, "  // `" + vn + "_" + fname + ": " + ft + "` is not generated: the glue cannot " +
+                  "carry it.");
+          continue;
+        }
         line(o, "  /** The `" + fname + "` of a `" + vn + "` — check `tag` first. */");
         // A getter, as the reference's generator writes it: a caller reads `v.Bool_value`, and a
         // method of that name hands back the function object instead.
@@ -987,6 +1034,34 @@ export string bindgenDeclined(string sigs, string wire) {
       args = args + ps[i];
     }
     out = out + g.sName[s] + "(" + args + ") -> " + orVoid(g.sRet[s]) + "\n";
+  }
+  // **Struct and enum fields too, which this walked past.** A silent omission is the failure this
+  // report exists to prevent — `bindtables_test.wac`'s own header is about a type that crossed and was
+  // not in the metadata, failing "much later, in the host, as a class that is asked for and is not
+  // there". A field left out of a class is the same shape one level down, and until 2026-08-25 the
+  // generator did not leave it out: it emitted an accessor whose *type* was wrong.
+  for (i32 t = 0; t < g.tCount; t++) {
+    string payload = g.tPayload[t];
+    if (payload == "") { continue; }
+    if (g.tKind[t] == "S") {
+      string[] fs = splitTop(payload, ",");
+      for (i32 i = 0; i < fs.len(); i++) {
+        if (usableField(g, fieldType(fs[i]))) { continue; }
+        out = out + g.tName[t] + "." + fieldName(fs[i]) + ": " + fieldType(fs[i]) + "\n";
+      }
+      continue;
+    }
+    string[] vs = splitTop(payload, ";");
+    for (i32 v = 0; v < vs.len(); v++) {
+      string rest = variantPayload(vs[v]);
+      if (rest == "") { continue; }
+      string[] fs = splitTop(rest, "|");
+      for (i32 k = 0; k < fs.len(); k++) {
+        if (usableField(g, fieldType(fs[k]))) { continue; }
+        out = out + g.tName[t] + "." + variantName(vs[v]) + "." + fieldName(fs[k]) + ": " +
+              fieldType(fs[k]) + "\n";
+      }
+    }
   }
   return out;
 }
