@@ -1,9 +1,10 @@
-# 0263c — the native host's loaded module cannot use `Cli`, and the trap says nothing
+# 0263c — the native host's loaded module traps on any capability that answers a `Pending`
 
 - **Status:** open
 - **Reported by:** agent-c, 2026-08-25
 - **Kind:** bug
-- **Symptom:** an engine trap with no message, from the first `Cli` call a loaded module makes — on one host of the four
+- **Symptom:** an engine trap with no message, from the first `Pending`-answering capability a loaded module reaches — on one host of the four
+- **Note:** the filename says `cannot-use-cli`, which is where this started; the table below is what it is
 
 `Cli.load` a module and `Cli.call` an export that takes `(Core, Cli)`: **`Core` works and every `Cli`
 method traps.** Not a fault, not a refusal — `status == 1` and an empty message, which
@@ -83,7 +84,30 @@ the host could only build in part is handed that partial world silently, and the
 field is an engine trap with no message — which is the shape of this bug even if `capability_for` is a
 static mapping and not the cause of *this* instance.
 
-## The mechanism: it is `Pending`, not `Cli`
+## The mechanism, as a table
+
+One module, five exports, loaded and called by one program on the native host. The rows are ordered by
+what the *host* has to construct to answer:
+
+| the answer's shape | what the host must build | result |
+|---|---|---|
+| `bool` — `Cli.write` | nothing | ok, and `W` is printed |
+| nothing — `Core.log` | nothing | ok, and `LOG` is printed |
+| `Read` — `Cli.readChunk` | an enum, through `read_variants` | **ok** |
+| `Pending<i32>` — `Cli.argCount` | a struct holding funcrefs | **TRAP** |
+| `Pending<i64>` — `Core.monotonicNanos` | a struct holding funcrefs | **TRAP** |
+
+So it is not `Cli`: a `Core` capability answering a `Pending` traps in the same breath, and a `Cli`
+capability answering an enum does not. **Everything the host builds as a `Pending` traps and nothing
+else does.**
+
+The enum row is the one that changes the diagnosis. `read_variants` is in `HostState` and is *not*
+swapped per loaded module either — so "the host used the loader's constructor" is by itself not fatal,
+because for `Read` it works. What distinguishes `Pending` is that it **carries funcrefs**: the resolve,
+settled and drop callbacks. A `Pending` built through the loader's constructor holds funcrefs from the
+loader's table, and the loaded module's `wait()` is what calls them.
+
+## The earlier reading, kept because it is still where to look
 
 One module, two exports, loaded and called by the same program on the native host:
 
