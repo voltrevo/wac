@@ -263,6 +263,39 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
  * answer, which is the property the comment above claims and the only one that does not need a second
  * compiler.
  */
+/**
+ * A JSX attribute and a JSX child refuse a **nullable** as they refuse any other wrong type.
+ *
+ * `spec/spec/jsx.md` has an attribute's value being a `string` and a child being a `Node`, and both
+ * slots checked it with `assignable` alone — which answers *true* for `string?` into `string` by
+ * design, that being what `nullableIntoNonNull` exists to report separately. So `<div class={s}>` for
+ * a `string? s` and `<div>{kid}</div>` for a `Node? kid` were accepted, while an `i32` in either
+ * position was refused. The value that might not be there is the one case a slot most needs to catch.
+ *
+ * **The `i32` rows are why this is a gap and not a slot that checks nothing**, and the well-typed rows
+ * are why the fix is not "refuse everything": four controls for two claims.
+ */
+export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
+  T t = T.create();
+  const string HEAD = "import { Attr, Node } from \"core\";\n";
+  i32 attrNull = dumpTypeErrors((HEAD + "export Node f(string? s) { return <div class={s}></div>; }\n").toBytes()).len() / 3;
+  i32 kidNull = dumpTypeErrors((HEAD + "export Node f(Node? kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  t.isTrue(attrNull > 0, "a nullable string in an attribute was accepted");
+  t.isTrue(kidNull > 0, "a nullable Node as a child was accepted");
+  // The slots do check — an `i32` in either is refused — so the rows above are a gap rather than a
+  // position nothing looks at.
+  i32 attrWrong = dumpTypeErrors((HEAD + "export Node f(i32 n) { return <div class={n}></div>; }\n").toBytes()).len() / 3;
+  i32 kidWrong = dumpTypeErrors((HEAD + "export Node f(i32 kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  t.isTrue(attrWrong > 0, "an i32 attribute was accepted, so this slot checks nothing");
+  t.isTrue(kidWrong > 0, "an i32 child was accepted, so this slot checks nothing");
+  // ...and the ordinary programs stay ordinary.
+  i32 attrOk = dumpTypeErrors((HEAD + "export Node f(string s) { return <div class={s}></div>; }\n").toBytes()).len() / 3;
+  i32 kidOk = dumpTypeErrors((HEAD + "export Node f(Node kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  t.eqI32(attrOk, 0, "a string attribute was refused");
+  t.eqI32(kidOk, 0, "a Node child was refused");
+  return t.report();
+}
+
 export string test_a_component_tag_and_its_construction_agree() {
   T t = T.create();
   const string DECL =

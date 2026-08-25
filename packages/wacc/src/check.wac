@@ -3741,7 +3741,12 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       continue;
     }
     string got = typeOfExpr(c, attrs[i].value);
-    if (got != typeNone() && !assignable(c, "string", got)) {
+    // A `string?` is not a `string`, and `assignable` says it is — see `nullableIntoNonNull`, which
+    // carries that complaint separately so the two do not both fire. Without asking it, the one value
+    // that might not be there was the one an attribute accepted, while an `i32` was refused.
+    if (nullableIntoNonNull(c, "string", got)) {
+      c.report(errNullableToNonNull(), attrs[i].value.line, attrs[i].value.col);
+    } else if (got != typeNone() && !assignable(c, "string", got)) {
       c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
                    "an attribute is a string, and " + tokenText(c, attrs[i].nameTok) +
                    " is " + got);
@@ -3754,7 +3759,10 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       continue;
     }
     string got = typeOfExpr(c, kids[i]);
-    if (got != typeNone() && !assignable(c, "Node", got)) {
+    // The same for a child, which is a `Node` by `spec/spec/jsx.md` and was taking a `Node?`.
+    if (nullableIntoNonNull(c, "Node", got)) {
+      c.report(errNullableToNonNull(), kids[i].line, kids[i].col);
+    } else if (got != typeNone() && !assignable(c, "Node", got)) {
       c.reportWith(errFieldMismatch(), kids[i].line, kids[i].col,
                    "a child is a Node, and this is " + got);
     }
