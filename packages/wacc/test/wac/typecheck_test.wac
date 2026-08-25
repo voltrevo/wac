@@ -210,11 +210,17 @@ string[] WRONG() {
     // also where the same split put a character literal.
     "export i32 f() { u8 b = 1; return b as i32; }",
     "export void f() { return 1; }",
-    // The one that disagreed: this reported at the match's *subject*, and the reference reports at
-    // the second `else` — a position we had no reason to prefer and one the reader cannot act on.
+    // **The three match-coverage rules, all of which disagreed about position.** Each reported the
+    // match's *subject* — the one part of a `match` none of them is complaining about. The reference
+    // names the second `else`, the unreachable `else`, and the `match` keyword respectively, and they
+    // are here so that the agreement is now a test rather than a measurement someone took once.
     "enum E { A, B }\n"
       + "export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } }"
-      + " return 0; }");
+      + " return 0; }",
+    "enum E { A, B }\n"
+      + "export i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } }"
+      + " return 0; }",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } return 0; }");
 }
 
 /**

@@ -4195,7 +4195,7 @@ void checkExpr(C c, Expr e) {
       // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
       // value is walked immediately afterwards, and leaving them in scope for the rest of the
       // function is over-permissive in the silent direction, which is the one to err in.
-      checkArmVariants(c, subject, arms);
+      checkArmVariants(c, subject, arms, e.line, e.col);
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
@@ -8064,7 +8064,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.switchDepth = c.switchDepth - 1;
     }
     case Match(subject, arms): {
-      checkArmVariants(c, subject, arms);
+      checkArmVariants(c, subject, arms, s.line, s.col);
       for (i32 i = 0; i < arms.len(); i++) {
         // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `case Circle:` is the
         // same question asked by the other syntax, and `s.radius` inside it means the payload. The
@@ -8878,7 +8878,18 @@ string enumOfSubject(C c, string t, bool built) {
   return owners == 1 ? only : "";
 }
 
-void checkArmVariants(C c, Expr subject, Arm[] arms) {
+/**
+ * **The three coverage rules point at what is wrong, not at the subject.**
+ *
+ * All three reported `subject.line, subject.col` — the `(e)` — which is the one part of a `match` that
+ * these rules are never complaining about. The reference names the `match` for an inexhaustive one and
+ * the offending `else` for the other two, and it is right: a reader sent to the subject has to work
+ * out for themselves that the subject is fine. Found by walking the diagnostic codes the generated
+ * sweeps do not reach and comparing positions; `errDuplicateElse` was the first of the three.
+ *
+ * `mline`/`mcol` are the `match` keyword's, from the node the caller is already holding.
+ */
+void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   string t = typeOfExpr(c, subject);
   if (t == typeNone() || t == "") { return; }
   // **A nullable subject has no arm for the null.** Asked before the enum question, because
@@ -9004,10 +9015,12 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
   // the statement that is fine. `Arm.elseTok` exists precisely because the keyword's token was once
   // not kept (`issues/lang/0148`), so it is there to be used.
   i32 elseCount = 0;
+  i32 firstElse = -1;
   i32 secondElse = -1;
   for (i32 i = 0; i < arms.len(); i++) {
     if (arms[i].variantTok >= 0) { continue; }
     elseCount = elseCount + 1;
+    if (elseCount == 1) { firstElse = arms[i].elseTok; }
     if (elseCount == 2) { secondElse = arms[i].elseTok; }
   }
   bool hasElse = elseCount > 0;
@@ -9018,12 +9031,16 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     else { c.report(errDuplicateElse(), subject.line, subject.col); }
   }
 
+  // At the `match`, because an inexhaustive one is the *statement* being incomplete — there is no arm
+  // to point at, which is the whole complaint.
   if (!hasElse && covered < total) {
-    c.report(errMatchInexhaustive(), subject.line, subject.col);
+    c.report(errMatchInexhaustive(), mline, mcol);
   }
-  // And the other way round: once every variant is named, an `else` is a branch nothing reaches.
+  // And the other way round: once every variant is named, an `else` is a branch nothing reaches — and
+  // here there is an arm to point at, so it gets pointed at.
   if (hasElse && covered == total) {
-    c.report(errElseUnreachable(), subject.line, subject.col);
+    if (firstElse >= 0) { c.reportTok(errElseUnreachable(), firstElse, ""); }
+    else { c.report(errElseUnreachable(), mline, mcol); }
   }
 }
 
