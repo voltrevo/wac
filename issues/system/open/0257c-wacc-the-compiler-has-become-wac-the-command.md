@@ -212,3 +212,32 @@ net gets nothing. The ceiling enforces itself instead of being compared against 
   *already installed*, which still has the old number.
 - Removing the dispatch is not enough to shrink the graph — the **imports** pull it in. 218 files
   stayed 218 until the five import lines went too.
+
+## Step 4 is done — 2026-08-25
+
+The binary carried three payloads and carries one. `sh` and `update` are dispatched inside the
+program, `native/v8/build.rs` embeds only the compiler, `run_shell` and `update_command` are gone from
+`native/v8/src/main.rs`, and `tools/seed.sh` has no `payload()`. The two usage lines the host printed
+under `if SHELL.is_some()` are in the program's own `usage()`, where they are true on every host
+rather than on whichever binary happened to carry the module.
+
+    binary            70,201,352 -> 68,889,736 bytes
+    seed/             wacc.wasm, sh.wasm, update.wasm -> wacc.wasm
+    seed              one payload, no `payload()`, and nothing to forget building
+
+**What verified it was an existing test.** `tools/wac/sh_test.wac` spawns whichever binary is on this
+machine and checks `wac sh` sealed and granted — the front page's own two pipelines, plus that a
+refused write says *not granted* rather than a filesystem error. It passed against the payload and
+passes against the program, which is the whole claim. `commandparity_test.wac` is green over its 34
+invocations and three hosts, and `packages/wacpkg/test/wac/update_test.wac` over the fetcher.
+
+**The differential got slower and that is real**: parity was about 56s and is 83.7s wall / 97.4s CPU,
+because each host now builds a 219-file program rather than a 44-file one. Three hosts × 34
+invocations is where it lands.
+
+`issues/system/0258c` closed as a consequence rather than by being fixed — `boxsh.wac` is not compiled
+into anything shipped any more, so an `example/` directory is where it belongs.
+
+**What is left is the least-privilege half**, written up above: one program means one manifest, so
+`--allow-net` is now held by every `wac build`. `packages/wac/src/grants.wac` is the mechanism that
+buys it back and only `sh` uses it. Filing that separately rather than leaving it in here.

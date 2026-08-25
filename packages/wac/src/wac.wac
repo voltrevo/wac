@@ -766,7 +766,16 @@ string usage() {
        // and `test` twice, with two different accounts of `test`. Reported against an external
        // project on 2026-08-25. One list, and it is this one.
        + "                [--coverage] [--filter <name>] [--ignore <path,…>] [--verbose] [path…]\n"
-       + "                run `test*()` exports; paths may be files or directories";
+       + "                run `test*()` exports; paths may be files or directories\n"
+       // **These two were the host's lines**, printed after this block by `native/v8/src/main.rs`
+       // under `if SHELL.is_some()` and `if UPDATE.is_some()` — because they were payloads it
+       // embedded and this program knew nothing about them. `issues/system/0257c` moved the
+       // commands here, so the usage moves with them: one list, printed by whichever host runs
+       // this, instead of a list that was right only on the binary that happened to carry them.
+       + "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
+       + "                [-c script]           the shell, sealed unless granted\n"
+       + "       wac update [project]           resolve and fetch what wac.lock does not cover,\n"
+       + "                and write the lock — the only command that reaches the network";
 }
 
 /**

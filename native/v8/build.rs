@@ -17,17 +17,15 @@
 fn main() {
     let dir = std::env::var("WAC_SEED_DIR").unwrap_or_else(|_| "seed".into());
     println!("cargo:rerun-if-env-changed=WAC_SEED_DIR");
-    // Three payloads, the same way: the compiler answers `check`/`compile`/`build`, the shell
-    // answers `sh`, and the fetcher answers `update`. Each is optional, so a build with none of them
-    // is the runtime this host started as.
+    // **One payload, as of `issues/system/0257c`.** There were three — the compiler answering
+    // `check`/`compile`/`build`, a shell answering `sh`, a fetcher answering `update` — and the
+    // second and third are now *inside* the first, because `wac` is one program that contains the
+    // compiler plus more rather than a compiler with two modules bolted beside it. The binary that
+    // carried them lost 1.85 MB and the other hosts gained two commands they never had.
+    //
+    // Still optional: a build with no payload is the runtime this host started as.
     embed(&dir, "wacc", "WAC_SEED_WASM", "wac_seed");
-    embed(&dir, "sh", "WAC_SHELL_WASM", "wac_shell");
-    // And the fetcher, which answers `update` — `design/lang/0009` D10 names it as the explicit
-    // operation, so it has to be a command rather than a program you build first.
-    embed(&dir, "update", "WAC_UPDATE_WASM", "wac_update");
     println!("cargo:rustc-check-cfg=cfg(wac_seed)");
-    println!("cargo:rustc-check-cfg=cfg(wac_shell)");
-    println!("cargo:rustc-check-cfg=cfg(wac_update)");
 }
 
 /// Embed `<dir>/<stem>.wasm`, if it is there, as `env` and set `cfg`.

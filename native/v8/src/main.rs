@@ -539,21 +539,6 @@ const SEED: Option<&[u8]> = Some(include_bytes!(env!("WAC_SEED_WASM")));
 #[cfg(not(wac_seed))]
 const SEED: Option<&[u8]> = None;
 
-/// The shell, for `wac sh`. Embedded the same way the compiler is, and optional in the same way.
-#[cfg(wac_shell)]
-const SHELL: Option<&[u8]> = Some(include_bytes!(env!("WAC_SHELL_WASM")));
-#[cfg(not(wac_shell))]
-const SHELL: Option<&[u8]> = None;
-
-/// The fetcher, for `wac update`. `design/lang/0009` D10 makes it the *explicit* operation — the one
-/// thing allowed to resolve a ref and move a lock — so an ordinary `wac build` never reaches the
-/// network. It is embedded rather than built on demand for the same reason the compiler is: somebody
-/// who installed the command has a `$WAC_HOME` and no checkout to build a program from.
-#[cfg(wac_update)]
-const UPDATE: Option<&[u8]> = Some(include_bytes!(env!("WAC_UPDATE_WASM")));
-#[cfg(not(wac_update))]
-const UPDATE: Option<&[u8]> = None;
-
 /// Start V8, once. Both the seeded path and the handed-a-module path go through here.
 /// Start V8, once per process however many times this is called.
 ///
@@ -595,124 +580,6 @@ fn run_seed(args: &[String]) -> i32 {
     run_as_with(&manifest, wasm, &text, as_child)
 }
 
-/// `wac sh [--allow-…] [args…]` — the shell inside this binary.
-///
-/// **Sealed is the default, because it is the absence of grants rather than a mode.** `wac sh` on
-/// its own gets an in-memory filesystem and no host at all; `wac sh --allow-read --allow-write` gets
-/// the machine's. There is deliberately no `--sealed`: a flag that turns something *off* would
-/// suggest the grants were there to begin with, and the whole argument of this system is that a
-/// program reaches only what it was handed.
-///
-/// **The flags can only narrow.** The embedded shell is built with everything, and what the caller
-/// asks for is *intersected* with what the payload carries — the same rule `spawn` uses one layer
-/// down, and for the same reason: a grant that could be widened at the point of use is not a grant.
-/// So the payload's own manifest is the ceiling and this can never exceed it.
-///
-/// Unlike `run`, nothing is compiled: the shell is already a module, so the flags are not build
-/// flags being passed through. They are the world this invocation is handed.
-fn run_shell(rest: &[String]) -> i32 {
-    let Some(wasm) = SHELL else {
-        eprintln!("wac: this build carries no shell — build one into seed/sh.wasm, see native/v8/README.md");
-        return 1;
-    };
-    let mut asked = Grants::default();
-    let mut i = 0;
-    while i < rest.len() && rest[i].starts_with("--allow-") {
-        match rest[i].as_str() {
-            "--allow-read" => asked.read = true,
-            "--allow-write" => asked.write = true,
-            "--allow-net" => asked.net = true,
-            "--allow-env" => asked.env = true,
-            "--allow-run" => asked.run = true,
-            other => {
-                eprintln!("wac: {other} is not a grant — read, write, net, env, run");
-                return 2;
-            }
-        }
-        i += 1;
-    }
-    let Some(text) = manifest_in(wasm) else {
-        eprintln!("wac: the built-in shell carries no wac.manifest section");
-        return 1;
-    };
-    let manifest: Manifest = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("wac: the built-in shell's manifest is not one — {e}");
-            return 1;
-        }
-    };
-    let held = manifest.grants;
-    // Every path that instantiates a module starts V8 first; this one is reached without going
-    // through the compiler, so it is the only caller that has to say so itself.
-    start_v8();
-    let mut as_child = AsChild { argv: rest[i..].iter().map(|a| a.as_bytes().to_vec()).collect(), ..Default::default() };
-    as_child.grants = Some(Grants {
-        read: asked.read && held.read,
-        write: asked.write && held.write,
-        net: asked.net && held.net,
-        env: asked.env && held.env,
-        run: asked.run && held.run,
-    });
-    run_as_with(&manifest, wasm, &text, as_child)
-}
-
-
-/// `wac update [project]` — resolve what the lock does not cover, fetch it, and write the lock.
-///
-/// **The one command that reaches the network, and that is the whole point of it being one.** D10:
-/// an ordinary command may create a missing lock entry and must never advance an existing one
-/// because a branch moved; `wac update` is where a ref is resolved and a pin moves. Keeping it a
-/// separate command is what lets `wac build` be offline by construction rather than by convention.
-///
-/// The grants are the payload's own rather than this command line's. Unlike `wac sh`, there is no
-/// narrowing to offer: a fetcher that may not read, write, reach the network or find `$WAC_HOME` is
-/// a fetcher that cannot do the one thing it is for, so the flags would be a choice between working
-/// and not.
-fn update_command(rest: &[String]) -> i32 {
-    let Some(wasm) = UPDATE else {
-        eprintln!("wac: this build carries no fetcher — build one into seed/update.wasm from");
-        eprintln!("     packages/wacpkg/src/fetch.wac, see native/v8/README.md");
-        return 1;
-    };
-    let Some(text) = manifest_in(wasm) else {
-        eprintln!("wac: the built-in fetcher carries no wac.manifest section");
-        return 1;
-    };
-    let manifest: Manifest = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("wac: the built-in fetcher's manifest is not one — {e}");
-            return 1;
-        }
-    };
-    start_v8();
-    // **The cache directory is the second argument, and it has to be `$WAC_HOME`.**
-    //
-    // `fetch.wac` takes the project as `arg(0)` and the cache root as `arg(1)`, defaulting the second
-    // to the literal `.wac` — which is right for running it as a program from a checkout and wrong
-    // for a command. The compiler reads `$WAC_HOME` (then `$HOME/.wac`), so leaving the default in
-    // place put the fetched tree somewhere nothing would ever look for it: `wac update` said *1
-    // fetched*, a second `wac update` said *nothing to fetch; already locked*, and `wac run` said
-    // *not in the cache — run `wac update`*. Three commands, all truthful, and no way out of it.
-    //
-    // `wac_home` is the same function `uninstall` uses, which is what keeps the two halves of
-    // `$WAC_HOME` agreeing about where it is.
-    let mut argv: Vec<Vec<u8>> = if rest.is_empty() {
-        vec![b".".to_vec()]
-    } else {
-        rest.iter().map(|a| a.as_bytes().to_vec()).collect()
-    };
-    if argv.len() < 2 {
-        let Some(home) = wac_home() else {
-            eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
-            return 2;
-        };
-        argv.push(home.into_bytes());
-    }
-    let as_child = AsChild { argv, ..Default::default() };
-    run_as_with(&manifest, wasm, &text, as_child)
-}
 
 /// `wac run [--allow-…] <entry.wac> [args…]` — compile a program and run it, with no file in between.
 ///
@@ -2176,35 +2043,12 @@ fn main() {
         // that they live in the wac program, so `wac --help` listed each twice and gave two different
         // accounts of `test`. Reported against an external project on 2026-08-25. The seed's list is
         // the one, and it carries the flags this binary accepts.
-        if SHELL.is_some() {
-            eprintln!(
-                "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
-                 [--allow-run] [-c script]"
-            );
-            eprintln!("                                      the shell, sealed unless granted");
-        }
-        if UPDATE.is_some() {
-            eprintln!("       wac update [project]           resolve and fetch what wac.lock does not");
-            eprintln!("                                      cover, and write the lock — the only");
-            eprintln!("                                      command that reaches the network");
-        }
         eprintln!("       wac app <entry.wac> -o <dest>  an executable that runs itself — one file,");
         eprintln!("                                      needing a `wac` on the machine that runs it");
         eprintln!("       wac uninstall [--keep-cache]");
         eprintln!("                                      remove what `deno task wac:install` put under");
         eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
         std::process::exit(if asked { 0 } else { code });
-    }
-    // A build with a shell and no compiler still answers `help` — the seed's own usage is the part
-    // that is missing, not the host's, and saying nothing at all would be the worse failure.
-    if SEED.is_none() && SHELL.is_some() && (args.len() < 2 || asked) {
-        eprintln!(
-            "usage: wac sh [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
-             [--allow-run] [-c script]"
-        );
-        eprintln!("       wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
-        eprintln!("this build carries a shell and no compiler");
-        std::process::exit(if asked { 0 } else { 2 });
     }
     if args.len() < 2 {
         eprintln!("usage: wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
@@ -2259,19 +2103,6 @@ fn main() {
     // shell is a perfectly good thing to hand somebody's `./thing` to.
     if stem == "app-run" {
         std::process::exit(app_run_command(&args[2..]));
-    }
-    // `sh` is the host's too, and needs no compiler at all — the shell is already a module. It is
-    // tested before the seed check for that reason: a build with a shell and no compiler is a
-    // perfectly good `wac sh`, and refusing it because there is nothing to compile would be a
-    // message about the wrong half.
-    if SHELL.is_some() && stem == "sh" {
-        std::process::exit(run_shell(&args[2..]));
-    }
-    // `update` is the host's too, and needs no compiler: the fetcher is already a module. Placed
-    // beside `sh` for the same reason — a build carrying one payload and not another is a perfectly
-    // good command for what it does carry.
-    if UPDATE.is_some() && stem == "update" {
-        std::process::exit(update_command(&args[2..]));
     }
     // **The one command that needs no compiler at all**, and the only one whose reason for being
     // here is what the person typing it does *not* have. `deno task wac:uninstall` does the same
