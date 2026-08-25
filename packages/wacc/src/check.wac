@@ -3245,8 +3245,17 @@ export string typeOfExpr(C c, Expr e) {
         // deliberately blind to a `?` — that is what `nullableIntoNonNull` exists for — so both
         // directions answer true for `P` against `P?` and whichever was asked first would win. The
         // pair above decides that one; this decides the rest.
-        if (assignable(c, other, t)) { return other; }
-        if (assignable(c, t, other)) { return t; }
+        //
+        // **And only at equal nullability, for that same blindness.** `Sub?` against `Base` has
+        // different bases, so the pair above does not fire, and `assignable` then answers true in the
+        // `Base` direction — which would make this unify them to `Base` and lose the `?`. The
+        // reference calls that pair *"ternary branches have incompatible types: Sub? and Base"*, and
+        // an unknown type is silent while an invented one can suppress a complaint or raise a wrong
+        // one. So the `?`s have to match, and a mixed pair answers nothing until something reports it.
+        if (endsWith(t, "?") == endsWith(other, "?")) {
+          if (assignable(c, other, t)) { return other; }
+          if (assignable(c, t, other)) { return t; }
+        }
       }
       return typeNone();
     }
