@@ -302,6 +302,18 @@ G readWires(string wire, string sigs, bool js) {
           string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
           string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
           string[sl.len()](fill: ""), string[sl.len()](fill: ""), string[sl.len()](fill: ""), 0);
+  // **Why none of the six cursors below is bounds-checked**, which is worth stating because every
+  // cursor in `emit.wac` is and the difference looks like an omission.
+  //
+  // This is one pass over `wl`, the branches are mutually exclusive, and each advances its own cursor
+  // by exactly one — so the six *sum* to at most `wl.len()`, and every array they index was sized
+  // `wl.len()` above. The same holds for `sl` below, whose `continue` only ever advances less. A
+  // guard here would be dead code, and dead code that suggests the bound is uncertain when it is
+  // exact.
+  //
+  // Filed as `issues/system/0259c` on the strength of "six cursors, no guards" and closed by reading
+  // this loop. The absence of a guard is only a defect when the array's size is not the walk's own
+  // bound; here it is the same expression.
   for (i32 i = 0; i < wl.len(); i++) {
     string tag = field(wl[i], 0);
     if (tag == "S" || tag == "E") {
