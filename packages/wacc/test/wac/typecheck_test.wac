@@ -169,7 +169,33 @@ string[] WRONG() {
     // as the two cases that happened to be found: an array against an integer literal, and a
     // struct against a string one.
     "export i32 f(bool c, i32[] a) { i32[] r = c ? a : 1; return r[0]; }",
-    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : \"s\"; return r.x; }");
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : \"s\"; return r.x; }",
+    // **Ten rules that no corpus exercised.** `errArmTypes` reported at the arm where the
+    // reference reports the whole `match`, and had done since it was written — nothing caught it
+    // because no corpus contains a program that triggers it, so no differential ever had an
+    // opinion about its position. Measured: of 84 declared codes, `generate()`'s 10,013 programs,
+    // the 225 spec cases and every package source between them produce **60**.
+    //
+    // These are ten of the twenty-four that were left, each checked to report at the same place
+    // as the reference before being added — so what they pin is that it stays that way. The other
+    // fourteen are wacc-only rules, the three warnings (which `dumpTypeErrors` does not carry and
+    // the reference has no channel for), or shapes the reference refuses earlier for a different
+    // reason.
+    //
+    // **`errCharLiteral` is one of those and was tried here first.** `'ab'` is refused by both,
+    // at the same position — but the reference refuses it in its *lexer*, and this list is
+    // compared against `checkpos`, which is the type checker alone. So it read as *we report a
+    // diagnostic the reference does not*, which is a contradiction rather than a row. The same
+    // boundary that keeps `zz? q = null;` out of this list.
+    "export i32 f(i32 a, i32 a) { return a; }",
+    "struct B { i32 v; i32 m(this) { return 1; } } struct D : B { i32 w; i32 m(this) { return 2; } } export i32 f(D d) { return d.m(); }",
+    "struct B { i32 v; } struct D : B { i32 w; override i32 m(this) { return 1; } } export i32 f(D d) { return d.m(); }",
+    "export i32 f() { return i32; }",
+    "struct P { i32 v; } export void f(const P p) { p.v = 1; }",
+    "struct P { i32 v; } export i32 f() { return P.nope(); }",
+    "export void f(string s) { s[0] = \"a\"; }",
+    "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f(P p) { i32 x = p.m; return x; }");
 }
 
 /**
