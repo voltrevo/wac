@@ -44,6 +44,9 @@ export string parseMessage(i32 code) {
   if (code == 27) { return "expected a brace after the struct name"; }
   if (code == 28) { return "a function type cannot be used as an array element type"; }
   if (code == 29) { return "a module specifier must be a quoted path"; }
+  if (code == 30) { return "a keyword cannot be used as a name"; }
+  if (code == 31) { return "'override' is not allowed on an enum method"; }
+  if (code == 32) { return "an enum method must take 'this'"; }
   return "the parser refused this";
 }
 
@@ -224,5 +227,9 @@ export string hintFor(i32 code) {
 export string parseHintFor(i32 code) {
   if (code == 21) { return "a type is a name like `i32`, `string`, or one this file declares"; }
   if (code == 25) { return "a field is `type name;` — the name comes after the type"; }
+  // No hint for 30: the annotation already names the keyword and the position, and this file's rule
+  // is that a hint with nothing to add is filler.
+  if (code == 31) { return "an enum's variants are the compiler's own subtypes, so there is nothing to override"; }
+  if (code == 32) { return "`E.name()` is already how a variant is constructed, so a static method would be ambiguous"; }
   return "";
 }

@@ -95,6 +95,9 @@ export const PARSE_CODE_VALUES: ReadonlyMap<number, string> = new Map([
   [27, "perrCtorBrace"],
   [28, "perrFnArray"],
   [29, "perrBareSpec"],
+  [30, "perrKeywordName"],
+  [31, "perrEnumOverride"],
+  [32, "perrEnumMethodThis"],
 ]);
 
 /** A reference message with its interpolated parts blanked, so shapes can be compared. */

@@ -45,6 +45,27 @@ export i32 perrMethodName()  { return 26; }
 export i32 perrCtorBrace()   { return 27; }
 export i32 perrFnArray()     { return 28; }
 export i32 perrBareSpec()    { return 29; }
+/**
+ * A keyword where a name belongs — `[§wac-keyword-name-8wnq4kp]`.
+ *
+ * Separate from `perrExpected` because the spec makes the wording part of the rule: *"an error that
+ * names the keyword and points at it"*, and the section says why in as many words — `from` was once
+ * reserved, and a parameter called `from` reported a missing semicolon a hundred lines further on.
+ * A generic "unexpected token" is that same error with the useful half removed.
+ */
+export i32 perrKeywordName() { return 30; }
+
+/** `override` on an enum method — `[§enum-methods-6vkq2wn]`, which states the message. */
+export i32 perrEnumOverride() { return 31; }
+
+/**
+ * An enum method declared without `this` — `[§enum-methods-6vkq2wn]`.
+ *
+ * Its own code because `perrMethodName` was carrying both faults, and the one it names is the one
+ * that did not happen: `i32 make() { … }` has a method name, in the right place, spelled correctly.
+ * "expected a method name" pointed at `{` and sent the reader looking for a typo in `make`.
+ */
+export i32 perrEnumMethodThis() { return 32; }
 
 export struct P {
   u8[] src;
@@ -182,10 +203,18 @@ bool atKeyword(P p) {
  * compared by position, and leaving the keyword in place would put every following error
  * somewhere else.
  */
-i32 declName(P p, i32 code) {
+i32 declName(P p, i32 code, string what) {
   if (p.at1(kIdent())) { return p.advance(); }
+  // **The keyword case says which keyword and which name position**, because the spec makes that
+  // wording the rule rather than a courtesy — `[§wac-keyword-name-8wnq4kp]`. The port kept the
+  // consumption and dropped the message, which nothing noticed for as long as it did because the
+  // differentials compare parse errors by *position* and both compilers report in the same place.
+  if (atKeyword(p)) {
+    p.failWith(perrKeywordName(),
+               "'" + p.textAt(0) + "' is a keyword and cannot be used as a " + what);
+    return p.advance();
+  }
   p.fail(code);
-  if (atKeyword(p)) { return p.advance(); }
   return -1;
 }
 
@@ -662,7 +691,19 @@ i32[] parseTypeParams(P p) {
   if (!p.at1(kGt())) {
     while (true) {
       if (p.at1(kGt())) { break; }                 // trailing comma
-      if (p.at1(kIdent())) { params.push(p.advance()); } else { p.fail(perrExpected()); }
+      // **The message only.** Every other name position goes through `declName`, and this one cannot:
+      // `declName` *consumes* the keyword, the reference does not consume it here, and the parse
+      // errors are compared by position — so consuming would move every later diagnostic in the file
+      // and turn a better message into a rung-3 contradiction. The reference says "expected type
+      // parameter name" and names no keyword; this names it, in the same place, consuming nothing.
+      if (p.at1(kIdent())) {
+        params.push(p.advance());
+      } else if (atKeyword(p)) {
+        p.failWith(perrKeywordName(),
+                   "'" + p.textAt(0) + "' is a keyword and cannot be used as a type parameter name");
+      } else {
+        p.fail(perrExpected());
+      }
       if (!p.eat(kComma())) { break; }
     }
   }
@@ -1047,7 +1088,7 @@ Expr parsePostfix(P p) {
     if (p.at1(kDot())) {
       p.advance();
       i32 nameTok = -1;
-      nameTok = declName(p, perrFieldName());
+      nameTok = declName(p, perrFieldName(), "field name");
       if (p.at1(kLparen())) {
         p.advance();
         Expr[] args = parseArgList(p);
@@ -1429,7 +1470,7 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
     if (!p.at1(kRbrace())) {
       while (true) {
         i32 fieldTok = -1;
-        fieldTok = declName(p, perrFieldName());
+        fieldTok = declName(p, perrFieldName(), "field name");
         p.expect(kColon());
         named.push(NamedArg(fieldTok, parseExpr(p)));
         if (!p.eat(kComma())) { break; }
@@ -1502,7 +1543,7 @@ export Lvalue parseLvalue(P p) {
     if (p.at1(kDot())) {
       p.advance();
       i32 fieldTok = -1;
-      fieldTok = declName(p, perrFieldName());
+      fieldTok = declName(p, perrFieldName(), "field name");
       lv = Lvalue(LvalueKind.LField(lv, fieldTok), pLine, pCol);
     } else if (p.at1(kLbrack())) {
       p.advance();
@@ -1647,7 +1688,7 @@ Stmt parseVarDecl(P p, bool noSemi) {
   bool isConst = p.eat(kConst());
   Ty t = parseType(p);
   i32 nameTok = -1;
-  nameTok = declName(p, perrExpected());
+  nameTok = declName(p, perrExpected(), "variable name");
   p.expect(kAssign());
   Expr init = parseExpr(p);
   if (!noSemi) { p.expect(kSemi()); }
@@ -1967,7 +2008,7 @@ void parseParams(P p, ParamList out) {
     bool isConst = p.eat(kConst());
     Ty t = parseType(p);
     i32 nameTok = -1;
-    nameTok = declName(p, perrExpected());
+    nameTok = declName(p, perrExpected(), "parameter name");
     out.push(Param(nameTok, t, isConst));
     if (!p.eat(kComma())) { return; }
   }
@@ -2032,7 +2073,7 @@ Decl parseStructDecl(P p, bool exported) {
   bool isConst = p.eat(kConst());
   p.advance();                                     // struct
   i32 nameTok = -1;
-  nameTok = declName(p, perrExpected());
+  nameTok = declName(p, perrExpected(), "struct name");
   i32[] typeParams = parseTypeParams(p);
   i32 parentTok = -1;
   if (p.eat(kColon())) {
@@ -2053,7 +2094,7 @@ Decl parseStructDecl(P p, bool exported) {
 
     Ty memberType = parseType(p);
     i32 memberTok = -1;
-    memberTok = declName(p, perrExpected());
+    memberTok = declName(p, perrExpected(), "member name");
 
     if (p.at1(kSemi())) {
       p.advance();
@@ -2109,7 +2150,7 @@ Decl parseEnumDecl(P p, bool exported) {
   i32 col = p.colAt(0);
   p.expect(kEnum());
   i32 nameTok = -1;
-  nameTok = declName(p, perrExpected());
+  nameTok = declName(p, perrExpected(), "enum name");
   // As on a struct, and for the same reason: the parameters are in scope for every variant's payload
   // types and every method below.
   i32[] typeParams = parseTypeParams(p);
@@ -2133,7 +2174,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // `override` means nothing here — the variants are the compiler's own subtypes, so an override
     // would be per-variant dispatch, a different feature. Refused rather than quietly accepted.
     if (p.at1(kOverride())) {
-      p.fail(perrExpected());
+      p.fail(perrEnumOverride());
       p.advance();
     }
     Ty returnType = parseType(p);
@@ -2161,7 +2202,7 @@ Decl parseEnumDecl(P p, bool exported) {
     p.expect(kRparen());
     // A static method would be spelled `Shape.make()`, which is already how a variant is constructed,
     // so one is refused until that ambiguity is decided deliberately.
-    if (!hasThis) { p.fail(perrMethodName()); }
+    if (!hasThis) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
                         i32[0]()));
   }
@@ -2197,7 +2238,7 @@ Decl parseFuncDecl(P p) {
   bool exported = p.eat(kExport());
   Ty ret = parseType(p);
   i32 nameTok = -1;
-  nameTok = declName(p, perrExpected());
+  nameTok = declName(p, perrExpected(), "function name");
   i32[] typeParams = parseTypeParams(p);
   p.expect(kLparen());
   ParamList params = ParamList.create();

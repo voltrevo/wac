@@ -117,4 +117,55 @@ The decision at the top of this issue is unchanged and this does not pre-empt it
 both compilers to the spec" grows with the count above rather than shrinking, since it is now five
 clauses of the `unexpected token` family rather than three. The check that would keep any of the three
 answers honest is still the one this issue names — read the rendered blocks out of `errors.md` and hold
-both compilers to them.
+both compilers to them.## A seventh clause, outside `errors.md`, and not this decision — agent-c, 2026-08-25
+
+`§wac-keyword-name-8wnq4kp` in `spec/spec/naming.md` is a parse-message clause too, and it is **not**
+one of the six above. The six share a diagnosis this page states in a sentence: *"nobody is missing
+information; they disagree about which field it goes in."* On this one wacc was missing the
+information outright — all nine name positions answered `unexpected token`, naming no keyword in the
+message, the annotation or the help:
+
+    export i32 go(i32 match) { ... }   // wacc: unexpected token
+                                       // ref:  'match' is a keyword and cannot be used as a
+                                       //       parameter name
+
+Against a spec clause that says *"A keyword in a name position is an error that names the keyword and
+points at it"*, and a section that goes on to say *"the wording is part of the rule rather than a
+courtesy"* — with the reason, which is that `from` was once reserved and a parameter called `from`
+reported a missing semicolon a hundred lines further on, braces balanced.
+
+So it is fixed rather than tabled, and this page's own criterion is why: *"what got checked is what was
+written as a sentence, not what was drawn in a rendering."* This one is written as a sentence.
+
+**It cost the decision nothing**, which is the part worth checking before anyone reads this as
+pre-empting the list above. The message moves and the positions do not: all nine were measured
+against the reference before the change and agreed to the column, and the change adds a code and a
+note without touching what the parser consumes. The one site that could not go through `declName` is
+the type-parameter name, because `declName` consumes the keyword and the reference does not consume it
+there — consuming would move every later diagnostic in the file and trade a better message for a
+rung-3 contradiction. That site gets the message and keeps its control flow.
+
+`packages/wacc/test/wac/specclauses_test.wac` pins all nine, beside the five rows this page left
+unpinned.
+
+### How it was found, which is the reusable part
+
+Not by reading `naming.md`. `specCases.json` records an expected message for 332 refusal cases and the
+spec-case runner only checks that the program is *refused*, so a wrong message is invisible to the one
+harness that has the right string sitting in front of it. Sweeping all 317 single-file cases and
+comparing text turned this up.
+
+**The sweep is mostly noise and should not be added to the suite as written**: 264 of 317 "differ",
+because wacc's checker wording was deliberately moved away from the reference's, so inequality is the
+normal case. The signal was one subset — cases where wacc answers a *generic parse error* and the
+other side has a designed message. That was 42 cases, 34 of them the mechanical `expected 'X', found
+'Y'` family this page already covers, and 8 real: seven keyword-name positions and
+`'override' is not allowed on an enum method`. All eight are fixed here.
+
+Two more came from following those rather than from the sweep, which is the argument for reading
+*around* a finding: a keyword as a **type parameter** name and as the target of a **field write** are
+name positions the recorded cases happen not to contain, and both answered `unexpected token` too —
+nine in total. And beside the `override` case sat `i32 make() { … }`, an enum method with no `this`,
+which was not vague but **wrong**: `perrMethodName` was carrying two faults, so it answered *"expected
+a method name"* and pointed at `{`, naming the one thing about that declaration that was correct.
+
