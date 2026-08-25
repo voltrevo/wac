@@ -336,7 +336,18 @@ string[] sources() {
     // is load-bearing for the syntax and was not pinned anywhere: it is one argument that separates
     // this from the construction reading, so it is the case that decides whether the justification is
     // still true. `issues/lang/0265c`.
-    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }");
+    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }",
+    // **A `match` expression whose arms are a subtype pair.** `spec/spec/enums.md` has the arms
+    // unifying exactly as a ternary's branches do, and the *emitter* took the first arm's type as the
+    // block's result and never looked at the rest — so the `else` arm's `Base` landed where a `Sub`
+    // was declared and the engine refused the module: *type error in fallthru[0] (expected (ref null
+    // 2), got (ref null 1))*. The checker said nothing, because it had unified them. Both arms are
+    // called, since taking the first arm's type is right for whichever arm happens to be first.
+    "struct Base { i32 b; } struct Sub : Base { i32 s; } enum E { A, B } " +
+      "export i32 f() { Sub s = Sub(3, 4); Base bb = Base(9); E e = E.B; " +
+      "Base w = match (e) { case A: s, else: bb }; return w.b; } " +
+      "export i32 g() { Sub s = Sub(3, 4); Base bb = Base(9); E e = E.A; " +
+      "Base w = match (e) { case A: s, else: bb }; return w.b; }");
 }
 
 /** The calls, aligned with `sources()`. */
@@ -609,7 +620,9 @@ string[] calls() {
     "f",
     "f",
     "f",
-    "f");
+    "f",
+    // Both arms of the subtype `match`.
+    "f;g");
 }
 
 /** The declared return type of `name` in `src`, or `""`. */

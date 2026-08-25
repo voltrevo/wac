@@ -6074,13 +6074,27 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
 void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string want) {
   string en = env.canonType(typeOfE(src, lexed, env, subject));
   if (!env.isEnumName(en) || arms.len() == 0) { return; }
+  // **Every arm, not the first one.** This took the type of the first arm that had a value and used it
+  // as the block's result, so a `match` whose arms are a subtype pair emitted the `else` arm's `Base`
+  // where a `Sub` was declared and the engine refused the module — *type error in fallthru[0]
+  // (expected (ref null 2), got (ref null 1))*. The checker said nothing, because it unifies them:
+  // `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying exactly as a ternary's two
+  // branches do, and the ternary arm of `emitExpr` already folds `commonStructAncestor` for precisely
+  // this. Which arm came first decided whether the program built.
   string rt = "";
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].value is null) { continue; }
-    if (rt != "") { continue; }
     i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
-    rt = typeOfE(src, lexed, env, arms[a].value!);
+    string at = typeOfE(src, lexed, env, arms[a].value!);
     env.localCount = saved;
+    if (at == "") { continue; }
+    if (rt == "") { rt = at; }
+    else if (rt != at) {
+      // Only when there *is* a shared ancestor, as the ternary does: an unrelated pair keeps the
+      // first arm's type and fails where it already failed, rather than becoming a new answer here.
+      string shared = commonStructAncestor(env, rt, at);
+      if (shared != "") { rt = shared; }
+    }
   }
   if (rt == "") { rt = want; }
   env.addLocal(" match", en);
