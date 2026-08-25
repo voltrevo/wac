@@ -7,7 +7,7 @@
 // measurement. That issue's own words: *"Without it, 'shared semantics' is a claim, and the two
 // loaders in 0229a are what a claim like that looks like after a few months."*
 //
-// `packages/wacc/example/wacc.wac` is the program. The native binary embeds it as a payload; the Deno
+// `packages/wac/example/wac.wac` is the program. The native binary embeds it as a payload; the Deno
 // and Node hosts get it through `packages/platform/build.ts`. All three parse the same argv in the same
 // wac code, so what this file can still catch is the part *outside* the program: how a host reports an
 // exit status, what it does with a stream, and whether a capability answers the same way.
@@ -88,7 +88,7 @@ import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, joined } from "../../../wactest/src/strings.wac";
 
-const string ENTRY = "packages/wacc/example/wacc.wac";
+const string ENTRY = "packages/wac/example/wac.wac";
 
 string scratch(Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/parity-" + name;

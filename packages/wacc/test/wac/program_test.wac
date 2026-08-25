@@ -30,7 +30,7 @@ import { emitFiles } from "../../src/api.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
-const string SOURCE = "packages/wacc/example/wacc.wac";
+const string SOURCE = "packages/wac/example/wac.wac";
 const string GLUERUN = "packages/wacc/test/gluerun.ts";
 
 string freshScratch(T t, Cli cli, string name) {

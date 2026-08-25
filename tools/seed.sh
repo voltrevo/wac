@@ -103,7 +103,7 @@ buildNativeHost() {
 cd "$(dirname "$0")/.."
 
 BIN=./native/v8/target/release/wac
-ENTRY=packages/wacc/example/wacc.wac
+ENTRY=packages/wac/example/wac.wac
 SH_ENTRY=packages/box/example/boxsh.wac
 UPDATE_ENTRY=packages/wacpkg/example/fetch.wac
 SEED=native/v8/seed

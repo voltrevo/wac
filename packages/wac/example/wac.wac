@@ -30,18 +30,18 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
          covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn, missingImportFilesIn,
          wireHasErrors,
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
-         manifestWire } from "../src/api.wac";
-import { Built } from "../src/emit.wac";
-import { cellAt, cells, manifestIn, withManifestSection } from "../src/manifest.wac";
+         manifestWire } from "../../wacc/src/api.wac";
+import { Built } from "../../wacc/src/emit.wac";
+import { cellAt, cells, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
-         from "../../wac/src/runprog.wac";
+         from "../src/runprog.wac";
 import { aggregatePath, aggregateSource, flagValue, importable, runTests, sigsWithCounters,
-         testFilesIn, unknownTestFlag, withoutIgnored } from "../../wac/src/testrun.wac";
-import { renderDiagnostics } from "../src/render.wac";
-import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../src/files.wac";
-import { Res } from "../src/path.wac";
-import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../src/coretext.wac";
+         testFilesIn, unknownTestFlag, withoutIgnored } from "../src/testrun.wac";
+import { renderDiagnostics } from "../../wacc/src/render.wac";
+import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/files.wac";
+import { Res } from "../../wacc/src/path.wac";
+import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
