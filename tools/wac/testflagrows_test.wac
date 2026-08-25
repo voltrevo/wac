@@ -27,7 +27,17 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { Cli, Core, FileResult } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 
+/**
+ * Where the flag lists live — **both, concatenated**, because they are moving.
+ *
+ * `unknownTestFlag` was in the compiler's example until `issues/system/0257c` began taking the
+ * command out of it, and `unknownFlagBefore` is next. A guard that names one file goes quiet the day
+ * its subject moves: this one did, on the extraction that moved the test runner, and said "found the
+ * flags `test` accepts — got 0" rather than passing. That assertion is why this file names two paths
+ * instead of chasing one.
+ */
 const string CLI = "packages/wacc/example/wacc.wac";
+const string CLI2 = "packages/wac/src/testrun.wac";
 const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
 
 /**
@@ -143,9 +153,9 @@ string uncovered(string cmd, string[] accepted, string[] rowed) {
 
 export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, Cli cli) {
   T t = T.create();
-  string cliSrc = textOf(cli, CLI);
+  string cliSrc = textOf(cli, CLI) + "\n" + textOf(cli, CLI2);
   string paritySrc = textOf(cli, PARITY);
-  t.isTrue(cliSrc.len() > 0, "read " + CLI);
+  t.isTrue(cliSrc.len() > 0, "read " + CLI + " and " + CLI2);
   t.isTrue(paritySrc.len() > 0, "read " + PARITY);
   if (cliSrc.len() == 0 || paritySrc.len() == 0) { return t.report(); }
 
