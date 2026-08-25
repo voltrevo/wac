@@ -86,6 +86,14 @@ export const FAULT_NAME_TOO_LONG = 12;
 export const FAULT_LOOP = 13;
 /** The filesystem will take no more — `ENOSPC`. See `FAULT_NO_SPACE` in platform.wac. */
 export const FAULT_NO_SPACE = 14;
+/**
+ * The three a socket needs. Every code above is about a filesystem and so was `fault_of`, so a
+ * refused connection, an unreachable host and one that never answered were one category —
+ * `FAULT_OTHER`. `issues/system/0255c` is the consumer that cannot map a SOCKS reply without them.
+ */
+export const FAULT_REFUSED = 15;
+export const FAULT_UNREACHABLE = 16;
+export const FAULT_TIMED_OUT = 17;
 
 /**
  * A fault a host had to name itself, because its filesystem does not report one.
@@ -311,6 +319,10 @@ export function phraseOf(fault: number): string {
   if (fault === FAULT_NAME_TOO_LONG) return "File name too long";
   if (fault === FAULT_LOOP) return "Too many levels of symbolic links";
   if (fault === FAULT_NO_SPACE) return "No space left on device";
+  // The network three. `strerror`'s wording, like the filesystem ones above and unlike the two below.
+  if (fault === FAULT_REFUSED) return "Connection refused";
+  if (fault === FAULT_UNREACHABLE) return "No route to host";
+  if (fault === FAULT_TIMED_OUT) return "Connection timed out";
   // Ours, not `strerror`'s: a filesystem that can name every file has no phrase for the first, and a
   // program the operating system started was handed everything it has, so it never needed the second.
   if (fault === FAULT_NOT_REPRESENTABLE) return "the name is not representable on this host";

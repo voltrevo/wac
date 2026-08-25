@@ -28,6 +28,10 @@ import { ByteQueue } from "./queue.ts";
 import {
   CHANGED_OK,
   FAULT_NOT_GRANTED,
+  FAULT_OTHER,
+  FAULT_REFUSED,
+  FAULT_TIMED_OUT,
+  FAULT_UNREACHABLE,
   Faulted,
   STAT_BYTES,
   STAT_EXEC,
@@ -39,6 +43,25 @@ import {
   pathFailure,
   statFault,
 } from "./faults.ts";
+
+/**
+ * A socket failure as a category, not a sentence.
+ *
+ * The `FAULT_*` vocabulary was filesystem-shaped and so is `fault_of` in the native hosts, so every
+ * socket failure that was not a refused *grant* reached a program as `FAULT_OTHER`: a refused
+ * connection, a host with no route and one that never answered, one category. Deno names them, so
+ * this is a lookup rather than a guess at a message. `issues/system/0255c` is the consumer.
+ */
+function netFault(e: unknown): number {
+  if (e instanceof Deno.errors.ConnectionRefused) return FAULT_REFUSED;
+  if (e instanceof Deno.errors.TimedOut) return FAULT_TIMED_OUT;
+  // Deno has no `HostUnreachable`; the code is the only thing that says so.
+  const code = (e as { code?: string } | null)?.code;
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return FAULT_UNREACHABLE;
+  if (code === "ECONNREFUSED") return FAULT_REFUSED;
+  if (code === "ETIMEDOUT") return FAULT_TIMED_OUT;
+  return FAULT_OTHER;
+}
 
 export type DenoWorldOptions = {
   /** Arguments the application sees. Defaults to none, not to the launcher's own. */
@@ -827,7 +850,14 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
     [OP.CONNECT]: async (p) => {
       if (!opts.net) deny("network access");
       const port = readI32le(p);
-      const conn = await Deno.connect({ hostname: unstr(p.subarray(4)), port });
+      let conn: Deno.TcpConn;
+      try {
+        conn = await Deno.connect({ hostname: unstr(p.subarray(4)), port });
+      } catch (e) {
+        // The category travels with the sentence, so `Socket.fault` can say which of the three this
+        // was. Without this the resolver saw a plain `Error` and answered `FAULT_OTHER`.
+        throw new Faulted(netFault(e), e instanceof Error ? e.message : String(e));
+      }
       const h = nextHandle++;
       sockets.set(h, conn);
       return withPeer(h, "", localPort(conn.localAddr));

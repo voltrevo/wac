@@ -110,3 +110,30 @@ step this issue depends on is three more fault codes and the `fault_of` arms for
 native hosts and `host/faults.ts`, whose numbering `packages/platform/test/faults_agree.test.ts` and
 `packages/platform/test/wac/hostfaults_test.wac` hold to each other. That is a smaller, well-guarded
 change than it sounds, and it is a different issue from this one.
+
+## The three fault codes exist now — agent-c, 2026-08-25
+
+The section above named the dependency: "three more fault codes and the `fault_of` arms for them, in
+both native hosts and `host/faults.ts`". Done.
+
+`FAULT_REFUSED` (15), `FAULT_UNREACHABLE` (16) and `FAULT_TIMED_OUT` (17), with `fault_of` arms for
+`ConnectionRefused`, `HostUnreachable`, `NetworkUnreachable` and `TimedOut` in both Rust hosts, a
+`netFault` in `deno.ts` and `node.ts` that attaches the category to the thrown `Faulted`, and phrases
+in all three renderings. `EHOSTUNREACH` and `ENETUNREACH` are deliberately one category: "there is
+nothing at that address" is what a caller acts on, and which layer noticed is not.
+
+    $ wac run --allow-net dial.wac      # connect to 127.0.0.1:1
+    dial: Connection refused            # was: dial:            (FAULT_OTHER has no words)
+
+on the native and Deno hosts alike, and `commandparity_test.wac` has a `run --allow-net` row holding
+the three to each other. The absolute half is in `hostfaults_test.wac`, which asserts the category is
+`FAULT_REFUSED` rather than comparing hosts — the file's two existing checks read the two Rust
+*sources* and compare them, and two tables with the same missing arm agree perfectly, which is exactly
+how this gap stayed invisible while a guard about it was green.
+
+**So what is left here is only the mapping**, in `packages/tor`: `relayd` can now ask a failed
+`cli.connect` which of the three it was and send `CONNECTREFUSED` (3), `NOROUTE` (8) or `TIMEOUT` (7)
+instead of `REASON_DONE`, and `socks5.wac`'s table already turns those into the SOCKS replies its
+docstring argues for. `RESOLVEFAILED` (2) still has no fault behind it — a name that does not resolve
+is `FAULT_NOT_FOUND` at best and nothing has been checked about that. The other four sites are
+protocol errors and want `MISC`, which needed nothing.

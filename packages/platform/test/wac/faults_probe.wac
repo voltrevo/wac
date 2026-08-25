@@ -11,10 +11,11 @@
 import { FAULT_NONE, FAULT_NOT_FOUND, FAULT_DENIED, FAULT_EXISTS, FAULT_NOT_EMPTY, FAULT_OTHER,
          FAULT_NOT_REPRESENTABLE, FAULT_NOT_GRANTED, FAULT_IS_DIR, FAULT_UNSUPPORTED,
          FAULT_NOT_A_DIR, FAULT_READ_ONLY, FAULT_NAME_TOO_LONG, FAULT_LOOP, FAULT_NO_SPACE,
+         FAULT_REFUSED, FAULT_UNREACHABLE, FAULT_TIMED_OUT,
          faultWords } from "std/platform.wac";
 
 export i32[] codes() {
-  i32[] out = i32[15]();
+  i32[] out = i32[18]();
   out[0] = FAULT_NONE();
   out[1] = FAULT_NOT_FOUND();
   out[2] = FAULT_DENIED();
@@ -30,6 +31,9 @@ export i32[] codes() {
   out[12] = FAULT_NAME_TOO_LONG();
   out[13] = FAULT_LOOP();
   out[14] = FAULT_NO_SPACE();
+  out[15] = FAULT_REFUSED();
+  out[16] = FAULT_UNREACHABLE();
+  out[17] = FAULT_TIMED_OUT();
   return out;
 }
 

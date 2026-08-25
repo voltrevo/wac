@@ -35,6 +35,10 @@ import { serveHostCalls } from "./respond.ts";
 import {
   CHANGED_OK,
   FAULT_NOT_GRANTED,
+  FAULT_OTHER,
+  FAULT_REFUSED,
+  FAULT_TIMED_OUT,
+  FAULT_UNREACHABLE,
   FAULT_UNSUPPORTED,
   Faulted,
   STAT_BYTES,
@@ -46,6 +50,27 @@ import {
   readFailure,
   statFault,
 } from "./faults.ts";
+
+/**
+ * A socket failure as a category, not a sentence — the Node half of `deno.ts`'s `netFault`.
+ *
+ * Node says it in `err.code` and nowhere else, which is why this reads a string rather than testing
+ * an error class. `EHOSTUNREACH` and `ENETUNREACH` are one category on purpose: "there is nothing at
+ * that address" is what a caller acts on, and which layer noticed is not. `issues/system/0255c`.
+ */
+function netFault(e: unknown): number {
+  switch ((e as { code?: string } | null)?.code) {
+    case "ECONNREFUSED":
+      return FAULT_REFUSED;
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+      return FAULT_UNREACHABLE;
+    case "ETIMEDOUT":
+      return FAULT_TIMED_OUT;
+    default:
+      return FAULT_OTHER;
+  }
+}
 
 /** Node's pieces, described rather than imported, so this file checks under Deno. */
 export type NodeIo = {
@@ -626,7 +651,12 @@ export function nodeWorld(
 
     [OP.CONNECT]: async (p) => {
       if (!opts.net) deny("network access");
-      const c = await io.connect(unstr(p.subarray(4)), readI32le(p));
+      let c: NodeSock;
+      try {
+        c = await io.connect(unstr(p.subarray(4)), readI32le(p));
+      } catch (e) {
+        throw new Faulted(netFault(e), e instanceof Error ? e.message : String(e));
+      }
       const h = nextHandle++;
       sockets.set(h, c);
       return withPeer(h, "", c.port ?? 0);

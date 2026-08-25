@@ -319,6 +319,12 @@ const FAULT_READ_ONLY: i32 = 11;
 const FAULT_NAME_TOO_LONG: i32 = 12;
 const FAULT_LOOP: i32 = 13;
 const FAULT_NO_SPACE: i32 = 14;
+/// The three a socket needs. Every code above is about a filesystem, and so was `fault_of` —
+/// a refused connection, an unreachable host and one that never answered all fell to `FAULT_OTHER`,
+/// which is one category for three things a caller acts on differently. `issues/system/0255c`.
+const FAULT_REFUSED: i32 = 15;
+const FAULT_UNREACHABLE: i32 = 16;
+const FAULT_TIMED_OUT: i32 = 17;
 const ENAMETOOLONG: i32 = 36;
 const ELOOP: i32 = 40;
 const ENOSPC: i32 = 28;
@@ -362,6 +368,15 @@ fn fault_of(e: &std::io::Error) -> i32 {
         std::io::ErrorKind::IsADirectory => FAULT_IS_DIR,
         std::io::ErrorKind::NotADirectory => FAULT_NOT_A_DIR,
         std::io::ErrorKind::ReadOnlyFilesystem => FAULT_READ_ONLY,
+        // **The network ones**, which this had none of until 2026-08-25: every socket failure that
+        // was not a refused *grant* arrived as `FAULT_OTHER`, so `Socket.fault` could not tell a
+        // refusal from a dead route from a silence. `HostUnreachable` and `NetworkUnreachable` are
+        // one category here on purpose — "there is nothing at that address" is what a caller does
+        // something about, and which layer noticed is not.
+        std::io::ErrorKind::ConnectionRefused => FAULT_REFUSED,
+        std::io::ErrorKind::HostUnreachable => FAULT_UNREACHABLE,
+        std::io::ErrorKind::NetworkUnreachable => FAULT_UNREACHABLE,
+        std::io::ErrorKind::TimedOut => FAULT_TIMED_OUT,
         _ => match e.raw_os_error() {
             Some(ENAMETOOLONG) => FAULT_NAME_TOO_LONG,
             Some(ELOOP) => FAULT_LOOP,
@@ -2256,8 +2271,13 @@ fn main() {
         std::process::exit(validate_command(&args[2..]));
     }
     // **The counters themselves, not a percentage.** `--coverage` prints how many points were
-    // reached; a test about what a counter *means* needs how many times each one ran, and nothing
-    // in wac can call `__cov_get` — the instrumentation injects it, so no source names it.
+    // reached; a test about what a counter *means* needs how many times each one ran.
+    //
+    // This used to add "and nothing in wac can call `__cov_get` — the instrumentation injects it, so
+    // no source names it", which was the reason this command lives here. It is no longer true:
+    // `issues/system/0243c` puts the three injected exports in the manifest, so `Cli.call` finds
+    // them. What keeps this in Rust now is narrower — `counters_of` is handed modules that carry *no
+    // manifest*, and `Cli.load` refuses those. `issues/system/0230a` has the two ways out.
     if SEED.is_some() && stem == "covdump" {
         std::process::exit(covdump_command(&args[2..]));
     }

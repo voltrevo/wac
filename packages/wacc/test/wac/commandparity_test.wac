@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Twenty-nine invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
+// Thirty invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
@@ -56,8 +56,8 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **39s warm, measured at twenty-six cases; twenty-nine now** — up from 2–3s, for three hosts instead
-// of two and twenty-nine cases instead of six, fifteen of which compile, run or test a program rather
+// **39s warm, measured at twenty-six cases; thirty now** — up from 2–3s, for three hosts instead
+// of two and thirty cases instead of six, fifteen of which compile, run or test a program rather
 // than only checking one, plus three module builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
@@ -214,6 +214,15 @@ string[][] cases() {
     // that is refused is a bad answer and a flag that is silently dropped is a worse one.
     string[]("test", "--allow-read", "--verbose", "src/one_test.wac"),
     string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
+    // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
+    // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
+    // `issues/system/0255c`'s first half, so this printed nothing on any host — three hosts agreeing
+    // on an empty string, which is what a differential cannot see by itself. The absolute half is
+    // `packages/platform/test/wac/hostfaults_test.wac`, which asserts the category is `FAULT_REFUSED`
+    // rather than comparing hosts. This row is the other half: that they still agree once it is not
+    // empty, including the wording, which comes from `faultWords` and so is the program's rather than
+    // any host's.
+    string[]("run", "--allow-net", "src/dial.wac"),
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
     // part: `ok`, `not run (--ignore)`, `with failures`, `needing a grant`, `with nothing matching
@@ -255,6 +264,15 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            "                                                                : \"read failed\"));\n" +
            "  return 0;\n}\n")
     && put(t, cli, dir + "/notamodule.wasm", "not a module\n")
+    // **The first row here that touches the network.** Port 1 on loopback: nothing listens, and
+    // connecting needs no privilege — only binding does — so every host gets a refusal rather than a
+    // hang. It prints the *category*, which is the thing three hosts had no reason to agree on.
+    && put(t, cli, dir + "/src/dial.wac",
+           "import { Cli, Core, Socket, faultWords } from \"std/platform.wac\";\n"
+           + "export i32 main(Core core, Cli cli) {\n"
+           + "  Socket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
+           + "  core.log(s.handle < 0 ? \"dial: \" + faultWords(s.fault) : \"dial: connected\");\n"
+           + "  return 0;\n}\n")
     // For `test`: one of each outcome the runner has to tell apart — a pass, a failing report, a
     // `test_traps_*` that traps as its name says, and one that returns instead, which is a failure
     // whose whole point is that an empty report from it must not read as a pass.
@@ -366,7 +384,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
   // returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 9, "nine of these twenty-nine succeed on the native host; a different count " +
+  t.eqI32(zeroes, 10, "ten of these thirty succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

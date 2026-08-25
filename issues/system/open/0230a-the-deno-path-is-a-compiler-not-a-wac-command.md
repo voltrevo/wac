@@ -527,3 +527,39 @@ fewer tests run and everything reported as passing — and this repository has 3
 `wac test packages/` was inside the cap and not by much. `issues/lang/0158` is the same bug in
 `gather`, and `wacc.wac` states the rule twelve lines from where the violation was written: "the cap is
 reported, not skipped". They are `Vec`s now, which has no cap to report.
+
+## 2026-08-25: both reasons the last three commands could not move are gone, and a narrower one is left
+
+The section above says `covdump`, `tracestat` and `ctcompare` "cannot move at all today" and gives two
+reasons. Neither holds now:
+
+- *"There is no capability for 'instantiate this module and call that export', and adding one is a
+  bigger decision than parity."* — that capability is `Cli.load`/`Cli.call`, added 2026-08-23
+  (`issues/system/0240c`), which is what the section below this one records.
+- *"the instrumentation injects it, so no source names it"* — `issues/system/0243c`, closed
+  2026-08-24. `Cli.call` finds an export's signature in the manifest, and the manifest now lists
+  `__cov_init`, `__cov_len` and `__cov_get` for a coverage build: the compiler declares what the
+  compiler injected. `wac test --coverage` answers identically on all three hosts and
+  `commandparity_test.wac` has the row.
+
+**What actually blocks them is narrower, and was invisible while the two above were true.** All three
+commands funnel through one function — `counters_of(path)` — which reads a module file and
+instantiates it **with no imports**. None of them touches the manifest. And the modules they are
+handed have none: `wac compile` and the trace instrumentation write a plain module, which is what
+`issues/system/0221` was about. `Cli.load` refuses one, in as many words: *"this module carries no
+wac.manifest section"*.
+
+So one question decides all three:
+
+- **`load` accepts a module with no manifest**, on the ground that a module declaring no capabilities
+  should get no world and that is the correct world for it — which is exactly the argument the Rust
+  makes for instantiating it with no imports. The catch is that `call` dispatches on the manifest, so
+  a module without one has no callable surface and the counters are unreachable again. This answer
+  needs a second one to go with it.
+- **The producers write a manifest.** `wac compile` and the trace pass emit one, and `sigsWithCounters`
+  already puts the counter exports in it, so all three commands move with no change to the capability
+  at all. It is a change to what `wac compile` *writes*, which is a decision about the command rather
+  than work, and `0221` is the history of why it does not.
+
+The second is the one to want. Recorded rather than taken because it changes an artefact other things
+read, and because this issue owns which subcommand lives where.

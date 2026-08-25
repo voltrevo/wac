@@ -20,7 +20,8 @@
 // `issues/system/0132` is the conformance tier this belongs in.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FAULT_NOT_GRANTED, FAULT_REFUSED, FileResult, Socket, faultWords }
+       from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string V8_HOST = "native/v8/src/main.rs";
@@ -183,4 +184,39 @@ string[] constantsOf(string source) {
   string[] exact = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
+}
+
+/**
+ * A refused connection has its own category, and the two Rust sources above cannot say whether it does.
+ *
+ * **The checks above read source text; this one connects.** They compare the two `fault_of`s to each
+ * other, which is the right guard for "the hosts agree" and no guard at all for "and the answer is
+ * right" -- two tables with the same missing arm agree perfectly. Until 2026-08-25 both were missing
+ * the same four: every `FAULT_*` code was about a filesystem, so a refused connection, a host with no
+ * route and one that never answered all arrived as `FAULT_OTHER`, and the source comparison was green
+ * throughout. `issues/system/0255c`.
+ *
+ * Port 1 on loopback, because nothing listens there and *connecting* needs no privilege -- only
+ * binding does. A closed port on loopback is refused rather than dropped on every Unix, which is what
+ * makes this an assertion rather than a race.
+ */
+export string test_a_refused_connection_is_refused_and_not_merely_failed(Core core, Cli cli) {
+  T t = T.create();
+  Socket s = cli.connect("127.0.0.1", 1).wait();
+  if (s.handle >= 0) {
+    cli.closeSocket(s.handle);
+    t.isTrue(false, "something is listening on 127.0.0.1:1, so this cannot test a refusal");
+    return t.report();
+  }
+  // A run with no network grant would answer `FAULT_NOT_GRANTED` and fail the assertion below for a
+  // reason that is nothing to do with the subject -- so it is named rather than left to look wrong.
+  if (s.fault == FAULT_NOT_GRANTED()) {
+    t.isTrue(false, "this run was not granted the network, so it cannot see how a dial failed");
+    return t.report();
+  }
+  t.eqI32(s.fault, FAULT_REFUSED(),
+          "a refused dial is its own category, not FAULT_OTHER — got " + itoa(s.fault)
+          + " with the message " + s.error);
+  t.eqStr(faultWords(s.fault), "Connection refused", "and the words strerror uses for it");
+  return t.report();
 }
