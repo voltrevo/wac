@@ -410,6 +410,23 @@ struct ModuleCtx {
     /// loader's grants — `wac test --allow-read` handed a test the command's write capability, and a
     /// test wrote a file the run had not granted.
     grants: Grants,
+    /// **`Pending<T>` per module, because a `Pending` carries funcrefs** — `issues/system/0263c`.
+    ///
+    /// This lived in `HostState` alone, so every `Pending` the host handed a *loaded* module was built
+    /// with the **loader's** constructor and carried the loader's resolve/settled/drop funcrefs. Those
+    /// index the loader's `caps` table; called from the loaded module with its own ctx installed, they
+    /// reach the wrong slot and the program dies as an engine trap with no message.
+    ///
+    /// The symptom was that a loaded module could not use `Cli` at all. It was narrower and stranger
+    /// than that: `Cli.write` (a `bool`) worked, `Cli.readChunk` (an *enum*, built with the loader's
+    /// `read_variants` and still fine) worked, and `Core.monotonicNanos` — a `Pending` on the *other*
+    /// capability object — trapped. Everything built as a `Pending` trapped and nothing else did, which
+    /// is what pointed at the funcrefs rather than at the constructor.
+    ///
+    /// A plain struct or enum constructor is interchangeable between modules because the engine
+    /// canonicalises identical types; a funcref is not, because it names a slot in one module's table.
+    /// So this is the one part of the answer-building machinery that has to travel with the swap.
+    pending: HashMap<String, PendingGlobals>,
 }
 
 /// A module `Cli.load` instantiated, and what is needed to call into it.
@@ -4141,6 +4158,7 @@ struct PendingHooks<'s> {
 }
 
 /// The same, held across the call into the program.
+#[derive(Clone)]
 struct PendingGlobals {
     ctor: v8::Global<v8::Function>,
     resolve: v8::Global<v8::Value>,
@@ -6247,6 +6265,42 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
         }
     }
 
+    // **This module's own `Pending<T>` constructors** — `issues/system/0263c`, and the same loop
+    // `run_as_with` runs for a program. Without it every `Pending` handed to this module was built by
+    // the loader's constructor, carrying the loader's resolve/settled/drop funcrefs: those index the
+    // loader's `caps` table, and called with this module's ctx installed they reach the wrong slot and
+    // trap with no message. A `Pending` is the one answer shape that carries funcrefs, which is why it
+    // is the one that had to move.
+    //
+    // Registered *after* `Core` and `Cli` above, matching the program path's order — the slot numbers
+    // are internal to this module's table and `pending_hooks` returns the funcrefs it registered, so
+    // consistency is automatic either way.
+    let mut pending: HashMap<String, PendingHooks> = HashMap::new();
+    for (ty, resolve) in [
+        ("i32", Cap::ResolveI32),
+        ("i64", Cap::ResolveI64),
+        ("string", Cap::ResolveText),
+        ("u8[]", Cap::ResolveBytes),
+        ("FileResult", Cap::ResolveFile),
+        ("Change", Cap::ResolveChange),
+        ("Stat", Cap::ResolveStat),
+        ("string[]", Cap::ResolveNames),
+        ("Socket", Cap::ResolveSocket),
+        ("Datagram", Cap::ResolveDatagram),
+        ("Read", Cap::ResolveRead),
+        ("bool", Cap::ResolveBool),
+        ("Captured", Cap::ResolveCaptured),
+        ("Exec", Cap::ResolveExec),
+        ("Child", Cap::ResolveChild),
+    ] {
+        // A module that never asks for a `Pending<i32>` has none in its manifest, and that is not an
+        // error until something asks for one — `pending_hooks` answers `Err` and this skips it, which
+        // is the program path's rule verbatim.
+        if let Ok(h) = pending_hooks(scope, exports, &m, ty, resolve, &mut caps, &mut names) {
+            pending.insert(ty.to_string(), h);
+        }
+    }
+
     let of = |name: &str| -> Option<String> {
         m.find_struct(name)
             .and_then(|st| st.methods.iter().find(|mm| mm.name == "of"))
@@ -6258,6 +6312,10 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
     let entry = HeldModule {
         ctx: ModuleCtx {
             exports: v8::Global::new(scope, exports),
+            pending: pending
+                .into_iter()
+                .map(|(k, v)| (k, PendingGlobals::new(scope, v)))
+                .collect(),
             caps,
             cap_names: names,
             grants: Grants {
@@ -6336,6 +6394,9 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             caps: lm.ctx.caps.clone(),
             cap_names: lm.ctx.cap_names.clone(),
             grants: lm.ctx.grants.clone(),
+            // Cloned rather than taken: the module stays loaded and a second call needs these again.
+            // `PendingGlobals` is four `v8::Global`s, so a clone is four refcount bumps.
+            pending: lm.ctx.pending.clone(),
         };
         let world: Vec<v8::Global<v8::Value>> = lm.world.clone();
         let was = ModuleCtx {
@@ -6343,11 +6404,14 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             caps: std::mem::take(&mut st.caps),
             cap_names: std::mem::take(&mut st.cap_names),
             grants: st.grants.clone(),
+            pending: std::mem::take(&mut st.pending),
         };
         st.exports = mine.exports;
         st.caps = mine.caps;
         st.cap_names = mine.cap_names;
         st.grants = mine.grants;
+        // The loaded module's own `Pending` constructor, for the reason `ModuleCtx.pending` gives.
+        st.pending = mine.pending;
         (was, world)
     });
     let (was, world) = saved;
@@ -6426,6 +6490,11 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             st.caps = was.caps;
             st.cap_names = was.cap_names;
             st.grants = was.grants;
+            // **And the caller's own `Pending` constructors.** Forgetting this line is what "the test
+            // trapped" was: the save above *takes* the map, so a loader that did not get it back had
+            // an empty one and died on its next `Pending`-answering capability — after the call
+            // returned, which is why the trap looked like it came from somewhere else.
+            st.pending = was.pending;
         }
     });
     outcome

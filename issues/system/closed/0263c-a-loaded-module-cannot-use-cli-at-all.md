@@ -1,6 +1,6 @@
 # 0263c — the native host's loaded module traps on any capability that answers a `Pending`
 
-- **Status:** open
+- **Status:** closed — 2026-08-25
 - **Reported by:** agent-c, 2026-08-25
 - **Kind:** bug
 - **Symptom:** an engine trap with no message, from the first `Pending`-answering capability a loaded module reaches — on one host of the four
@@ -182,3 +182,40 @@ with the same shape — 31 structs, 62 callbacks, 473 bind keys, compared — an
 The one difference left standing is provenance: the test runner loads bytes it built *in this process*,
 and `covdump` loads bytes `wac build` wrote to a file. That should not matter, which is why it is the
 next thing to look at.
+
+## Fixed: `Pending` constructors travel with the context swap — 2026-08-25
+
+`HostState.pending` maps a type name to the four `v8::Global`s that build a `Pending<T>` **in one
+module's terms** — its constructor and its resolve, settled and drop funcrefs. `ModuleCtx`, the part
+`call_loaded` swaps, held `exports`, `caps`, `cap_names` and `grants` and not that. So every `Pending`
+the host handed a loaded module was built by the *loader's* constructor and carried funcrefs indexing
+the loader's `caps` table; called with the loaded module's context installed, they reached the wrong
+slot.
+
+Five lines, in three places:
+
+    ModuleCtx      gains `pending: HashMap<String, PendingGlobals>`
+    load_module    builds the loaded module's own map — the same fifteen-type loop `run_as_with` runs
+    call_loaded    saves the caller's map, installs the module's, and **puts the caller's back**
+
+## The fourth line is the one worth writing down
+
+The first version had the save and the install and no restore. The save *takes* the map, so the loader
+was left with an empty one — and died on its next `Pending`-answering capability, **after** the call had
+returned. `packages/platform/test/wac/load_test.wac` went from 2 passed to *"the test trapped"*, and the
+trap looked as though it came from somewhere else entirely.
+
+I mis-diagnosed that too, and the mis-diagnosis is instructive: I decided `pending_hooks` must be
+trapping inside the load and wrapped it in a `TryCatch`, with a comment asserting it had been measured.
+It changed nothing. Removed, along with the comment — a `TryCatch` that catches nothing, documented as
+load-bearing, is worse than no `TryCatch`.
+
+**And I nearly shipped the regression as a fix.** The two halves — a program loading a module, and the
+seed loading a test — were each broken by one version and fixed by the other, and only running the
+existing differential caught it. `load_test.wac` was green before the change; I measured that
+*afterwards*, by restoring the backup and rebuilding, which is the only reason I knew it was mine.
+
+## What it unblocks
+
+`issues/system/0257c`'s last row. `covdump` can move now: `packages/wac/src/counters.wac` is written and
+`tools/wac/covdump_test.wac`'s world case is what will say so.
