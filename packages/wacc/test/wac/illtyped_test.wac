@@ -625,6 +625,18 @@ export string test_an_uninferrable_type_parameter_is_not_an_arity_error() {
   t.eqI32(clash.len() / 3, 1, "one fault, and this many diagnostics");
   if (clash.len() >= 3) { t.eqI32(clash[0], 79, "the code — `errTypeParamClash`"); }
 
+  // **And the negation rule the slot hides.** `u32 f() { return -1; }` reported the literal's range,
+  // which is advice that cannot be taken — no literal makes `-x` valid on an unsigned type. Kept
+  // beside a signed slot and an unsigned *positive* literal, because the rule is about the operator
+  // and the slot together and either one alone would pass a version that refused too much.
+  i32[] negU = dumpTypeErrors("export u32 f() { return -1; }\n".toBytes());
+  t.eqI32(negU.len() / 3, 1, "a negated literal in a u32 slot, and this many diagnostics");
+  if (negU.len() >= 3) { t.eqI32(negU[0], 38, "the code — `errOperandKind`, not the literal range"); }
+  i32[] negI = dumpTypeErrors("export i32 f() { return -1; }\n".toBytes());
+  t.eqI32(negI.len() / 3, 0, "refused a negated literal in a signed slot");
+  i32[] posU = dumpTypeErrors("export u32 f() { return 1; }\n".toBytes());
+  t.eqI32(posU.len() / 3, 0, "refused a positive literal in an unsigned slot");
+
   // And an inferrable call is silent, so none of these is met by refusing generics.
   i32[] fine = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { return id(1); }\n".toBytes());
   t.eqI32(fine.len() / 3, 0, "refused a call whose type argument is evident");

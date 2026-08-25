@@ -246,7 +246,14 @@ string[] WRONG() {
     // template on that path, where `referenceCheck.ts` does and gives the clash. Same column either
     // way, which is all this list asks; the *rule* is pinned in `illtyped_test.wac` instead.
     "T max<T>(T a, T b) { return a > b ? a : b; }\n"
-      + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }");
+      + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }",
+    // **A negated literal in an unsigned slot is the operator, not the range.** This said *"literal
+    // out of range for its type"*, which tells the reader to pick a different literal — and none
+    // works: `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright. wacc had that
+    // rule and could not reach it, because `-1` types as `i32` on its own and only the slot is
+    // unsigned.
+    "u32 f() { return -1; }",
+    "u64 f() { return -1; }");
 }
 
 /**

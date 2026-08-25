@@ -2611,6 +2611,21 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
     }
     return;
   }
+  // **A negated literal in an unsigned slot is the operator, not the range.** `u32 f() { return -1; }`
+  // said *"literal out of range for its type"*, which tells the reader to pick a different literal —
+  // and none works, because `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright:
+  // *"it wants something with a negation, so … neither does an unsigned integer"*. wacc has that rule
+  // and could not reach it here: `-1` types as `i32` on its own and only the *slot* is unsigned,
+  // where the reference pushes the slot's type into the operand and answers *"unary '-' is not
+  // defined on u32"*. At the operator's token, which is where the reference points too.
+  if (want == "u32" || want == "u64") {
+    match (e.kind) {
+      case Unary(op, operand): {
+        if (tokenText(c, op) == "-") { c.reportTok(errOperandKind(), op, ""); return; }
+      }
+      else: { }
+    }
+  }
   // A range complaint names the **literal**, where a family mismatch names the whole expression:
   // `i32 x = -1.5` is reported at the `-` and `f32 x = -1.0e40` at the `1`. Measured, and the pair is
   // worth stating together, because either one alone reads as an off-by-one against the other.
