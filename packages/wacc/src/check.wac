@@ -2218,6 +2218,68 @@ string tokenText(C c, i32 t) {
  * things the spec says look like type names and are not: `f(x)` where `f` is a funcref, and
  * `x is Other` where `Other` is a variable, which is an identity test.
  */
+/**
+ * Report a name that is standing in a type position and is a **binding** rather than a type.
+ *
+ * `knownTypeName` accepts any declared name on purpose, and its comment gives the two reasons: the
+ * spec says `x is Other` where `Other` is a variable is an identity test, and `f(x)` where `f` is a
+ * funcref is a call. Both are bare names at the *top* of a type, and both are why that function may
+ * not simply ask "is this a type". Inside `[]` or before `?` there is no such reading — a name there
+ * is a type or the program is wrong — so the permissiveness those two need is a hole here.
+ *
+ * What it cost was a silence. `i32 zz = 1; zz[1]();` drew **no diagnostic at all**: `zz` is declared,
+ * so `zz[]` was invented and travelled, either into a mismatch naming a type not in the program —
+ * *expected i32, found zz[]* — or, in a statement position, into nothing whatever, leaving the
+ * emitter's whole-module decline as the only thing between `wac check`'s "no diagnostics" and a
+ * module a reader would believe. The reference reports `undefined type 'zz'` for both.
+ *
+ * **Import-only is exempt, and that is the reason this cannot just be `isStruct || isEnum`.** Under a
+ * single-file check an imported alias is declared with no type so that the name *exists*
+ * (`nameImportOnly`) — calling that undefined would report on every file that imports a type. A
+ * binding with a real type behind it is not that case.
+ *
+ * Returns true when it reported, so the caller answers `typeNone()` and nothing invents a spelling.
+ * **Two positions of four.** `fn[i32(zz)]` and `Box<zz>` have the same root and are not silent — they
+ * report a downstream mismatch against an invented `fn(zz) -> i32` — so they are a worse message
+ * rather than a missing one, and are left for a change that can be checked against the reference's
+ * wording.
+ */
+bool bindingAsType(C c, Ty elem) {
+  match (elem.kind) {
+    case Named(etok, eargs): {
+      if (eargs.len() > 0) { return false; }
+      string ebase = c.canon(c.renamed(tokenText(c, etok)));
+      if (!c.scopeTypes) { return false; }
+      if (c.isStruct(ebase) || c.isEnum(ebase) || c.isVariantName(ebase)) { return false; }
+      return !c.isImportOnlyName(ebase) && c.isDeclaredName(ebase);
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * The same question, reported.
+ *
+ * **Split from the predicate because the two callers need different halves, and reporting from both
+ * would contradict the reference.** The typing walk must answer `typeNone()` so that no `zz[]`
+ * spelling is invented and carried into a second diagnostic — `return zz[1]();` produced *expected
+ * i32, found zz[]* that way, a position the reference does not report, which is a contradiction and
+ * not merely a worse message. The checking walk is the one that runs once per expression, so it is the
+ * one that says so. Unknown is silent everywhere in this checker, which is what makes that division
+ * safe rather than a second silence.
+ */
+bool reportBindingAsType(C c, Ty elem) {
+  if (!bindingAsType(c, elem)) { return false; }
+  match (elem.kind) {
+    case Named(etok, eargs): {
+      c.reportTok(errUndefinedType(), etok,
+                  "unknown type '" + c.canon(c.renamed(tokenText(c, etok))) + "'");
+      return true;
+    }
+    else: { return false; }
+  }
+}
+
 bool knownTypeName(C c, string base) {
   // **Declared is not the same as in scope.** A type reached through an imported signature is
   // declared so that its members can be resolved, and writing its name is still an error — see
@@ -2307,11 +2369,21 @@ export string typeOfTy(C c, Ty t) {
     // slice cannot spell makes the whole thing unspellable rather than half-named: `Box<i32>[]` is
     // not `[]`.
     case Arr(elem): {
+      // A name inside `[]` is a type or the program is wrong — `reportBindingAsType`. This is how
+      // `issues/lang/0265c` is *seen* rather than what causes it: `a[0]()` reads as constructing an
+      // array of the type `a` because nothing at parse time separates a type name from a variable, and
+      // that reading stands. What changes is that the name is resolved as a type, so the message names
+      // `a` instead of inventing `a[]` and carrying it downstream.
+      if (reportBindingAsType(c, elem)) { return typeNone(); }
       string inner = typeOfTy(c, elem);
       if (inner == typeNone()) { return typeNone(); }
       return inner + "[]";
     }
     case Nullable(inner): {
+      // The same hole as `Arr` above, and it was silent in the same way: `i32 zz = 1; zz? q = null;`
+      // drew nothing at all while the reference said `undefined type 'zz'`. Found by asking what the
+      // siblings of the `[]` case were rather than by a second report.
+      if (reportBindingAsType(c, inner)) { return typeNone(); }
       string base = typeOfTy(c, inner);
       if (base == typeNone()) { return typeNone(); }
       return base + "?";
@@ -3213,6 +3285,13 @@ export string typeOfExpr(C c, Expr e) {
     // `assignable` was never the problem and neither was `nameableType`, which admits arrays. The rule
     // existed and could not see its input, which is the shape of every gap `issues/lang/0170a` found.
     case ArrNew(elem, size, fill, elements): {
+      // **An element type here can only be a type**, so a binding standing in for one gives unknown
+      // rather than a spelling. `zz[1]()` where `zz` is an `i32` local answered `zz[]` — a type not in
+      // the program — and that travelled: into *expected i32, found zz[]* in a return, and into no
+      // complaint at all in a statement, which left the emitter's whole-module decline as the only
+      // thing behind `wac check`'s "no diagnostics". The report is in the checking walk; see
+      // `reportBindingAsType` for why the two halves are split.
+      if (bindingAsType(c, elem)) { return typeNone(); }
       string el = typeOfTy(c, elem);
       return el == "" || el == typeNone() ? typeNone() : el + "[]";
     }
@@ -3989,6 +4068,9 @@ void checkExpr(C c, Expr e) {
           if (st2 != typeNone() && st2 != "i32") { c.report(errIndex(), sz.line, sz.col); }
         }
       }
+      // The report for the case the typing arm answers `typeNone()` for: a local's name standing where
+      // an element type belongs. Once per expression, at the name.
+      reportBindingAsType(c, elem);
       string elemWant = typeOfTy(c, elem);
       // An element's slot is the element type, which is what lets a bare generic infer inside one.
       for (i32 i = 0; i < elements.len(); i++) {

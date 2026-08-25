@@ -65,6 +65,12 @@ parse time separates them, which is the spec's own point, so a parser cannot sim
 Resolving this needs a name-resolution answer (is `a` a type or a value?) or a syntax that cannot
 collide, which is a decision rather than a bug.
 
+**How lopsided that is, counted.** `grep -rnE "[a-z][a-zA-Z0-9_]*\[[a-zA-Z0-9_]+\]\(\)"` over
+`packages/ spec/ tools/ compiler/` is **4,399 lines**, and every one is a scalar construction —
+filtering out the scalar type names leaves a single hit, which is a commented-out line in `emit.wac`.
+So nothing in the repository writes `value[i]()` meaning a call, and the reading that would have to
+give way is in four thousand places.
+
 ## The workaround, which is why nothing is broken today
 
 One assignment:
@@ -89,6 +95,45 @@ than a break. Found while looking for a construct that reaches the emitter's per
 - **A syntax that cannot collide** — some spelling of "call this element". A third form for something
   the two-liner already does.
 
-**Whichever is chosen, wacc's message wants fixing.** *"expected i32, found `a[]`"* names a type that
-is not in the program and does not mention the construction reading at all; the reference at least says
-`a` is not a type. That part is ours and is not a decision.
+**Whichever is chosen, wacc's message wanted fixing.** *"expected i32, found `a[]`"* named a type that
+is not in the program and did not mention the construction reading at all; the reference at least said
+`a` is not a type. That part was ours and not a decision, and it is **done** — see below. The decision
+above is untouched by it: `a[0]()` is still a construction, and what changed is that the name in it is
+resolved as a type, so the message is now `unknown type 'a'` at the `a`.
+
+## The diagnostic is fixed, and it was hiding a silence — agent-c, 2026-08-25
+
+Chasing the bad message found a worse thing behind it. wacc's type-name lookup, `knownTypeName`,
+accepts **any declared name**, on purpose: the spec makes `x is Other` where `Other` is a variable an
+identity test, and `f(x)` where `f` is a funcref a call, so a bare name at the top of a type may be a
+value. That permissiveness leaked into positions where a name can only be a type, and in two of them
+nothing downstream disagreed:
+
+| position | before | reference |
+|---|---|---|
+| `i32 zz = 1; zz[1]();` | **no diagnostic at all** | `undefined type 'zz'` |
+| `i32 zz = 1; zz? q = null;` | **no diagnostic at all** | `undefined type 'zz'` |
+| `return zz[1]();` | *expected i32, found `zz[]`* — a type not in the program | `undefined type 'zz'` |
+| `fn[i32(zz)]`, `Box<zz>` | a downstream mismatch against an invented type | `undefined type 'zz'` |
+
+The first two are `issues/lang/0170a`'s class exactly: `wac check` reported **no diagnostics** on a
+program with an undefined type in it, and the only thing between that and a module a reader would
+believe was the emitter's whole-module decline — *"a value of a type this emitter cannot write: zz"*,
+which names neither the line nor the mistake.
+
+`bindingAsType` / `reportBindingAsType` in `check.wac` answer the narrow question — is this name a
+*binding* standing where a type belongs — and the two halves are split because reporting from the
+typing walk as well would invent `zz[]` again and produce a second diagnostic at a position the
+reference does not report, which is a contradiction rather than a worse message. Import-only names are
+exempt, because under a single-file check an imported alias is declared with no type so that the name
+exists; calling that undefined would report on every file that imports a type.
+
+**What makes this safe to assert:** 10,013 generated programs and 4,594 corpus programs through the two
+rung-3 sweeps with 0 false alarms and 0 contradictions, 871 real repository sources with 0 diagnostics
+and a canary proving the sweep could report, and `deno task seed` a fixed point after one round — which
+is wacc compiling its own hundred-odd sources under the stricter rule. The `is`-against-a-variable
+control is asserted beside the bad cases, because a rule that refused every declared name in a type
+position would pass all of them and break the construct the permissiveness exists for.
+
+The other two rows are left: they report at the right line with the wrong words, so they are a worse
+message rather than a missing one, and matching the reference's wording is a separate change.
