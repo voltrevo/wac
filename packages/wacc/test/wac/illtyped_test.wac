@@ -362,6 +362,33 @@ export string test_a_component_tag_and_its_construction_agree() {
   return t.report();
 }
 
+/**
+ * **A refused declaration leaves no type behind, so one mistake is one diagnostic.**
+ *
+ * `const void A = 1;` reported the `void` *and* "expected void, found i32" one token along — the
+ * second being a consequence of the first, since the initialiser was checked against a type the
+ * program had just been told it could not have. The reference says only that a constant cannot have
+ * type void.
+ *
+ * Unknown is what this checker is silent about, which is what a refused declaration should leave.
+ * A local already did this; the module-level constant is a separate walk and did not.
+ */
+export string test_a_const_of_type_void_is_one_diagnostic() {
+  T t = T.create();
+  i32[] d = dumpTypeErrors("const void A = 1;\nexport i32 g() { return 0; }\n".toBytes());
+  t.eqI32(d.len() / 3, 1, "one fault, and this many diagnostics");
+  if (d.len() >= 3) { t.eqI32(d[0], 36, "the code — `errVoidType`"); }
+
+  // The local form, which has always reported once — kept so the two walks cannot drift apart.
+  i32[] local = dumpTypeErrors("export i32 f() { void x = 1; return 0; }\n".toBytes());
+  t.eqI32(local.len() / 3, 1, "the local form, and this many diagnostics");
+
+  // An ordinary constant, so neither is met by refusing module-level consts.
+  i32[] fine = dumpTypeErrors("const i32 A = 1;\nexport i32 g() { return A; }\n".toBytes());
+  t.eqI32(fine.len() / 3, 0, "refused a valid module-level constant");
+  return t.report();
+}
+
 export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
   T t = T.create();
   string[] name = string[](

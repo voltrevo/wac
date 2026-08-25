@@ -9474,7 +9474,16 @@ export void checkModule(C c, Program prog) {
         // refused, and so was `i32[2](fill: "x")`. `spec/cases/0067` and `0068`.
         string constType = typeOfTy(c, type);
         // A constant is a value, and `void` is the absence of one. `spec/cases/0069`.
-        if (constType == "void") { c.report(errVoidType(), type.line, type.col); }
+        //
+        // **And then it has no type**, which is what keeps one mistake to one diagnostic. Leaving it
+        // as `void` meant the initialiser was checked against a type nobody chose: `const void A = 1`
+        // reported the `void` *and* "expected void, found i32" one token along. The reference says
+        // only the first. Unknown is the value this checker is silent about, which is exactly what a
+        // refused declaration should leave behind.
+        if (constType == "void") {
+          c.report(errVoidType(), type.line, type.col);
+          constType = typeNone();
+        }
         checkPackedNullable(c, constType, type);
         // A literal initialiser is asked whether it fits, exactly as a local's is — `const i32 A =
         // 1.5` is a float in an integer's slot. `spec/cases/0075`.
