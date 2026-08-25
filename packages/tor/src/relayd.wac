@@ -43,7 +43,8 @@
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
 
-import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS } from "std/platform.wac";
+import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
+         FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std/platform.wac";
 import { Read } from "core";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
@@ -1121,17 +1122,25 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
     if (source == 2) {
       Circ k = c.circs[slot]!;
       bool open = false;
+      // **`End` and `Failed` are not the same ending**, and this told the client `DONE` for both. A
+      // stream that failed mid-flight is not a stream that finished, and a client that reads `DONE`
+      // has been told its data arrived. `issues/system/0255c`.
+      bool failed = false;
       u8[] payload = u8[0]();
       match (k.fromStream.wait()) {
         case Data(bytes): { payload = bytes; open = true; }
         case End: { }
-        case Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the stream failed: " + why); }
+        case Failed(why): {
+          core.warn("relayd: [" + itoa(c.id) + "]  the stream failed: " + why);
+          failed = true;
+        }
       }
       if (!open) {
         // The far end closed, which is an END rather than silence: a client that is told nothing waits
         // for its own timeout and blames the circuit.
         c.tls = sendCell(cli, c.sockObj, c.tls,
-                       sendToClient(k.hop, k.circId, relayEnd(), k.streamId, endReason()));
+                       sendToClient(k.hop, k.circId, relayEnd(), k.streamId,
+                                    failed ? endMisc() : endReason()));
         cli.closeSocket(k.streamSock);
         k.hasStream = false;
         core.log("relayd: [" + itoa(c.id) + "]  stream " + itoa(k.streamId) + " on handle " +
@@ -1489,14 +1498,16 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
           if (k.hasStream) {
             core.warn("relayd: [" + itoa(c.id) + "]  a second stream on one circuit is not supported");
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
+                                        endResourceLimit()));
             continue;
           }
           Begin want = parseBegin(inbound.data);
           if (!want.ok) {
             core.warn("relayd: [" + itoa(c.id) + "]  a BEGIN we could not read");
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
+                                        endProtocol()));
             continue;
           }
           // A leading colon means this relay's own address, which is how a rendezvous stream is opened.
@@ -1504,8 +1515,13 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
           Socket target = cli.connect(host, want.port).wait();
           if (target.handle < 0) {
             core.log("relayd: [" + itoa(c.id) + "]  " + host + ":" + itoa(want.port) + " refused: " + target.error);
+            // **The one END a client can act on.** `socks5.wac` turns CONNECTREFUSED into "connection
+            // refused", NOROUTE into "network unreachable" and TIMEOUT into "TTL expired"; DONE is in
+            // none of its rows, so this site alone was sending every failed connect to a person as
+            // "general failure" — the outcome that mapping exists to prevent.
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
+                                        endForFault(target.fault)));
             continue;
           }
           k.streamSock = target.handle;
@@ -1548,8 +1564,11 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
           k.streamIn = k.streamIn + inbound.data.len();
           if (!cli.send(k.streamSock, inbound.data).wait()) {
             core.warn("relayd: [" + itoa(c.id) + "]  the stream would not take the data");
+            // `MISC` rather than `CONNRESET`: `cli.send` answers a bool, so there is nothing here
+            // saying the peer reset as against the write failing for another reason, and claiming
+            // the more specific code would be inventing the evidence for it.
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayEnd(), k.streamId, endReason()));
+                           sendToClient(k.hop, k.circId, relayEnd(), k.streamId, endMisc()));
             cli.closeSocket(k.streamSock);
             k.hasStream = false;
           }
@@ -1569,7 +1588,8 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
             // Refused rather than ignored: a client that gets no answer waits out its timeout, and a
             // client that gets an END tries somewhere else immediately.
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
+                                        endNotDirectory()));
             core.log("relayd: [" + itoa(c.id) + "]  a BEGIN_DIR, refused: no documents to serve");
             continue;
           }
@@ -1855,11 +1875,67 @@ i32 parseInt(string s) {
   return v;
 }
 
-/** A one-byte RELAY_END reason: `REASON_DONE`, the ordinary close. */
-u8[] endReason() {
+/** A one-byte RELAY_END body carrying `reason`. */
+export u8[] endWith(i32 reason) {
   u8[] r = u8[1]();
-  r[0] = 6;
+  // Assigned as `i32` and narrowed by the array, which is how every byte writer in this repository
+  // does it — `packages/quic/src/varint.wac` says so in as many words: "an explicit `as~ u8` is what
+  // `wacc` declines, and it was never needed". The diagnostic for trying is worth knowing, because it
+  // reads backwards: `expected i32, found u8`, with a help line offering the two casts that do not
+  // work either.
+  r[0] = reason;
   return r;
+}
+
+/** A one-byte RELAY_END reason: `REASON_DONE`, the ordinary close. */
+export u8[] endReason() { return endWith(6); }
+
+/**
+ * `REASON_MISC` — it failed, and none of tor-spec's named reasons describes how.
+ *
+ * **Honest rather than `DONE`, which is what these sites used to send.** `issues/system/0255c`:
+ * `endReason()` is `REASON_DONE` and five of the seven places that ended a stream were failures, so a
+ * client was told its stream had closed normally when the relay could not open it, could not parse
+ * its BEGIN, or lost it mid-flight. `socks5.wac` maps a reason to a SOCKS reply and `DONE` is in none
+ * of its rows, so every one of those reached a person as "general failure" — the outcome that
+ * mapping's docstring exists to prevent.
+ */
+export u8[] endMisc() { return endWith(1); }
+
+/**
+ * `REASON_RESOURCELIMIT` — this relay will not, rather than the client should not have asked.
+ *
+ * For the second stream on one circuit. A client opening several streams on a circuit is doing an
+ * ordinary thing that tor-spec allows and this relay does not implement, so `TORPROTOCOL` would
+ * blame the caller for our limit.
+ */
+export u8[] endResourceLimit() { return endWith(11); }
+
+/** `REASON_TORPROTOCOL` — the cell was not something this protocol allows, e.g. a BEGIN we cannot read. */
+export u8[] endProtocol() { return endWith(13); }
+
+/** `REASON_NOTDIRECTORY` — a BEGIN_DIR at a relay serving no documents, which is exactly this code. */
+export u8[] endNotDirectory() { return endWith(14); }
+
+/**
+ * Why a `cli.connect` failed, as the RELAY_END reason a client can act on.
+ *
+ * **This is the half `issues/system/0255c` was waiting for.** The codes `socks5.wac` translates —
+ * `CONNECTREFUSED` to "connection refused", `NOROUTE` to "network unreachable", `TIMEOUT` to "TTL
+ * expired" — need to know *which* failure happened, and `Socket` carried only an English sentence
+ * until `issues/system/0238c` gave it a fault and `0255c`'s first half gave that fault a network
+ * vocabulary. Both landed on 2026-08-25; this is what they were for.
+ *
+ * `NOT_GRANTED` is `MISC` rather than `EXITPOLICY`: a relay that was not granted the network is not
+ * announcing a policy about the address, and a client that reads `EXITPOLICY` learns something untrue
+ * about the destination. `RESOLVEFAILED` has no fault behind it yet — a name that does not resolve
+ * arrives as `NOT_FOUND` at best, and nothing has been measured about that.
+ */
+export u8[] endForFault(i32 fault) {
+  if (fault == FAULT_REFUSED()) { return endWith(3); }        // CONNECTREFUSED
+  if (fault == FAULT_UNREACHABLE()) { return endWith(8); }    // NOROUTE
+  if (fault == FAULT_TIMED_OUT()) { return endWith(7); }      // TIMEOUT
+  return endMisc();
 }
 
 string[] pushString(string[] xs, string x) {

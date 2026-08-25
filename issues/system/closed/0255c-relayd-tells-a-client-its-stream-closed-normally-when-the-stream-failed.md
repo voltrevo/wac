@@ -1,6 +1,6 @@
 # 0255c — relayd tells a client its stream closed normally when the stream failed
 
-- **Status:** open
+- **Status:** closed — 2026-08-25
 - **Reported by:** agent-c
 - **Date:** 2026-08-24
 - **Kind:** bug
@@ -137,3 +137,48 @@ instead of `REASON_DONE`, and `socks5.wac`'s table already turns those into the 
 docstring argues for. `RESOLVEFAILED` (2) still has no fault behind it — a name that does not resolve
 is `FAULT_NOT_FOUND` at best and nothing has been checked about that. The other four sites are
 protocol errors and want `MISC`, which needed nothing.
+
+## Fixed — 2026-08-25
+
+Seven endings, and the count in the title was slightly wrong: the first site is **both**. It handles
+`End` and `Failed` from the same `match` and told the client `DONE` for each, so a stream that died
+mid-flight was reported as one that finished. It carries a `failed` flag now.
+
+    the far end closed a stream that did not fail   DONE            unchanged
+    the far end closed one that failed              MISC            was DONE
+    a second stream on one circuit                  RESOURCELIMIT   was DONE
+    a BEGIN we could not read                       TORPROTOCOL     was DONE
+    `cli.connect` failed                            from the fault  was DONE
+    the stream would not take the data              MISC            was DONE
+    a BEGIN_DIR with no documents                   NOTDIRECTORY    was DONE
+    a directory request answered in full            DONE            unchanged
+
+`RESOURCELIMIT` rather than `TORPROTOCOL` for the second stream, because several streams on a circuit
+is an ordinary thing tor-spec allows and this relay does not implement — blaming the caller for our
+limit would be the same class of dishonesty one row over. `MISC` rather than `CONNRESET` for the send
+failure, because `cli.send` answers a bool and there is nothing there saying the peer reset.
+
+**Where the fix is actually observable is one site.** `replyForEndReason` maps 2, 3, 4, 7, 8 and 12
+and collapses everything else to a general failure — correctly, since none of the others describes the
+destination. So only the failed `connect` changes what a person sees, and it changes it from "general
+failure" to "connection refused" / "network unreachable" / "TTL expired". The other five are honesty
+in the protocol: the reason travels in the cell, and a relay claiming `DONE` for a stream it refused
+is lying to anything that reads the cell rather than the SOCKS reply.
+
+## The test is the part this issue was really about
+
+`packages/tor/test/wac/relayend_test.wac`. The complaint here was that `socks5_test.wac` fed the
+mapping **hand-made bytes** — `u8[](3)` — so nothing compared producer with consumer. So the new file
+composes them with no literal in between: `replyForEndReason(endForFault(FAULT_REFUSED()))`.
+
+It carries its own canary, which is the interesting part: `DONE` maps to a general failure, so the
+assertion "the reason we send maps to something specific" is *false for the reason the code used to
+send*. That is what makes the test measure the fix rather than the mapping.
+
+And a sixth case that the composition tests cannot catch: a source guard asserting exactly **two**
+call sites send `DONE`, both successes. `endForFault` could be perfect and someone could still write
+`endReason()` on a new failure path with every other assertion staying green — which is precisely how
+this bug existed. Confirmed by planting it: the guard says `got 3, want 2`.
+
+Driving a live relay to each of the seven endings is the honest end-to-end test and is a
+live-network one; this is the cheap guard that fails on the edit instead.

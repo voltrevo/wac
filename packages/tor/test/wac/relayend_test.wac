@@ -1,0 +1,160 @@
+// The RELAY_END reason our relay sends, read by our own SOCKS proxy.
+//
+// **Two halves that had never been introduced.** `relayd.wac` ends a stream by writing a one-byte
+// reason; `socks5.wac`'s `replyForEndReason` turns that byte into the reply a client shows a person.
+// Both were tested — and `socks5_test.wac` tested its half against **hand-made bytes**, `u8[](3)` and
+// `u8[](8)`, so nothing anywhere compared what the producer sends with what the consumer understands.
+//
+// `issues/system/0255c` is what that hid: `endReason()` is `REASON_DONE` and *five of the seven*
+// places that ended a stream were failures. A client whose connection was refused was told its
+// stream had closed normally. `DONE` is in none of the mapping's rows, so every one of those reached
+// a person as "general failure" — the outcome that mapping's docstring exists to prevent.
+//
+// So this file composes them: `replyForEndReason(endForFault(…))`, no literals in between. It is the
+// cheap version of the end-to-end test — no relay is started here — and it is the part that was
+// missing, because the bug was never in either function. It was in the *pair*.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { contains, splitLines } from "../../../wactest/src/strings.wac";
+import { endForFault, endMisc, endNotDirectory, endProtocol, endReason, endResourceLimit }
+  from "../../src/relayd.wac";
+import { replyForEndReason, endReasonName, repFailure, repNetUnreachable, repOk, repRefused,
+         repTtlExpired } from "../../src/socks5.wac";
+import { Cli, Core, FileResult, FAULT_NONE, FAULT_NOT_GRANTED, FAULT_REFUSED, FAULT_TIMED_OUT,
+         FAULT_UNREACHABLE } from "std/platform.wac";
+
+/**
+ * A failed connect reaches a person as what actually happened.
+ *
+ * This is the one END a SOCKS client can act on, and the whole point of `0255c`: "connection refused"
+ * and "network unreachable" send someone to look in different places, and the relay used to send
+ * neither.
+ */
+export string test_a_failed_connect_reaches_a_person_as_what_happened() {
+  T t = T.create();
+  t.eqI32(replyForEndReason(endForFault(FAULT_REFUSED())), repRefused(),
+          "a refused connection is refused, not a general failure");
+  t.eqI32(replyForEndReason(endForFault(FAULT_UNREACHABLE())), repNetUnreachable(),
+          "no route is network unreachable");
+  t.eqI32(replyForEndReason(endForFault(FAULT_TIMED_OUT())), repTtlExpired(),
+          "a timeout is TTL expired");
+  return t.report();
+}
+
+/**
+ * The canary: this test would pass on the old code if it only checked the three above.
+ *
+ * `DONE` maps to a general failure — it is not in the mapping's rows, because a stream that finished
+ * is not a stream that failed and a SOCKS reply is about failing. So "the reason we send maps to
+ * something specific" is a claim that is **false for the reason the code used to send**, which is
+ * what makes the assertions above measure the fix rather than the mapping.
+ */
+export string test_and_done_is_exactly_what_it_used_to_send() {
+  T t = T.create();
+  t.eqI32(replyForEndReason(endReason()), repFailure(),
+          "DONE says nothing a SOCKS client can act on, which is why sending it for a failure lost " +
+          "the information — issues/system/0255c");
+  t.eqBool(replyForEndReason(endReason()) != repRefused(), true,
+           "so a refused connect reported as DONE could not come out as `refused`");
+  // And DONE is not an *error* reason at all: `repOk` is what a successful CONNECT replies with, and
+  // the mapping never answers it, because it is only ever asked about an ending.
+  t.eqBool(replyForEndReason(endReason()) != repOk(), true, "nor as success");
+  return t.report();
+}
+
+/**
+ * The reasons for our own limits, which are honest without being actionable.
+ *
+ * All three collapse to a general failure and that is correct — `replyForEndReason`'s own comment
+ * says none of them describes the destination, which is all a SOCKS code can say. They are worth
+ * sending anyway: the reason travels in the protocol, `endReasonName` renders it in a log, and a
+ * relay claiming `DONE` for a stream it refused is lying to anything that reads the cell rather than
+ * the SOCKS reply.
+ */
+export string test_our_own_limits_are_named_even_though_socks_collapses_them() {
+  T t = T.create();
+  t.eqI32(replyForEndReason(endMisc()), repFailure(), "MISC is a general failure");
+  t.eqI32(replyForEndReason(endResourceLimit()), repFailure(), "so is a resource limit");
+  t.eqI32(replyForEndReason(endProtocol()), repFailure(), "so is a protocol error");
+  t.eqI32(replyForEndReason(endNotDirectory()), repFailure(), "so is not-a-directory");
+
+  // But they are distinguishable *as reasons*, which is what the cell carries. Four ends that were
+  // one byte apart and all spelled `DONE` before.
+  t.eqBool(endMisc()[0] != endResourceLimit()[0], true, "MISC and RESOURCELIMIT are different ends");
+  t.eqBool(endProtocol()[0] != endNotDirectory()[0], true, "so are TORPROTOCOL and NOTDIRECTORY");
+  t.eqBool(endMisc()[0] != endReason()[0], true, "and none of them is DONE");
+  return t.report();
+}
+
+/** Every reason we can send renders as a name, so a log never shows a bare number. */
+export string test_every_reason_we_send_has_a_name() {
+  T t = T.create();
+  u8[][] ours = u8[][](endReason(), endMisc(), endResourceLimit(), endProtocol(), endNotDirectory(),
+                       endForFault(FAULT_REFUSED()), endForFault(FAULT_UNREACHABLE()),
+                       endForFault(FAULT_TIMED_OUT()), endForFault(FAULT_NOT_GRANTED()),
+                       endForFault(FAULT_NONE()));
+  for (i32 i = 0; i < ours.len(); i++) {
+    t.eqBool(ours[i].len() == 1, true, "a RELAY_END body is one byte");
+    string name = endReasonName(ours[i]);
+    t.eqBool(name != "", true, "reason " + name + " renders as a name rather than a number");
+  }
+  return t.report();
+}
+
+/**
+ * A fault with no network meaning does not become a claim about the network.
+ *
+ * `NOT_GRANTED` is `MISC`, not `EXITPOLICY`: a relay that was never granted the network is not
+ * announcing a policy about the address, and a client reading `EXITPOLICY` would learn something
+ * untrue about the destination — which is the same class of mistake as `DONE`, one row over.
+ */
+export string test_a_fault_with_no_network_meaning_says_nothing_about_the_network() {
+  T t = T.create();
+  t.eqI32(endForFault(FAULT_NOT_GRANTED())[0], endMisc()[0],
+          "not granted is MISC — our problem, not a statement about the address");
+  t.eqI32(endForFault(FAULT_NONE())[0], endMisc()[0],
+          "and a fault we have no mapping for does not guess");
+  t.eqBool(replyForEndReason(endForFault(FAULT_NOT_GRANTED())) != repNetUnreachable(), true,
+           "so it never comes out as `network unreachable`");
+  return t.report();
+}
+
+/**
+ * No failure path sends `DONE`, checked against the source rather than against a running relay.
+ *
+ * **The tests above cannot catch a regression at the call sites**, which is where the bug actually
+ * was: `endForFault` could be perfect and someone could still write `endReason()` on a new failure
+ * path, and every assertion above would stay green. Driving a real relay to each of the seven endings
+ * is the honest test and it is a live-network one; this is the cheap guard that fails on the edit.
+ *
+ * Two call sites are legitimate and both are *successes*:
+ *
+ *   - the far end closing a stream that did not fail — `failed ? endMisc() : endReason()`
+ *   - a directory request answered in full
+ *
+ * A third appearing means a failure path is claiming the stream finished. If you are adding a
+ * deliberate one, add it here and say which.
+ */
+export string test_no_failure_path_sends_done(Core core, Cli cli) {
+  T t = T.create();
+  string path = "packages/tor/src/relayd.wac";
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) {
+    // Read from the repository root, as every other source-reading guard here is. Said rather than
+    // skipped: a guard that cannot find its subject has checked nothing.
+    t.fail("could not read " + path + " — this guard runs from the repository root");
+    return t.report();
+  }
+  string src = string.fromBytes(f.bytes);
+  string[] lines = splitLines(src);
+  i32 calls = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string l = lines[i];
+    // The definition and the docstring that names it are not call sites.
+    if (contains(l, "u8[] endReason()") || contains(l, " * `endReason()`")) { continue; }
+    if (contains(l, "endReason()")) { calls = calls + 1; }
+  }
+  t.eqI32(calls, 2, "exactly two call sites send DONE, and both are successes — see this test's " +
+                    "docstring, and issues/system/0255c for the five that used to");
+  return t.report();
+}
