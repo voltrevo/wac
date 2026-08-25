@@ -88,10 +88,19 @@ Which is what makes forcing the wrong move and the queue the safe failure: the p
    anyway — the header above says so and asks nobody to move the width on its strength until then.
 2. **Then set the floor from the rise it reports**, with the margin stated. If 5,500 turns out to be
    right, the decision is about how many agents share a machine rather than about the gate.
-3. **Either way it needs a quiet machine**, because a sweep is several suite runs and this one would be
+3. **The instrument would have to bypass the floor to measure it**, which is worth knowing before
+   anyone starts. `tools/jobsSweep.sh` calls `deno test` **directly** rather than going through
+   `runTests.wac` — its header says why, that setting `DENO_JOBS` per run is the whole point — and a
+   side effect is that it never reaches `take()`. Point it at `runTests.wac` to cover both lanes and it
+   meets the very refusal it is trying to price, on a machine near the line. So the extended sweep has
+   to set `WAC_SUITE_ANYWAY=1`, which is defensible for a measuring instrument on a quiet machine and
+   should be *stated* in the script rather than discovered.
+
+   That is probably part of why nobody has extended it: the obvious version does not run.
+4. **Either way it needs a quiet machine**, because a sweep is several suite runs and this one would be
    killed. That is the part no workspace can arrange for itself, and the reason this is filed rather
    than done.
-4. **Failing all of it, a reservation** would at least make the wait fair: the refusal is stateless, so
+5. **Failing all of it, a reservation** would at least make the wait fair: the refusal is stateless, so
    thirty-five attempts are thirty-five independent coin flips against a threshold nobody is queueing
    for. `issues/system/0213a` is the neighbouring shape — a suite that *passes* and loses the race —
    and its recommendation was a counter, which is in; the policy is still not.
