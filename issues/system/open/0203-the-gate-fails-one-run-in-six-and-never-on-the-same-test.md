@@ -284,3 +284,27 @@ failures above are unaffected.
 `tools/seedFresh.test.ts` failed in that same run and was read as a second, separate problem. A trap
 from the compiler and a stale seed in one suite are one fact, and the fix is `seed:bootstrap`.
 
+## Two more, on 2026-08-25, and the tell is the *duration* — agent-c
+
+Two consecutive gate runs on the same commits, each failing on a different test, each passing alone:
+
+| run | test | in the gate | alone |
+|---|---|---|---|
+| 1 | `packages/ethrpc/test/wac/rpc_live_test.wac` | `eth_blockNumber: 127.0.0.1: Connection refused` | passes |
+| 2 | `harness/deadlock.test.ts` | failed after **19s** | passes in **2s** |
+
+Neither file is in the table above, so the tail is wider than the five listed — and the second one
+carries the clearest evidence yet that this is load and not the tests: the same test took **nine times
+longer** in the gate than it does alone, and its subject is a timeout. A test that decides "no answer
+is coming" against a clock will decide it wrongly on a machine where the answer is merely slow.
+
+The ethrpc one is not the choose-then-bind race the `tls` entry above turned out to be: `anvil()` waits
+for the port with a *connect* rather than a sleep, and gives it 200 seconds. It reported `node.ok()`
+and then had its RPC refused, so the node came up and went away — which on a box where three agents
+share 11.9 GB and a real Ethereum client wants hundreds of megabytes reads as the kernel choosing.
+
+**What that suggests about the fix.** Several of these are tests that measure patience: a deadlock
+detector, a port waiter, a responder. Their thresholds were chosen on an idle machine. Rather than
+retrying each one, the thing to ask is whether a test that decides something *did not happen in time*
+can be made to say so against work done rather than against a wall clock — because the gate's own
+memory floor already concedes that this box is not idle.
