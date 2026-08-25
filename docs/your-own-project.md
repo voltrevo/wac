@@ -66,8 +66,9 @@ deno run -A <wac>/packages/platform/build.ts <wac>/packages/wacc/example/wacc.wa
 `build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
 built module with the grants that module's own manifest declares. `test --coverage` works here too,
 over a file or a directory, and answers the same table as the binary. `sh` and `update` are still the
-native binary's alone — both are separate payloads it embeds, and a hosted `wac` is built from
-`wacc.wac` alone, so there is nothing for `wac sh` to start; `issues/system/0230a` has the options.
+native binary's alone, and **not for a reason that has anything to do with hosts**: the command is
+built from the *compiler's* example, so it carries what the compiler carries. Both are ordinary wac
+programs and belong in it. `issues/system/0257c`.
 Every command they share is held to the same output on all three —
 `packages/wacc/test/wac/commandparity_test.wac`.
 
@@ -91,7 +92,8 @@ issue 22 reported it; `issues/system/0229a` has the measurement and the fix, and
 
 ### What the Deno path is, and is not
 
-**It is the `wac` command now, for everything but `sh` and `update`.** That is a change from what this
+**It is the `wac` command now, for everything but `sh` and `update`** — and those two are missing
+because of how the command is built rather than because a host cannot have them (`issues/system/0257c`). That is a change from what this
 section said until 2026-08-25, and the paragraph above is where it happened: one program, built for
 Deno or Node, answering `check`, `compile`, `build`, `bindgen`, `run`, `test` — a file or a directory,
 with or without `--coverage` — and `wac <prog.wasm>`. It is the same wac program the native binary

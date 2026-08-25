@@ -396,6 +396,14 @@ files, build an aggregate entry, spawn it, `--filter`. Nothing in it is host-spe
 no shell to start. Either `build.ts` learns to embed extra modules, or those two move into the wac
 program, or they stay native-only by design. Raised with the operator; not decided.
 
+**Decided on 2026-08-25, and the framing above was wrong.** The operator: "`wac` *contains* the
+compiler, plus more stuff. each version of the wac unified binary should do all the stuff", and
+separately that "wacc has grown to include things that it shouldn't". There is no third option: the
+reason `wac sh` has no shell is that the command is built from `packages/wacc/example/wacc.wac`, the
+compiler's own example. `sh` and the fetcher are ordinary wac programs and go in the command, once
+there is a command to put them in. `issues/system/0257c` has the ruling, the inventory of what is in
+the compiler that should not be, and the order of work.
+
 **`covdump`, `tracestat` and `ctcompare` cannot move at all today.** They read a module's *exports* —
 `__cov_get` for the counters, the journal for a trace — and `spawn` hands over a *program*: streams and
 an exit code. There is no capability for "instantiate this module and call that export", and adding one
