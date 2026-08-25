@@ -59,6 +59,28 @@ last argument is *where in argv to start*, which is exactly what in-process disp
 `packages/wacpkg/example/fetch.wac` needs its `main` body lifted into a function taking a directory
 and a `$WAC_HOME`.
 
+## Where the line goes, and `run` is already on the right side of it
+
+The operator, refining the above: *"intercepting makes sense for efficiently running programs, then
+everything else should go through a regular wac program rather than being implemented on the host."*
+
+So a host may implement **running a module** — that is the engine doing engine work — and must not
+implement the **command surface**. That is a sharper rule than "one dispatch path everywhere", and it
+puts `run` on the *right* side, which I had wrong: `build_module` in `native/v8/src/main.rs` calls
+`run_seed(&build)`, so the native compiles **through the wac program** already and only instantiates
+in Rust. The interception is "run this module in this process, with the real streams", and the
+in-process part is exactly what a spawn-and-relay cannot give a program that wants a terminal.
+
+Under that rule:
+
+| | |
+|---|---|
+| `wac prog.wasm`, the instantiate half of `run` | **stays** a host's — running a module is its job |
+| `validate` | **stays** — it answers whether *this engine* accepts a module, so three answers is it working |
+| `test` | **moves.** A whole second implementation in Rust: the walk, the per-directory aggregate, the runner, the coverage table. The wac program has all of it. This is most of what the differential exists to police |
+| `covdump`, `tracestat`, `ctcompare` | **move.** They only read counters, which `issues/system/0243c` made reachable. What still blocks them is that they are handed modules carrying no manifest and `Cli.load` refuses those |
+| `sh`, `update` | **move**, and they are not host implementations at all — just separate payloads. In the one program, every host has them |
+
 ## What it touches, which is why this is written down before it is done
 
 `tools/seed.sh` (`ENTRY=`), `tools/push.sh`, `tools/seedFresh.test.ts`, `packages/platform/build.ts`,
