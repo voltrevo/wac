@@ -105,7 +105,7 @@ cd "$(dirname "$0")/.."
 BIN=./native/v8/target/release/wac
 ENTRY=packages/wac/src/wac.wac
 SH_ENTRY=packages/box/example/boxsh.wac
-UPDATE_ENTRY=packages/wacpkg/example/fetch.wac
+UPDATE_ENTRY=packages/wacpkg/src/fetch.wac
 SEED=native/v8/seed
 
 bootstrap=0

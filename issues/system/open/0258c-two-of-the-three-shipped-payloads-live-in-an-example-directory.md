@@ -10,15 +10,22 @@ The operator, on `packages/wac/example/wac.wac`:
 > a point on style: `wac.wac` is the primary reason for the wac package, so it's not an example
 
 That one is fixed — it is `packages/wac/src/wac.wac`. Asked to check whether other packages have the
-same problem: **two do, and they are the other two things the binary ships.** `tools/seed.sh`:
+same problem: **two did, and they were the other two things the binary ships.** `tools/seed.sh` now
+reads:
 
     ENTRY=packages/wac/src/wac.wac                  the command
-    SH_ENTRY=packages/box/example/boxsh.wac         `wac sh`
-    UPDATE_ENTRY=packages/wacpkg/example/fetch.wac  `wac update`
+    SH_ENTRY=packages/box/example/boxsh.wac         `wac sh`          <- still an example
+    UPDATE_ENTRY=packages/wacpkg/src/fetch.wac      `wac update`      <- moved, see below
 
 A file compiled into the released binary is not an example of anything. Both are the *reason* their
 side of the package exists — `fetch.wac` is what `wac update` **is**, and `boxsh.wac` is what `wac sh`
 **is** — and a reader who opens `example/` is told the opposite.
+
+**The fetcher moved the same day, for the better reason this issue said to wait for.** `0257c` step 4
+needs the command to *import* it, and importing from an `example/` directory is the smell itself. So
+it is `packages/wacpkg/src/fetch.wac`, its `main` is a four-line wrapper around a `fetchAll` the
+command calls, and it moved once rather than twice. `plan.wac` stays in `example/`: it is an
+inspection tool rather than something the binary ships, which is what that directory is for.
 
 ## The repository already has the convention, applied unevenly
 
@@ -36,14 +43,12 @@ three places. These two are the exceptions, and nothing distinguishes them excep
 - **`boxsh.wac` is in `packages/box`, and it is a shell** — while `packages/sh` exists and its own
   program is already `src/sh.wac`. So "move it to `src/`" has to answer *which package's* `src/`
   first, and that is a question about what box's shell is for relative to sh's.
-- **`fetch.wac`'s sibling is `plan.wac`**, which really is an inspection tool rather than a shipped
-  thing. Moving one and leaving the other splits a pair that reads as a pair today.
 - Both are named in `tools/seed.sh`, `native/v8/build.rs`'s payload embedding, and the docs that
   describe the three payloads. The last of those matters more than the count: `issues/system/0257c` is
   about `sh` and `update` **stopping being separate payloads at all** and joining the one wac program.
   If that lands, these files move for a better reason and to a place that issue decides — and doing it
   now would be moving them twice.
 
-**Recommendation: wait for `0257c` step 4.** The names are wrong today and the cost of them being
+**What is left is `boxsh.wac`, and the recommendation stands for it: wait for `0257c` step 4.** The names are wrong today and the cost of them being
 wrong is a reader's minute; the cost of moving twice is two rounds of repointing a build. If `0257c`
 stalls, move them then — the shape to copy is `packages/box/src/box.wac`.

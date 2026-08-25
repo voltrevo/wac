@@ -66,7 +66,7 @@ an explicit operation, so "does `wac update` exist after a seed" is the same que
 ## Closed 2026-08-20 — the seed carries all three
 
 `tools/seed.sh` builds `packages/box/example/boxsh.wac` into `$SEED/sh.wasm` and
-`packages/wacpkg/example/fetch.wac` into `$SEED/update.wasm` after the fixpoint converges, then runs
+`packages/wacpkg/src/fetch.wac` into `$SEED/update.wasm` after the fixpoint converges, then runs
 one more `cargo build` so the loop's binaries — which ran before those files existed — are not what
 gets kept. Optional to `build.rs` is not optional here: a payload that does not compile fails the
 command and says which one, because a `wac` missing two of its five documented subcommands is what

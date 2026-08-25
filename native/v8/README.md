@@ -236,7 +236,7 @@ deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
   -o seed/wacc --allow-read --allow-write
 deno run -A packages/platform/native.ts packages/box/example/boxsh.wac \
   -o seed/sh --allow-read --allow-write --allow-net --allow-env
-deno run -A packages/platform/native.ts packages/wacpkg/example/fetch.wac \
+deno run -A packages/platform/native.ts packages/wacpkg/src/fetch.wac \
   -o seed/update --allow-read --allow-write --allow-net --allow-env
 cargo build --release
 
@@ -537,7 +537,7 @@ passed through to a compiler. They are the world this invocation is handed.
 
 ## `wac update` — the fetcher as a third payload
 
-`seed/update.wasm` is `packages/wacpkg/example/fetch.wac`, embedded the same way, and the binary
+`seed/update.wasm` is `packages/wacpkg/src/fetch.wac`, embedded the same way, and the binary
 answers `update` with it. 0.8 MB, and optional like the others.
 
 **It is the only command that reaches the network, and that is the design rather than a consequence.**

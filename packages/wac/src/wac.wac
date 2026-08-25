@@ -952,6 +952,7 @@ export i32 main(Core core, Cli cli) {
     return runModule(core, cli, argc, cmd);
   }
 
+
   // **After the module check, because a module is a complete invocation on its own.** This guard was
   // first, so `wac prog.wasm` — one argument — printed the usage block without ever looking at what
   // that argument was. The command is known even when nothing else is, so say what *it* takes.

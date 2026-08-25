@@ -56,7 +56,7 @@ Then "each version of the wac unified binary does all the stuff" is true by cons
 by a payload arrangement, and `sh` and `update` stop being native-only: both are already ordinary wac
 programs with thin `main`s — `packages/sh/src/sh.wac` calls `shellMain(core, cli, sh, 0)` where the
 last argument is *where in argv to start*, which is exactly what in-process dispatch needs, and
-`packages/wacpkg/example/fetch.wac` needs its `main` body lifted into a function taking a directory
+`packages/wacpkg/src/fetch.wac` needs its `main` body lifted into a function taking a directory
 and a `$WAC_HOME`.
 
 ## Where the line goes, and `run` is already on the right side of it
@@ -96,3 +96,33 @@ starting rather than after.
 2. Move the command's code out of the example into modules something can import.
 3. Add `packages/wac/src/wac.wac` and repoint the build at it, one consumer at a time.
 4. `sh` and `update` join it, which is the thing the operator asked for and the reason the rest matters.
+
+## Step 4 is blocked by a compiler limit — agent-c, 2026-08-25
+
+`sh` and `update` dispatched from `wac.wac` is nine lines, and it does not build.
+
+    wacc: cannot emit packages/wac/src/wac.wac — the emitter ran out of room for functions
+
+**Why it is bigger than it looks.** `wac sh` has to be what the native ships, which is
+`packages/box/example/boxsh.wac` — the shell *with box's sixty-five applets wired in*. So dispatching
+it in-process pulls `packages/sh` and `packages/box` into the command's graph, and `wac update` adds
+`packages/wacpkg`. The command went from **44 files to 218**, and `Env`'s function table is a fixed
+`string[4096]`.
+
+It declines rather than truncating, which is `issues/lang/0158`'s rule working exactly as intended.
+
+**Raising it is not enough, and that is the interesting part.** 4096 → 16384 changes nothing on its
+own, because the compiler doing the compiling is the *seed*, and the seed still has the old number
+baked in. `deno task seed:bootstrap` is the documented way out of "wacc cannot build itself" — and it
+fails the same way, because with the entry now being the command, "build wacc with the reference and
+the app with wacc" has wacc building a 218-file program either way.
+
+So the order is: make the table grow instead of being sized, get that into a seed, then dispatch. The
+caps want to be `Vec`s — `funcs`, `funcReturns`, `funcParamAt`, `funcParamCount` are four parallel
+arrays with a hand-rolled cursor, and `withoutIgnored` and the test walk have already been through
+this conversion. Filed separately.
+
+**What landed anyway**, because it is independently right: `packages/wacpkg/example/fetch.wac` is
+`packages/wacpkg/src/fetch.wac`, and its `main` is a wrapper around `fetchAll(core, cli, dir, wacHome)`
+— the shape step 4 needs, and the move `issues/system/0258c` recommended waiting for a better reason
+to make. This was the better reason.

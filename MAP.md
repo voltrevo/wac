@@ -145,7 +145,7 @@ reach — see `packages/platform/README.md`.
 | `packages/tor/tools/capture-ntor.wac` | Re-record the ntor vectors from tor's own `test-ntor-cl server1`. |
 | `packages/tor/tools/capture-relaycert.wac` | Capture a relay's ed25519 certificates from a running chutney network. The wac half of |
 | `packages/wac/src/wac.wac` | `wac` — the command, as a program. |
-| `packages/wacpkg/example/fetch.wac` | `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock. |
+| `packages/wacpkg/src/fetch.wac` | `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock. |
 | `packages/wacpkg/example/plan.wac` | What a project's dependencies are, and what an ordinary build would have to fetch. |
 | `packages/webrtc/example/answer.wac` | A WebRTC data channel, answered by a wac program. |
 

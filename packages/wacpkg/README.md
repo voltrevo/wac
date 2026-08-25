@@ -160,7 +160,7 @@ migration or orphaning everything already downloaded.
 `wacpkg` decides *what* to fetch and where it goes, `packages/git` and `packages/tls` do it.
 
 ```sh
-deno task app:build packages/wacpkg/example/fetch.wac \
+deno task app:build packages/wacpkg/src/fetch.wac \
   --allow-read --allow-write --allow-net --allow-env -o wacfetch
 ./wacfetch . ~/.wac
 ```

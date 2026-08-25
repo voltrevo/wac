@@ -1,6 +1,6 @@
 // `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock.
 //
-//     deno task app:build packages/wacpkg/example/fetch.wac \
+//     deno task app:build packages/wacpkg/src/fetch.wac \
 //       --allow-read --allow-write --allow-net --allow-env -o wacfetch
 //     ./wacfetch .
 //
@@ -40,11 +40,11 @@ import { Parsed, parseCommit } from "../../git/src/commit.wac";
 import { PackIndex } from "../../git/src/idx.wac";
 import { Store } from "../../tls/src/roots.wac";
 import { Answer, Remote, parseRemote, request, systemStore } from "../../git/src/transport.wac";
-import { Manifest, Mapping, readManifest, unsupportedTransport } from "../src/manifest.wac";
-import { Lock, LockEntry, Step, applyPlan, plan, readLock, writeLock, USE } from "../src/lock.wac";
-import { MANIFEST_NAME } from "../src/root.wac";
-import { cachePath } from "../src/cache.wac";
-import { resolveRef, Resolved } from "../src/refs.wac";
+import { Manifest, Mapping, readManifest, unsupportedTransport } from "./manifest.wac";
+import { Lock, LockEntry, Step, applyPlan, plan, readLock, writeLock, USE } from "./lock.wac";
+import { MANIFEST_NAME } from "./root.wac";
+import { cachePath } from "./cache.wac";
+import { resolveRef, Resolved } from "./refs.wac";
 
 /** How deep a fetch asks for. One commit is what a locked dependency needs. */
 i32 depth() { return 1; }
@@ -53,7 +53,21 @@ export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   string dir = argc > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
   string wacHome = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".wac";
+  return fetchAll(core, cli, dir, wacHome);
+}
 
+/**
+ * The whole of `wac update`, with its two arguments passed rather than read.
+ *
+ * **Split from `main` so the command can call it.** `wac update` was a separate wasm payload the
+ * native binary embedded and the JavaScript hosts had no copy of, which is why it looked like
+ * something only a native `wac` could do. It is one program's subcommand now
+ * (`issues/system/0257c`), and a subcommand takes parameters where a payload read argv.
+ *
+ * `dir` is the project and `wacHome` is the cache root — the same two the native handed the payload,
+ * and the second has to be the real `$WAC_HOME` or a fetch fills a cache nothing later reads.
+ */
+export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
   FileResult mf = cli.readFile(join(dir, MANIFEST_NAME())).wait();
   if (!mf.ok) {
     core.warn("wacfetch: " + join(dir, MANIFEST_NAME()) + " could not be read, so " + dir

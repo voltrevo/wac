@@ -672,7 +672,7 @@ fn run_shell(rest: &[String]) -> i32 {
 fn update_command(rest: &[String]) -> i32 {
     let Some(wasm) = UPDATE else {
         eprintln!("wac: this build carries no fetcher — build one into seed/update.wasm from");
-        eprintln!("     packages/wacpkg/example/fetch.wac, see native/v8/README.md");
+        eprintln!("     packages/wacpkg/src/fetch.wac, see native/v8/README.md");
         return 1;
     };
     let Some(text) = manifest_in(wasm) else {
