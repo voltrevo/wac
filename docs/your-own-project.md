@@ -64,9 +64,12 @@ deno run -A <wac>/packages/platform/build.ts <wac>/packages/wacc/example/wacc.wa
 
 `--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
 `build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
-built module with the grants that module's own manifest declares. `test --coverage`, `sh` and `update`
-are still the native binary's alone, and `issues/system/0230a` tracks giving them to all three. Every command they share is held to the same
-output on all three — `packages/wacc/test/wac/commandparity_test.wac`.
+built module with the grants that module's own manifest declares. `test --coverage` works here too,
+over a file or a directory, and answers the same table as the binary. `sh` and `update` are still the
+native binary's alone — both are separate payloads it embeds, and a hosted `wac` is built from
+`wacc.wac` alone, so there is nothing for `wac sh` to start; `issues/system/0230a` has the options.
+Every command they share is held to the same output on all three —
+`packages/wacc/test/wac/commandparity_test.wac`.
 
 **It did not work from outside this repository until 2026-08-20**, which is worth saying because
 somebody hit it: the compiler's own sources were named by relative path, so it read
@@ -88,15 +91,24 @@ issue 22 reported it; `issues/system/0229a` has the measurement and the fix, and
 
 ### What the Deno path is, and is not
 
-It compiles. It is not the `wac` command. The seven things `wac` does are, through Deno, seven
-different entry points with different flags and exit codes — `native.ts` builds, `tools/check.ts`
-checks, `harness/referenceRun.ts` runs, `deno task bindgen` generates bindings, and `wac update` has no
-Deno equivalent at all. Note that **`deno task check` is this repository's own TypeScript check**, not
-`wac check`.
+**It is the `wac` command now, for everything but `sh` and `update`.** That is a change from what this
+section said until 2026-08-25, and the paragraph above is where it happened: one program, built for
+Deno or Node, answering `check`, `compile`, `build`, `bindgen`, `run`, `test` — a file or a directory,
+with or without `--coverage` — and `wac <prog.wasm>`. It is the same wac program the native binary
+carries, so "the same" is by construction rather than by care, and
+`packages/wacc/test/wac/commandparity_test.wac` measures it invocation by invocation anyway.
 
-So if you want the development loop rather than an artefact, install the binary. `issues/system/0230a`
-is the open question of whether Deno should host the whole command, with options and a recommendation;
-GitHub issue 22 is the case for it, and it makes the case better than that issue does.
+**What is still not the command**: the older, lower-level entry points, which remain because the
+compiler needs an API and not only a CLI. `native.ts` builds, `tools/check.ts` checks with the
+*reference* compiler, `harness/referenceRun.ts` runs. They take different flags, answer different exit
+codes, and resolve a project differently — reaching for one of those is what GitHub issue 22 was
+originally about. Reach for the built command unless you are working on the compiler itself. And note
+that **`deno task check` is this repository's own TypeScript check**, not `wac check`.
+
+**One thing to know before you build it**: the hosted build shells out to `deno bundle`, which fetches
+`@esbuild/linux-x64` from npm the first time. On a machine with no network that fails after about a
+minute of silence. The binary has no such step, so an offline environment is still a reason to install
+it. `issues/system/0230a` tracks that too.
 
 **One thing here does need the network, once.** Compiling does not: the two commands above complete
 under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*

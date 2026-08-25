@@ -2138,17 +2138,11 @@ fn main() {
     if SEED.is_some() && (args.len() < 2 || asked) {
         start_v8();
         let code = run_seed(&[]);
-        eprintln!(
-            "       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
-             [--allow-run] <entry.wac> [args…]"
-        );
-        eprintln!("                                      compile and run it, with no file in between;");
-        eprintln!("                                      a grant goes before the entry, and after `--`");
-        eprintln!("                                      an argument is the program's, whatever it looks like");
-        eprintln!("       wac test [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]");
-        eprintln!("                [--coverage] [--filter <name>] [--ignore <path,…>] [--verbose] [path…]");
-        eprintln!("                                      run `test*()` exports; paths may be files or");
-        eprintln!("                                      directories, and default to here and down");
+        // **`run` and `test` are not repeated here.** They used to be: this binary answers both in
+        // Rust, so it added its own lines after the seed's usage — and the seed prints them too now
+        // that they live in the wac program, so `wac --help` listed each twice and gave two different
+        // accounts of `test`. Reported against an external project on 2026-08-25. The seed's list is
+        // the one, and it carries the flags this binary accepts.
         if SHELL.is_some() {
             eprintln!(
                 "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] \

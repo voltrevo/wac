@@ -928,6 +928,35 @@ i32 runModule(Core core, Cli cli, i32 argc, string path) {
  * thing to a wac program. The name ends `_test.wac` so that a walk which happens across `.cache`
  * would find something that *is* a test file rather than a fragment.
  */
+/**
+ * The walked paths as the aggregate can import them: relative to the project, or nothing.
+ *
+ * **The aggregate lives in `.cache/`, so every import is `../` and then the path.** For a relative
+ * path that is right. For an *absolute* one it produced `..//workspace/…/x_test.wac` — a doubled
+ * slash and a climb out of the project — and the compile failed on an import nobody wrote. Naming a
+ * directory by an absolute path is the ordinary thing to do from a script, so this converts rather
+ * than refusing: a path under the current directory is the same file named relatively.
+ *
+ * Empty when one of them is not under the project. An absolute *import* is not a way out — the
+ * resolver drops the leading slash and reads `tmp/…` relative to the importer, so emitting one would
+ * turn a clear failure into a confusing one. The caller reports the limitation instead.
+ */
+string[] importable(Cli cli, string[] walked) {
+  string cwd = cli.cwd().wait();
+  string prefix = cwd + "/";
+  string[] out = string[walked.len()](fill: "");
+  for (i32 i = 0; i < walked.len(); i++) {
+    string p = walked[i];
+    if (p.len() > 0 && p.slice(0, 1) != "/") { out[i] = p; continue; }
+    if (p.len() > prefix.len() && p.slice(0, prefix.len()) == prefix) {
+      out[i] = p.slice(prefix.len(), p.len());
+      continue;
+    }
+    return string[0]();
+  }
+  return out;
+}
+
 string aggregatePath(Core core, Cli cli) {
   return ".cache/wac-aggregate-" + itoa64(core.monotonicNanos().wait()) + "_test.wac";
 }
@@ -1324,7 +1353,20 @@ string flagValue(Cli cli, i32 argc, string flag) {
  * **Points, not lines.** One line can hold two branches and the question is which of them ran, so a
  * per-line count would report half a fact. The native command counts the same way.
  */
-void sayCoverage(Core core, string table, i32[] hit) {
+/**
+ * The report, optionally narrowed to a set of files.
+ *
+ * **`only` is empty for a single entry and the walked files for a directory**, which is what the
+ * native command does and is the more useful answer: a directory walk compiles one aggregate over
+ * every test file, so the unnarrowed table is dominated by `std/platform.wac` and reads `6 of 292
+ * points (2%)` where the files a person wrote are `4 of 6 (66%)`. The aggregate's own wrapper is in
+ * there too, under a `.cache/` name nobody typed.
+ *
+ * **The skip happens after `i` is counted, not by filtering the table.** `hit[i]` is positional —
+ * the table is one row per counter in counter order — so dropping rows before this would slide every
+ * later counter onto the wrong point and the percentage would still look plausible.
+ */
+void sayCoverage(Core core, string table, i32[] hit, string[] only) {
   string[] lines = splitLines(table);
   string[] names = string[lines.len()](fill: "");
   i32[] total = i32[lines.len()]();
@@ -1336,6 +1378,11 @@ void sayCoverage(Core core, string table, i32[] hit) {
     if (lines[i] == "") { continue; }
     string file = fieldOf(lines[i], 4);
     if (file == "") { continue; }
+    if (only.len() > 0) {
+      bool wanted = false;
+      for (i32 k = 0; k < only.len(); k++) { if (only[k] == file) { wanted = true; } }
+      if (!wanted) { continue; }
+    }
     i32 at = -1;
     for (i32 k = 0; k < files; k++) { if (names[k] == file) { at = k; } }
     if (at < 0) { at = files; names[at] = file; files = files + 1; }
@@ -1543,7 +1590,7 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
       return 1;
     }
     sayTally(core, t);
-    if (covTable != "") { sayCoverage(core, covTable, hit); }
+    if (covTable != "") { sayCoverage(core, covTable, hit, string[0]()); }
     return t.failed == 0 ? 0 : 3;
   }
 
@@ -1568,7 +1615,11 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
       if (fileOfWrapper(names[i].name) == f) { mine[count] = i; count = count + 1; }
     }
     if (count == 0) { continue; }
-    core.log("── " + files[f]);
+    // **No header when the walk found one file**, which is what the native command does and was found
+    // by asking it: a fresh project with a single test file printed `── t/x_test.wac` here and nothing
+    // there. One file named by a directory reads like one file named directly, plus the summary line
+    // that says a directory was walked.
+    if (files.len() > 1) { core.log("── " + files[f]); }
     Tally t = runNamed(core, cli, m.handle, names, mine, count, grants, filter, loud);
     if (t.ungrantedCount > 0) {
       core.log(itoa(t.ungrantedCount) + " test(s) want a capability this run was not granted: "
@@ -1616,6 +1667,14 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
       ungrantedTests = ungrantedTests + t.ungrantedCount;
     }
   }
+  // **Read before the handle goes**, for the reason the single-file branch above gives: the counters
+  // live in the module and `unload` is the end of them.
+  //
+  // **`--coverage` over a directory did nothing here until 2026-08-25**, which is the shape this
+  // command keeps producing: the flag was accepted, the run happened, and no report was printed —
+  // where the native command answers with the table. One aggregate module means one counter array for
+  // the whole walk, so this is the same two calls the single-file branch makes.
+  i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[0]();
   cli.unload(m.handle);
   // **Nothing matched anywhere is a mistake, not a clean walk.** Per file the message says which file
   // the filter emptied; across the whole walk it says the pattern found nothing at all, and exits
@@ -1627,7 +1686,12 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
     core.warn("wac: no test anywhere under " + target + " matches --filter " + filter);
     return 1;
   }
-  core.log("");
+  // The report goes between the blocks and the summary, where the native command puts it, and it
+  // opens with the blank line the summary would otherwise have printed for itself.
+  if (covTable != "") { sayCoverage(core, covTable, hit, files); }
+  // The blank line separates the per-file blocks from the summary, and there are no blocks to
+  // separate when the walk found one file — the native command prints none there either.
+  else if (files.len() > 1) { core.log(""); }
   // **One section of the native command's output is missing here, and cannot be written.** After the
   // summary it ranks the files that cost a second or more:
   //
@@ -1718,7 +1782,12 @@ string usage() {
        + "                a grant goes before the entry, and after `--` an argument is the\n"
        + "                program's, whatever it looks like\n"
        + "       wac test [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
-       + "                [--filter <name>] <file_test.wac>   run its `test*()` exports";
+       // The flags this actually takes, which is what the native binary was printing *after* this
+       // block because these two lines were narrower than the truth — so `wac --help` listed `run`
+       // and `test` twice, with two different accounts of `test`. Reported against an external
+       // project on 2026-08-25. One list, and it is this one.
+       + "                [--coverage] [--filter <name>] [--ignore <path,…>] [--verbose] [path…]\n"
+       + "                run `test*()` exports; paths may be files or directories";
 }
 
 /**
@@ -1985,7 +2054,23 @@ export i32 main(Core core, Cli cli) {
       }
       texts[i] = string.fromBytes(one.bytes);
     }
-    Change wrote = cli.writeFile(aggregate, aggregateSource(walked, texts).toBytes()).wait();
+    // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
+    // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —
+    // naming a path the caller had not chosen, for a file they did not know existed. Reported against
+    // an external project on 2026-08-25; the native command never hit it because it writes its
+    // aggregate to a temporary directory of its own.
+    Change made = cli.mkdir(".cache", true).wait();
+    if (!made.ok()) {
+      core.warn("wac: cannot make .cache for the test aggregate — " + made.message);
+      return 1;
+    }
+    string[] imports = importable(cli, walked);
+    if (imports.len() == 0) {
+      core.warn("wac: `test <directory>` needs the directory to be inside the project — "
+                + walked[0] + " is not under " + cli.cwd().wait());
+      return 2;
+    }
+    Change wrote = cli.writeFile(aggregate, aggregateSource(imports, texts).toBytes()).wait();
     if (!wrote.ok()) {
       core.warn("wac: cannot write the aggregate " + aggregate + " — " + wrote.message);
       return 1;

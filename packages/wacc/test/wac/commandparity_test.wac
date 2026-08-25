@@ -521,6 +521,61 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
                 "two different programs do not have the same bytes");
     }
   }
+  // **A directory test in a project that has never built anything**, which is the one shape the rows
+  // above cannot produce: they run from `dir`, and by the time a `test <directory>` row is reached a
+  // `build` row has already created `dir/.cache` for its own artefact cache. That order dependency hid
+  // two failures until an external project hit them on 2026-08-25 — the aggregate could not be written
+  // because `.cache/` did not exist, and naming the directory by an absolute path produced an import
+  // of `..//abs/path/x_test.wac`, a doubled slash and a climb out of the project.
+  //
+  // Its own directory, made after everything above has finished with `dir`, so "never built anything"
+  // is true of it.
+  string fresh = dir + "/fresh";
+  bool ready = cli.mkdir(fresh + "/t", true).wait().ok()
+    && put(t, cli, fresh + "/wac.json5", "{}\n")
+    && put(t, cli, fresh + "/t/x_test.wac",
+           "export string test_two_is_two() { return 2 == 2 ? \"\" : \"no\"; }\n");
+  t.isTrue(ready, "the fresh project was written");
+  if (ready) {
+    // **Granted, because the command's own capabilities are not a host's to differ on.** A hosted
+    // `wac` is a program built once with grants baked in; the native binary takes them per
+    // invocation. So `wac test <dir>` with no grants is a fair question to neither — the native
+    // cannot read the directory to discover it is one and compiles it as a file, and the hosted one
+    // walks it. These pass what the directory rows above pass.
+    string[] g = string[]("test", "--allow-read", "--allow-write", "t");
+    Said rel1 = say(cli, fresh, native, g);
+    Said rel2 = say(cli, fresh, deno, g);
+    Said rel3 = say(cli, fresh, "node " + node, g);
+    t.eqI32(rel1.status, 0, "native, a fresh project and a relative directory: " + rel1.out);
+    t.eqStr(steadied(rel2.out), steadied(rel1.out), "deno agrees on a fresh project");
+    t.eqStr(steadied(rel3.out), steadied(rel1.out), "node agrees on a fresh project");
+    // **One file, so no `──` header and no blank line**, which is what the native prints and what the
+    // hosted one printed a header for until this block asked.
+    t.isFalse(contains(rel1.out, "── "), "one file in a directory gets no header: " + rel1.out);
+
+    // The same walk with `--coverage`, which did nothing at all on the hosted command until this
+    // block asked: the run happened and no table was printed. It also has to be the *same* table —
+    // narrowed to the files walked, not the whole graph, or it reads `2%` for a suite that covers its
+    // own files well.
+    string[] c = string[]("test", "--allow-read", "--allow-write", "--coverage", "t");
+    Said cov1 = say(cli, fresh, native, c);
+    Said cov2 = say(cli, fresh, deno, c);
+    t.isTrue(contains(cov1.out, "branch coverage:"), "native reports coverage: " + cov1.out);
+    t.eqStr(steadied(cov2.out), steadied(cov1.out), "deno's coverage table is the native's");
+    t.isFalse(contains(cov2.out, "std/platform.wac"),
+              "and it is the walked files, not the whole graph: " + cov2.out);
+
+    // Absolute, and compared with each host's own relative answer rather than across hosts: the
+    // per-file header names the path the caller typed, so the two forms differ on purpose. What must
+    // hold is that both work — an absolute directory produced `..//abs/path` and failed to compile.
+    Said abs2 = say(cli, fresh, deno, string[]("test", "--allow-read", "--allow-write", fresh + "/t"));
+    Said abs3 = say(cli, fresh, "node " + node,
+                    string[]("test", "--allow-read", "--allow-write", fresh + "/t"));
+    t.eqI32(abs2.status, 0, "deno, the same directory named absolutely: " + abs2.out);
+    t.eqI32(abs3.status, 0, "node, the same directory named absolutely: " + abs3.out);
+    t.isTrue(contains(abs2.out, "1 passed, 0 failed"), "and it ran the test: " + abs2.out);
+  }
+
   cli.remove(dir, true).wait();
   return t.report();
 }
