@@ -220,7 +220,21 @@ string[] WRONG() {
     "enum E { A, B }\n"
       + "export i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } }"
       + " return 0; }",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } return 0; }");
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } return 0; }",
+    // **A name reached through a struct rather than through a value.** `checkMember` had this rule
+    // for enums — `E.nope` is a variant that is not there — and not for structs, so all three of
+    // these were accepted by the checker and declined by the *emitter*, which is a refusal with no
+    // position and no message. The reference refuses all three here.
+    //
+    // The fourth member of the family is not in this list because it is **legal**: `Base.get` is an
+    // unbound method reference, an `fn[i32(Base)]` taking the receiver first, and rung 4 has seven
+    // programs passing them to functions and storing them in arrays. The first version of this rule
+    // refused those, and that corpus is what said so.
+    "struct P { i32 v; } export i32 f() { return P.nope; }",
+    "struct P { i32 v; } export i32 f() { return P.v; }",
+    // Legal as a *value* and wrong in this *slot*, which is the reference's complaint too — it had no
+    // type at all here until `staticMethodType` learned the unbound signature.
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f() { return P.m; }");
 }
 
 /**

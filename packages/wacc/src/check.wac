@@ -6228,11 +6228,21 @@ string staticMethodType(C c, Expr obj, string name) {
     else: { }
   }
   if (owner == "" || c.isGeneric(owner)) { return typeNone(); }
-  i32 at = c.ownMethodAt(owner, name);
-  if (at < 0 || !c.methodStatics[at]) { return typeNone(); }
+  i32 at = c.methodAt(owner, name);
+  if (at < 0) { return typeNone(); }
+  // **An instance method reached through its type is an *unbound* reference**, whose first parameter
+  // is the receiver: `Base.get` is an `fn[i32(Base)]`, and rung 4's corpus passes those around. This
+  // answered `typeNone()` for them, so `return P.m;` in an `i32` function compared nothing against
+  // nothing and stayed quiet where the reference says *"expected i32, found fn(P) -> i32"*. The
+  // slot-driven paths typed these all along, which is why the corpus compiles and only a slot that
+  // asks *this* function was silent.
+  //
+  // `methodAt` rather than `ownMethodAt` for the same reason as the caller in `checkMember`:
+  // `Derived.get` inherits one.
   string out = "fn(";
+  if (!c.methodStatics[at]) { out = out + owner; }
   for (i32 i = 0; i < c.methodParamCount[at]; i++) {
-    if (i > 0) { out = out + ", "; }
+    if (out != "fn(") { out = out + ", "; }
     out = out + c.methodParamTypes[c.methodParamAt[at] + i];
   }
   return out + ") -> " + c.methodReturns[at];
@@ -6447,6 +6457,27 @@ void checkMember(C c, Expr at, Expr obj, string name) {
       string en = tokenText(c, tok);
       if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) < 0) {
         c.report(errNoVariant(), at.line, at.col);
+        return;
+      }
+      // **And the struct sibling of that rule**, which was missing: `P.nope`, `P.v` and `P.m` all
+      // named something through a *type* rather than a value, so every rule below had nothing to ask
+      // and stayed silent — the reference refuses all three. `P.s`, a static, is the one form that is
+      // a value: `staticMethodType` gives it an `fn(…)` and a wrong slot is then an ordinary
+      // mismatch, which is why it must be let through here rather than caught.
+      //
+      // **Any method of the type is a value here**, static or not: `Counter.inc` is an *unbound*
+      // method reference, an `fn[void(Counter)]` that takes the receiver as its first argument, and
+      // the corpus passes them to functions and stores them in arrays. So this rule is only about a
+      // name the type does not have — a field named through the type, or nothing at all — and
+      // `methodAt` rather than `ownMethodAt` because `Derived.get` inherits one.
+      //
+      // Written the other way first, refusing an instance method as "not a value" on the reasoning
+      // that the reference refuses `return P.m;`. It does — on the *slot*, because `fn(P) -> i32` is
+      // not an `i32`, which is a type error about the return and not about the reference. Seven
+      // programs in rung 4's own corpus said so within the minute.
+      if (c.isStruct(en) && c.typeOfName(en) == typeNone()) {
+        if (c.methodAt(en, name) >= 0) { return; }
+        c.reportWith(errNoStaticMethod(), at.line, at.col, "no " + en + "." + name);
         return;
       }
     }
