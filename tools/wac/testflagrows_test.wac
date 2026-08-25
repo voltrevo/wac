@@ -37,7 +37,7 @@ import { Vec } from "core/vec.wac";
  * instead of chasing one.
  */
 const string CLI = "packages/wacc/example/wacc.wac";
-const string CLI2 = "packages/wac/src/testrun.wac";
+const string CMD_DIR = "packages/wac/src";
 const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
 
 /**
@@ -58,6 +58,27 @@ bool excused(string cmd, string flag) {
   // reporting the environment beside the two capabilities it already reports.
   if (cmd == "run" && flag == "--allow-env") { return true; }
   return false;
+}
+
+/**
+ * Every `.wac` file under `dir`, concatenated.
+ *
+ * **A directory rather than a list of files, because the list was wrong twice in one day.** This named
+ * one file, then two, and each time a function it reads moved out of the compiler's example under
+ * `issues/system/0257c` the guard went red saying it had found nothing — correct, and twice the work.
+ * A directory keeps up with a split in progress.
+ */
+string sourcesIn(Cli cli, string dir) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return ""; }
+  string[] names = entries!;
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i].len() > 4 && names[i].slice(names[i].len() - 4, names[i].len()) == ".wac") {
+      out = out + textOf(cli, dir + "/" + names[i]) + "\n";
+    }
+  }
+  return out;
 }
 
 /** The text of `path`, or "" — a file this cannot read is reported by the caller, not guessed at. */
@@ -153,9 +174,9 @@ string uncovered(string cmd, string[] accepted, string[] rowed) {
 
 export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, Cli cli) {
   T t = T.create();
-  string cliSrc = textOf(cli, CLI) + "\n" + textOf(cli, CLI2);
+  string cliSrc = textOf(cli, CLI) + "\n" + sourcesIn(cli, CMD_DIR);
   string paritySrc = textOf(cli, PARITY);
-  t.isTrue(cliSrc.len() > 0, "read " + CLI + " and " + CLI2);
+  t.isTrue(cliSrc.len() > 0, "read " + CLI + " and " + CMD_DIR);
   t.isTrue(paritySrc.len() > 0, "read " + PARITY);
   if (cliSrc.len() == 0 || paritySrc.len() == 0) { return t.report(); }
 
