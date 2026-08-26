@@ -1357,12 +1357,35 @@ fn compiler_id() -> String {
     format!("{h:016x}")
 }
 
+/// **This binary runs one program, and it is written in wac.**
+///
+/// Every argument goes to the built-in program verbatim and it decides everything: which commands
+/// exist, what `--help` says, what a grant means, whether an argument names a module or a mistake.
+/// There is no command surface here at all — no list of names to keep in step with the program's,
+/// no interception that shadows what the program would have done, and nothing that can be true on
+/// this host and false on the two JavaScript ones.
+///
+/// That is `issues/system/0257c` taken to its end. The rule was that a host may implement *running a
+/// module* and must not implement the command surface; the way it kept being broken was not by
+/// disagreeing with it but by *exception* — `test` needed a capability the fall-through could not
+/// grant, so it was implemented here; `covdump` needed a loaded module to be able to `exec`, so it
+/// came back; `run`, `app` and `app-run` were "the host's own" because starting a program is what
+/// this binary is. Each was locally reasonable and the sum was a second implementation of the whole
+/// command line, 700 lines of test runner included.
+///
+/// **The one that made the exceptions unnecessary is `run_seed` granting everything.** The program is
+/// the toolchain — the payload this binary was built around — so "may it read a file" is the same
+/// question as "may this binary run", which whoever typed the command has already answered. With the
+/// program holding every capability, `load_module` and `spawn` narrow *from* it, and what a program it
+/// starts may do is the program's decision rather than a policy compiled in here.
+///
+/// Without a seed this is what it always was: a runtime, told to run a module. It says so rather than
+/// pretending to be a `wac` command, because there is no program in it to be one.
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    // **Every payload can ask which compiler is running it.** Set here rather than per command so
-    // that `build`, `run` and `test` all see the same answer, and set unconditionally so that a
-    // program reading it never has to distinguish "no compiler" from "not told". Reading it needs the
-    // `env` grant the compiler already holds for `$WAC_HOME`. `issues/system/0204`.
+    // **Every payload can ask which compiler is running it.** Set before V8 starts, and set
+    // unconditionally so that a program reading it never has to distinguish "no compiler" from "not
+    // told". Reading it needs the `env` grant the program already holds. `issues/system/0204`.
     //
     // Not overwritten if the caller set one: a test that wants to force a cache miss says so, and a
     // host that has already decided its identity is not second-guessed here.
@@ -1380,141 +1403,28 @@ fn main() {
     // bytes as well, so it changes whenever anyone rebuilds the compiler — which in this repository is
     // several times a day, and would make every `app` artefact stale by the afternoon. The version is
     // the coarser question and the one that was being asked.
-    //
-    // Overwritable, like the id above: a test that wants to see the mismatch path says so.
     if std::env::var_os("WAC_VERSION").is_none() {
         // SAFETY: as above.
         unsafe { std::env::set_var("WAC_VERSION", env!("CARGO_PKG_VERSION")) };
     }
-    // **Asked for help, or given nothing.** The commands are in two places because they are
-    // implemented in two places — the compiler inside answers `check`, `compile` and `build`, and
-    // `run` is this host's. So the seed prints its own usage and this adds the one line it cannot
-    // know about, rather than either side keeping a list of the other's commands.
-    let asked = args.len() > 1 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help");
-    if SEED.is_some() && (args.len() < 2 || asked) {
-        start_v8();
-        let code = run_seed(&[]);
-        // **`run` and `test` are not repeated here.** They used to be: this binary answers both in
-        // Rust, so it added its own lines after the seed's usage — and the seed prints them too now
-        // that they live in the wac program, so `wac --help` listed each twice and gave two different
-        // accounts of `test`. Reported against an external project on 2026-08-25. The seed's list is
-        // the one, and it carries the flags this binary accepts.
-        eprintln!("       wac app <entry.wac> -o <dest>  an executable that runs itself — one file,");
-        eprintln!("                                      needing a `wac` on the machine that runs it");
-        std::process::exit(if asked { 0 } else { code });
-    }
-    if args.len() < 2 {
-        eprintln!("usage: wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
-        std::process::exit(2);
-    }
-    let stem = &args[1];
-    // **A module first.** `wac prog.wasm` is the whole of it when the module describes itself;
-    // `wac stem` finds `stem.wasm` and `stem.json` beside each other, which is what the pair was.
-    let direct = if stem.ends_with(".wasm") { std::fs::read(stem).ok() } else { None };
-    if let Some(bytes) = direct {
-        let Some(text) = manifest_in(&bytes) else {
-            eprintln!("wac: {stem} carries no wac.manifest section — build it with packages/platform/native.ts");
-            std::process::exit(1);
-        };
-        let manifest: Manifest = match serde_json::from_str(&text) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!("wac: the manifest inside {stem} is not one — {e}");
-                std::process::exit(1);
-            }
-        };
-        start_v8();
-        std::process::exit(run(&manifest, &bytes, &text));
-    }
-    // **Arguments for the program inside, or a bundle to run.** Decided by what the first argument
-    // *is* rather than by a flag: `wac compile x.wac` and `wac prog.json` are both what someone
-    // would type, and a bundle is a `.wasm` or a stem with a `.json` beside it.
-    //
-    // A name ending in `.wasm` is a bundle *claim* whether or not the file is there, and is reported
-    // as one. Otherwise a mistyped path would reach the compiler and come back as **unknown command
-    // 'prog.wasm'** — a message about the wrong thing entirely, for a file that is simply missing.
-    if SEED.is_some() && stem.ends_with(".wasm") {
-        // `message_of` rather than `to_string`, which is the difference between "No such file or
-        // directory" and "No such file or directory (os error 2)". The wac program answers this same
-        // sentence from `faultWords`, and `commandparity_test.wac` compares them — an errno is the one
-        // part of it no other host would spell the same way.
-        let e = std::fs::read(stem).err().map(|e| message_of(&e)).unwrap_or_default();
-        eprintln!("wac: cannot read {stem} — {e}");
-        std::process::exit(1);
-    }
-    // `run` is this host's own command rather than the compiler's: the compiler writes a module and
-    // cannot instantiate one, and running it is the thing this binary is.
-    if SEED.is_some() && stem == "run" {
-        std::process::exit(run_command(&args[2..]));
-    }
-    // `app` builds; `app-run` runs what it built. Both are the host's: the compiler writes a module
-    // and knows nothing about making it executable, and `app-run` is what the preamble calls.
-    if SEED.is_some() && stem == "app" {
-        std::process::exit(app_command(&args[2..]));
-    }
-    // No `SEED.is_some()`: running an application needs no compiler, and a build carrying only a
-    // shell is a perfectly good thing to hand somebody's `./thing` to.
-    if stem == "app-run" {
-        std::process::exit(app_run_command(&args[2..]));
-    }
-    // **The one command that needs no compiler at all**, and the only one whose reason for being
-    // here is what the person typing it does *not* have. `deno task wac:uninstall` does the same
-    // job, and it is a Deno program under `tools/` — so it needs this repository, and somebody who
-    // installed the command has a `$WAC_HOME` and no checkout. `design/lang/0009` D1.
-    //
-    // No `SEED.is_some()`: a build carrying only a shell can still take itself away.
-    // **`test` is the program's, not the host's.** `issues/system/0257c` ruled that a host may
-    // implement *running a module* and must not implement the *command surface*; `test` was a row in
-    // its table and this interception is what kept it there, so the program's `wac test` never ran on
-    // this binary. `issues/system/0264c` measured where the two disagreed — a report per file against
-    // one aggregate for `--coverage <directory>` — and the 700 lines behind this line are gone.
-    //
-    // What went with them is a capability, not only a duplicate: `test_command` parsed `--allow-*` at
-    // run time, where the fall-through hands the seed its *baked* manifest. That is the open half —
-    // see `0264c`.
-    // **`covdump` is back here, and `issues/system/0264c` is why.** It ran in the program from
-    // `issues/system/0257c` until 2026-08-25, and that broke thirteen coverage ratchets: the program
-    // reaches an exercise through `cli.load`, and a loaded module is granted `run: false` by a policy
-    // `load_module` states in its own words. An exercise that asks an oracle could no longer ask it, so
-    // every ledger measured a fraction of its package and said *the operand oracle did not answer*.
-    //
-    // Running a module and reading the counters it leaves behind is the host's job in a way a command
-    // surface is not — the counters are in the instance, and nothing outside it can see them. This
-    // stays here until a command-line grant can reach a baked program.
-    // **Whether the engine accepts a module, without running it.** `WebAssembly.validate` has no
-    // equivalent in wac, so a test that emits modules and wants to know they are well-formed had to
-    // run each one — a fork per module. `packages/wacc/test/wac/corpusemit_test.wac` compiles the
-    // whole repository and paid 543 of them, which is 142s of the 193s it took. Taking a list is the
-    // whole point: the isolate is built once and every module is compiled inside it.
-    if SEED.is_some() && stem == "validate" {
-        std::process::exit(validate_command(&args[2..]));
-    }
-    // **No `ctcompare` here.** `packages/wac/src/wac.wac`, as of 2026-08-25 — the last of the three
-    // counter commands to move, for `issues/system/0257c`'s rule that a host implements running a
-    // module and not the command surface. It reaches the seed through the fall-through below.
-    // **No `tracestat` here.** It is `packages/wac/src/wac.wac`'s, as of 2026-08-25 —
-    // `issues/system/0257c`'s rule is that a host may implement *running a module* and must not
-    // implement the command surface, and reading a journal's size is a command. It reaches the seed
-    // through the fall-through below, like `check` and `build`.
-    // **A stem is no longer a program.** `wac <stem>` used to run `<stem>.wasm` against a
-    // `<stem>.json` beside it, which was the pair form: two files, and a manifest that could be
-    // separated from the module it describes. `wac build` writes one artefact now — the manifest is a
-    // section inside the module — so anything that is not a command and not a `.wasm` is the
-    // compiler's. `issues/system/0161`.
+
     if SEED.is_some() {
         start_v8();
         let code = run_seed(&args[1..]);
         // **A successful `build` has to have written a module the engine accepts.**
         //
-        // `wac run` and `wac test` load what they compiled, so a broken module fails there on its
-        // own. `wac build` is the command whose whole output is the artefact, and it had no such
-        // check: an ill-typed program wacc's checker has no rule for could be emitted *wrongly* —
-        // the function present and the types not agreeing — and the build printed a size and exited
-        // 0 over a file the engine refuses to load. `issues/lang/0170a`.
+        // The one thing here that outlives the command surface, and it is not a command: it is the
+        // engine being asked whether it would load what the compiler claimed to write, which is a
+        // question only the engine can answer. `wac run` and `wac test` load what they compiled, so a
+        // broken module fails there on its own. `build`'s whole output is the artefact, and an
+        // ill-typed program wacc has no rule for could be emitted *wrongly* — the function present and
+        // the types not agreeing — with the build printing a size and exiting 0 over a file the engine
+        // refuses. `issues/lang/0170a`.
         //
-        // `validate_command` is the same validator `wac validate` is, called rather than copied, so
-        // there is one answer to "would this load".
-        if code == 0 && stem == "build" {
+        // Keyed on the command word only to know whether there is an artefact to look for. It reads
+        // nothing else off the line and refuses nothing: an argument this does not understand simply
+        // yields no path, and the program has already had its say either way.
+        if code == 0 && args.get(1).is_some_and(|a| a == "build") {
             if let Some(out) = built_module_path(&args[1..]) {
                 if std::path::Path::new(&out).is_file() && validate_modules(&[out.clone()], true) != 0 {
                     eprintln!(
@@ -1527,8 +1437,36 @@ fn main() {
         }
         std::process::exit(code);
     }
-    eprintln!("wac: {stem} is not a command, and this build has no compiler in it");
-    std::process::exit(2);
+
+    // **No seed: a runtime, and nothing more.** `wac prog.wasm` is the whole of it — a module
+    // carrying its own manifest, run with what that manifest declares.
+    let Some(stem) = args.get(1) else {
+        eprintln!("usage: wac <program.wasm>   # a module carrying its own manifest");
+        eprintln!("       this build has no compiler in it, so it has no other commands");
+        std::process::exit(2);
+    };
+    let bytes = match std::fs::read(stem) {
+        Ok(b) => b,
+        Err(e) => {
+            // `message_of` rather than `to_string`, which is the difference between "No such file or
+            // directory" and "No such file or directory (os error 2)".
+            eprintln!("wac: cannot read {stem} — {}", message_of(&e));
+            std::process::exit(1);
+        }
+    };
+    let Some(text) = manifest_in(&bytes) else {
+        eprintln!("wac: {stem} carries no wac.manifest section — build it with packages/platform/native.ts");
+        std::process::exit(1);
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the manifest inside {stem} is not one — {e}");
+            std::process::exit(1);
+        }
+    };
+    start_v8();
+    std::process::exit(run(&manifest, &bytes, &text));
 }
 
 /// Where a `build` put its module, so the host can check what the compiler claimed to write.

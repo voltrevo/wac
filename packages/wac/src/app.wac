@@ -1,0 +1,173 @@
+// `wac app` and `wac app-run` — a program that runs by being run.
+//
+// The artefact is a `/bin/sh` preamble with a wasm module glued to the end of it. `./thing` execs
+// `wac app-run "$0"`, which finds the module inside the file it was pointed at and runs it. So it is
+// one file, it is executable, it survives an `scp`, and it is **about 700 KB rather than 67 MB** —
+// because the engine is not in it. What is in it is the program.
+//
+// **Both were the host's until 2026-08-26**, and the reason given was that "the compiler writes a
+// module and knows nothing about making it executable". That was true of the *compiler*; it is not
+// true of this program, which is not the compiler. `Cli.setExecutable` is the one capability the
+// pair needed that a wac program did not obviously have, and it has been there since
+// `issues/system/0132` — one bit rather than a mode, which is exactly the bit this wants.
+// `issues/system/0257c`: a host may implement running a module, and must not implement the command
+// surface.
+//
+// The one thing here that only a host can answer is **which version of `wac` is running**, because
+// the check exists to catch a file built by one installation and run by another. It arrives as
+// `WAC_VERSION`, set beside `WAC_COMPILER_ID` by whichever host started this program.
+
+import { Change, Cli, Core, FileResult, Stat } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { runBytes } from "./runprog.wac";
+
+/**
+ * The line that says a file was built by `wac app`, and by which version.
+ *
+ * A shell comment, so the preamble stays a valid script. Looked for **only in the text before the
+ * module**, so a byte sequence inside the module cannot pass for a version line.
+ */
+export const string APP_MARK = "# wac-app ";
+
+/** This host's version, or "" if it did not say — see the note at the top of this file. */
+export string wacVersion(Cli cli) {
+  u8[]? v = cli.env("WAC_VERSION").wait();
+  if ((v is null) || v!.len() == 0) { return ""; }
+  return string.fromBytes(v!);
+}
+
+/**
+ * The preamble a `wac app` executable begins with.
+ *
+ * **No backtick and no `$` that the shell would expand**, other than the two positional expansions
+ * it needs: this text is read by `/bin/sh` on somebody else's machine, and the only thing it may do
+ * is check for `wac` and exec it. `command -v` is POSIX, unlike `which`.
+ *
+ * `"$0"` rather than the path as written, so the file finds itself wherever it was moved to; `"$@"`
+ * so the program gets its own arguments.
+ */
+export string preamble(string version) {
+  return "#!/bin/sh\n"
+       + APP_MARK + version + "\n"
+       + "# A wac program. The wasm module begins at the first NUL byte below.\n"
+       + "command -v wac >/dev/null 2>&1 || {\n"
+       + "  echo \"$0: needs the wac command on PATH — deno task wac:install\" >&2\n"
+       + "  exit 127\n"
+       + "}\n"
+       + "exec wac app-run \"$0\" \"$@\"\n";
+}
+
+/**
+ * Where the wasm module starts inside a `wac app` executable, or -1.
+ *
+ * The magic number `\0asm`, which is the first thing in every wasm module and cannot appear in the
+ * preamble — that text is ASCII and has no NUL in it.
+ */
+export i32 moduleAt(u8[] bytes) {
+  for (i32 i = 0; i + 3 < bytes.len(); i++) {
+    // Plain integers on both sides: indexing a `u8[]` already answers an `i32` here, and the `as u8`
+    // this first had was both a cast to the type it already was and, without brackets, a parse of
+    // `(bytes[i] == 0) as u8`.
+    if (bytes[i] == 0 && bytes[i + 1] == 97 && bytes[i + 2] == 115 && bytes[i + 3] == 109) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** The version on the `APP_MARK` line of `head`, or "" if there is no such line. */
+export string builtBy(string head) {
+  i32 at = 0;
+  while (at <= head.len()) {
+    i32 nl = head.slice(at, head.len()).indexOf("\n");
+    i32 end = nl < 0 ? head.len() : at + nl;
+    string line = head.slice(at, end);
+    if (line.len() >= APP_MARK.len() && line.slice(0, APP_MARK.len()) == APP_MARK) {
+      // `trimmed` of a version is the trailing `\r` a file that went through a Windows editor
+      // carries, and nothing else — a version has no spaces in it.
+      string v = line.slice(APP_MARK.len(), line.len());
+      i32 n = v.len();
+      while (n > 0 && (v.slice(n - 1, n) == "\r" || v.slice(n - 1, n) == " ")) { n = n - 1; }
+      return v.slice(0, n);
+    }
+    if (nl < 0) { break; }
+    at = end + 1;
+  }
+  return "";
+}
+
+/**
+ * `wac app <entry.wac> -o <dest>` — write the executable, given the module already built.
+ *
+ * The build is the caller's: `wac.wac` has just compiled the entry with the grants asked for, and
+ * `whole` is the module with its manifest section in it. Everything left is file work.
+ *
+ * **Executable for whoever can already read it**, which is what a program handed to somebody has to
+ * be — owner-only would make an `scp` to a shared machine produce a file nobody there can run. That
+ * is `setExecutable`'s whole surface, and it is the reason one bit was enough.
+ */
+export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWords) {
+  u8[] head = preamble(wacVersion(cli)).toBytes();
+  u8[] out = u8[head.len() + whole.len()]();
+  for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+  for (i32 i = 0; i < whole.len(); i++) { out[head.len() + i] = whole[i]; }
+  Change wrote = cli.writeFile(dest, out).wait();
+  if (!wrote.ok()) {
+    core.warn("wac: cannot write " + dest + " — " + wrote.message);
+    return 1;
+  }
+  Change made = cli.setExecutable(dest, true).wait();
+  if (!made.ok()) {
+    core.warn("wac: cannot make " + dest + " executable — " + made.message);
+    return 1;
+  }
+  core.warn(dest + "  " + itoa(out.len() / 1024) + " KB  ["
+            + (grantWords == "" ? "no capabilities" : grantWords) + "]");
+  return 0;
+}
+
+/**
+ * `wac app-run <file> [args…]` — run the module inside a `wac app` executable.
+ *
+ * **No compiler is needed and none is asked for**, which is the whole point of the artefact: a build
+ * carrying only a shell can still run one of these.
+ *
+ * The version check is not politeness. wac is unstable by choice, so a manifest written by another
+ * version is not read the same way, and the failure without this check is whatever the difference
+ * happens to produce — a missing export, a world built in the wrong order, or nothing at all until
+ * the program is halfway through. Refusing by name costs one comparison and says what to do.
+ */
+export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) {
+    core.warn("wac: cannot read " + path + " — " + f.error);
+    return 1;
+  }
+  i32 at = moduleAt(f.bytes);
+  if (at < 0) {
+    core.warn("wac: " + path + " carries no wasm module — is it a `wac app` executable?");
+    return 1;
+  }
+  u8[] headBytes = u8[at]();
+  for (i32 i = 0; i < at; i++) { headBytes[i] = f.bytes[i]; }
+  string head = string.fromBytes(headBytes);
+  string was = builtBy(head);
+  if (was == "") {
+    core.warn("wac: " + path + " has a module in it but no `" + APP_MARK + "` line — not built by "
+              + "`wac app`");
+    return 1;
+  }
+  string mine = wacVersion(cli);
+  // **A host that does not say its version cannot refuse for it.** Both sides read the same variable,
+  // so an empty `mine` means this host published nothing rather than that the file is unmarked —
+  // reporting a mismatch there would blame the artefact for the host's silence.
+  if (mine != "" && was != mine) {
+    core.warn("wac: " + path + " was built by wac " + was + " and this is wac " + mine);
+    core.warn("     wac is unstable by choice, so a manifest from another version is not read");
+    core.warn("     the same way. Rebuild it: wac app <entry.wac> -o " + path);
+    return 1;
+  }
+  u8[] wasm = u8[f.bytes.len() - at]();
+  for (i32 i = at; i < f.bytes.len(); i++) { wasm[i - at] = f.bytes[i]; }
+  return runBytes(core, cli, wasm, args, path);
+}

@@ -110,6 +110,14 @@ export Asked forCommand(string cmd) {
   if (cmd == "compile" || cmd == "bindgen" || cmd == "build") {
     return Asked(true, true, false, true, false);
   }
+  // `app` is a build that writes an executable instead of a module: the same three, and the
+  // executable bit is part of writing a file rather than a capability of its own.
+  if (cmd == "app") { return Asked(true, true, false, true, false); }
+  // `app-run` reads one file and starts what is inside it, and the grants the program gets are the
+  // ones its own manifest declares — `runBytes` reads them from the module rather than passing on
+  // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
+  // handed what its parent does not hold, so narrowing here would cap what a built program declared.
+  if (cmd == "app-run") { return Asked(true, true, true, true, true); }
   // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
   // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
   // though the two now live in one program.

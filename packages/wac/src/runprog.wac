@@ -190,21 +190,36 @@ export i32 runModule(Core core, Cli cli, i32 argc, string path) {
     core.warn("wac: cannot read " + path + " — " + (words == "" ? f.error : words));
     return 1;
   }
-  i32 grants = declaredGrants(f.bytes);
+  u8[][] args = u8[][argc - 1 < 0 ? 0 : argc - 1](fill: u8[0]());
+  for (i32 i = 1; i < argc; i++) { args[i - 1] = cli.arg(i).wait(); }
+  return runBytes(core, cli, f.bytes, args, path);
+}
+
+/**
+ * A module already in hand, run with what its own manifest declares.
+ *
+ * Split from `runModule` for `wac app-run`, whose module is not a whole file: it is the tail of an
+ * executable, after a shell preamble. Everything from the manifest down is identical, and the one
+ * thing the two do not share is how they got the bytes — so that is what stayed behind.
+ *
+ * `shown` is the path to name in a message. It is the file the *caller* pointed at, which for an
+ * app is the executable rather than anything a compiler wrote, and a sentence naming a module the
+ * caller has never seen is a sentence about the wrong thing.
+ */
+export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
+  i32 grants = declaredGrants(wasm);
   if (grants < 0) {
-    core.warn("wac: " + path + " carries no wac.manifest section — build it with "
+    core.warn("wac: " + shown + " carries no wac.manifest section — build it with "
               + "packages/platform/native.ts");
     return 1;
   }
-  u8[][] args = u8[][argc - 1 < 0 ? 0 : argc - 1](fill: u8[0]());
-  for (i32 i = 1; i < argc; i++) { args[i - 1] = cli.arg(i).wait(); }
-  Child kid = cli.spawn(f.bytes, args, grants, "", true, false).wait();
+  Child kid = cli.spawn(wasm, args, grants, "", true, false).wait();
   if (kid.unavailable()) {
     core.warn("wac: this host cannot run a module — it has no form of `spawn`");
     return 1;
   }
   if (kid.handle < 0) {
-    core.warn("wac: cannot run " + path + " — " + kid.error);
+    core.warn("wac: cannot run " + shown + " — " + kid.error);
     return 1;
   }
   return relay(core, cli, kid);

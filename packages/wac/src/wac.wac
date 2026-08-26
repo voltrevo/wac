@@ -31,7 +31,8 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { CallResult, Change, Child, Cli, Core, FileResult, LoadedModule, Pending, Stat, faultWords }
+import { CallResult, Change, Child, Cli, Core, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
+         GRANT_RUN, GRANT_WRITE, LoadedModule, Pending, Stat, faultWords }
   from "std/platform.wac";
 import { Read } from "core";
 import { Vec } from "core/vec.wac";
@@ -47,6 +48,7 @@ import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../..
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
          from "./runprog.wac";
+import { appRun, writeApp } from "./app.wac";
 import { aggregatePath, aggregateSource, beside, flagValue, importable, noTrailingSlash, runTests,
          sigsWithCounters,
          testFilesIn, unknownTestFlag, withoutIgnored } from "./testrun.wac";
@@ -781,7 +783,12 @@ string usage() {
        // Printed by the host until 2026-08-26, appended after this block because the command lived
        // there. It is the program's now, so its line is too — `issues/system/0257c`.
        + "       wac uninstall [--keep-cache]   remove what `deno task wac:install` put under\n"
-       + "                $WAC_HOME, the profile line, and nothing else";
+       + "                $WAC_HOME, the profile line, and nothing else\n"
+       // Appended by the host after this block until 2026-08-26, because `app` was the host's
+       // command and this program knew nothing about it. It is here now, and so is the command —
+       // which is what makes this the whole list rather than most of it.
+       + "       wac app [--allow-…] <entry.wac> -o <dest>   an executable that runs itself — one\n"
+       + "                file, needing a `wac` on the machine that runs it";
 }
 
 /**
@@ -983,6 +990,24 @@ export i32 main(Core core, Cli cli) {
   // 'prog.wasm'" — a message about the wrong thing entirely.
   if (cmd.len() > 5 && cmd.slice(cmd.len() - 5, cmd.len()) == ".wasm") {
     return runModule(core, cli, argc, cmd);
+  }
+
+  // **`app-run` needs no compiler and asks for none**, which is why it is up here with the module
+  // case rather than below the shared compile: the module it runs is already built and glued to the
+  // end of the file it was pointed at. A build of this program carrying only a shell can still run a
+  // `wac app` executable, and that was true when the command lived in the host too.
+  if (cmd == "app-run") {
+    if (argc < 2) {
+      core.warn("usage: wac app-run <file> [args…]");
+      core.warn("       normally run for you by the first two lines of a `wac app` executable");
+      return 2;
+    }
+    string appPath = string.fromBytes(cli.arg(1).wait());
+    // Argument 0 for the program is the first thing after the file, exactly as `run` counts: the
+    // artefact's own path is how it was found, not something it was told.
+    u8[][] rest = u8[][argc - 2 < 0 ? 0 : argc - 2](fill: u8[0]());
+    for (i32 i = 2; i < argc; i++) { rest[i - 2] = cli.arg(i).wait(); }
+    return appRun(core, cli, argc, appPath, rest);
   }
 
   // **The shell and the fetcher, in this program rather than beside it.** `issues/system/0257c`:
@@ -1192,8 +1217,9 @@ export i32 main(Core core, Cli cli) {
   // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
   // error is reported as one should not depend on an unrelated path happening to exist.
   if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run"
-      && cmd != "test") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build, bindgen, run or test");
+      && cmd != "test" && cmd != "app") {
+    core.warn("wacc: unknown command '" + cmd
+              + "' — check, compile, build, bindgen, run, test or app");
     return 2;
   }
 
@@ -1595,6 +1621,41 @@ export i32 main(Core core, Cli cli) {
       return 1;
     }
     return relay(core, cli, kid);
+  }
+
+  // **`app` is `build` with a different thing written**, and it goes here for that reason: the shared
+  // compile above has already produced `wasm`, and the only two questions left are what bytes go on
+  // the front and what the file's mode is. Its own dispatch rather than a flag on `build` because the
+  // output is not a module — `-o thing.wasm` and `-o thing` mean the same to `build` and very
+  // different things to somebody handed the result.
+  if (cmd == "app") {
+    string bad = unknownFlag(cli, argc);
+    if (bad != "") {
+      core.warn("wac: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, "
+                + "--allow-env, --allow-run");
+      return 2;
+    }
+    string dest = outStem(cli, argc);
+    if (dest == "") {
+      core.warn("usage: wac app [--allow-read] [--allow-write] [--allow-net] [--allow-env] "
+                + "[--allow-run] <entry.wac> -o <dest>");
+      core.warn("       ./<dest> runs it, and needs the `wac` command on the machine that does");
+      return 2;
+    }
+    i32 appGrants = grantsIn(cli, argc);
+    // The grants as words, for the line this prints: `--allow-read --allow-write` reads back as what
+    // was typed, where a bitmask would be a number the caller has to decode to check their own build.
+    string words = "";
+    if ((appGrants & GRANT_READ) != 0) { words = words + (words == "" ? "" : " ") + "--allow-read"; }
+    if ((appGrants & GRANT_WRITE) != 0) { words = words + (words == "" ? "" : " ") + "--allow-write"; }
+    if ((appGrants & GRANT_NET) != 0) { words = words + (words == "" ? "" : " ") + "--allow-net"; }
+    if ((appGrants & GRANT_ENV) != 0) { words = words + (words == "" ? "" : " ") + "--allow-env"; }
+    if ((appGrants & GRANT_RUN) != 0) { words = words + (words == "" ? "" : " ") + "--allow-run"; }
+    return writeApp(core, cli,
+                    withManifestSection(wasm, manifestWire(wasm, types, sigs, entry,
+                                                           baseName(stem(entry)) + ".wasm",
+                                                           appGrants)),
+                    dest, words);
   }
 
   if (cmd == "build") {
