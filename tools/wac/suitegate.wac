@@ -76,10 +76,44 @@ i32 cooldownMin() { return 20; }
  * barely moves; the rise is 2.5–3.3 GB whether one worker runs or four", true of a suite a third the
  * size, and it outlived its measurement because the sweep that produces it had quietly stopped
  * running. The suite was 3230 tests in the parallel pass when the table above was taken and is larger
- * now, so **5500 is a floor nobody has re-measured**, and if it is wrong today it is wrong by being
- * too low. Re-run the sweep before trusting it against a machine that is close to the line.
+ * now, so **5500 was a floor nobody had re-measured**. Re-run the sweep before trusting any number
+ * here against a machine that is close to the line.
+ *
+ * ## 4000, operator's decision 2026-08-26 — and what it rests on
+ *
+ * The suite the table above describes is the **Deno lane alone**, when that lane held 3,230–3,377
+ * tests. It is about 14% of the suite now, and `issues/system/0266c` sampled a full run of the suite
+ * that actually runs:
+ *
+ *     available at start   6625 MB      used at start   5305 MB
+ *     lowest available     4137 MB      peak used       7794 MB
+ *     rise (used)          2489 MB
+ *
+ * A rise of 2489 against a floor of 5500 is roughly double the requirement, and `issues/system/0266c`
+ * records thirty-five refusals in one day with 45 finished commits behind them. Peak was 7794 MB of
+ * 11.9 GB, so about 4 GB stayed free at the worst moment of a complete run.
+ *
+ * **Three things this number is knowingly weak on**, so the next person does not have to rediscover
+ * them:
+ *
+ *   - **3000 was tried and killed runs** — three in one afternoon, above. 4000 is 1000 MB above a
+ *     floor that demonstrably admitted suites that then died, and the reason that is not the same bet
+ *     is that those runs rose 4.9 GB where this one rose 2.5.
+ *   - **2489 is a warm-cache figure.** It is `free -m` used-delta from a box with 5.3 GB already
+ *     resident, so the files the suite reads were largely cached before it started and the climb is
+ *     understated. The cgroup's `anon` rise is the quantity that has to be *found*, and for today's
+ *     suite nobody has measured it. The last anon figure, for the old Deno-only lane, was 5905.
+ *   - **The floor is a start condition and 4137 was a mid-run trough.** That run began at 6625 and
+ *     dipped; it is not evidence that starting at 4137 is survivable, and it should not be read as
+ *     such.
+ *
+ * What settles it is one instrumented run reading `memory.stat`'s `anon` for the suite as it is now.
+ * Until then this is a judgement: the old constant described a workload that no longer exists, and a
+ * number twice the measured rise was refusing pushes for reasons the machine did not have.
+ * `issues/system/0142` is why the direction matters — a floor that is too low does not fail loudly,
+ * it produces a killed lane that reads as a red test.
  */
-i32 minAvailableMb() { return 5500; }
+i32 minAvailableMb() { return 4000; }
 /** One-minute load average above which five cores are already spoken for — 8, in tenths. */
 i32 maxLoadTenths() { return 80; }
 /** The environment variable that says a suite is already running above us. */
