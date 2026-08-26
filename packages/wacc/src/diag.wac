@@ -44,6 +44,9 @@ export string parseMessage(i32 code) {
   if (code == 27) { return "expected a brace after the struct name"; }
   if (code == 28) { return "a function type cannot be used as an array element type"; }
   if (code == 29) { return "a module specifier must be a quoted path"; }
+  if (code == 30) { return "a keyword cannot be used as a name"; }
+  if (code == 31) { return "'override' is not allowed on an enum method"; }
+  if (code == 32) { return "an enum method must take 'this'"; }
   return "the parser refused this";
 }
 
@@ -115,13 +118,19 @@ export string checkMessage(i32 code) {
   if (code == 47) { return "this is not something that can be called"; }
   if (code == 48) { return "a method is not a value; call it or take it as a funcref"; }
   if (code == 49) { return "a type name is not a value"; }
-  if (code == 50) { return "float literal out of range for its type"; }
+  // **Both kinds of literal, so the headline names the rule and not one caller.** `reportLiteral`
+  // raises this for an integer too wide for its slot as well as a float too large for an `f32`, and
+  // saying *float* meant `i32 b = 5000000000;` was reported as a float literal — which is the one
+  // thing the reader can see is not true. The annotation carries which type it did not fit.
+  if (code == 50) { return "literal out of range for its type"; }
   if (code == 51) { return "no variant of that name"; }
   if (code == 52) { return "unknown module"; }
   if (code == 53) { return "a generic that instantiates itself for ever"; }
   if (code == 54) { return "an enum method cannot be named after one of its variants"; }
   if (code == 55) { return "this name is already imported or declared in this file"; }
   if (code == 77) { return "no file was supplied at that path"; }
+  if (code == 78) { return "cannot tell what a type parameter is here"; }
+  if (code == 79) { return "the arguments imply two different types for one type parameter"; }
   if (code == 56) { return "that file does not export this name"; }
   if (code == 57) { return "undefined type"; }
   if (code == 58) { return "match does not cover every variant"; }
@@ -168,14 +177,21 @@ export string hintFor(i32 code) {
   if (code == 10) { return "drop the `const`, or bind a separate local for the value that changes"; }
   if (code == 12) { return "take the parameter without `const` if it is meant to be written through"; }
   if (code == 16) { return "`as` converts without loss, `as!` checks at runtime, `as~` takes the nearest value"; }
+  // The distinction the rule turns on, because "instantiates itself for ever" is a symptom and
+  // this is the cause: recursion on the *same* type parameter is the commonest shape there is.
+  if (code == 53) { return "a recursive generic must pass `T` along, not something that contains it"; }
   if (code == 30) { return "use `as!` — a cast down the hierarchy has to be checked"; }
   if (code == 33) { return "store the packed value in a wider type, or drop the `?`"; }
   if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
   if (code == 29) { return "quote it — `core` included, since D5 removed the one bare spelling"; }
   if (code == 46) { return "the cast can be removed"; }
-  if (code == 50) { return "use `f64` if the value does not fit an `f32`"; }
+  // Kept useful for the float case without asserting the literal is one — `i32 b = 5000000000;` was
+  // told to use an `f64`, which is advice about a different program.
+  if (code == 50) { return "a literal has to fit the type it is written for; `f64` holds what an `f32` cannot"; }
   if (code == 55) { return "rename one of them with `as`"; }
   if (code == 77) { return "supply the file, or check the path — `core` and `std` are the only trees that need none"; }
+  if (code == 78) { return "the arguments are what say it — a `null` is a value of no type, so it says nothing"; }
+  if (code == 79) { return "one type parameter is one type — convert one argument, or give the function two"; }
   if (code == 56) { return "import it from the file that declares it — importing does not re-export"; }
   if (code == 57) { return "import the type, or check the spelling"; }
   if (code == 58) { return "add the missing arms, or an `else`"; }
@@ -218,5 +234,9 @@ export string hintFor(i32 code) {
 export string parseHintFor(i32 code) {
   if (code == 21) { return "a type is a name like `i32`, `string`, or one this file declares"; }
   if (code == 25) { return "a field is `type name;` — the name comes after the type"; }
+  // No hint for 30: the annotation already names the keyword and the position, and this file's rule
+  // is that a hint with nothing to add is filler.
+  if (code == 31) { return "an enum's variants are the compiler's own subtypes, so there is nothing to override"; }
+  if (code == 32) { return "`E.name()` is already how a variant is constructed, so a static method would be ambiguous"; }
   return "";
 }

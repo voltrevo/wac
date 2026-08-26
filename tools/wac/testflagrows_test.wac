@@ -8,7 +8,7 @@
 // flag accepted and ignored is the first of those, handed to a caller who asked for it by name.
 //
 // What let it last was not the flag. `test` is one of the two subcommands implemented **twice** — in
-// `native/v8/src/main.rs` and again in `packages/wacc/example/wacc.wac` — and
+// `native/v8/src/main.rs` and again in `packages/wac/src/wac.wac` — and
 // `packages/wacc/test/wac/commandparity_test.wac` is the instrument that holds the two together. No
 // row passed `--verbose`, so the instrument never looked at it. This checks that every flag the wac
 // side accepts is one some row supplies.
@@ -36,7 +36,7 @@ import { Vec } from "core/vec.wac";
  * flags `test` accepts — got 0" rather than passing. That assertion is why this file names two paths
  * instead of chasing one.
  */
-const string CLI = "packages/wacc/example/wacc.wac";
+const string CLI = "packages/wac/src/wac.wac";
 const string CMD_DIR = "packages/wac/src";
 const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
 
@@ -51,12 +51,11 @@ bool excused(string cmd, string flag) {
   // holds `exec` and `spawn` across all four hosts already, and a row here would pay a process per
   // host to ask the same question somewhere whose subject is the command rather than the capability.
   if (flag == "--allow-run") { return true; }
-  // **`run --allow-env` waits on `issues/system/0256c`**, which is that a *denied* `env` answers null
-  // on the native hosts and traps on the JavaScript ones. A row that does not grant it therefore
-  // disagrees by host, and a row that does grant it asks what the `test --allow-env` row already
-  // asks one layer in. Delete this arm when that issue closes; the row it wants is a `caps` fixture
-  // reporting the environment beside the two capabilities it already reports.
-  if (cmd == "run" && flag == "--allow-env") { return true; }
+  // `run --allow-env` was excused here while `issues/system/0256c` was open — a *denied* `env`
+  // answered null on the native hosts and trapped on the JavaScript ones, so a row that did not grant
+  // it disagreed by host. That closed on 2026-08-25 and this arm went with it: the row the excuse
+  // asked for is `run --allow-read --allow-env src/caps.wac`, and the `caps` fixture reports the
+  // environment beside the read and the write it already reported.
   return false;
 }
 

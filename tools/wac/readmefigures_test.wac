@@ -40,7 +40,7 @@ import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
+import { contains, splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
 
 /** Ten per cent either way. Rot, not drift. */
 const i32 TOLERANCE_PERCENT = 10;
@@ -703,5 +703,67 @@ export string test_the_side_channel_table_lists_what_ct_wac_traces(Core core, Cl
   t.eqStr(extra, "",
           "the side-channel table names these and ct.wac does not trace them:" + extra +
           " — a verdict with nothing behind it, which is what that section exists not to have.");
+  return t.report();
+}
+
+/**
+ * Every measurement in wacc's reference-comparison table names what prints it.
+ *
+ * **A guard against an orphaned figure, which is a real thing that happened.** That table carried
+ * "emit wasm — 356 of 359 whole" until 2026-08-25, and by then no test in the repository produced
+ * either number: the measurement it came from had been replaced and the sentence stayed. Two rows above
+ * it said "303 of 304 spec rejections" where the live answer is 317 of 317 with an empty ledger of
+ * misses — a stale figure *understating* the compiler, which is the direction nobody checks.
+ *
+ * `tools/wac/readmefigures_test.wac` existed and passed throughout, because it checks other figures.
+ * That is the gap this closes.
+ *
+ * **A shape check, not a value check**, and deliberately. The tests behind these rows cost 28 minutes
+ * (`corpusemit_test.wac` compiles the tree), so a guard that re-derived them would be a guard nobody
+ * runs. What it asserts is the property that makes a value checkable *by hand*: a claim of the form
+ * "N of M" has to name the file that prints it, so a reader can run one thing and compare. The
+ * operator's instruction for this table is to keep it current; naming the printer is what makes
+ * "current" a question with an answer.
+ */
+export string test_every_measurement_in_the_wacc_table_names_its_printer(Core core, Cli cli) {
+  T t = T.create();
+  string path = "packages/wacc/README.md";
+  FileResult f = cli.readFile(path).wait();
+  t.isTrue(f.ok, "could not read " + path + " — " + f.error);
+  if (!f.ok) { return t.report(); }
+  string[] lines = splitLines(string.fromBytes(f.bytes));
+
+  // The table is the one whose header names the reference; there is one.
+  i32 at = 0 - 1;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (startsWith(lines[i], "| what the reference does")) { at = i; }
+  }
+  t.isTrue(at >= 0, "the reference-comparison table is not in " + path + " under its old heading");
+  if (at < 0) { return t.report(); }
+
+  i32 rows = 0;
+  i32 measured = 0;
+  for (i32 i = at + 1; i < lines.len(); i++) {
+    string l = lines[i];
+    // The table ends at the first line that is not a row.
+    if (l.len() == 0 || !startsWith(l, "|")) { i = lines.len(); continue; }
+    if (startsWith(l, "|---")) { continue; }
+    rows = rows + 1;
+    // "N of M" is the shape every measurement in this table uses. A row without one is prose.
+    if (!contains(l, " of ")) { continue; }
+    bool digits = false;
+    for (i32 c = 0; c + 1 < l.len(); c++) {
+      string ch = l.slice(c, c + 1);
+      if (ch >= "0" && ch <= "9") { digits = true; }
+    }
+    if (!digits) { continue; }
+    measured = measured + 1;
+    t.isTrue(contains(l, "_test.wac") || contains(l, ".test.ts"),
+             "a measurement in wacc's table names no test that prints it, so nobody can check it: " +
+             l.slice(0, l.len() < 120 ? l.len() : 120));
+  }
+  t.isTrue(rows > 8, "found only " + itoa(rows) + " rows in wacc's table — the walk is not reaching it");
+  t.isTrue(measured > 2, "found only " + itoa(measured) + " measurements in wacc's table, which is " +
+                         "fewer than the three this was written for");
   return t.report();
 }

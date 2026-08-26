@@ -1,0 +1,5 @@
+// expect: answers f = 5
+// why: the control for `0230` and `0231` — a value an `f64` holds exactly converts and answers, so
+//      the trap is an exactness test rather than a refusal of the conversion
+// from: issues/lang/0268c
+export f64 f() { i64 x = 5; return x as! f64; }

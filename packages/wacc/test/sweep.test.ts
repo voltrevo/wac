@@ -36,6 +36,20 @@ function ours(src: string): string[] {
 }
 
 /**
+ * The same diagnostics as `code@line:col`, for the one property positions cannot express.
+ *
+ * A repeat is invisible to the two checks below: they ask whether each position we report is one the
+ * reference reports, and a second copy of a position is still one it reports. So a program could draw
+ * the same complaint twice for ever and this sweep would call it agreement.
+ */
+function oursKeyed(src: string): string[] {
+  const out = dumpTypeErrors(enc.encode(src));
+  const keys: string[] = [];
+  for (let i = 0; i < out.length; i += 3) keys.push(`${out[i]}@${out[i + 1]}:${out[i + 2]}`);
+  return keys;
+}
+
+/**
  * The reference's type diagnostics, or `null` when its **parser** would not read the program.
  *
  * Rung 3 compares type checkers, and a program the parser could not read has no type diagnostics to
@@ -74,6 +88,8 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
 
   const alarms: string[] = [];
   const contradictions: string[] = [];
+  const repeats: string[] = [];
+  const missed = new Map<string, { n: number; example: string }>();
   let accepted = 0;
   let rejected = 0;
   let caught = 0;
@@ -98,8 +114,28 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
       continue;
     }
     rejected++;
-    if (mine.length === 0) continue;
+    if (mine.length === 0) {
+      // **The misses, grouped by the context that produced them.** The recall message below has always
+      // said *"the kinds it missed most are printed above"* and nothing printed them, so a run that
+      // dropped under the floor sent the reader to output that did not exist — and the seven standing
+      // misses were invisible meanwhile. Keyed on `cell.context` rather than on the reference's message
+      // because that is what the generator varies, so a row names the axis to look at.
+      const seen = missed.get(cell.context) ?? { n: 0, example: cell.src };
+      seen.n++;
+      missed.set(cell.context, seen);
+      continue;
+    }
     caught++;
+    // **The same complaint twice is one complaint, and this is where that is checked.** `C.report`
+    // dedupes against the *immediately previous* diagnostic only, so anything recorded in between
+    // lets a repeat through — and neither check in this loop can see one, since a duplicate position
+    // is still a position the reference reports. Measured at 630 of these programs before the scan
+    // was widened to every entry.
+    const keys = oursKeyed(cell.src);
+    if (new Set(keys).size !== keys.length && repeats.length < 12) {
+      const dup = keys.filter((k, i) => keys.indexOf(k) !== i);
+      repeats.push(`${cell.context}: ${dup.join(",")} twice in ${JSON.stringify(cell.src)}`);
+    }
     for (const at of mine) {
       if (!theirs.includes(at)) {
         if (contradictions.length < 12) {
@@ -110,10 +146,27 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
       }
     }
   }
+  // Most-missed first, one line each with a program to run. Six rows, because the point is a queue to
+  // work rather than a census — and the tail is counted so a cap cannot read as "that is all of them".
+  const byMost = [...missed.entries()].sort((a, b) => b[1].n - a[1].n);
+  for (const [ctx, v] of byMost.slice(0, 6)) {
+    console.log(`        ${String(v.n).padStart(3)} missed  ${ctx}  e.g. ${JSON.stringify(v.example)}`);
+  }
+  const tail = byMost.slice(6).reduce((n, [, v]) => n + v.n, 0);
+  if (tail > 0) {
+    console.log(`        … and ${byMost.length - 6} more context(s) holding ${tail} miss(es)`);
+  }
   console.log(`    rung 3 generated sweep: ${cells.length} programs, ${accepted} accepted ` +
     `(${alarms.length} false alarms), ${rejected} rejected, ${caught} caught ` +
     `(${((100 * caught) / rejected).toFixed(0)}%), ${contradictions.length} contradicted, ` +
     `${unparsed} unparsed (wac 0079)`);
+
+  if (repeats.length > 0) {
+    throw new Error(
+      `${repeats.length}+ program(s) draw the same diagnostic twice at one position:\n  ` +
+        repeats.join("\n  "),
+    );
+  }
 
   // Both halves have to be non-empty, or the sweep is measuring one thing and calling it two. A
   // generator that only produced valid programs would report "no contradictions" for ever.

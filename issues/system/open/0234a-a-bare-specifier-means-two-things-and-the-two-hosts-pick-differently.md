@@ -37,7 +37,7 @@ joined the name to the importing file's directory instead, found `src/dep/lib.wa
 `wac update`.
 
 `harness/wacFiles.ts`'s walk is where it happens — the `resolveFrom(fresh[i], spec)` line that every
-non-`@/` specifier reaches. `packages/wacc/example/wacc.wac` chose the other order and says why, in the
+non-`@/` specifier reaches. `packages/wac/src/wac.wac` chose the other order and says why, in the
 comment right where it decided:
 
 > A mapping is tried before the path arithmetic, because a specifier like `dep/lib.wac` is a legitimate

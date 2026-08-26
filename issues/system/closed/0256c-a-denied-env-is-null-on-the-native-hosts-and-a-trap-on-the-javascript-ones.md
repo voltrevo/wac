@@ -1,6 +1,6 @@
 # 0256c — a denied `env` is null on the native hosts and a trap on the JavaScript ones
 
-- **Status:** open
+- **Status:** closed — the hosts agree, 2026-08-25
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
 - **Kind:** decision
@@ -65,3 +65,43 @@ option is the present arrangement**, where the answer depends on which host the 
 `envsrc/` rather than `src/` **on purpose**: in `src/` it also joins the three rows that walk a
 directory, where the run grants read and write and not env, and those rows go red. Moving that one
 file back into `src/` is this issue's reproduction and its regression test — one path, no new fixture.
+
+## Closed: null on all four, and the mechanism was not where this issue said
+
+`deny("environment")` in `deno.ts` is not what did it — there is no such call, and both `deno.ts` and
+`node.ts` already answer a one-byte "absent" when they hold no environment. The refusal happens a
+layer earlier, **on the program's own side**, in `packages/platform/host/provider.ts`:
+
+    const NEEDS = { … [OP.ENV]: GRANT_ENV … };
+
+`send` gives a guarded call it cannot make a ticket that is never submitted, and `collect` throws for
+that ticket. The comment above it states the design and, read carefully, states the bug:
+
+> each shape's resolver already turns a thrown error into *its own* refusal — a failed `FileResult`, a
+> `Change` with a fault, a `Socket` with a negative handle. That is why this needed no change per
+> capability: **the refusal shapes were already written.**
+
+They were, except one. `u8[]?` has no fault field, so `maybeBytes` never caught, and the throw reached
+the program as a trap. It catches now — **only `FAULT_NOT_GRANTED`**, because a host that broke while
+answering is not a variable that is unset — and answers null, which is what `Cli.env`'s own type
+documents and what both native hosts already did. Four hosts, one answer.
+
+**Option one, deliberately, and the reason is the gate rather than the design.** Option three is still
+the one to want and it is now measured rather than estimated: `Pending<u8[]?>` → a shape with a fault
+touches `std/platform.wac`, `Cli.of`'s forty positional fields, four hosts, `frame.wac`'s `childCli`,
+`packages/wac/src/grants.wac`, `probe.wac`'s fake, and **13 call sites** across `git`, `ssh`, `sh`,
+`wacc` and `wac`. That is a `Cli` shape change — the widest seam here — and landing one with the suite
+gate refusing for memory is the wrong risk. Filed as `issues/system/0261c`.
+
+## The regression test, and it was measured in both directions
+
+The issue proposed moving `capsrc/env_test.wac` into `src/`. What landed is one step better:
+`src/deniedenv_test.wac`, which asserts the *refusal* rather than the grant, so the three rows that
+walk `src` stay **green** instead of failing identically on three hosts — and a host that traps still
+breaks the comparison, which is the job.
+
+    with the fix        all three hosts agreed on 34 of 34
+    fix reverted        all three hosts agreed on 32 of 34
+
+Two rows, caught. That second line is the one worth having: a refusal test that has not been run
+against the unfixed code is a test that might be asserting nothing.

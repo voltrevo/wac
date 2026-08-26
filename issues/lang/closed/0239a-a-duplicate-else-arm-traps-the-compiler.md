@@ -31,7 +31,7 @@ Delete one `else` and it builds: 2,351 bytes, exit 0. The reference refuses it â
 `[typecheck] duplicate else arm` â€” which is where the rule is written down.
 
 **This is the worst symptom in the tracker.** Not a wrong answer, not a silent acceptance: the compiler
-itself faults, and the message names `packages/wacc/example/wacc.wac` rather than the program that
+itself faults, and the message names `packages/wac/src/wac.wac` rather than the program that
 caused it, so the first impression is that the toolchain is broken rather than the input unusual.
 
 ## How it was found

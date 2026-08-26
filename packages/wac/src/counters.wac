@@ -1,0 +1,285 @@
+// Reading an instrumented module's counters, through the boundary rather than through a host.
+//
+// **This is the last row of `issues/system/0257c`'s table.** `covdump`, `tracestat` and `ctcompare`
+// were implemented in `native/v8/src/main.rs` — a second engine driver, instantiating the module by
+// hand and reaching its exports through V8 — because `Cli.call` could not reach an injected export.
+// It can since `issues/system/0243c` and, for a `wac build --coverage` artefact, since the day this
+// file was written: the manifest declares the three the instrumentation injects, so the *program* can
+// do what the host was doing.
+//
+// The operator's rule is what makes that worth doing: a host may implement **running a module**, and
+// must not implement the command surface. Reading a counter table is not running a module — it is a
+// command, and one that every host should answer the same way.
+//
+// ## What the three exports mean
+//
+// `__cov_init()` allocates the array, `__cov_len()` is its length and `__cov_get(i)` reads a slot.
+// Under `--coverage` a slot is a count per branch point; under `--trace` the same array is a journal —
+// slot 0 is the cursor, the last slot is how many events *wanted* to be recorded, and the pairs
+// between are `(site, value)`. One array, two readings, which is why one reader serves both.
+
+import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
+import { manifestWire } from "../../wacc/src/api.wac";
+import { sigsWithCounters } from "./testrun.wac";
+import { declaredGrants } from "./runprog.wac";
+
+/** A module's counters, or why there are none. */
+export struct Counters {
+  /** Empty when the read worked; otherwise the sentence to print. */
+  string error;
+  Vec<i32> values;
+  /** Whether the exercise trapped, which is **not** a failure — see `read`. */
+  bool trapped;
+  /** What the trap said, empty for an engine trap that said nothing. */
+  string trapText;
+  /**
+   * Exercises that named an export the module does not have.
+   *
+   * Collected rather than fatal, and reported **after** the counters: a mistyped name would otherwise
+   * read as a package whose trapping branches are simply uncovered, which is the same number a real
+   * gap gives. The native command's own reasoning, kept.
+   */
+  Vec<string> missing;
+}
+
+/**
+ * One thing to call, from a `covdump` argument.
+ *
+ * `name` calls it once; `name:<n>` calls it with 0, 1, … n-1 — a *sweep*, which is how a bounds case
+ * that traps gets counted at all: a trap ends the function it is in and nothing else, so seven cases
+ * are seven calls rather than seven runs.
+ *
+ * `cases < 0` means "no count was given". Not zero: `name:0` is a usage error, and conflating the two
+ * would make it a silent no-op.
+ */
+export struct Exercise {
+  string name;
+  i32 cases;
+}
+
+/**
+ * Load `path`, run it, and read the counters it recorded.
+ *
+ * **The run is the point, and a trap in it is tolerated.** A counter table is what the module wrote
+ * *while running*, so reading without running answers zeroes; and a traced or covered run of something
+ * that traps has still recorded everything up to the trap, which is what a caller asked about. The
+ * native command said the same thing in a comment about `TryCatch` and for a sharper reason: without
+ * catching, V8 announced the trap on **stdout**, which is the stream `tracestat` prints its numbers to
+ * and `packages/crypto/test/wac/constanttime_test.wac` parses.
+ *
+ * Here the trap cannot escape at all — `Cli.call` answers `status == 1` and a sentence — so the hazard
+ * is gone rather than handled. That is one of the two things this move buys.
+ *
+ * `grants` is passed to `load` and is the loader's own ceiling intersected with what is asked, so this
+ * cannot hand a module more than the command holds.
+ */
+export Counters read(Core core, Cli cli, string path, Exercise[] also) {
+  Vec<i32> none = Vec.create();
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return Counters("cannot read " + path + " — " + f.error, none, false, "", Vec.create()); }
+  // **A module with no manifest gets one, made here.** `Cli.load` needs a manifest because that is
+  // where an export's *signature* comes from; a raw `emitFilesCovered` artefact has none, and the
+  // native command could read one anyway because it instantiated by hand and reached the exports
+  // directly.
+  //
+  // I first declared that capability unnecessary — "every test that feeds these commands builds with
+  // `wac build`" — having checked two of the three test files. `packages/wacc/test/wac/coverage_test.wac`
+  // calls `emitFilesCovered` and writes the bytes, on purpose: its subject is the library, not the
+  // command. So the capability is real and this is how it is kept.
+  //
+  // **The manifest is synthesised in the compiler's own code, not in a host.** That is
+  // `issues/system/0243c`'s rule — "the platform boundary learns nothing about coverage; the compiler
+  // is what knows what the compiler injected" — and `sigsWithCounters` is the one place those three
+  // signatures are written down. `manifestOf` reads the `$bind$` family out of the module itself, so
+  // the marshalling half needs nothing from us; no grants, because a module with no manifest declares
+  // none and that is the correct world for it.
+  u8[] bytes = f.bytes;
+  // **Is it a module at all?** Asked before anything else, because everything after this reads the
+  // bytes as wasm and the hosts disagree about rubbish: handed a `.wac` source, the native answered
+  // *carries no wac.manifest section* and the JavaScript hosts answered *expected magic word 00 61 73
+  // 6d, found 69 6d 70 6f* — the first four bytes of the word `import`. Found by the parity row added
+  // for this command on the day it moved, which is what that differential is for.
+  //
+  // `\0asm`, the four bytes every wasm module starts with. Naming the file is the useful half: the
+  // mistake this catches is handing a command the source instead of the artefact.
+  if (bytes.len() < 4 || bytes[0] != 0 || bytes[1] != 0x61 || bytes[2] != 0x73 || bytes[3] != 0x6d) {
+    return Counters(path + " is not a wasm module — did you mean the artefact `wac build` wrote?",
+                    none, false, "", Vec.create());
+  }
+  if (manifestIn(bytes) == "") {
+    string made = manifestWire(bytes, "", sigsWithCounters("main\ti32\t\n", true), path,
+                               "counters.wasm", 0);
+    bytes = withManifestSection(bytes, made);
+  }
+  // **The module's own grants, not the command line's**, which is `wac prog.wasm`'s rule and the one
+  // the host used: "the world is built from the manifest and the grants are the ones baked into it".
+  // `issues/system/0221` is what the alternative cost — instantiating with an empty imports object
+  // meant a coverage exercise could declare no capabilities, so `main(Core, Cli)` was not *refused*,
+  // it failed to instantiate, and no exercise could read a corpus off disk.
+  //
+  // Passing the covdump line's own grants instead would be the hole `runprog.wac` names: a module
+  // would get more than it asked for whenever the *command* had been built with more. A synthesised
+  // manifest declares none, which is right — a module with no manifest asked for nothing.
+  i32 declared = declaredGrants(bytes);
+  LoadedModule m = cli.load(bytes, declared < 0 ? 0 : declared);
+  if (m.handle < 0) { return Counters(path + " could not be loaded — " + m.error, none, false, "", Vec.create()); }
+
+  // **`__cov_init` before anything else, and its absence is the diagnosis.** The counters are
+  // allocated by this call rather than by instantiation, so a module without it is not an instrumented
+  // module — and every instrumented function would trap on its first branch, which reads as a fault in
+  // the program rather than as the wrong artefact having been handed over.
+  CallResult started = cli.call(m.handle, "__cov_init", 0);
+  if (started.status == 2) {
+    cli.unload(m.handle);
+    return Counters(path + " carries no counters — was it built with --coverage or --trace?",
+                    none, false, "", Vec.create());
+  }
+
+  // The exercise. `main` is what the native ran and what a built module has; a module without one has
+  // nothing to record and answers an empty table, which is a true answer rather than an error.
+  bool trapped = false;
+  string trapText = "";
+  CallResult ran = cli.call(m.handle, "main", 0);
+  if (ran.status == 1) { trapped = true; trapText = ran.text; }
+
+  // **After `main`, not instead of it**, which is the native command's rule: a named export is an
+  // extra exercise rather than a replacement, so what `main` covered stays covered.
+  //
+  // A trap here is expected — these are usually the cases that trap — and `Cli.call` catches it by
+  // construction. The host needed a `TryCatch` *per call* for this, because one for the whole loop
+  // leaves the first trap pending through every case after it; measured there as `packages/bytes`
+  // reporting 69 covered on one run and 73 on the next from an unchanged tree. Nothing here can leave
+  // an exception pending, so that failure mode is gone rather than guarded.
+  Vec<string> missing = Vec.create();
+  for (i32 e = 0; e < also.len(); e++) {
+    // **"Call it once" and "call it with 0" are not the same case**, and the boundary keeps them
+    // apart for us: `Cli.call` passes the argument only when the export's signature takes one, read
+    // from the manifest. The host had to reason about arity by hand to avoid handing a one-parameter
+    // function no value.
+    i32 cases = also[e].cases;
+    i32 calls = cases < 0 ? 1 : cases;
+    for (i32 i = 0; i < calls; i++) {
+      CallResult r = cli.call(m.handle, also[e].name, cases < 0 ? 0 : i);
+      if (r.status == 2) { missing.push(also[e].name); i = calls; }
+      if (r.status == 1) { trapped = true; if (trapText == "") { trapText = r.text; } }
+    }
+  }
+
+  CallResult n = cli.call(m.handle, "__cov_len", 0);
+  if (n.status != 0) {
+    cli.unload(m.handle);
+    return Counters(path + " has __cov_init and no __cov_len", none, trapped, trapText, missing);
+  }
+  Vec<i32> out = Vec.create();
+  for (i32 i = 0; i < n.value; i++) {
+    CallResult v = cli.call(m.handle, "__cov_get", i);
+    // -1 for a slot that would not answer, which is what the native reader records. A negative count
+    // is impossible for a real slot, so it reads as "this one is missing" rather than as a value.
+    out.push(v.status == 0 ? v.value : 0 - 1);
+  }
+  cli.unload(m.handle);
+  return Counters("", out, trapped, trapText, missing);
+}
+
+// ── Comparing two journals ────────────────────────────────────────────────────
+
+/**
+ * Two traced runs, and where they first differ — `wac ctcompare`'s answer, as lines.
+ *
+ * **The comparison happens where the modules are**, which is why this is a command rather than two
+ * `covdump`s and a diff: a real journal is large — `x25519Base` produces about 1.6 million events — so
+ * shipping both out as text to learn one number costs tens of megabytes. This prints one line.
+ *
+ *     same <n>                          identical, over `n` events
+ *     differs <i> <sa> <va> <sb> <vb>   at event `i`, where each side stood; `-1 -1` for a side
+ *                                       that had already ended
+ *     truncated <a> <b>                 a side recorded fewer events than happened, so the answer is
+ *                                       not a comparison — the journal was sized too small
+ *
+ * `all` answers with every divergent site instead of the first, which is what a caller checking a
+ * published list of leaking lines needs:
+ *
+ *     split <i> <sa> <sb>               the runs parted; nothing after this is a comparison
+ *     site <i> <site> <va> <vb>         one point, reached by both, with different values
+ *     longer <n> <site>                 one side kept going, and where
+ *
+ * Returned as lines rather than printed, so a test can compare them without a subprocess.
+ */
+export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
+  // Slot 0 is how many entries are live; the last is how many events happened whether or not there
+  // was room.
+  i32 usedA = a.get(0) > 0 ? a.get(0) : 0;
+  i32 usedB = b.get(0) > 0 ? b.get(0) : 0;
+  i32 wantA = a.get(a.len() - 1);
+  i32 wantB = b.get(b.len() - 1);
+  // **Truncation is only reported when nothing diverged**, and the native command's comment says why
+  // getting that the other way round was its first version's bug: a difference inside the prefix both
+  // journals kept is a real difference, because the events are aligned up to there and what was
+  // dropped after cannot un-differ them. What truncation invalidates is `same` — two runs that
+  // overflowed can agree on everything they kept and differ in what they dropped.
+  bool overflowed = wantA * 2 > usedA || wantB * 2 > usedB;
+  i32 nA = usedA / 2;
+  i32 nB = usedB / 2;
+  Vec<string> out = Vec.create();
+
+  if (all) {
+    Vec<i32> seen = Vec.create();
+    bool said = false;
+    i32 n = nA < nB ? nA : nB;
+    for (i32 i = 0; i < n; i++) {
+      i32 sa = a.get(1 + 2 * i);
+      i32 va = a.get(2 + 2 * i);
+      i32 sb = b.get(1 + 2 * i);
+      i32 vb = b.get(2 + 2 * i);
+      if (sa == sb && va == vb) { continue; }
+      if (sa != sb) {
+        // Not a leaking site: it is where *this* run happened to be when the two stopped agreeing,
+        // and the other was somewhere else. Naming both is the only honest report, and nothing after
+        // it is a comparison.
+        out.push("split " + itoa(i) + " " + itoa(sa) + " " + itoa(sb));
+        return out.toArray();
+      }
+      bool known = false;
+      for (i32 k = 0; k < seen.len(); k++) { if (seen.get(k) == sa) { known = true; } }
+      if (!known) {
+        seen.push(sa);
+        said = true;
+        out.push("site " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " + itoa(vb));
+      }
+    }
+    if (nA != nB) {
+      said = true;
+      out.push("longer " + itoa(n) + " " + itoa(nA > nB ? a.get(1 + 2 * n) : b.get(1 + 2 * n)));
+    }
+    if (!said) {
+      out.push(overflowed ? "truncated " + itoa(wantA) + " " + itoa(wantB)
+                          : "same " + itoa(nA < nB ? nA : nB));
+    }
+    return out.toArray();
+  }
+
+  i32 most = nA > nB ? nA : nB;
+  for (i32 i = 0; i < most; i++) {
+    bool hasA = i < nA;
+    bool hasB = i < nB;
+    if (!hasA && !hasB) { i = most; continue; }
+    i32 sa = hasA ? a.get(1 + 2 * i) : 0 - 1;
+    i32 va = hasA ? a.get(2 + 2 * i) : 0 - 1;
+    i32 sb = hasB ? b.get(1 + 2 * i) : 0 - 1;
+    i32 vb = hasB ? b.get(2 + 2 * i) : 0 - 1;
+    if (hasA && hasB && sa == sb && va == vb) { continue; }
+    out.push("differs " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " +
+             itoa(sb) + " " + itoa(vb));
+    return out.toArray();
+  }
+  out.push(overflowed ? "truncated " + itoa(wantA) + " " + itoa(wantB)
+                      // **The count, because `same` over nothing is not agreement.** A mistyped
+                      // export name calls nothing and records nothing, and two empty journals match
+                      // perfectly — which would report every routine in the repository as
+                      // constant-time. A caller checks the number.
+                      : "same " + itoa(nA < nB ? nA : nB));
+  return out.toArray();
+}

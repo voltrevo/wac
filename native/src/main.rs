@@ -96,6 +96,7 @@ enum Cap {
     Load,
     Call,
     Unload,
+    Validated,
     Log,
     Warn,
     Write,
@@ -881,9 +882,9 @@ fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8], asked: i32) -> Result
         write: mine.write && (asked & GRANT_WRITE) != 0,
         env: mine.env && (asked & GRANT_ENV) != 0,
         net: mine.net && (asked & GRANT_NET) != 0,
-        // No `GRANT_*` bit names running a host program — `spawn_instance` refuses it for the same
-        // reason and will gain it the same way.
-        run: false,
+        // **Inheritable now**, and by the same intersection as the four above: `GRANT_RUN` exists and
+        // this stage is the one the old note asked for. `issues/system/0264c`.
+        run: mine.run && (asked & GRANT_RUN) != 0,
     };
     // The rest of the caller's authority is shared by reference — see `HeldModule`.
     let mut host = Host::new(m.callbacks.len(), caller.data().args.clone(), grants);
@@ -1057,7 +1058,13 @@ fn enter(
     let main = instance
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
-    let mut out = [Val::I32(0)];
+    // **Sized from `main`'s own signature, not assumed to be one.** `export void main(Core)` is a
+    // legal program and the whole of many of them — `wac app`'s own example is one — and a fixed
+    // single slot made wasmtime refuse it with *expected 0 results, got 1*: a sentence about this
+    // host's bookkeeping, in answer to a program that was right, before any of it ran. The V8 host
+    // reads the signature and has always taken either.
+    let results = main.ty(&mut *store).results().len();
+    let mut out = vec![Val::I32(0); results];
     // **What the program said, if it said anything.** A `trap "…"` puts its message in a global before
     // trapping — after one there is no code left to run — and `$trap$message` hands it back once the trap
     // has unwound. Empty for an engine trap, which writes nothing. `issues/lang/0147`.
@@ -1068,8 +1075,10 @@ fn enter(
         }
         return Err(wasmtime::Error::msg(format!("{} trapped: {said}", m.entry)));
     }
-    let status = match out[0] {
-        Val::I32(n) => n,
+    // A `void main` that returned is a success: there is no status to read, and inventing one from an
+    // empty slot is how a program with nothing to say gets a verdict it never gave.
+    let status = match out.first() {
+        Some(Val::I32(n)) => *n,
         _ => 0,
     };
     let host_exit = store.data().exit;
@@ -1336,6 +1345,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "load") => Cap::Load,
         ("Cli", "call") => Cap::Call,
         ("Cli", "unload") => Cap::Unload,
+        // Compile and stop — `Cli.validated`. wasmtime answers it directly, where the V8 host has to
+        // guard the isolate against the exception a rejection leaves behind.
+        ("Cli", "validated") => Cap::Validated,
         ("Cli", "openInput") => Cap::OpenInput,
         ("Cli", "openOutput") => Cap::OpenOutput,
         ("Cli", "outputError") => Cap::OutputError,
@@ -1713,6 +1725,19 @@ fn dispatch(
             if let Val::I32(n) = arg(1) {
                 LOADED.with(|t| t.borrow_mut().remove(&n));
             }
+            return Ok(());
+        }
+        // **Compiled, not instantiated**, which is `Cli.validated`'s whole contract: whether the
+        // engine accepts the bytes, asked without a manifest, a world, or anything running. wasmtime
+        // hands back the reason as an ordinary error, so unlike the V8 host there is no exception
+        // left on anything and no guard needed around a second call.
+        Cap::Validated => {
+            let prog = read_u8_array(caller, &params[1])?;
+            let why = match wasmtime::Module::validate(caller.engine(), &prog) {
+                Ok(()) => String::new(),
+                Err(e) => format!("{e}"),
+            };
+            results[0] = make_string(caller, why.as_bytes())?;
             return Ok(());
         }
         Cap::Spawn => {
@@ -2937,11 +2962,10 @@ fn spawn_instance(
         read: mine.read && (want & GRANT_READ) != 0,
         write: mine.write && (want & GRANT_WRITE) != 0,
         env: mine.env && (want & GRANT_ENV) != 0,
-        // **Not inheritable yet.** `GRANT_*` has no bit for running a host program, and a child
-        // that could exec would be a confined wasm module holding the one authority confinement is
-        // for. Allocating a bit needs a `GRANT_RUN` in `platform.wac` and a stage that proves the
-        // ceiling holds for it; until then, denied.
-        run: false,
+        // **Inheritable now** — see the sibling above and `issues/system/0264c`. A child gets `run`
+        // if it asked and its parent held it, which is what confinement means rather than what it
+        // forbids.
+        run: mine.run && (want & GRANT_RUN) != 0,
         net: mine.net && (want & GRANT_NET) != 0,
     };
 
@@ -3003,6 +3027,10 @@ const GRANT_READ: i32 = 1;
 const GRANT_WRITE: i32 = 2;
 const GRANT_NET: i32 = 4;
 const GRANT_ENV: i32 = 8;
+/// Running a *host* program — `Cli.exec`. Bit 16, and the last to be allocated: it is the one
+/// authority a confined module's confinement is about, so it was refused outright until there was a
+/// bit to narrow with. `issues/system/0264c`.
+const GRANT_RUN: i32 = 16;
 
 /// A `u8[][]` as a list of byte strings, element by element.
 fn read_bytes_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u8>>, wasmtime::Error> {

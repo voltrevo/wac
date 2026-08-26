@@ -19,7 +19,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedIn, missingIm
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked } from "./emit.wac";
-import { coreSource } from "./coretext.wac";
+import { coreSource, isBuiltinSpec } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom, resolveFromIn } from "./files.wac";
@@ -569,7 +569,25 @@ export string diagnoseGraphIn(string[] paths, string[] sources, Res res, string 
     subCounts[n] = counts[paths.len()];
     subLexes[n] = lexes[paths.len()];
     subProgs[n] = progs[paths.len()];
-    out = out + diagnoseFilesWithIn(subPaths, subSources, res, paths[i], subCounts,
+    // **The roots have to be re-indexed with the paths**, because `Res.rootAt` pairs `roots[i]` with
+    // `paths[i]` — a *positional* key. Everything above builds a closure array in `seen` order and
+    // this call handed it the graph's `Res` unchanged, so every file read some other file's project
+    // root, and usually "". `@/` then resolved against nothing, the import landed on a key nobody
+    // supplied, and the names it brings in were declared *unknown* — which this checker is silent
+    // about by design. So a mistake behind a `@/` import in any file but the entry was invisible.
+    //
+    // `issues/lang/0175a` fixed the entry's own case by threading the `Res` this far;
+    // `issues/lang/0267c` is this sibling, which the thread reached and the indexing did not.
+    //
+    // The mappings are keyed by path *string* — `mappedTo` compares `mapFrom[i] == from` — so they
+    // survive the subsetting unchanged and only `roots` needs rebuilding.
+    string[] subRoots = string[n](fill: "");
+    for (i32 k = 0; k < n; k++) {
+      i32 at = seen[k];
+      subRoots[k] = at < res.roots.len() ? res.roots[at] : "";
+    }
+    Res subRes = Res(subRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base);
+    out = out + diagnoseFilesWithIn(subPaths, subSources, subRes, paths[i], subCounts,
                                     subLexes, subProgs);
   }
   return out;
@@ -1238,6 +1256,48 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
           // silence again one step further along. On an empty `Res` this is `resolveImport`, so the
           // callers with no filesystem are unaffected. `issues/lang/0175a`.
           : resolveVia(res, paths, entry, quoted.slice(1, quoted.len() - 1));
+        // **A specifier that resolves to a file nobody supplied is refused here** — the other half of
+        // `issues/lang/0157`. The single-file entry point has said so since 2026-08-20, reading the
+        // parse because one file means every non-builtin specifier is unsatisfiable; this one has a
+        // real path map and a `Res`, so it can tell "resolved to a file I was not given" from "did
+        // not resolve at all", which is the distinction that made resolving with the plain resolver
+        // wrong. The `Res` came from `issues/lang/0175a`, which paid this cost for its own reason.
+        //
+        // Recorded rather than reported: `C.isUnresolved` is what the `Import` arm in `check.wac`
+        // asks, so the diagnostic lands at the import's own token with the path in the annotation,
+        // beside `unknown module` and `no such export` rather than in a layer
+        // `spec/spec/errors.md` says diagnostics must not come from.
+        //
+        // `edgesOfIn` *drops* such a specifier, with a comment saying a missing file is the caller's
+        // to report — that is where the silence came from, and it stays true of the edge list: an
+        // edge to a file that is not there is not an edge. What was missing is anyone saying so.
+        if (pathTok >= 0 && quoted.len() >= 2) {
+          string spec = quoted.slice(1, quoted.len() - 1);
+          bool supplied = false;
+          for (i32 q = 0; q < paths.len(); q++) {
+            if (paths[q] == target) { supplied = true; }
+          }
+          // A linear walk rather than `indexVia`: this runs once per import of one file, and the
+          // `ByLen` index that would make it a lookup is built in `edgesOfIn`, not here.
+          // **Only a plain relative specifier**, because that is the only one this resolver is
+          // authoritative about when the `Res` is empty — and it is empty for every caller with no
+          // filesystem, which is most of them. `@/src/point.wac` and a mapped `dep/lib.wac` need the
+          // `Res` to land anywhere; without one they resolve to a key nobody supplied and look
+          // exactly like the fault this rule is for. `issues/lang/0157` says the shape to avoid in
+          // as many words: a caller that cannot resolve "would have to say it cannot answer rather
+          // than answer wrongly."
+          //
+          // Measured rather than assumed: reporting all specifiers made `projectspec_test.wac` and
+          // `mappedspec_test.wac` red on three cases that are *correct programs*, each importing a
+          // file that is supplied and reached another way. That is the false-alarm direction, which
+          // is the one a checker may not be wrong in.
+          bool relative = spec.len() >= 2 && spec.slice(0, 2) == "./"
+                       || spec.len() >= 3 && spec.slice(0, 3) == "../";
+          // `res.base` is "" for a caller with no filesystem — the one that cannot resolve a `@/`
+          // or a mapped specifier at all, and so may judge a relative path and nothing else.
+          bool canJudge = relative || res.base != "";
+          if (canJudge && !isBuiltinSpec(spec) && !supplied) { c.addUnresolved(spec); }
+        }
         for (i32 i = 0; i < items.len(); i++) {
           if (n >= wantName.len()) { continue; }
           wantFrom[n] = target;

@@ -2,7 +2,7 @@
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/filecap_test.wac
 //
-// `gather` in `packages/wacc/example/wacc.wac` reads a program breadth first into tables of
+// `gather` in `packages/wac/src/wac.wac` reads a program breadth first into tables of
 // `maxFiles()` — 512 — and its docstring says what it is for: *"A file that cannot be read stops the
 // walk and is named: the alternative is compiling a program with a hole in it and reporting whatever
 // the hole makes the checker say, which points at the wrong file."*

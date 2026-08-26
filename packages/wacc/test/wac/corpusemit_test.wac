@@ -27,7 +27,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
+import { contains, has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
@@ -204,8 +204,43 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
             + itoa(reasons) + " declined by name");
 
   t.isTrue(whole > 0, "no corpus file was emitted in full — the harness is not reaching the emitter");
-  t.isTrue(partial > 0, "every file emitted whole, which cannot be true yet");
-  t.isTrue(reasons > 0, "nothing was declined by name — the emittability walk is not running");
+
+  // **`partial > 0` and `reasons > 0` used to be here, and the emitter outgrew them.**
+  //
+  // They were canaries about the *harness*: a run that measured nothing would report a comfortable
+  // zero, and "some file is still declined" was the cheap proof that the emittability walk was
+  // running at all. That worked while the corpus had files the emitter could not manage — 27 of 729
+  // partial on 2026-08-20, three of 414 six days before that.
+  //
+  // It is 1075 of 1075 whole and 0 partial now, so those two assertions had inverted: they failed
+  // *because* the thing they were watching for had been achieved. A canary that fires on success is
+  // worse than no canary, because the natural fix is to stop believing it.
+  //
+  // **Finding a replacement subject was the interesting part.** Every construct tried first is caught
+  // by the *checker* now, which is `issues/lang/0170a` working: an ill-typed body, a generic method
+  // called without its type arguments, a mixed construction — none of them reaches the emitter. The
+  // first version of this canary used a generic instantiated at an enum, which was declined when it
+  // was written and *compiles* an hour later, because `issues/lang/0260c` got fixed in between.
+  //
+  // So the subject is a **cap** rather than a construct: `capsPerLambda()` is 32, the checker has no
+  // opinion about it, and a lambda capturing 33 locals is declined with the cap named. If that number
+  // is ever raised this fails loudly and says so, which is the right way for a canary to break.
+  //
+  // **"Named" means the cap, not the function.** This said "declined by name", which reads as the
+  // per-function decline and is not what happens: the message is `wacc: cannot emit <file> — the
+  // emitter ran out of room for captures in one lambda`, because a cap goes through `declineFor` and
+  // sets `fullWhy`, which is whole-module. The assertion below only ever checked the reason, so it was
+  // the sentence that was wrong. `issues/lang/0262c` is about what that leaves untested.
+  string caps = "export i32 f() {\n";
+  for (i32 i = 0; i < 33; i++) { caps = caps + "  i32 v" + itoa(i) + " = " + itoa(i) + ";\n"; }
+  caps = caps + "  fn[i32()] g = () => v0";
+  for (i32 i = 1; i < 33; i++) { caps = caps + " + v" + itoa(i); }
+  caps = caps + ";\n  return g();\n}\n";
+  string canaryWhy = blockedFiles(string[]("/canary/m.wac"), string[](caps), "/canary/m.wac");
+  t.isTrue(canaryWhy != "", "a file this emitter cannot emit was not declined — the emittability " +
+                            "walk is not running, so the counts above mean nothing");
+  t.isTrue(contains(canaryWhy, "captures in one lambda"),
+           "the decline did not say what it ran out of: " + canaryWhy);
 
   // **The scan found something.** `short_` is a count of names that are declared and missing, so a
   // scanner that declared nothing would report zero of them and this whole check would be a comment.

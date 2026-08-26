@@ -1,9 +1,20 @@
-// The compiler, as a program.
+// `wac` — the command, as a program.
 //
-//     wacc check   main.wac          # type-check it and its imports; say what is wrong
-//     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
-//     wacc build   main.wac -o stem  # ...and the manifest a native host reads, in the module
-//     wacc bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
+//     wac check   main.wac          # type-check it and its imports; say what is wrong
+//     wac compile main.wac [out]    # write the module, `main.wasm` beside it by default
+//     wac build   main.wac -o stem  # ...and the manifest a native host reads, in the module
+//     wac bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
+//     wac run     main.wac [args…]  # compile and run it, with no file in between
+//     wac test    path [path…]      # a file or a directory of `*_test.wac`
+//     wac prog.wasm [args…]         # run a built module, under the grants its manifest declares
+//
+// **This is the whole command, and that is the point of where it lives.** It opened "the compiler, as
+// a program" and sat in `packages/wacc/example/`, which made the compiler's example *be* the unified
+// command — so `sh` and `update` looked like things a host could not have, when the truth was that
+// the command was built out of the compiler and carried what the compiler carried.
+// `issues/system/0257c` is the operator's ruling: `wac` contains the compiler plus more, and every
+// host's binary runs this same program. What a host may implement is *running a module*, because that
+// is the engine doing engine work; everything else comes through here.
 //
 // `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
 // `--trace` is the other instrumented build — an ordered journal rather than counts, with
@@ -20,7 +31,8 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { CallResult, Change, Child, Cli, Core, FileResult, LoadedModule, Pending, Stat, faultWords }
+import { CallResult, Change, Child, Cli, Core, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
+         GRANT_RUN, GRANT_WRITE, LoadedModule, Pending, Stat, faultWords }
   from "std/platform.wac";
 import { Read } from "core";
 import { Vec } from "core/vec.wac";
@@ -30,18 +42,20 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
          covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn, missingImportFilesIn,
          wireHasErrors,
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
-         manifestWire } from "../src/api.wac";
-import { Built } from "../src/emit.wac";
-import { cellAt, cells, manifestIn, withManifestSection } from "../src/manifest.wac";
+         manifestWire } from "../../wacc/src/api.wac";
+import { Built } from "../../wacc/src/emit.wac";
+import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
-         from "../../wac/src/runprog.wac";
-import { aggregatePath, aggregateSource, flagValue, importable, runTests, sigsWithCounters,
-         testFilesIn, unknownTestFlag, withoutIgnored } from "../../wac/src/testrun.wac";
-import { renderDiagnostics } from "../src/render.wac";
-import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../src/files.wac";
-import { Res } from "../src/path.wac";
-import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../src/coretext.wac";
+         from "./runprog.wac";
+import { appRun, writeApp } from "./app.wac";
+import { aggregatePath, aggregateSource, beside, flagValue, importable, noTrailingSlash, runTests,
+         sigsWithCounters,
+         testFilesIn, unknownTestFlag, withoutIgnored } from "./testrun.wac";
+import { renderDiagnostics } from "../../wacc/src/render.wac";
+import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/files.wac";
+import { Res } from "../../wacc/src/path.wac";
+import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
@@ -49,6 +63,12 @@ import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
+import { fetchAll } from "../../wacpkg/src/fetch.wac";
+import { Shell } from "../../sh/src/exec.wac";
+import { shellMain } from "../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../box/src/shrun.wac";
+import { Asked, Parsed, askedFrom, forCommand, narrowed } from "./grants.wac";
+import { Counters, Exercise, compareJournals, read } from "./counters.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -326,8 +346,20 @@ string dirOf(string path) {
  * answers the same; the caller still gets the ordinary error, one compile later.
  */
 string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] paths, string[] texts,
-                      string stem) {
-  if (cmd != "build" || stem == "") { return ""; }
+                      string stem, string target) {
+  // **`test` is cacheable too, and keyed on what the caller named.** `issues/system/0204` gave the
+  // native `wac test` a module cache and it lived in the host path only `run` reaches now — measured
+  // after the move, `packages/box/test/wac` was 18s cold and 7s warm where a hit is about one.
+  //
+  // The key cannot use `entry`: for a directory that is the generated aggregate, whose *name* carries
+  // the clock so two runs never collide, so every run would miss. `target` is what the caller typed
+  // and is stable, and the aggregate's own text is in the key anyway through `texts` — so the same
+  // directory with the same sources answers the same key, and one file changing changes it.
+  if (cmd == "test") {
+    if (target == "") { return ""; }
+  } else if (cmd != "build" || stem == "") {
+    return "";
+  }
   if (hasFlag(cli, argc, "--coverage") || hasFlag(cli, argc, "--trace")) { return ""; }
   if (hasFlag(cli, argc, "--no-cache")) { return ""; }
   if (unknownFlag(cli, argc) != "") { return ""; }
@@ -344,12 +376,16 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
   Fnv h = Fnv.start();
   h.eat("wac-build 1");
   h.eat(string.fromBytes(id!));
-  h.eat(entry);
-  h.eat(baseName(stem) + ".wasm");
+  h.eat(cmd);
+  h.eat(cmd == "test" ? target : entry);
+  h.eat(cmd == "test" ? "" : baseName(stem) + ".wasm");
   // A bitmask, not a list — `grantsIn` answers the five bits that go into the manifest.
   h.eat(itoa(grantsIn(cli, argc)));
   for (i32 i = 0; i < paths.len(); i++) {
-    h.eat(paths[i]);
+    // **The aggregate's path is replaced, its text is not.** It is `.cache/wac-aggregate-<clock>`,
+    // different on every run and the same file every time; hashing the name would make the key
+    // unrepeatable, and dropping the text would make it stand for less than it claims.
+    h.eat(paths[i] == entry && cmd == "test" ? "<entry>" : paths[i]);
     h.eat(texts[i]);
   }
   return home + "/cache/build/" + h.hex() + ".wasm";
@@ -750,7 +786,25 @@ string usage() {
        // and `test` twice, with two different accounts of `test`. Reported against an external
        // project on 2026-08-25. One list, and it is this one.
        + "                [--coverage] [--filter <name>] [--ignore <path,…>] [--verbose] [path…]\n"
-       + "                run `test*()` exports; paths may be files or directories";
+       + "                run `test*()` exports; paths may be files or directories\n"
+       // **These two were the host's lines**, printed after this block by `native/v8/src/main.rs`
+       // under `if SHELL.is_some()` and `if UPDATE.is_some()` — because they were payloads it
+       // embedded and this program knew nothing about them. `issues/system/0257c` moved the
+       // commands here, so the usage moves with them: one list, printed by whichever host runs
+       // this, instead of a list that was right only on the binary that happened to carry them.
+       + "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
+       + "                [-c script]           the shell, sealed unless granted\n"
+       + "       wac update [project]           resolve and fetch what wac.lock does not cover,\n"
+       + "                and write the lock — the only command that reaches the network\n"
+       // Printed by the host until 2026-08-26, appended after this block because the command lived
+       // there. It is the program's now, so its line is too — `issues/system/0257c`.
+       + "       wac uninstall [--keep-cache]   remove what `deno task wac:install` put under\n"
+       + "                $WAC_HOME, the profile line, and nothing else\n"
+       // Appended by the host after this block until 2026-08-26, because `app` was the host's
+       // command and this program knew nothing about it. It is here now, and so is the command —
+       // which is what makes this the whole list rather than most of it.
+       + "       wac app [--allow-…] <entry.wac> -o <dest>   an executable that runs itself — one\n"
+       + "                file, needing a `wac` on the machine that runs it";
 }
 
 /**
@@ -780,6 +834,19 @@ string usageFor(string cmd) {
  * `-o` is the one flag carrying a value, and skipping the flag without its value would leave the stem
  * looking like the entry — which is the same class of mistake one level along.
  */
+/**
+ * Every argument, in order, flags included.
+ *
+ * `positionals` drops flags, which is what the compiler's subcommands want and exactly wrong for
+ * `sh`: the shell reads its own command line, and the `--allow-*` words in front of it have to be
+ * counted rather than removed so the shell is told where its arguments begin.
+ */
+string[] allArgs(Cli cli, i32 argc) {
+  string[] out = string[argc](fill: "");
+  for (i32 i = 0; i < argc; i++) { out[i] = string.fromBytes(cli.arg(i).wait()); }
+  return out;
+}
+
 string[] positionals(Cli cli, i32 argc) {
   string[] out = string[argc](fill: "");
   i32 n = 0;
@@ -920,6 +987,38 @@ string wasmBeside(string entry) {
   return entry + ".wasm";
 }
 
+/**
+ * Store a built module under its key, if there is a key and it is worth storing.
+ *
+ * **Written beside and moved into place**, because three agents share this machine and a reader that
+ * catches a half-written entry gets a truncated module rather than a miss. `rename` is atomic on
+ * every filesystem this runs on — `std/platform.wac` says so where it explains why `rename` is in
+ * the same tier as `writeFile` — so a concurrent build sees the old entry or the new one and never
+ * part of either.
+ *
+ * `distinct` is the temporary name's disambiguator, since this world has no pid: two builds racing on
+ * one key are building the same program, and what distinguishes them is where each was asked to put
+ * it. For `build` that is the output stem; for `test` there is no output, and the aggregate's own
+ * path serves — it carries the clock, so no two runs share one.
+ *
+ * A failure to store is not a failure to build: the artefact the caller asked for is already made,
+ * and the next run simply compiles again. Nothing here reports.
+ */
+void rememberBuild(Cli cli, string cachePath, u8[] whole, string distinct) {
+  if (cachePath == "") { return; }
+  string cacheDir = dirOf(cachePath);
+  cli.mkdir(cacheDir, true).wait();
+  Fnv u = Fnv.start();
+  u.eat(distinct);
+  string tmp = cachePath + ".tmp" + u.hex();
+  Change wroteTmp = cli.writeFile(tmp, whole).wait();
+  if (wroteTmp.ok()) {
+    Change moved = cli.rename(tmp, cachePath).wait();
+    if (!moved.ok()) { cli.remove(tmp, false).wait(); }
+  }
+  sweepBuildCache(cli, cacheDir);
+}
+
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 1) {
@@ -927,6 +1026,17 @@ export i32 main(Core core, Cli cli) {
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
+
+  // **Asking for help is not an error.** The native binary used to translate this on the way out —
+  // it ran the program for its usage block and then exited 0 if the caller had said `--help`, because
+  // the program had no way to tell it apart from a mistake. With the binary handing every argument
+  // over unchanged, the distinction is this program's to make, and it is the same one every tool
+  // makes: a usage block somebody asked for is the answer, and the same block at somebody who
+  // mistyped is a refusal. `spec/cli/wac.md` `[§wac-cli-usage-3nkq8wj]`.
+  if (cmd == "--help" || cmd == "-h" || cmd == "help") {
+    core.warn(usage());
+    return 0;
+  }
 
   // **A module is a program, and that is decided by what the first argument *is*.** `wac prog.wasm`
   // is the most basic thing this command does and it worked only on the native binary until
@@ -940,6 +1050,234 @@ export i32 main(Core core, Cli cli) {
   if (cmd.len() > 5 && cmd.slice(cmd.len() - 5, cmd.len()) == ".wasm") {
     return runModule(core, cli, argc, cmd);
   }
+
+  // **`validate` needs the engine and nothing else**, so it is up here with the other two commands
+  // that skip the compile. It was the host's until 2026-08-26 for want of `Cli.validated`, which is
+  // the one thing about a module only a host can answer — see that field's note. The command around
+  // it is a loop and a count, which is what a command is.
+  if (cmd == "validate") {
+    if (argc < 2) {
+      core.warn("usage: wac validate <module.wasm> […]");
+      return 2;
+    }
+    i32 bad = 0;
+    for (i32 i = 1; i < argc; i++) {
+      string path = string.fromBytes(cli.arg(i).wait());
+      FileResult f = cli.readFile(path).wait();
+      if (!f.ok) {
+        // **Unreadable counts as rejected**, so one missing path does not hide the verdict on the
+        // others — the caller asked about a list and gets an answer about the whole list.
+        string words = faultWords(f.fault);
+        core.log("unreadable " + path + " — " + (words == "" ? f.error : words));
+        bad = bad + 1;
+        continue;
+      }
+      string why = cli.validated(f.bytes);
+      if (why != "") {
+        core.log("rejected " + path);
+        bad = bad + 1;
+      }
+    }
+    core.log(itoa(argc - 1) + " module(s): " + itoa(bad) + " rejected");
+    return bad > 0 ? 1 : 0;
+  }
+
+  // **`app-run` needs no compiler and asks for none**, which is why it is up here with the module
+  // case rather than below the shared compile: the module it runs is already built and glued to the
+  // end of the file it was pointed at. A build of this program carrying only a shell can still run a
+  // `wac app` executable, and that was true when the command lived in the host too.
+  if (cmd == "app-run") {
+    if (argc < 2) {
+      core.warn("usage: wac app-run <file> [args…]");
+      core.warn("       normally run for you by the first two lines of a `wac app` executable");
+      return 2;
+    }
+    string appPath = string.fromBytes(cli.arg(1).wait());
+    // Argument 0 for the program is the first thing after the file, exactly as `run` counts: the
+    // artefact's own path is how it was found, not something it was told.
+    u8[][] rest = u8[][argc - 2 < 0 ? 0 : argc - 2](fill: u8[0]());
+    for (i32 i = 2; i < argc; i++) { rest[i - 2] = cli.arg(i).wait(); }
+    return appRun(core, cli, argc, appPath, rest);
+  }
+
+  // **The shell and the fetcher, in this program rather than beside it.** `issues/system/0257c`:
+  // these were separate payloads the native binary embedded, so `wac sh` and `wac update` were
+  // things only that host had — not because a host is required to implement them, but because the
+  // command was three modules and the other hosts carried one. Dispatched here they are neither.
+  //
+  // `shellMain`'s last argument is where in argv to start, which is why this costs three lines: the
+  // shell was already written to be someone else's subcommand. `boxRun`/`boxNames` are what the
+  // native ships — the shell with box's applets — and are the reason this pulls in a large graph.
+  // **Sealed unless the command line asks, which is `run_shell`'s rule moved into the program.**
+  // `packages/wac/src/grants.wac` says why at length; the short version is that a callee shares its
+  // caller's capabilities, so a shell dispatched in here would inherit whatever the *compiler* was
+  // granted. `narrowed` refuses everything not asked for, and cannot widen: what it passes on is
+  // what this program was handed.
+  if (cmd == "sh") {
+    string[] argv = allArgs(cli, argc);
+    Parsed p = askedFrom(argv, 1);
+    if (p.bad != "") {
+      core.warn("wac: " + p.bad + " is not a grant — read, write, net, env, run");
+      return 2;
+    }
+    Cli inner = narrowed(cli, p.asked);
+    // **`Fs.onHost` either way, and the sealing is entirely `inner`'s** — which is what the native
+    // binary has always done: its payload is `boxsh.wac` over a world `run_shell` built with no
+    // grants, so `wac sh -c 'ls /bin'` answers *Not granted* rather than listing an image.
+    //
+    // The first version here handed a sealed session `Fs.inMemory` with a `/bin` and a `/tmp`, which
+    // is `packages/box/src/bin/sealedsh.wac`'s arrangement and a nicer place to stand. It also broke
+    // every pipeline: an applet reading standard input asks for the path `""`, `Fs.onHost` knows
+    // that convention and `Fs.inMemory` does not, so `seq 1 5 | wc -l` answered `wc: : Not granted
+    // to this application` — a message about a filesystem, about standard input. Worth fixing in
+    // `packages/fs`; not worth `wac sh` differing from the shipped one to get it.
+    Shell sh = Shell.onFs(core, inner, Fs.onHost(inner, 0));
+    sh.external = boxRun;
+    sh.externalNames = boxNames;
+    // **Not `externalSpawnable`**, which is `packages/box/example/boxsh.wac`'s arrangement and the
+    // one the native binary ships. Spawning a stage re-enters this program's `main` with the
+    // applet's name first, and `main` is *this* dispatcher — so `ls` arrived here as a command, was
+    // not one, and every pipeline in a sealed session printed nothing at all while `echo`, a
+    // builtin, worked. `packages/box/src/bin/sealedsh.wac` sets it and can, because its `main`
+    // answers as an applet before it answers as a shell. Ours would have to become multi-call
+    // first, and running them in process is what the shipped shell already does.
+    return shellMain(core, inner, sh, p.at);
+  }
+  // `$WAC_HOME` rather than `fetch.wac`'s own `.wac` default: the compiler reads the cache from
+  // there, so defaulting to a relative directory puts a fetched tree where nothing looks for it —
+  // `wac update` says *1 fetched* and `wac run` says *not in the cache*, both truthfully.
+  // **`ctcompare`, the last row of `issues/system/0257c`'s table.** Two traced runs and where they
+  // first differ — the comparison happens where the modules are, because a real journal is about 1.6
+  // million events for `x25519Base` and shipping both out as text to learn one number costs tens of
+  // megabytes. `packages/wac/src/counters.wac` has the reading and the comparing.
+  if (cmd == "ctcompare") {
+    bool all = false;
+    string[] both = string[2](fill: "");
+    i32 seen = 0;
+    for (i32 i = 1; i < argc; i++) {
+      string a = string.fromBytes(cli.arg(i).wait());
+      if (a == "--all") { all = true; continue; }
+      // Any other `--` word is a flag this command does not have, and saying so beats reading it as a
+      // path and reporting that a file called `--vebose` cannot be read.
+      if (a.len() > 2 && a.slice(0, 2) == "--") {
+        core.warn("wac: unknown flag '" + a + "' — ctcompare takes --all");
+        return 2;
+      }
+      if (seen < 2) { both[seen] = a; }
+      seen = seen + 1;
+    }
+    if (seen < 2) {
+      core.warn("usage: wac ctcompare [--all] <a.wasm> <b.wasm>");
+      return 2;
+    }
+    Exercise[] none = Exercise[0](fill: Exercise("", 0 - 1));
+    Counters ca = read(core, cli, both[0], none);
+    if (ca.error != "") { core.warn("wac: " + ca.error); return 1; }
+    Counters cb = read(core, cli, both[1], none);
+    if (cb.error != "") { core.warn("wac: " + cb.error); return 1; }
+    if (ca.values.len() < 2 || cb.values.len() < 2) {
+      core.warn("wac: a journal is at least two slots; got " + itoa(ca.values.len()) +
+                " and " + itoa(cb.values.len()));
+      return 1;
+    }
+    string[] lines = compareJournals(ca.values, cb.values, all);
+    for (i32 i = 0; i < lines.len(); i++) { core.log(lines[i]); }
+    return 0;
+  }
+
+  // **`covdump`, moved out of the host** for `issues/system/0257c`'s reason: reading a counter table
+  // is a command, not the engine running a module. `<index>\t<count>` per counter and then how many —
+  // per counter in index order, because that is what the table is keyed by: `covTableFiles`' `i`th row
+  // describes counter `i`, and a test asserting "the loop ran three times" needs the pair. The
+  // aggregated report `--coverage` prints answers a different question and cannot say how often.
+  //
+  // Written once before `issues/system/0263c` was found and reverted, because a loaded module could not
+  // use `Cli` at all: this command runs a module *with its declared world*, so it was the first thing to
+  // notice. That is fixed, and this is the same thirty lines.
+  if (cmd == "covdump") {
+    if (argc < 2) {
+      core.warn("usage: wac covdump <module.wasm> [export|export:<cases>]…");
+      return 2;
+    }
+    // **Parsed before anything runs, so a bad count is a usage error rather than a missing export.**
+    // Left to the call, `sweep:many` comes back as "no export named sweep:many" — a message about the
+    // module, naming a fault in the command line.
+    Exercise[] also = Exercise[argc](fill: Exercise("", 0 - 1));
+    i32 n = 0;
+    for (i32 i = 2; i < argc; i++) {
+      string a = string.fromBytes(cli.arg(i).wait());
+      i32 colon = a.indexOf(":");
+      if (colon < 0) { also[n] = Exercise(a, 0 - 1); n = n + 1; continue; }
+      string count = a.slice(colon + 1, a.len());
+      i32 cases = atoi(count);
+      // `atoi` answers 0 for anything it cannot read, and 0 is also a count nobody can mean — a sweep
+      // of no cases calls nothing — so one test covers both.
+      if (cases <= 0) {
+        core.warn("wac: " + a + " — `" + count + "` is not a case count; a sweep is " +
+                  "`name:<n>` for some n above zero");
+        return 2;
+      }
+      also[n] = Exercise(a.slice(0, colon), cases);
+      n = n + 1;
+    }
+    Exercise[] asked = Exercise[n](fill: Exercise("", 0 - 1));
+    for (i32 i = 0; i < n; i++) { asked[i] = also[i]; }
+
+    Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked);
+    if (c.error != "") { core.warn("wac: " + c.error); return 1; }
+    for (i32 i = 0; i < c.values.len(); i++) {
+      core.log(itoa(i) + "\t" + itoa(c.values.get(i)));
+    }
+    core.log(itoa(c.values.len()) + " counter(s)");
+    // **After the table, and it does not change the status.** A mistyped export is worth saying and
+    // the counters that were collected are still the answer; the run printed a table, which is what
+    // this command was asked for.
+    for (i32 i = 0; i < c.missing.len(); i++) {
+      core.warn("wac: the module exports no " + c.missing.get(i));
+    }
+    return 0;
+  }
+
+  // **`tracestat`, moved out of the host.** `issues/system/0257c`'s rule: a host may implement
+  // running a module and must not implement the command surface. Reading a journal's size is a
+  // command — `native/v8/src/main.rs` did it by instantiating the module by hand through V8, a second
+  // engine driver beside the one the program already goes through.
+  //
+  // `events` is what was recorded, `wanted` is what happened whether or not there was room, and
+  // `slots` is the room there was. They differ exactly when the journal overflowed, and `wanted` is
+  // the number to pass to `--trace-slots` to make the next run fit — which is why it is reported
+  // rather than left for a caller to double and try again.
+  if (cmd == "tracestat") {
+    if (argc < 2) {
+      core.warn("usage: wac tracestat <module.wasm>");
+      return 2;
+    }
+    Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()),
+                      Exercise[0](fill: Exercise("", 0 - 1)));
+    if (c.error != "") { core.warn("wac: " + c.error); return 1; }
+    if (c.values.len() < 2) {
+      core.warn("wac: a journal is at least two slots; got " + itoa(c.values.len()));
+      return 1;
+    }
+    i32 cursor = c.values.get(0);
+    core.log("events " + itoa((cursor > 0 ? cursor : 0) / 2) +
+             " wanted " + itoa(c.values.get(c.values.len() - 1)) +
+             " slots " + itoa(c.values.len()));
+    return 0;
+  }
+
+  if (cmd == "uninstall") { return uninstallCommand(core, narrowed(cli, forCommand("uninstall")), argc); }
+
+  if (cmd == "update") {
+    string dir = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".";
+    string home = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wacHomeOf(cli);
+    if (home == "") {
+      core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
+      return 2;
+    }
+    return fetchAll(core, narrowed(cli, forCommand("update")), dir, home);
+  }
+
 
   // **After the module check, because a module is a complete invocation on its own.** This guard was
   // first, so `wac prog.wasm` — one argument — printed the usage block without ever looking at what
@@ -969,10 +1307,22 @@ export i32 main(Core core, Cli cli) {
   // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
   // error is reported as one should not depend on an unrelated path happening to exist.
   if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run"
-      && cmd != "test") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build, bindgen, run or test");
+      && cmd != "test" && cmd != "app") {
+    core.warn("wacc: unknown command '" + cmd
+              + "' — check, compile, build, bindgen, run, test or app");
     return 2;
   }
+
+  // **The command narrows itself to what it needs.** `packages/wac/src/grants.wac` says why at
+  // length: unifying the commands unified their grants, so the seed is built with `--allow-net`
+  // because `wac update` clones, and every `wac check` was running inside a program that could open
+  // a socket. Rebinding `cli` here means every path below this line — the graph walk, the emitter's
+  // I/O, the cache, the test runner — sees only the narrowed one, rather than each having to
+  // remember.
+  //
+  // `run` and `test` are unchanged by this: their flags grant the program they *start*, and a child
+  // cannot be handed what its parent does not hold.
+  cli = narrowed(cli, forCommand(cmd));
 
   Fs fs = Fs.onHost(cli, 0);
 
@@ -991,6 +1341,20 @@ export i32 main(Core core, Cli cli) {
   // How many the `--ignore` list took out, which the summary reports: "there were none" and "you
   // excluded them all" are different answers to the same count.
   i32 ignoredCount = 0;
+  // **A named file is not a way around `--ignore`.** The walk below is where the exclusion list is
+  // applied, and one file that is not a directory does not go through it — so
+  // `wac test --ignore a_test.wac a_test.wac` ran the file, contradicting the sentence above it. A
+  // caller building a target list and an ignore list from one source must get the same answer for a
+  // file as for the directory holding it; the alternative is an exclusion that works or not depending
+  // on how the caller happened to spell the target.
+  if (cmd == "test" && !fs.stat(entry).isDir
+      && withoutIgnored(string[](entry), flagValue(cli, argc, "--ignore")).len() == 0) {
+    // The walk's own spelling for a run that excluded everything, in the one-file shape: `0 ok`
+    // rather than nothing at all, because "excluded" and "no tests here" are different answers and
+    // the exit code cannot tell them apart.
+    core.log("1 file: 0 ok, 1 not run (--ignore)");
+    return 0;
+  }
   if (cmd == "test" && fs.stat(entry).isDir) {
     string[] found = testFilesIn(fs, entry);
     walked = withoutIgnored(found, flagValue(cli, argc, "--ignore"));
@@ -1007,7 +1371,7 @@ export i32 main(Core core, Cli cli) {
       }
       return 1;
     }
-    string aggregate = aggregatePath(core, cli);
+    string aggregate = "";
     string[] texts = string[walked.len()](fill: "");
     for (i32 i = 0; i < walked.len(); i++) {
       FileResult one = cli.readFile(walked[i]).wait();
@@ -1017,23 +1381,36 @@ export i32 main(Core core, Cli cli) {
       }
       texts[i] = string.fromBytes(one.bytes);
     }
-    // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
-    // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —
-    // naming a path the caller had not chosen, for a file they did not know existed. Reported against
-    // an external project on 2026-08-25; the native command never hit it because it writes its
-    // aggregate to a temporary directory of its own.
-    Change made = cli.mkdir(".cache", true).wait();
-    if (!made.ok()) {
-      core.warn("wac: cannot make .cache for the test aggregate — " + made.message);
-      return 1;
-    }
+    // **Two places the aggregate can live, and the imports it carries decide which.**
+    //
+    // `.cache/` is the ordinary one: the file is scratch, it is already ignored, and every import is
+    // `../` and then the path as the project spells it. That needs the walked files to be *under* the
+    // project, and a directory somewhere else has no relative name from `.cache/` — an absolute import
+    // is read relative to the importer, so there is nothing to emit. `wac test /tmp/somewhere` was
+    // refused for that reason once `test` became the program's, and it had worked before, because the
+    // host built its aggregate in a temporary directory of its own. `beside` is the way back: put the
+    // aggregate *in* the walked directory, where every file the walk found is at or below it and the
+    // `../` is not needed at all.
+    string up = "../";
     string[] imports = importable(cli, walked);
     if (imports.len() == 0) {
-      core.warn("wac: `test <directory>` needs the directory to be inside the project — "
-                + walked[0] + " is not under " + cli.cwd().wait());
-      return 2;
+      string dir = noTrailingSlash(entry);
+      imports = beside(dir, walked);
+      up = "";
+      aggregate = dir + "/" + baseName(aggregatePath(core, cli));
+    } else {
+      // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
+      // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —
+      // naming a path the caller had not chosen, for a file they did not know existed. Reported against
+      // an external project on 2026-08-25.
+      Change made = cli.mkdir(".cache", true).wait();
+      if (!made.ok()) {
+        core.warn("wac: cannot make .cache for the test aggregate — " + made.message);
+        return 1;
+      }
+      aggregate = aggregatePath(core, cli);
     }
-    Change wrote = cli.writeFile(aggregate, aggregateSource(imports, texts).toBytes()).wait();
+    Change wrote = cli.writeFile(aggregate, aggregateSource(imports, texts, up).toBytes()).wait();
     if (!wrote.ok()) {
       core.warn("wac: cannot write the aggregate " + aggregate + " — " + wrote.message);
       return 1;
@@ -1058,10 +1435,40 @@ export i32 main(Core core, Cli cli) {
   //
   // Above the compile and below the gather, because the sources *are* the key: there is no way to know
   // a build is a repeat without reading what it reads. Gathering is the cheap half.
-  string cachePath = buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc));
+  // **Read before the cache is asked, because it decides whether the cache may answer.** `WAC_PROFILE`
+  // turns on an instrumented build without `--coverage` on the command line — see `covered` below —
+  // and `buildCachePath` only knows about the flag. A hit would serve the *plain* module to a run
+  // whose whole purpose is the counters, and the profile would come back empty rather than wrong,
+  // which is the kind of empty that reads as "this entry has no tests".
+  string profileDir = "";
+  if (cmd == "test") {
+    u8[]? want = cli.env("WAC_PROFILE").wait();
+    if (!(want is null) && want!.len() > 0) { profileDir = string.fromBytes(want!); }
+  }
+  string cachePath = profileDir != ""
+                   ? ""
+                   : buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc), target);
   if (cachePath != "") {
     FileResult hit = fs.readFile(cachePath);
-    if (hit.ok && hit.bytes.len() > 8) {
+    if (hit.ok && hit.bytes.len() > 8 && cmd == "test") {
+      // **A cached test module is run, not written.** `build`'s hit ends in a file because the file is
+      // what was asked for; `test`'s hit ends in the tests, and the module carries its own manifest so
+      // there is nothing else to reconstruct. `covTable` is empty by construction: `buildCachePath`
+      // refuses a `--coverage` line, and `WAC_PROFILE` turns that on.
+      string cachedManifest = manifestIn(hit.bytes);
+      if (cachedManifest != "") {
+        string badFlagHit = unknownTestFlag(cli, argc, entry);
+        if (badFlagHit != "") {
+          core.warn("wac: unknown flag '" + badFlagHit + "' — --allow-read, --allow-write, "
+                    + "--allow-net, --allow-env, --allow-run, --filter");
+          return 2;
+        }
+        return runTests(core, cli, target, hit.bytes, cachedManifest, grantsIn(cli, argc),
+                        flagValue(cli, argc, "--filter"), walked, ignoredCount, target, "",
+                        hasFlag(cli, argc, "--verbose"), profileDir);
+      }
+    }
+    if (hit.ok && hit.bytes.len() > 8 && cmd != "test") {
       string stemHit = outStem(cli, argc);
       Change wroteHit = fs.writeFile(stemHit + ".wasm", hit.bytes);
       if (!wroteHit.ok()) {
@@ -1125,7 +1532,13 @@ export i32 main(Core core, Cli cli) {
   // is. Both or neither — a table without the counters describes a module that does not exist. That
   // path keeps the separate calls, because there is no folded form of it and a coverage build is
   // something a person waits for on purpose.
-  bool covered = hasFlag(cli, argc, "--coverage");
+  // **`WAC_PROFILE` asks for the same instrumented build without the flag**, because the thing that
+  // sets it is not typing a command line: `tools/mutate.ts` runs `wac test <entry>` and then reads the
+  // per-test line map to decide which tests a mutation could possibly reach. A profile is a coverage
+  // build read per test rather than once, so it needs the counters for the same reason and gets them
+  // the same way. `test` only — a `build` that quietly emitted a different module because a variable
+  // was set in the shell would be a build whose output does not follow from its arguments.
+  bool covered = hasFlag(cli, argc, "--coverage") || profileDir != "";
   // **`--trace` is the other instrumented build**, and it is the same three exports meaning something
   // else: a journal of `(site, value)` in the order events happened rather than a count per point.
   // `wac ctcompare` reads it. The two cannot be asked for together — they are one counter array, and a
@@ -1257,12 +1670,18 @@ export i32 main(Core core, Cli cli) {
     // the table is written beside it, so one aggregate would report the first file's positions for all
     // of them. That path needs a build per file, which this command does not do yet.
     i32 grants = grantsIn(cli, argc);
-    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered), entry,
+    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
                                   baseName(stem(entry)) + ".wasm", grants);
-    i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
+    u8[] wholeTest = withManifestSection(wasm, manifest);
+    // **Remembered before the tests run, not after.** What is cached is the *build*, and whether the
+    // tests pass is not a property of it — a failing suite recompiled from scratch on every run would
+    // be the case that most wants the cache. `cachePath` is already "" for a `--coverage` or profiling
+    // line, and for a warned program the diagnostics pass above has returned.
+    rememberBuild(cli, cachePath, wholeTest, entry);
+    i32 code = runTests(core, cli, entry, wholeTest, manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
                         covered ? covTableFilesIn(paths, texts, res, entry) : "",
-                        hasFlag(cli, argc, "--verbose"));
+                        hasFlag(cli, argc, "--verbose"), profileDir);
     // **The aggregate is scratch and goes when the run does.** It is a generated file with a unique
     // name, so leaving it would grow `.cache/` by one per invocation — `issues/system/0136` is the day
     // this repository's disk filled from exactly that shape, one temporary directory per run that
@@ -1306,7 +1725,8 @@ export i32 main(Core core, Cli cli) {
     // The name inside it is the entry's own stem: nothing is written to disk, so there is no file for
     // it to be wrong about, and a program that reports its own name should not report a temporary one.
     u8[] whole = withManifestSection(
-      wasm, manifestWire(wasm, types, sigs, entry, baseName(stem(entry)) + ".wasm", grants));
+      wasm, manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
+                         baseName(stem(entry)) + ".wasm", grants));
 
     // `true` for the input, so the program reads the terminal or the pipe this command was given —
     // which is what the native `run` does by instantiating in its own process. `false` for the
@@ -1324,6 +1744,41 @@ export i32 main(Core core, Cli cli) {
     return relay(core, cli, kid);
   }
 
+  // **`app` is `build` with a different thing written**, and it goes here for that reason: the shared
+  // compile above has already produced `wasm`, and the only two questions left are what bytes go on
+  // the front and what the file's mode is. Its own dispatch rather than a flag on `build` because the
+  // output is not a module — `-o thing.wasm` and `-o thing` mean the same to `build` and very
+  // different things to somebody handed the result.
+  if (cmd == "app") {
+    string bad = unknownFlag(cli, argc);
+    if (bad != "") {
+      core.warn("wac: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, "
+                + "--allow-env, --allow-run");
+      return 2;
+    }
+    string dest = outStem(cli, argc);
+    if (dest == "") {
+      core.warn("usage: wac app [--allow-read] [--allow-write] [--allow-net] [--allow-env] "
+                + "[--allow-run] <entry.wac> -o <dest>");
+      core.warn("       ./<dest> runs it, and needs the `wac` command on the machine that does");
+      return 2;
+    }
+    i32 appGrants = grantsIn(cli, argc);
+    // The grants as words, for the line this prints: `--allow-read --allow-write` reads back as what
+    // was typed, where a bitmask would be a number the caller has to decode to check their own build.
+    string words = "";
+    if ((appGrants & GRANT_READ) != 0) { words = words + (words == "" ? "" : " ") + "--allow-read"; }
+    if ((appGrants & GRANT_WRITE) != 0) { words = words + (words == "" ? "" : " ") + "--allow-write"; }
+    if ((appGrants & GRANT_NET) != 0) { words = words + (words == "" ? "" : " ") + "--allow-net"; }
+    if ((appGrants & GRANT_ENV) != 0) { words = words + (words == "" ? "" : " ") + "--allow-env"; }
+    if ((appGrants & GRANT_RUN) != 0) { words = words + (words == "" ? "" : " ") + "--allow-run"; }
+    return writeApp(core, cli,
+                    withManifestSection(wasm, manifestWire(wasm, types, sigs, entry,
+                                                           baseName(stem(entry)) + ".wasm",
+                                                           appGrants)),
+                    dest, words);
+  }
+
   if (cmd == "build") {
     string bad = unknownFlag(cli, argc);
     if (bad != "") {
@@ -1338,8 +1793,44 @@ export i32 main(Core core, Cli cli) {
     string wasmName = baseName(stem) + ".wasm";
     // Two more front ends, if this were `manifestFiles`: it derives `bindTypes` and `exportSigs`
     // from the sources, and both are already here.
-    string manifest = manifestWire(wasm, types, sigs, entry, wasmName, grantsIn(cli, argc));
+    //
+    // **`sigsWithCounters`, because an instrumented build has three exports no source names.**
+    // `issues/system/0243c` added that call for `wac test --coverage` and stopped there, so
+    // `wac build --coverage` wrote a module exporting `__cov_init`, `__cov_len` and `__cov_get` and a
+    // manifest listing neither — and a manifest that "claims to describe the module's callable
+    // surface" is that issue's own phrase. Measured: a `--coverage` build's manifest held `twice` and
+    // `main` while the module held those two plus the three, so `cli.call(h, "__cov_get", i)` answered
+    // *no export named __cov_get* against a module that exports it.
+    //
+    // That is what keeps `covdump`, `tracestat` and `ctcompare` in Rust — the last row of
+    // `issues/system/0257c`'s table, and `issues/system/0230a`. It was recorded there as `Cli.load`
+    // refusing manifest-less modules, which is a different thing and not what these commands are
+    // handed: every test that feeds them uses `wac build`.
+    //
+    // `traced` as well as `covered`: the two are one counter array meaning different things, and both
+    // inject the same three exports.
+    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
+                                  wasmName, grantsIn(cli, argc));
     u8[] whole = withManifestSection(wasm, manifest);
+    // **A build that emitted no code used to report success** — `issues/lang/0155`. The artefact had
+    // one section, `wac.manifest`, listing fifty exports the module did not contain, and it *validates*
+    // because a module made of a custom section is legal wasm. So the engine check the native host runs
+    // after a build had nothing to say, and what a reader got was a file with the magic number, the
+    // version and a manifest they would believe.
+    //
+    // Checked here rather than in a host, so every host refuses it — and before the write, so there is
+    // no artefact to believe.
+    // `sigs` is one export per line, so its line count is what the manifest promises. Counted here
+    // rather than passed as a string: `hollowWhy` walks bytes and has no business parsing a table.
+    i32 promised = 0;
+    for (i32 i = 0; i < sigs.len(); i++) { if (sigs.slice(i, i + 1) == "\n") { promised = promised + 1; } }
+    string hollow = hollowWhy(whole, promised);
+    if (hollow != "") {
+      core.warn("wacc: cannot build " + entry + " — " + hollow +
+                ". This is a compiler fault rather than a fault in the program: please report it with " +
+                "the entry that produced it.");
+      return 1;
+    }
     Change wroteWasm = fs.writeFile(stem + ".wasm", whole);
     if (!wroteWasm.ok()) {
       core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);
@@ -1358,28 +1849,7 @@ export i32 main(Core core, Cli cli) {
     // rendered diagnostics beside the artefact, which is a second file to write, evict and validate for
     // a case worth fixing rather than caching. A warned program pays full price every build, and any
     // `diags` still here is a warning — `wireHasErrors` returned above.
-    if (cachePath != "" && diags == "") {
-      string cacheDir = dirOf(cachePath);
-      cli.mkdir(cacheDir, true).wait();
-      // **Written beside and moved into place**, because three agents share this machine and a reader
-      // that catches a half-written entry gets a truncated module rather than a miss. `rename` is
-      // atomic on every filesystem this runs on — `std/platform.wac` says so where it explains why
-      // `rename` is in the same tier as `writeFile` — so a concurrent build sees the old entry or the
-      // new one and never part of either.
-      //
-      // The temporary name carries the *destination*, since this world has no pid: two builds racing
-      // on one key are building the same program, and what distinguishes them is where each was asked
-      // to put it. Two that also share a destination are already in conflict over the artefact itself.
-      Fnv u = Fnv.start();
-      u.eat(stem);
-      string tmp = cachePath + ".tmp" + u.hex();
-      Change wroteTmp = cli.writeFile(tmp, whole).wait();
-      if (wroteTmp.ok()) {
-        Change moved = cli.rename(tmp, cachePath).wait();
-        if (!moved.ok()) { cli.remove(tmp, false).wait(); }
-      }
-      sweepBuildCache(cli, cacheDir);
-    }
+    if (diags == "") { rememberBuild(cli, cachePath, whole, stem); }
     // **Inside the module, and only there.** A `.json` went beside it until 2026-08-20, because the
     // wasmtime host predated the section and took a manifest path as its argument. Both hosts read the
     // section now (`native/manifest`), so the pair was a second copy of one thing with nothing left
@@ -1420,4 +1890,110 @@ export i32 main(Core core, Cli cli) {
   }
   core.log(out + ": " + itoa(wasm.len()) + " bytes from " + itoa(src.n) + " file(s)");
   return 0;
+}
+
+/**
+ * Remove what `deno task wac:install` put under `$WAC_HOME`, and the line it added to a profile.
+ *
+ * **In the program, because it is a command and not engine work.** `issues/system/0257c` puts the
+ * command surface here; this was 59 lines of Rust doing filesystem calls the program can already
+ * make, which is the definition of a row that moves.
+ *
+ * The rules are the host's, kept exactly: a profile line is one containing `# wac`, the three files
+ * are `bin/wac`, `env` and `install.json5`, `bin/` goes only if it empties, the cache stays with
+ * `--keep-cache`, and `$WAC_HOME` itself goes only if nothing is left in it — otherwise the count is
+ * reported, because removing a directory somebody else is using is not this command's business.
+ */
+i32 uninstallCommand(Core core, Cli cli, i32 argc) {
+  bool keepCache = false;
+  for (i32 i = 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--keep-cache") { keepCache = true; }
+    else {
+      core.warn("usage: wac uninstall [--keep-cache]");
+      core.warn("wac: unknown argument " + a);
+      return 2;
+    }
+  }
+  string home = wacHomeOf(cli);
+  if (home == "") {
+    core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to uninstall from");
+    return 2;
+  }
+  string went = "";
+  i32 wentN = 0;
+
+  u8[]? h = cli.env("HOME").wait();
+  if (!(h is null) && h!.len() > 0) {
+    string hd = string.fromBytes(h!);
+    i32 lines = 0;
+    string[] profiles = string[](hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile");
+    for (i32 i = 0; i < profiles.len(); i++) { lines = lines + removeProfileLine(cli, profiles[i]); }
+    if (lines > 0) { went = went + (wentN > 0 ? ", " : "") + itoa(lines) + " profile line(s)"; wentN++; }
+  }
+
+  string[] named = string[]("bin/wac", "env", "install.json5");
+  for (i32 i = 0; i < named.len(); i++) {
+    Change gone = cli.remove(home + "/" + named[i], false).wait();
+    if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + named[i]; wentN++; }
+  }
+  // Only when it empties, which is what we want — a `bin` holding anything else is not ours.
+  cli.remove(home + "/bin", false).wait();
+  if (!keepCache) {
+    Change gone = cli.remove(home + "/cache", true).wait();
+    if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + "cache"; wentN++; }
+  }
+  string[]? left = cli.readDir(home).wait();
+  if (!(left is null)) {
+    if (left!.len() == 0) { cli.remove(home, false).wait(); }
+    else {
+      went = went + (wentN > 0 ? ", " : "") + "(" + itoa(left!.len()) + " other entr"
+           + (left!.len() == 1 ? "y" : "ies") + " left in " + home + ")";
+      wentN++;
+    }
+  }
+  // The host printed the list bare — `println!("{}", went.join(", "))` — and this is a differential
+  // against a command people have in their shell history, so the wording is not mine to improve.
+  core.log(wentN == 0 ? "nothing to remove" : went);
+  return 0;
+}
+
+/** Whether `hay` holds `needle`. Local because this file wants one substring test and no dependency. */
+bool holds(string hay, string needle) {
+  if (needle.len() == 0) { return true; }
+  if (needle.len() > hay.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= hay.len(); i++) {
+    if (hay.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/**
+ * A profile line is one carrying `# wac`, and the count of those removed. The host's rule exactly,
+ * including the join: `kept.join("\n")` there, so a file ending in a newline keeps its trailing
+ * empty line and one that does not, does not.
+ */
+i32 removeProfileLine(Cli cli, string profile) {
+  FileResult got = cli.readFile(profile).wait();
+  if (!got.ok) { return 0; }
+  string text = string.fromBytes(got.bytes);
+  string kept = "";
+  i32 dropped = 0;
+  i32 keptN = 0;
+  i32 at = 0;
+  while (at <= text.len()) {
+    i32 nl = at;
+    while (nl < text.len() && text.slice(nl, nl + 1) != "\n") { nl++; }
+    string line = text.slice(at, nl);
+    if (holds(line, "# wac")) { dropped++; }
+    else {
+      kept = kept + (keptN > 0 ? "\n" : "") + line;
+      keptN++;
+    }
+    if (nl >= text.len()) { break; }
+    at = nl + 1;
+  }
+  if (dropped == 0) { return 0; }
+  Change wrote = cli.writeFile(profile, kept.toBytes()).wait();
+  return wrote.ok() ? dropped : 0;
 }

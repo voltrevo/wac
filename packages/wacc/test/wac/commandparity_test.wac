@@ -7,7 +7,7 @@
 // measurement. That issue's own words: *"Without it, 'shared semantics' is a claim, and the two
 // loaders in 0229a are what a claim like that looks like after a few months."*
 //
-// `packages/wacc/example/wacc.wac` is the program. The native binary embeds it as a payload; the Deno
+// `packages/wac/src/wac.wac` is the program. The native binary embeds it as a payload; the Deno
 // and Node hosts get it through `packages/platform/build.ts`. All three parse the same argv in the same
 // wac code, so what this file can still catch is the part *outside* the program: how a host reports an
 // exit status, what it does with a stream, and whether a capability answers the same way.
@@ -57,7 +57,9 @@
 // ## What it costs, measured 2026-08-25
 //
 // **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
-// three hosts instead of two and thirty-four cases instead of six. Twenty-eight of them run
+// three hosts instead of two and forty-two cases instead of six. (The wall figure is older than the
+// count: since the command became one program containing the shell and the fetcher it is 83.7s wall
+// and 97.4s of CPU, because each host now builds a 219-file program rather than a 44-file one.) Twenty-eight of them run
 // something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
 // `bindgen` rows stop at the diagnostics and one names a subcommand that does not exist. Six `build`
 // invocations besides: three writing the module fixtures, and three more comparing what `build`
@@ -88,7 +90,7 @@ import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, joined } from "../../../wactest/src/strings.wac";
 
-const string ENTRY = "packages/wacc/example/wacc.wac";
+const string ENTRY = "packages/wac/src/wac.wac";
 
 string scratch(Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/parity-" + name;
@@ -248,6 +250,25 @@ string[][] cases() {
     // spelled correctly and did nothing — while the native printed a line per passing test. A flag
     // that is refused is a bad answer and a flag that is silently dropped is a worse one.
     string[]("test", "--allow-read", "--verbose", "src/one_test.wac"),
+    // **`tracestat`, which was a host command until it was not.** Two rows: the journal it reads, and
+    // the sentence it says about a file that is not an instrumented module. The second is the one that
+    // would have caught the move being half done — a host that still intercepted the command would
+    // answer its own wording, and a host that never had it would answer `unknown command`.
+    string[]("tracestat", "traced.wasm"),
+    string[]("tracestat", "src/hello.wac"),
+    // **`covdump`, which moved the same day and for the same reason** — and which needed
+    // `issues/system/0263c` fixing first, because it runs the module with the world its manifest
+    // declares and a loaded module could not use a capability at all. The table, and a case count that
+    // is not one: the second never loads anything, so it compares the command's own sentence.
+    string[]("covdump", "covered.wasm"),
+    string[]("covdump", "covered.wasm", "hello:many"),
+    // **`ctcompare`, the last of the three.** A journal against itself, which must be `same`; the same
+    // through `--all`, which is a different walk with its own `split`/`site`/`longer` vocabulary; and
+    // one path where two are needed, which is the usage error. Comparing a module with itself is the
+    // one comparison whose answer is known without running anything.
+    string[]("ctcompare", "traced.wasm", "traced.wasm"),
+    string[]("ctcompare", "--all", "traced.wasm", "traced.wasm"),
+    string[]("ctcompare", "traced.wasm"),
     string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
     // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
     // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
@@ -264,6 +285,10 @@ string[][] cases() {
     // implementations' worth of question, and `issues/system/0242c` is what happens when nobody asks
     // it. One program, run both ways, reporting what it was allowed to do.
     string[]("run", "--allow-read", "--allow-write", "src/caps.wac"),
+    // **The environment granted to a `run`**, which was excused in `testflagrows_test.wac` until
+    // `issues/system/0256c` closed. The row above reports it as `unset` because it was not granted;
+    // this one reports `ok`, and the two together are what makes the first one mean something.
+    string[]("run", "--allow-read", "--allow-env", "src/caps.wac"),
     string[]("run", "src/caps.wac"),
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
@@ -349,6 +374,23 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            "  if (c.ok()) { return \"\"; }\n" +
            "  return c.fault == FAULT_NOT_GRANTED() ? \"the write was denied\" : \"the write failed\";\n" +
            "}\n")
+    // **And the same capability *withheld*, which is where the hosts actually disagreed.** The three
+    // rows that walk `src` grant read and write and never env, so a file here is asked the denied
+    // question on every host — and until 2026-08-25 the native two answered the null this capability
+    // documents while the JavaScript two **trapped**, because `provider.ts` refuses a guarded call
+    // centrally and `u8[]?` was the one return shape with no fault field to absorb it.
+    // `issues/system/0256c`.
+    //
+    // The issue proposed moving `capsrc/env_test.wac` into `src/` as its regression test. This is the
+    // same test one step better: it asserts the *refusal* rather than the grant, so the rows stay
+    // green instead of failing identically on three hosts — and a host that traps still breaks the
+    // comparison, which is the whole job.
+    && put(t, cli, dir + "/src/deniedenv_test.wac",
+           "import { Cli, Core } from \"std/platform.wac\";\n" +
+           "export string test_a_denied_environment_is_null(Core core, Cli cli) {\n" +
+           "  u8[]? v = cli.env(\"PATH\").wait();\n" +
+           "  return v is null ? \"\" : \"PATH was readable without --allow-env\";\n" +
+           "}\n")
     // **The environment grant reaching a loaded module.** `--allow-env` was in the list `test` accepts
     // and in no row, which is the state `--verbose` was in — `tools/wac/testflagrows_test.wac` is the
     // check that now names such a flag. The question it asks is `issues/system/0242c`'s: a test runs
@@ -375,7 +417,19 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            + "  string read = f.ok ? \"ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
            + "  Change w = cli.writeFile(\"caps.txt\", \"x\\n\".toBytes()).wait();\n"
            + "  string write = w.ok() ? \"ok\" : (w.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
-           + "  core.log(\"read=\" + read + \" write=\" + write);\n"
+           // **And the environment, beside the two this already reported.** The row that wanted this
+           // was excused in `tools/wac/testflagrows_test.wac` while `issues/system/0256c` was open —
+           // a *denied* `env` answered null on the native hosts and trapped on the JavaScript ones, so
+           // a row without the grant disagreed by host. That is fixed, and the excuse said in as many
+           // words what to add when it closed: "a `caps` fixture reporting the environment beside the
+           // two capabilities it already reports".
+           //
+           // `PATH` rather than something of ours: it is set in every environment this runs in, so
+           // `unset` here means the capability was withheld rather than that the variable was absent —
+           // which is the distinction `issues/system/0261c` is about the type being unable to make.
+           + "  u8[]? e = cli.env(\"PATH\").wait();\n"
+           + "  string env = e is null ? \"unset\" : \"ok\";\n"
+           + "  core.log(\"read=\" + read + \" write=\" + write + \" env=\" + env);\n"
            + "  return 0;\n}\n")
     && put(t, cli, dir + "/capsrc/env_test.wac",
            "import { Cli, Core } from \"std/platform.wac\";\n"
@@ -396,6 +450,27 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
 
   string native = wacBinary(cli);
   t.isTrue(cli.stat(native).wait().isFile, "the native binary is built: " + native);
+
+  // **A traced artefact, built once by the native binary and read by all three.** `tracestat` moved
+  // out of `native/v8/src/main.rs` into the program on 2026-08-25 — `issues/system/0257c`'s rule that
+  // a host implements *running a module* and not the command surface — so the three hosts now read a
+  // counter journal through `Cli.load`/`Cli.call` rather than through a second engine driver, and
+  // whether they agree is exactly what this file is for.
+  //
+  // Built here rather than written as bytes: the artefact has to be a *real* traced module, and the
+  // number `tracestat` reports depends on the instrumentation rather than on the source. Small slots
+  // on purpose, so `wanted` and `slots` are both small numbers a reader can check by eye.
+  Exec traced = cli.exec(native,
+                         string[]("build", dir + "/src/hello.wac", "--trace", "--trace-slots", "8",
+                                  "-o", dir + "/traced", "--quiet"), u8[0]()).wait();
+  t.isTrue(traced.ran() && traced.status == 0,
+           "the traced fixture built: " + traced.error + string.fromBytes(traced.stderr));
+  // And the coverage half, for `covdump` — the same source, counted rather than journalled.
+  Exec covered = cli.exec(native,
+                          string[]("build", dir + "/src/hello.wac", "--coverage",
+                                   "-o", dir + "/covered", "--quiet"), u8[0]()).wait();
+  t.isTrue(covered.ran() && covered.status == 0,
+           "the coverage fixture built: " + covered.error + string.fromBytes(covered.stderr));
   string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
                              "--allow-net");
   string deno = builtByDeno(cli, ENTRY, "wac-deno-cli", grants, "deno", false);
@@ -466,7 +541,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
   // returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 14, "fourteen of these thirty-four succeed on the native host; a different count " +
+  // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
+  // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
+  t.eqI32(zeroes, 19, "nineteen of these forty-two succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

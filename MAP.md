@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-39 packages, 135,009 lines of wac, 2785 tests,
+39 packages, 137,690 lines of wac, 2823 tests,
 82 command-line programs and 11 browser pages.
 
 ## Packages
@@ -40,16 +40,16 @@ In dependency order: nothing here imports anything below it.
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,764 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `tls` |
 | [`lightclient`](packages/lightclient/) | A light client follows the beacon chain without downloading it. | 642 | 12 | `bls` `ssz` |
 | [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 33 | `codec` `crypto` `fmt` `rlp` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,389 | 246 | `bytes` `fmt` `json` `wacc` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,392 | 246 | `bytes` `fmt` `json` `wacc` |
 | [`quic`](packages/quic/) | QUIC version 1 — RFC 9000 and RFC 9001 — in wac. | 3,289 | 98 | `crypto` `tls` |
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,510 | 32 | `bytes` `codec` `fmt` `fs` `platform` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,132 | 58 | `box` `bytes` `codec` `crypto` `fmt` `fs` `sh` `tty` |
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 32 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,435 | 200 | `bytes` `codec` `crypto` |
-| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,375 | 318 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `tls` `wactest` |
-| [`wac`](packages/wac/) |  | 1,093 | 0 | `fmt` `fs` `json` `wacc` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 36,649 | 341 | `bytes` `codec` `crypto` `fmt` `fs` `json` `wac` `wacpkg` |
-| [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,769 | 48 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
+| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,451 | 324 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `tls` `wactest` |
+| [`wac`](packages/wac/) | The command. | 4,107 | 8 | `box` `fmt` `fs` `json` `platform` `sh` `wacc` `wacpkg` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 36,223 | 365 | `bytes` `codec` `crypto` `fmt` |
+| [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,783 | 48 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 2,287 | 35 | `bytes` `crypto` `fmt` `json` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,754 | 79 | `crypto` `fmt` `gzip` `tls` |
 
@@ -144,9 +144,9 @@ reach — see `packages/platform/README.md`.
 | `packages/tor/tools/capture-hspub.wac` | Pin publication against a real HSDir: tor's own descriptor cache. The wac half of |
 | `packages/tor/tools/capture-ntor.wac` | Re-record the ntor vectors from tor's own `test-ntor-cl server1`. |
 | `packages/tor/tools/capture-relaycert.wac` | Capture a relay's ed25519 certificates from a running chutney network. The wac half of |
-| `packages/wacc/example/wacc.wac` | The compiler, as a program. |
-| `packages/wacpkg/example/fetch.wac` | `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock. |
+| `packages/wac/src/wac.wac` | `wac` — the command, as a program. |
 | `packages/wacpkg/example/plan.wac` | What a project's dependencies are, and what an ordinary build would have to fetch. |
+| `packages/wacpkg/src/fetch.wac` | `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock. |
 | `packages/webrtc/example/answer.wac` | A WebRTC data channel, answered by a wac program. |
 
 ## Pages

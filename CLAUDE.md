@@ -89,13 +89,17 @@ every seed for a binary this checkout may never run is the waste `issues/system/
 checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
 task. `issues/system/0208`.
 
-**It builds all three payloads, and costs about 27s.** The binary carries a compiler, a shell and a
-fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote
-only the first, so the supported route produced a `wac` answering `unknown command 'sh'` and a red
-suite for anyone who ran `wac update` (`issues/system/0216a`). Of the original 34s, the fixpoint was
-about 13s and the other two payloads 12.4s and 3.9s plus a `cargo build`. `wac build` remembers what
-it built since 2026-08-24 (`issues/system/0204`), keyed on the compiler, the sources, the grants and
-the output name; the payloads come out of that cache, which is where the 34s went.
+**It builds one payload, since 2026-08-25.** The binary used to carry three — a compiler, a shell and
+a fetcher, answering `wac build`/`run`/`test`, `wac sh` and `wac update` — and `issues/system/0257c`
+put the second and third *inside* the first, because `wac` is one program containing the compiler
+plus more rather than a compiler with two modules beside it. The binary lost 1.3 MB and every other
+host gained two commands it never had.
+
+That also retires a whole class of mistake: this script wrote only the compiler until 2026-08-20, so
+the supported route produced a `wac` answering `unknown command 'sh'` and a red suite for anyone who
+ran `wac update` (`issues/system/0216a`). There is no second file to forget now. `wac build` remembers
+what it built since 2026-08-24 (`issues/system/0204`), keyed on the compiler, the sources, the grants
+and the output name.
 
 **The fixpoint rounds are built with the cache off, and 12.2s was the number for not checking.** This
 paragraph said "about 12s … **12.2s against 27.2s**" for a day, and that saving was the fixpoint check

@@ -1,0 +1,5 @@
+// expect: traps f
+// why: `casts.md` — "traps if the i32 value has no exact f32 representation", and a `u32` needs 32
+//      bits where an `f32` has 24. The 32-bit row of the same rule as `spec/cases/0230`
+// from: issues/lang/0268c
+export f32 f() { u32 x = 4294967295; return x as! f32; }

@@ -1,6 +1,8 @@
 # 0154 — an exported struct name that collides in a link breaks other modules' exports
 
-- **Status:** open
+- **Status:** closed — unreachable, 2026-08-25
+- **Fixed in:** `71874f73` — nothing to fix: the checker refuses the collision first, which
+  `spec/spec/imports.md` specifies, so this closes as unreachable rather than as repaired
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** bug
@@ -358,3 +360,110 @@ can see is *which file* asked for the name and how many candidates it found. Log
 since the interesting comparison is `Program` against `Ty` — turns this from a reading exercise into
 one run. Four of my own hypotheses died to a two-minute experiment today; the fifth should not be
 argued either.
+
+## The instrument exists; two reproductions that should have triggered it did not — agent-c, 2026-08-25
+
+Built what the paragraph above asked for: a `keyLog` on `Env`, appended at the *third* branch of `keyAt`
+with `(file, name, candidates, key)`, exposed through `keyLogLinked`/`keyLogFiles` and also appended to
+the decline that `blockedLinked` already returns, so the real case would print its own rows. It compiles
+and the seed is a fixed point with it in. **Then it logged nothing, twice**, and that is the result.
+
+Two constructions, both of which I expected to reach the third branch:
+
+    a.wac exports `Case` and `makeCase()`; b.wac exports another `Case`;
+    e.wac imports `makeCase` and calls it, naming `Case` nowhere         -> no ambiguity, builds
+
+    lib.wac imports speccases.wac's `Case` and exports `Holder { Case c; }`;
+    one_test.wac imports `Holder`; two_test.wac imports ast.wac's `Case`;
+    `wac test <dir>` links them into one aggregate                        -> no ambiguity, builds
+
+**Why, and this is the narrowing.** Both files that could have been ambiguous resolve at branch **2**:
+`e.wac` imports `makeCase` from the file that declares `Case`, and the import list says exactly which
+file the name comes from, so the third branch is never reached. `lib.wac` imports `Case` itself. The
+aggregate wrapper imports the test files and calls `test_*()`, whose signatures mention no struct at all.
+
+So the trigger needs a file that **neither declares nor imports the name and still must resolve it** —
+and an import of a *function* is not enough, because branch 2 answers from the import that named it. The
+23-file case had something narrower in it than "two files export `Case`". That is what the instrument
+should be pointed at next, and the cheapest way to point it is the real directory rather than a
+construction: `wac test packages/wacc/test/wac`, which is slow only because `corpusemit_test.wac` is in
+it — the aggregate build fails long before any test runs, so the run can be killed as soon as the
+decline prints.
+
+The instrument was reverted rather than shipped: it adds a field to a 142-field positional struct and a
+string append on a hot path. It is four small edits and this section says where each goes.
+
+**One thing it is worth knowing before rebuilding it**: `Env`'s fields and methods interleave, so
+"append the field at the end of the struct" is not the same as "after the last field". The last field is
+`usedData`, and the constructor's last three arguments are `B.create(), false, false`. Getting that wrong
+gives `expected bool, found string` at the constructor, which is the friendly version of the failure —
+the unfriendly one is a field silently wired to its neighbour.
+
+## The reproduction no longer reproduces — agent-c, 2026-08-25
+
+Before pointing the instrument at the real directory, I ran it:
+
+    $ wac test packages/wacc/test/wac        # killed after 180s, 16 files in
+
+**No decline, and no fallback.** `native/v8/src/main.rs` prints *"the shared build for … did not build,
+so its N files are being built one at a time"* whenever an aggregate fails, once, before the group's
+first file — and it is not in the output. The aggregate for this directory builds today.
+
+That fits the history. This issue was filed on 2026-08-18; **`9b4f2c4b`, the next day**, made a file's
+private declarations stop being candidates for other files — `spec/spec/imports.md` line 16, "only
+export-marked functions and types can be imported". The trigger described above is
+*"`ast.wac` exports `Case`, `diagnosticgap_test.wac` declares a private one, a third file exports
+one"*, and one of those three stopped counting. Nobody re-measured the reproduction afterwards, so the
+text above still reads as live.
+
+Two exported `Case` declarations remain — `packages/wacc/src/ast.wac` and
+`packages/wacc/test/wac/speccases.wac` — so the *count* is still two. What has changed is that nothing
+in that link reaches the name by the third branch any more, which is the same thing my two
+constructions showed from the other direction.
+
+**So what is left of this issue is the rule, not the defect**, which is what the 2026-08-18 note already
+said: two files declaring one name is fine and a name *two of a file's imports* declare is refused,
+because the import list says which files and not which names came from which. That is a language
+question and does not need a reproduction. The sub-question *"why is `Arm` guessed at where five of its
+neighbours are refused"* is probably moot with it — it was a symptom of the same link.
+
+Worth doing before anything else here: a case that *pins* the current behaviour, so the next change to
+`keyAt` cannot quietly restore the old one. `privatename_test.wac` covers the private half; the
+ambiguity half has no case of its own, which is why this could stop reproducing without anybody noticing.
+
+## Closed: the checker gets there first, and that is specified — agent-c, 2026-08-25
+
+The permissive path in `keyAt` — resolve a name the file neither declares nor imports, and refuse only
+when two candidates match — cannot be reached from source anybody writes, because the **checker** refuses
+the name before the emitter sees it:
+
+    import { makeCase } from "./a.wac";      // `Case` itself is not imported
+    export i32 main() { Case c = makeCase(); return c.v; }
+
+    error: expected type
+      --> col/e2.wac:3:21
+       |
+     3 | export i32 main() { Case c = makeCase(); return c.v; }
+       |                     ^^^^ unknown type 'Case'
+       = help: import the type, or check the spelling
+
+Measured with two candidates and with one: **both are refused**, so this is not the ambiguity rule, it is
+`spec/spec/imports.md`'s *"A written type name must be in scope"* — `[§wac-type-name-scope-8vqk3mn]`,
+whose own example is this exact shape. `issues/lang/0048` is the closed issue that established it, and it
+is the same defect one layer up: *"a type name resolves outside the file that wrote it, and picks wrong
+when two match"*.
+
+So the sequence is: `0048` closed the door in the checker; `9b4f2c4b` removed private declarations from
+the candidate count; and the aggregate that reached the emitter's copy of the rule stopped producing it.
+What is left in `keyAt` is defensive rather than live — a name that arrives through a *signature* is keyed
+in the file that declared it, and one a file *writes* has to be imported.
+
+**What would make it reachable again is relaxing that clause**, which is the rule question this issue has
+carried since 2026-08-18: whether a name two of a file's imports declare should be qualified further
+rather than refused. That question survives; the bug does not. `§wac-type-name-scope-8vqk3mn` is the
+guard, it is held by a case, and `spectags_test.wac` counts it among 435 of 435.
+
+Closed as unreachable rather than as fixed, because nobody fixed it — two other changes made it
+unreachable, and six days passed before anyone re-measured. That is the thing worth carrying forward: a
+bug whose reproduction depends on a second bug should say so, so that closing the second one prompts a
+re-measure of the first.

@@ -1,8 +1,23 @@
-// A function the emitter could not emit is **named**, and the build fails — `issues/lang/0170a`.
+// A program **no phase can compile** fails the build and points at the line — `issues/lang/0170a`.
 //
 // Operator's principle, 2026-08-20: *it is better for the compiler to fail something correct than to
 // accept something incorrect. In every case where it hits a case that isn't implemented, it must
 // fail, not be silent.*
+//
+// **This said "a function the emitter could not emit is named", and the subject moved** —
+// `issues/lang/0262c`. The fixture is `return s[0] - 1;`, which is a *checker* error now, so the
+// emitter never runs and there is no per-function decline in any of the three cases below. That
+// happened because things went right: `issues/lang/0170a` item 2, "a binary whose operands disagree
+// has no type", is the commit that took it.
+//
+// **And it passed anyway, on a coincidence worth remembering.** The assertion was
+// `contains(said, "f")` — the function is `f`, the checker's message does not name it, and the needle
+// found the `f` in *"of that kind"*. A one-character needle finds itself in almost any English
+// sentence, so it is a location now: `m.wac:2`, which no accident of prose supplies.
+//
+// What survives is the property that matters and is phase-independent: a program this compiler cannot
+// compile, for any reason, exits non-zero and says where. Whether the *emitter's* per-function decline
+// can still be reached by any input at all is `issues/lang/0262c` and is not settled here.
 //
 // **The silence this exists to keep out.** An ill-typed body wacc's checker does not have a rule for
 // reaches the emitter, which declines the function — correctly, and the decline cascades to its
@@ -16,9 +31,12 @@
 //
 // The three cases are the ones that can each be wrong in a way the others would not catch:
 //
-//   1. an exported function that cannot be emitted fails the build and is named;
+//   1. an exported function that cannot be compiled fails the build and the failure says where;
 //   2. **a method declared before it does not hide it** — the index bug, reproduced deliberately,
-//      because every case in this repository that used to pass had no method before the function;
+//      because every case in this repository that used to pass had no method before the function.
+//      The *reason* for this shape is historical now: the bug was an index into the per-function
+//      arrays, which this fixture no longer reaches. What it still asserts — that two methods ahead of
+//      the function do not turn a refusal into a silent success — holds whichever phase refuses;
 //   3. a program with nothing wrong still builds, so the check cannot be satisfied by refusing
 //      everything.
 
@@ -67,7 +85,10 @@ export string test_an_export_that_cannot_be_emitted_fails_the_build(Core core, C
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
     t.isTrue(r.status != 0, "a build that lost an exported function reported success: " + said);
-    t.isTrue(contains(said, "f"), "the failure did not name the function — " + said);
+    // **A location, not a name.** The old needle was `"f"` and passed on the `f` in "of that kind";
+    // this one is the file and line the mistake is on, which is what a reader needs and what no
+    // English sentence supplies by accident. `issues/lang/0262c`.
+    t.isTrue(contains(said, "m.wac:2"), "the failure did not point at the line — " + said);
   }
   cli.remove(dir, true).wait();
   return t.report();

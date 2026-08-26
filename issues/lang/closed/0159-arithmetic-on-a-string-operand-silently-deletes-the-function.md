@@ -85,8 +85,8 @@ to resolve to nothing and emit nothing for the operand, which is exactly what a 
 value short looks like. If that is right, the fix is a diagnostic at resolution and the emit paths need
 no change.
 
-Related but not the same: [0155](../open/0155-a-build-that-emitted-no-code-reports-success.md) is a build that
-emitted *nothing* reporting success; this one emits almost everything. [0154](../open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md)
+Related but not the same: [0155](0155-a-build-that-emitted-no-code-reports-success.md) is a build that
+emitted *nothing* reporting success; this one emits almost everything. [0154](0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md)
 shares the symptom of a manifest disagreeing with the module, from a different cause.
 
 ## Fixed, and the fix is one line

@@ -28,13 +28,10 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { diagnoseFiles, diagnoseFilesRendered } from "../../src/api.wac";
-import { wireField, wireLines } from "./wire_probe.wac";
+import { wireField, wireLines, ANNOTATION, HINT, SPAN } from "./wire_probe.wac";
 
 const string ORACLE = "packages/wacc/test/renderdiag_oracle.ts";
 const string CORPUS = "packages/wacc/test/specCases.json";
-const i32 ANNOTATION = 5;
-const i32 HINT = 6;
-const i32 SPAN = 7;
 
 /** One single-file case from the corpus: its path, its source, and whether it should compile. */
 struct Recorded {
@@ -205,13 +202,13 @@ export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core,
     string[] lines = wireLines(wire);
     for (i32 k = 0; k < lines.len(); k++) {
       diagnostics = diagnostics + 1;
-      if (wireField(lines[k], ANNOTATION) != "") { annotated = annotated + 1; }
-      if (wireField(lines[k], HINT) != "") { hinted = hinted + 1; }
+      if (wireField(lines[k], ANNOTATION()) != "") { annotated = annotated + 1; }
+      if (wireField(lines[k], HINT()) != "") { hinted = hinted + 1; }
       // **Recorded, not wide.** A correct span for `;` is 1, so counting `span > 1` would measure how
       // long the tokens happened to be. The wire carries `0` where nothing measured a width, which is
       // what makes "we did not look" distinguishable from "one character is the truth" — so this
       // reads the raw column rather than the rendered one, where a zero is already a one.
-      string span = wireField(lines[k], SPAN);
+      string span = wireField(lines[k], SPAN());
       if (span != "" && span != "0") { spanned = spanned + 1; }
     }
   }
@@ -246,10 +243,22 @@ export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core,
   // `unexpected token`, whose specifics already travel in the annotation (`expected '=', found ';'`).
   // A generic help line there would be noise, which is why the number has not been pushed.
   //
+  // **Help came down to 42 on 2026-08-25, and the population is why.** `C.report` deduped a new
+  // diagnostic against the *immediately previous* one only, so a repeat separated by anything else was
+  // recorded twice — `i32 r = a & b;` for an `i32` and a `bool` said *operands have mismatched types*
+  // at one character, then another rule, then the first one again. The scan is over every entry now,
+  // and this corpus lost **12 diagnostics: 697 to 685, with help on 297 down to 285.** All twelve
+  // carried help, so they were flattering the share, and 42.6% became 41.6%.
+  //
+  // Measured both ways rather than assumed — the change was stashed, the seed rebuilt and this test
+  // run again — because a ratchet that falls is the same shape whether the compiler got worse or the
+  // thing being counted got smaller, and only one of those is a regression. Nothing about a *rule*
+  // moved: the same diagnostics are reported, once each.
+  //
   // The floors are a few points under, so ordinary movement does not fail the suite and a *regression*
   // does. Raise them when you raise the numbers.
   t.isTrue(pctAnnotated >= 76, "operands: " + itoa(pctAnnotated) + "%, was at least 76%");
-  t.isTrue(pctHinted >= 43, "help: " + itoa(pctHinted) + "%, was at least 43%");
+  t.isTrue(pctHinted >= 42, "help: " + itoa(pctHinted) + "%, was at least 42%");
   t.isTrue(pctSpanned >= 70, "a real span: " + itoa(pctSpanned) + "%, was at least 70%");
   return t.report();
 }

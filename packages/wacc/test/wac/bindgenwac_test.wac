@@ -24,7 +24,7 @@ import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Graph, graphOf } from "./graph.wac";
-import { emitFiles, bindgenFiles, bindgenWire } from "../../src/api.wac";
+import { emitFiles, bindgenDeclinedFiles, bindgenFiles, bindgenWire } from "../../src/api.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 const string ORACLE = "packages/wacc/test/bindgenOracle.ts";
@@ -261,5 +261,54 @@ export string test_the_two_generators_write_the_same_glue_for_whole_programs(Cor
     if (!g.ok) { continue; }
     compare(t, cli, "", entries[i], entries[i], g.paths, g.sources);
   }
+  return t.report();
+}
+
+/**
+ * A callback that *returns* a function is left out of the class, not typed wrongly.
+ *
+ * **The one shape the glue cannot carry, and the way it failed was silence.** A funcref in a
+ * callback's *parameter* position is a host function coming in, and `collectOutSigs` has arranged for
+ * that since 2026-08-18. One in *return* position is JavaScript handing wac a function it built, which
+ * needs a registration this generator does not write — `usableSig` says so and the dispatcher throws.
+ *
+ * What it did not do was leave the member out. For `fn[fn[i32(i32)](bool)]` — takes a bool, answers a
+ * function — the generated accessor was typed `(a0: boolean) => number`: the returned function
+ * flattened to its own return type. A caller writes `(b) => 3`, TypeScript agrees, and the boundary
+ * throws. `bindgenDeclined` said nothing either, because it walked exported signatures and never
+ * struct fields.
+ *
+ * The reference omits the member. This asserts the same, and that the omission is *named* — silence is
+ * the failure `bindtables_test.wac` was written about, one level down.
+ */
+export string test_a_callback_returning_a_function_is_left_out_and_named(Core core, Cli cli) {
+  T t = T.create();
+  string[] paths = string[]("/t/main.wac");
+  string[] sources = string[](
+      "export struct Chooser {\n" +
+      "  fn[fn[i32(i32)](bool)] pick;\n" +
+      "}\n" +
+      "export i32 use(Chooser c, bool which, i32 n) {\n" +
+      "  fn[i32(i32)] f = c.pick(which);\n" +
+      "  return f(n);\n" +
+      "}\n");
+
+  // **Named, which is the half that was missing entirely.** The type is spelled out so a reader of the
+  // report knows which shape was refused rather than only which field.
+  string declined = bindgenDeclinedFiles(paths, sources, "/t/main.wac");
+  t.isTrue(contains(declined, "Chooser.pick"),
+           "the declined report does not name the field: " + declined);
+  t.isTrue(contains(declined, "fn[fn[i32(i32)](bool)]"),
+           "the declined report does not name the type it could not carry: " + declined);
+
+  // And left out, rather than emitted with a type that flattens the returned function.
+  // `bindgenFiles` rather than `bindgenWire`: it takes the sources and derives both tables itself,
+  // which is what this test has to say about — the generator's own view of the program.
+  string glue = bindgenFiles(emitFiles(paths, sources, "/t/main.wac"), paths, sources,
+                             "/t/main.wac", "ts");
+  t.isTrue(!contains(glue, "get pick("), "an accessor was generated for a field the glue cannot carry");
+  t.isTrue(!contains(glue, "(a0: boolean) => number"),
+           "the flattened type is still there — a callback answering a function typed as its return");
+  t.isTrue(contains(glue, "not generated"), "the omission is not explained in the file itself");
   return t.report();
 }

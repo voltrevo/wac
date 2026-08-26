@@ -16,6 +16,13 @@ export i32 LINE() { return 1; }
 export i32 COLUMN() { return 2; }
 export i32 PHASE() { return 3; }
 export i32 MESSAGE() { return 4; }
+// **These three were `const i32 ANNOTATION = 5;` in two test files each**, beside six that were
+// already here — so half the layout was named in one place and half was copied. A wire format with
+// two owners is one that drifts on the day a field is inserted, and the copies name the *same*
+// numbers, which is what makes it look safe.
+export i32 ANNOTATION() { return 5; }
+export i32 HINT() { return 6; }
+export i32 SPAN() { return 7; }
 export i32 SEVERITY() { return 8; }
 
 /** The non-empty lines of a wire, which is one diagnostic each. */

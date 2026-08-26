@@ -586,6 +586,20 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
           // A parameter no argument mentions cannot be inferred, and guessing would compile a
           // different function from the one that was called.
           if (bound[i] == "") { return ""; }
+          // **Canonicalised, or an enum gets two instantiations of one generic.** `typeOfE` of
+          // `Colour.Red` is the *variant*, so `hold(Colour.Red)` inferred `T = Colour.Red` and built
+          // `Hold<Colour.Red>` — a different struct from the `Hold<Colour>` the caller's signature
+          // names, and a different type index. The function then returned `(ref null 387)` where its
+          // own signature said `(ref null 336)`: a module the emitter was happy with and the engine
+          // would not load. `issues/lang/0260c`.
+          //
+          // `canonType` is the right instrument and its docstring says why — "a variant and its enum
+          // are one struct … everywhere a wac type name reaches wasm, it goes through here first".
+          // An instantiation *name* is such a place; it was the one that did not.
+          //
+          // Done here rather than in the name only, so the substitution inside the body agrees: the
+          // instance is `Hold<Colour>` and `T` stands for `Colour` throughout it.
+          bound[i] = env.canonType(bound[i]);
           if (i > 0) { inst = inst + ","; }
           inst = inst + bound[i];
         }
@@ -1668,7 +1682,22 @@ export struct Env {
 
   /** Record a function, with its parameters, in the order the calls will index them. */
   void addFunc(this, string name, string ret, string[] ptypes) {
-    if (this.funcCount >= this.funcs.len()) {
+    // **Every table `funcCount` indexes, not just this one.** Eight arrays are keyed by this cursor
+    // and only `funcs` was checked, so the guard bounded the cursor by *one* of the things it
+    // indexes. Six of the eight were raised to 16384 together and two — `funcRecv` and
+    // `funcMethodGeneric`, declared ninety fields away in the struct — stayed at 4096. The cursor
+    // then walked past their ends, and `collectInstances` writes `funcRecv[funcCount - 1]` with no
+    // check of its own: `array element access out of bounds`, an engine trap with no message, three
+    // frames below anything that mentions a table. `issues/system/0257c`.
+    //
+    // Checking all eight means a future drift *declines* instead — `issues/lang/0158`'s rule — and
+    // it costs seven comparisons on a path that already does a string write. The sizes should simply
+    // be equal, and the language cannot say "as long as that one", so this is where that is enforced.
+    if (this.funcCount >= this.funcs.len() || this.funcCount >= this.funcReturns.len()
+        || this.funcCount >= this.funcParamAt.len() || this.funcCount >= this.funcParamCount.len()
+        || this.funcCount >= this.funcOk.len() || this.funcCount >= this.funcIndex.len()
+        || this.funcCount >= this.funcRecv.len()
+        || this.funcCount >= this.funcMethodGeneric.len()) {
       this.ranOut("functions");
       return;
     }
@@ -2347,12 +2376,33 @@ export struct Env {
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
                string[1024](), 0,
                string[16384](), string[16384](), string[16384](), bool[16384](), 0,
-               string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
-               bool[4096](), i32[4096](), 0,
+// **The function table, raised from 4096 on 2026-08-25.** `issues/system/0257c` makes `wac` one
+               // program containing the compiler, the shell and the fetcher, and `wac sh` wires box's
+               // sixty-five applets: the command's graph goes from 44 files to 218 and this declined
+               // it — "ran out of room for functions", which is `issues/lang/0158`'s rule working.
+               //
+               // **Raise it while the command is still small.** Round 1 compiles with the seed
+               // *already installed*, so raising this and adding the dispatch in one go changes
+               // nothing: the compiler doing the work still has the old number. The number goes up,
+               // that seed is installed, and only then can it compile the larger program.
+               //
+               // These are `funcs`, `funcReturns`, `funcParamTypes`, `funcParamAt`, `funcParamCount`,
+               // `funcOk` and `funcIndex` — seven parallel arrays and two cursors, which is the wrong
+               // shape and wants to be `Vec`. Identified by matching the *type signature* of the
+               // struct's fields against this argument list, after raising a different group of
+               // `string[4096]`s by eye and watching the build fail unchanged.
+               string[16384](), string[16384](), string[65536](), i32[16384](), i32[16384](), 0,
+               bool[16384](), i32[16384](), 0,
                i32[1024](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), bool[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
-               string[1024](), i32[1024](), null, false, string[4096](), bool[4096](),
+               // **`funcRecv` and `funcMethodGeneric`, raised with the rest of the function table
+               // on 2026-08-25** — they are indexed by `funcCount` too, and they are *here* rather
+               // than beside it because the struct declares them ninety fields later. That is the
+               // whole reason the first raise looked complete and was not: matching the contiguous
+               // block of `string[4096]`s found six of the eight, and the two stragglers then took
+               // `funcCount` past 4096 and off the end. See `addFunc`, which now checks all eight.
+               string[1024](), i32[1024](), null, false, string[16384](), bool[16384](),
                string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
@@ -6024,13 +6074,27 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
 void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string want) {
   string en = env.canonType(typeOfE(src, lexed, env, subject));
   if (!env.isEnumName(en) || arms.len() == 0) { return; }
+  // **Every arm, not the first one.** This took the type of the first arm that had a value and used it
+  // as the block's result, so a `match` whose arms are a subtype pair emitted the `else` arm's `Base`
+  // where a `Sub` was declared and the engine refused the module — *type error in fallthru[0]
+  // (expected (ref null 2), got (ref null 1))*. The checker said nothing, because it unifies them:
+  // `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying exactly as a ternary's two
+  // branches do, and the ternary arm of `emitExpr` already folds `commonStructAncestor` for precisely
+  // this. Which arm came first decided whether the program built.
   string rt = "";
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].value is null) { continue; }
-    if (rt != "") { continue; }
     i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
-    rt = typeOfE(src, lexed, env, arms[a].value!);
+    string at = typeOfE(src, lexed, env, arms[a].value!);
     env.localCount = saved;
+    if (at == "") { continue; }
+    if (rt == "") { rt = at; }
+    else if (rt != at) {
+      // Only when there *is* a shared ancestor, as the ternary does: an unrelated pair keeps the
+      // first arm's type and fails where it already failed, rather than becoming a new answer here.
+      string shared = commonStructAncestor(env, rt, at);
+      if (shared != "") { rt = shared; }
+    }
   }
   if (rt == "") { rt = want; }
   env.addLocal(" match", en);
@@ -9294,15 +9358,66 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  * `5000000000 as! i32` was `i32` max — the one spelling whose job is to stop failing silently, and
  * inventing a plausible number while it did. `issues/lang/0127`.
  *
- * The check is one rule for every row: **convert, convert back, compare, trap if they differ.** The
- * fractional case needs no separate test — `1.5` truncates to `1` and `1.0 != 1.5` — and NaN handles
- * itself, since `trunc_sat` gives 0 and NaN is not equal to `0.0`. Not being equal to anything,
- * including itself, is what makes a comparison the right instrument here.
+ * The check is **convert, convert back, compare, trap if they differ** for most rows. The fractional
+ * case needs no separate test — `1.5` truncates to `1` and `1.0 != 1.5` — and NaN handles itself on
+ * the float-to-integer rows, since `trunc_sat` gives 0 and NaN is not equal to `0.0`. Not being equal
+ * to anything, including itself, is what makes a comparison the right instrument there.
+ *
+ * **It is not one rule for every row, and saying so was how two families went unchecked.** Two need
+ * something else, both because a round trip can return the original without the value having
+ * survived — `issues/lang/0268c`:
+ *
+ *   - two integer types of one wasm width, where there is nothing to convert: `emitSignRangeTrap`;
+ *   - back from a float, where the *saturating* truncation clamps an out-of-range value onto the
+ *     original: the trapping truncation instead, `truncTrapOpcode`.
+ *
+ * The comparison is still the instrument; what changed is that two rows had nothing to compare.
  *
  * Only for numeric conversions. A reference downcast is already checked by `ref.cast`, which traps
  * on a wrong type, and has no round trip to make.
  */
+/**
+ * `as!` between two integer types of one wasm width — `i32`/`u32`, `i64`/`u64`.
+ *
+ * **A range test, because the round trip has nothing to see.** Converting and converting back is how
+ * every other checked cast is guarded, and it cannot work here: the two types are one wasm value type,
+ * so the conversion emits nothing and the round trip would compare a value with itself.
+ *
+ * `spec/spec/casts.md` states this case with a clause of its own —
+ * `[§wac-usign-chk-p8jn3wl]` *"`check(5)` returns `5`; `check(-1)` traps"* — beside the program
+ * `export u32 check(i32 x) { return x as! u32; }`. `spec/cases/0224` and `0226` run it.
+ * `issues/lang/0268c`.
+ */
+void emitSignRangeTrap(B fb, Env env, string from, string to) {
+  i32 tmp = env.scratchNamed("castsign", from);
+  fb.byte(34); fb.u32leb(tmp);                      // local.tee — keep the original
+  if (valType(from) == wasmI32()) {
+    if (isUnsigned(to)) {
+      fb.byte(65); fb.i32leb(0); fb.byte(72);            // i32.const 0, i32.lt_s
+    } else {
+      fb.byte(65); fb.i32leb(2147483647); fb.byte(75);   // i32.const i32max, i32.gt_u
+    }
+  } else {
+    if (isUnsigned(to)) {
+      fb.byte(66); fb.i64leb(0); fb.byte(83);     // i64.const 0, i64.lt_s
+    } else {
+      fb.byte(66); fb.i64leb(9223372036854775807); fb.byte(86);  // i64.const i64max, i64.gt_u
+    }
+  }
+  fb.byte(4); fb.byte(64);                          // if (void)
+  fb.byte(0);                                       // unreachable
+  fb.byte(11);                                      // end
+  fb.byte(32); fb.u32leb(tmp);                      // local.get — the value, unchanged
+}
+
 void emitCast(B fb, Env env, string from, string to, i32 op) {
+  // **One width, two ranges** — see `emitSignRangeTrap`. This has to come before the bail below,
+  // which declines on `valType(from) == valType(to)` and so declined on exactly this.
+  if (op == kAsBang() && from != to && isNumericTy(from) && isNumericTy(to) &&
+      valType(from) == valType(to) && !isFloat(from) && isUnsigned(from) != isUnsigned(to)) {
+    emitSignRangeTrap(fb, env, from, to);
+    return;
+  }
   // **Same width is a reinterpretation, and carries no check.** `i32 as! u32` is the same
   // thirty-two bits read differently: `emitConversion` emits nothing for it, so the round trip
   // below would tee a value, convert it nowhere and back, compare it with itself and branch — six
@@ -9314,8 +9429,14 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   // reaches here, which is what the measurement above had to be rewritten to use once the first
   // version of it showed no difference at all.
   //
-  // It is also the right answer rather than only the cheap one: `casts.md:86–94` lists nine
-  // trapping rows and not one of them has the same wasm value type on both sides.
+  // **And the claim this comment used to end on was wrong.** It said the bail "is also the right
+  // answer rather than only the cheap one: `casts.md:86–94` lists nine trapping rows and not one of
+  // them has the same wasm value type on both sides." True of that table, which is the cross-width and
+  // float one — and the same-width signedness change is specified separately at `casts.md:215–230`,
+  // with a clause naming the program: `[§wac-usign-chk-p8jn3wl]`, *"`check(-1)` traps"*. Generalising
+  // from one table over a section it does not cover is what left `-1 as! u32` answering 0 for as long
+  // as it did. The branch above handles that case now, so what is left here is the saving, which is
+  // real: six instructions and about eighteen bytes per cast that can never fire.
   if (op != kAsBang() || from == to || !isNumericTy(from) || !isNumericTy(to) ||
       valType(from) == valType(to)) {
     emitConversion(fb, env, from, to, op);
@@ -9326,7 +9447,16 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   fb.byte(34); fb.u32leb(srcL);              // local.tee  — keep the original
   emitConversion(fb, env, from, to, op);
   fb.byte(34); fb.u32leb(dstL);              // local.tee  — keep the converted
-  emitConversion(fb, env, to, from, 0);      // and convert it back
+  // **Coming back from a float, the *trapping* truncation.** `emitConversion` uses the saturating one
+  // — right for `as~`, and blind here: `u64`'s maximum rounds *up* to 2^64 in an `f64` and saturation
+  // clamps it back onto the original, so the comparison below sees no loss exactly where the loss is.
+  // The trapping form refuses the out-of-range value itself, and a value that merely rounds still
+  // comes back different and is caught by the comparison. `issues/lang/0268c`.
+  if (isFloat(to) && !isFloat(from)) {
+    fb.byte(truncTrapOpcode(to, from));
+  } else {
+    emitConversion(fb, env, to, from, 0);    // and convert it back
+  }
   fb.byte(32); fb.u32leb(srcL);              // local.get  — the original
   fb.byte(eqOpcode(from));
   fb.byte(69);                               // i32.eqz — true when they differ
@@ -9346,6 +9476,19 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
  */
 bool isNumericTy(string t) {
   return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64";
+}
+
+/**
+ * The **trapping** float-to-integer truncation — `i64.trunc_f64_u` and its seven siblings.
+ *
+ * Separate from the saturating family `emitConversion` emits, which is `as~`'s answer: those clamp,
+ * and a clamp is what hid an inexact `as!` through a float. `from` is the float, `to` the integer.
+ */
+i32 truncTrapOpcode(string from, string to) {
+  bool wide = valType(to) == 126;             // i64 or u64
+  bool f32src = from == "f32";
+  i32 base = wide ? (f32src ? 174 : 176) : (f32src ? 168 : 170);
+  return base + (isUnsigned(to) ? 1 : 0);
 }
 
 /** The `eq` opcode for a numeric type's wasm value type. */
@@ -9955,7 +10098,26 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
     case Return(value): {
       if (value is null) { return ""; }
-      return unsupportedValueAt(src, lexed, env, value!, env.returnType);
+      string rv = unsupportedValueAt(src, lexed, env, value!, env.returnType);
+      if (rv != "") { return rv; }
+      // **The same two-known-types test the `Var` case above makes**, and its absence here was
+      // `issues/lang/0260c`: `Pending<Read> p = ready(Read.End);` is declined and
+      // `Pending<Read> f() { return ready(Read.End); }` emitted a function returning a reference type
+      // its own signature did not name — `expected (ref null 336), got (ref null 387)` from the
+      // engine, with nothing from the compiler. One construct, caught in one position and mis-emitted
+      // in the other, which is `issues/lang/0106`'s class and the operator's rule that a case which
+      // is not implemented must fail.
+      //
+      // `returnType` is `""` for a void function, and `isStructName("")` is false, so this costs
+      // nothing there.
+      string gr = isLiteral(value!) ? "" : typeOfE(src, lexed, env, value!);
+      if (gr != "" && env.canonType(gr) != env.canonType(env.returnType) &&
+          valType(gr) == valType(env.returnType) &&
+          (isArrayType(env.returnType) || env.isStructName(env.returnType)) &&
+          !env.isSubtypeOf(env.canonType(gr), env.canonType(env.returnType))) {
+        return "a return between related reference types";
+      }
+      return "";
     }
     case ExprStmt(e): {
       string r = unsupportedExpr(src, lexed, env, e);
@@ -10315,9 +10477,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // struct exist, and what is missing is the receiver and the field reads.
       i32 li = env.lambdaAtPos(e.line, e.col);
       // **Capture is by reference now**, so a write is no longer a reason to refuse: a captured local
-      // lives in a cell that both sides hold. What is still refused is capturing a *parameter*, which
-      // has no declaration to promote — a cell for one has to be built at function entry, and that is
-      // not done.
+      // lives in a cell that both sides hold. This said a *parameter* was still refused, for having no
+      // declaration to promote; it is not — `i32 f(i32 p) { fn[i32()] g = () => p + 1; return g(); }`
+      // compiles and answers, so the cell does get built at entry. Left as a note about what the
+      // decline below is *not* for, since the reachable declines here are caps rather than constructs.
 
       if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
       i32 untyped = 0;
@@ -10762,11 +10925,19 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
     env.addLocal(tokenTextOf(src, lexed, params[i].nameTok), pt);
   }
   env.paramCount = env.localCount;
-  // **Two locals of one name.** wasm has a single flat frame per function and the language has block
-  // scopes, so `for (i32 k = …)` in one block and `i64 k = …` in another are two different locals
-  // with one name — and a name-to-index lookup cannot tell them apart. Searching from the end gives
-  // the *later* one to the earlier block, which is an `i32.const` going into an `i64` slot and a
-  // module that does not validate. Declined until there is a scope stack to resolve them properly.
+  // **Two locals of one name are not declined, and were never declined here.** wasm has a single
+  // flat frame per function while the language has block scopes, so `k` in two blocks is two locals
+  // with one name; a lookup that searched from the end would hand the *later* slot to the earlier
+  // block, which is an `i32.const` going into an `i64` slot and a module that does not validate.
+  // `duplicateLocal` was written to refuse that shape and **had no caller** — this comment claimed
+  // the decline was live for as long as the function sat there unreferenced.
+  //
+  // What makes it unnecessary is `unsupportedIn` saving and restoring `env.localCount` around every
+  // block, the same way emission does: two disjoint blocks never hold both `k`s at once, and a nested
+  // shadow puts the inner one out of scope again at the closing brace. Measured rather than reasoned —
+  // disjoint blocks at different types, a nested shadow at a different type and a nested shadow at the
+  // same type all answer correctly, and all three are cases in `emit_test.wac`'s rung-4 differential
+  // now, so the claim is a test rather than a paragraph.
   string why = unsupportedIn(src, lexed, env, body);
   env.lastWhy = why;
   if (why != "" && env.blocked == "") { env.blocked = why; }
@@ -12120,28 +12291,6 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
     }
     else: { return ""; }
   }
-}
-
-/**
- * A name declared twice at **different types**, or `""`.
- *
- * Two `for (i32 i = …)` loops in sequence declare `i` twice and are perfectly safe: both slots are
- * `i32`, so whichever the lookup returns is well-typed. Declining those refused six corpus files and
- * a test of this emitter's own. It is the *type* that cannot be shared, not the name.
- *
- * What this still does not catch is two same-typed locals of one name whose live ranges **overlap** —
- * a nested shadow. That is a semantic error rather than a validation one, so it survives the module
- * check; it wants a scope stack, which this slice has not got, and is named here rather than fixed.
- */
-string duplicateLocal(Env env) {
-  for (i32 i = 0; i < env.localCount; i++) {
-    for (i32 j = i + 1; j < env.localCount; j++) {
-      if (env.locals[i] == env.locals[j] && env.localTypes[i] != env.localTypes[j]) {
-        return env.locals[i];
-      }
-    }
-  }
-  return "";
 }
 
 /**

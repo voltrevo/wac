@@ -236,7 +236,7 @@ deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
   -o seed/wacc --allow-read --allow-write
 deno run -A packages/platform/native.ts packages/box/example/boxsh.wac \
   -o seed/sh --allow-read --allow-write --allow-net --allow-env
-deno run -A packages/platform/native.ts packages/wacpkg/example/fetch.wac \
+deno run -A packages/platform/native.ts packages/wacpkg/src/fetch.wac \
   -o seed/update --allow-read --allow-write --allow-net --allow-env
 cargo build --release
 
@@ -508,12 +508,18 @@ The stem matters: a manifest names the file it sits beside, so a rebuild under a
 different artefact, correctly. The four grant flags are the same ones `app:native` takes and mean the
 same thing — whoever packages the program chooses what it may do.
 
-## `wac sh` — the shell as a second payload
+## `wac sh` — the shell, inside the one payload
 
-`build.rs` embeds `seed/sh.wasm` the same way it embeds the compiler, and the binary answers `sh`
-with it. 0.8 MB on a 65 MB file, and a build with either payload, both or neither is legitimate:
-without a shell, `sh` reaches the compiler and comes back as an unknown command; without a seed, the
-host still answers `sh` and says the compiler is what is missing.
+It was a second payload until 2026-08-25: `build.rs` embedded `seed/sh.wasm` beside the compiler and
+this host answered `sh` with it, which meant the Deno, Node and browser builds — which have no
+payloads to embed — did not have the command at all. `issues/system/0257c` is the operator's ruling
+that `wac` is one program containing the compiler *plus more*, so `sh` is dispatched inside it and
+every host has it.
+
+Nothing about the behaviour changed, which is what `tools/wac/sh_test.wac` checks against whichever
+binary is on this machine. Sealing moved rather than went: `run_shell` used to build the shell's world
+in Rust with no grants, and `packages/wac/src/grants.wac` now narrows the same forty capabilities in
+wac. It cannot widen, because what it passes on is what this program was handed.
 
 ```
 $ wac sh -c 'seq 1 20 | grep 7 | wc -l'          →  2
@@ -535,10 +541,16 @@ read-only shell could not be talked into writing by any flag.
 Unlike `run`, nothing is compiled: the shell is already a module, so these are not build flags being
 passed through to a compiler. They are the world this invocation is handed.
 
-## `wac update` — the fetcher as a third payload
+## `wac update` — the fetcher, in the one payload too
 
-`seed/update.wasm` is `packages/wacpkg/example/fetch.wac`, embedded the same way, and the binary
-answers `update` with it. 0.8 MB, and optional like the others.
+`seed/update.wasm` was a third embedded module until 2026-08-25 and is now dispatched inside the
+program, for the reason `sh` is — `issues/system/0257c`.
+
+**The grants are the thing to watch here.** Three payloads meant three manifests, and only the
+fetcher's carried `--allow-net`; one program's manifest is the *union*, so the seed is built with net
+and every `wac build` holds it. That is inherent to unifying the commands, and what buys least
+privilege back is narrowing per subcommand inside the program — `packages/wac/src/grants.wac`, which
+`wac sh` uses and the compiler's own subcommands do not yet.
 
 **It is the only command that reaches the network, and that is the design rather than a consequence.**
 `design/lang/0009` D10: an ordinary command may create a missing lock entry and must never advance an

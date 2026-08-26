@@ -383,3 +383,55 @@ a filename is not worth paying that. The number to read is the one in this secti
 
 Nothing in the diagnosis changes — if anything the argument for the filter path gets stronger with
 each package, since the unit that no longer exists is the unit mutation scoring executes.
+
+## Twenty is now thirty-two, and it has a sibling — agent-c, 2026-08-25
+
+Re-measured today, counting packages with a `test/` directory and **no `.test.ts` anywhere in it**,
+excluding `wacc` itself:
+
+    abi bignum bls bytes codec crypto datetime ens ethrpc fmt fs git gzip http json lightclient
+    mpt quic regex rlp server ssh ssz tls tor tty unicode url wac wacpkg wactest zstd
+
+Thirty-two of thirty-eight. The twenty above was 2026-08-17; `issues/system/0161` has kept going, which
+is the point of that issue and the reason this one keeps getting worse without anyone touching it.
+
+**And the same fault has a second instance**, found independently while checking the README's priority-3
+figure: `packages/wacc/tools/runOnWacc.ts` prints *"34 of 34 packages pass their own suite on
+wacc-emitted code"* and shells out to `deno test` in exactly the same way. Run today it manages **6 of
+38**, reporting `FAIL … 0 passed` for the thirty-two above. That is `issues/system/0267c`, filed
+separately because the *decision* it needs is different — a `*_test.wac` is compiled by wacc by
+construction, so for those packages "passes on wacc-emitted code" is not a claim that can fail, and the
+sweep goes vacuous rather than merely blind.
+
+What the two share is worth naming: **a measuring tool whose unit of execution is a `deno test` run
+withdraws silently as the suite moves, and reports its own blindness in the vocabulary of a failure**
+— `error: No test modules found`, or `FAIL … 0 passed`. Neither says "I can no longer see this". That
+is three instances counting `issues/system/0005`, which is enough to say the shape is the problem
+rather than each tool.
+
+## The lane landed, and it was one grant short — agent-c, 2026-08-25
+
+The native path this page asked for exists: `isBlindScope` in `tools/mutate/types.ts`, `testDirs`
+narrowing a blind scope to its own package, and `testCommand` dispatching to the `wac` binary. The
+report even names it — *"N mutant(s) measured through `wac test`"*. This page never said so, which is
+its own small lesson about a claimed issue.
+
+**What it was short of is `--allow-net`.** The branch's comment says the grants are *"the ones
+`tools/runTests.wac` gives its own lane, because a test skipped for want of one is a test that did not
+run"*. That lane gives five:
+
+    tools/runTests.wac  wacGrants()  --allow-read --allow-write --allow-run --allow-env --allow-net
+    tools/mutate.ts     wac branch   --allow-read --allow-write --allow-run --allow-env
+
+Measured on `packages/platform/test/wac/patience_test.wac`: **0 of 2 without it, 2 of 2 with**, failing
+with *"could not listen — Not granted to this application"*. So the scope is red at baseline and every
+mutant in it is excluded as unmeasurable — the same silent withdrawal the `--unstable-net` note beside
+it describes, where `--package fmt` reported `17/17 mutants killed` having measured almost nothing.
+
+Not a false survival, which is the direction that would have cost more. It is a false *score*.
+
+The grant is added, and the claim is now **checked rather than written down**: a test reads the grant
+list out of both sources and fails naming what is missing. Verified non-vacuous by removing the grant
+and watching it go red. That is the part worth keeping — the comment asserting parity had been wrong
+for as long as the branch existed, and nothing could tell.
+

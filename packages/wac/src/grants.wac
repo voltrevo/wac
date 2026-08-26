@@ -1,0 +1,280 @@
+// The world `wac sh` hands the shell: sealed unless the command line asked otherwise.
+//
+// **This is the part of `issues/system/0257c` step 4 that is not wiring.** `sh` was a payload the
+// native binary embedded, and `run_shell` in `native/v8/src/main.rs` served it a world built in Rust:
+// no grants by default, and `--allow-read`/`--allow-write`/`--allow-net`/`--allow-env`/`--allow-run`
+// *intersected* with what the payload carried. Dispatching `sh` inside the one `wac` program removes
+// that step — a callee shares its caller's capabilities, so the shell would silently inherit
+// everything the command was granted, which for the seed build is read, write, env and net.
+//
+// That would be a widening nobody asked for. `wac sh` on its own is sealed, and the whole argument of
+// this system is that a program reaches only what it was handed; a command that gets a filesystem
+// because the *compiler* needed one is the opposite of that.
+//
+// So the narrowing moves into the program, where `packages/platform/src/frame.wac` has done the same
+// thing for a while: `childCli` builds the `Cli` a frame's child sees, forty fields, passing on what
+// it does not change. This is that shape with a different rule — pass on what was asked for, refuse
+// the rest — and it means the sealed default is the *program's* behaviour on every host rather than
+// one host's.
+//
+// **The intersection is free here, which is the nice part.** `run_shell` had to check the asked-for
+// grants against the payload's manifest, because a flag that widened would be a hole. This cannot
+// widen: a field it passes on is the one the host gave *this* program, so a `wac` that was never
+// granted net has nothing to hand a `wac sh --allow-net`. The ceiling enforces itself.
+//
+// ## Refusals say what the hosts say
+//
+// Every denial below carries `FAULT_NOT_GRANTED`, which is the code the hosts use — see
+// `provider.ts`'s `HostCallError("Not granted to this application", FAULT_NOT_GRANTED)`. A program
+// cannot tell this refusal from the host's, and that is the point: sealing is not a mode the shell
+// is in, it is the absence of a capability, and it should look like every other absence.
+//
+// `env` is the exception and it answers null, because `Cli.env`'s own docstring says null means
+// unset. That the four hosts disagree about a *denied* env — null on the native two, a trap on the
+// JavaScript two — is `issues/system/0256c`, and it is why this file picks the answer the type
+// documents rather than the answer any particular host gives.
+
+import { Captured, Change, Child, Cli, Datagram, Exec, FileResult, Pending, Socket, Stat,
+         FAULT_NOT_GRANTED } from "std/platform.wac";
+import { Read } from "core";
+import { ready } from "../../platform/src/frame.wac";
+
+/** What the command line asked for, which is all `sh` gets. */
+export struct Asked {
+  bool read;
+  bool write;
+  bool net;
+  bool env;
+  bool run;
+
+  Asked none() { return Asked(false, false, false, false, false); }
+
+  /** Whether any filesystem was asked for — the shell takes a real `Fs` only then. */
+  bool anyFs(const this) { return this.read || this.write; }
+}
+
+/**
+ * Read the leading `--allow-*` flags, stopping at the first thing that is not one.
+ *
+ * Returns how many were consumed as well as what they said, because the caller has to know where
+ * the shell's own arguments begin. An unknown `--allow-` word is *not* consumed: `sh` passes the
+ * rest to the shell, and a mistyped grant should reach the shell's own argument handling and be
+ * complained about there rather than being silently accepted as nothing.
+ */
+export struct Parsed {
+  Asked asked;
+  i32 at;
+  string bad;
+}
+
+export Parsed askedFrom(string[] argv, i32 from) {
+  Asked a = Asked.none();
+  i32 i = from;
+  while (i < argv.len()) {
+    string w = argv[i];
+    if (w == "--allow-read") { a.read = true; }
+    else if (w == "--allow-write") { a.write = true; }
+    else if (w == "--allow-net") { a.net = true; }
+    else if (w == "--allow-env") { a.env = true; }
+    else if (w == "--allow-run") { a.run = true; }
+    else if (w.len() > 8 && w.slice(0, 8) == "--allow-") { return Parsed(a, i, w); }
+    else { return Parsed(a, i, ""); }
+    i = i + 1;
+  }
+  return Parsed(a, i, "");
+}
+
+/**
+ * What each command needs, which is less than the program holds.
+ *
+ * **One program means one manifest, and the manifest is the union.** Three payloads each carried
+ * their own grants and only the fetcher's had `--allow-net`; now the seed is built with net because
+ * `wac update` clones, so a `wac check` that asks for nothing at all is running inside a program that
+ * could open a socket. Nothing exploits that — but "a program reaches only what it was handed" is the
+ * whole argument of this system, and the binary handing itself more than the command needs is exactly
+ * the shape the system is against.
+ *
+ * So the command narrows itself on the way in. The four compiler commands cannot reach the network or
+ * start a process, whatever the binary was built with.
+ *
+ * **`run` and `test` keep everything, and that is not laziness.** Their `--allow-*` flags govern the
+ * *program they start*, not this one, and a child cannot be handed what its parent does not hold — so
+ * narrowing here would silently make `wac test --allow-net` unable to grant net. The flags are already
+ * the narrowing for those two; `runprog.wac` and `testrun.wac` own it.
+ */
+export Asked forCommand(string cmd) {
+  // Reading sources, and `$WAC_HOME` to find a mapped import in the cache. `check` writes nothing —
+  // it is the one command whose whole output is a sentence.
+  if (cmd == "check") { return Asked(true, false, false, true, false); }
+  // ...and these three write a module, a manifest or a `.gen.ts` beside it.
+  if (cmd == "compile" || cmd == "bindgen" || cmd == "build") {
+    return Asked(true, true, false, true, false);
+  }
+  // `app` is a build that writes an executable instead of a module: the same three, and the
+  // executable bit is part of writing a file rather than a capability of its own.
+  if (cmd == "app") { return Asked(true, true, false, true, false); }
+  // Reading the modules it is asked about, and nothing else: `Cli.validated` is the engine answering
+  // in this process, so there is no program to start and no file to write.
+  if (cmd == "validate") { return Asked(true, false, false, false, false); }
+  // `app-run` reads one file and starts what is inside it, and the grants the program gets are the
+  // ones its own manifest declares — `runBytes` reads them from the module rather than passing on
+  // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
+  // handed what its parent does not hold, so narrowing here would cap what a built program declared.
+  if (cmd == "app-run") { return Asked(true, true, true, true, true); }
+  // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
+  // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
+  // though the two now live in one program.
+  if (cmd == "update") { return Asked(true, true, true, true, false); }
+  // Removing an installation reads three files, writes the profiles back and asks where `$WAC_HOME`
+  // is. It reaches no network and starts no program, and saying so is the point of this table.
+  if (cmd == "uninstall") { return Asked(true, true, false, true, false); }
+  return Asked(true, true, true, true, true);
+}
+
+// ── What a refused capability answers ─────────────────────────────────────────
+//
+// Named functions rather than lambdas, and not for style: `Cli.of` is positional over forty fields,
+// and a named function with a written signature is checked against the field it is passed to. A
+// lambda whose parameter list is a character wrong wires to its neighbour and compiles.
+
+const string DENIED = "Not granted to this application";
+
+Pending<u8[]?> noEnv(string name) {
+  // Null, not a fault — see the header. `Cli.env`'s type says null is how "no value" is spelled.
+  u8[]? none = null;
+  return ready(none);
+}
+
+Pending<FileResult> noReadFile(string path) {
+  return ready(FileResult.of(false, u8[0](), DENIED, FAULT_NOT_GRANTED()));
+}
+Pending<Stat> noStat(string path) {
+  // `exists: false` with a fault set, which `Stat.sound()` reads as "the question could not be
+  // answered" rather than as "the file is not there". A sealed shell must not be able to probe for
+  // a path's existence, and answering a confident false would let it.
+  return ready(Stat.of(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED()));
+}
+Pending<string[]?> noReadDir(string path) {
+  string[]? none = null;
+  return ready(none);
+}
+Pending<Change> noOpen(string path) { return ready(Change.of(FAULT_NOT_GRANTED(), DENIED)); }
+Pending<Change> noWriteFile(string path, u8[] bytes) {
+  return ready(Change.of(FAULT_NOT_GRANTED(), DENIED));
+}
+Pending<Change> noPathFlag(string path, bool flag) {
+  return ready(Change.of(FAULT_NOT_GRANTED(), DENIED));
+}
+Pending<Change> noRename(string from, string to) {
+  return ready(Change.of(FAULT_NOT_GRANTED(), DENIED));
+}
+
+Pending<Socket> noConnect(string host, i32 port) {
+  return ready(Socket.of(0 - 1, DENIED, "", 0, FAULT_NOT_GRANTED()));
+}
+Pending<Socket> noAccept(i32 handle) {
+  return ready(Socket.of(0 - 1, DENIED, "", 0, FAULT_NOT_GRANTED()));
+}
+/**
+ * Not `ready(Read.End)`, and the difference is a compiler bug rather than a preference.
+ *
+ * `ready<T>` at an enum from `core` gives the instantiation a second type index, so this function
+ * returned `(ref null 387)` where its own signature said `(ref null 336)` — a module the emitter was
+ * happy with and the engine would not load. Written directly it is *declined* instead ("an
+ * assignment between related reference types"), which is the same construct caught in one position
+ * and mis-emitted in another. `issues/lang/0260c`.
+ *
+ * The explicit form is what `packages/sh/test/wac/probe.wac` has always used for this exact type.
+ */
+Read resolveEnd(i32 id) { return Read.End; }
+bool alwaysSettled(i32 id) { return true; }
+void ignoreDrop(i32 id) { }
+Pending<Read> noRecv(i32 handle) {
+  return Pending.of(0, resolveEnd, alwaysSettled, ignoreDrop);
+}
+Pending<bool> noSend(i32 handle, u8[] bytes) { return ready(false); }
+Pending<Datagram> noReceiveFrom(i32 handle) {
+  return ready(Datagram.of(u8[0](), "", 0, DENIED));
+}
+Pending<bool> noSendTo(i32 handle, string host, i32 port, u8[] bytes) { return ready(false); }
+
+Pending<Child> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, bool inheritIn,
+                       bool inheritErr) {
+  // -1 rather than -2: `Child.unavailable()` means "this host cannot spawn at all", and this host
+  // can — it was not granted to this program. A shell that could not tell those apart would report
+  // a missing feature where the truth is a missing permission.
+  return ready(Child.of(0 - 1, 0 - 1, 0 - 1, DENIED));
+}
+Pending<Exec> noExec(string path, string[] args, u8[] stdin, string[] env, bool clearEnv,
+                     bool inherit) {
+  return ready(Exec.of(0, u8[0](), u8[0](), DENIED));
+}
+
+/**
+ * `parent` with everything not in `a` refused.
+ *
+ * Field order is `Cli.of`'s and nothing here may be reordered — see the note above the refusals.
+ * What is passed on unconditionally is what is not a grant: the arguments, standard input and
+ * output, the in-process frame stack, and the module loader.
+ */
+export Cli narrowed(const Cli parent, Asked a) {
+  return Cli.of(
+    parent.argCount,
+    parent.arg,
+    a.env ? parent.env : noEnv,
+    // Standard input is not a grant on any host — a program is handed its own streams, and a sealed
+    // shell reading the script it was given `-c` is the ordinary case.
+    parent.readStdin,
+    parent.write,
+    parent.writeErr,
+    a.read ? parent.readFile : noReadFile,
+    a.write ? parent.writeFile : noWriteFile,
+    a.read ? parent.stat : noStat,
+    a.read ? parent.linkStat : noStat,
+    a.read ? parent.readDir : noReadDir,
+    a.write ? parent.mkdir : noPathFlag,
+    a.write ? parent.remove : noPathFlag,
+    a.write ? parent.rename : noRename,
+    a.write ? parent.setExecutable : noPathFlag,
+    // **The empty path is standard input, not a file**, and no grant covers it — `std/platform.wac`
+    // says the read grant is `readFile`, `stat`, `readDir` and "`openInput` *on a path*". Refusing
+    // it broke every pipeline in a sealed session: the downstream applet selects its input with
+    // `openInput("")`, got `Not granted`, and `ls /bin | wc -l` answered `wc: : Not granted to this
+    // application` — a message about a filesystem, about standard input.
+    (string path) => a.read || path == "" ? parent.openInput(path) : noOpen(path),
+    parent.readChunk,
+    parent.outputError,
+    // `openOutput("")` is standard output, for the same reason and with the same exemption.
+    (string path) => a.write || path == "" ? parent.openOutput(path) : noOpen(path),
+    a.net ? parent.connect : noConnect,
+    a.net ? parent.listen : noConnect,
+    a.net ? parent.accept : noAccept,
+    a.net ? parent.recv : noRecv,
+    a.net ? parent.send : noSend,
+    // Closing is not a grant: a handle this program never got cannot be closed, and one it did get
+    // is its own to release. Refusing here would leak the sockets a granted session opened.
+    parent.closeSocket,
+    parent.closeSend,
+    a.net ? parent.bindDatagram : noConnect,
+    a.net ? parent.receiveFrom : noReceiveFrom,
+    a.net ? parent.sendTo : noSendTo,
+    a.run ? parent.spawn : noSpawn,
+    // **`spawnSelf` needs no grant and keeps none**, which is `packages/box/src/bin/sealedsh.wac`'s
+    // rule: the source is this program's own bundle, so spawning a stage of itself reaches nothing
+    // new. What the stage *sees* is this `Cli`, so a sealed session's stages are sealed too.
+    parent.spawnSelf,
+    parent.closeFeed,
+    parent.exitCode,
+    parent.cwd,
+    parent.pushChild,
+    parent.popChild,
+    a.run ? parent.execWith : noExec,
+    parent.load,
+    parent.call,
+    parent.unload,
+    // Asking whether the engine would accept some bytes is not a capability over anything: it reads
+    // no file, starts nothing, and the bytes came from the caller. Passed on unconditionally for the
+    // same reason `write` is.
+    parent.validated,
+  );
+}

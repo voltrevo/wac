@@ -200,12 +200,21 @@ function mutationFor(name: string): number {
 
   /** Every mutant this run will judge, before any of them is compiled. */
   const mutants: { at: number; name: string; mutated: string }[] = [];
+  // **How many mutants each kind produced**, because one hashed mutation per file means a kind is
+  // exercised only where its pattern happens to occur — and a kind that never lands is a rule this
+  // sweep reports nothing about while still counting toward the recall it prints.
+  const perKind = new Map<string, number>();
+  for (const [label] of MUTATIONS) perKind.set(label, 0);
   for (let i = 0; i < entries.length; i++) {
     const [name, src] = entries[i];
-    const [, mutate] = MUTATIONS[mutationFor(name)];
+    const [label, mutate] = MUTATIONS[mutationFor(name)];
     const mutated = mutate(src);
-    if (mutated !== null) mutants.push({ at: i, name, mutated });
+    if (mutated !== null) {
+      mutants.push({ at: i, name, mutated });
+      perKind.set(label, (perKind.get(label) ?? 0) + 1);
+    }
   }
+  const barren = [...perKind.entries()].filter(([, n]) => n === 0).map(([k]) => k);
 
   /**
    * **The reference's half, cached per mutant — it was 12.6s of this test's 13.0s.**
@@ -354,6 +363,25 @@ function mutationFor(name: string): number {
     console.log(`      ${String(v.seen - v.caught).padStart(3)} missed of ${String(v.seen).padStart(3)}  ${k.slice(0, 70)}`);
   }
   for (const m of misses) console.log(`      miss: ${m.slice(0, 110)}`);
+  // **Every mutation kind has to land somewhere.** One hashed mutation per file means a kind is
+  // exercised only where its pattern occurs, so a kind that matches nothing in the corpus
+  // contributes to none of the numbers above while still looking like part of the sweep — the
+  // same silent-instrument rot `jobsSweep.sh` and this package's canaries keep turning up.
+  // Asserted rather than printed because it is zero: measured across all 23 kinds on 1,077 corpus
+  // files, every one produces at least one mutant. If the corpus moves under a kind, or a kind is
+  // added whose pattern this code does not contain, this says which.
+  //
+  // **And adding a kind is how it happens**, which the canary for this showed rather than argued:
+  // `mutationFor` hashes a file name into `MUTATIONS`, so a twenty-fourth entry reshuffles every
+  // assignment — and a never-matching entry added to prove this throws also starved *a lossless
+  // cast becomes plain* to zero. Which kinds land is luck, and the luck changes whenever the list
+  // or the corpus does. That is the thing worth failing on.
+  if (barren.length > 0) {
+    throw new Error(
+      `${barren.length} mutation kind(s) produced no mutant, so nothing here measures them: ` +
+        barren.join(", "),
+    );
+  }
   // The ratchet. `broken` is zero only if the sweep found nothing to break, which the line above
   // would already have made obvious; guarded anyway so a division by zero cannot read as a pass.
   const share = broken === 0 ? 0 : caught / broken;

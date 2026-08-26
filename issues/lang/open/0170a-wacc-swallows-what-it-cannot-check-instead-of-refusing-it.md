@@ -472,7 +472,7 @@ Instrumented the emitter to count, over every declaration in a build rather than
 
 | entry | private functions | `!funcOk` | `funcIndex < 0` |
 |---|---:|---:|---:|
-| `packages/wacc/example/wacc.wac` | 763 | 0 | 0 |
+| `packages/wac/src/wac.wac` | 763 | 0 | 0 |
 | `packages/wacc/src/api.wac` | 656 | 0 | 0 |
 | `packages/sh/src/sh.wac` | 236 | 0 | 0 |
 | `packages/fs/src/image.wac` | 45 | 0 | 0 |

@@ -259,12 +259,12 @@ export default function Home() {
           rebound, which made every linked-list walk in the specification illegal.
         </P>
         <Caveat title="not finished">
-          Some of the repository&rsquo;s own files it still cannot compile whole — and it says which
-          feature stopped it rather than emitting something that fails later. What the sweep asserts
-          is the shape rather than a score: some whole, some partial, <em>none invalid</em>, and none
-          of the modules it calls whole missing an export its source declares. And the way back is
-          closing: {m({ children: "box" })} no longer builds with the seed at all, because the
-          shell&rsquo;s compression library uses instructions only wacc has.
+          All 1075 of the repository&rsquo;s wac files compile whole now — it was 27 short of 729 five
+          days ago — and none of that sweep produced an invalid module. What is not finished is the
+          reach: when the emitter does stop, it says which feature stopped it rather than emitting
+          something that fails later. And the way back is closing:{" "}
+          {m({ children: "box" })} no longer builds with the seed at all, because the shell&rsquo;s
+          compression library uses instructions only wacc has.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>

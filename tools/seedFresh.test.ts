@@ -26,7 +26,7 @@
 // tree, and that claim ages without anybody editing this file.
 
 // **The whole graph, not `packages/wacc/src`.** This watched that one directory, and the seed is
-// built from `packages/wacc/example/wacc.wac` — whose closure is `src/`, yes, but also the example
+// built from `packages/wac/src/wac.wac` — whose closure is `src/`, yes, but also the example
 // itself and everything it imports from `packages/platform`, `packages/fs`, `packages/fmt` and
 // the rest. A change to the example's own usage text left the seed stale with this test green, and
 // the four CLI tests that then failed said nothing about a seed. Watching a directory when the
@@ -36,7 +36,7 @@ import { ROOT } from "../harness/programs.ts";
 import { wacFiles } from "../harness/wacFiles.ts";
 
 const SEED = `${ROOT}/native/v8/seed/wacc.wasm`;
-const ENTRY = "packages/wacc/example/wacc.wac";
+const ENTRY = "packages/wac/src/wac.wac";
 
 async function newestInGraph(): Promise<{ at: number; what: string; count: number }> {
   const files = await wacFiles(ENTRY);

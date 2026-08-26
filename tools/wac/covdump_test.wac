@@ -21,10 +21,11 @@
 // `Not granted`, and neither is the instantiation failure that used to happen.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, putFile, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { manifestIn } from "../../packages/wacc/src/manifest.wac";
 
 /** A program that reads a file and says whether it could. */
 const string READER =
@@ -264,6 +265,68 @@ export string test_covdump_sweeps_one_export_across_a_range_of_cases(Core core, 
   t.isTrue(contains(string.fromBytes(bad.stderr), "many"),
            "and says what it could not read: " + string.fromBytes(bad.stderr));
 
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A `--coverage` build's manifest lists the three exports the instrumentation injected.
+ *
+ * **This is what keeps `covdump` in Rust, and it was recorded as something else.** The last row of
+ * `issues/system/0257c`'s table says `covdump`, `tracestat` and `ctcompare` are "handed modules
+ * carrying no manifest and `Cli.load` refuses those" — and every test that feeds them, including this
+ * file, builds with `wac build`, so the modules carry manifests. The real blocker was narrower:
+ * `issues/system/0243c` taught `wac test --coverage` to declare the injected exports and stopped
+ * there, so a `wac build --coverage` artefact exported `__cov_init`, `__cov_len` and `__cov_get` while
+ * its manifest listed neither. `Cli.call` reads the signature from the manifest, so it answered *no
+ * export named __cov_get* about a module that exports it.
+ *
+ * Measured before the fix: the manifest held `twice` and `main`, the module held those plus three.
+ *
+ * Asserted here through the manifest section rather than through `Cli.call`, because that is the thing
+ * that was wrong — and because a test that loads and calls is `issues/system/0230a`'s work rather than
+ * this file's. What it buys is that a program on *any* host can now read a counter table, which is the
+ * whole reason those three commands can move out of Rust.
+ */
+export string test_a_coverage_build_declares_its_injected_exports(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-manifest");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.eqStr(putFile(cli, dir + "/m.wac",
+                  "export i32 twice(i32 n) { if (n > 0) { return n * 2; } return 0; }\n" +
+                  "export i32 main() { return twice(3); }\n"), "", "wrote the entry");
+  Exec built = build(cli, dir + "/m.wac", dir + "/m", "");
+  t.isTrue(built.ran() && built.status == 0,
+           "the coverage build failed — " + built.error + string.fromBytes(built.stderr));
+  if (!built.ran() || built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  FileResult art = cli.readFile(dir + "/m.wasm").wait();
+  t.isTrue(art.ok, "could not read the artefact — " + art.error);
+  if (!art.ok) { cli.remove(dir, true).wait(); return t.report(); }
+  string man = manifestIn(art.bytes);
+  t.isTrue(man != "", "the artefact carries no wac.manifest section at all");
+  // The three, by name. `__cov_init` first because it is the one with no return type, which is the
+  // shape `sigsWithCounters` spells with an empty cell and the one a hand-written table gets wrong.
+  t.isTrue(contains(man, "__cov_init"), "the manifest does not declare __cov_init: " + man);
+  t.isTrue(contains(man, "__cov_len"), "the manifest does not declare __cov_len: " + man);
+  t.isTrue(contains(man, "__cov_get"), "the manifest does not declare __cov_get: " + man);
+  // The canary: a plain build must *not* declare them, or the assertions above pass on a manifest
+  // that names everything and the fix could be "list these three always".
+  Exec plain = cli.exec(binaryPath(cli),
+                        string[]("build", dir + "/m.wac", "-o", dir + "/p", "--quiet"),
+                        u8[0]()).wait();
+  t.isTrue(plain.ran() && plain.status == 0, "the plain build failed — " + plain.error);
+  if (plain.ran() && plain.status == 0) {
+    FileResult pl = cli.readFile(dir + "/p.wasm").wait();
+    if (pl.ok) {
+      t.isTrue(!contains(manifestIn(pl.bytes), "__cov_"),
+               "a build with no --coverage declared counter exports it does not have");
+    }
+  }
   cli.remove(dir, true).wait();
   return t.report();
 }

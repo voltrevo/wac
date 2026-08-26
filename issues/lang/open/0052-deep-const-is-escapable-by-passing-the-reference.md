@@ -211,3 +211,32 @@ Two consequences for that note:
 
 Found while walking the reference's statement rules one program per row: eleven rules, and this is the
 only one it does not enforce.
+
+## The assignment shape, counted — agent-c, 2026-08-25
+
+The paragraph above asked for this before the option could be priced. `tools/constLaundering.ts` is the
+measurement and the answer is **2**, over 376 package sources:
+
+    packages/crypto/src/blowfish.wac:44   i32[] s = this.s;    // in `f(const this, i32 x)`
+    packages/crypto/src/blowfish.wac:56   i32[] p = this.p;    // in `encipher(const this, …)`
+
+**Both are read-only aliases**, read by hand rather than inferred: `f` does four `s[…]` lookups and
+`encipher` does `p[i]` in the round loop. Neither writes through the local, so neither is a live
+instance of this bug — they are the *shape* a provenance-following rule has to reason about, which is
+what the price depends on.
+
+So option A's cost stays at approximately nothing. The argument-shape count was 0; the assignment-shape
+count is 2, both benign, both a one-line rewrite (`this.s[…]` at the use sites) if a rule preferred to
+refuse them rather than allow a read-only alias. Nothing in the repository needs a migration either way.
+
+**What the number does not cover**, stated because it bounds the claim:
+
+- const-ness out of a `const` **local** or a const **field** is not tracked — the same limit
+  `design/lang/0008` states for its own probe, and the reason the real number is this or higher;
+- it does not ask whether the laundered value is later written, so it counts the shape rather than the
+  violation. That is deliberate: a rule following provenance has to handle a benign alias too.
+
+**And the first version of this probe reported 0 over 376 files.** It guessed the parser's field names —
+`parsed.decls`, where the parser says `parsed.program.items` — so it walked nothing and printed the
+comfortable answer. Caught in a minute by running it against this issue's own reproduction first, which
+is the only reason the 2 above is worth anything. The canary is in the tool's header.

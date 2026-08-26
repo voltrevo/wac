@@ -267,7 +267,7 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
  *
  * `manifestWhy` exists because `wacc` used to print `m.detail` alone — *`wac.json5` is not usable:
  * std/\** — which names the mapping and not the complaint. One renderer means every reader says the
- * same thing, and its only caller is `packages/wacc/example/wacc.wac`. So nothing in this package
+ * same thing, and its only caller is `packages/wac/src/wac.wac`. So nothing in this package
  * called it: `issues/system/0205` listed `manifest.wac:46` as an uncovered *entry* and all eleven of
  * its rows with it.
  *

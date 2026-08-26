@@ -1,0 +1,69 @@
+// Every table one cursor indexes is the same length as the others.
+//
+// `Env` keeps its function table as **eight parallel arrays and a cursor**. `addFunc` guards the
+// cursor, and until 2026-08-25 it guarded it against *one* of the eight — so the invariant that
+// actually mattered ("`funcCount` is in bounds for everything it indexes") was enforced by the
+// arrays happening to be declared with the same number in them.
+//
+// They stopped happening to. `issues/system/0257c` made `wac` one program containing the compiler,
+// the shell and box's applets, which took the command from 44 files to 218 and past the old cap of
+// 4096. Six of the eight were raised together — they sit in one block in `Env.create()`, and were
+// found by matching that block's *type signature*. `funcRecv` and `funcMethodGeneric` are declared
+// ninety fields later, so they were not in the block, and were not raised.
+//
+// The failure is what makes this test worth having rather than a comment. There is no diagnostic: the
+// guard passes, the write to `funcRecv[funcCount - 1]` in `collectInstances` has no check of its own,
+// and the compile dies as `array element access out of bounds` — an engine trap, which
+// `issues/lang/0254c` says arrives with **no message at all**. Three hosts print `wac: … trapped` and
+// stop. Finding which of a hundred and fifty fields did it took a compile under a JavaScript host to
+// get a stack trace with a name in it.
+//
+// So: assert the shape directly, where a mismatch costs a millisecond and names both arrays. This is
+// the same lesson as `bindtables_test.wac` — a fixed table that quietly stopped being big enough —
+// but about *agreement between* tables rather than the size of one.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Env } from "../../src/emit.wac";
+
+/**
+ * The eight arrays `funcCount` indexes, by name, so a failure says which one disagreed.
+ *
+ * Kept as a literal list rather than derived: the language has no reflection, and a derived list
+ * would be derived from the same declaration the test is checking. Adding a ninth array indexed by
+ * `funcCount` means adding it here and to `addFunc`'s guard — which is the point of both.
+ */
+export string test_every_table_the_function_cursor_indexes_is_the_same_length() {
+  T t = T.create();
+  Env env = Env.create();
+  i32 want = env.funcs.len();
+  t.eqI32(env.funcReturns.len(), want, "funcReturns is as long as funcs");
+  t.eqI32(env.funcParamAt.len(), want, "funcParamAt is as long as funcs");
+  t.eqI32(env.funcParamCount.len(), want, "funcParamCount is as long as funcs");
+  t.eqI32(env.funcOk.len(), want, "funcOk is as long as funcs");
+  t.eqI32(env.funcIndex.len(), want, "funcIndex is as long as funcs");
+  // The two that drifted. Named separately in the message because "a parallel array is short" is
+  // useless and "funcRecv is short" is the whole diagnosis.
+  t.eqI32(env.funcRecv.len(), want, "funcRecv is as long as funcs");
+  t.eqI32(env.funcMethodGeneric.len(), want, "funcMethodGeneric is as long as funcs");
+  return t.report();
+}
+
+/**
+ * And that the table is big enough for the largest program in this repository.
+ *
+ * `wac` itself is the largest, and the number below is a floor rather than a measurement — the
+ * point is that the table is not sized just above what happens to be here today. A program that
+ * needs more gets `the emitter ran out of room for functions`, which is a sentence rather than a
+ * trap, and that is the behaviour `addFunc` now guarantees for all eight.
+ */
+export string test_and_it_is_big_enough_for_the_largest_program_here() {
+  T t = T.create();
+  Env env = Env.create();
+  i32 got = env.funcs.len();
+  if (got < 16384) {
+    t.fail("the function table holds " + itoa(got) + ", which is under the 16384 the unified " +
+           "`wac` command needed — see issues/system/0257c");
+  }
+  return t.report();
+}

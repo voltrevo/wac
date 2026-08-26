@@ -67,6 +67,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `pushChild`, `popChild` | — (a child *inside* this program, with this program's authority) |
 | | `execWith` | `--allow-run` — a **host program**, which `spawn` is not; a page has no form of it. `Cli.exec` is the short form: no environment, nothing cleared, output buffered |
 | | `load`, `call`, `unload` | — (a **module** rather than a program: its exports called in this program's own world, with this program's own authority, so there is no grant to pass. Not `Pending`, because nothing crosses to a host. `spawn` is still what confines something: a loaded export runs on the caller's thread and nothing can stop it) |
+| | `validated` | — (whether the *engine* would accept some bytes as a module, compiled and no further. No grant: it reads no file, starts nothing, and the bytes came from the caller. The one thing about a module only a host can answer, which is why `wac validate` was a host command until there was a field for it) |
 | `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |
 | | `drawPixels`, `drawPixelsIn`, `nextFile`, `offerDownload` | browser only |
 

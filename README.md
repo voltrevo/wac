@@ -89,22 +89,35 @@ stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    16 sources, 968 KB, identical
+B == C    220 sources, 1.6 MB, identical
 ```
+
+The jump from *16 sources, 968 KB* — what this said until 2026-08-25 — is `issues/system/0257c`
+rather than the compiler growing: the seed's entry is `packages/wac/src/wac.wac`, and that is now one
+program carrying the compiler, the shell and the fetcher instead of three payloads beside each other,
+so the graph it builds absorbed box's applets.
 
 Every rung was checked against the TypeScript compiler before the next was started — token streams,
 syntax trees, then diagnostics at exact positions. The type checker was finished against four
-independent corpora, the newest being this repository's own **729** wac files, with no false alarm
+independent corpora, the newest being this repository's own **1077** wac files, with no false alarm
 among them.
 
-It is not finished. The emitter compiles **702 of those 729** files whole, 27 partially and none
-invalidly — and that number goes down as well as up, because the corpus is the live repository and
-code written for other reasons arrives using things the emitter has not reached yet.
+The emitter compiles **all 1077** of them whole — none partially, none invalidly. It was 702 of 729
+five days earlier and 411 of 414 six days before that, so the interesting property is not the number
+but that the number is *printed by the rung that produces it*: the corpus is the live repository, and
+code written for other reasons keeps arriving using things the emitter has not reached, so this goes
+down as well as up.
 
-Every number in this section is printed by the rung that produces it, and read on 2026-08-20:
+A rung that can no longer fail is a rung that has stopped measuring, so the check that the walk is
+running no longer asks the corpus to contain a defect — it asks the emitter about four lines that it
+must decline, and asks that the refusal name a language construct.
+
+Every number in this section is printed by the rung that produces it, and read on 2026-08-25:
 `wac test packages/wacc/test/wac/corpusemit_test.wac` for the corpus and the emitter — it is in the
-heavy lane, about twenty-five minutes, because it compiles the tree — and `deno task seed` for the size, which is printed to the byte and rounded here because it
-moved three times on the day this was written — 960,310, then 965,855, then 968,370.
+heavy lane, thirty-three minutes when it was last run on a machine three agents share, because it
+compiles the tree — and `deno task seed` for the size, which is printed to the byte and rounded here.
+It is **1,675,320** bytes; the day the figure above was first written it moved three times, 960,310,
+then 965,855, then 968,370, which is the reason it is rounded rather than quoted.
 Three days earlier they were 414 files, 411 whole, three partial and 431,705 bytes; six days before
 that, 354, 346, 8 and 266,164. The figures move because the repository does.
 

@@ -103,9 +103,7 @@ buildNativeHost() {
 cd "$(dirname "$0")/.."
 
 BIN=./native/v8/target/release/wac
-ENTRY=packages/wacc/example/wacc.wac
-SH_ENTRY=packages/box/example/boxsh.wac
-UPDATE_ENTRY=packages/wacpkg/example/fetch.wac
+ENTRY=packages/wac/src/wac.wac
 SEED=native/v8/seed
 
 bootstrap=0
@@ -141,42 +139,22 @@ fi
 # read it — `embed` takes `{dir}/{stem}.wasm` and nothing else — so the seed carried a copy of a
 # manifest that is already a section inside the module next to it.
 #
-# Only `wacc.wasm` here, because this runs inside the fixpoint loop; `sh.wasm` and `update.wasm` are
-# written once after it converges and are left alone by these builds.
+# **And only one payload at all, since `issues/system/0257c`.** `sh.wasm` and `update.wasm` were
+# written once after the fixpoint converged; `wac sh` and `wac update` are dispatched inside the
+# command now, so there is one artefact and the binary is 1.85 MB smaller.
 install_seed() {   # $1 is a directory holding wacc.wasm
   cp "$1/wacc.wasm" "$SEED/wacc.wasm"
   cargoBuild
 }
 
-# **The other two payloads, and they are not optional here.**
+# **`sh` and `update` used to be built here, and are not commands this script can forget any more.**
 #
-# `native/v8/build.rs` embeds three, "each optional": the compiler answers `check`/`compile`/`build`,
-# the shell answers `sh`, the fetcher answers `update`. Optional to the *build* is not optional to the
-# command — `spec/cli/wac.md` lists all three without qualification — and this script wrote only the
-# first until 2026-08-20. So the binary from the supported route (`deno task wac:install`) answered
-# `unknown command 'sh'`, and `wac update` fell past the host into the compiler's usage line, which is
-# what `packages/wacpkg`'s own mapped-import test then failed on. `issues/system/0216a`.
+# `issues/system/0216a` is what that cost: `build.rs` embedded three payloads "each optional", this
+# script wrote only the first, and the binary from the supported route answered `unknown command
+# 'sh'` while `wac update` fell past the host into the compiler's usage line. The fix then was to
+# build all three. The fix now is that there is one — `issues/system/0257c` puts both commands inside
+# the program, so a seed that exists carries them and there is no second file to forget.
 #
-# Built *after* the fixpoint rather than inside it: these are ordinary programs, not the compiler, so
-# they say nothing about whether wacc reproduces itself, and putting them in the loop would pay for
-# two extra compiles a round. One `cargo build` follows them, because the loop's builds ran before
-# these files existed.
-#
-# **The shell is built with everything.** `wac sh` narrows to what its own command line asks for and
-# can never exceed what the payload carries, so the payload is the ceiling rather than the default —
-# `tools/wac/sh_test.wac` is the pair of tests that says so. The fetcher gets the four its own header
-# names; it clones over the network into `$WAC_HOME`.
-payload() {   # $1 entry, $2 stem
-  if ! "$BIN" build "$1" --allow-read --allow-write --allow-env --allow-net \
-       -o "$tmp/p/$2" --quiet; then
-    echo "seed: $1 did not build, so this \`wac\` would have no \`$2\` command." >&2
-    echo "   The compiler is installed and is a fixed point, so \`wac build\`, \`run\`, \`test\` and" >&2
-    echo "   \`check\` all work; what is missing is \`wac $2\`. Fix that entry and run this again." >&2
-    return 1
-  fi
-  cp "$tmp/p/$2.wasm" "$SEED/$2.wasm"
-}
-
 # **The first seed, when there is no binary to make one.** Deno's output is not compared with
 # anything: it exists so the binary can be built at all, and the fixpoint below is between two
 # artefacts the binary produced.
@@ -184,7 +162,7 @@ if [ "$bootstrap" -eq 1 ]; then
   mkdir -p "$tmp/0"
   stage "bootstrapping: compiling wacc with the reference compiler (Deno, the slow one, once)"
   deno run --allow-read --allow-write --allow-env --allow-run \
-    packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/0/wacc" >/dev/null
+    packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env --allow-net -o "$tmp/0/wacc" >/dev/null
   install_seed "$tmp/0"
 fi
 
@@ -244,8 +222,15 @@ MAX_ROUNDS=4
 # **The environment variable rather than `--no-cache`.** Round 1 runs the binary that is already
 # installed, which may predate the flag; an unknown flag is refused and there would be no way to build
 # the compiler that understands it. An unknown variable is ignored, so this spelling has no flag day.
+#
+# **`--allow-net`, because the command now contains the fetcher.** `issues/system/0257c` dispatches
+# `wac update` inside this program rather than from a payload beside it, and cloning needs the
+# network — so the one program's manifest is the *union* of what its subcommands need, which is an
+# inherent consequence of unifying them. What restores least privilege is narrowing per subcommand
+# inside the program: `packages/wac/src/grants.wac` does it for `wac sh`, and the compiler's own
+# subcommands still hold more than they use. Recorded in `0257c`.
 buildRound() {   # $1 output dir
-  if WAC_BUILD_CACHE_KEEP=0 "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$1/wacc" >/dev/null; then
+  if WAC_BUILD_CACHE_KEEP=0 "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env --allow-net -o "$1/wacc" >/dev/null; then
     return 0
   fi
   echo "== wacc cannot build itself with the seed just installed ==" >&2
@@ -280,14 +265,9 @@ done
 
 if [ "$converged" -ne 0 ]; then
   rounds=$((converged - 1))
-  mkdir -p "$tmp/p"
-  stage "fixed point reached; building the other two payloads (wac sh, wac update)"
-  payload "$SH_ENTRY" sh
-  payload "$UPDATE_ENTRY" update
-  stage "linking the binary (cargo build --release)"
+  stage "fixed point reached; linking the binary (cargo build --release)"
   cargoBuild
   echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
-  echo "      sh $(stat -c %s "$SEED/sh.wasm") bytes, update $(stat -c %s "$SEED/update.wasm") bytes"
   # **And the other binary — but only if it is already there.** Measured: `cargo build --release` in
   # `native/` is 7s of CPU and about 10s of wall with *nothing to do*, and this task runs after every
   # `packages/wacc` edit, for three agents. Paying that on every seed to keep a binary fresh that this

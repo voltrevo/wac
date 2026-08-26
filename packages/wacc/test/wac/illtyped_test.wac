@@ -24,7 +24,8 @@
 // checked clean and the emitter caught them later as `unresolved name i32`, without a position.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles } from "../../src/api.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles, diagnoseFiles } from "../../src/api.wac";
+import { wireField, wireLines, ANNOTATION } from "./wire_probe.wac";
 
 string[] names() {
   return string[](
@@ -223,6 +224,481 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
   // `s + "b"` is an ordinary program.
   i32 ok = dumpTypeErrors("export string f(string s) { return s + \"b\"; }\n".toBytes()).len() / 3;
   t.eqI32(ok, 0, "refused a valid concatenation");
+  return t.report();
+}
+
+/**
+ * A bitwise operator on operands that **differ** reports once, and the mismatch is the complaint.
+ *
+ * `& | ^` are in *both* rule sets: the bitwise block demands integers, and the same-type block demands
+ * the two agree. `%` is only in the second, which is why `issues/lang/0238a` fixed `s % 2` and left
+ * `a & b` at two — one fault, reported as a mismatch and as an operand of the wrong kind, both at the
+ * operator. The reference reports one, and which one depends on the pair:
+ *
+ *     i32 & bool     type mismatch in '&': i32 and bool          the operands differ
+ *     i32 & f64      type mismatch in '&': i32 and f64           the operands differ
+ *     f64 & f64      '&' requires i32 or i64, got f64            they agree and are not integers
+ *
+ * So the mismatch wins where the two differ, and the kind rule is the whole complaint where they
+ * agree. That is `issues/lang/0238a`'s own rule read the other way round — its question is whether the
+ * second diagnostic rests on something invented, and here the operand rule adds nothing a reader of
+ * *"i32 and bool"* does not already have.
+ *
+ * **The `f64 & f64` row is the control and is not a formality.** Suppressing the kind rule whenever the
+ * bitwise block fires would pass every row above and lose the only diagnostic that program gets, which
+ * is the failure this file has recorded twice — see `n * "a"` above, where a suppression keyed on the
+ * operator alone made an ill-typed program compile.
+ */
+/**
+ * A component tag and the named construction it desugars to say the **same** thing.
+ *
+ * `checkJsxComponent` states the rule it is built on: *"The field rules are named construction's …
+ * because the desugaring **is** a named construction, and two sets of rules for one construct would
+ * differ the first time either moved."* Either moved. `Card { p: a }` for a nullable `a` into a
+ * non-null field is reported, and `<Card p={a} />` was not, because the JSX path has its own
+ * `assignable` call rather than the construction check's.
+ *
+ * **wacc is its own oracle here, and it has to be**: the reference has no JSX at all — it answers
+ * *expected expression, found '<'* — so the rung-3 differentials cannot see this family, which is why
+ * a divergence could sit in it. What can be checked is that one construct written two ways gets one
+ * answer, which is the property the comment above claims and the only one that does not need a second
+ * compiler.
+ */
+/**
+ * A JSX attribute and a JSX child refuse a **nullable** as they refuse any other wrong type.
+ *
+ * `spec/spec/jsx.md` has an attribute's value being a `string` and a child being a `Node`, and both
+ * slots checked it with `assignable` alone — which answers *true* for `string?` into `string` by
+ * design, that being what `nullableIntoNonNull` exists to report separately. So `<div class={s}>` for
+ * a `string? s` and `<div>{kid}</div>` for a `Node? kid` were accepted, while an `i32` in either
+ * position was refused. The value that might not be there is the one case a slot most needs to catch.
+ *
+ * **The `i32` rows are why this is a gap and not a slot that checks nothing**, and the well-typed rows
+ * are why the fix is not "refuse everything": four controls for two claims.
+ */
+/**
+ * A `match` expression's arms unify **exactly as a ternary's branches do**, which the spec requires.
+ *
+ * `spec/spec/enums.md` §enum-match-expr-4wnq7bk: the arms unify *"exactly as a ternary's two branches
+ * are … and by the same code"*. It was not the same code. The ternary learned to unify a nullability
+ * difference (`P` with `P?` is a `P?`) and a subtype pair (`Sub` with `Base` is a `Base`) on
+ * 2026-08-25; the match kept requiring the arms to be *equal*, and unknown is silent — so
+ * `P r = c ? a : b;` was refused and the identical `match` was accepted.
+ *
+ * **wacc is its own oracle**, as for JSX: `§enum-*` is a wacc-only clause family, so no rung-3
+ * differential covers it and a divergence can sit here indefinitely. The property that needs no second
+ * compiler is the one the spec states — one rule, two spellings, one answer.
+ */
+export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
+  T t = T.create();
+  const string NULLABLE_DECL = "struct P { i32 x; }\nenum E { A, B }\n";
+  i32 tern1 = dumpTypeErrors((NULLABLE_DECL +
+    "export i32 f(bool c, P a, P? b) { P r = c ? a : b; return r.x; }\n").toBytes()).len() / 3;
+  i32 match1 = dumpTypeErrors((NULLABLE_DECL +
+    "export i32 f(E e, P a, P? b) { P r = match (e) { case A: a, else: b }; return r.x; }\n").toBytes()).len() / 3;
+  t.isTrue(tern1 > 0, "the ternary stopped refusing a nullable arm in a non-null slot");
+  t.eqI32(match1, tern1, "a match and a ternary disagree about a nullable arm");
+
+  const string SUB_DECL = "struct Base { i32 b; }\nstruct Sub : Base { i32 s; }\nenum E { A, B }\n";
+  i32 tern2 = dumpTypeErrors((SUB_DECL +
+    "export i32 f(bool c, Sub a, Base b) { Sub r = c ? a : b; return r.s; }\n").toBytes()).len() / 3;
+  i32 match2 = dumpTypeErrors((SUB_DECL +
+    "export i32 f(E e, Sub a, Base b) { Sub r = match (e) { case A: a, else: b }; return r.s; }\n").toBytes()).len() / 3;
+  t.isTrue(tern2 > 0, "the ternary stopped refusing a parent arm in a child slot");
+  t.eqI32(match2, tern2, "a match and a ternary disagree about a subtype pair");
+
+  // The controls, both spellings: the same programs where the slot *is* the common type are ordinary,
+  // so neither fix can be "refuse a match whose arms differ".
+  i32 okTern = dumpTypeErrors((SUB_DECL +
+    "export i32 f(bool c, Sub a, Base b) { Base r = c ? a : b; return r.b; }\n").toBytes()).len() / 3;
+  i32 okMatch = dumpTypeErrors((SUB_DECL +
+    "export i32 f(E e, Sub a, Base b) { Base r = match (e) { case A: a, else: b }; return r.b; }\n").toBytes()).len() / 3;
+  t.eqI32(okTern, 0, "a ternary widening to the parent was refused");
+  t.eqI32(okMatch, 0, "a match widening to the parent was refused");
+  return t.report();
+}
+
+export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
+  T t = T.create();
+  const string HEAD = "import { Attr, Node } from \"core\";\n";
+  i32 attrNull = dumpTypeErrors((HEAD + "export Node f(string? s) { return <div class={s}></div>; }\n").toBytes()).len() / 3;
+  i32 kidNull = dumpTypeErrors((HEAD + "export Node f(Node? kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  t.isTrue(attrNull > 0, "a nullable string in an attribute was accepted");
+  t.isTrue(kidNull > 0, "a nullable Node as a child was accepted");
+  // The slots do check — an `i32` in either is refused — so the rows above are a gap rather than a
+  // position nothing looks at.
+  i32 attrWrong = dumpTypeErrors((HEAD + "export Node f(i32 n) { return <div class={n}></div>; }\n").toBytes()).len() / 3;
+  i32 kidWrong = dumpTypeErrors((HEAD + "export Node f(i32 kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  t.isTrue(attrWrong > 0, "an i32 attribute was accepted, so this slot checks nothing");
+  t.isTrue(kidWrong > 0, "an i32 child was accepted, so this slot checks nothing");
+  // ...and the ordinary programs stay ordinary.
+  i32 attrOk = dumpTypeErrors((HEAD + "export Node f(string s) { return <div class={s}></div>; }\n").toBytes()).len() / 3;
+  i32 kidOk = dumpTypeErrors((HEAD + "export Node f(Node kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  t.eqI32(attrOk, 0, "a string attribute was refused");
+  t.eqI32(kidOk, 0, "a Node child was refused");
+  return t.report();
+}
+
+export string test_a_component_tag_and_its_construction_agree() {
+  T t = T.create();
+  const string DECL =
+    "import { Attr, Node } from \"core\";\n" +
+    "struct P { i32 x; }\n" +
+    "struct Card {\n" +
+    "  P p;\n" +
+    "  Node render(const this, Node[] kids) { return <section class=\"card\"></section>; }\n" +
+    "}\n";
+  // A nullable into the non-null field, both ways round.
+  i32 viaJsx = dumpTypeErrors((DECL + "export Node f(P? a) { return <Card p={a} />; }\n").toBytes()).len() / 3;
+  i32 viaNamed = dumpTypeErrors((DECL + "export Node f(P? a) { return Card { p: a }.render(Node[]()); }\n").toBytes()).len() / 3;
+  t.isTrue(viaNamed > 0, "the named construction stopped reporting a nullable field");
+  t.eqI32(viaJsx, viaNamed, "the tag and the construction disagree about the same program");
+  // The control, both ways: a `P` in that field is an ordinary program and neither spelling may
+  // complain. Without it, a rule that refused every component attribute would satisfy the row above.
+  i32 okJsx = dumpTypeErrors((DECL + "export Node f(P a) { return <Card p={a} />; }\n").toBytes()).len() / 3;
+  i32 okNamed = dumpTypeErrors((DECL + "export Node f(P a) { return Card { p: a }.render(Node[]()); }\n").toBytes()).len() / 3;
+  t.eqI32(okJsx, 0, "a well-typed component tag was refused");
+  t.eqI32(okNamed, 0, "a well-typed named construction was refused");
+  return t.report();
+}
+
+/**
+ * **A refused declaration leaves no type behind, so one mistake is one diagnostic.**
+ *
+ * `const void A = 1;` reported the `void` *and* "expected void, found i32" one token along — the
+ * second being a consequence of the first, since the initialiser was checked against a type the
+ * program had just been told it could not have. The reference says only that a constant cannot have
+ * type void.
+ *
+ * Unknown is what this checker is silent about, which is what a refused declaration should leave.
+ * A local already did this; the module-level constant is a separate walk and did not.
+ */
+/**
+ * **A comparison whose operands disagree is not a `bool` — it is nothing.**
+ *
+ * `return x != y;` for an `i32` and a `u32` drew *"expected i32, found bool"* beside the operand
+ * complaint: the return rule was told the refused comparison had a type, and complained about it. The
+ * reference draws only the operand one.
+ *
+ * Fifteen programs of `mutateCheck.test.ts`'s *"we report more diagnostics than the reference"* queue
+ * were this one family — that queue is printed rather than asserted, so it is a list of work rather
+ * than a tolerance, and this is the head of it coming off.
+ *
+ * The controls are the two ways this could over-reach: a literal operand keeps its `bool`, because a
+ * literal answers unknown and the condition wants *both* sides known; and a well-typed comparison is
+ * silent. `is` is a different node, so identity between a struct and its parent never came through
+ * here.
+ */
+export string test_a_mismatched_comparison_has_no_type() {
+  T t = T.create();
+  i32[] mixed = dumpTypeErrors("export i32 f() { i32 x = 1; u32 y = 1; return x != y; }\n".toBytes());
+  t.eqI32(mixed.len() / 3, 1, "one fault, and this many diagnostics");
+  if (mixed.len() >= 3) { t.eqI32(mixed[0], 4, "the code — `errOperandMismatch`"); }
+
+  // A literal operand: the comparison still has a type, so the return is still checked.
+  i32[] lit = dumpTypeErrors("export i32 f() { i32 x = 1; return x != 1; }\n".toBytes());
+  t.eqI32(lit.len() / 3, 1, "a bool returned from an i32 function, and this many diagnostics");
+
+  // And a comparison that is fine, in a slot that wants what it gives.
+  i32[] fine = dumpTypeErrors("export bool f() { i32 x = 1; i32 y = 2; return x != y; }\n".toBytes());
+  t.eqI32(fine.len() / 3, 0, "refused a well-typed comparison");
+  return t.report();
+}
+
+export string test_a_const_of_type_void_is_one_diagnostic() {
+  T t = T.create();
+  i32[] d = dumpTypeErrors("const void A = 1;\nexport i32 g() { return 0; }\n".toBytes());
+  t.eqI32(d.len() / 3, 1, "one fault, and this many diagnostics");
+  if (d.len() >= 3) { t.eqI32(d[0], 36, "the code — `errVoidType`"); }
+
+  // The local form, which has always reported once — kept so the two walks cannot drift apart.
+  i32[] local = dumpTypeErrors("export i32 f() { void x = 1; return 0; }\n".toBytes());
+  t.eqI32(local.len() / 3, 1, "the local form, and this many diagnostics");
+
+  // An ordinary constant, so neither is met by refusing module-level consts.
+  i32[] fine = dumpTypeErrors("const i32 A = 1;\nexport i32 g() { return A; }\n".toBytes());
+  t.eqI32(fine.len() / 3, 0, "refused a valid module-level constant");
+  return t.report();
+}
+
+export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
+  T t = T.create();
+  string[] name = string[](
+    "i32 & bool", "i32 | f64", "i32 ^ bool", "i32 & f64", "bool | i32");
+  string[] src = string[](
+    "export i32 f(i32 a, bool b) { return a & b; }\n",
+    "export i32 f(i32 a, f64 b) { return a | b; }\n",
+    "export i32 f(i32 a, bool b) { return a ^ b; }\n",
+    "export i32 f(i32 a, f64 b) { return a & b; }\n",
+    "export i32 f(bool a, i32 b) { return a | b; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
+  }
+  // **Both operands wrong and agreeing**: the kind rule is the only thing that can speak, so it must.
+  i32 agree = dumpTypeErrors("export f64 f(f64 a, f64 b) { return a & b; }\n".toBytes()).len() / 3;
+  t.eqI32(agree, 1, "two f64s in `&` — the operand rule is the whole complaint and went quiet");
+  i32 bools = dumpTypeErrors("export bool f(bool a, bool b) { return a & b; }\n".toBytes()).len() / 3;
+  t.isTrue(bools > 0, "two bools in `&` drew nothing at all");
+  // And an ordinary program, so none of the above is satisfied by refusing bitwise outright.
+  i32 fine = dumpTypeErrors("export i32 f(i32 a, i32 b) { return (a & b) | (a ^ b); }\n".toBytes()).len() / 3;
+  t.eqI32(fine, 0, "refused a valid bitwise expression");
+  return t.report();
+}
+
+/**
+ * **Two duplicate-declaration rules, reported where the duplicate is written.**
+ *
+ * Both came out of walking the diagnostic codes for ones no generated program reaches, and comparing
+ * their positions against the reference. `errDuplicateElse` reported at the match's *subject* — the
+ * one part of the statement that is fine — and now reports at the second `else`, agreeing with the
+ * reference; `packages/wacc/test/wac/typecheck_test.wac`'s `WRONG()` carries that case and is what
+ * keeps it agreeing.
+ *
+ * **`errDuplicateBinding` is deliberately not in that list, and this test is why.** We point at the
+ * second `v`; the reference points at `case`, ten columns earlier. That is a real divergence and the
+ * reference is the oracle, but it is the oracle for *whether* a program is wrong rather than for
+ * where the reader should look, and "the duplicate binding" is a better answer than "the arm". So
+ * the position is asserted here instead — the same arrangement, and for the same reason, as the
+ * nullable-array case in `typecheck_test.wac`.
+ *
+ * The columns are derived from the source rather than written down, because a magic column number is
+ * a test that stops meaning anything the first time the program is reworded.
+ */
+export string test_a_duplicate_binding_and_a_duplicate_else_report_at_the_duplicate() {
+  T t = T.create();
+
+  string bindHead = "enum E { A(i32 x, i32 y), B } export i32 f(E e) { match (e) { case A(v, ";
+  string bindSrc = bindHead + "v): { return v; } else: { return 0; } } return 0; }\n";
+  i32[] bind = dumpTypeErrors(bindSrc.toBytes());
+  t.eqI32(bind.len() / 3, 1, "one duplicate binding, and this many diagnostics");
+  if (bind.len() >= 3) {
+    t.eqI32(bind[2], bindHead.len() + 1,
+            "the duplicate binding is reported away from the second `v`");
+  }
+
+  string elseHead =
+      "enum E { A, B } export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } ";
+  string elseSrc = elseHead + "else: { return 3; } } return 0; }\n";
+  i32[] dup = dumpTypeErrors(elseSrc.toBytes());
+  t.isTrue(dup.len() >= 3, "a second `else` drew nothing at all");
+  if (dup.len() >= 3) {
+    t.eqI32(dup[2], elseHead.len() + 1, "the second `else` is reported away from the `else`");
+  }
+
+  // And one `else` is not a duplicate, so that neither of the above is satisfied by refusing `else`.
+  i32 fine = dumpTypeErrors(
+      ("enum E { A, B } export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } }"
+       + " return 0; }\n").toBytes()).len() / 3;
+  t.eqI32(fine, 0, "refused a match with a single else arm");
+  return t.report();
+}
+
+/**
+ * **Two duplicates the reference refuses while parsing, so no differential can carry them.**
+ *
+ * A duplicate method and a second `default:` are both refused by the reference — *"switch may have at
+ * most one 'default' clause"* at the second `default`, and the same shape for the method — and both at
+ * the column we report. But it refuses them in its **parser**, and `typecheck_test.wac`'s `WRONG()`
+ * compares against its **checker**, which stays silent. Put them in that list and the assertion
+ * becomes "we invent a diagnostic here", which is the opposite of what is true.
+ *
+ * That is the same split that took a character literal out of the list, and it is worth stating once
+ * more because the failure is silent in the useful direction: a rule the reference implements
+ * somewhere else reads exactly like a rule it does not implement at all.
+ *
+ * `spec/spec/naming.md` line 50 makes the duplicate method an error in as many words, and the switch
+ * grammar in `spec/spec/control.md` carries a single `default`.
+ */
+export string test_a_duplicate_method_and_a_second_default_are_refused() {
+  T t = T.create();
+
+  string methodHead = "struct P { i32 v; i32 m(this) { return 1; } ";
+  string methodSrc = methodHead + "i32 m(this) { return 2; } }\nexport i32 f(P p) { return p.m(); }\n";
+  i32[] dupMethod = dumpTypeErrors(methodSrc.toBytes());
+  t.isTrue(dupMethod.len() >= 3, "a struct with the same method twice drew nothing at all");
+  if (dupMethod.len() >= 3) {
+    t.eqI32(dupMethod[2], methodHead.len() + 1,
+            "the duplicate method is reported away from the second declaration");
+  }
+
+  string switchHead = "export i32 f(i32 n) { switch (n) { default: { return 1; } ";
+  string switchSrc = switchHead + "default: { return 2; } } return 0; }\n";
+  i32[] twoDefaults = dumpTypeErrors(switchSrc.toBytes());
+  t.isTrue(twoDefaults.len() >= 3, "a switch with two defaults drew nothing at all");
+  if (twoDefaults.len() >= 3) {
+    t.eqI32(twoDefaults[2], switchHead.len() + 1,
+            "the second `default` is reported away from the second `default`");
+  }
+
+  // One of each, so that neither assertion above is satisfied by refusing the construct outright.
+  i32 okMethod = dumpTypeErrors(
+      ("struct P { i32 v; i32 m(this) { return 1; } }\nexport i32 f(P p) { return p.m(); }\n")
+          .toBytes()).len() / 3;
+  t.eqI32(okMethod, 0, "refused a struct with one method");
+  i32 okSwitch = dumpTypeErrors(
+      ("export i32 f(i32 n) { switch (n) { case 1: { return 1; } default: { return 2; } } return 0; }\n")
+          .toBytes()).len() / 3;
+  t.eqI32(okSwitch, 0, "refused a switch with one default");
+  return t.report();
+}
+
+/**
+ * **A name reached through a struct, and which of the two things went wrong.**
+ *
+ * `checkMember` had this rule for enums and not for structs, so `P.nope` and `P.v` were accepted here
+ * and declined by the *emitter* — a refusal with no position and no message. The positions are pinned
+ * by `typecheck_test.wac`'s `WRONG()`; what is pinned here is the annotation, because the two cases
+ * are not the same mistake and the shared code says "static method" for both.
+ *
+ * `P.v` is a field: present, and reached the wrong way. `P.nope` is nothing at all. The reference
+ * answers *"cannot use static method 'P.v' as a value"* for the field, which names the one thing `v`
+ * is not — a criticism worth acting on rather than copying.
+ *
+ * `P.m` is deliberately absent from this test: an instance method reached through its type is a legal
+ * **unbound** reference, an `fn[i32(P)]` taking the receiver first, and rung 4 has seven programs
+ * passing those around. It is refused in an `i32` slot by the ordinary mismatch rule, not by this one.
+ */
+export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
+  T t = T.create();
+  string[] annot = string[](
+    "no P.nope",
+    "P.v is a field, which is reached through a value");
+  string[] src = string[](
+    "struct P { i32 v; } export i32 f() { return P.nope; }\n",
+    "struct P { i32 v; } export i32 f() { return P.v; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    string[] lines = wireLines(diagnoseFiles(string[]("m.wac"), string[](src[i]), "m.wac"));
+    t.isTrue(lines.len() > 0, annot[i] + ": nothing was reported at all");
+    if (lines.len() == 0) { continue; }
+    t.eqStr(wireField(lines[0], ANNOTATION()), annot[i], "the annotation");
+  }
+  // A static method through the type is a value, so neither row above is met by refusing `P.<name>`.
+  i32 fine = dumpTypeErrors(
+      "struct P { i32 v; i32 s() { return 1; } } export i32 f() { fn[i32()] g = P.s; return g(); }\n"
+          .toBytes()).len() / 3;
+  t.eqI32(fine, 0, "refused a static method taken as a value");
+  return t.report();
+}
+
+/**
+ * `issues/lang/0157` — an import of a file nobody supplied, through the **files** entry point.
+ *
+ * The single-file half has reported since 2026-08-20, reading the parse: one file means every
+ * non-builtin specifier is unsatisfiable. The files half stayed silent for another five days, and the
+ * silence is the bad kind — an unresolved import declares its names as *unknown*, and unknown is what
+ * this checker stays quiet about, so a caller who asked was told the program was fine. `blockedFiles`
+ * knew, but it answers from a linker sentinel with no position.
+ *
+ * **Only a plain relative specifier is judged**, and that is a real limit rather than laziness. A
+ * `@/src/x.wac` or a mapped `dep/lib.wac` resolves through a `Res`, and every caller with no
+ * filesystem passes an empty one — so those land on a key nobody supplied and are indistinguishable
+ * from the fault. Reporting them made three *correct* programs red in `projectspec_test.wac` and
+ * `mappedspec_test.wac`, which is the false-alarm direction and the one a checker may not be wrong
+ * in. `0157` names this shape: a caller that cannot resolve must say so rather than answer wrongly.
+ */
+export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
+  T t = T.create();
+
+  string[] paths = string[]("/t/main.wac");
+  string[] sources = string[](
+      "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n");
+  i32[] one = dumpTypeErrorsFiles(paths, sources, "/t/main.wac");
+  t.eqI32(one.len() / 3, 1, "one missing import, and this many diagnostics");
+  if (one.len() >= 3) {
+    t.eqI32(one[0], 77, "the code — `errMissingImportFile`");
+    t.eqI32(one[1], 1, "the line: the import's own, not the entry's first");
+  }
+
+  // **And with a real closure around it**, so the rule is not satisfied by "one file means every
+  // import is missing" — which is what the single-file half legitimately assumes.
+  string[] paths2 = string[]("/t/main.wac", "/t/a.wac");
+  string[] sources2 = string[](
+      "import { bar } from \"./a.wac\";\nimport { foo } from \"./b.wac\";\n" +
+      "export i32 f() { return foo() + bar(); }\n",
+      "export i32 bar() { return 1; }\n");
+  i32[] two = dumpTypeErrorsFiles(paths2, sources2, "/t/main.wac");
+  t.eqI32(two.len() / 3, 1, "one of two imports is missing, and this many diagnostics");
+  if (two.len() >= 3) {
+    t.eqI32(two[1], 2, "the line: the *second* import, which is the missing one");
+  }
+
+  // The same program with both files supplied, so none of the above is met by refusing imports.
+  string[] paths3 = string[]("/t/main.wac", "/t/a.wac", "/t/b.wac");
+  string[] sources3 = string[](
+      "import { bar } from \"./a.wac\";\nimport { foo } from \"./b.wac\";\n" +
+      "export i32 f() { return foo() + bar(); }\n",
+      "export i32 bar() { return 1; }\n",
+      "export i32 foo() { return 2; }\n");
+  i32[] all = dumpTypeErrorsFiles(paths3, sources3, "/t/main.wac");
+  t.eqI32(all.len() / 3, 0, "refused a program whose imports are all supplied");
+  return t.report();
+}
+
+/**
+ * **A call whose type parameter nothing determines is not an arity mistake.**
+ *
+ * `id(null)` for a `T id<T>(T a)` was reported through `errCallArity`, so the diagnostic contradicted
+ * itself: the headline said *"wrong number of arguments"*, the annotation said *"nothing in the call
+ * says what T is"*, and the help said *"check the declaration for how many it takes"* — sending the
+ * reader to count arguments that are already correct. One argument, one parameter.
+ *
+ * Found by sweeping the spec's 317 single-file rejection programs and comparing positions against the
+ * reference: `specsingle_test.wac` asserts that each is *refused* and nothing compares where or why,
+ * so a diagnostic naming the wrong rule is invisible to it. The reference says *"cannot infer 'T' for
+ * 'id'"*, which is the same complaint under a different name.
+ */
+export string test_an_uninferrable_type_parameter_is_not_an_arity_error() {
+  T t = T.create();
+  i32[] d = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { i32 x = id(null); return x; }\n"
+                               .toBytes());
+  t.eqI32(d.len() / 3, 1, "one fault, and this many diagnostics");
+  if (d.len() >= 3) { t.eqI32(d[0], 78, "the code — `errInferType`, not `errCallArity` (32)"); }
+
+  // A real arity mistake still reports as one, so the split did not simply rename the old code.
+  i32[] arity = dumpTypeErrors(("i32 two(i32 a, i32 b) { return a + b; }\n"
+                                + "export i32 f() { return two(1); }\n").toBytes());
+  t.eqI32(arity.len() / 3, 1, "one arity fault, and this many diagnostics");
+  if (arity.len() >= 3) { t.eqI32(arity[0], 32, "the code — `errCallArity`"); }
+
+  // **The third fault `errCallArity` was carrying**, and the same shape: `grow(b)` takes one
+  // argument and passes one. Code 53 already said this rule for a struct *field* that instantiates
+  // for ever; the call form reported an arity it had counted correctly.
+  i32[] forever = dumpTypeErrors(
+      ("struct Box<T> { T v; }\n"
+       + "i32 grow<T>(T a) { Box<T> b = Box<T>(a); return grow(b); }\n"
+       + "export i32 f() { return grow(1); }\n").toBytes());
+  t.isTrue(forever.len() >= 3, "a generic instantiating itself for ever drew nothing");
+  if (forever.len() >= 3) {
+    t.eqI32(forever[0], 53, "the code — `errInfiniteGeneric`, not `errCallArity` (32)");
+  }
+
+  // **A fourth, and the one that produced two diagnostics rather than a wrong one.** `max<T>(T a, T b)`
+  // called with an `i32` and an `f64`: the binder kept the first and dropped the rest, so `T` was
+  // `i32`, the call had a type, and `max(x, y) as! i32` drew *"this cast is between one type and
+  // itself"* — true of the type the call was given, about a call that should not exist. The clash is
+  // reported now *and* the call's type is unknown, which is what keeps it to one complaint.
+  i32[] clash = dumpTypeErrors(
+      ("T max<T>(T a, T b) { return a > b ? a : b; }\n"
+       + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }\n").toBytes());
+  t.eqI32(clash.len() / 3, 1, "one fault, and this many diagnostics");
+  if (clash.len() >= 3) { t.eqI32(clash[0], 79, "the code — `errTypeParamClash`"); }
+
+  // **And the negation rule the slot hides.** `u32 f() { return -1; }` reported the literal's range,
+  // which is advice that cannot be taken — no literal makes `-x` valid on an unsigned type. Kept
+  // beside a signed slot and an unsigned *positive* literal, because the rule is about the operator
+  // and the slot together and either one alone would pass a version that refused too much.
+  i32[] negU = dumpTypeErrors("export u32 f() { return -1; }\n".toBytes());
+  t.eqI32(negU.len() / 3, 1, "a negated literal in a u32 slot, and this many diagnostics");
+  if (negU.len() >= 3) { t.eqI32(negU[0], 38, "the code — `errOperandKind`, not the literal range"); }
+  i32[] negI = dumpTypeErrors("export i32 f() { return -1; }\n".toBytes());
+  t.eqI32(negI.len() / 3, 0, "refused a negated literal in a signed slot");
+  i32[] posU = dumpTypeErrors("export u32 f() { return 1; }\n".toBytes());
+  t.eqI32(posU.len() / 3, 0, "refused a positive literal in an unsigned slot");
+
+  // And an inferrable call is silent, so none of these is met by refusing generics.
+  i32[] fine = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { return id(1); }\n".toBytes());
+  t.eqI32(fine.len() / 3, 0, "refused a call whose type argument is evident");
   return t.report();
 }
 

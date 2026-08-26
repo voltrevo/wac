@@ -788,7 +788,15 @@ function testCommand(work: string, dirs: string[], filter?: string): Deno.Comman
   // checkout: it is a build artefact rather than a source, and `stageProject` does not copy
   // `native/target`. `cwd` is still the staged copy, so it compiles the mutated sources.
   if (isWacRun(dirs)) {
-    const args = ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env"];
+    // **`--allow-net` among them**, which this list said it had and did not: `tools/runTests.wac`
+    // gives its wac lane five and this gave four. A `*_test.wac` that listens then fails with *"could
+    // not listen — Not granted to this application"*, the scope is red at baseline, and every mutant
+    // in it is excluded as unmeasurable — the same silent withdrawal the `--unstable-net` note below
+    // describes, where `--package fmt` reported `17/17 mutants killed` having measured almost
+    // nothing. Verified against `packages/platform/test/wac/patience_test.wac`: 0 of 2 without it,
+    // 2 of 2 with.
+    const args = ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env",
+                  "--allow-net"];
     // **The filter is not passed on.** `filterFor` builds Deno's regex spelling and `wac test --filter`
     // matches a plain substring, so handing it over selects *nothing* and the mutant is scored against a
     // run of zero tests — a survivor, silently. Selection on this path is by *entry*: the narrow branch

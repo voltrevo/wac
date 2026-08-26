@@ -25,19 +25,16 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseFiles } from "../../src/api.wac";
-import { wireField, wireLines, MESSAGE } from "./wire_probe.wac";
+import { wireField, wireLines, MESSAGE, ANNOTATION, HINT, SPAN } from "./wire_probe.wac";
 
-const i32 ANNOTATION = 5;
-const i32 HINT = 6;
-const i32 SPAN = 7;
 
 /** The first diagnostic for `src`, as its nine wire fields — empty strings when there is none. */
 string[] firstDiagnostic(string src) {
   string wire = diagnoseFiles(string[]("err.wac"), string[](src), "err.wac");
   string[] lines = wireLines(wire);
   if (lines.len() == 0) { return string[0](fill: ""); }
-  return string[](wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION),
-                  wireField(lines[0], HINT), wireField(lines[0], SPAN));
+  return string[](wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION()),
+                  wireField(lines[0], HINT()), wireField(lines[0], SPAN()));
 }
 
 /**
@@ -257,6 +254,94 @@ bool contains(string haystack, string needle) {
     if (haystack.slice(i, i + needle.len()) == needle) { return true; }
   }
   return false;
+}
+
+/**
+ * `§wac-keyword-name-8wnq4kp` — *"an error that names the keyword and points at it"*.
+ *
+ * **Not one of the wording rows below, and the difference is what makes this a fix rather than a
+ * decision.** `issues/lang/0156` is about six clauses where the spec, wacc and the reference all say
+ * the same thing in different fields — *"nobody is missing information"*. Here wacc named the keyword
+ * in **no** field: every one of these eight positions answered `unexpected token`, and the reader is
+ * left to work out which of the twenty-eight reserved words they reached for.
+ *
+ * The spec states this one as a sentence rather than drawing it in a block, and says outright that
+ * *"the wording is part of the rule rather than a courtesy"* — with the reason, which is that `from`
+ * was once reserved and a parameter called `from` reported a missing semicolon a hundred lines
+ * further on. `0156`'s own diagnosis of why these went unchecked is *"what got checked is what was
+ * written as a sentence, not what was drawn in a rendering"*; this is such a sentence.
+ *
+ * Positions were identical on all eight before the change and are unchanged by it — the whole of what
+ * moved is the text, which is exactly the half no differential compares.
+ */
+export string test_a_keyword_in_a_name_position_names_the_keyword() {
+  T t = T.create();
+  string[] what = string[](
+    "parameter name", "variable name", "struct name", "function name",
+    "member name", "enum name", "member name", "type parameter name", "field name");
+  string[] src = string[](
+    "export i32 go(i32 match) { return 1; }\n",
+    "export i32 f() { i32 match = 1; return match; }\n",
+    "struct match { i32 x; }\n",
+    "export i32 match() { return 1; }\n",
+    // A field *declaration* is a member, which is the reference's word for it too; the role called
+    // "field name" is the one below, where a field is written to.
+    "struct P { i32 match; }\n",
+    "enum match { A, B }\n",
+    "struct P { i32 v; i32 match(this) { return 1; } }\n",
+    "struct P<match> { match v; }\n",
+    "struct P { i32 v; }\nexport i32 f(P p) { p.match = 1; return p.v; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    string[] d = firstDiagnostic(src[i]);
+    t.isTrue(d.len() == 4, what[i] + ": wacc reported nothing for a keyword there");
+    if (d.len() != 4) { continue; }
+    t.eqStr(d[0], "a keyword cannot be used as a name", what[i] + ": the message");
+    t.eqStr(d[1], "'match' is a keyword and cannot be used as a " + what[i],
+            what[i] + ": the annotation, which is the half that names the keyword");
+  }
+  // A name that is not a keyword still parses, so none of the above is met by refusing the shapes.
+  string[] fine = firstDiagnostic("export i32 go(i32 n) { return n; }\n");
+  t.isTrue(fine.len() == 0, "refused an ordinary parameter name");
+  return t.report();
+}
+
+/**
+ * `§enum-methods-6vkq2wn` — the two enum-method shapes the spec refuses, and what it calls them.
+ *
+ * Found the same way and fixed in the same change as the keyword clause above, but this pair is worth
+ * separating because one of them was not merely vague. `i32 make() { … }` inside an enum answered
+ * **"expected a method name"** — pointing at `{`, and naming the one thing that was not wrong: the
+ * method is named, in the right place, spelled correctly. `perrMethodName` was carrying two faults and
+ * the reader was sent looking for a typo in `make`. The fault is the missing `this`.
+ *
+ * The `override` case was the ordinary kind of vague: `unexpected token`, where both the spec and the
+ * reference say what is not allowed and the parser already had a comment explaining why.
+ *
+ * Positions were measured against the reference before the change — 1:16 and 1:27, agreeing — and the
+ * change moves no token, so the rung-3 differentials see nothing.
+ */
+export string test_the_enum_method_rules_say_which_rule_was_broken() {
+  T t = T.create();
+
+  string[] over = firstDiagnostic(
+      "enum E { A, B, override i32 val(const this) { return 0; } }\nexport i32 f() { return 1; }\n");
+  t.isTrue(over.len() == 4, "wacc reported nothing for `override` on an enum method");
+  if (over.len() == 4) {
+    t.eqStr(over[0], "'override' is not allowed on an enum method", "the message");
+  }
+
+  string[] noThis = firstDiagnostic(
+      "enum E { A, B, i32 make() { return 0; } }\nexport i32 f() { return 1; }\n");
+  t.isTrue(noThis.len() == 4, "wacc reported nothing for an enum method without `this`");
+  if (noThis.len() == 4) {
+    t.eqStr(noThis[0], "an enum method must take 'this'", "the message");
+  }
+
+  // The shape both of those are one edit away from, so neither is met by refusing enum methods.
+  string[] fine = firstDiagnostic(
+      "enum E { A, B, i32 val(const this) { return 0; } }\nexport i32 f() { return 1; }\n");
+  t.isTrue(fine.len() == 0, "refused an ordinary enum method");
+  return t.report();
 }
 
 // ── The five parse clauses nothing pinned ──────────────────────────────────────────────────────

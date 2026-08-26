@@ -86,7 +86,174 @@ string[] WRONG() {
     // reference asks for the unwrap — the one spelling in this family where the two disagreed, and
     // `k is K` right beside it is refused by both.
     "struct S { i32 v; }\nstruct K : S { i32 w; }\n"
-      + "export i32 f(K? k) { if (k is S) { return k.v; } return 0; }");
+      + "export i32 f(K? k) { if (k is S) { return k.v; } return 0; }",
+    // **A local's name used as a type**, which is not a class disagreement like the rest of this list.
+    // `zz` is an `i32` and `zz[1]()` reads as *constructing an array of the type `zz`* — both
+    // compilers take that reading, which is `issues/lang/0265c`. The reference says
+    // *undefined type 'zz'*; this checker said **nothing at all**, because `knownTypeName` accepted
+    // any name `findName` could see and a local is declared there beside every parameter and
+    // function. It is in this list for the recall assertion above, which is the one that catches a
+    // silence — and it is a silence with a floor under it, since the emitter then declines the module
+    // for "a value of a type this emitter cannot write: zz". `wac check` still said the file was fine.
+    "export void g() { i32 zz = 1; zz[1](); }",
+    // **A literal too wide for an `i64` was answered "it fits" for every narrower type.** `parseInt`
+    // returns an `i64`, so `18446744073709551615` arrives as -1, and `integerLiteralFits` had a guard
+    // returning *true* for a negative `v` — put there so the numeric comparisons below could not read
+    // wrapped bits, and reading as "no complaint". So this drew no diagnostic, built, and returned
+    // **-1**: `wac run` exited 255. `spec/spec/types.md` states the rule as a clause,
+    // `§wac-litctx-nofit-k3mq8wl` — *"a literal that does not fit is an error"* — with
+    // `i32 b = 5000000000` as its own example, which was caught; the boundary was i64::MAX, and
+    // everything above it was silent. Found through the mutation sweep's recall queue, which named the
+    // family, and `packages/wacc/test/missed.ts`, which named the program.
+    // Three types and both signs, because the guard was blind to all of them equally. Not `u8` or
+    // `i16`: a packed type is refused in a local at all, so such a program is wrong for a second
+    // reason and cannot say whether the range rule spoke.
+    "export i32 f() { i32 b = 18446744073709551615; return b; }",
+    "export u32 f() { u32 b = 18446744073709551615; return b; }",
+    "export i32 f() { i32 b = -18446744073709551615; return b; }",
+    // **Ten digits is not the same as "does not fit".** With no expected type an integer literal falls
+    // back to its own notation, and `naturalTypeOf` called one an `i32` only when it had fewer than ten
+    // digits — certain, and conservative by a wide margin: `1000000000` is an `i32` and
+    // `999999999.nofield` was reported while `1000000000.nofield` drew nothing at all. The reference
+    // walks a ladder — `i32` if it fits, else `i64`, else out of range — and these are the two rungs
+    // below the top.
+    "export u64 f() { return 1000000000.nofield; }",
+    "export u64 f() { return 2147483648.nofield; }",
+    // **A nullable into a non-null slot, in the four positions that did not ask.** `assignable`
+    // answers *true* for `P?` into `P` on purpose — `nullableIntoNonNull` has its own diagnostic and
+    // its own wording, so the two do not both fire at one position — which means every slot has to
+    // ask it, and six did: a call argument, a return, an assignment, a field assignment, an element
+    // assignment and a declaration's initialiser. A construction's argument, an array literal's
+    // element, a `fill:` value and a ternary's arms did not, so each of these was silent while
+    // `P r = a;` beside them was reported. Found in `sweep.test.ts`'s miss queue, where three of them
+    // were the largest group.
+    "struct P { i32 x; } struct Q { P v; } export void f(P? a) { Q q = Q(a); }",
+    "struct P { i32 x; } export void f(P? a) { P[] v = P[](a); }",
+    "struct P { i32 x; } export void f(P? a) { P[] v = P[1](fill: a); }",
+    "struct P { i32 x; } export void f(bool c, P a, P? b) { P r = c ? a : b; }",
+    // One of the last three rows of `sweep.test.ts`'s miss queue: `bool r = a + b;` is refused and
+    // `a += b` was not, because the gate asks whether the target is a *value* type and a `bool` is one.
+    // Two stated clauses compose to make it an error — `§wac-bool-arith-f2nx8k3` and a compound
+    // operator having the underlying operator's type rules.
+    //
+    // **The other two rows stay in the queue, and neither is a gap.** A funcref cast to itself: the
+    // reference refuses it and allows a `string`, a struct and an array cast to themselves, which wacc
+    // allows too, and `spec/spec/casts.md` covers none of the four — `checkCast` carries the note where
+    // the decision is. And `is null` on a non-nullable funcref: the reference calls it an error, while
+    // `§wac-nonnull-isnull-k8fn3wp` makes such a test *legal and always false*, which is why wacc says
+    // it with a **warning** — extended to funcrefs now, since it was silent on them where it warned on
+    // a struct. A warning is not an error, so the row does not move, and it should not.
+    "export void f(bool a, bool b) { a += b; }",
+    // **An enum variant's payload**, the eleventh slot and the one the first enumeration missed:
+    // that list came from `nullableIntoNonNull`'s existing callers plus the sweep's queue, and a
+    // payload is in neither. Grepping every `!assignable(c,` in `check.wac` and asking which had
+    // the nullability branch within six lines is what found it — nine had it and eight did not.
+    "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }",
+    // **`fill`'s value**, the twelfth slot and the one the site enumeration pointed at but my first
+    // probes could not reach: they guessed the signature and were refused for arity by *both*
+    // compilers, which reads exactly like "no gap here". `spec/spec/arrays.md` has it as
+    // `dst.fill(value, start, end)` — value first — and with the right shape the slot is silent on
+    // a nullable. `copyFrom`, checked beside it, already reports.
+    "struct P { i32 x; } export void f(P? a, P[] xs) { xs.fill(a, 0, xs.len()); }",
+    // **A literal beside a struct in a ternary.** The rule for a literal against a non-literal
+    // branch is gated on `concreteShape`, which is the numbers, `bool` and `string` — so a struct
+    // fell through every branch of it and `c ? p : 1` was silent. The emitter then wrote a module
+    // the engine refuses, which `wac build`'s own check calls a compiler bug. The reference says
+    // *ternary branches have incompatible types: P and i32*.
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : 1; return r.x; }",
+    // The same pair in a `match`, which `checkArmValueTypes` gates on the same `concreteShape`
+    // and skipped for the same reason. The reference: *match arms have incompatible types: P and
+    // i32*.
+    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { case A: p, else: 1 }; return r.x; }",
+    // The other kinds `literalNeverFits` names, so the widening is pinned as a family rather than
+    // as the two cases that happened to be found: an array against an integer literal, and a
+    // struct against a string one.
+    "export i32 f(bool c, i32[] a) { i32[] r = c ? a : 1; return r[0]; }",
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : \"s\"; return r.x; }",
+    // **Ten rules that no corpus exercised.** `errArmTypes` reported at the arm where the
+    // reference reports the whole `match`, and had done since it was written — nothing caught it
+    // because no corpus contains a program that triggers it, so no differential ever had an
+    // opinion about its position. Measured: of 84 declared codes, `generate()`'s 10,013 programs,
+    // the 225 spec cases and every package source between them produce **60**.
+    //
+    // These are ten of the twenty-four that were left, each checked to report at the same place
+    // as the reference before being added — so what they pin is that it stays that way. The other
+    // fourteen are wacc-only rules, the three warnings (which `dumpTypeErrors` does not carry and
+    // the reference has no channel for), or shapes the reference refuses earlier for a different
+    // reason.
+    //
+    // **`errCharLiteral` is one of those and was tried here first.** `'ab'` is refused by both,
+    // at the same position — but the reference refuses it in its *lexer*, and this list is
+    // compared against `checkpos`, which is the type checker alone. So it read as *we report a
+    // diagnostic the reference does not*, which is a contradiction rather than a row. The same
+    // boundary that keeps `zz? q = null;` out of this list.
+    "export i32 f(i32 a, i32 a) { return a; }",
+    "struct B { i32 v; i32 m(this) { return 1; } } struct D : B { i32 w; i32 m(this) { return 2; } } export i32 f(D d) { return d.m(); }",
+    "struct B { i32 v; } struct D : B { i32 w; override i32 m(this) { return 1; } } export i32 f(D d) { return d.m(); }",
+    "export i32 f() { return i32; }",
+    "struct P { i32 v; } export void f(const P p) { p.v = 1; }",
+    "struct P { i32 v; } export i32 f() { return P.nope(); }",
+    "export void f(string s) { s[0] = \"a\"; }",
+    "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f(P p) { i32 x = p.m; return x; }",
+    // **Three rules that no generated program reaches**, added by walking the diagnostic codes rather
+    // than the generator: of 84 codes the sweeps exercise 60, and a code this list never carries is a
+    // code whose *position* nothing compares.
+    //
+    // Two of these agreed on the first run and are here to stay that way. The third did not, and
+    // finding it is why the walk was worth doing — see the `else` case below.
+    //
+    // Two more that the walk turned up are *not* here, and the reason is about this list rather than
+    // about them: the reference refuses a duplicate method and a second `default:` while **parsing**,
+    // so its checker — which is all this list compares against — says nothing, and adding them here
+    // asserts that we invent a diagnostic. They are asserted directly in `illtyped_test.wac`, which is
+    // also where the same split put a character literal.
+    "export i32 f() { u8 b = 1; return b as i32; }",
+    "export void f() { return 1; }",
+    // **The three match-coverage rules, all of which disagreed about position.** Each reported the
+    // match's *subject* — the one part of a `match` none of them is complaining about. The reference
+    // names the second `else`, the unreachable `else`, and the `match` keyword respectively, and they
+    // are here so that the agreement is now a test rather than a measurement someone took once.
+    "enum E { A, B }\n"
+      + "export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } }"
+      + " return 0; }",
+    "enum E { A, B }\n"
+      + "export i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } }"
+      + " return 0; }",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } return 0; }",
+    // **A name reached through a struct rather than through a value.** `checkMember` had this rule
+    // for enums — `E.nope` is a variant that is not there — and not for structs, so all three of
+    // these were accepted by the checker and declined by the *emitter*, which is a refusal with no
+    // position and no message. The reference refuses all three here.
+    //
+    // The fourth member of the family is not in this list because it is **legal**: `Base.get` is an
+    // unbound method reference, an `fn[i32(Base)]` taking the receiver first, and rung 4 has seven
+    // programs passing them to functions and storing them in arrays. The first version of this rule
+    // refused those, and that corpus is what said so.
+    "struct P { i32 v; } export i32 f() { return P.nope; }",
+    "struct P { i32 v; } export i32 f() { return P.v; }",
+    // Legal as a *value* and wrong in this *slot*, which is the reference's complaint too — it had no
+    // type at all here until `staticMethodType` learned the unbound signature.
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f() { return P.m; }",
+    // **Two arguments that disagree about one type parameter.** The binder kept the first and dropped
+    // the rest, so `max<T>(T a, T b)` bound `T` to `i32` and the call had a type — leaving the only
+    // complaint to be about what the caller did with it. The spec's own program says `as! i32`, and
+    // wacc answered *"this cast is between one type and itself"*: a true sentence about a call that
+    // should not exist. Both sides report at the call now.
+    //
+    // **They report different rules there, and this list only compares positions.** The reference's
+    // `checkpos` route answers *"undefined function or struct 'max'"* — it does not resolve the
+    // template on that path, where `referenceCheck.ts` does and gives the clash. Same column either
+    // way, which is all this list asks; the *rule* is pinned in `illtyped_test.wac` instead.
+    "T max<T>(T a, T b) { return a > b ? a : b; }\n"
+      + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }",
+    // **A negated literal in an unsigned slot is the operator, not the range.** This said *"literal
+    // out of range for its type"*, which tells the reader to pick a different literal — and none
+    // works: `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright. wacc had that
+    // rule and could not reach it, because `-1` types as `i32` on its own and only the slot is
+    // unsigned.
+    "u32 f() { return -1; }",
+    "u64 f() { return -1; }");
 }
 
 /**
@@ -109,6 +276,28 @@ string[] CLEAN() {
   return string[](
     "export i32 main() { return 1; }",
     "export i64 w() { return 1; }",
+    // **The other side of the range rule, at each boundary.** The fix for a literal wider than an
+    // `i64` refuses when `parseInt` wrapped, and a refusal keyed on the wrong thing would take these
+    // with it: the largest value each type really holds, and the hex spelling of all-ones, which names
+    // bits rather than a magnitude and is how an `i32` of -1 is written.
+    "export u32 x() { u32 b = 4294967295; return b; }",
+    "export i32 y() { i32 b = 2147483647; return b; }",
+    "export i64 z() { i64 b = 9223372036854775807; return b; }",
+    "export u64 u() { u64 b = 18446744073709551615; return b; }",
+    "export i32 h() { i32 b = 0xFFFFFFFF; return b; }",
+    // **`null` beside a reference arm stays legal**, in both spellings — it is the one literal a
+    // nullable takes, and the reason `literalNeverFits` is asked only about *plain* literals.
+    // Without these two rows the widening above could refuse them and every other row would
+    // still pass.
+    "struct P { i32 x; } export i32 j(bool c, P p) { P? r = c ? p : null; return r is null ? 0 : r!.x; }",
+    "struct P { i32 x; } enum E { A, B } export i32 k(E e, P p) { P? r = match (e) { case A: p, else: null }; return r is null ? 0 : r!.x; }",
+    // **The controls for the three rows above**, and the first is the one that matters: `is null` on a
+    // *nullable* funcref is the ordinary way to ask whether one was supplied, which is why the rule was
+    // written to skip funcrefs in the first place. A legal compound assignment and a widening cast are
+    // the other two, so none of those fixes can be satisfied by refusing the construct outright.
+    "export void n(fn[i32(i32)]? a) { bool r = a is null; }",
+    "export void p(i32 a, i32 b) { a += b; }",
+    "export void q(i32 a) { i64 v = a as i64; }",
     "export f64 g() { return 1.5; }",
     "export string s() { return \"x\"; }",
     "export bool t() { return true; }",
@@ -207,6 +396,147 @@ export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_cal
   }
   t.eqI32(sawMissing, cases.len(), "the unsupplied import was reported " + itoa(sawMissing) +
                                 " time(s) for " + itoa(cases.len()) + " program(s)");
+  return t.report();
+}
+
+/**
+ * A local's name standing where a **type** belongs is reported, in all four positions it can stand.
+ *
+ * `knownTypeName` accepts any declared name deliberately — the spec makes `x is Other` where `Other`
+ * is a variable an identity test, and `f(x)` where `f` is a funcref a call — and that permissiveness
+ * leaked into positions with no such reading. `i32 zz = 1; zz[1]();` drew **no diagnostic at all**:
+ * `zz[]` was invented, and in a statement position nothing downstream disagreed with it, so
+ * `wac check` said the file was fine and the emitter's whole-module decline was the only thing left.
+ * `zz?` was silent for the same reason. `issues/lang/0170a`'s class exactly.
+ *
+ * **Asserted here rather than in `WRONG()` for the `?` case, and the reason is about the oracle.**
+ * The differential above compares this checker against the reference's *checker*, through `checkpos`.
+ * For `zz?` the reference's checker says nothing — its **resolver** is what refuses the program, with
+ * `undefined type 'zz'`, confirmed through `harness/referenceCheck.ts`. wacc has one pass that reports
+ * both kinds, so a correct diagnostic here reads as a contradiction to a checker-only oracle. The
+ * `zz[]` case *is* in `WRONG()`, because the reference's checker reports that one.
+ *
+ * The last two are the other two positions a bare name can take. They were never silent — each
+ * produces a downstream mismatch against an invented type, `expected fn(zz) -> i32` for the funcref —
+ * so they are a worse message rather than a missing one, and what is pinned is only that they still
+ * say *something*. Fixing their wording wants the reference's own words and is not done here.
+ */
+export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
+  T t = T.create();
+  string[] bad = string[](
+    "export void g() { i32 zz = 1; zz[1](); }",
+    "export i32 g() { i32 zz = 1; return zz[1](); }",
+    "export void g() { i32 zz = 1; zz? q = null; }",
+    "i32 h(i32 n) { return n; } export void g() { i32 zz = 1; fn[i32(zz)] f = h; }",
+    "struct Box<T> { T v; } export void g() { i32 zz = 1; Box<zz> b = Box<zz>(zz); }");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isTrue(ours(bad[i]).len() > 0, "no diagnostic for " + bad[i]);
+  }
+  // **The controls, and the third is the one that matters.** A rule that refused every declared name
+  // in a type position would satisfy every line above and break `is` against a variable, which is the
+  // construct `knownTypeName` is permissive *for*.
+  string[] fine = string[](
+    "export i32 f() { i32[] a = i32[2](fill: 0); return a[0]; }",
+    "struct S { i32 v; } export i32 f() { S[] a = S[2](fill: S(1)); return a[0].v; }",
+    "struct S { i32 v; } export i32 f(S x, S Other) { return x is Other ? 1 : 0; }",
+    "export i32 f() { i32? q = null; return q is null ? 0 : q!; }",
+    // `issues/lang/0265c`'s workaround: the funcref comes out of the array through a local, which is
+    // the spelling that works while `a[0]()` reads as a construction.
+    "i32 five() { return 5; } export i32 f() { fn[i32()][] a = fn[i32()][1](fill: five); " +
+      "fn[i32()] g = a[0]; return g(); }");
+  for (i32 i = 0; i < fine.len(); i++) {
+    string[] mine = ours(fine[i]);
+    t.eqI32(mine.len(), 0, "invented " + itoa(mine.len()) + " diagnostic(s) at " +
+                           joinedWith(mine, ", ") + " in " + fine[i]);
+  }
+  return t.report();
+}
+
+/**
+ * A malformed import does not **trap** the checker.
+ *
+ * `import * as p from "./p.wac";` is not wac — the parser says *expected '{', found '*'* — and
+ * `wac check` and `wac build` both stop there, so no user path reaches this. `dumpTypeErrors` does not
+ * stop, and it trapped: *array element access out of bounds*, inside `checkImportCollisions`.
+ *
+ * **The route is a false clash.** That walk reads `items[i].aliasTok`, which the failed parse left at
+ * -1, so the alias came out `""` — and `""` compares equal to `declaredNameOf` for any declaration
+ * that introduces no name. So a malformed item "collides" with something, and the report that follows
+ * indexes the token table at -1. Two bugs on one line: an empty alias should match nothing, and a
+ * token that does not exist should not be reported against.
+ *
+ * Other bad input was already fine — a bare spec (`from core`, which the parser reports and recovers
+ * from by recording the word) and an ordinary `return ;` both answer one diagnostic — so this is the
+ * shape where recovery leaves a hole rather than anything about parse errors in general.
+ */
+/**
+ * The same complaint is not reported twice at one position.
+ *
+ * `C.report` compared a new diagnostic against the **immediately previous** one only, so a repeat
+ * separated by anything went through: `i32 r = a & b;` for an `i32` and a `bool` printed *operands
+ * have mismatched types* at 1:42, then another rule's complaint at the same character, then the first
+ * one **again** — three errors for one mistake, where the reference reports one.
+ *
+ * **630 of the 10,013 generated sweep programs** were in that shape, and neither rung-3 check could
+ * see it: both ask whether each position we report is one the reference reports, and a second copy of
+ * a position still is. `sweep.test.ts` asserts the absence at that scale now; this is the same
+ * property through the *binary*, which is a different artefact — the sweep binds wacc compiled by the
+ * reference, and this runs the seed.
+ *
+ * Asserted as "no *code* at a position twice" rather than "exactly two diagnostics", because how many
+ * distinct rules fire on one mistake is a separate question this does not want to pin.
+ *
+ * **The first version of this test keyed on the position alone and failed on the fixed compiler**,
+ * which is worth keeping: two rules do fire at 1:42 on these programs — *operands have mismatched
+ * types* and *this operator does not take an operand of that kind* — so a repeated position is the
+ * normal case here and only a repeated `code@line:col` is a duplicate. `ours` drops the code, which
+ * is exactly why `sweep.test.ts` grew a keyed helper rather than reusing its own.
+ */
+export string test_the_same_diagnostic_is_not_reported_twice_at_one_position() {
+  T t = T.create();
+  string[] cases = string[](
+    "export void f(i32 a, bool b) { i32 r = a & b; }",
+    "export void f(i32 a, bool b) { i32 r = a | b; }",
+    "export void f(i32 a, i32[] b) { i32 r = a ^ b; }");
+  for (i32 i = 0; i < cases.len(); i++) {
+    // The raw triples, because the identity of a diagnostic is its code *and* its position.
+    i32[] raw = dumpTypeErrors(cases[i].toBytes());
+    t.isTrue(raw.len() > 0, "no diagnostic at all for " + cases[i]);
+    i32 dups = 0;
+    string said = "";
+    for (i32 j = 0; j + 2 < raw.len(); j = j + 3) {
+      said = said + (said == "" ? "" : ", ") + itoa(raw[j]) + "@" + itoa(raw[j + 1]) + ":" +
+             itoa(raw[j + 2]);
+      for (i32 k = j + 3; k + 2 < raw.len(); k = k + 3) {
+        if (raw[j] == raw[k] && raw[j + 1] == raw[k + 1] && raw[j + 2] == raw[k + 2]) {
+          dups = dups + 1;
+        }
+      }
+    }
+    t.eqI32(dups, 0, "the same diagnostic twice in " + cases[i] + " — " + said);
+  }
+  return t.report();
+}
+
+export string test_a_malformed_import_does_not_trap_the_checker() {
+  T t = T.create();
+  // Each of these is refused by the parser. What is asserted is only that asking the checker about
+  // them answers rather than trapping — the count is not the point and is not pinned.
+  string[] bad = string[](
+    "import * as p from \"./p.wac\";\nexport i32 f() { return 0; }",
+    "import * from \"./p.wac\";\nexport i32 f() { return 0; }",
+    "import { Read } from core;\nexport i32 f() { return 0; }",
+    "export i32 f() { return ; }");
+  for (i32 i = 0; i < bad.len(); i++) {
+    // `ours` goes through `dumpTypeErrors`; a trap here fails the test rather than returning.
+    i32 n = ours(bad[i]).len();
+    t.isTrue(n >= 0, "unreachable, but names the case if the call above traps: " + bad[i]);
+  }
+  // The control: a program with two imports of one name really does collide, so the walk that traps
+  // above is still doing its job. Without this, deleting the collision check would pass this test.
+  t.isTrue(ours("import { A } from \"./x.wac\";\nimport { A } from \"./y.wac\";\n" +
+                "export i32 f() { return 0; }").len() > 0,
+           "a name imported twice was not reported");
   return t.report();
 }
 

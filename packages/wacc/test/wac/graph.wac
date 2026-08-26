@@ -7,7 +7,7 @@
 //
 // **It grows rather than stopping at a number.** The version this was lifted out of held 64 paths and
 // dropped anything past them — `if (seen || n >= paths.len()) { continue; }` — which is correct for
-// the small entries it was written for and silently wrong for `packages/wacc/example/wacc.wac`, whose
+// the small entries it was written for and silently wrong for `packages/wac/src/wac.wac`, whose
 // graph is closer to two hundred files. A truncated graph is not an error anywhere: it is a smaller
 // program that compiles, and what it produces is compared against something derived from the whole
 // one. `issues/system/0161` step 4 is full of that shape.
