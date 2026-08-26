@@ -3616,7 +3616,7 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
  * Named rather than written twice because `blockedAgain` ranks it *below* a recorded reason, and a
  * precedence that turns on a string literal is one edit away from silently reverting.
  */
-string typesGrewCatchAll() { return "a type this emitter names only while emitting"; }
+export string typesGrewCatchAll() { return "a type this emitter names only while emitting"; }
 
 string blockedAgain(string[] paths, string[] sources, Res res, string entry, Env spent) {
   Front? again = frontOf(paths, sources, res, entry);
@@ -11007,6 +11007,23 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
 export string emitBlocked(u8[] src) {
   return blockedOf(frontOfRaw(src, -1, i32[1](), i32[1](), string[1](), string[1](),
                               false, false, Env.create()));
+}
+
+/**
+ * Why the **emit** path gave up on one source — the single-file half of `emitDeclineLinked`.
+ *
+ * The pair existed at file-set level (`blockedFiles` beside `emitDeclineFiles`) and only the
+ * speculative half existed here, so `packages/wacc/test/specEmit.test.ts` — the census of what wacc
+ * cannot emit across the spec — had no way to ask the emitter itself. One row of its table reads
+ * `a type this emitter names only while emitting`, which is `blockedOf` saying it can see that types
+ * grew and not which. `issues/lang/0170a`, `issues/lang/0271a`.
+ */
+export string emitDeclineRaw(u8[] src) {
+  Env env = Env.create();
+  emitModuleOfInto(src, -1, i32[1](), i32[1](), string[1](), string[1](), false, false, env);
+  if (env.fullWhy != "") { return env.fullWhy; }
+  if (env.full) { return "declined with no reason recorded"; }
+  return "";
 }
 
 /** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */

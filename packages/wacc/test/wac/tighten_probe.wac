@@ -14,10 +14,35 @@
 // It prints rather than asserts, and it prints through a returned reason because that is the only
 // channel a wac test has. Run it before a change and after, and the difference is the list of
 // legitimate expressions the tightening refused.
+//
+// ## Both instruments, because one of them cannot see the emitter
+//
+// This asked `blockedFiles` alone until 2026-08-26 and reported **0 of 18**, which reads as a clean
+// tree and is not what it measures. `blockedFiles` runs a *speculative* walk over a fresh `Env`, so a
+// decline raised while emitting reaches it only as a fallback — `api.wac` says so, and
+// `issues/lang/0170a` proved it by forcing one: *"`blockedFiles` answers `""` for every one of these,
+// forced or not … so `emitDeclineFiles` is the instrument for anything in this family."*
+//
+// That is 24 of the emitter's declines invisible to the probe built to watch them, in the issue that
+// introduced the probe, written down 180 lines below where the probe is described. So it now asks
+// both and says which one answered. `walk` is `blockedFiles` alone; `both` is the two agreeing, with
+// the speculative walk's words because it names the *declaration*; `emit` is a row `blockedFiles`
+// could not report, or could only report as its catch-all — which loses to a recorded reason here for
+// the same reason it loses in `blockedAgain`.
+//
+// **Canaried, because a widened instrument that still finds nothing is indistinguishable from a blind
+// one.** Injecting a `Pending<i64[]>` source — a program only the emit path declines — is reported,
+// and it was reported as `[both]` with the useless half until the precedence above was written. Both
+// halves of that are the point: the instrument can see, and asking it was what found the second bug.
+//
+// **It costs a second compile of each source** — 12.8s became the figure below — because
+// `emitDeclineFiles` emits rather than guesses. That is the price of the answer being about the
+// emitter, and a probe nobody runs in the suite can pay it.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
-import { blockedFiles } from "../../src/api.wac";
+import { blockedFiles, emitDeclineFiles } from "../../src/api.wac";
+import { typesGrewCatchAll } from "../../src/emit.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { closureOf } from "./source_probe.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -51,18 +76,31 @@ export string test_what_the_emitter_declines_across_waccs_own_sources(Core core,
   }
 
   i32 declined = 0;
+  i32 emitOnly = 0;
   string rows = "";
   for (i32 i = 0; i < cp.len(); i++) {
-    string why = blockedFiles(cp, cs, cp[i]);
-    if (why == "") { continue; }
+    string spoke = blockedFiles(cp, cs, cp[i]);
+    string emitted = emitDeclineFiles(cp, cs, cp[i]);
+    if (spoke == "" && emitted == "") { continue; }
     declined = declined + 1;
-    rows = rows + "    " + cp[i] + ": " + why + "\n";
+    // Which instrument answered, in the row rather than in this header, because the row is read every
+    // run and the header once. `emit` is the one that matters: `blockedFiles` could not have said it.
+    // **The catch-all loses to a recorded reason**, which is the same precedence `blockedAgain` uses
+    // and for the same reason: the speculative walk's last resort says types grew and not which, so
+    // preferring it throws away the sentence the emitter actually wrote. Canarying this probe is what
+    // showed it — the injected case came back `[both]` with the useless half. `issues/lang/0271a`.
+    bool vague = spoke == typesGrewCatchAll();
+    bool useEmit = (spoke == "" || vague) && emitted != "";
+    string from = spoke == "" ? "emit" : (emitted == "" ? "walk" : (vague ? "emit" : "both"));
+    if (useEmit) { emitOnly = emitOnly + 1; }
+    rows = rows + "    " + cp[i] + " [" + from + "]: " + (useEmit ? emitted : spoke) + "\n";
   }
   // **Reported through `core.warn` and passing**, not through a returned reason. A probe that says
   // what it found by failing is a red test for anyone who runs it, and `tools/runTests.wac` picking up
   // one more glob is all it would take. Printing on success is the rule this repository learned the
   // expensive way — an instrument that reports by failing a build installs itself as the seed.
   core.warn("tighten_probe: " + itoa(declined) + " of " + itoa(cp.len())
-      + " of wacc's own sources declined" + (rows == "" ? "" : "\n" + rows));
+      + " of wacc's own sources declined, " + itoa(emitOnly)
+      + " of them the emit path told us more about" + (rows == "" ? "" : "\n" + rows));
   return t.report();
 }

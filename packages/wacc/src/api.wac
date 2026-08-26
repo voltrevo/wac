@@ -12,7 +12,7 @@ import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
          warningsOf, widthsOf, errNoSuchExport } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
+import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
@@ -118,6 +118,29 @@ export u8[] emit(u8[] src) {
 /** Why a module was not emitted in full — the feature that stopped it, or `""`. */
 export string blocked(u8[] src) {
   return emitBlocked(src);
+}
+
+/**
+ * The same question asked of the **emit** path, for one source — `emitDeclineFiles`'s single-file half.
+ *
+ * `blocked` walks a fresh `Env` speculatively, so a decline raised while emitting reaches it only as
+ * a fallback. This one emits and reads what `declineFor` recorded. The pair existed at file-set level
+ * and not here, which left `packages/wacc/test/specEmit.test.ts` — the census of what wacc cannot
+ * emit — with no way to ask the emitter itself. `issues/lang/0170a`.
+ */
+export string emitDecline(u8[] src) {
+  return emitDeclineRaw(src);
+}
+
+/**
+ * `blocked`'s last resort, so a caller can rank it below a reason the emitter recorded.
+ *
+ * Exported rather than spelled out by each caller because three of them need the same precedence —
+ * `blockedAgain`, `tighten_probe.wac` and `specEmit.test.ts` — and one that turns on a string literal
+ * is one edit away from silently reverting. `issues/lang/0271a`.
+ */
+export string declineCatchAll() {
+  return typesGrewCatchAll();
 }
 
 /** The emitted functions in order, so a wasm "function #N" can be turned back into a name. */
