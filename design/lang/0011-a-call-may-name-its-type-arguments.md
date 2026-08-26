@@ -146,10 +146,18 @@ to say why it was dropped. It admits exactly the same programs as the rule above
 with a table of tokens in the spec and one member that has to be argued for separately. A simple rule
 that needs parentheses in a shape nobody writes is worth more than a flexible one that needs a table.
 
-**This widens what wac does today**, which fires only when `>` is immediately followed by `(`. The
-gain is that a generic function becomes referable as a value at all: `fn[i32(i32)] g = id<i32>;` is
-`expected an expression` today, with no workaround but a lambda wrapper — which itself needs the
-inference this document is about.
+**This is a simplification of what wac does today, not a widening** — corrected 2026-08-26 by reading
+the parser instead of inferring from the diagnostics. `packages/wacc/src/parse.wac` already applies a
+follow set: after the type arguments it accepts `[`, `(`, `{` and `?`. So the change is to *delete*
+that test and keep what remains —
+
+    if (next == kLt()) { return afterTypeArgs(p, 1) >= 0; }
+
+— which is the rule above, and is less code than what is there now.
+
+The gain is that a generic function becomes referable as a value at all: `fn[i32(i32)] g = id<i32>;`
+is `expected an expression` today, because `;` is not in that follow set, and there is no workaround
+but a lambda wrapper — which itself needs the inference this document is about.
 
 ## Why committing in the parser is affordable
 
@@ -212,8 +220,22 @@ the rule it protects has produced a feature nobody can use.
 
 1. **`issues/lang/0088`** — a variant of a written type, `Maybe<i32>.Just(4)`. Needs none of the
    decisions above and is arguably a bug rather than a feature, since the struct form already works.
-2. **Widen the trigger** from "`>` immediately followed by `(`" to "it parses as a type list".
-   This is the piece that makes `id<i32>` a value, and it is separable from everything below it.
+
+   **Scoped 2026-08-26, and it is two changes rather than one.** `parse.wac`'s own comment says why:
+   *"`.` is deliberately not in that set … Adding it is one token of parsing and would be wrong on
+   its own, because `parseConstructionOrCall`'s `.` branch builds its base from the name token and
+   drops the type arguments — so `Cell<i32>.of(3)` would be accepted and mean `Cell.of(3)`, which is
+   a spelling whose meaning is 'ignore what you wrote'."*
+
+   So: add `kDot()` to the follow set, **and** give the `.` branch a way to carry `nameArgs`. There
+   is no expression shape for it — `Member(Expr obj, i32 nameTok)` takes an `Expr`, and `Ident(tok)`
+   cannot hold type arguments — so it wants one new `ExprKind` variant, something like `TypeName(Ty)`,
+   valid only as the object of a `Member`. Because `match` is exhaustive the compiler enumerates the
+   work: 48 sites in `check.wac`, 41 in `emit.wac`, 3 in `print.wac`, most of them a one-line "not
+   valid here".
+2. **Simplify the trigger** in `packages/wacc/src/parse.wac`: the `kLt()` branch currently accepts
+   only `[`, `(`, `{` and `?` after the type arguments, and becomes `afterTypeArgs(p, 1) >= 0`. This
+   is the piece that makes `id<i32>` a value, and it is separable from everything below it.
 3. **The postfix path**: `recv.m<T>(x)` parses as `Cell<i32>(…)` does. Closes the grammar half of
    `issues/lang/0235a` and is what makes [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md)
    option C writable at all.
@@ -296,7 +318,7 @@ rather than stylistic, so they are recorded there and repeated here:
 |---|---|
 | the target, the spelling, the trigger | **accepted** with the operator, 2026-08-26 |
 | 1 — `issues/lang/0088` | open, separable, and the cheapest thing here |
-| 2 — the trigger becomes "parses as a type list" | **not started** — buys `id<i32>` as a value |
+| 2 — the trigger becomes "parses as a type list" | **not started** — deletes a follow set in `parse.wac`; buys `id<i32>` as a value |
 | 3 — the postfix path | **not started** |
 | 4 — name resolution | **not started** — this is the feature |
 | 5 — the diagnostic | **not started**; `issues/lang/0235a` is open and is this |
