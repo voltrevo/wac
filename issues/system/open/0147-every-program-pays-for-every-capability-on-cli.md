@@ -521,3 +521,50 @@ because **this issue is not blocked on measurement.** The reproduction above is 
 fields for datagrams cost `wc.wac` 8.1% of its module and three callback signatures, and it names none
 of them. What is open is the design: how a capability struct is split so a program carries what it
 declares. A finer audit would make the per-program picture easier to see; it would not decide that.
+
+## Re-measured 2026-08-26, and the slope fixtures do not measure the slope — agent-a
+
+The numbers here are dated 2026-08-13 through 08-15. Eleven days on, same fixtures, same command
+(`packages/platform/native.ts`, which is what prints the signature count):
+
+| fixture | 2026-08-15 | 2026-08-26 |
+| --- | --- | --- |
+| `cli_only` | 187 KB, 45 signatures | **239 KB, 63 signatures** |
+| `core_only` | 10 signatures | **12 signatures** |
+| `none` | 721 bytes | 2 KB |
+
+**+28% in size and +40% in signatures**, on fixtures that have not changed. `issues/system/0129`,
+re-measured the same day, has the other half: the *host* side of the same boundary grew 86% in a
+comparable window. The two are one subject from either end.
+
+### The `cap*` series cannot answer the question it was built for
+
+    fixture   fields   distinct Pending<T> shapes   signatures   wasm
+    cap1        1              1                        14        82 KB
+    cap5        5              5                        18        96 KB
+    cap10      10              5                        24       111 KB
+    cap20      20              5                        24       115 KB
+
+**The series stops adding distinct shapes at five and repeats them.** `cap10` and `cap20` hold the
+same five — `Pending<bool>`, `Pending<i32>`, `Pending<i64>`, `Pending<string>`, `Pending<u8[]>` — four
+fields apiece in `cap20`.
+
+Which is the thing those files say must not happen, in their own headers:
+
+> The fields differ in return type on purpose, because a `Pending<T>` is monomorphised per `T`: a
+> struct with ten fields all answering `i32` would measure something cheaper than a real one.
+
+So `cap20` measures something cheaper than a real twenty-field struct, by the fixture's own argument.
+The flat `24` signatures at ten and twenty fields reads as *the cost saturates* and is really *the
+fixture stopped varying*. And this issue says what rests on it: the slope is "the number that decides
+whether emitting per *use* rather than per *mention* is worth building".
+
+`cap1` → `cap5` is still a real slope over distinct shapes, 14 → 18 signatures and 82 → 96 KB. Past
+five, the series measures field repetition.
+
+**What it needs is more shapes, not more fields** — `Pending<f64>`, `Pending<i32[]>`, `Pending<string[]>`,
+nested ones — so that `cap20` is twenty distinct monomorphisations. Until then the honest reading of
+the table is that nothing here measures the cost of a wide capability struct, which is what `Cli` is.
+
+Not fixed here: extending the fixtures changes the numbers this issue argues from, and the argument is
+mid-decision. Recorded so the decision is not taken on a slope that flattened for the wrong reason.
