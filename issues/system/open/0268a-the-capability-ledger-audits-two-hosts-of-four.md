@@ -267,3 +267,33 @@ a host must be credited with it. Different question, different signal, and the t
 file, and every Node answer lives in `also`, so it stayed green while the number went back to zero.
 Fixed to scan both, and re-canaried — removing the `cli.exec("node"` pattern now fails 12 entries by
 name.
+
+### 0 → 14 → 17, and the last three were my own scan's fault
+
+`WRITE_STDOUT`, `WRITE_STDERR` and `MONOTONIC_NANOS` are covered on Node too — `core.log`,
+`core.warn` and `core.monotonicNanos` in `wc.wac`, `roundtrip.wac`, `greet.wac` and `echod.wac`, all of
+which `runtimes_test.wac` and `node_net_test.wac` build for both runtimes.
+
+I missed them because the scan I used to decide which opcodes each program exercises grepped `cli.`,
+and **half the capability surface hangs off `core.`**. A scan whose vocabulary is half its subject,
+which is the fourth variant of this issue's own subject to turn up in one day.
+
+### The limit that stays, now written into the file
+
+Every check here verifies that a **cited** file's hosts are credited. Nothing can tell that an
+**uncited** file covers an opcode — different question, much harder. That gap *was* this issue: the
+derive was correct and the entries pointed elsewhere, and finding out took reading three tests and
+following into the programs they build.
+
+So the header now says it: a low figure here is a prompt to go looking, not a finding. Before
+concluding a host is uncovered, grep for tests that build for it and read what their programs call —
+on `Core` as well as `Cli`.
+
+### Still open
+
+Six entries derive wasmtime+deno with no V8: `CLOSE_SEND`, `NOW_MILLIS`, `MONOTONIC_NANOS`,
+`SLEEP_MILLIS`, `RANDOM_BYTES`, `CONNECT`, all backed by `native_examples_test.wac` alone. Given how
+the Node walk went I would expect some to have V8 coverage that is simply not cited, but that is a
+verification job rather than an inference, and symmetry is not evidence.
+
+Step 2 — parity rows for `app`, `sh`, `update`, `validate`, `uninstall` — is untouched.

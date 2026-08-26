@@ -71,6 +71,22 @@ import { opcodes, nativeCapabilities, declaredFields, camel, has, sorted, joined
  * than `wacBinary`. What makes it an instrument rather than a heuristic is the floor:
  * `test_every_entry_names_a_file_that_says_which_hosts_it_drives` refuses an entry that derives *no*
  * host at all, so a missed spelling fails loudly instead of quietly shrinking the number.
+ *
+ * ## What these numbers do not say, and cannot
+ *
+ * **They are about the tests this file points at.** Every check here verifies that a *cited* file's
+ * hosts are credited; nothing can tell that an *uncited* file covers an opcode, because that is a
+ * different question and a much harder one.
+ *
+ * That gap is not theoretical — it was the whole of `issues/system/0268a`. The ledger reported `0
+ * include the Node host` while `runtimes_test.wac`, `node_net_test.wac` and `echod_test.wac` compared
+ * Deno against Node across seventeen opcodes. Nothing was wrong with the derive; the entries pointed
+ * elsewhere. It took reading each of those tests and following into the program it builds.
+ *
+ * So: **a low figure here is a prompt to go looking, not a finding.** Before concluding a host is
+ * uncovered, grep for tests that build for it and check what their programs call — on `Core` as well
+ * as `Cli`, which is how `WRITE_STDOUT`, `WRITE_STDERR` and `MONOTONIC_NANOS` were missed on the first
+ * pass of that walk: the scan looked for `cli.` and half the capability surface hangs off `core.`.
  */
 struct Cover {
   string op;
@@ -279,8 +295,8 @@ Cover[] coverage() {
       "place the *distinction* from `closeSocket` is asked on both hosts: the child has to stay alive " +
       "to say what it heard, which a stop would prevent"),
     where("CWD", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: every script `cd`s first, by design"),
-    where("WRITE_STDOUT", "packages/platform/test/wac/native_shell_test.wac", "native_shell: 25 corpus scripts, byte for byte"),
-    where("WRITE_STDERR", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: stderr compared on every AGREED script"),
+    where2("WRITE_STDOUT", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_shell: 25 corpus scripts, byte for byte"),
+    where2("WRITE_STDERR", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: stderr compared on every AGREED script"),
     where2("ARG_COUNT", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_shell: `sealedsh -c` passes its script as an argument"),
     where2("ARG", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_shell: same"),
     where2("READ_STDIN", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac",
@@ -293,7 +309,7 @@ Cover[] coverage() {
       "clocks can agree on — this one dates, so the claim is that it is past a moment already gone. " +
       "The gap here used to say a comparison was impossible by construction; what was missing was a " +
       "program that compared the promises instead of the readings"),
-    where("MONOTONIC_NANOS", "packages/platform/test/wac/native_examples_test.wac",
+    where2("MONOTONIC_NANOS", "packages/platform/test/wac/native_examples_test.wac", "packages/platform/test/wac/runtimes_test.wac",
       "native_examples: `clocks` reads it twice and requires the second not to be earlier — equal is " +
       "fine, a coarse clock read inside one microsecond says so — and separately requires it not to " +
       "be a plausible epoch stamp, which is what a host answering the wall clock in disguise would " +
