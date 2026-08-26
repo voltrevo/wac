@@ -9,6 +9,10 @@
 - **Distinct from:** [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md), which is
   about a letter the *argument* fails to state. This is about a letter **no argument mentions at
   all** — inference cannot reach it by construction rather than by weakness
+- **Unblocks:** [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md)'s option C, which
+  had been ruled out on the `<` ambiguity this document resolves. 0010 was decided in favour of C on
+  the strength of it, and its option D became
+  [0012](0012-synthesising-a-lambdas-return-type.md)
 
 ## What is wanted
 
