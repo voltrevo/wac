@@ -1485,6 +1485,16 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
  * - **Derived authority is out of scope.** A `Socket` from `Cli.connect` is a live connection, and a
  *   file holding one can talk to the network without naming `Cli`. The seed is the two types a host
  *   *constructs*; everything reachable from them is a second question.
+ * - **The unit is the type, not the field, and that is not laziness.** Naming *which* of `Cli`'s 44
+ *   capabilities a file reaches would be worth more than `reaches`, and the cheap ways of getting it
+ *   do not work. Measured over `packages/`: of 2,598 call sites whose method name is a capability's,
+ *   **79% are on a receiver literally called `cli` or `core`** and the rest are on `fs` (253), `page`
+ *   (164), `sh` and a scatter of short names — so a receiver-prefix scan is a fifth short, and the
+ *   misses cluster in exactly the wrapper types that hold a `Cli`. Matching the method name on any
+ *   receiver fails the other way: `remove`, `log`, `call`, `on`, `render` and `resolve` are ordinary
+ *   names, so a `Vec.remove` would read as the filesystem. Field-level needs the checker's types, and
+ *   a column that is 21% short would be read as exhaustive — which is the failure this whole function
+ *   is written against.
  * - **A generic parameterised over a bearing type is not tracked.** `Vec<Cli>` mentions `Cli` and is
  *   caught by the mention scan, but a `T` bound to `Cli` at a distant call site is not.
  *

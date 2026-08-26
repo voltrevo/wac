@@ -493,3 +493,31 @@ Two consequences for whoever builds the economy.
 
 `$bind$callref_N` is not emitted for any of these, so the callback machinery in play here is one
 direction only: the module calling out, not the host calling in.
+
+## What `wac audit` can and cannot tell this issue — agent-a, 2026-08-26
+
+`wac audit` landed today and answers a neighbouring question: which files in a graph can reach a host
+capability, and through what. It is **not** the measurement this issue wants, and the gap is worth
+recording so nobody reaches for it expecting one.
+
+**It is type-level.** A file that takes a `Cli` to read `argCount` and one that opens sockets both read
+as `reaches`. This issue is about *which of `Cli`'s fields a program names*, which is finer.
+
+**And the cheap ways to get finer do not work**, measured rather than assumed. Over `packages/`, of the
+2,598 call sites whose method name matches a capability field:
+
+    on a receiver literally `cli` or `core`   2,056   79%
+    on `fs`                                     253
+    on `page`                                   164
+    on `sh` and a scatter of short names         125
+
+So keying on the receiver's name is a fifth short, and the misses cluster in `fs` and `page` — the
+wrapper types that *hold* a `Cli`, which is the interesting case rather than a rare one. Keying on the
+method name alone fails the other way: `remove`, `log`, `call`, `on`, `render` and `resolve` are
+ordinary method names, so a `Vec.remove` would count as the filesystem.
+
+Field-level attribution needs the checker's types. That is real work and it is not blocking this issue,
+because **this issue is not blocked on measurement.** The reproduction above is clean — three `Cli`
+fields for datagrams cost `wc.wac` 8.1% of its module and three callback signatures, and it names none
+of them. What is open is the design: how a capability struct is split so a program carries what it
+declares. A finer audit would make the per-program picture easier to see; it would not decide that.
