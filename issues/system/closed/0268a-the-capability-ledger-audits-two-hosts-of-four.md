@@ -1,6 +1,6 @@
 # 0268a — the capability ledger audits two hosts of four
 
-- **Status:** open
+- **Status:** closed, agent-a, 2026-08-26
 - **Reported by:** agent-a
 - **Date:** 2026-08-26
 - **Kind:** missing feature
@@ -330,7 +330,42 @@ what separates adding a row from adding a row that does nothing.
 - **Step 1** — the ledger derives its hosts. Done.
 - **Step 3** — the Node walk. Done: 0 → 17.
 - **Step 2** — parity rows. Done, less `uninstall`, with the reason recorded.
-- **Left**: the V8 direction of the step-3 walk. Six entries derive wasmtime+deno with no V8, all
-  backed by `native_examples_test.wac` alone — `CLOSE_SEND`, `NOW_MILLIS`, `MONOTONIC_NANOS`,
-  `SLEEP_MILLIS`, `RANDOM_BYTES`, `CONNECT`. Symmetry with the Node case is a reason to look, not a
-  finding.
+- **The V8 direction of the walk: checked, and it is not the Node case.** Six entries derive
+  wasmtime+deno with no V8 — `CLOSE_SEND`, `NOW_MILLIS`, `MONOTONIC_NANOS`, `SLEEP_MILLIS`,
+  `RANDOM_BYTES`, `CONNECT` — all backed by `native_examples_test.wac`, which drives the programs
+  `clocks.wac`, `entropy.wac` and `halfclose.wac`. Grepping for anything else that touches those
+  artefacts returns that one file. **So these are genuinely uncompared on V8 rather than
+  under-recorded**, and `8 do not include the V8 binary` is accurate as printed.
+
+  Worth stating because I expected the opposite. The Node figure was wrong by 17 and it would have
+  been easy to assume the V8 one was wrong the same way; the two look alike from the outside and are
+  not. Symmetry was a reason to look, and looking said no.
+
+  What would close them is a third target in `native_examples_test.wac` — it already builds each
+  example twice, and the V8 binary runs a module directly, so a third run and a third comparison is
+  the shape. Whether every example belongs on every host is the real question: `wacland` has no
+  compiler, and the three clocks are named gaps in the first place *because a clock answers
+  differently on every run*.
+
+- **Left**: nothing blocking. The remaining work is the third target above, which is a decision about
+  which examples belong on which hosts rather than a defect.
+
+## Closed — agent-a, 2026-08-26
+
+The instrument defect is fixed and the two capability bugs that exposed it were fixed the day they
+were found. What the ledger prints now:
+
+    conformance: 37 of 44 opcodes have a comparison; 7 are named gaps
+                 17 include the Node host; 8 do not include the V8 binary
+
+against `0` and an unsayable second number when this was filed.
+
+**The lasting change is that those figures are derived.** An entry names the file it rests on; the
+hosts come from reading what that file spawns; a floor refuses an entry deriving none; an independent
+scan cross-checks the derive; and the header says what the numbers cannot answer — that nothing here
+can tell an *uncited* file covers an opcode, which was this issue's whole substance.
+
+Left in the file rather than refiled: whether a third target belongs in `native_examples_test.wac`, so
+the six clock, entropy and half-close opcodes get a V8 comparison. That is a question about which
+examples belong on which hosts — the three clocks are named gaps *because a clock answers differently
+on every run* — rather than an instrument that lies, which is what this issue was about.
