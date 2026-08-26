@@ -78,10 +78,28 @@ struct Cover {
   string kind;
   /** For `where` the test's path; for `sameAs` the opcode it borrows; "" for a gap. */
   string ref;
+  /**
+   * A **second** test covering the same opcode on other hosts, or "".
+   *
+   * **One opcode is routinely covered by two tests, and they compare different hosts.**
+   * `BIND_DATAGRAM` is `datagram_test.wac` — v8, wasmtime and Deno through the handler table — *and*
+   * `echod_test.wac`, which builds a real program for Deno and Node and talks to a foreign UDP peer.
+   * Neither is the better test; they answer about different hosts. A single field forces a choice
+   * between two true statements and makes the derived total understate whichever is not picked, which
+   * is the same shape of quiet wrongness this whole entry structure exists to remove.
+   *
+   * Hosts are **unioned** across the two, so the number means *compared on this host by something*
+   * rather than *by the one test we happened to cite*.
+   */
+  string also;
   string note;
 }
 
-Cover where(string op, string test, string note) { return Cover(op, "where", test, note); }
+Cover where(string op, string test, string note) { return Cover(op, "where", test, "", note); }
+/** A `where` with a second test covering other hosts — see `Cover.also`. */
+Cover where2(string op, string test, string also, string note) {
+  return Cover(op, "where", test, also, note);
+}
 /**
  * This opcode is exercised by the test another opcode names.
  *
@@ -89,8 +107,19 @@ Cover where(string op, string test, string note) { return Cover(op, "where", tes
  * same run"`, which nothing checked: no test asserted a `CONNECT` entry existed, so a rename would
  * have left four rows pointing at nothing and still counting as covered.
  */
-Cover sameAs(string op, string other, string note) { return Cover(op, "sameAs", other, note); }
-Cover gap(string op, string note) { return Cover(op, "gap", "", note); }
+Cover sameAs(string op, string other, string note) { return Cover(op, "sameAs", other, "", note); }
+/**
+ * A `sameAs` that a second test also covers directly.
+ *
+ * `LISTEN` and `ACCEPT` borrow `CONNECT`'s program, and are *separately* compared on Deno and Node by
+ * `node_net_test.wac` — which builds `greet.wac` for both targets, and that program calls `listen`,
+ * `accept` and `send`. `CONNECT` itself is not: the connecting side there is the test harness's own
+ * client, not the program under comparison.
+ */
+Cover sameAs2(string op, string other, string also, string note) {
+  return Cover(op, "sameAs", other, also, note);
+}
+Cover gap(string op, string note) { return Cover(op, "gap", "", "", note); }
 
 /** Whether an entry claims a comparison at all — `where` or `sameAs`, not `gap`. */
 bool isCompared(Cover c) { return c.kind != "gap"; }
@@ -119,7 +148,13 @@ string hostsOfFile(Cli cli, string path) {
       || src.indexOf("\"--target\", \"deno\"") >= 0 || src.indexOf("cli.exec(\"deno\"") >= 0) {
     out = out + (out == "" ? "" : "+") + "deno";
   }
-  if (src.indexOf("\"--target\", \"node\"") >= 0 || src.indexOf("builtByNode(") >= 0) {
+  // **`cli.exec("node"` is the one that matters**, and the literal `--target node` is not. Every test
+  // that drives Node builds through a helper taking the target as a *variable* —
+  // `build(t, cli, WC, nodeOut, "node", …)` — so the flag pair never appears in the source at all.
+  // Three tests derived as Deno-only for that reason, and the floor below could not see it: an entry
+  // that finds one host of two passes a check that only refuses finding none.
+  if (src.indexOf("cli.exec(\"node\"") >= 0 || src.indexOf("\"--target\", \"node\"") >= 0
+      || src.indexOf("builtByNode(") >= 0) {
     out = out + (out == "" ? "" : "+") + "node";
   }
   return out;
@@ -128,11 +163,43 @@ string hostsOfFile(Cli cli, string path) {
 /** `hostsOfFile` for an entry, following one `sameAs` hop. */
 string hostsOf(Cli cli, Cover[] all, Cover c) {
   if (c.kind == "gap") { return ""; }
-  if (c.kind == "where") { return hostsOfFile(cli, c.ref); }
+  if (c.kind == "where") {
+    string first = hostsOfFile(cli, c.ref);
+    if (c.also == "") { return first; }
+    // Unioned, not concatenated: the second test usually repeats a host the first already had, and
+    // `contains(hosts, "deno")` must not depend on how many times it appears.
+    string second = hostsOfFile(cli, c.also);
+    string[] names = string[]("wasmtime", "v8", "deno", "node");
+    string out = "";
+    for (i32 i = 0; i < names.len(); i++) {
+      if (contains(first, names[i]) || contains(second, names[i])) {
+        out = out + (out == "" ? "" : "+") + names[i];
+      }
+    }
+    return out;
+  }
   for (i32 i = 0; i < all.len(); i++) {
     // One hop only: a `sameAs` naming a `sameAs` would be a chain nobody can read, and there is no
     // reason to write one.
-    if (all[i].op == c.ref && all[i].kind == "where") { return hostsOfFile(cli, all[i].ref); }
+    //
+    // **`hostsOf` and not `hostsOfFile`**, so the borrowed entry's *second* test comes with it.
+    // `RECEIVE_FROM` and `SEND_TO` borrow `BIND_DATAGRAM`, which is covered by `datagram_test.wac`
+    // and by `echod_test.wac` on different hosts; reading only the first would have given the two
+    // borrowers a narrower answer than the entry they name, which is a disagreement inside the
+    // ledger rather than a fact about the hosts.
+    if (all[i].op == c.ref && all[i].kind == "where") {
+      string inherited = hostsOf(cli, all, all[i]);
+      if (c.also == "") { return inherited; }
+      string mine = hostsOfFile(cli, c.also);
+      string[] names = string[]("wasmtime", "v8", "deno", "node");
+      string out = "";
+      for (i32 k = 0; k < names.len(); k++) {
+        if (contains(inherited, names[k]) || contains(mine, names[k])) {
+          out = out + (out == "" ? "" : "+") + names[k];
+        }
+      }
+      return out;
+    }
   }
   return "";
 }
@@ -140,19 +207,19 @@ string hostsOf(Cli cli, Cover[] all, Cover c) {
 Cover[] coverage() {
   return Cover[](
     // ── The filesystem: twelve operations and every grant refusal, on both hosts ──
-    where("READ_FILE", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `cat f`, and refused with no grant"),
-    where("WRITE_FILE", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `touch`, and write-only grants"),
-    where("STAT", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `stat f`"),
+    where2("READ_FILE", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `cat f`, and refused with no grant"),
+    where2("WRITE_FILE", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `touch`, and write-only grants"),
+    where2("STAT", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `stat f`"),
     where("LINK_STAT", "packages/platform/test/wac/native_hostfs_test.wac",
       "native_hostfs: `test -h` over a real symlink and a real dangling one, against GNU on both " +
       "hosts, with `test -e` beside each — the pair is what says these are two different calls " +
       "rather than one answering for both. The fixture makes the links itself because there is no " +
       "`ln` in this system, so no script could make its own; that absence is why this sat as a gap " +
       "while `Fs.linkStat` had two callers"),
-    where("READ_DIR", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `ls`"),
+    where2("READ_DIR", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `ls`"),
     where("MKDIR", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `mkdir d2; ls; rmdir d2`"),
-    where("REMOVE", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `rm made`"),
-    where("RENAME", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `mv f moved`"),
+    where2("REMOVE", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `rm made`"),
+    where2("RENAME", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `mv f moved`"),
     where("SET_EXECUTABLE", "packages/platform/test/wac/setexecutable_test.wac",
       "setexecutable: a program built for both hosts, run on a file whose starting mode the test pins " +
       "with `chmod`, and the resulting mode compared — `setexecutable_test.wac`. **This entry was a " +
@@ -165,7 +232,7 @@ Cover[] coverage() {
       "neighbouring question is not coverage of this one. A shell case could not reach it: " +
       "native_hostfs drives the hosts through scripts and there is no `chmod` applet. " +
       "issues/system/0132"),
-    where("EXEC_WITH", "packages/platform/test/wac/native_test.wac",
+    where2("EXEC_WITH", "packages/platform/test/wac/native_test.wac", "packages/platform/test/wac/runtimes_test.wac",
       "native: one module built once and run by both native binaries — `native_test.wac`'s " +
       "`test_running_a_host_program_agrees_between_the_two_native_hosts`, which compares the three " +
       "verdicts `exec_probe.wac` prints (an inherited stream, an added environment, a cleared one) " +
@@ -202,7 +269,7 @@ Cover[] coverage() {
       "whose every command is a spawned child, so all three of a child's handles are exercised rather " +
       "than only its output"),
     where("EXIT_CODE", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: the status of every AGREED script"),
-    where("CLOSE_SOCKET", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `kill %1` is delivered by closing the child"),
+    where2("CLOSE_SOCKET", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/node_net_test.wac", "native_hostfs: `kill %1` is delivered by closing the child"),
     where("CLOSE_SEND", "packages/platform/test/wac/native_examples_test.wac",
       "native_examples: `halfclose` runs both ends in one program and prints two lines — the " +
       "server reaching `End`, and the client still reading afterwards. One line alone is passed " +
@@ -214,9 +281,9 @@ Cover[] coverage() {
     where("CWD", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: every script `cd`s first, by design"),
     where("WRITE_STDOUT", "packages/platform/test/wac/native_shell_test.wac", "native_shell: 25 corpus scripts, byte for byte"),
     where("WRITE_STDERR", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: stderr compared on every AGREED script"),
-    where("ARG_COUNT", "packages/platform/test/wac/native_shell_test.wac", "native_shell: `sealedsh -c` passes its script as an argument"),
-    where("ARG", "packages/platform/test/wac/native_shell_test.wac", "native_shell: same"),
-    where("READ_STDIN", "packages/platform/test/wac/native_hostfs_test.wac",
+    where2("ARG_COUNT", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_shell: `sealedsh -c` passes its script as an argument"),
+    where2("ARG", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_shell: same"),
+    where2("READ_STDIN", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac",
       "native_hostfs: ten scripts with real piped input — this gap is what found the bug that every " +
       "filter under a spawning shell read nothing on the native host"),
 
@@ -249,7 +316,7 @@ Cover[] coverage() {
     gap("LOG",
       "no comparison: `log` goes to the host's own stream, which the two hosts frame differently"),
     gap("WARN", "as LOG"),
-    where("ENV", "packages/platform/test/wac/native_shell_test.wac",
+    where2("ENV", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/runtimes_test.wac",
       "native_shell: the seal, on both hosts. `sealing.test.ts` had asked it on one, which is half a " +
       "claim about a design whose whole point is that the same system appears on two — and the two " +
       "runtimes reach the environment by completely different routes. Both binaries are built " +
@@ -263,8 +330,8 @@ Cover[] coverage() {
       "fixed, because these run in the parallel lane. Before this the network was exercised end to " +
       "end by `arrival_users` over ssh — but only with the native host as the *server*, so nothing " +
       "compared the three calls themselves"),
-    sameAs("LISTEN", "CONNECT", "as CONNECT — the same program, the same run"),
-    where("BIND_DATAGRAM", "packages/platform/test/wac/datagram_test.wac",
+    sameAs2("LISTEN", "CONNECT", "packages/platform/test/wac/node_net_test.wac", "as CONNECT — the same program, the same run"),
+    where2("BIND_DATAGRAM", "packages/platform/test/wac/datagram_test.wac", "packages/platform/test/wac/echod_test.wac",
       "datagram: one program binds two sockets on loopback, sends between them and reads what " +
       "arrives, so one run exercises all three calls — `datagram_test.wac`, the shape `writeread` " +
       "uses for connect/listen/accept. Built for the Deno host and the V8 native one and compared, " +
@@ -279,13 +346,13 @@ Cover[] coverage() {
       "first time they were asked. What was left was nobody having written the comparison"),
     sameAs("RECEIVE_FROM", "BIND_DATAGRAM", "as BIND_DATAGRAM — the same program, the same run"),
     sameAs("SEND_TO", "BIND_DATAGRAM", "as BIND_DATAGRAM"),
-    sameAs("ACCEPT", "CONNECT", "as CONNECT"),
+    sameAs2("ACCEPT", "CONNECT", "packages/platform/test/wac/node_net_test.wac", "as CONNECT"),
     where("RECV", "packages/platform/test/wac/native_shell_test.wac",
       "native_shell: every filesystem operation of every spawned stage. `sealedsh` spawns its stages " +
       "and serves their filesystem over a handle (wac-mono 0116), so a corpus script that reads a " +
       "file is `send` and `recv` in both directions on both hosts — which is why this stopped being a " +
       "gap without a test being written for it"),
-    where("SEND", "packages/platform/test/wac/native_shell_test.wac",
+    where2("SEND", "packages/platform/test/wac/native_shell_test.wac", "packages/platform/test/wac/node_net_test.wac",
       "native_shell: as RECV, and the same traffic — plus native_examples' `feed`, which asks the " +
       "part a pipeline never reaches: what the **bool** says. `send` answers `Pending<bool>` and three " +
       "JavaScript hosts were not answering it at all (`kid.in.push(...)` with the result discarded), " +
@@ -540,6 +607,32 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
   }
   t.eqI32(n, 0, "these entries name a test that drives no host this can recognise — a spelling the "
                 + "pattern list is missing, not an absence of coverage: " + joined(silent, ", "));
+
+  // **A partial miss, which the per-entry floor cannot see** — and this is not hypothetical, it
+  // happened three times while the derive was being written. An entry deriving `deno` when the file
+  // drives Deno *and* Node passes a check that only refuses deriving *nothing*. So the derive is
+  // cross-checked against an independent signal: any backing test whose source spawns a host must be
+  // credited with it. Different question, different scan, and the two have to agree.
+  // **Both files, and the first version of this checked only the first.** The Node coverage lives in
+  // the `also` test for every entry that has any, so scanning `ref` alone found nothing to complain
+  // about and the check passed while deriving zero Node — proved by removing the `cli.exec("node"`
+  // pattern and watching this stay green. A cross-check that cannot see where the answer comes from
+  // is not a cross-check.
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].kind == "gap") { continue; }
+    string hosts = hostsOf(cli, all, all[i]);
+    string[] files = string[](all[i].kind == "where" ? all[i].ref : "", all[i].also);
+    for (i32 f = 0; f < files.len(); f++) {
+      if (files[f] == "") { continue; }
+      string src = sourceOf(cli, files[f]);
+      if (contains(src, "cli.exec(\"node\"") && !contains(hosts, "node")) {
+        t.fail(all[i].op + ": " + files[f] + " spawns node and the derive did not say so");
+      }
+      if (contains(src, "cli.exec(\"deno\"") && !contains(hosts, "deno")) {
+        t.fail(all[i].op + ": " + files[f] + " spawns deno and the derive did not say so");
+      }
+    }
+  }
 
   // **And the whole list going stale at once**, which the per-entry floor cannot see: if every
   // pattern stopped matching, every entry would fail above — but if the *tests* were rewritten onto

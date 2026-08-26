@@ -220,3 +220,50 @@ a wrong one.
 builds the same program for both runtimes and compares them, which is the right shape — but the
 program it uses is `wc`, so it covers the filesystem and stdio and nothing else."* The two-runtime
 comparison has existed for a while and is narrow; the entries point at the wider native ones instead.
+
+## 2026-08-26, step 3: Node was covered all along — 0 → 14
+
+    conformance: 37 of 44 opcodes have a comparison; 7 are named gaps
+                 14 include the Node host; 8 do not include the V8 binary
+
+Verified by reading each test's body and following into the program it builds, not by its header:
+
+| test | builds for | the program calls | opcodes |
+|---|---|---|---|
+| `runtimes_test.wac` | deno **and** node, `t.eqStr` on stdout *"byte for byte, the same answer from both runtimes"* | `wc.wac`, `roundtrip.wac`, `exec_probe.wac` | `READ_FILE` `WRITE_FILE` `STAT` `READ_DIR` `REMOVE` `RENAME` `ARG` `ARG_COUNT` `ENV` `READ_STDIN` `EXEC_WITH` |
+| `node_net_test.wac` | deno **and** node | `greet.wac`: `listen`, `accept`, `send`, `closeSocket` | `LISTEN` `ACCEPT` `SEND` `CLOSE_SOCKET` |
+| `echod_test.wac` | deno **and** node, foreign UDP peer | `echod.wac`: `bindDatagram`, `receiveFrom`, `sendTo` | `BIND_DATAGRAM` `RECEIVE_FROM` `SEND_TO` |
+
+`CONNECT` and `RECV` deliberately stay: in `node_net_test.wac` those are the harness's own client
+calls, not the program being compared.
+
+### An opcode has two tests, so `Cover` holds two
+
+`BIND_DATAGRAM` is `datagram_test.wac` — v8, wasmtime and Deno through the handler table — **and**
+`echod_test.wac`, a real program on Deno and Node. Neither is the better test; they answer about
+different hosts. A single field forces a choice between two true statements and understates whichever
+loses. So `where2`/`sameAs2` carry a second test and the hosts are **unioned**, and a `sameAs` inherits
+the borrowed entry's *full* set rather than its first file.
+
+### The pattern list was wrong three times, and the third was invisible
+
+Each failure under-reported silently, in the direction that looks like less coverage rather than a
+broken tool:
+
+1. `native_shell_test.wac` read as Deno-only — reaches the binary through `nativeBinaryPath`.
+2. `native_test.wac` read as wasmtime-only — reaches it by literal path, with no helper at all.
+3. **Every Node-driving test read as Deno-only** — they build through a helper taking the target as a
+   *variable*, so `"--target", "node"` never appears in the source. `cli.exec("node"` is the marker.
+
+The first two failed the floor loudly, because those entries derived a host set that contradicted
+their own note. **The third did not**, and that is the lesson: a floor refusing *no hosts at all*
+cannot see an entry that found one of two. It passed while reporting zero Node coverage across a
+repository with three Node-comparing tests in it.
+
+So the derive is now cross-checked against an independent scan — any backing test whose source spawns
+a host must be credited with it. Different question, different signal, and the two must agree.
+
+**And that check was itself wrong on the first try**, which the canary caught: it read only the `ref`
+file, and every Node answer lives in `also`, so it stayed green while the number went back to zero.
+Fixed to scan both, and re-canaried — removing the `cli.exec("node"` pattern now fails 12 entries by
+name.
