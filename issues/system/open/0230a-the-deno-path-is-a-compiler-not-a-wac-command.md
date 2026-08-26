@@ -794,3 +794,35 @@ the whole rule: refuse when two versions disagree, run when either is missing.
 If the deferral ever ends, `install.json5` is where a version should come from rather than any of the
 three options above — it is the installation's number, and the installation is what the check has always
 been asking about. Recorded, not recommended.
+
+### 2026-08-26: the last unchecked report from the issue — cross-project cache reuse — does not reproduce
+
+The second GitHub comment ended with a friction item nothing in this issue ever answered:
+
+> Every fresh project mapping the same repository/commit took 18–20 seconds and reported writing the
+> same 8.75 MB pack to the same global cache path, even though the checkout was already present.
+> Cross-project cache reuse appears incomplete.
+
+Run rather than reasoned about, with a `$WAC_HOME` of its own so the cache starts empty, three
+projects with the same one-line mapping to `https://github.com/voltrevo/wac @ master`:
+
+| | wall | what it said |
+|---|---|---|
+| project 1, empty cache | **6.1s** | `9466944 bytes, 2981 objects -> …/pack.pack` |
+| project 2, fresh project, same commit | **0.42s** | `819ad18199c4 is already in the cache -> …` |
+| project 1 again, now locked | **0.06s** | `nothing to fetch; 1 mapping(s) already locked` |
+
+**Reuse works and says so.** The second project writes no pack, and the cache hit is an explicit line
+rather than something to infer from the clock. What remains in the 0.42s is resolving `master` to a
+commit, which is a question only the remote can answer and is the reason `ref` exists.
+
+Not filed, because there is nothing to file. Recorded here because "we did not reproduce it" is a
+different fact from "nobody looked", and this was the one observation in GitHub issue 22 in neither
+state until today.
+
+**One thing found on the way, and it is a documentation gap rather than a defect.** `file://` is not a
+transport — `wacfetch: dep/: 'file://' is not a transport this toolchain has; HTTPS only` — which is a
+good message and is nowhere in `docs/your-own-project.md`. It matters here more than it looks: this
+repository has `~/bare-repos` as its source of truth, so the obvious way to test a mapping without the
+network is the one that does not work, and the obvious next move is to reach for GitHub, which the
+same page calls *not authoritative*.
