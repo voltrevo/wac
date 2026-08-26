@@ -1,6 +1,9 @@
 # 0010 — a method's own type parameter has to come from the slot, because a lambda states no return type
 
-- **Status:** proposed — a decision is wanted before the implementation, not after
+- **Status:** **decided 2026-08-26 — option C**, written type arguments. The objection that ruled C
+  out has been removed by [0011](0011-a-call-may-name-its-type-arguments.md); see *The decision*
+  below. Option D moved to [0012](0012-synthesising-a-lambdas-return-type.md) as a separate
+  ergonomic question
 - **Date:** 2026-08-17
 - **Author:** agent-c
 - **Blocks:** chaining on `Pending<T>` — `p.then(() => Foo.create())` answering a `Pending<Foo>`
@@ -67,6 +70,10 @@ common case.
 plainly — `<` is ambiguous with less-than in expression position — and that reason does not weaken
 here.
 
+**D**, added 2026-08-26, is below: synthesise the lambda's return type from its body. It was not
+considered here because the note took *"a lambda states no return type"* as given — which is true of
+what the author writes and not of what the compiler can work out.
+
 ## What the restriction costs, measured
 
 Option A's limit is "a call whose result is not written down cannot infer". That is worth a number
@@ -95,6 +102,10 @@ than any change to what is already written.
 
 ## Recommendation
 
+**Superseded 2026-08-26 — the decision is C, below.** The operator's constraint is that inline
+lambdas must chain, and A cannot meet it: every link of a chain but the last sits in receiver
+position. The recommendation as written stands only if that constraint is dropped.
+
 **A**, with the limit written into the spec beside it: a method's own type parameters are inferred
 from the slot the call lands in, and a call whose result is not written down cannot infer them. It
 adds no syntax, it reuses a mechanism that exists and is tested, and it makes the shape the promise
@@ -112,6 +123,104 @@ If the answer is A, the implementation is three pieces, and the third is the onl
    name in the same table rather than a new mechanism. One thing found the hard way while writing the
    refusal: a call resolves to the *instantiated* entry, so anything keyed on the template alone is
    invisible at the call site.
+
+## The decision — option C, 2026-08-26
+
+**C was ruled out for a reason that no longer holds.** The paragraph above says the spec forbids
+written type arguments *"for a reason it states plainly — `<` is ambiguous with less-than in
+expression position — and that reason does not weaken here"*. It weakened.
+[0011](0011-a-call-may-name-its-type-arguments.md), accepted the same day, resolves that ambiguity:
+`name < … >` is an instantiation when what lies between the brackets parses as a type list, and a
+comparison otherwise. Its step 3 puts the rule on the postfix-after-dot path, which is exactly what
+this document needs.
+
+So the wanted program is written:
+
+```wac
+Pending<Foo> made = p.then<Foo>((i64 at) => Foo.create());
+```
+
+`U` is supplied, so the callback's parameter type `fn[U(T)]` becomes the concrete `fn[Foo(i64)]`, the
+lambda has a target, and it types in checking mode exactly as every other lambda does. **No new
+inference is required at all** — which is what makes C the cheap answer now and was not true when
+this document was written.
+
+Chains follow, at any depth, with inline lambdas:
+
+```wac
+Pending<Foo> made = p.then<A>((i64 at) => A.create())
+                     .then<B>((A a) => B.of(a))
+                     .then<Foo>((B b) => Foo.from(b));
+```
+
+That is the operator's constraint — inline lambdas must chain — met without A's slot restriction and
+without B's syntax.
+
+**A is superseded** rather than wrong: under A every link of a chain but the last sits in receiver
+position, so three links need two named intermediates. Confirmed against the mechanism that already
+exists rather than argued: a generic static infers from the slot today, and `Box<i32> b = Box.of(3)`
+builds while `Box.of(9).get()` — the same call in receiver position — fails with *unresolved name
+Box*. The reason is structural: `then<U>` on `Pending<T>` returns `Pending<U>`, so the receiver's `T`
+never appears in the return type and the wanted type says nothing about what the receiver was.
+
+**Option D has moved to [0012](0012-synthesising-a-lambdas-return-type.md).** It proposed
+synthesising the lambda's return type from its body, so `<Foo>` could be omitted. With C in hand that
+is an ergonomic improvement rather than the resolution of this document, and it carries open
+questions of its own — chiefly what happens when a method's letter appears in a non-lambda parameter
+too, as it would in a `fold`. Keeping it here would have made this document wait on those.
+
+### `fold` is the example worth leading with
+
+`Pending.then` is what prompted this, and it is the *worst* advertisement for it: `U` appears once,
+only in the lambda's return, so every call needs the type written. The shape every collection API
+wants is better:
+
+```wac
+U fold<U>(const this, U seed, fn[U(U, T)] f)      // on Vec<T>
+```
+
+and it needs **no written type argument in the common case**, because `U` appears in `seed`, which is
+not a lambda:
+
+```wac
+i32 total = v.fold(0, (i32 acc, i32 x) => acc + x);        // U from seed and the slot
+i64 wide  = v.fold<i64>(0, (i64 acc, i32 x) => acc + x);   // written, when you want it
+```
+
+A bare literal takes its type from the slot — measured 2026-08-26, `id(0)` is `i32` or `i64`
+depending on where it lands — so the seed does not need a cast either.
+
+That matters for how this decision reads. The fear about C is that it makes every generic call
+noisy; `fold` is the demonstration that it does not. Writing the argument is the **escape**, used
+where nothing else determines the letter, which for a well-designed API is rare.
+
+`core/vec.wac` has no `map`, `fold` or `filter` today. They are the obvious first users.
+
+### Acceptance criteria
+
+1. `Vec<T>.fold<U>` can be **declared** — today the declaration checks and the call is refused.
+2. `v.fold(0, (i32 acc, i32 x) => acc + x)` compiles with **no** written type argument.
+3. `v.fold<i64>(0, (i64 acc, i32 x) => acc + x)` compiles with one.
+4. `p.then<Foo>((i64 at) => Foo.create())` compiles — the `Pending` case, where the argument is
+   required because `U` appears only in the lambda's return.
+5. A three-link chain of inline lambdas compiles, which is the operator's constraint:
+   `p.then<A>(f).then<B>(g).then<Foo>(h)`.
+6. The emitter produces **distinct instantiations** for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>`
+   — the third level of monomorphisation, and the thing most likely to be got wrong quietly.
+
+### What is left to build
+
+C needs no inference work, but it is not free:
+
+1. **`Pending<T>.then` does not exist in the value-returning form.** `std/platform.wac:286` is
+   `void then(this, fn[void(T)] f)`. Declaring `Pending<U> then<U>(this, fn[U(T)] f)` is part of this,
+   and it is a change to the capability surface rather than to the compiler.
+2. **Method type parameters are refused in three places** — twice in the checker, per the section
+   below, and once in the emitter's decline path (`issues/lang/0160`'s guards). All three have to go.
+3. **The emitter monomorphises per (owner instantiation × method type arguments)**, which is the
+   third level beside the two it has and remains the only large piece. A generic struct already
+   registers its methods per instantiation, so `Pending<i64>.then<Foo>` is a longer name in the same
+   table.
 
 ## Not recommended: leaving it refused
 
