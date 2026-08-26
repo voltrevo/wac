@@ -31,7 +31,7 @@ after it drains, which the serial lane did for free.
 A target narrows the lane, which it did not before: `deno task test packages/tty/` used to run every wac
 test in the repository.
 
-**`WAC_KEEP_AGGREGATE=1` keeps the generated aggregate**, as `.cache/wac-aggregate-<nanos>_test.wac`,
+**`WAC_KEEP_AGGREGATE=1` keeps the generated aggregate**, as `.cache/wac-aggregate-<pid>-<nanos>_test.wac`,
 and says where it left it. That is the file the compiler actually saw, and it is otherwise removed as
 soon as the compiler has read it. Reach for it when a test passes on its own and fails in a directory
 run: that difference is the aggregate, and `issues/lang/0154` is one bug that lives there.
@@ -41,6 +41,14 @@ The name was `wac-aggregate-<pid>-<group>.kept.wac` here until 2026-08-26 and ha
 between `issues/system/0257c` and GitHub wac#27 the aggregate was kept on every path but one and this
 paragraph described a switch that did nothing — which is why a reader could reasonably report it as
 working.
+
+**The `<pid>` is load-bearing and was briefly edited out of this paragraph rather than back into the
+code.** `core.monotonicNanos()` is per process and starts near zero, so four parallel workers sharing
+one `.cache/` produced `wac-aggregate-41_test.wac` at the same moment; two wrote the same path and one
+removed it while the other was between writing and compiling, which is a gate failure with no failing
+test in it. The retired host's name had a pid for exactly that reason. Fixing this page to match the
+code, instead of asking why the code had stopped matching the page, is what let the race land —
+`packages/wac/test/wac/aggregate_test.wac` now pins the shape.
 
 A wait that is a *spin* is what makes that parallelism unsafe, and there were two — see
 `waitForPortWithin` in [`packages/wactest/src/daemon.wac`](../packages/wactest/src/daemon.wac). Four

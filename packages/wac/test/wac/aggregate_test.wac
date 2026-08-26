@@ -117,6 +117,69 @@ export string test_the_opt_in_keeps_one_and_says_where(Core core, Cli cli) {
   return t.report();
 }
 
+/**
+ * The name carries a pid, which is what keeps two workers out of each other's way.
+ *
+ * **This is a regression test for a race the cleanup created.** The name used to be the monotonic
+ * clock alone — per *process*, starting near zero — so parallel workers sharing one `.cache/`
+ * generated `wac-aggregate-41_test.wac` at the same moment. Two wrote the same path and one removed
+ * it while the other was between writing and compiling:
+ *
+ *     wacc: cannot read .cache/wac-aggregate-41_test.wac
+ *
+ * The collision predates the cleanup; removing the file promptly is what made it bite. The clock is
+ * still tiny — a run of this test observed `42` — so the pid is doing all of the work.
+ *
+ * Asserted on the *shape* rather than by racing two runs, because a race that reproduces sometimes is
+ * a test that passes sometimes. The concurrent case is below as well, since the shape is the reason
+ * and the outcome is the claim.
+ */
+export string test_the_aggregate_name_carries_a_pid(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "aggregate-pid");
+  string why = fixture(cli, dir, true);
+  t.eqStr(why, "", "could not write the fixture");
+  if (why != "") { return t.report(); }
+
+  Exec r = runIn(cli, dir, true);
+  t.isTrue(r.ran(), "the run did not start — " + r.error);
+  string[]? names = cli.readDir(dir + "/.cache").wait();
+  t.isTrue(names is not null, "no .cache after a kept run");
+  if (names is null) { return t.report(); }
+  string got = "";
+  for (i32 i = 0; i < names!.len(); i++) {
+    if (names![i].len() >= 14 && names![i].slice(0, 14) == "wac-aggregate-") { got = names![i]; }
+  }
+  t.isTrue(got != "", "no aggregate was kept");
+  // `wac-aggregate-<pid>-<clock>_test.wac`: two numbers, so two hyphens after the prefix.
+  string rest = got.len() > 14 ? got.slice(14, got.len()) : "";
+  t.isTrue(rest.indexOf("-") > 0,
+           "the name has no pid in it, so two workers can collide: " + got);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_two_runs_at_once_in_one_project_both_succeed(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "aggregate-race");
+  string why = fixture(cli, dir, true);
+  t.eqStr(why, "", "could not write the fixture");
+  if (why != "") { return t.report(); }
+
+  // The outcome the pid buys. It is not a reliable *detector* — without the pid this fails often
+  // rather than always — so the shape assertion above is the one that cannot be lucky.
+  string line = "cd '" + dir + "' && ( '" + binaryPath(cli) + "' test test & "
+              + "'" + binaryPath(cli) + "' test test & wait )";
+  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  t.isTrue(r.ran(), "the pair did not start — " + r.error);
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isFalse(contains(said, "cannot read"),
+            "one run removed the other's aggregate: " + said);
+  t.eqI32(aggregatesIn(cli, dir), 0, "a concurrent pair left an aggregate behind");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
 export string test_the_cleanup_leaves_the_projects_own_files_alone(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "aggregate-others");
