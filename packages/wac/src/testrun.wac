@@ -384,7 +384,7 @@ TestExport[] testExportsIn(string manifest) {
               case Str(bytes): {
                 string name = string.fromBytes(bytes);
                 if (name.len() > 4 && name.slice(0, 4) == "test") {
-                  out.push(TestExport(name, namesCli(e)));
+                  out.push(TestExport(name, namesCli(e), namesOracle(e)));
                 }
               }
               else: { }
@@ -411,6 +411,46 @@ struct TestExport {
    * fact from the manifest to say the same thing.
    */
   bool needsCli;
+  /**
+   * **Whether it declares a parameter this runner cannot supply**, which means it wants an *oracle*.
+   *
+   * A test taking `fn[i32(i32)]` — or any type that is not `Core` or `Cli` — is asking for an
+   * independent implementation to compare against, and a *host* is what has one. 31 of this
+   * repository's wac test files are entirely of that kind and 17 more are mixed. `Cli.call` reports
+   * such a call as status 3, "a signature this cannot call", and treating that as a failure is the
+   * wrong answer twice over: the test is not broken, and a suite of them would be all red.
+   *
+   * Read from the manifest here rather than from the status, because a skip has to be decided
+   * *before* the call: a test that is going to be skipped must not have the counters snapshotted
+   * around it, and it belongs in the profile's `skipped` list rather than its `tests` map.
+   */
+  bool needsOracle;
+}
+
+/**
+ * Whether an export declares a parameter that is neither `Core` nor `Cli`.
+ *
+ * Those two are the world this runner can build; anything else is an oracle only a host supplies.
+ * A test with no parameters at all answers false, which is the ordinary case.
+ */
+bool namesOracle(JsonObject e) {
+  JsonValue? ps = e.getStr("params");
+  if (ps is null) { return false; }
+  match (ps!) {
+    case Array(items): {
+      for (i32 i = 0; i < items.len(); i++) {
+        match (items.get(i)) {
+          case Str(bytes): {
+            string ty = string.fromBytes(bytes);
+            if (ty != "Core" && ty != "Cli") { return true; }
+          }
+          else: { }
+        }
+      }
+    }
+    else: { }
+  }
+  return false;
 }
 
 /** Whether an export's declared parameters include `Cli`. */
@@ -703,6 +743,16 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
     TestExport t = names[which[k]];
     string shown = shownName(t.name);
     if (!holds(shown, filter)) { filtered = filtered + 1; continue; }
+    // **A test wanting an oracle is skipped, not failed.** See `TestExport.needsOracle`: the host is
+    // what has an independent implementation to compare against, and this runner does not. Recorded
+    // in the profile for the same reason an ungranted one is — a line only it reaches is not unhit.
+    if (t.needsOracle) {
+      if (profiling) {
+        profileSkipped = profileSkipped + (skippedN > 0 ? "," : "") + "\"" + shown + "\"";
+        skippedN++;
+      }
+      continue;
+    }
     if (t.needsCli && grants == 0) {
       ungranted = ungranted + (ungranted == "" ? "" : ", ") + shown;
       ungrantedCount = ungrantedCount + 1;
@@ -810,6 +860,11 @@ void writeProfile(Core core, Cli cli, string dir, string entry, Tally t, string[
   string doc = "{\"entry\":\"" + entry + "\",\"all\":[" + all + "],\"tests\":{"
              + t.profileTests + "},\"skipped\":[" + t.profileSkipped + "]}";
   string path = dir + "/" + profileStem(entry) + ".json";
+  // **Made, not assumed.** `WAC_PROFILE` names where the profile should go rather than somewhere that
+  // exists: `tools/mutate.ts` points it at a fresh subdirectory of a temporary directory and expects
+  // the run to create it, which the host's version did with `create_dir_all` and this did not.
+  // `parents` because the whole path can be new.
+  cli.mkdir(dir, true).wait();
   Change wrote = cli.writeFile(path, doc.toBytes()).wait();
   if (!wrote.ok()) {
     core.warn("wac: WAC_PROFILE is set but " + path + " could not be written — " + wrote.message);
