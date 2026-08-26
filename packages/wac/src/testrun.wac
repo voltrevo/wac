@@ -842,6 +842,18 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // **One file: no headers, no file count.** That is what a person naming one file wants, and it is
   // what the native command prints — the summary below is the whole output.
   if (files.len() == 0) {
+    // **A file that exports no tests is an error, not a silent pass.** The failure worth guarding is
+    // a misnamed export: zero tests run, nothing fails, and the file reports `0 passed, 0 failed` —
+    // which reads as a file that is fine. Nobody names one file expecting it to have nothing in it,
+    // so saying so costs nothing and catches the case that otherwise makes a whole suite green by
+    // running none of it. A *directory* is different and is not covered here: a walk that finds no
+    // test files says so in its own words, above.
+    if (names.len() == 0) {
+      cli.unload(m.handle);
+      core.warn("wac: " + entry + " exports no tests — a test is `test*()` answering a string, "
+                + "empty for a pass");
+      return 1;
+    }
     i32[] all = i32[names.len()]();
     for (i32 i = 0; i < names.len(); i++) { all[i] = i; }
     Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter, loud,
