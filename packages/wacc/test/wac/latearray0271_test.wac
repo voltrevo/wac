@@ -1,0 +1,96 @@
+// An array type that only a generic instantiation introduces must not be emitted silently.
+// `issues/lang/0271a`.
+//
+//     wac test packages/wacc/test/wac/latearray0271_test.wac
+//
+// ## What went wrong
+//
+// `emit.wac` counts the array helper functions — `$bind$arr_<el>_new/get/set/len` and, for a numeric
+// element, `_to_mem`/`_from_mem` — into `arrHelpers`, and every function index after them is that
+// count plus an offset. The count is taken at one point in the walk and `env.arrayCount` keeps
+// growing after it: the generic instantiation pass and everything up to where the type section is
+// sized can register an array type that was not in any declaration.
+//
+// So `Pending<i64[]>` on a capability field, in a program that never writes `i64[]` anywhere else,
+// registered `i64[]` after the count was taken. Six helpers were emitted for it and zero counted, the
+// function section's vector said six entries fewer than it carried, and the engine refused the module
+// with *"section was shorter than expected size (1896 bytes expected, 1884 decoded)"* — twelve
+// surplus bytes, which is six two-byte type indices.
+//
+// **`wac build` printed a size and exited 0.** Only `native/v8`'s post-build validation
+// (`issues/lang/0170a`) caught it, and only for the host that has one.
+//
+// ## Why the guard rather than the fix
+//
+// Correcting `arrHelpers` alone would be worse than the bug. It also feeds `structHelpersAt` and
+// every index after it, so a right count over the indices already published on `env` gives a module
+// the engine *accepts* and that calls the wrong functions. Refusing is the answer that cannot be
+// silently wrong, and it is the same answer the emitter already gives one phase later for a type
+// registered while a body is being emitted.
+//
+// ## The control matters as much as the case
+//
+// A guard that declined every `Pending<T[]>` would pass the first assertion and be useless, so the
+// second program is the same shape at `i32[]` — an element `std/platform.wac` already declares, so it
+// is registered in the declaration pass and the count is right. It must still build.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { emitDeclineFiles, buildFiles, describeSeparator } from "../../src/api.wac";
+import { Built } from "../../src/emit.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+const string ENTRY = "/t/main.wac";
+
+/** The reproduction, parameterised by the array element `Pending` is instantiated at. */
+string program(string elem) {
+  return "import { Pending } from \"std/platform.wac\";\n" +
+         "export struct C { fn[Pending<" + elem + "[]>(string)] f0; }\n" +
+         "export i32 main(C c) { return 0; }\n";
+}
+
+string why(string elem) {
+  return emitDeclineFiles(string[](ENTRY), string[](program(elem)), ENTRY);
+}
+
+export string test_an_array_type_only_an_instantiation_introduces_is_declined_not_emitted() {
+  T t = T.create();
+  // `i64[]` appears nowhere in `std/platform.wac`, so this program is the only thing that names it,
+  // and it names it through a generic. Before `issues/lang/0271a` this was "" and the build wrote a
+  // module the engine would not load.
+  string said = why("i64");
+  t.isTrue(said != "", "the emitter accepted a program whose array helpers it cannot have counted");
+  t.isTrue(contains(said, "i64[]"),
+           "the decline should name the array type that arrived late: " + said);
+  return t.report();
+}
+
+/** What `wac build` would print — the first field of what the build path describes. */
+string blockedFromBuild(string elem) {
+  Built built = buildFiles(string[](ENTRY), string[](program(elem)), ENTRY);
+  string sep = describeSeparator();
+  i32 at = built.described.indexOf(sep);
+  return at < 0 ? built.described : built.described.slice(0, at);
+}
+
+export string test_the_reason_the_build_path_reports_is_the_one_the_emitter_recorded() {
+  T t = T.create();
+  // The decline above is only useful if it survives the trip to the user. `blockedAgain` re-runs a
+  // speculative walk and preferred *its* answer unconditionally, so a specific reason lost to that
+  // walk's last resort — "a type this emitter names only while emitting", which `api.wac` records as
+  // having cost four wrong guesses in a row. `wac build` printed exactly that sentence over a guard
+  // that had already named `i64[]`.
+  string said = blockedFromBuild("i64");
+  t.isTrue(said != "", "the build path reported no reason at all");
+  t.isTrue(contains(said, "i64[]"),
+           "the build path reported the catch-all over the recorded reason: " + said);
+  return t.report();
+}
+
+export string test_an_array_type_the_declarations_already_named_still_builds() {
+  T t = T.create();
+  // The control. `i32[]` is declared in `std/platform.wac`, so it is registered before the count is
+  // taken and nothing about this program is late. A guard that cannot tell these two apart has not
+  // found anything.
+  t.eqStr(why("i32"), "", "declined a program whose array types were all counted");
+  return t.report();
+}

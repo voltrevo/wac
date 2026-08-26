@@ -3610,11 +3610,26 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
  * is worth its cost. `fullWhy` is the fallback when the fresh walk finds nothing, which happens when
  * the decline is one only the emit path can see (`emitDeclineLinked`'s whole reason for existing).
  */
+/**
+ * The sentence `blockedOf` reaches for when it can see that types grew and not which.
+ *
+ * Named rather than written twice because `blockedAgain` ranks it *below* a recorded reason, and a
+ * precedence that turns on a string literal is one edit away from silently reverting.
+ */
+string typesGrewCatchAll() { return "a type this emitter names only while emitting"; }
+
 string blockedAgain(string[] paths, string[] sources, Res res, string entry, Env spent) {
   Front? again = frontOf(paths, sources, res, entry);
   if (again is not null) {
     string said = blockedOf(again!);
-    if (said != "") { return said; }
+    // **The catch-all loses to a reason the emit actually recorded.** `blockedOf` is preferred
+    // because it names the *declaration* where `fullWhy` names the call — `issues/lang/0106` — but
+    // that argument only holds while it has something to say. Its last resort says types grew and not
+    // which ones, and taking it over `fullWhy` threw away the specific sentence `declineFor` had
+    // already written: a guard that names the array type that arrived late reached the user as the
+    // one message `api.wac` records as having cost four wrong guesses in a row. `issues/lang/0271a`.
+    if (said != "" && said != typesGrewCatchAll()) { return said; }
+    if (said != "" && spent.fullWhy == "") { return said; }
   }
   if (spent.fullWhy != "") { return spent.fullWhy; }
   return "declined with no reason recorded";
@@ -4321,6 +4336,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // **Every array a host can hold, and the accessors it needs to hold one.** `_to_mem` and
   // `_from_mem` move bytes, so only a numeric element has them; `string[]` and `u8[][]` had no
   // helpers at all and a host asking for one saw `$bind$arr_u8Arr_new is not a function`.
+  // **What the helper counts were taken over**, so the guard below `declTypes` can tell whether an
+  // array or a struct arrived after them. It is not enough that the *type section* agrees: these two
+  // counts fix `arrayHelpersAt`, `structHelpersAt` and every function index after them, and they are
+  // taken here while `env` keeps registering types until the type section is sized.
+  // `issues/lang/0271a`.
+  i32 countedArrays = env.arrayCount;
   i32 arrHelpers = 0;
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     if (!bindableArray(env, env.arrayTypes[bi])) { continue; }
@@ -4329,6 +4350,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // The structs a host can hold, and how many helpers they need between them. Computed once: the
   // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
   // an index that disagrees with a count is a call to the wrong function.
+  i32 countedStructs = env.structCount;
   string[] bindStructs = string[512]();
   i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs, entryDecls);
   // **An enum is a struct in this emitter's tables and not one at the boundary.** `collectBindStructs`
@@ -4690,6 +4712,30 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // types and two env signatures per module that nothing can reach.
   env.sigType("fn[f64(f64,f64)]");
   env.sigType("fn[f32(f32,f32)]");
+
+  // **The helper counts are older than the type section, and a type that arrives between the two is
+  // invisible to the guard at the end of this function.** That one compares against `declTypes`,
+  // captured on the next line, so it sees a body registering a type and nothing earlier.
+  //
+  // An array registered after `countedArrays` gets its four-to-six helpers emitted by the walks below
+  // and counted by none of them: the function section's vector then declares fewer entries than it
+  // carries, and the engine refuses the module — *"section was shorter than expected size (1896 bytes
+  // expected, 1884 decoded)"*, twelve surplus bytes for the six two-byte type indices of one bulk
+  // array's helpers. `wac build` printed a size and exited 0; only `native/v8`'s post-build
+  // validation caught it. `issues/lang/0271a`.
+  //
+  // **Declining rather than recounting**, because `arrHelpers` is not only a count. It fixes
+  // `structHelpersAt` and every index after it, both already published on `env` and already read. A
+  // corrected count over those indices gives a module the engine *accepts* and that calls the wrong
+  // functions — silently wrong in place of loudly invalid, which is the worse trade.
+  if (env.arrayCount != countedArrays || env.structCount != countedStructs) {
+    string late = "";
+    for (i32 li = countedArrays; li < env.arrayCount; li++) { late = late + " array " + env.arrayTypes[li]; }
+    for (i32 li = countedStructs; li < env.structCount; li++) { late = late + " struct " + env.structNames[li]; }
+    env.declineFor("a type was registered after the boundary helpers had been counted, so their " +
+                   "number and every function index after them is short:" + late);
+    return bareModule();
+  }
 
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
   // Kept apart so the guard at the end of this function can *name* what grew rather than only
@@ -11122,7 +11168,7 @@ string blockedOf(Front f) {
   }
   if (env.full) { return "more declarations than this emitter has room for"; }
   if (env.blocked == "" && grewTypesWhileEmitting(src, entryDecls, starts, edges, names)) {
-    return "a type this emitter names only while emitting";
+    return typesGrewCatchAll();
   }
   return env.blocked;
 }

@@ -1,7 +1,7 @@
 # 0271a — a `Pending<T[]>` the boundary cannot marshal emits an invalid module, and the checker says nothing
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a (2026-08-26)
 - **Reported by:** agent-a
 - **Date:** 2026-08-26
 - **Kind:** bug
@@ -117,3 +117,82 @@ bind, and this is a shape the boundary cannot bind that does not reach it.
 the marshalling list. Each was a pattern fitted to four or five data points; the one that held came
 from testing all nine element types and finding a list already written down. Worth recording as the
 method rather than the conclusion: the answer was in a comment in the file that does the work.
+
+## The cause, found — and the marshalling list was wrong too — agent-a, same day
+
+**`driver.ts`'s list is not it.** That file is the manifest-driven host, and the module is refused by
+the engine before any host reads it; a host-side list cannot shorten a wasm section. The sets coincide
+because both are "the array types `std/platform.wac` happens to use", which is a fact about the
+corpus rather than a rule.
+
+**And the rejection of the second characterisation was invalid.** It was rejected on `bool[]` and
+`string[]` building fine — but neither is a *bulk* array, so neither reaches the path in question.
+Among bulk arrays only, "already registered" separates the table exactly.
+
+### What it actually is
+
+    $ wac build base.wac       # Pending<i64[]> and nothing else naming i64[]
+    rejected: section was shorter than expected size (1896 bytes expected, 1884 decoded)
+
+    $ wac build force.wac      # the same, plus `export i64[] force() { … }`
+    87418 bytes                # valid
+
+One added declaration, and the module becomes valid. The section is the **function section**, 1896
+bytes, matching the engine's number exactly:
+
+    type 11652 | import 170 | function 1896 | memory 3 | global 7 | export 9870 | …
+
+`emit.wac` counts the array helper families into `arrHelpers` — `new`/`get`/`set`/`len`, plus
+`_to_mem`/`_from_mem` for a numeric element — and writes `funcs.u32leb(count + helpers)` as that
+vector's length. The count is taken at one point in the walk; `env.arrayCount` keeps growing after it,
+because the generic-instantiation pass and everything up to where the type section is sized can
+register an array type no declaration named. `Pending<i64[]>` is such a type. Six helpers emitted,
+zero counted, and six two-byte type indices is **twelve bytes** — the constant seen in both sizes.
+
+`i32[]` and `u8[]` escape it only because `std/platform.wac` declares them, so they are registered
+before the count is taken.
+
+### Why the guard rather than the arithmetic
+
+Landed in `packages/wacc/src/emit.wac`, with `packages/wacc/test/wac/latearray0271_test.wac`.
+
+`arrHelpers` is not only a count. It fixes `structHelpersAt` and every function index after it, both
+published on `env` and already read by the time the discrepancy could be noticed. **Correcting the
+count over stale indices gives a module the engine accepts and that calls the wrong functions** —
+silently wrong in place of loudly invalid, which is the worse trade. So the emitter now declines,
+naming the array or struct that arrived late, which is the same answer it already gives one phase
+later for a type registered while a body is being emitted.
+
+The test pairs the case with a control at `i32[]`, because a guard that declined every `Pending<T[]>`
+would pass the first assertion and have found nothing.
+
+### What remains, and it is the reason this stays open
+
+**`Pending<i64[]>` still does not compile** — it is refused instead of mis-emitted. The real fix is to
+take the helper counts after every type has been registered rather than before, which means the
+function section's vector length has to be written from the walk that fills it rather than from an
+earlier count. The entries are appended by emission that runs much later, so this is "build the body
+in its own buffer and prefix the count at the end" rather than moving one line.
+
+Worth doing, and larger than the guard. Nothing in the repository needs it today, which is why the
+guard went first.
+
+### A second bug, found on the way out
+
+The guard's message did not reach the user. `wac build` printed the catch-all:
+
+    wacc: cannot emit base.wac — a type this emitter names only while emitting
+
+`blockedAgain` re-runs a speculative walk and preferred *its* answer whenever it said anything at all,
+so the specific reason `declineFor` had recorded lost to that walk's last resort — the one sentence
+`api.wac`'s own comment records as having "cost four wrong guesses in a row". The preference is right
+in general (`issues/lang/0106`: `blockedOf` names the declaration, `fullWhy` names the call) and wrong
+for the catch-all, which names neither. It now loses to a recorded reason, and the sentence is a named
+function so the precedence does not turn on a string literal. The user gets:
+
+    wacc: cannot emit base.wac — a type was registered after the boundary helpers had been
+          counted, so their number and every function index after them is short: array i64[]
+
+**This was not specific to this bug.** Any decline whose cause the speculative walk cannot localise
+reported the catch-all in place of whatever the emitter knew, which is a fair description of the ten
+declines `issues/lang/0170a` tabulates. Worth re-reading that table now that the reasons are different.
