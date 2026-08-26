@@ -231,6 +231,49 @@ export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cl
   return t.report();
 }
 
+export string test_a_project_import_of_a_file_that_does_not_exist_is_refused(Core core, Cli cli) {
+  // **The question `issues/lang/0157`'s status line left open.** Its rule — an import naming a file
+  // nobody supplied is a diagnostic at the import's own token — landed for plain `./` and `../`
+  // specifiers, and the issue says a `@/` one is judged too *when the caller has a filesystem*,
+  // which is what `wac check` is. Nothing asserted that, so it was prose.
+  //
+  // The distinction matters and is why this is separate from the no-manifest case above: there the
+  // project cannot be found, and the specifier is unresolvable. Here the project is found, the
+  // specifier resolves cleanly, and the file it resolves *to* is absent — so the compiler has
+  // everything it needs to name the file rather than the specifier.
+  T t = T.create();
+  string dir = scratch(cli, "atspec-missing");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "wrote the manifest");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { answer } from \"@/src/nosuch.wac\";\n" +
+               "export i32 main() { return answer(); }\n"), "wrote main");
+
+  Exec r = reference(cli, "referenceCheck", string[](dir + "/src/main.wac"));
+  t.isTrue(r.ran(), "the reference did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  // **Non-zero rather than 1.** The reference exits 2 here and 1 for the no-manifest case above: an
+  // unreadable import fails before compiling, a bad specifier during it. Pinning the number would be
+  // pinning that distinction, which nothing else here relies on — the message is the assertion.
+  t.isTrue(r.status != 0, "the reference accepted an import of a file that is not there");
+  string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+  t.isTrue(contains(said, "nosuch.wac"), "the reference did not name the file: " + said);
+
+  // The control for this one is `test_a_project_specifier_resolves_against_its_own_project` above:
+  // the same shape with the file present is accepted there, so a rule that refused every `@/` would
+  // be caught rather than met by this assertion.
+  Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    string wsaid = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
+    t.isTrue(w.status != 0, "wacc accepted an import of a file that is not there: " + wsaid);
+    t.isTrue(contains(wsaid, "nosuch.wac"), "wacc did not name the missing file: " + wsaid);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
 export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
   // **D8's half that exists today.** `design/lang/0009` D8: identity is canonical *after* resolution,
   // so a file reached by `./point.wac` and by `@/src/point.wac` is one module — and in wac that is

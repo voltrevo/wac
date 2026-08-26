@@ -3,7 +3,11 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
-- **Status:** open — both halves report now (single-file 2026-08-20, files-based 2026-08-25); what is left is the specifiers the files half declines to judge, and that has its own issue
+- **Status:** closed — agent-a, 2026-08-26: every route reports, and the residue the line below used to
+  name is inherent rather than missing work — see the closing section
+- **Fixed in:** `packages/wacc/src/api.wac` and `packages/wacc/src/check.wac` (agent-c, 2026-08-25),
+  with `packages/wacc/test/wac/missingimport_test.wac`, `illtyped_test.wac` and
+  `projectspec_test.wac`
 - **Claimed by:** (nobody — agent-a attempted it 2026-08-21, see the last section)
 - **Symptom:** no error
 
@@ -457,3 +461,47 @@ diagnostic in `0267c`'s case and manufacturing three here, and finding it needed
 Worth remembering the shape — a new rule going red on correct programs is evidence about the *program
 under it* as often as about the rule.
 
+
+## Closed — agent-a, 2026-08-26
+
+The status line said *"what is left is the specifiers the files half declines to judge, and that has its
+own issue"*. The issue it meant is `issues/lang/0267c`, which is closed, and the section above it —
+written the same day — already says *"with that fixed the rule is wide again"*. The line outlived the
+work. Re-measured rather than reasoned about, all four routes:
+
+| asked | before | now |
+| --- | --- | --- |
+| `dumpTypeErrors` (single source) | 0 | reports |
+| `dumpTypeErrorsFiles` / `diagnoseFiles` | 0 | reports, code 77, at the import's token |
+| `wac check`, a `./` import | emitter only | checker, positioned |
+| `wac check`, a `@/` import | emitter only | reported, naming file, importer and specifier |
+
+**Canaried.** Reverting the four-line rule — `if (canJudge && !isBuiltinSpec(spec) && !supplied)
+{ c.addUnresolved(spec); }` in `api.wac` — turns `missingimport_test.wac` red with the sentence written
+for exactly this: *"the files-based entry point is silent again"*. The control beside it, a supplied
+`./b.wac`, stays clean, so the rule is not met by refusing imports generally.
+
+### The `@/` route reports, and not as a checker diagnostic — which is correct
+
+This was the last thing in doubt, and it was prose. It is now
+`projectspec_test.wac::test_a_project_import_of_a_file_that_does_not_exist_is_refused`:
+
+    wacc: cannot read …/src/nosuch.wac (…/src/main.wac imports it as "@/src/nosuch.wac")
+
+exit 1, against exit 0 for the same program with the file present. The reference refuses it too, at
+exit **2** rather than the 1 the no-manifest case gives — an unreadable import fails before compiling,
+a bad specifier during it — so the test asserts the message and a non-zero status rather than pinning
+that distinction.
+
+It is the *reader's* message, not `errMissingImportFile` at a token, and that is the right answer
+rather than a shortfall: the file cannot be read, so the checker never sees the import to report on.
+It still names the file, the importer and the specifier as written, which is more than the token
+diagnostic carries.
+
+### What is genuinely left is not work
+
+An in-process caller with **no filesystem** — one that passes sources directly and an empty `Res` —
+cannot resolve `@/…` or a mapped `dep/lib.wac` at all, so it cannot distinguish "nobody supplied this"
+from "I cannot resolve this". It judges plain relative specifiers and leaves the rest alone. That is a
+property of having no filesystem, not a missing rule, and the section above already argues it. There is
+nothing to file.
