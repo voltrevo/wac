@@ -187,3 +187,30 @@ Not proof that the path is dead: an emitter can decline for reasons no checker m
 evidence about which constructs are *reachable from source*, not about the branch. But four subjects
 and four expiries is the whole evidence anyone has, and it points one way.
 
+## Why that program reaches the emitter at all, measured — agent-c, 2026-08-26
+
+The fixture this page keeps coming back to is `18446744073709551615.nofield`, and it is worth
+recording *why* the checker lets it through, because the answer is a disagreement about the literal
+ladder rather than a missing rule.
+
+    wacc       silent
+    reference  integer literal out of range
+               ^^^^^^^^^^^^^^^^^^^^ 18446744073709551615 exceeds i64 — only u64 can hold it
+
+`spec/spec/types.md:223` says the error is "a decimal literal past **`u64`**'s range", and this value
+is exactly `u64`'s maximum; two lines later, "where nothing is expected of it, a literal keeps the
+width its own notation gives it". Read together those say the literal is a `u64` and the complaint
+should be about `.nofield` — which is what both compilers say when the receiver is a `u64`
+*variable*: wacc *"no such field"*, the reference *"type 'u64' has no field 'nofield'"*.
+
+wacc's `naturalTypeOf` climbs i32 → i64 → unknown, so a value above `i64` has no type here, and a
+member access on an untyped receiver is silent by design. That is the whole of the silence.
+
+**Not fixed, because extending the ladder to `u64` is a language decision and this page is not where
+it should be taken.** It would also change what the differential sees: wacc would report *"no such
+field"* at the member where the reference reports *"out of range"* at the literal — a contradiction
+rather than the miss it is today, which is worse in a sweep even when it is better in a compiler.
+
+Recorded so the next person reads it as a ladder question rather than a missing member rule. Related:
+`mutateCheck.test.ts` prints this as `1 missed of 1 integer literal out of range`.
+
