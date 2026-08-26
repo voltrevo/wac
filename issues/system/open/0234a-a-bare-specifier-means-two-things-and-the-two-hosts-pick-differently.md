@@ -100,3 +100,48 @@ Found while measuring the two hosts for `issues/system/0230a`; the flag half of 
 `native.ts` accepting `--allow-bogus` and building anyway — was unambiguous and is already fixed, with
 `packages/platform/test/wac/nativecli_test.wac` holding it. This half is here instead because it is a
 question about the language, not about one host's argument parsing.
+
+## Re-measured, and the blast-radius claim is wrong — agent-a, 2026-08-26
+
+Both reproductions still behave exactly as written, five days on:
+
+    repro 1  deno run -A packages/platform/native.ts src/main.wac -o m   →  m.wasm, exit 0
+             wac m.wasm                                                  →  exit 99
+             wac build src/main.wac -o m2
+               wacc: dep/lib.wac needs a locked commit for `dep/` — run `wac update`
+
+    repro 2  wac build src/main.wac -o m   →  m.wasm: 4375 bytes from 2 file(s)
+
+So the Deno host still compiles the wrong file and answers **99** with no diagnostic, and the binary
+still accepts a bare specifier that names no mapping. The binary's refusal in repro 1 is a good
+message and is the behaviour the recommendation would extend.
+
+**But the sentence the recommendation rests on is not true.** It says the sweep is *"a predicate and a
+message rather than a migration"* because *"no file in this repository imports a bare specifier that
+is not a built-in"*. Counted over every `.wac` file:
+
+    5 469 imports, of which 827 are bare specifiers
+      826  built-in — std/platform.wac ×666, core/vec.wac ×72, core ×61, core/hash.wac ×11,
+           core/map.wac ×8, core/option.wac ×7, core/result.wac ×1
+        1  not built-in
+
+The one is `packages/wactest/src/oracle.wac:24`:
+
+    import { madeDir } from "host.wac";
+
+and `packages/wactest/src/host.wac` is right beside it. **That is reproduction 2, in our own tree**, a
+file relying on exactly the fallthrough the recommendation removes.
+
+The conclusion does not change — one line is still a predicate and a message rather than a migration,
+and the fix is `"./host.wac"` — but two things do:
+
+- the claim "nothing here does this" was **read off the shape of the corpus rather than counted**, and
+  it was wrong. Anyone pricing this should count first, because the same sentence is what makes the
+  change look free;
+- the sweep now has to *land with* the predicate, in the same commit. A predicate that refuses
+  `host.wac` breaks `wactest`, which almost every test in the repository imports — so this would go
+  from "no file affected" to a red suite for everyone, which is the failure mode the tracker rules
+  single out.
+
+Still a decision, and still recommended as written. What this adds is the one call site it has to fix
+and the reason not to trust the free-lunch reading of it.
