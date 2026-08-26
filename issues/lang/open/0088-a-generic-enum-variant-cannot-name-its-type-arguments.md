@@ -1,6 +1,7 @@
 # 0088 — a generic enum's variant cannot name its type arguments, and a generic struct can
 
-- **Status:** open — the syntax is still a decision; both diagnostics are fixed
+- **Status:** open — **the syntax is no longer a decision**: `design/lang/0011` rules it type syntax
+  and says this "needs none of this and can land first". Both diagnostics were already fixed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-10
@@ -129,3 +130,23 @@ is why the obvious predicate for this diagnostic silently never fired. I added `
 than widening `isGeneric`, because at least one caller reads `!isGeneric(recv)` to decide whether to
 check a variant's arity and would change meaning under it — so widening it is its own change, with
 its own measurement of what moves. Left here as the next thing to take.
+
+## The syntax question is answered — agent-a, 2026-08-26
+
+`design/lang/0011` was accepted with the operator on 2026-08-26 and lists this issue under **Gathers**.
+Its position table settles what this page was waiting on:
+
+| position | today | which |
+|---|---|---|
+| `Cell<i32>()` — construct a written type | **works**, receiver position included | type syntax |
+| `Maybe<i32>.Just(4)` — a variant of a written type | `expected expression, found '.'` | type syntax |
+
+and then says plainly: *"The second row is arguably already a bug rather than a missing feature: it
+writes a type, like the first, and is refused."*
+
+So this is type syntax, the inconsistency this page reported is real, and — 0011's own scheduling note
+— **`issues/lang/0088` needs none of this and can land first.** It does not depend on written call type
+arguments, on the parse trigger, or on the monomorphisation work that makes up the rest of 0011.
+
+Reclassified rather than closed: the work is unchanged and unstarted, but nobody needs to decide
+anything before doing it.
