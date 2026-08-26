@@ -127,6 +127,30 @@ simpler, and can be relaxed later.
 Each element is a wasm local and a multi-value result. Some bound exists; say what it is rather than
 discovering it.
 
+## Constraints inherited from generics — agent-b, 2026-08-26
+
+`design/lang/0011` was accepted the same day, and it commits the parser to reading
+`name < types >` as an instantiation when the following token cannot continue a comparison, or when
+that token is `(`. Parentheses are the documented escape for the contested case. That makes three
+choices here **load-bearing rather than stylistic**, and they are cheap only if taken deliberately:
+
+1. **`(x)` must stay pure grouping**, with a one-element tuple spelled `(x,)`. The escape hatch for
+   the ambiguity is `((a < b), c > (d))` — parenthesising the element that contains the `<`. If `(x)`
+   became a one-element tuple, that would change the element's type and the escape would stop
+   working. Python and Rust both spell a 1-tuple with the trailing comma, so this is the ordinary
+   choice; what is new is that it is now depended upon.
+
+2. **`(a < b, c > d)` must stay unambiguous**, which it is as long as the instantiation trigger keeps
+   requiring `(` *immediately* after `>`. That shape — a tuple of two comparisons — is the natural
+   thing to write, so it is the one worth protecting. Only the parenthesised-right-operand form,
+   `(a < b, c > (d))`, is contested, and it reads as an instantiation.
+
+3. **A tuple type in type-argument position carries its own parentheses**: `f<(A, B)>(x)`. Worth
+   stating so nobody reaches for a bare `f<A, B>` intending a single tuple argument.
+
+None of this argues against tuples or against any option above. It is written here because the
+person designing them is the one who needs it, and none of it is discoverable from the tuple side.
+
 ## The family this belongs to
 
 Three open issues are the same complaint — **a value that does not need identity is being given one**:
