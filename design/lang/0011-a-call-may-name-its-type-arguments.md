@@ -169,9 +169,15 @@ and `spec/`: chained comparisons `a < b > c` return 41 matches, all inside comme
 (`<n>`, `<entry.wac>`, `<port>`); comma-separated comparison arguments return two, both of them
 genuine `Map<string, i32>` parameter types. So the rule costs nothing measurable in 135k lines.
 
-One caveat on that evidence, worth keeping: this code was written under a *narrower* rule, so its
-authors were never pushed away from these shapes — but they never reached for them either, which is
-the useful half of the observation.
+**That measurement is a heuristic and not a constraint.** `CLAUDE.md` is explicit that *"there are no
+users and no legacy to support"*, so breaking existing code is an acceptable price for a better rule
+— the question a search like this answers is *how much explaining the change will take*, not whether
+it is allowed. If the count had been forty rather than zero the rule would still be right; it would
+just have come with a commit that fixed forty call sites.
+
+One caveat on the evidence either way: this code was written under a *narrower* rule, so its authors
+were never pushed away from these shapes — but they never reached for them either, which is the
+useful half of the observation.
 
 **Shadowing stays an error rather than falling back.** `i32 Cell = 1; Cell < q > (d)` fails today and
 will continue to, because the parser does not consult name resolution. The diagnostic carries the
@@ -225,6 +231,46 @@ the rule it protects has produced a feature nobody can use.
    removes.
 
 Steps 1 and 2 are independently useful and land without the rest.
+
+## Acceptance criteria
+
+The examples this document was argued from, as things that must compile — or must fail in a stated
+way — when it is done.
+
+**The feature:**
+
+1. `T zero<T>() { return 0; }` can be **called**: `i32 z = zero<i32>();`. Today the declaration
+   compiles and every call is refused, so this is the whole point.
+2. `Vec<T> empty<T>()` — a return-only type parameter on a collection, callable as `empty<i32>()`
+   and, where there is a slot, as `Vec<i32> v = empty();`.
+3. `fn[i32(i32)] g = id<i32>;` — **a generic function as a value**, assignable, passable and
+   returnable. Today `expected an expression`. This is the criterion that needs the trigger widened
+   beyond `>` followed by `(`, and nothing else in this list exercises it.
+
+**The `core` types, which is where the friction actually is:**
+
+4. `Option<i32>.None.orElse(7)` compiles — receiver position, no slot. Today `undefined variable`.
+5. `Result<i32, string>.Err("no")` compiles as an argument, where neither variant determines both
+   letters.
+6. `core/test/option_test.wac`'s workaround locals — `Option<i32> none = Option.None;` and
+   `Result<i32, string> ok = Result.Ok(3);` — can be **deleted and written inline**. A real file gets
+   shorter, which is the readable proof that this fixed something.
+
+**The rule, and what it refuses:**
+
+7. `Cell<i32>()` and `Cell<Cell<i32>>()` still compile, in receiver position included.
+8. `count < list.len() > 0` still parses as a comparison — a call is not a type, so the type parse
+   fails and the `<` is less-than.
+9. `Cell<Typoo>()` reports **unknown type `Typoo`**, not a comparison error. Committing to the
+   instantiation reading is what buys this, and losing it would be a real regression.
+10. `a < b > c` and `g(a < b, c > e)` **stop compiling** and need parentheses. Recorded as *expected*
+    rather than as a failure — see the heuristic note above — and the diagnostic must name the rule
+    and the escape rather than reporting a mismatch on a parse nobody intended.
+
+**The emitter:**
+
+11. Distinct instantiations are produced per written type argument, and a written one and an inferred
+    one that agree produce the *same* instantiation rather than two.
 
 ## What this hands to tuples
 

@@ -112,8 +112,12 @@ Choose them deliberately.
 ### 3. Synthesis must not replace checking
 
 `() => 42` synthesises `fn[i32()]`. Against a target of `fn[i64()]` the literal must still be checked
-as `i64`. So synthesis runs **only** where there is no target, and every program that compiles today
-compiles identically. That is what makes this additive rather than a change to 310 existing lambdas.
+as `i64`. So synthesis runs **only** where there is no target.
+
+The point is not compatibility — this repository has no legacy to support and breaking code is an
+acceptable price. It is that a lambda *with* a target has nothing to synthesise from that the target
+does not already say better, so running synthesis there would be doing different work for the same
+answer, and the two would eventually disagree.
 
 ## Acceptance criteria
 
@@ -122,8 +126,10 @@ compiles identically. That is what makes this additive rather than a change to 3
    point of this document.
 3. `i64 t = v.fold(0, (i64 acc, i32 x) => x);` fails with an error **naming the lambda's body against
    `i64`**, not one about `U` being ambiguous or conflicting. This is the ordering rule, tested.
-4. Every one of the 310 lambdas in the tree compiles identically, since each has a target and
-   synthesis must not run where one exists.
+4. The 310 lambdas in the tree compile identically, since each has a target and synthesis must not
+   run where one exists. **A heuristic rather than a hard rule** — `CLAUDE.md` has no legacy to
+   support, so breaking them would be allowed. It is a criterion because a change that disturbs a
+   lambda *with* a target has misplaced the synthesis, which is a design error rather than a cost.
 5. A body that cannot synthesise — `() => Option.None` with no target — fails saying *that*, rather
    than failing somewhere downstream.
 
