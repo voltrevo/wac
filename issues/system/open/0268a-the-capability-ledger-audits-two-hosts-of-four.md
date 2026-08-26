@@ -112,3 +112,52 @@ against the directory by a test a whole suite away.
 **Related:** `issues/system/0230a` (the hosted command, and where this was found),
 `issues/system/0257c` (the commands that moved into the program), `issues/system/0161` (the ledger's
 move host-side).
+
+## 2026-08-26: which two hosts, per row — and it is never the same two, and never Node
+
+This page says "two hosts of four". Counted, by reading what each backing test actually spawns:
+
+| backing test | entries | hosts it compares |
+|---|---|---|
+| `native_hostfs_test.wac` | 17 | **wasmtime + deno** (plus GNU coreutils as a third oracle) |
+| `native_shell_test.wac` | 7 | **v8 + deno** |
+| `native_examples_test.wac` | 6 | **wasmtime + deno** |
+| `setexecutable_test.wac` | 1 | **v8 + deno** |
+| `datagram_test.wac` | 1 | **v8 + deno + wasmtime** |
+| `EXEC_WITH` | 1 | **v8 + wasmtime** |
+| `as CONNECT` / `as BIND_DATAGRAM` | 4 | whatever the entry they name compares |
+| named gaps | 7 | — |
+
+37 comparisons over 44 opcodes. The helpers are unambiguous about which binary is which:
+`nativeHost` is `native/target/release/wacland`, `wacBinary` and `binaryPath` are
+`native/v8/target/release/wac`, and `denoBatch`/`builtByDeno` are the Deno host.
+
+**Three things that are worse than "two of four".**
+
+1. **Node is in none of them.** Not one entry compares the Node host, which is why `LINK_STAT` and
+   `SET_EXECUTABLE` read as covered while Node answered a zeroed `Stat` and *no mode bits to set*.
+2. **The two are not the same two.** Seventeen rows omit `native/v8` — the binary everybody here
+   actually runs — and seven omit `wacland`. So no host is in every row, and a reader who assumed
+   "two hosts" meant a fixed pair would be wrong about which fact each row establishes.
+3. **The summary line is honest and the entries are not.** It already prints *"two-host conformance"*,
+   which is exactly right. `Cover.compared` is a bool, so an entry cannot say the same thing, and
+   `where(...)` reads as *covered*.
+
+## The fix should derive the hosts, not record them
+
+My first plan was to widen `Cover` to carry a host list and fill in all 44 entries from the table
+above. **That would rebuild the defect one layer up**: a hand-written host set is remembered coverage,
+and this page exists because remembered coverage reads like an audit. The first entry to have its
+backing test changed would be wrong, silently, exactly as `LINK_STAT` was.
+
+So `Cover` should carry the **backing test's path as data** rather than inside prose, and the hosts
+should be computed from that file — `nativeHost` present means wasmtime, `wacBinary`/`binaryPath`
+means v8, `denoBatch`/`builtByDeno`/`--target deno` means Deno, `--target node` means Node. The
+conformance test already reads files to extract opcodes and capability fields, so the machinery is
+there.
+
+Then the totals line can say something that cannot rot: *37 of 44 opcodes have a comparison; 0 of them
+include Node; 17 exclude the v8 binary* — each number derived from the tests as they are today.
+
+It also makes the entry that names a test which no longer spawns what it claims fail, rather than
+quietly meaning less. That is the property this ledger was written to have and does not yet.
