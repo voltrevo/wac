@@ -1,6 +1,8 @@
 # 0010 — a method's own type parameter has to come from the slot, because a lambda states no return type
 
-- **Status:** proposed — a decision is wanted before the implementation, not after
+- **Status:** proposed — a decision is wanted before the implementation, not after.
+  **2026-08-26: the operator's constraint is that inline lambdas must chain**, which rules out A
+  as recommended below — see [D](#d--synthesise-the-lambdas-return-type-from-its-body--agent-b-2026-08-26)
 - **Date:** 2026-08-17
 - **Author:** agent-c
 - **Blocks:** chaining on `Pending<T>` — `p.then(() => Foo.create())` answering a `Pending<Foo>`
@@ -67,6 +69,10 @@ common case.
 plainly — `<` is ambiguous with less-than in expression position — and that reason does not weaken
 here.
 
+**D**, added 2026-08-26, is below: synthesise the lambda's return type from its body. It was not
+considered here because the note took *"a lambda states no return type"* as given — which is true of
+what the author writes and not of what the compiler can work out.
+
 ## What the restriction costs, measured
 
 Option A's limit is "a call whose result is not written down cannot infer". That is worth a number
@@ -95,6 +101,10 @@ than any change to what is already written.
 
 ## Recommendation
 
+**Superseded 2026-08-26 — read D below before acting on this.** The operator's constraint is that
+inline lambdas must chain, and A cannot meet it: every link of a chain but the last sits in receiver
+position. The recommendation as written stands only if that constraint is dropped.
+
 **A**, with the limit written into the spec beside it: a method's own type parameters are inferred
 from the slot the call lands in, and a call whose result is not written down cannot infer them. It
 adds no syntax, it reuses a mechanism that exists and is tested, and it makes the shape the promise
@@ -112,6 +122,86 @@ If the answer is A, the implementation is three pieces, and the third is the onl
    name in the same table rather than a new mechanism. One thing found the hard way while writing the
    refusal: a call resolves to the *instantiated* entry, so anything keyed on the template alone is
    invisible at the call site.
+
+## D — synthesise the lambda's return type from its body — agent-b, 2026-08-26
+
+Added because the operator's constraint is that **inline lambdas must chain**, which rules out A as
+recommended: under A every link of `p.then(f).then(g).then(h)` except the last is in receiver
+position, so a three-link chain needs two named intermediates rather than one. That is not a middle
+case, it is every case but the last, and the reason is structural — `then<U>` on `Pending<T>` returns
+`Pending<U>`, so the receiver's `T` does not appear in the return type and the wanted type tells you
+nothing about what the receiver was. Information flows outside-in for exactly one hop.
+
+**The premise this note rests on has an exception, and it is written in the spec two files away.**
+`spec/spec/funcrefs.md` `[§wacc-lambda]`:
+
+> Parameters carry their types; the return type comes from the `fn[…]` it is used as, **which the
+> language always supplies because there is no `var`**.
+
+`then<U>` is precisely the case where the language cannot supply it — so the justification for taking
+the return type from the target has stopped holding. But the first clause is the one that matters:
+**parameters always carry their types.** A lambda body is therefore typeable on its own, and
+`Foo.create()` is *"a call to a function or method whose return type is declared"*, which
+`spec/spec/generics.md` already lists among the types that are evident.
+
+So `(i64 at) => Foo.create()` has the type `fn[Foo(i64)]` from its own syntax. `U` is then read off
+the argument by ordinary argument-directed inference, and chains of inline lambdas work at any depth:
+
+```wac
+Pending<Foo> made = p.then((i64 at) => A.create())
+                     .then((A a) => B.of(a))
+                     .then((B b) => Foo.from(b));
+```
+
+**What this buys over the other three.** It meets the constraint A cannot. It adds no syntax, unlike
+B — the information B would have the author write is already derivable from what they wrote. It does
+not touch the `<` ambiguity that rules out C. And it leaves `spec/spec/generics.md`'s
+argument-directed rule *intact* rather than carving a second source of inference into it, which is A's
+real long-term cost: every later reader has to learn two places a type parameter can come from.
+
+It also dissolves the ordering problem the section above found. A has to *reach back* — binding `U`
+from the wanted type happens after the point where `nothing here wants a function, so this lambda has
+no type` fires, so an implementation must arrange the slot before typing the argument. Synthesis types
+the argument first, which is the order a checker already wants, and that diagnostic stops being
+reachable for an annotated lambda.
+
+### What it costs
+
+**A synthesis mode, which does not exist.** Lambdas are typed only in checking mode today, against a
+target; that diagnostic is the absence of a synthesis mode rather than a deliberate refusal.
+
+**Synthesis must not replace checking where a target exists.** `() => 42` synthesises `fn[i32()]`, and
+against a target of `fn[i64()]` the literal must still be checked as `i64`. Synthesise only when there
+is no target and every program that compiles today compiles identically — which is what makes this
+additive rather than a change to 310 existing lambdas.
+
+**Bodies that cannot synthesise keep the current path.** One returning `null`, or calling through a
+funcref, has no evident type; those keep the target-type rule and the existing refusal. The two paths
+coexist, so this is strictly more programs accepted.
+
+**A join rule for block bodies with more than one value-return** is the only genuinely new typing rule.
+Measured across `packages/` and `std/`: **310 lambdas, 149 block-bodied, 20 returning a value, and 3
+with more than one value-return.** All three have targets today, so none of them would need synthesis —
+the rule is for code that does not exist yet, which is the right time to choose it.
+
+**One compiler, not two.** The tag is `§wacc-lambda` rather than `§wac-`: the reference has no lambdas,
+so this is wacc alone.
+
+**The spec sentence quoted above has to change**, from *the return type comes from the `fn[…]` it is
+used as* to that plus *or is synthesised from the body when the body's type is evident*. A deliberate
+amendment rather than a quiet one, which is why it is here and not in a commit.
+
+### What would settle it
+
+Not checked, and each could change the answer:
+
+1. **the join rule's shape** — whether two value-returns of different types are an error or unify, and
+   what that does to `null` in one arm;
+2. **`Pending<T>.then` as it stands** is `void then(this, fn[void(T)] f)`, so the value-returning form
+   is new declaration as well as new inference, and the two want designing together;
+3. whether synthesis interacts with capture — a lambda whose body reads a local whose type is still
+   being inferred, which wac's no-declaration-inference rule should make impossible but which nobody
+   has argued through.
 
 ## Not recommended: leaving it refused
 
