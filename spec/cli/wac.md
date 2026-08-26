@@ -339,13 +339,17 @@ output rather than passed over, so *removed* and *found nothing* are never the s
 Running it twice is ordinary — it is what somebody does when they are not sure the first one
 worked — so the second prints `nothing to remove` and exits 0. That is not a failure.
 
-It is on the binary as well as being `deno task wac:uninstall`, and the reason is the whole point of
-installing anything: the task is a Deno program under `tools/`, so it needs this repository, and
+It is on the binary, and that is the whole point of installing anything: the `deno task
+wac:uninstall` it replaced was a Deno program under `tools/`, so it needed this repository, and
 somebody who installed the command has a `$WAC_HOME` and no checkout. Asking them to clone the
-compiler in order to remove the compiler is not an answer. The two are held to one list by
-`packages/wacc/test/wac/uninstall_test.wac`, which builds the same fake install twice and takes one
-away with each — duplicated knowledge with a test between the copies being a different thing from
-duplicated knowledge without one.
+compiler in order to remove the compiler is not an answer.
+
+**So the task went, 2026-08-26, and the subcommand is the only uninstaller.** The two were held to
+one list by a differential in `packages/wacc/test/wac/uninstall_test.wac` — the same fake install
+twice, one taken away with each — and retiring the copy that could not be used removes the reason for
+that as well: a test proving the retiree still agrees is what makes the retiree an oracle. What the
+file checks now is what this section says, against the command: the three files an install writes,
+the cache with `--keep-cache` and without, and two files it must never touch.
 
 ### A program that asks for nothing
 

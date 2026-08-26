@@ -77,7 +77,6 @@
     "seed:bootstrap": "bash tools/seed.sh --bootstrap",
     "seed:native": "bash tools/seed.sh --native-only",
     "wac:install": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts install",
-    "wac:uninstall": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts uninstall",
     "wac:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts build",
     "check": "deno run -A tools/checkTypes.ts",
     "test": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/runTests.wac --",

@@ -2,7 +2,18 @@
 //
 //     deno task wac:install                 # into $WAC_HOME, default $HOME/.wac
 //     deno task wac:build -o ./wac          # an uninstalled binary, nothing else touched
-//     deno task wac:uninstall [--keep-cache]
+//
+// **Taking it away is `wac uninstall`, and is not here.** There were two uninstallers until
+// 2026-08-26 — a `wac:uninstall` task in this file and the subcommand — and the subcommand is the
+// one that can be used: this is a Deno program under `tools/`, so it needs the checkout, and
+// somebody who installed the command has a `$WAC_HOME` and no checkout. The version that only works
+// for people who do not need it was not worth writing the `$WAC_HOME` layout down twice for.
+//
+// A differential kept the two honest — `packages/wacc/test/wac/uninstall_test.wac` built the same
+// fake install twice and compared what survived each — and it went with them, on the operator's
+// ruling. It is the arrangement CLAUDE.md names: a test that exists to prove the retiree still
+// agrees makes the retiree an oracle. `uninstallCommand` in `packages/wac/src/wac.wac` is the
+// uninstaller, and that test now checks what it *does* rather than who it matches.
 //
 // D1's point is that there is no supported path from cloning this repository to *having* the
 // command: today you build it and put it somewhere by hand, and every document that mentions it
@@ -31,7 +42,11 @@
 // to. Running the install twice and diffing the profile is a test below, because "it looked fine
 // when I ran it once" is how a profile ends up with nine copies of the same line.
 //
-// ## What uninstall must not do
+// ## What an uninstall must not do — the constraint on what an install may write
+//
+// Kept here although the uninstaller left, because it is a rule about *this* file: anything an
+// install puts in `$WAC_HOME` outside the four names above is something `wac uninstall` will not
+// know to take away.
 //
 // D1: it removes the binary, the cache, the profile line and the metadata, and **never** a
 // manifest, a lockfile, a source file or a build product. Those live in projects, not here, and a
@@ -123,21 +138,6 @@ export async function ensureProfileLine(
   return "added";
 }
 
-/** Remove any line carrying the marker. Answers how many went. */
-export async function removeProfileLine(profile: string): Promise<number> {
-  let text: string;
-  try {
-    text = await Deno.readTextFile(profile);
-  } catch {
-    return 0;
-  }
-  const lines = text.split("\n");
-  const kept = lines.filter((l) => !l.includes(MARKER));
-  if (kept.length === lines.length) return 0;
-  await Deno.writeTextFile(profile, kept.join("\n"));
-  return lines.length - kept.length;
-}
-
 export async function install(env: Deno.Env = Deno.env): Promise<string> {
   const home = wacHome(env);
   const built = await buildBinary();
@@ -182,46 +182,6 @@ export async function install(env: Deno.Env = Deno.env): Promise<string> {
     `  profile ${touched.length > 0 ? touched.join(", ") : "none found"}`;
 }
 
-export async function uninstall(env: Deno.Env = Deno.env, keepCache = false): Promise<string> {
-  const home = wacHome(env);
-  const went: string[] = [];
-
-  // **The profile line first, and this was missing.** The first version removed the files and the
-  // directory and left every profile sourcing an `env` that is no longer there — so a new shell
-  // prints an error on every login, from a command the person just removed. `removeProfileLine`
-  // existed and was tested on its own; nothing checked that `uninstall` called it, which is the
-  // difference between testing a part and testing the thing. Found by running it.
-  const h = env.get("HOME");
-  if (h !== undefined && h !== "") {
-    let lines = 0;
-    for (const p of PROFILES) lines += await removeProfileLine(`${h}/${p}`);
-    if (lines > 0) went.push(`${lines} profile line(s)`);
-  }
-  for (const path of [`${home}/bin/wac`, `${home}/env`, `${home}/install.json5`]) {
-    try {
-      await Deno.remove(path);
-      went.push(path.slice(home.length + 1));
-    } catch { /* not there is the state we wanted */ }
-  }
-  try {
-    await Deno.remove(`${home}/bin`);
-  } catch { /* not empty, or not there */ }
-  if (!keepCache) {
-    try {
-      await Deno.remove(`${home}/cache`, { recursive: true });
-      went.push("cache");
-    } catch { /* not there */ }
-  }
-  // Only if nothing else is in it. Somebody may keep things under `$WAC_HOME` that are not ours,
-  // and D1's rule is that uninstall removes what it installed and nothing else.
-  try {
-    const left = [...Deno.readDirSync(home)];
-    if (left.length === 0) await Deno.remove(home);
-    else went.push(`(${left.length} other entr${left.length === 1 ? "y" : "ies"} left in ${home})`);
-  } catch { /* home is gone or was never there */ }
-  return went.length > 0 ? went.join(", ") : "nothing to remove";
-}
-
 /** The compiler inside the binary, in bytes — which build of wacc this `wac` carries. */
 async function seedSize(): Promise<number> {
   try {
@@ -251,8 +211,6 @@ if (import.meta.main) {
   try {
     if (mode === "install") {
       console.log(`installed ${await install()}`);
-    } else if (mode === "uninstall") {
-      console.log(`removed ${await uninstall(Deno.env, args.includes("--keep-cache"))}`);
     } else if (mode === "build") {
       const at = args.indexOf("-o");
       if (at < 0 || args[at + 1] === undefined) {
@@ -262,7 +220,7 @@ if (import.meta.main) {
       await place(await buildBinary(), args[at + 1]);
       console.log(`built ${args[at + 1]}`);
     } else {
-      console.error(`unknown mode ${JSON.stringify(mode)}; expected install, uninstall or build`);
+      console.error(`unknown mode ${JSON.stringify(mode)}; expected install or build`);
       Deno.exit(2);
     }
   } catch (e) {

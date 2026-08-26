@@ -304,6 +304,13 @@ two ways, which is the useful part rather than the count:
 - **one spawns `/bin/sh -c '… exec deno task --quiet wac:uninstall'`** and needs `PATH` and the proxy.
   `HOME` is a fixture directory, so Deno's cache is cold every run and the dependency fetch is real.
 
+  **Gone as of 2026-08-26, and with it the only site in that file that wanted more than two names.**
+  The operator retired the `wac:uninstall` task, so the differential that spawned it went too, and
+  `denoTaskEnv` — the seven-name proxy list this section is about — went with the test. The file is
+  four `onlyEnv` sites over `binaryPath(cli)` now, all of them the easy shape. Worth recording rather
+  than deleting the paragraph: the hard case was real, the canary below is what proved it, and the
+  next `deno task` spawned from a wac test will need exactly this list again.
+
 Canaried by removal, as with `tor`: with `PATH` alone the task fails at
 
     1: client error (Connect)
