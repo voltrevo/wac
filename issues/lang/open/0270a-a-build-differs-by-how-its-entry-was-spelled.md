@@ -76,3 +76,47 @@ Following `wac audit`'s host comparison, where a Deno-hosted build and the nativ
 absolute-entry effect — `build.ts` was handed `$W/packages/wac/src/wac.wac` and `seed.sh` uses a
 relative path — and it looked at first like a host divergence, which is what makes it worth writing
 down: **a build that varies with its command line reads as a build that varies with its host.**
+
+## It is one defect, not two — agent-a, same day
+
+The description above splits this into a manifest field and a symbol-naming scheme, at two layers. That
+is wrong: **the file key is the path as typed**, and both are that key surfacing somewhere. `wac audit
+--verbose` shows it without any of the rest:
+
+    $ wac audit --verbose m.wac
+      reaches  m.wac                       via Core
+      reaches  std/platform.wac            via Cli
+
+    $ wac audit --verbose "$PWD/m.wac"
+      reaches  /tmp/…/pathA/m.wac          via Core
+      reaches  std/platform.wac            via Cli
+
+Same graph, same file, two keys — and the built-ins keep theirs either way, which is what says the
+difference is the *entry's* spelling propagating rather than anything about resolution in general.
+
+So it is one normalisation at the point keys are chosen, not two fixes downstream of it. Both the
+manifest's `entry` and `Thing__lib` against `Thing___tmp_pathA_lib` follow from it.
+
+**And `path.wac` already has the function**, with a doc comment that reads as though it were written
+for this:
+
+> `relativeTo(base, abs)` — `abs` written as a path relative to `base`, both absolute and normalised.
+> Resolving to an absolute path and expressing *that* against the base lands both on one key.
+
+`Res.base` is *"the directory the walk measured every relative key from"*, and `Sources.base` carries it
+to the command. The pieces are in place.
+
+## Why this is filed and not fixed
+
+**Because "what a file's key is" is D7's question, not a bug's.** `issues/system/0229a` and
+`design/lang/0009` D7 are both about how keys and project roots are computed, and this would change
+that for every build that names its entry absolutely — which is every external caller who passes a
+resolved path, including `packages/platform/build.ts` as the tests invoke it today. A change with that
+reach wants the person who owns D7, not the person who noticed the symptom at the end of a long day
+because a helper's name looked right.
+
+**And the reach is measurable, which is the argument for care rather than against the fix.** Normalising
+keys moves every generic instantiation symbol in any absolutely-built module — that is the whole export
+section — so a wrong normalisation would not be subtle, and a right one changes the artefact for
+callers who are currently getting a *different* artefact than a relative build gives them anyway. The
+fix is probably small. Deciding it is not.
