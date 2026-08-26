@@ -1334,3 +1334,39 @@ without disturbing what was already right.
 The counts in this issue are now **5 hold a coverage floor, 0 only check their own exemptions have not
 drifted, 16 report and cannot fail**, out of twenty-one. `ssh` is the fifth floor: `issues/system/0222`
 gave it a ratchet, which it had never had.
+
+## The count moved, and the new one is the command — agent-a, 2026-08-26
+
+The state above records `2 package(s) have no coverage task: box, wacc`. Every gate run today prints
+**three**:
+
+    37/37 ran in 221s — 36 hold a coverage floor, 0 only check their own exemptions have not
+    drifted, 1 report and cannot fail
+       3 package(s) have no coverage task and are not in the numbers above: box, wac, wacc
+
+`packages/wac` did not exist when this was written. `issues/system/0257c` moved the command out of the
+compiler's example into a package of its own, and it arrived without a ledger:
+
+    packages/wac    4,304 source lines    1 test file    no cov_ledger.wac
+    35 other packages have one
+
+So the two named exemptions are still somebody's to decide, and a third has appeared that nobody
+decided. It is not a small one: this is `check`, `run`, `build`, `test`, `bindgen`, `app`, `sh`,
+`update` and `audit` — **the most-executed code in the repository**, since every test in the suite runs
+through `wac test`, and the only package of its size with no coverage measurement at all.
+
+### Why it is not obvious that it should simply get one
+
+`packages/wac` is exercised as *infrastructure* rather than by dedicated tests. Its behaviour is
+covered heavily and from outside — the whole suite runs through it, and
+`packages/wacc/test/wac/commandparity_test.wac` puts 52 invocations through three hosts. A per-package
+ledger measures which branches **that package's own tests** reach, and `packages/wac/test/wac/` holds
+one file. A floor computed from that would be low, and low for a reason that has nothing to do with how
+well the command is tested.
+
+Which is this issue's own subject one turn along: a number that is honest arithmetic and answers a
+question nobody asked. The choice is between a ledger scoped to its own tests — accurate and
+misleading — and one that credits the suite's use of it, which no other package's does.
+
+Recorded rather than decided, and flagged because the exemption list is the kind of thing that reads as
+deliberate once it has three entries instead of two.
