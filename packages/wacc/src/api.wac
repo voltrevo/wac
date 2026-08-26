@@ -1446,3 +1446,228 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   checkModule(c, eprog);
   return c;
 }
+
+/**
+ * Which files in a graph can reach a host capability, and through what — `wac audit`.
+ *
+ * **wac has no ambient authority**, and that is what makes this answerable at all: a capability is a
+ * funcref field on `Cli` or `Core`, and a function that is not handed one cannot call one. There is no
+ * global to reach for, no `import fs`, nothing a body can do that its signature does not admit. So the
+ * question *what can this dependency touch* has a static answer, and it is a property of declared
+ * types rather than of what the code happens to do with them.
+ *
+ * `packages/wac/src/grants.wac` is the same idea one level up and by hand: `narrowed(cli, forCommand(
+ * "update"))` refuses the fetcher everything it did not ask for, because *"a callee shares its
+ * caller's capabilities"*. That is a discipline somebody remembered. This is the instrument that says
+ * where it was not remembered.
+ *
+ * ## What "reaches" means, exactly
+ *
+ * A **bearing type** is `Cli`, `Core`, or any type with a field or method return whose type is
+ * bearing — to a fixpoint. That second clause is not theoretical: `packages/fs/src/remote.wac` and
+ * `packages/platform/src/stream.wac` both hold a `Cli cli;` field, so a file handed one of those has
+ * the whole capability set without ever naming `Cli`.
+ *
+ * A **file reaches** if any declaration in it mentions a bearing type in a field, a parameter or a
+ * return. A file that mentions none is *sealed*: nothing in it can perform an effect, whatever its
+ * body says, because it has nothing to perform one with.
+ *
+ * ## Sound in the direction that matters, and here is where it is not
+ *
+ * The useful guarantee is that **sealed is never wrong** — a file this clears cannot reach a
+ * capability. It over-approximates freely in the other direction: a file that takes a `Cli` and only
+ * reads `argCount` is reported as reaching, because the honest unit here is the type and not the
+ * field.
+ *
+ * Two limits, named rather than hidden, because a ledger that reads like an audit and is not is worse
+ * than none — `packages/platform/test/wac/conformance_test.wac` says so about itself:
+ *
+ * - **Derived authority is out of scope.** A `Socket` from `Cli.connect` is a live connection, and a
+ *   file holding one can talk to the network without naming `Cli`. The seed is the two types a host
+ *   *constructs*; everything reachable from them is a second question.
+ * - **A generic parameterised over a bearing type is not tracked.** `Vec<Cli>` mentions `Cli` and is
+ *   caught by the mention scan, but a `T` bound to `Cli` at a distant call site is not.
+ *
+ * ## The output
+ *
+ * `file\treaches|sealed\tvia` per line, sorted by the caller, then a `#` line with the totals and any
+ * bound that was hit. **A bound is reported rather than absorbed**: a truncated table that says
+ * `sealed` about a file it ran out of room for is the one failure this must not have.
+ */
+export string capReachFiles(string[] paths, string[] sources) {
+  i32 n = 0;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] != "") { n = i + 1; } }
+
+  i32 maxTy = 8192;
+  string[] tyName = string[maxTy](fill: "");
+  // What each type holds, tab-delimited and tab-terminated so a search for `"\t" + name + "\t"`
+  // cannot match a prefix: `Cli` must not be found inside `ClientState`.
+  string[] tyHolds = string[maxTy](fill: "");
+  bool[] bearing = bool[maxTy]();
+  i32 tyCount = 0;
+  bool overflowed = false;
+
+  // Every named type any declaration in this file mentions in a field, parameter or return.
+  string[] mentions = string[n + 1](fill: "");
+
+  for (i32 i = 0; i < n; i++) {
+    if (paths[i] == "") { continue; }
+    u8[] src = (i < sources.len() ? sources[i] : "").toBytes();
+    Lexed lx = lex(src);
+    P p = P.create(src, lx.tokens, lx.tokenCount);
+    Program prog = parseProgram(p);
+    string seen = "\t";
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      string holds = "\t";
+      string declName = "";
+      bool isType = false;
+      match (prog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          declName = tokenTextOf(src, lx, nameTok);
+          isType = true;
+          for (i32 f = 0; f < fields.len(); f++) {
+            holds = holds + tyNamesJoined(src, lx, fields[f].type);
+          }
+          // **A method's return counts as a field does.** `Fs.onHost(cli, 0)` is how a `Cli` gets into
+          // an `Fs`; a method answering one is how it gets out, and a closure over fields alone would
+          // clear the holder.
+          for (i32 m = 0; m < methods.len(); m++) {
+            holds = holds + tyNamesJoined(src, lx, methods[m].returnType);
+          }
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          declName = tokenTextOf(src, lx, nameTok);
+          isType = true;
+          for (i32 v = 0; v < variants.len(); v++) {
+            for (i32 f = 0; f < variants[v].fields.len(); f++) {
+              holds = holds + tyNamesJoined(src, lx, variants[v].fields[f].type);
+            }
+          }
+          for (i32 m = 0; m < methods.len(); m++) {
+            holds = holds + tyNamesJoined(src, lx, methods[m].returnType);
+          }
+        }
+        else: { }
+      }
+      if (isType) {
+        if (tyCount >= maxTy) { overflowed = true; } else {
+          tyName[tyCount] = declName;
+          tyHolds[tyCount] = holds;
+          bearing[tyCount] = declName == "Cli" || declName == "Core";
+          tyCount = tyCount + 1;
+        }
+      }
+      seen = seen + mentionedIn(src, lx, prog, d);
+    }
+    mentions[i] = seen;
+  }
+
+  // To a fixpoint over the whole graph, not one file: a holder and the type it holds are routinely in
+  // different packages, which is the case a per-file closure would miss.
+  bool grew = true;
+  while (grew) {
+    grew = false;
+    for (i32 t = 0; t < tyCount; t++) {
+      if (bearing[t]) { continue; }
+      if (holdsBearing(tyHolds[t], tyName, bearing, tyCount)) { bearing[t] = true; grew = true; }
+    }
+  }
+
+  string out = "";
+  i32 reaches = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (paths[i] == "") { continue; }
+    string via = firstBearing(mentions[i], tyName, bearing, tyCount);
+    if (via == "") {
+      out = out + paths[i] + "\tsealed\t\n";
+    } else {
+      out = out + paths[i] + "\treaches\t" + via + "\n";
+      reaches = reaches + 1;
+    }
+  }
+  // The denominator, always, and the bound when one was hit. `issues/system/0268a` is what a
+  // measurement that does not say how much it looked at costs.
+  out = out + "#\t" + numText(reaches) + " of " + numText(n) + " file(s) reach a capability; "
+      + numText(tyCount) + " type(s) examined"
+      + (overflowed ? "; TRUNCATED at " + numText(maxTy) + " types — this answer is not to be trusted"
+                    : "") + "\n";
+  return out;
+}
+
+/** `tyNames`, tab-delimited and tab-terminated, so a search cannot match a prefix. */
+string tyNamesJoined(u8[] src, Lexed lx, Ty t) {
+  string[] found = string[64](fill: "");
+  i32[] seen = i32[1]();
+  tyNames(src, lx, t, found, seen);
+  string out = "";
+  for (i32 i = 0; i < seen[0]; i++) { out = out + found[i] + "\t"; }
+  return out;
+}
+
+/** Every named type declaration `d` mentions in a field, parameter or return. */
+string mentionedIn(u8[] src, Lexed lx, Program prog, i32 d) {
+  string out = "";
+  match (prog.decls[d].kind) {
+    case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      for (i32 f = 0; f < fields.len(); f++) { out = out + tyNamesJoined(src, lx, fields[f].type); }
+      for (i32 m = 0; m < methods.len(); m++) {
+        out = out + tyNamesJoined(src, lx, methods[m].returnType);
+        for (i32 p = 0; p < methods[m].params.len(); p++) {
+          out = out + tyNamesJoined(src, lx, methods[m].params[p].type);
+        }
+      }
+    }
+    case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      for (i32 v = 0; v < variants.len(); v++) {
+        for (i32 f = 0; f < variants[v].fields.len(); f++) {
+          out = out + tyNamesJoined(src, lx, variants[v].fields[f].type);
+        }
+      }
+      for (i32 m = 0; m < methods.len(); m++) {
+        out = out + tyNamesJoined(src, lx, methods[m].returnType);
+        for (i32 p = 0; p < methods[m].params.len(); p++) {
+          out = out + tyNamesJoined(src, lx, methods[m].params[p].type);
+        }
+      }
+    }
+    case Func(nameTok, returnType, params, body, exported, typeParams): {
+      out = out + tyNamesJoined(src, lx, returnType);
+      for (i32 p = 0; p < params.len(); p++) { out = out + tyNamesJoined(src, lx, params[p].type); }
+    }
+    else: { }
+  }
+  return out;
+}
+
+/** Whether any name in a tab-delimited list is a bearing type. */
+bool holdsBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
+  if (held.indexOf("Cli") >= 0 && listMentions(held, "Cli")) { return true; }
+  if (held.indexOf("Core") >= 0 && listMentions(held, "Core")) { return true; }
+  for (i32 t = 0; t < tyCount; t++) {
+    if (!bearing[t]) { continue; }
+    if (listMentions(held, tyName[t])) { return true; }
+  }
+  return false;
+}
+
+/** The first bearing type a tab-delimited list names, or "". */
+string firstBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
+  if (listMentions(held, "Cli")) { return "Cli"; }
+  if (listMentions(held, "Core")) { return "Core"; }
+  for (i32 t = 0; t < tyCount; t++) {
+    if (!bearing[t]) { continue; }
+    if (listMentions(held, tyName[t])) { return tyName[t]; }
+  }
+  return "";
+}
+
+/**
+ * Whether a tab-delimited, tab-terminated list holds `name` as a whole entry.
+ *
+ * Whole entry and not a substring: `Cli` appears inside `ClientState`, and a scan that matched it
+ * would report most of `packages/tls` as reaching the host.
+ */
+bool listMentions(string list, string name) {
+  if (name == "") { return false; }
+  return list.indexOf("\t" + name + "\t") >= 0;
+}

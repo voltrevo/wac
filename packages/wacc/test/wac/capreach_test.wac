@@ -1,0 +1,162 @@
+// `wac audit`'s analysis: which files can reach a host capability, and through what.
+//
+// `[§wac-cli-audit-6pn3wtq]` `[§wac-cli-audit-bearing-9km4txr]` `[§wac-cli-audit-sound-3tq8mnp]`
+// `[§wac-cli-audit-denominator-2wq7knx]`
+//
+// **What makes the question answerable is that wac has no ambient authority.** A capability is a
+// funcref field on `Cli` or `Core`; a function not handed one cannot call one, whatever its body
+// says. So `capReachFiles` is a statement about declared types, and these are the shapes it has to
+// get right.
+//
+// ## The direction that must never be wrong
+//
+// *Sealed is never wrong.* The tool over-approximates freely the other way — a file taking a `Cli` to
+// read `argCount` reads as reaching, and that is fine — but a file it clears must genuinely have
+// nothing to perform an effect with. Every case below is written to attack that direction: each one
+// is a way a capability could arrive that a naive scan would miss.
+//
+// ## Why inline sources rather than fixtures on disk
+//
+// The analysis takes `(paths, sources)` and does its own lexing, exactly as `dumpTypeErrors` does —
+// no filesystem, no build. So a case is two strings, and the whole file runs in milliseconds. It also
+// means the graph under test is *exactly* what is written here, with no `std/` closure arriving
+// behind it to make a sealed answer accidental.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { capReachFiles } from "../../src/api.wac";
+import { field, linesOf } from "../../src/text.wac";
+import { Cli, Core } from "std/platform.wac";
+
+/** The status `capReachFiles` gave one path — `reaches`, `sealed`, or "" if it said nothing. */
+string statusOf(string table, string path) {
+  string[] rows = linesOf(table);
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (field(rows[i], 0) == path) { return field(rows[i], 1); }
+  }
+  return "";
+}
+
+/** What it said the path reaches *through*. */
+string viaOf(string table, string path) {
+  string[] rows = linesOf(table);
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (field(rows[i], 0) == path) { return field(rows[i], 2); }
+  }
+  return "";
+}
+
+string[] paths2(string a, string b) { return string[](a, b); }
+string[] paths3(string a, string b, string c) { return string[](a, b, c); }
+
+export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not(Core core, Cli cli) {
+  T t = T.create();
+  string table = capReachFiles(
+    paths2("pure.wac", "uses.wac"),
+    paths2("export i32 twice(i32 n) { return n * 2; }\n",
+           "import { Cli } from \"std/platform.wac\";\nexport i32 go(Cli c) { return 0; }\n"));
+  t.eqStr(statusOf(table, "pure.wac"), "sealed", "a file with no capability in any signature");
+  t.eqStr(statusOf(table, "uses.wac"), "reaches", "a file taking a `Cli`");
+  t.eqStr(viaOf(table, "uses.wac"), "Cli", "and it should say through what");
+  return t.report();
+}
+
+export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_struct(Core core, Cli cli) {
+  // **The case a signature scan misses, and it is not hypothetical.**
+  // `packages/platform/src/stream.wac` has `Cli cli;` in `Sink`, and `packages/fs/src/fs.wac` has an
+  // enum variant `Host(Cli cli)`. A file handed one of those holds the entire capability set without
+  // ever writing the word `Cli` — and the audit of `packages/wac/src/wac.wac` finds four such files,
+  // reaching via `Fs`, `Sink` and `Reader`.
+  T t = T.create();
+  string table = capReachFiles(
+    paths2("holder.wac", "user.wac"),
+    paths2("import { Cli } from \"std/platform.wac\";\nexport struct Holder { Cli cli; i32 n; }\n",
+           "import { Holder } from \"./holder.wac\";\nexport i32 use(Holder h) { return h.n; }\n"));
+  t.eqStr(statusOf(table, "holder.wac"), "reaches", "the struct that holds it");
+  t.eqStr(statusOf(table, "user.wac"), "reaches",
+          "the file that only takes the holder — it has the capability and never names it");
+  t.eqStr(viaOf(table, "user.wac"), "Holder", "and it should name the type that carried it");
+  return t.report();
+}
+
+export string test_an_enum_variant_carries_a_capability_as_a_field_does(Core core, Cli cli) {
+  // `Fs.Host(Cli cli)` is the real one. A closure over struct fields alone would clear every holder
+  // of an `Fs`, which is most of `packages/box`.
+  T t = T.create();
+  string table = capReachFiles(
+    paths2("backing.wac", "caller.wac"),
+    paths2("import { Cli } from \"std/platform.wac\";\n"
+           + "export enum Backing { Host(Cli cli), Memory(i32 size) }\n",
+           "import { Backing } from \"./backing.wac\";\nexport i32 pick(Backing b) { return 0; }\n"));
+  t.eqStr(statusOf(table, "caller.wac"), "reaches", "a variant's field is a way in");
+  return t.report();
+}
+
+export string test_a_method_that_answers_a_capability_makes_its_type_bearing(Core core, Cli cli) {
+  // Holding the type is enough when a method hands the capability back — `Fs.onHost(Cli, i64)` is the
+  // way in and a method answering one would be the way out.
+  T t = T.create();
+  string table = capReachFiles(
+    paths2("vend.wac", "taker.wac"),
+    paths2("import { Cli } from \"std/platform.wac\";\n"
+           + "export struct Vend { i32 n;\n  Cli give(this) { return this.n as~ Cli; }\n}\n",
+           "import { Vend } from \"./vend.wac\";\nexport i32 t(Vend v) { return 0; }\n"));
+  t.eqStr(statusOf(table, "taker.wac"), "reaches", "a method's return is a way out");
+  return t.report();
+}
+
+export string test_a_type_whose_name_starts_with_cli_is_not_a_capability(Core core, Cli cli) {
+  // **The substring trap.** `Cli` is inside `ClientState`, and a scan matching on substrings would
+  // report most of `packages/tls` as reaching the host. The list is tab-delimited and searched with
+  // the separators, which is the whole reason for that format.
+  T t = T.create();
+  string table = capReachFiles(
+    paths2("client.wac", "uses.wac"),
+    paths2("export struct ClientState { i32 seq; }\nexport struct Corefile { i32 n; }\n",
+           "import { ClientState, Corefile } from \"./client.wac\";\n"
+           + "export i32 f(ClientState s, Corefile c) { return s.seq; }\n"));
+  t.eqStr(statusOf(table, "client.wac"), "sealed", "`ClientState` is not `Cli`");
+  t.eqStr(statusOf(table, "uses.wac"), "sealed", "`Corefile` is not `Core`");
+  return t.report();
+}
+
+export string test_the_summary_states_the_denominator(Core core, Cli cli) {
+  // `issues/system/0268a` is what an instrument that reports its hits and not what it looked at
+  // costs. This one has to say both, every time — including when the answer is none.
+  T t = T.create();
+  string table = capReachFiles(
+    paths2("a.wac", "b.wac"),
+    paths2("export i32 one() { return 1; }\n", "export i32 two() { return 2; }\n"));
+  string[] rows = linesOf(table);
+  string summary = "";
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (rows[i] != "" && rows[i].slice(0, 1) == "#") { summary = rows[i]; }
+  }
+  t.isTrue(summary != "", "there is no summary line at all");
+  t.isTrue(summary.indexOf("0 of 2 file(s)") >= 0,
+           "the summary should state both numbers even when nothing reaches: " + summary);
+  return t.report();
+}
+
+export string test_the_analysis_can_say_sealed_at_all(Core core, Cli cli) {
+  // **The canary, and every case above needs it.** An analysis that answered `reaches` for everything
+  // would pass four of the five tests here, and one that answered `sealed` for everything would pass
+  // the other two. This asserts the two answers both occur in one graph, so neither degenerate
+  // implementation is green.
+  T t = T.create();
+  string table = capReachFiles(
+    paths3("pure.wac", "uses.wac", "alsopure.wac"),
+    paths3("export i32 twice(i32 n) { return n * 2; }\n",
+           "import { Cli } from \"std/platform.wac\";\nexport i32 go(Cli c) { return 0; }\n",
+           "export string name() { return \"x\"; }\n"));
+  i32 sealed = 0;
+  i32 reaches = 0;
+  string[] rows = linesOf(table);
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (field(rows[i], 1) == "sealed") { sealed = sealed + 1; }
+    if (field(rows[i], 1) == "reaches") { reaches = reaches + 1; }
+  }
+  t.eqI32(sealed, 2, "two files should be sealed");
+  t.eqI32(reaches, 1, "and exactly one should reach");
+  return t.report();
+}
