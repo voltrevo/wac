@@ -228,3 +228,96 @@ every host.
 longer true. What is left is one defect with a reproduction, which is smaller than the issue it is
 written in — so either this closes and the narrowing is refiled, or the title changes to the narrowing.
 That is agent-c's to decide, since it is their issue and their probe; recorded here rather than acted on.
+## 2026-08-26: the asymmetry is two call sites, and the narrowing is not the bug — agent-a
+
+Correcting my own note above. It said `sayCoverage` "narrows to the walked `*_test.wac`" as though one
+rule were applied wrongly. It is two call sites in `packages/wac/src/testrun.wac`:
+
+    :935   single file   sayCoverage(core, covTable, hit, string[0]())   — no narrowing at all
+    :1044  directory     sayCoverage(core, covTable, hit, files)         — the walked test files
+
+So the file form counts **everything in the closure** and the directory form counts **only the test
+files**. Neither is "the code under test".
+
+**Why the file form looked right in my measurement, and why that was luck.** The ROT13 project's test
+imported its library and nothing else — no `std/platform.wac` anywhere in the test closure — so the
+unnarrowed table happened to hold exactly the two files a reader cares about, and read `12 of 14`. In
+this repository a test file reaches `wactest/assert.wac` and through it `std/platform.wac`, so the
+same unnarrowed table reads `6 of 292 points (2%)`, which is the number `sayCoverage`'s own header
+quotes.
+
+**So removing the narrowing is not the fix**, and I implied it might be. It would make every directory
+run in this repository useless while making my toy project correct.
+
+### What to narrow to
+
+Not `src.roots`: that is `""` for every file which does not write `@/`, deliberately — `design/lang/0009`
+D7 — so it is absent for most projects rather than merely sometimes.
+
+The available exact test is the one `wac audit`'s `groupOf` already uses: **built-in or not**, `std/`,
+`core` and `core/`, plus dropping the generated `.cache/wac-aggregate-…` entry. That keeps the library
+under test and drops the 292 points of platform.
+
+### The choice this makes, stated before making it
+
+Under that rule a Git-mapped dependency's files **are** counted: they are neither built-in nor the
+reader's. Defensible — they are code the tests execute, and a dependency with no coverage is worth
+seeing — but it is a decision rather than an oversight, and it should be a sentence in the report
+rather than something a reader infers from a denominator.
+
+The alternative is to count only files under the entry's own project, which needs a project root that
+D7 says will often not be there.
+
+### Both call sites are wrong, in opposite directions — measured
+
+The file form does not merely differ from the directory form. Run in this repository rather than on a
+toy project:
+
+    $ wac test --allow-read --coverage packages/codec/test/wac/codec_test.wac
+          14 / 73   packages/wactest/src/assert.wac
+           5 / 284  std/platform.wac
+           7 / 29   packages/fmt/src/itoa.wac
+          27 / 30   packages/codec/src/hex.wac      ← the rows a reader wanted
+          75 / 76   packages/codec/src/base64.wac
+          79 / 84   packages/codec/src/base32.wac
+           0 / 91   packages/fmt/src/ftoa.wac
+           0 / 68   packages/fmt/src/bigint.wac
+
+So: **the file form inflates the denominator with the whole closure** — 284 points of platform and 159
+of `fmt` that nothing in `codec`'s tests was ever going to reach — and **the directory form deflates it
+to the test files alone**. One is unusable because the percentage is about the standard library, the
+other because the code under test is missing. Neither answers *how much of my code do my tests reach*.
+
+That also disposes of the fix I suggested above. Narrowing by *built-in or not* repairs the directory
+form and leaves the file form counting `fmt/ftoa.wac`, which is not a built-in and is not the subject
+either.
+
+### The rule this wants already exists, in the ledger
+
+`tools/wac/covledger.wac` scopes coverage by a **path prefix** and identifies tests with `isTest` —
+`contains(file, "/test/") || endsWith(file, "_test.wac")`. Thirty-odd `cov_ledger.wac` programs use it.
+So there is a convention, and `wac test --coverage` is the one coverage consumer not following it.
+
+Derivable from the target with no new configuration:
+
+1. **Always drop the built-ins and the generated aggregate** — `std/`, `core`, `core/`, and the
+   `.cache/wac-aggregate-…` entry, which is a file nobody wrote.
+2. **If the target has a `/test/` segment, narrow to what precedes it.**
+   `packages/codec/test/wac` and `packages/codec/test/wac/codec_test.wac` both give `packages/codec`,
+   which is the package whose coverage the reader asked about.
+3. **Otherwise keep everything left after step 1**, which is the external-project case: `src/main.wac`
+   and `src/rot13.wac` counted, `std/platform.wac` not.
+
+Both call sites take the same rule, which is what makes the file and directory forms agree — the
+disagreement this issue is named for.
+
+### Recommended, not taken
+
+This is a decision about what the number *means*, and `issues/system/0241b` is an adjacent open one
+about the same thing: a file imported across a package boundary is measured once per importer and never
+as a whole. Picking a rule here could contradict whatever that concludes, so this is a recommendation
+with the measurement behind it rather than a change.
+
+**One part is not a decision, whichever rule wins: the report must say what it counted.** It prints a
+percentage with no statement of scope today, which is how `12 of 14` and `4 of 6` for one run went
+unnoticed. `issues/system/0268a` is the same failure in the capability ledger.
