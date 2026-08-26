@@ -164,6 +164,22 @@ i32 magicAt(u8[] b) {
   return -1;
 }
 
+/**
+ * A version this run is not, on a file that names one, is refused.
+ *
+ * **Both sides are supplied by the test, since 2026-08-26, and that is the point rather than a
+ * workaround.** No host publishes `WAC_VERSION` any more — `native/v8` did, from cargo's default
+ * `0.1.0`, and stopped, because a version nobody had decided was leaking into an artefact format and
+ * making one host's output differ from the other two's in the only line they were allowed to share.
+ * The operator's ruling is to not define one for now.
+ *
+ * So the rule under test is dormant in ordinary use and is not gone: **only two versions that both
+ * exist can differ.** With nothing published, nothing is refused — which is what
+ * `test_an_app_stamped_with_no_version_still_runs` holds. This one supplies a version to both sides
+ * through the environment, which is the seam the hosts use, and checks the refusal still works the day
+ * somebody defines one. Written this way rather than deleted because the deferral is "for now": a
+ * check that is unreachable *and* untested rots, and this one costs a variable on a shell line.
+ */
 export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "app-skew");
@@ -196,12 +212,92 @@ export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli
   t.isTrue(put.ok(), "could not write the edited artefact — " + put.message);
   cli.setExecutable(dir + "/old", true).wait();
 
-  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/old'");
+  // `WAC_VERSION` on the shell line is what a host would have set. The binary passes an exported one
+  // through untouched — it never had a reason to overwrite the caller's, and now it has none of its
+  // own to prefer.
+  Exec ran = sh(cli, "WAC_VERSION=9.9.9-this-run PATH='" + dirOf(binaryPath(cli))
+                     + "':/usr/bin:/bin '" + dir + "/old'");
   t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
   t.eqI32(ran.status, 1, "a version mismatch should be refused: " +
           string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
   t.isTrue(contains(string.fromBytes(ran.stderr), "0.0.0-not-this-one"),
            "the refusal should name the version that built it: " + string.fromBytes(ran.stderr));
+  t.isTrue(contains(string.fromBytes(ran.stderr), "9.9.9-this-run"),
+           "the refusal should name the version running it: " + string.fromBytes(ran.stderr));
+
+  // **And the same file is not refused when this run names no version**, which is the half that
+  // stopped being hypothetical: it is every invocation on every host today. Same artefact, same
+  // command, `WAC_VERSION` simply absent.
+  Exec quiet = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/old'");
+  t.isTrue(quiet.ran(), "the shell did not run — " + quiet.error);
+  t.eqI32(quiet.status, 0, "a run that names no version cannot refuse for one: " +
+          string.fromBytes(quiet.stdout) + string.fromBytes(quiet.stderr));
+  t.eqStr(trimmed(string.fromBytes(quiet.stdout)), "an app ran",
+          "stdout: " + string.fromBytes(quiet.stdout) + string.fromBytes(quiet.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * An artefact whose version line is *blank* runs, rather than being called unmarked.
+ *
+ * **This is what every host but `native/v8` writes today.** The stamp comes from `WAC_VERSION`, which
+ * `native/v8/src/main.rs` sets and no other host does, so `wac app` on a Deno- or Node-hosted `wac`
+ * produced `# wac-app ` with nothing after it — and `app-run` answered *has a module in it but no
+ * `# wac-app ` line — not built by `wac app`* about a file it had just built. Unrunnable by every
+ * host, including the one that made it. Reported 2026-08-26 against a hosted build outside the
+ * repository; `issues/system/0230a` carries the stamp half, which is a separate decision.
+ *
+ * `builtBy` answering `""` was the whole of it: one answer for *no marker line* and for *a marker
+ * line naming no version*, read by the caller as the first. So the assertion is that a blank stamp
+ * reaches the program — the version check below it already tolerates the blank in the other
+ * direction and could never be reached.
+ *
+ * Written by editing rather than by building on another host, for the same reason the case above
+ * edits: this suite has one `wac` and the artefact's bytes are what the claim is about. The edit is
+ * the exact string the silent hosts emit.
+ */
+export string test_an_app_stamped_with_no_version_still_runs(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-blank");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
+  Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
+  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  FileResult got = cli.readFile(dir + "/thing").wait();
+  t.isTrue(got.ok, "could not read the artefact back — " + got.error);
+  if (!got.ok) { return t.report(); }
+  i32 cut = magicAt(got.bytes);
+  string head = "";
+  for (i32 i = 0; i < cut; i++) { head = head + string.fromCodepoint(got.bytes[i]); }
+  i32 mark = indexOf(head, "# wac-app ");
+  t.isTrue(mark >= 0, "the artefact carries no version line");
+  if (mark < 0) { return t.report(); }
+  i32 eol = mark;
+  while (eol < head.len() && head.slice(eol, eol + 1) != "\n") { eol = eol + 1; }
+  // The trailing space is kept and nothing follows it — `APP_MARK` exactly, which is the line
+  // `preamble("")` writes.
+  string edited = head.slice(0, mark) + "# wac-app " + head.slice(eol, head.len());
+  u8[] out = u8[edited.len() + (got.bytes.len() - cut)]();
+  u8[] eb = edited.toBytes();
+  for (i32 i = 0; i < eb.len(); i++) { out[i] = eb[i]; }
+  for (i32 i = 0; i < got.bytes.len() - cut; i++) { out[eb.len() + i] = got.bytes[cut + i]; }
+  Change put = cli.writeFile(dir + "/blank", out).wait();
+  t.isTrue(put.ok(), "could not write the edited artefact — " + put.message);
+  cli.setExecutable(dir + "/blank", true).wait();
+
+  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/blank'");
+  t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
+  t.eqI32(ran.status, 0, "a blank stamp should not be refused: " +
+          string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
+  // **The program ran, not merely that nothing was refused.** A status of 0 with no output would
+  // also satisfy the line above, and that is the shape a wrong fix takes.
+  t.eqStr(trimmed(string.fromBytes(ran.stdout)), "an app ran",
+          "stdout: " + string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
 
   cli.remove(dir, true).wait();
   return t.report();

@@ -722,20 +722,30 @@ fn main() {
         // SAFETY: single-threaded, before V8 starts and before any payload runs.
         unsafe { std::env::set_var("WAC_COMPILER_ID", compiler_id()) };
     }
-    // **The binary's own version, for the same reason and by the same route.** `wac app` stamps it
-    // into the executable it writes and `wac app-run` refuses a file stamped with another — a check
-    // that has to survive the two being different installations, so it cannot be a constant either
-    // side compiles in. Both are the wac program now, and this is the only thing in that pair only
-    // the host knows.
+    // **No `WAC_VERSION` here, and that is the ruling rather than an omission.** This set it from
+    // `env!("CARGO_PKG_VERSION")` until 2026-08-26, so `wac app` stamped `# wac-app 0.1.0` into every
+    // executable this binary wrote — and **no other host stamped anything**, because no other host has
+    // a Cargo package to read. Two `wac` commands built from one program produced artefacts differing
+    // in exactly that line, which is the one thing about them that was allowed to differ and the one
+    // thing that did.
+    //
+    // The operator's answer is to not define a version yet: *"we should avoid defining it for now, so
+    // the correct output is the one that omits a version"*. `0.1.0` was never a version anybody had
+    // decided — it is cargo's default, carried into an artefact format by the accident of this host
+    // being the one written in Rust. So the blank the other hosts write is right and this was wrong.
+    //
+    // **The skew check stays and is dormant, not dead.** `app-run` still compares, and its rule is that
+    // only two versions which both *exist* can differ — so with nothing published, nothing is refused,
+    // and the day a version is defined it starts working with no change here. `packages/wac/src/app.wac`
+    // has that rule; the environment variable is still the seam, and this is simply no longer a host
+    // that fills it. A caller who exports one anyway is passed through, which is how the skew case is
+    // exercised in `tools/wac/app_test.wac`.
     //
     // **Not `WAC_COMPILER_ID`, though it is right there and is a stronger key.** It hashes the seed's
     // bytes as well, so it changes whenever anyone rebuilds the compiler — which in this repository is
     // several times a day, and would make every `app` artefact stale by the afternoon. The version is
-    // the coarser question and the one that was being asked.
-    if std::env::var_os("WAC_VERSION").is_none() {
-        // SAFETY: as above.
-        unsafe { std::env::set_var("WAC_VERSION", env!("CARGO_PKG_VERSION")) };
-    }
+    // the coarser question and the one that was being asked. Recorded because it is the first thing to
+    // reach for if the deferral above is ever revisited, and it is the wrong thing to reach for.
 
     if SEED.is_some() {
         start_v8();

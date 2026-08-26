@@ -785,10 +785,18 @@ async function produceApp(
         (grants.net === true ? NODE_NET : "") +
           `import { runLauncherNode } from "${nodeRuntime}";\n` +
           `import * as wt from "node:worker_threads";\n` +
-          `import { readFile, writeFile, stat, readdir, mkdir, rm, rename, open } from "node:fs/promises";\n` +
+          // **`lstat` and `chmod` were missing until 2026-08-26**, and `runLauncherNode` declares both
+          // as *required* — the `as unknown as` below is what let an object short of two of them
+          // compile. Neither failed loudly: `setExecutable` answered `FAULT_UNSUPPORTED` — *this
+          // filesystem has no mode bits to set* — on an ordinary POSIX one, so `wac app` wrote a file
+          // it could not make executable; and `linkStat` answered a **zeroed `Stat`** for a file that
+          // is there, so `isFile` was false and `size` was 0 with nothing said. A wrong answer, not a
+          // refusal. The Deno target has neither bug because it reaches `Deno.*` directly and injects
+          // nothing.
+          `import { readFile, writeFile, stat, lstat, chmod, readdir, mkdir, rm, rename, open } from "node:fs/promises";\n` +
           `await runLauncherNode(\n` +
           `  wt as unknown as Parameters<typeof runLauncherNode>[0],\n` +
-          `  { readFile, writeFile, stat, readdir, mkdir, rm, rename, open } as unknown as Parameters<typeof runLauncherNode>[1],\n` +
+          `  { readFile, writeFile, stat, lstat, chmod, readdir, mkdir, rm, rename, open } as unknown as Parameters<typeof runLauncherNode>[1],\n` +
           `  process as unknown as Parameters<typeof runLauncherNode>[2],\n` +
           `  ${JSON.stringify(workerSource)},\n` +
           `  ${JSON.stringify(grants)},\n` +

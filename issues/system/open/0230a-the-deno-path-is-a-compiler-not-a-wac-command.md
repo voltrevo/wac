@@ -673,3 +673,124 @@ hosted build shells out to `deno bundle`, which fetches `@esbuild/<platform>` fr
 the workflow this criterion wants to lead with has a network step the binary does not. That is a reason
 to fix the bundler before reordering the page, not a reason for the order — and it is the last thing on
 this issue's list either way.
+
+## 2026-08-26: `wac app` is byte-identical across hosts except for one line, and that line breaks it — agent-a
+
+The operator's expectation, and it is the right one:
+
+> The deno-based wac and v8-based wac, when producing an executable for another user program, should
+> produce byte identical executables. Both assume there is an ambient `wac` command, these can be
+> backed by different hosts, but those different hosts should do the same thing.
+
+**Nearly true, and worth recording how nearly.** One entry program, `wac app`-ed on three hosts:
+
+| built by | bytes |
+|---|---|
+| Deno-hosted `wac` | 245,060 |
+| Node-hosted `wac` | 245,060 — **identical to the Deno one** |
+| native binary | 245,065 |
+
+Remove line 2 from the first and third and they are **identical, 245,049 bytes each**. The whole
+difference is:
+
+    deno    # wac-app
+    native  # wac-app 0.1.0
+
+Cross-flavour execution works in the direction that can be tested today: with the Deno-hosted `wac` as
+the ambient one on `PATH`, the **native-built** artefact runs and prints its output. So the
+"any flavour runs it" property holds; what does not is the stamp.
+
+### Why the stamp is empty, and why that is a decision rather than work
+
+`WAC_VERSION` is set in `native/v8/src/main.rs` and nowhere else, from `env!("CARGO_PKG_VERSION")`.
+That file's own note says why it is the host's job: *"a check that has to survive the two being
+different installations, so it cannot be a constant either side compiles in… this is the only thing in
+that pair only the host knows."*
+
+The JS hosts have no Cargo, so there is nothing for them to read, and **the version has to come from
+somewhere that is not a second copy.** `native/v8/Cargo.toml` is the only version string in the tree.
+Three ways, and the third is the one to want:
+
+- **`build.ts` reads `Cargo.toml` and injects the string.** Cheapest, and wrong in the way this
+  repository minds: a hosted build made from a checkout would stamp the version of a binary nobody
+  built, and the file the JS host reads would be one it has no other reason to know about.
+- **A version constant in wac, compiled into the program.** Removes the host from the question — but
+  the note above is right that it must not be a constant either side compiles in, because then the
+  stamp says what the *program* was built from and the check is asking about the *installation*.
+- **`wac:install` writes the version into `$WAC_HOME/install.json5`, and every host reads it from
+  there.** It already writes that file. The version then belongs to the installation, which is what
+  the check has always been asking about, and a host that was never installed — a build run straight
+  out of a checkout — correctly publishes nothing.
+
+The third also answers a question the first two dodge: **what the version of a Deno-hosted `wac` even
+is.** It is not the binary's, because there is no binary. It is the installation's.
+
+### Fixed here, because it is not the same question
+
+An empty stamp made the artefact **unrunnable by every host, including the one that built it**:
+
+    $ ./app_deno
+    wac: ./app_deno has a module in it but no `# wac-app ` line — not built by `wac app`
+
+`builtBy` answers `""` both for *no marker line* and for *a marker line naming no version*, and
+`appRun` read it as the first. The version check five lines below already reasons correctly about the
+blank in the other direction — *"a host that does not say its version cannot refuse for it"* — and
+could never be reached, because the conflated test had already rejected the file. Split into
+`hasAppMark` (presence) and `builtBy` (content), with the same tolerance added the other way: only two
+versions that both exist can differ. `tools/wac/app_test.wac` has the case, canaried.
+
+So a hosted-built app runs everywhere as of today, and the stamp above would make the bytes match too.
+
+### And two capabilities the Node target never had
+
+`packages/platform/build.ts`'s Node launcher injected an fs object short of `lstat` and `chmod`, both
+of which `runLauncherNode` declares as **required** — the `as unknown as` cast is what let it compile.
+Neither failed in a way anyone would see:
+
+    node wac app … -o thing   wac: cannot make thing executable — this filesystem has no mode bits to set
+    cli.linkStat(a real file)  deno → isFile=yes size>0=yes
+                               node → isFile=no  size>0=no
+
+The second is the bad one: a **zeroed `Stat` for a file that is there**, which is a wrong answer rather
+than a refusal. Fixed. The Deno target has neither, because it reaches `Deno.*` directly and injects
+nothing — so this was never a difference between what the hosts *are*, only between what one of them
+was handed.
+
+**The general shape, for the next injected boundary:** a required field lost to `as unknown as` on a
+capability whose failure mode is a default value. The type said `lstat`, the caller did not pass it,
+and the reader got a zeroed struct. Worth a test that asks each host the same question about the same
+file rather than a type that a cast can silence.
+
+### Ruled 2026-08-26: no version, so the blank is the correct output — the operator
+
+The three options above are moot, and the answer is none of them:
+
+> for versioning, we should avoid defining it for now, so the correct output is the one that omits a
+> version
+
+Which inverts what the section above assumed. It read the native binary's `# wac-app 0.1.0` as the
+right answer and the hosted `# wac-app ` as the gap to close. **It is the other way round:** `0.1.0` is
+`native/v8/Cargo.toml`'s default, not a version anybody decided, and it reached an artefact format by
+the accident of that host being the one written in Rust. Three hosts wrote nothing because they had
+nothing to write, which was correct, and one wrote a number because cargo requires a field.
+
+Done, and the three hosts now produce byte-identical `wac app` output:
+
+- `native/v8/src/main.rs` no longer sets `WAC_VERSION`. The block is replaced by the reasoning, kept
+  because "not `WAC_COMPILER_ID`, though it is right there" is the first wrong turn available to
+  anybody revisiting this.
+- `packages/wac/src/app.wac`'s header says the blank is correct rather than describing a host that
+  fills it.
+- `spec/cli/wac.md` `[§wac-cli-app-skew-3vq9mkt]` keeps the rule and adds the state: only two versions
+  that both exist can differ, and today neither does.
+
+**The check is dormant, not deleted**, which is the one judgement call in here. "For now" is not
+"never", the rule is spec'd, and it costs a comparison that is always false. What it must not become is
+unreachable *and* untested, so `test_an_app_built_by_another_version_is_refused` supplies both sides
+through `WAC_VERSION` on the shell line — the same seam a host would use — and a second assertion in the
+same test runs the identical artefact with the variable absent and requires it to *work*. That pair is
+the whole rule: refuse when two versions disagree, run when either is missing.
+
+If the deferral ever ends, `install.json5` is where a version should come from rather than any of the
+three options above — it is the installation's number, and the installation is what the check has always
+been asking about. Recorded, not recommended.

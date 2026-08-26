@@ -313,6 +313,14 @@ belongs to the binary that reads it and wac is unstable by choice, so `app-run` 
 in the preamble with its own and stops. Running it anyway would trap somewhere inside a module built
 against a different contract, which is a worse message than the one it could have given.
 
+**Only two versions that both exist can differ, and today neither does.** No version is defined: a host
+publishes one through `WAC_VERSION` and none does, so `wac app` writes the mark with nothing after it
+and `app-run` refuses nothing for skew. That is the correct output rather than a gap — `native/v8` used
+to publish cargo's default `0.1.0`, which was not a decision anybody had taken, and it made that host's
+artefact differ from every other host's in the single line they were otherwise identical in. The rule
+above is written for the day a version is defined and holds unchanged until then: a blank on either
+side is a version that was never claimed, not a version that disagrees.
+
 The module is found by scanning for the first `\0asm`: shell text cannot contain a NUL, so there is
 no length header to keep in step and no second file. `app-run` is its own command rather than
 `wac thing` because `./thing` has to hand *itself* to `wac`, and a bare stem would collide with the
