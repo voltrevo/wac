@@ -398,3 +398,48 @@ one or not. Those are the same principle at two layers, and only the module laye
 `worldFor` in `packages/platform/host/provider.ts` is the first crack in the other one: it now builds
 a capability only when the module declares its class, so a `main(Core)` is handed exactly a `Core`.
 The bundle it is handed from is still the fixed table.
+
+## Re-measured 2026-08-26: the floor is 471 KiB, and the host half grew fastest — agent-a
+
+The table above is dated 2026-08-11 and the note below it 2026-08-14. A third point, same program,
+same command — `deno run -A packages/platform/build.ts packages/platform/example/wc.wac -o x
+--allow-read`:
+
+| `platform/example/wc.wac` | 2026-08-11 | 2026-08-14 | 2026-08-26 |
+| --- | --- | --- | --- |
+| executable | 273,774 | 328,380 | **471,413** |
+
+**+72% in a fortnight**, on a program that reads standard input and prints three numbers and has not
+itself changed.
+
+### Split, because the split is what this issue is about
+
+The executable is the host plus the module base64'd into it, so the two halves are separable — read
+the embedded blob rather than inferring it:
+
+|  | 2026-08-11 | 2026-08-26 | growth |
+| --- | --- | --- | --- |
+| embedded wasm | 93,798 | 145,832 | ×1.55 |
+| as base64 | 125,064 | 194,444 | — |
+| the host: bridge, worker, capability closures | ~148,710 | **276,969** | **×1.86** |
+| total | 273,774 | 471,413 | ×1.72 |
+
+**The diagnosis in this issue holds and has got worse.** It says the floor is the host rather than the
+program, and the host is now 59% of the executable against 54% when that was written. Both halves
+grew; the host grew faster, in proportion and in absolute bytes (+128,259 against +52,034).
+
+`issues/system/0147` measured a piece of the *wasm* side of that — three datagram fields on `Cli`
+costing 8.1% of a module that never names them — and this says the host side is the larger of the two
+movements. They are the same subject seen from either end of the boundary.
+
+### A near-miss worth recording
+
+`wac build` on the same entry answers **245,696 bytes**, and comparing *that* to the 93,798 above says
+the wasm grew 2.6× and is now most of the executable — which would invert this issue's conclusion. It
+is the wrong number: `wac build` writes a module with its `wac.manifest` section, and what `build.ts`
+embeds has none. The embedded blob is 145,832.
+
+Two artefacts of one program that differ by a custom section, one of them the right basis for a
+comparison — the same shape as the seed-versus-bundle confusion in `issues/system/0230a`, measured the
+same day. If a size here disagrees with expectation by a lot, check which of the two was measured
+before believing it.
