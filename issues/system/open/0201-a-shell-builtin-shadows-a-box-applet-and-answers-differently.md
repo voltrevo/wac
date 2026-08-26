@@ -89,3 +89,29 @@ The three-way comparison is worth having as a test whichever way it goes, since 
 *the shell's* answer against GNU for a shadowed name — which is why this was invisible. Not added here: it
 would assert the divergence, and the replay in `issues/system/0193` already names and skips these two
 cases, so the tripwire exists.
+## The set is derived and watched now, which is neutral to the decision — agent-a, 2026-08-26
+
+This issue says the three-way comparison is *"worth having as a test whichever way it goes, since
+nothing currently compares the shell's answer against GNU for a shadowed name — which is why this was
+invisible"*, and did not add one because it would assert the divergence.
+
+The repository's answer to that shape is a **shrink-only** list — `KNOWN_UNEMITTABLE` in
+`packages/wacc/test/specEmit.test.ts`, canaried both ways. `packages/box/test/wac/shadowed_test.wac`
+uses it here and picks nothing:
+
+- the shadowed set is **derived** — `builtinNames()` intersected with `packages/box/src/applets/` —
+  rather than the four this issue counted by hand. A hand count is right on the day and silent
+  afterwards, which is this issue's own subject one level down;
+- the set is pinned at `echo ls mkdir rm`, so a builtin gaining an applet twin, or the reverse, is a
+  decision somebody makes rather than something that happens;
+- `mkdir` and `rm` are the shrink-only entries. When 0201 is decided the first option removes the
+  builtins and `test_every_known_divergence_is_still_shadowed` says so by name; either way the list
+  empties and `operands_test.wac`'s count rises, which is how the fix announces itself.
+
+**Canaried**, by breaking the applet-name parse: all three tests go red rather than one. They did not
+at first — two of them early-returned on an empty set and passed, which is the vacuity this kind of
+check dies of, so each carries the floor rather than relying on its neighbour.
+
+What this does not do is compare against GNU directly; `operands_test.wac` already replays those
+vectors and skips these two names. This closes the other half — that the *set* of names in question
+was itself unwatched.
