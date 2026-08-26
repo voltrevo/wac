@@ -294,6 +294,8 @@ const GRANT_READ: i32 = 1;
 const GRANT_WRITE: i32 = 2;
 const GRANT_NET: i32 = 4;
 const GRANT_ENV: i32 = 8;
+/// Running a host program — `Cli.exec`. See `GRANT_RUN` in `std/platform.wac`.
+const GRANT_RUN: i32 = 16;
 
 const FAULT_NONE: i32 = 0;
 const FAULT_NOT_FOUND: i32 = 1;
@@ -586,13 +588,32 @@ fn run_seed(args: &[String]) -> i32 {
         eprintln!("wac: the built-in program carries no wac.manifest section — build the seed with packages/platform/native.ts");
         return 1;
     };
-    let manifest: Manifest = match serde_json::from_str(&text) {
+    let mut manifest: Manifest = match serde_json::from_str(&text) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("wac: the built-in manifest is not one — {e}");
             return 1;
         }
     };
+    // **The built-in program holds every capability, and this host parses no `--allow-*` at all.**
+    //
+    // It is the toolchain — the payload this binary was built around — so the question "may it read a
+    // file" is the same question as "may this binary run", which the person invoking it has already
+    // answered. What is *not* settled here is what a program it goes on to load may do, and that is
+    // the point: `load_module` narrows to the loader's grants intersected with what is asked, so with
+    // the loader holding everything the effective set is exactly what the seed decided. **One place
+    // decides, and it is written in wac.**
+    //
+    // The alternative — this host reading `--allow-run` off the command line — was what
+    // `test_command` did, and it is why a whole test runner lived in Rust: the fall-through could not
+    // grant, so anything needing a capability had to be reimplemented on the host to obtain one.
+    // Baking the answer here instead of parsing it puts the decision in the program, where the rest of
+    // the command surface already is. `issues/system/0264c`, `issues/system/0257c`.
+    manifest.grants.read = true;
+    manifest.grants.write = true;
+    manifest.grants.env = true;
+    manifest.grants.net = true;
+    manifest.grants.run = true;
     as_child.argv = args.iter().map(|a| a.as_bytes().to_vec()).collect();
     run_as_with(&manifest, wasm, &text, as_child)
 }
@@ -611,58 +632,6 @@ fn run_seed(args: &[String]) -> i32 {
 /// --allow-read prog.wac --allow-read` runs a program that may read and is passed the string.
 fn run_command(rest: &[String]) -> i32 {
     build_and_call(rest, Entry::Main)
-}
-
-/// `wac test [--allow-…] <file.wac>` — compile a file of wac tests and run them.
-/// Every `*_test.wac` under `dir`, sorted, so a run is the same twice.
-///
-/// **By name, not by directory.** A `test/` folder holds probes and fixtures as well as tests —
-/// 56 of this repository's 140 files under `test/wac` export nothing runnable and exist to be
-/// driven from a host — so walking directories would report each of them as an error. The suffix
-/// is exact where it matters: 83 files here export a `test*` and end in `_test.wac`, and the one
-/// that does not is `wactest`'s own fixture, which fails on purpose and must stay out of a suite.
-fn collect_tests(dir: &std::path::Path, out: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut names: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-    names.sort();
-    for p in names {
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // Nothing anybody wants compiled, and `target` in particular is enormous.
-        if p.is_dir() {
-            if !name.starts_with('.') && name != "node_modules" && name != "target" {
-                collect_tests(&p, out);
-            }
-        } else if name.ends_with("_test.wac") {
-            out.push(p.display().to_string());
-        }
-    }
-}
-
-/// The `test*` exports a file declares, as `(name, params)`.
-///
-/// A scan rather than a compile, because this runs *before* anything is built — it is what decides
-/// what the aggregate below imports. The shape it looks for is the one `run_tests` will accept:
-/// `export string test…(…)`. A parameter list may span lines, so it is read to the first `)`; that is
-/// safe because the only types a wac test signature ever carries are `Core` and `Cli`, measured
-/// across all 1 960 of them.
-fn test_exports_of(path: &str) -> Vec<(String, String)> {
-    let Ok(src) = std::fs::read_to_string(path) else { return Vec::new() };
-    let mut out = Vec::new();
-    for (at, _) in src.match_indices("export string test") {
-        // Only at the start of a line — the same words inside a comment or a doc block are prose.
-        if src[..at].chars().rev().take_while(|c| *c != '\n').any(|c| !c.is_whitespace()) {
-            continue;
-        }
-        let rest = &src[at + "export string ".len()..];
-        let Some(open) = rest.find('(') else { continue };
-        let name = rest[..open].trim();
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            continue;
-        }
-        let Some(close) = rest[open..].find(')') else { continue };
-        out.push((name.to_string(), rest[open + 1..open + close].to_string()));
-    }
-    out
 }
 
 /// One entry that imports every test file and re-exports its tests, for a single build.
@@ -812,52 +781,6 @@ fn test_module_key(entry: &str, sources: &[(String, Vec<u8>)], flags: &[String],
     h
 }
 
-/// This process's CPU time so far, self plus every child it has waited for, in milliseconds.
-///
-/// **Wall time ranks by whoever else was running.** `wac test` reports what each file cost so that "no
-/// slow tests" has a ranking, and the suite runs four of these at once on a machine three agents share
-/// — so the wall time of a process-heavy file is two to eight times its work, unevenly, and the
-/// ranking it produces is a ranking of contention. Measured 2026-08-19: the suite's own per-file
-/// numbers summed to **456s against a 219s wall**, and `native_hostfs_test.wac` was reported at 60.2s
-/// where a directory pass puts its run at 7.7s. Two days of "why is this test slow" went to the top of
-/// that list.
-///
-/// CPU time does not move when a neighbour runs. `cutime`/`cstime` cover children this process has
-/// reaped, which is every `Cli.exec` — they wait — so a test that spends its time in `ssh` or `deno` is
-/// still counted. Read from `/proc/self/stat` rather than through a crate: fields 14-17, after the
-/// comm field, which can itself contain spaces and is therefore skipped by its closing parenthesis.
-///
-/// **A child's CPU is charged when it is *reaped*, not while it runs**, and that is why the two halves
-/// are reported apart. A test that leaves a daemon running — `echod_test.wac` starts Deno peers — hands
-/// its CPU to whichever file happens to reap it, and the suite duly charged 49.1s to
-/// `v8host_test.wac`, the last file of that chunk, which costs 1.6s when run on its own. Split, that
-/// reads as "0.4s here and 48.7s in children" and the reader can see it is not v8host's.
-///
-/// It is also worth knowing what this does *not* fix: it says nothing about **waiting**. Four copies of
-/// one chunk put `echod_test.wac` at 2.0-5.4s of CPU against 33.6-97.5s of wall, all of it blocked on a
-/// port — no swapping, ten major faults in the whole run. That is why wall is printed beside it rather
-/// than dropped.
-fn cpu_millis() -> (u128, u128) {
-    let Ok(text) = std::fs::read_to_string("/proc/self/stat") else { return (0, 0) };
-    let Some(after) = text.rsplit_once(')') else { return (0, 0) };
-    let fields: Vec<&str> = after.1.split_whitespace().collect();
-    // `after.1` starts at field 3 (state), so utime is index 11 and cstime index 14.
-    let at = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok()).unwrap_or(0);
-    // `sysconf(_SC_CLK_TCK)` is 100 on every Linux this runs on, and getting it right matters less
-    // than being consistent: the number is only ever compared with another from the same machine.
-    ((at(11) + at(12)) as u128 * 10, (at(13) + at(14)) as u128 * 10)
-}
-
-/// How many built modules the shared directory keeps.
-///
-/// Sixty was chosen when only directory aggregates landed here — about fifty-one chunks in a suite
-/// pass. Single files now key into the same directory, and there are ninety-odd `*_test.wac` in the
-/// tree plus whatever `wac run` builds, so sixty evicted the thing about to be asked for. **Measured
-/// on 2026-08-19: sixty entries were 30 MB**, half a megabyte each, so two hundred is about 100 MB of
-/// a filesystem with seventeen free — and `issues/system/0136`, the day the disk filled, is the reason
-/// this is a number with a measurement beside it rather than "plenty".
-const KEEP_MODULES: usize = 200;
-
 /// A built aggregate from the cache, or `None`.
 ///
 /// **Why this exists.** `wac test <dir>` compiles the directory's aggregate every run, and for a small
@@ -904,6 +827,16 @@ fn remember_module(key: u64, wasm: &[u8]) {
     sweep_modules(&dir);
 }
 
+/// How many built modules the cache keeps.
+///
+/// Sixty was chosen when only directory aggregates landed here — about fifty-one chunks in a suite
+/// pass. Single files now key into the same directory, and there are ninety-odd `*_test.wac` in the
+/// tree plus whatever `wac run` builds, so sixty evicted the thing about to be asked for. **Measured
+/// on 2026-08-19: sixty entries were 30 MB**, half a megabyte each, so two hundred is about 100 MB of
+/// a filesystem with seventeen free — and `issues/system/0136`, the day the disk filled, is the reason
+/// this is a number with a measurement beside it rather than "plenty".
+const KEEP_MODULES: usize = 200;
+
 /// Keep the newest `KEEP_MODULES` and remove the rest — the same rule, and the same reason, as the
 /// compiled-artefact sweep above: nothing else would ever bound this.
 fn sweep_modules(dir: &std::path::Path) {
@@ -927,555 +860,6 @@ fn filetime_set(path: &std::path::Path, when: std::time::SystemTime) -> std::io:
     let f = std::fs::OpenOptions::new().append(true).open(path)?;
     f.set_modified(when)?;
     Ok(())
-}
-
-fn write_aggregate(
-    files: &[String],
-    which: &[usize],
-    to: &std::path::Path,
-) -> Option<(String, Vec<usize>)> {
-    let up = "../".repeat(to.parent()?.components().count());
-    let mut imports = vec![format!(
-        "import {{ Cli, Core }} from \"std/platform.wac\";"
-    )];
-    let mut wrappers = Vec::new();
-    // Which files ended up in it, by index into `files`: one with no tests contributes nothing, and
-    // the suffixes have to keep pointing at the right path.
-    let mut carried = Vec::new();
-    for &i in which {
-        let f = &files[i];
-        let tests = test_exports_of(f);
-        if tests.is_empty() {
-            continue;
-        }
-        let aliased: Vec<String> = tests
-            .iter()
-            .map(|(n, _)| format!("{n} as impl{i}_{n}"))
-            .collect();
-        imports.push(format!("import {{ {} }} from \"{up}{f}\";", aliased.join(", ")));
-        for (n, params) in &tests {
-            let ps = params.trim();
-            let args: Vec<&str> = if ps.is_empty() {
-                Vec::new()
-            } else {
-                ps.split(',').filter_map(|p| p.trim().split_whitespace().last()).collect()
-            };
-            wrappers.push(format!(
-                "export string {n}__f{i}({ps}) {{ return impl{i}_{n}({}); }}",
-                args.join(", ")
-            ));
-        }
-        carried.push(i);
-    }
-    if wrappers.is_empty() {
-        return None;
-    }
-    let source = format!("{}\n\n{}\n", imports.join("\n"), wrappers.join("\n"));
-    std::fs::create_dir_all(to.parent()?).ok()?;
-    std::fs::write(to, &source).ok()?;
-    Some((to.display().to_string(), carried))
-}
-
-/// Compile `entry` once, and hand back the module, its manifest text and the parsed manifest.
-///
-/// The build half of `build_and_call`, extracted so a caller can run one module more than once —
-/// `issues/system/0192`, where a directory of test files becomes one build and one instantiation per
-/// file rather than one build *and* one instantiation per file.
-///
-/// The coverage table comes back with it, because the counters live in the instance and the table is
-/// written beside the module: reading it after the run has returned finds nothing.
-fn build_module(
-    flags: &[String],
-    entry: &str,
-    coverage: bool,
-) -> Result<(Vec<u8>, String, Manifest, Option<String>), i32> {
-    sweep_stale_runs();
-    let dir = std::env::temp_dir().join(format!("wac-build-{}", std::process::id()));
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("wac: cannot make a working directory — {e}");
-        return Err(1);
-    }
-    let stem = dir.join("prog");
-    let mut build = vec![
-        "build".to_string(),
-        entry.to_string(),
-        "-o".to_string(),
-        stem.display().to_string(),
-        "--quiet".to_string(),
-    ];
-    if coverage {
-        build.push("--coverage".to_string());
-    }
-    build.extend(flags.iter().cloned());
-    start_v8();
-    let built = run_seed(&build);
-    if built != 0 {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err(built);
-    }
-    let out = match std::fs::read(dir.join("prog.wasm")) {
-        Err(e) => {
-            eprintln!("wac: the build wrote nothing to run — {e}");
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err(1);
-        }
-        Ok(bytes) => bytes,
-    };
-    let Some(text) = manifest_in(&out) else {
-        eprintln!("wac: the module just built describes itself wrongly");
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err(1);
-    };
-    let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else {
-        eprintln!("wac: the module just built describes itself wrongly");
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err(1);
-    };
-    let cov = if coverage { std::fs::read_to_string(dir.join("prog.cov")).ok() } else { None };
-    let _ = std::fs::remove_dir_all(&dir);
-    Ok((out, text, manifest, cov))
-}
-
-fn test_command(rest: &[String]) -> i32 {
-    // The flags are read here as well as in `build_and_call`, because discovery has to happen
-    // before any build and the target may be absent entirely — `wac test` with no argument is the
-    // thing a person types first.
-    let mut i = 0;
-    while i < rest.len()
-        && (rest[i].starts_with("--allow-")
-            || rest[i] == "--coverage"
-            || rest[i] == "--verbose"
-            || rest[i] == "--ignore"
-            || rest[i] == "--filter")
-    {
-        // `--filter` and `--ignore` carry a value, so stepping one at a time would leave the
-        // pattern looking like the path and send a directory to the compiler.
-        if rest[i] == "--filter" || rest[i] == "--ignore" {
-            i += 1;
-        }
-        i += 1;
-    }
-    let mut flags: Vec<String> = rest[..i].to_vec();
-    // **A flag after the path is a flag, not a target.** Reading flags only up to the first argument
-    // that is not one made `wac test packages/fs/ --allow-write` count `--allow-write` as a file — one
-    // that does not exist, so one that "did not run" — and printed a phantom entry in the summary that
-    // reads as a failing test, with the grant silently absent from the run that did happen. Neither
-    // half says "the flag is in the wrong place", and every other tool here takes them in any position.
-    // `tools/wac/testcli_test.wac`.
-    let mut targets: Vec<String> = Vec::new();
-    let mut j = i;
-    while j < rest.len() {
-        if rest[j].starts_with('-') {
-            flags.push(rest[j].clone());
-            // `--filter` carries a value, and moving the flag without it leaves the pattern looking
-            // like a second directory — which discovery then reports as a file that did not run.
-            if (rest[j] == "--filter" || rest[j] == "--ignore") && j + 1 < rest.len() {
-                j += 1;
-                flags.push(rest[j].clone());
-            }
-        } else {
-            targets.push(rest[j].clone());
-        }
-        j += 1;
-    }
-    let filter_used = flags
-        .iter()
-        .position(|f| f == "--filter")
-        .and_then(|k| flags.get(k + 1))
-        .cloned();
-    // **`--ignore` is discovery's, and does not reach the build.** It answers "which of the files
-    // under this directory are not this run's", which is a question about the walk; `--filter` is
-    // per-file and does reach it. Passing this one through would have the compiler read a
-    // comma-separated list as an entry path.
-    let ignored: Vec<String> = flags
-        .iter()
-        .position(|f| f == "--ignore")
-        .and_then(|k| flags.get(k + 1))
-        .map(|v| v.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
-        .unwrap_or_default();
-    if let Some(k) = flags.iter().position(|f| f == "--ignore") {
-        flags.drain(k..=(k + 1).min(flags.len() - 1));
-    }
-    // **No `./` stripping here any more.** It was a workaround for `issues/lang/0134` — a leading
-    // dot-slash reached the compiler's import resolver and came back as "an import of a file that
-    // was not supplied" — and the compiler normalises its entry now, so the path is passed as the
-    // caller spelled it.
-    // **Every remaining argument, not one.** A caller with a set of files — `tools/mutate.ts`
-    // hands over the tests a mutant could possibly have broken — would otherwise invoke this once
-    // per file and add up the answers itself, which is the runner's job and not theirs.
-    if targets.is_empty() {
-        targets.push(".".to_string());
-    }
-    let target = targets.join(", ");
-
-    if targets.len() == 1 && !std::path::Path::new(&targets[0]).is_dir() {
-        // **`--ignore` applies here too.** This path skips the walk, so the filter below never sees
-        // it, and `wac test --ignore a.wac a.wac` ran the file — the code disagreeing with its own
-        // comment one screen down. A caller assembling both lists from the same source must not get
-        // a different answer for naming one file than for naming its directory.
-        if ignored.iter().any(|ig| &targets[0] == ig) {
-            println!("0 files: 0 ok, 1 not run (--ignore)");
-            return 0;
-        }
-        // Rebuilt rather than passed through as `rest`, so a flag written after the path reaches the
-        // build in the position it expects.
-        let mut one = flags.clone();
-        one.push(targets[0].clone());
-        let code = build_and_call(&one, Entry::Tests);
-        // You named this file and asked for a test it does not have. During a directory walk the
-        // same answer is ordinary; here it is a typo, and exiting 0 would hide it.
-        return if code == 5 { 1 } else { code };
-    }
-
-    let mut files = Vec::new();
-    for t in &targets {
-        let path = std::path::Path::new(t);
-        if path.is_dir() {
-            collect_tests(path, &mut files);
-        } else {
-            // Named directly, so it runs whether or not it is called `*_test.wac` — discovery's
-            // naming rule is for finding files, not for refusing the one you pointed at.
-            files.push(t.clone());
-        }
-    }
-    files.dedup();
-    // **Applied after the walk, and to a named file too.** A path given directly is normally run
-    // whatever it is called, but a caller assembling both lists — `tools/runTests.wac` names the
-    // packages and the lane in one command — means the two must not contradict each other. The
-    // match is a prefix, as `deno test --ignore` is, so a directory excludes what is under it.
-    let before = files.len();
-    if !ignored.is_empty() {
-        files.retain(|f| !ignored.iter().any(|ig| f == ig || f.starts_with(&format!("{ig}/"))));
-    }
-    let skipped_by_ignore = before - files.len();
-    if files.is_empty() {
-        // **Said differently when `--ignore` is what emptied it.** "No tests under packages/" is a
-        // wrong answer when there were some and this run excluded every one, and it sends the
-        // reader to look for a naming mistake that is not there.
-        if skipped_by_ignore > 0 {
-            eprintln!(
-                "wac: --ignore excluded all {skipped_by_ignore} test file(s) under {target}"
-            );
-        } else {
-            eprintln!(
-                "wac: no tests under {target} — a test file is named `*_test.wac` and exports \
-                 `test*()` answering a string, empty for a pass"
-            );
-        }
-        return 1;
-    }
-    if files.len() == 1 {
-        let mut args = flags;
-        args.push(files.remove(0));
-        let code = build_and_call(&args, Entry::Tests);
-        // **A walk that found one file still says how many it found.** The summary below is printed for
-        // two files and was not printed for one — and a caller counting files across many walks then
-        // loses the single-file ones silently. `tools/runTests.wac` runs this lane as a queue of
-        // directories and adds the counts up; five of the thirty-eight hold one file, so its own total
-        // could say it was short without being able to say by how much.
-        //
-        // Reached only when the target was a *directory*: naming a file gets the plain run, one screen
-        // up, and no summary — which is what a person typing one file wants.
-        println!(
-            "1 file: {}",
-            match code {
-                0 => "1 ok",
-                3 => "0 ok, 1 with failures",
-                4 => "0 ok, 1 needing a host oracle",
-                5 => "0 ok, 1 passed over by --filter",
-                _ => "0 ok, 1 that did not run",
-            }
-        );
-        return code;
-    }
-
-    // **One build for the whole walk, and one instantiation per file** — `issues/system/0192`.
-    //
-    // It used to be a build *and* an instantiation each, and the build is what costs: `packages/box`'s
-    // sixteen files took 40.9s that way and 11.1s as one build, with the assertions in them totalling
-    // under two seconds. Every file in a directory imports very nearly the same graph, so compiling
-    // once and instantiating per file pays for the graph once and keeps everything the per-file shape
-    // was for — a trap unwinds one instance, a failing file is named on its own line, and the summary
-    // still counts files.
-    //
-    // **Instantiating per file rather than running the lot in one instance** is deliberate: it is what
-    // keeps a file's tests from seeing anything an earlier file left behind, which is the property the
-    // old shape had for free and the one a reader assumes.
-    //
-    // `--coverage` keeps the old path. Its counters are per module and the table is written beside it,
-    // so one aggregate would report one file's worth of positions for all of them.
-    let mut grants: Vec<String> = Vec::new();
-    let mut coverage = false;
-    let mut loud = false;
-    let mut only: Option<String> = None;
-    let mut flag_iter = flags.iter();
-    while let Some(a) = flag_iter.next() {
-        match a.as_str() {
-            "--coverage" => coverage = true,
-            "--verbose" => loud = true,
-            // The value travels with it, and taking the flag without the value would leave the
-            // pattern looking like a grant.
-            "--filter" => only = flag_iter.next().cloned(),
-            _ => grants.push(a.clone()),
-        }
-    }
-    // **One aggregate per directory, not one for the walk.** The first version built a single module
-    // for everything `wac test packages/` found, and that is the wrong unit: the build is shared, but
-    // then every one of 294 files instantiates a module containing the whole repository. Measured, it
-    // took the lane from about ten minutes to 409s, where a directory-sized module takes `packages/box`
-    // from 40.9s to 11.3s — the same 3.6× the whole walk did not get. A module is cheap to instantiate
-    // in proportion to its size, so the group has to be small enough that its files share a graph.
-    let mut groups: Vec<(std::path::PathBuf, Vec<usize>)> = Vec::new();
-    for (i, f) in files.iter().enumerate() {
-        let dir = std::path::Path::new(f).parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-        match groups.iter_mut().find(|(d, _)| *d == dir) {
-            Some((_, members)) => members.push(i),
-            None => groups.push((dir, vec![i])),
-        }
-    }
-    // Which group each file belongs to, and the module for each group once it is built.
-    let mut group_of: Vec<usize> = vec![0; files.len()];
-    for (g, (_, members)) in groups.iter().enumerate() {
-        for &i in members {
-            group_of[i] = g;
-        }
-    }
-    let mut built: Vec<Option<((Vec<u8>, String, Manifest, Option<String>), Vec<usize>)>> = Vec::new();
-    for (g, (_, members)) in groups.iter().enumerate() {
-        if coverage || members.len() < 2 {
-            // A lone file has nothing to share a build with, and `--coverage` keeps the old path: its
-            // counters are per module and the table is written beside it, so one aggregate would
-            // report one file's positions for all of them.
-            built.push(None);
-            continue;
-        }
-        let at = std::path::Path::new(".cache")
-            .join(format!("wac-aggregate-{}-{g}_test.wac", std::process::id()));
-        let made = write_aggregate(&files, members, &at).and_then(|(agg, carried)| {
-            // **The same aggregate, compiled once across runs.** `issues/system/0204`: this file is
-            // written and compiled on every `wac test`, and for a small directory that is most of the
-            // cost — `packages/url/test/wac` was 674ms of compile in an 887ms run. The key is the
-            // aggregate's text, the content of every `.wac` it reaches, the grants, and the seed that
-            // would compile it, so a hit is the same bytes a fresh build would have produced.
-            let (sources, whole) = closure_of(std::path::Path::new(&agg));
-            // `None` when the scan could not read something an import named: see `closure_of`. A
-            // directory of tests that reaches a mapped dependency compiles every run, which is the
-            // cost of the cache being honest about what it covers.
-            let key = whole.then(|| test_module_key(&agg, &sources, &grants, false));
-            let m = match key.and_then(cached_module) {
-                // **V8 is started here as well, because the fresh path starts it inside
-                // `build_module`.** Without this a hit panicked with "Invalid global state" the moment
-                // it tried to *run* what it had not compiled — and it looked like a 4ms directory with
-                // no failures, which is what a run that never happened looks like from the outside.
-                Some(wasm) => {
-                    start_v8();
-                    manifest_in(&wasm)
-                        .and_then(|text| {
-                            serde_json::from_str::<Manifest>(&text)
-                                .ok()
-                                .map(|man| (wasm.clone(), text, man, None))
-                        })
-                }
-                None => {
-                    let fresh = build_module(&grants, &agg, false).ok();
-                    if let (Some(k), Some((wasm, _, _, _))) = (key, fresh.as_ref()) {
-                        remember_module(k, wasm);
-                    }
-                    fresh
-                }
-            };
-            // **A failed aggregate says so.** Falling back to a build per file is the right answer — the
-            // tests still run, and one directory's shared build is an optimisation rather than a
-            // promise — but doing it silently turns a broken aggregate into a directory that is
-            // mysteriously four times slower, with nothing naming the cause. That is the shape this
-            // whole area keeps producing: `issues/lang/0154` was found because its aggregate failed
-            // *loudly*, and `issues/lang/0155`'s fix turned the same defect into this quiet path.
-            if m.is_none() {
-                eprintln!(
-                    "wac: the shared build for {} did not build, so its {} files are being built one at \
-                     a time — slower, and the reason is above",
-                    members
-                        .first()
-                        .and_then(|&i| files[i].rsplit_once('/').map(|(d, _)| d.to_string()))
-                        .unwrap_or_else(|| "this group".to_string()),
-                    members.len()
-                );
-            }
-            // **`WAC_KEEP_AGGREGATE=1` keeps a copy**, because a bug in the aggregate is otherwise
-            // impossible to look at: the file the compiler saw is gone by the time anything fails, and
-            // reconstructing it by hand is a second implementation of `write_aggregate`.
-            // `issues/lang/0154` is the bug that wanted it — a struct name declared three times in one
-            // link makes the emit answer with the wasm header and nothing else, with nothing declined —
-            // and the next step on it is this file, which is the input that does it.
-            //
-            // The copy is `.kept.wac`, not `_test.wac`: the walk collects the latter, so a kept
-            // aggregate under `.cache` would otherwise be read as a test file of its own on the next
-            // run — which is what the removal below is for.
-            if matches!(std::env::var("WAC_KEEP_AGGREGATE").as_deref(), Ok("1")) {
-                let kept = std::path::Path::new(".cache")
-                    .join(format!("wac-aggregate-{}-{g}.kept.wac", std::process::id()));
-                match std::fs::copy(&at, &kept) {
-                    Ok(_) => eprintln!("wac: kept the generated aggregate at {}", kept.display()),
-                    Err(e) => eprintln!("wac: could not keep the aggregate — {}", message_of(&e)),
-                }
-            }
-            // **Removed whether or not it built.** A generated file left in `.cache` is read by the
-            // next `wac test packages/` as a test file of its own, and then imports every test under
-            // it into a run that asked for one directory.
-            let _ = std::fs::remove_file(&at);
-            m.map(|m| (m, carried))
-        });
-        built.push(made);
-    }
-    let mut ok = 0;
-    let mut bad = 0;
-    let mut broken = 0;
-    let mut skipped = 0;
-    let mut filtered_files = 0;
-    // The files worth going back to. Over eighty files a failure has scrolled off the top long
-    // before the summary, and "2 with failures" without saying which is a number you cannot act
-    // on without running the whole thing again.
-    let mut names: Vec<(String, &str)> = Vec::new();
-    // **What each file cost to run, because "no slow tests" needs a ranking.** The aggregate is built
-    // before this loop, so these are run times with no compile in them — which is the number to act
-    // on: a file that is slow because the directory's graph is large is not the file's fault, and a
-    // file that is slow because it emits a thousand modules is.
-    //
-    // **Ranked by CPU rather than by wall**, for the reason `cpu_millis` carries: four of these run at
-    // once and the wall time of a process-heavy file is mostly its neighbours. Both are printed, since
-    // wall is what a person waited and CPU is what the file is answerable for.
-    let mut cost: Vec<(String, u128, u128, u128)> = Vec::new();
-    for (i, f) in files.iter().enumerate() {
-        println!("── {f}");
-        let began = std::time::Instant::now();
-        let (self_began, child_began) = cpu_millis();
-        let code = match &built[group_of[i]] {
-            Some(((bytes, text, manifest, _), carried)) if carried.contains(&i) => run_as_with(
-                manifest,
-                bytes,
-                text,
-                AsChild {
-                    entry: Entry::Tests,
-                    only: only.clone(),
-                    file_suffix: Some(format!("__f{i}")),
-                    shown_entry: Some(files[i].clone()),
-                    loud,
-                    ..Default::default()
-                },
-            ),
-            // In the walk and contributing no test: the same answer the per-file path gave, which is
-            // "named like a test and exports none".
-            Some(_) => 1,
-            None => {
-                let mut args = flags.clone();
-                args.push(f.clone());
-                build_and_call(&args, Entry::Tests)
-            }
-        };
-        let (self_now, child_now) = cpu_millis();
-        cost.push((
-            f.clone(),
-            began.elapsed().as_millis(),
-            self_now.saturating_sub(self_began),
-            child_now.saturating_sub(child_began),
-        ));
-        match code {
-            0 => ok += 1,
-            3 => {
-                bad += 1;
-                names.push((f.clone(), "failures"));
-            }
-            // Nothing this host can run, which is not the file's fault and not a failure.
-            4 => skipped += 1,
-            // Passed over by `--filter`, which during a directory walk is the normal case.
-            5 => filtered_files += 1,
-            // Did not compile, or is named like a test and exports none. Counted apart from a
-            // failing test because they need different work from whoever reads this.
-            _ => {
-                broken += 1;
-                names.push((f.clone(), "did not run"));
-            }
-        }
-    }
-    println!();
-    // A filter that matched nothing in any file is a typo, and answering 0 for it would be a green
-    // run that tested nothing — the failure mode a filter exists to avoid noticing too late.
-    if ok == 0 && bad == 0 && broken == 0 && skipped == 0 {
-        if let Some(pat) = filter_used {
-            eprintln!("wac: no test anywhere under {target} matches --filter {pat}");
-            return 1;
-        }
-    }
-    let mut line = format!("{} files: {ok} ok", files.len());
-    // **Named, not merely subtracted.** A lane that quietly runs fewer files than the reader thinks
-    // is the failure this whole mechanism can produce: the summary would say `220 files: 220 ok`
-    // and the eight most expensive checks in the repository would not have run. So the count of
-    // what was excluded travels with the count of what passed.
-    if skipped_by_ignore > 0 {
-        line += &format!(", {skipped_by_ignore} not run (--ignore)");
-    }
-    if bad > 0 {
-        line += &format!(", {bad} with failures");
-    }
-    // **Split, because the remedies differ.** Both kinds of "nothing ran here" answer 4, so this used
-    // to call a file that wanted `--allow-read` one that wanted a host — see `UNGRANTED_FILES`.
-    let ungranted_files = UNGRANTED_FILES.load(std::sync::atomic::Ordering::Relaxed);
-    let needing_oracle = (skipped as usize).saturating_sub(ungranted_files);
-    if needing_oracle > 0 {
-        line += &format!(", {needing_oracle} needing a host oracle");
-    }
-    if ungranted_files > 0 {
-        line += &format!(", {ungranted_files} needing a grant");
-    }
-    // **Tests, not files**, and counted across the whole walk: a file whose *other* tests passed is
-    // `ok` above, so without this a run that skipped seventeen of them reported nothing but `13 ok`.
-    let ungranted_tests = UNGRANTED_TESTS.load(std::sync::atomic::Ordering::Relaxed);
-    if ungranted_tests > 0 {
-        line += &format!(", {ungranted_tests} test(s) skipped for a grant");
-    }
-    if filtered_files > 0 {
-        line += &format!(", {filtered_files} with nothing matching --filter");
-    }
-    if broken > 0 {
-        line += &format!(", {broken} that did not run");
-    }
-    println!("{line}");
-    if !names.is_empty() {
-        println!();
-        let wide = names.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
-        for (n, why) in &names {
-            println!("   {n:wide$}   {why}");
-        }
-    }
-    // **The slow ones, by name.** A walk that says `42 files: 42 ok` in ninety seconds says nothing
-    // about which of the forty-two spent it, and the whole of "no slow tests in the regular suite"
-    // is a question about individual files. One second is the floor because below it a ranking is
-    // noise, and the count under the floor is stated so this cannot read as "everything else is fast"
-    // when it means "nothing else reached the floor".
-    let mut slow: Vec<&(String, u128, u128, u128)> =
-        cost.iter().filter(|(_, _, mine, kids)| mine + kids >= 1000).collect();
-    if files.len() > 1 && !slow.is_empty() {
-        slow.sort_by(|a, b| (b.2 + b.3).cmp(&(a.2 + a.3)));
-        let under = cost.len() - slow.len();
-        println!();
-        println!(
-            "   {} file(s) cost a second or more of CPU to run — the other {under} did not:",
-            slow.len()
-        );
-        for (f, ms, mine, kids) in slow.iter().take(6) {
-            println!(
-                "     {:>6} cpu ({:>5} here, {:>5} in children) {:>6} wall  {f}",
-                format!("{:.1}s", (*mine + *kids) as f64 / 1000.0),
-                format!("{:.1}s", *mine as f64 / 1000.0),
-                format!("{:.1}s", *kids as f64 / 1000.0),
-                format!("{:.1}s", *ms as f64 / 1000.0)
-            );
-        }
-        if slow.len() > 6 {
-            println!("     ... and {} more above the floor", slow.len() - 6);
-        }
-    }
-    if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
 }
 
 /// What a trap said, as a tail to append to a line about it: `": the ring is full"`, or `""`.
@@ -2130,13 +1514,15 @@ fn main() {
     if stem == "uninstall" {
         std::process::exit(uninstall_command(&args[2..]));
     }
-    // **The other thing a person does with a compiler.** 125 files here are wac tests — an export
-    // named `test*` answering a `string`, empty for a pass — and every one of them needed a Deno to
-    // run. `harness/wacTestRun.ts` is that convention; this is the same convention with nothing
-    // underneath it.
-    if SEED.is_some() && stem == "test" {
-        std::process::exit(test_command(&args[2..]));
-    }
+    // **`test` is the program's, not the host's.** `issues/system/0257c` ruled that a host may
+    // implement *running a module* and must not implement the *command surface*; `test` was a row in
+    // its table and this interception is what kept it there, so the program's `wac test` never ran on
+    // this binary. `issues/system/0264c` measured where the two disagreed — a report per file against
+    // one aggregate for `--coverage <directory>` — and the 700 lines behind this line are gone.
+    //
+    // What went with them is a capability, not only a duplicate: `test_command` parsed `--allow-*` at
+    // run time, where the fall-through hands the seed its *baked* manifest. That is the open half —
+    // see `0264c`.
     // **`covdump` is back here, and `issues/system/0264c` is why.** It ran in the program from
     // `issues/system/0257c` until 2026-08-25, and that broke thirteen coverage ratchets: the program
     // reaches an exercise through `cli.load`, and a loaded module is granted `run: false` by a policy
@@ -2146,9 +1532,6 @@ fn main() {
     // Running a module and reading the counters it leaves behind is the host's job in a way a command
     // surface is not — the counters are in the instance, and nothing outside it can see them. This
     // stays here until a command-line grant can reach a baked program.
-    if SEED.is_some() && stem == "covdump" {
-        std::process::exit(covdump_command(&args[2..]));
-    }
     // **Whether the engine accepts a module, without running it.** `WebAssembly.validate` has no
     // equivalent in wac, so a test that emits modules and wants to know they are well-formed had to
     // run each one — a fork per module. `packages/wacc/test/wac/corpusemit_test.wac` compiles the
@@ -5905,11 +5288,17 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
                 write: mine.write && (asked & GRANT_WRITE) != 0,
                 env: mine.env && (asked & GRANT_ENV) != 0,
                 net: mine.net && (asked & GRANT_NET) != 0,
-                // **Not inheritable, exactly as for a spawned child.** `GRANT_*` has no bit for
-                // running a host program, and a loaded module that could `exec` would hold the one
-                // authority this narrowing is for. `spawn_instance` in `native/src/main.rs` refuses
-                // it in the same words, and both will gain it the same way.
-                run: false,
+                // **Bounded by the loader's own, like every other bit.** This was `false`
+                // unconditionally while `GRANT_*` had no bit for running a host program — a loaded
+                // module that could `exec` would have held the one authority the narrowing exists
+                // for, and nothing could have granted it deliberately.
+                //
+                // `GRANT_RUN` is that bit. It is not a widening: the intersection with `mine.run` is
+                // the same ceiling every other capability has, so a loader without `run` still hands
+                // over none. What it buys is a test runner able to grant its own oracle the right to
+                // spawn, which is what kept a whole test implementation in this host.
+                // `issues/system/0264c`.
+                run: mine.run && (asked & GRANT_RUN) != 0,
             },
         },
         exports: m.exports.clone(),
@@ -6474,89 +5863,15 @@ fn run_host_program(
     }
 }
 
-// ── Restored 2026-08-25: `covdump` cannot live in the program ─────────────────────────────
-//
-// `issues/system/0257c` moved this into `packages/wac/src/wac.wac`, and that broke **thirteen**
-// coverage ratchets. The program's version loads the exercise with `cli.load`, and a loaded module
-// is granted `run: false` by deliberate policy — `load_module` says so in its own words, and that
-// line predates all of this. So every ledger whose exercise asks an oracle got
-// *the operand oracle did not answer* and measured a fraction of its package.
-//
-// Running a module and reading its counters afterwards is the host's job in a way a command surface
-// is not: the counters live in the instance. It goes back until a command-line grant can reach a
-// baked program — `issues/system/0264c` is that question, and this is the second thing waiting on it.
-fn counters_of(path: &str) -> Result<Vec<i32>, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {path} — {e}"))?;
-    start_v8();
-    let isolate = &mut v8::Isolate::new(Default::default());
-    v8::scope!(let handle_scope, isolate);
-    let context = v8::Context::new(handle_scope, Default::default());
-    let scope = &mut v8::ContextScope::new(handle_scope, context);
-
-    let Some(module) = v8::WasmModuleObject::compile(scope, &bytes) else {
-        return Err(format!("{path} was rejected by the engine"));
-    };
-    let imports = v8::Object::new(scope);
-    let global = context.global(scope);
-    let mod_key = v8::String::new(scope, "__mod").unwrap();
-    global.set(scope, mod_key.into(), module.into()).unwrap();
-    let imp_key = v8::String::new(scope, "__imports").unwrap();
-    global.set(scope, imp_key.into(), imports.into()).unwrap();
-    let src = v8::String::new(scope, "new WebAssembly.Instance(__mod, __imports).exports").unwrap();
-    let Some(exports) = v8::Script::compile(scope, src, None)
-        .and_then(|sc| sc.run(scope))
-        .and_then(|v| v.to_object(scope))
-    else {
-        return Err(format!("{path} did not instantiate — an import it wants is missing"));
-    };
-
-    // The counters are allocated by a call, not by instantiation: skip this and every instrumented
-    // function traps on its first branch with a message about the program rather than the omission.
-    let Some(init) = get_export(scope, exports, "__cov_init") else {
-        return Err(format!("{path} carries no counters — was it built with coverage or tracing?"));
-    };
-    init.call(scope, exports.into(), &[]);
-    if let Some(main) = get_export(scope, exports, "main") {
-        // **A `TryCatch`, because a trap here is expected and tolerated.** The next lines say so: the
-        // counters stand after a trap and they are what was asked for. Without one, V8's default
-        // handler announces the trap on **stdout** — which is the stream `tracestat` prints its one
-        // line of numbers to and `ctcompare` prints its verdict to, and `ct.wac` and
-        // `packages/crypto/test/wac/constanttime_test.wac` both parse. Measured before the fix: a
-        // trapping module gave `tracestat` one stray line and `ctcompare` two, since it reads two
-        // modules through here.
-        let tc = std::pin::pin!(v8::TryCatch::new(scope));
-        let mut tc = tc.init();
-        main.call(&mut tc, exports.into(), &[]);
-        tc.reset();
-    }
-
-    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
-        return Err(format!("{path} has __cov_init and no __cov_len"));
-    };
-    let len = len_fn
-        .call(scope, exports.into(), &[])
-        .and_then(|v| v.to_int32(scope))
-        .map(|v| v.value())
-        .unwrap_or(0);
-    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
-        return Err(format!("{path} has __cov_len and no __cov_get"));
-    };
-    let mut out = Vec::with_capacity(len.max(0) as usize);
-    for i in 0..len {
-        let idx = v8::Integer::new(scope, i);
-        out.push(
-            get_fn
-                .call(scope, exports.into(), &[idx.into()])
-                .and_then(|v| v.to_int32(scope))
-                .map(|v| v.value())
-                .unwrap_or(-1),
-        );
-    }
-    Ok(out)
-}
-
+/// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
+///
+/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
+/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
+/// The aggregated report `--coverage` prints answers a different question — how much was reached —
+/// and cannot say how often.
+///
 thread_local! {
-    /// Whether a counter table has been printed this process — read by `covdump_command`.
+    /// Whether a counter table has been printed this process.
     ///
     /// **`covdump`'s exit status is about the dump, not about the program.** Running through the
     /// ordinary program path means `run_as_with` hands back what `main` returned, and a coverage
@@ -6566,13 +5881,6 @@ thread_local! {
     static COUNTERS_PRINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
-///
-/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
-/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
-/// The aggregated report `--coverage` prints answers a different question — how much was reached —
-/// and cannot say how often.
-///
 /// Written from inside a live run, because the counters are in the instance and the instance is gone
 /// once `run_as_with` has returned. `issues/system/0221`.
 fn print_counters(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) {
@@ -6666,88 +5974,3 @@ fn call_for_counters(
     }
 }
 
-/// `wac covdump <module.wasm> [export…]` — run an instrumented module and print each counter.
-///
-/// **Through the ordinary program path**, which is the whole of `issues/system/0221`. This used to
-/// instantiate with an empty imports object and call `main` with no arguments, so a coverage exercise
-/// could declare no capabilities: `main(Core, Cli)` was not refused, it *failed to instantiate*,
-/// because the imports were absent rather than denied. No exercise could read a corpus off disk, and
-/// `packages/json`'s needs a directory listing. Now the world is built from the manifest and the
-/// grants are the ones baked into it, exactly as for `wac prog.wasm`.
-///
-/// With export names, each is called with its trap caught — see `call_for_counters`. Without, `main`
-/// runs, and a trap in it still prints what was reached.
-fn covdump_command(rest: &[String]) -> i32 {
-    let Some(path) = rest.first() else {
-        eprintln!("usage: wac covdump <module.wasm> [export|export:<cases>…]");
-        eprintln!("       no export names runs `main`; several are called in order, traps caught");
-        eprintln!("       `name:<n>` calls name(0)…name(n-1), each trap caught, for a sweep");
-        return 2;
-    };
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("wac: cannot read {path} — {e}");
-            return 1;
-        }
-    };
-    // **No manifest is not an error here.** `wac compile` and the trace instrumentation write a plain
-    // module, and `tools/wac/ctcompare_test.wac` and `coverage_test.wac` hand those straight to this
-    // command. A module with no manifest declares no capabilities, so instantiating it with no imports
-    // is not a limitation for it — it is the correct world. That is the path this command used to take
-    // for *everything*, which is what `issues/system/0221` was about.
-    let Some(text) = manifest_in(&bytes) else {
-        if rest.len() > 1 {
-            eprintln!("wac: {path} carries no wac.manifest section, so it has no world to call \
-                       {} in — build it with `wac build`", rest[1..].join(", "));
-            return 2;
-        }
-        match counters_of(path) {
-            Ok(counters) => {
-                for (i, n) in counters.iter().enumerate() {
-                    println!("{i}\t{n}");
-                }
-                println!("{} counter(s)", counters.len());
-                return 0;
-            }
-            Err(e) => {
-                eprintln!("wac: {e}");
-                return 1;
-            }
-        }
-    };
-    let manifest: Manifest = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("wac: the manifest inside {path} is not one — {e}");
-            return 1;
-        }
-    };
-    // **Parsed here, so a bad count is a usage error rather than a missing export.** Left to
-    // `call_for_counters`, `sweep:many` would come back as "exports no sweep:many" — a message about
-    // the module, naming a fault in the command line.
-    let mut cov_exports: Vec<(String, Option<i32>)> = Vec::new();
-    for a in &rest[1..] {
-        match a.split_once(':') {
-            None => cov_exports.push((a.clone(), None)),
-            Some((name, count)) => match count.parse::<i32>() {
-                Ok(n) if n > 0 => cov_exports.push((name.to_string(), Some(n))),
-                _ => {
-                    eprintln!("wac: {a} — `{count}` is not a case count; a sweep is \
-                               `name:<n>` for some n above zero");
-                    return 2;
-                }
-            },
-        }
-    }
-    start_v8();
-    let code = run_as_with(&manifest, &bytes, &text, AsChild {
-        dump_counters: true,
-        cov_exports,
-        ..Default::default()
-    });
-    // The program's own status is not this command's answer — see `COUNTERS_PRINTED`. A run that
-    // printed a table succeeded at the thing it was asked to do, whatever the exercise returned;
-    // one that printed none failed, and `run_as_with` has already said why.
-    if COUNTERS_PRINTED.with(|p| p.get()) { 0 } else if code == 0 { 1 } else { code }
-}
