@@ -201,3 +201,22 @@ So the next step is not "write Node tests". It is: go through those five, and fo
 exercise, either point the entry at them or add the entry. Some of the surface is very likely Node-
 covered already and recorded as though it were not — which is the same failure as `LINK_STAT`, in the
 opposite direction.
+
+### The five, and what their headers claim — a work list, not a finding
+
+Read from each file's header only, so this is where to *look* rather than what is true. Confirming any
+row means reading the body, which is the same discipline that turned my hand-written host table into
+a wrong one.
+
+| test | header claims | opcodes it plausibly settles on Node |
+|---|---|---|
+| `runtimes_test.wac` | one application, two JavaScript runtimes, the same program built twice | the filesystem and stdio surface its program uses |
+| `node_net_test.wac` | *"The Node host's sockets, against the Deno host's, with a real client attached"* | `CONNECT`, `LISTEN`, `ACCEPT`, `SEND`, `RECV` |
+| `spawn_test.wac` | a child is a handle — `send`, `recv`, `closeFeed`, `exitCode`, `waitAny` | `SPAWN_SELF`, `CLOSE_FEED`, `EXIT_CODE` |
+| `load_test.wac` | loading a module and calling its exports, `issues/system/0240c` | the `load`/`call` pair |
+| `echod_test.wac` | a wac program echoing datagrams, foreign UDP peer | `BIND_DATAGRAM`, `SEND_TO`, `RECEIVE_FROM` |
+
+`node_net_test.wac`'s header also explains why the ledger reads the way it does: *"`platform.test.ts`
+builds the same program for both runtimes and compares them, which is the right shape — but the
+program it uses is `wc`, so it covers the filesystem and stdio and nothing else."* The two-runtime
+comparison has existed for a while and is narrow; the entries point at the wider native ones instead.
