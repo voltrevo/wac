@@ -57,18 +57,29 @@ a binary — and it is a developer fallback rather than the supported route, whi
 line above: that one compiles, and this one is the command.
 
 ```sh
-deno run -A <wac>/packages/platform/build.ts <wac>/packages/wacc/example/wacc.wac \
+deno run -A <wac>/packages/platform/build.ts <wac>/packages/wac/src/wac.wac \
   -o wac --target deno --allow-read --allow-write --allow-run --allow-env --allow-net
 ./wac run main.wac                       # compile and run, no file in between
 ```
 
+**The entry is `packages/wac/src/wac.wac`, and this line named the compiler's old example until
+2026-08-26** — packages/wacc/example/wacc.wac, unbackticked here because it no longer exists and
+`tools/wac/links_test.wac` would fail on it, which is the same trick that file plays on itself.
+`issues/system/0257c` moved the command out of that example, listed this page among the files to
+repoint, and repointed the others. So for a day the one documented Cargo-free way to *have* the command
+named a deleted file. Everything the paragraphs below claim was still true of the program; the reader
+could not reach it.
+
 `--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
 `build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
 built module with the grants that module's own manifest declares. `test --coverage` works here too,
-over a file or a directory, and answers the same table as the binary. `sh` and `update` are still the
-native binary's alone, and **not for a reason that has anything to do with hosts**: the command is
-built from the *compiler's* example, so it carries what the compiler carries. Both are ordinary wac
-programs and belong in it. `issues/system/0257c`.
+over a file or a directory, though a directory answers a narrower table than the binary used to —
+see below. **`sh` and `update` are here too, since 2026-08-26**, which is the second half of
+`issues/system/0257c`: they were never host implementations, only separate payloads the binary
+embedded, so the command carried what the *compiler's* example carried and those two were outside it.
+One program now, and every host has them. Measured on a Deno-hosted build outside this repository:
+`./wac sh -c 'seq 1 20 | grep 7 | wc -l'` answers `2`, and `./wac update` answers
+`nothing to fetch; 0 mapping(s) already locked`.
 Every command they share is held to the same output on all three —
 `packages/wacc/test/wac/commandparity_test.wac`.
 
@@ -92,13 +103,22 @@ issue 22 reported it; `issues/system/0229a` has the measurement and the fix, and
 
 ### What the Deno path is, and is not
 
-**It is the `wac` command now, for everything but `sh` and `update`** — and those two are missing
-because of how the command is built rather than because a host cannot have them (`issues/system/0257c`). That is a change from what this
+**It is the `wac` command now, and since 2026-08-26 that includes `sh` and `update`** — which were
+missing because of how the command was built rather than because a host cannot have them
+(`issues/system/0257c`). That is a change from what this
 section said until 2026-08-25, and the paragraph above is where it happened: one program, built for
 Deno or Node, answering `check`, `compile`, `build`, `bindgen`, `run`, `test` — a file or a directory,
-with or without `--coverage` — and `wac <prog.wasm>`. It is the same wac program the native binary
+with or without `--coverage` — plus `sh`, `update`, `app`, `app-run`, `validate` and `uninstall`, and
+`wac <prog.wasm>`. It is the same wac program the native binary
 carries, so "the same" is by construction rather than by care, and
 `packages/wacc/test/wac/commandparity_test.wac` measures it invocation by invocation anyway.
+
+**One number this changed, and not for the better**: `wac test --coverage <directory>` now reports
+only the `*_test.wac` files the walk found, so the library the tests exercise is missing from the
+table and from the denominator. On a two-file project outside this repository the file form said
+`12 of 14 points (85%)` over `rot13_test.wac` and `rot13.wac`, and the directory form said
+`4 of 6 points (66%)` over the test file alone — same tests, same code, same run.
+`issues/system/0264c` is where the two implementations' disagreement is tracked.
 
 **What is still not the command**: the older, lower-level entry points, which remain because the
 compiler needs an API and not only a CLI. `native.ts` builds, `tools/check.ts` checks with the

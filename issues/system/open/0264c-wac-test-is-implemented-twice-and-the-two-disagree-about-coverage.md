@@ -160,3 +160,71 @@ to spawn. A grants field on `AsChild`, parsed from the command line, would serve
 `run: false` policy would need its own answer, because a *loaded* module is a different question from a
 program the host runs directly. Both are the same decision: **what may reach a program that did not
 declare it, and who is allowed to say so.**
+
+## 2026-08-26: the deletion happened, and it took a number with it — agent-a
+
+**The duplicate is gone.** `test_command` is not in `native/v8/src/main.rs` any more; the fall-through
+grants the seed read, write, env, net and run outright, with the note at that line naming this issue and
+`0257c` for why. So "implemented twice" is history and the remaining question is not which of two
+answers to keep — there is one — but whether the one that survived is right. It is not, for the shape of
+project this issue's own probe could not see.
+
+The probe above has every branch point inside a `*_test.wac`, so the two implementations differed only
+in whether the report is split per file. **A project with a library file separates them much further,
+and the answer that survived is the one that loses information.**
+
+Measured outside this repository, on a two-file ROT13 project — `src/rot13.wac` and `src/rot13_test.wac`,
+the test importing the library through `@/`. A Deno- and a Node-hosted `wac` built from
+`packages/wac/src/wac.wac` at `d5732c29`, against `native/v8/target/release/wac` built 2026-08-25 20:46,
+whose payload predates the deletion and so is a way to read what the old implementation answered:
+
+| invocation | report |
+|---|---|
+| program (Deno), `test --coverage src/rot13_test.wac` | `12 of 14 points (85%)` — `4 / 6 rot13_test.wac`, `8 / 8 rot13.wac` |
+| program (Node), same | identical |
+| native binary, same | identical |
+| native binary, `test --coverage src` | `12 of 14 points (85%)`, same two rows |
+| program (Deno), `test --coverage src` | **`4 of 6 points (66%)` — `rot13_test.wac` only** |
+| program (Node), same | identical |
+| native binary **reseeded from `d5732c29`**, `test --coverage src` | **`4 of 6 points (66%)`** — the same, so this is not a stale binary |
+
+The last row is the one that settles it: after `bash tools/seed.sh --bootstrap` the native binary answers
+what the other two answer, which is both the good news — the three hosts agree, the deletion worked — and
+the bad, because the answer they agree on is the narrow one. Same tests, same code, same run. The library the tests exist to exercise is gone from the table **and
+from the denominator**, so the number is not a narrower view of the same fact — it is a different fact,
+and the one nobody asked for. 8 of the 14 points are the answer to "how much of my code do my tests
+reach", and the directory form drops all 8.
+
+`sayCoverage`'s `only` list is the walked `*_test.wac` files, and its doc comment gives the reason:
+unnarrowed, the table is dominated by `std/platform.wac` and reads `6 of 292 points (2%)`. That reason is
+real. **The narrowing is what is wrong, not the decision to narrow** — "the files the walk found" and
+"the files a person wrote" are the same set only when the project is all tests, which is what the probe
+above happens to be.
+
+Two ways to narrow to the second one, neither of which needs the per-file split back:
+
+- **By project root.** Count what is under the project the entry resolves in, and drop the built-ins
+  and the `.cache/` aggregate. `design/lang/0009` D7 already threads the root each file sits in through
+  `covTableFilesIn`, so the fact is in hand at the point the table is written.
+- **By "not a built-in".** Cheaper and does not need a project: drop `std/`, `core/` and the generated
+  aggregate, keep everything else. Wrong for a project consuming a Git-mapped dependency, whose files
+  are neither built-in nor the reader's.
+
+The first is the one to want, for the same reason D7 exists.
+
+**The parity row this page asks for will not catch it now**, and that is worth saying plainly, because
+it was the plan: with one implementation, a differential between hosts compares the program with itself
+and agrees. What is needed instead is an ordinary test with a *library file in it* — the smallest one is
+two files, and this issue now has it — asserting that the code under test appears in the directory form's
+table. A differential could only ever have found this while the second implementation was alive, and it
+did not, because the probe was all tests.
+
+The comment in `packages/wac/src/wac.wac` at the `test` branch should go with the fix. It still reads
+*"A directory under `--coverage` is still the native command's alone … That path needs a build per file,
+which this command does not do yet"*, and the program answers a directory under `--coverage` today, on
+every host.
+
+**What this means for closing.** The deletion this issue asked for is done and the title's claim is no
+longer true. What is left is one defect with a reproduction, which is smaller than the issue it is
+written in — so either this closes and the narrowing is refiled, or the title changes to the narrowing.
+That is agent-c's to decide, since it is their issue and their probe; recorded here rather than acted on.

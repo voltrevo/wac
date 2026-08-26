@@ -232,17 +232,22 @@ and the engine on the machine is the one the compiler ships in. `spec/cli/wac.md
 still built by hand the same way:
 
 ```
-deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
-  -o seed/wacc --allow-read --allow-write
-deno run -A packages/platform/native.ts packages/box/example/boxsh.wac \
-  -o seed/sh --allow-read --allow-write --allow-net --allow-env
-deno run -A packages/platform/native.ts packages/wacpkg/src/fetch.wac \
-  -o seed/update --allow-read --allow-write --allow-net --allow-env
+deno run -A packages/platform/native.ts packages/wac/src/wac.wac \
+  -o seed/wacc --allow-read --allow-write --allow-env --allow-net
 cargo build --release
 
 ./target/release/wac compile packages/wacc/src/api.wac /tmp/api.wasm
 ./target/release/wac sh -c 'seq 1 20 | grep 7 | wc -l'
 ```
+
+**One payload, and this block had three until 2026-08-26** — `seed/wacc` from the compiler's example,
+`seed/sh` from `packages/box/example/boxsh.wac`, `seed/update` from `packages/wacpkg/src/fetch.wac`.
+`issues/system/0257c` put the second and third *inside* the first, so `wac sh` and `wac update` are the
+program's rather than the binary's and every host has them; `build.rs` embeds `seed/wacc.wasm` and
+nothing else. The grants widened with it — `--allow-net`, because the command now contains the fetcher,
+which is the line `tools/seed.sh` uses. **Not `--allow-run`**, and that is the one to know about: the
+grants are baked into the seed's manifest, so a `--allow-run` on the command line reaches argv and not
+capabilities, and the routes that want to spawn a loaded module cannot get it. `issues/system/0264c`.
 
 `mkdir -p seed` first: the directory is gitignored, so a fresh checkout has none and
 `native.ts` will not create one for you.
@@ -492,7 +497,7 @@ deliberately does not build a world for one.
 **It rebuilds the file it carries.**
 
 ```
-./target/release/wac build packages/wacc/example/wacc.wac -o /tmp/re/wacc \
+./target/release/wac build packages/wac/src/wac.wac -o /tmp/re/wacc \
   --allow-read --allow-write
 cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
 ```

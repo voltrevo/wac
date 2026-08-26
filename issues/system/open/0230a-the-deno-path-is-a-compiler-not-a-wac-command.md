@@ -571,3 +571,105 @@ So one question decides all three:
 
 The second is the one to want. Recorded rather than taken because it changes an artefact other things
 read, and because this issue owns which subcommand lives where.
+
+## 2026-08-26: the eleven criteria, run rather than read — agent-a
+
+Everything below was exercised on a two-file ROT13 project in an empty directory outside this checkout,
+against a Deno-hosted and a Node-hosted `wac` built from `packages/wac/src/wac.wac` at `d5732c29`, both
+offline under `--cached-only`. **Nine of the eleven are met, one has a caveat, and one is a decision this
+issue has not taken.**
+
+| # | criterion | verdict |
+|---|---|---|
+| 1 | a documented Cargo-free Deno-hosted `wac` | **met, and was broken until today** — see below |
+| 2 | a Node-hosted equivalent | met — `--target node`, 2,353 KB, same answers |
+| 3 | `check` `run` `build` `test` `bindgen` `update` | met, plus `sh`, `app`, `app-run`, `validate`, `uninstall` |
+| 4 | native and hosted share semantics | met by construction — one program, and the native duplicate is deleted. One number regressed with the deletion: `issues/system/0264c` |
+| 5 | one project/source resolution | met — `issues/system/0229a` |
+| 6 | `@/` identical for check/run/build/test/bindgen | met, all five run |
+| 7 | tested from root, nested, relative, absolute | met — `packages/platform/test/project.test.ts`, and re-run by hand here |
+| 8 | a Cargo-free user can test and execute | met — `2 passed, 0 failed`, and the built artefact prints `Uryyb, JNP!` |
+| 9 | ordinary offline work fetches no npm | met for the *commands*; **building the hosted command still shells out to `deno bundle`** |
+| 10 | `update` is the only network command | met |
+| 11 | the docs lead with the JS-hosted command for JS/TS projects | **not met, and it is a decision — below** |
+
+Verbatim, to make the row above checkable:
+
+    $ ./wac check src/main.wac
+    src/main.wac: 4 file(s), no diagnostics
+    $ ./wac test src                       # with no .cache/ in the project
+    2 passed, 0 failed
+    1 file: 1 ok
+    $ ./wac test "$PWD/src"                # absolute, also with no .cache/
+    2 passed, 0 failed
+    $ ./wac build src/main.wac -o rot13 && ./wac rot13.wasm
+    rot13.wasm: 244822 bytes from 4 file(s)
+    Uryyb, JNP!
+    $ ./wac bindgen --js src/main.wac out/glue.gen.js && node --check out/glue.gen.js
+    out/glue.gen.js: 296024 bytes
+    $ ./wac sh -c 'seq 1 20 | grep 7 | wc -l'
+    2
+    $ ./wac update
+    wacfetch: nothing to fetch; 0 mapping(s) already locked
+
+**Every item the 2026-08-25 GitHub follow-up listed as remaining is now closed except the bundler.**
+`update` and `sh` are hosted. The fresh-project `.cache/` failure is fixed — the directory is made
+rather than assumed. An absolute directory works, through `beside`. `bindgen` honours its positional
+output, which the help had advertised and the code ignored. `wac --help` prints `run` and `test` once
+each. The `/tmp/wac-run-<pid>` collision across PID namespaces is fixed by a timestamp in the name and a
+sweep that asks age.
+
+### Criterion 1 was broken for a day, by the change that made criterion 3 true
+
+`issues/system/0257c` moved the command out of `packages/wacc/example/wacc.wac`, listed this page and
+`docs/your-own-project.md` among what it touches, and repointed everything except the documentation. So
+the single documented Cargo-free way to *have* the command named a deleted file, and the reader's first
+command failed. Fixed today, along with the same dead path in `native/README.md`, `native/v8/README.md`
+and both `build.rs` headers, and the `native/v8` README's three-payload block, which `0257c` made one.
+
+**The guard for this exists and the path walked past it.**
+`tools/wac/links_test.wac`'s `test_every_backticked_repository_path_names_a_file_that_exists` is exactly
+the check — every backticked repository path in a prose file must name something on disk, hundreds of
+them across the tree, with a floor assertion so the scan cannot quietly stop matching. It did not fire,
+because **it scans backticks and the rotted path was a bare argument inside a ```sh fence.** Prose says
+`packages/platform/native.ts` and gets checked; the command block underneath says the same kind of thing
+with no backticks and does not. I found this by tripping the guard with my own fix, which quoted the dead
+path to explain it — so the check works, and its coverage stops at the boundary where a reader is most
+likely to copy something.
+
+Extending it to fenced blocks is not free: a fence holds output as well as commands, and `native/`'s
+READMEs print paths that are deliberately hypothetical. The narrower version is worth more — **a token
+inside a fence that starts at a directory the repository root has, and ends in a source extension** — which
+is what `rootedPaths` already decides, applied to a different slice of the file.
+
+There is also a stronger shape already in the tree: `packages/platform/test/wac/nativecli_test.wac`
+*runs* the `native.ts` spelling this page documents, so the command is checked rather than the path. The
+hosted-build spelling deserves the same, and it is now cheap to assert — measured here, the Deno target
+builds in **8.7s** under `--cached-only` with esbuild already fetched.
+
+### Criterion 11 is a decision, and it collides with `design/lang/0009` D1
+
+The criterion asks that `docs/your-own-project.md` "presents the JS-hosted command as the natural
+workflow for existing JS/TS projects, with native installation as the standalone workflow". The page
+still opens *"There is one way today, and it needs a checkout of this repository, Deno, and Cargo"* and
+puts the hosted command in a subsection headed "Without Cargo". That is not an oversight: D1 makes
+`deno task wac:install` **the supported way to have the command**, and a page that led with the hosted
+build would contradict a design decision this issue does not own.
+
+The two are not both satisfiable as written, so pick one:
+
+- **Amend D1** to "one command, three hosts; the binary is the standalone packaging", and reorder the
+  page so a reader with Deno or Node already installed never reads about Cargo. This is what the
+  criterion asks for and what the architecture now supports — the binary and the hosted build run the
+  same program, so "supported" attaching to one host is a leftover from when it was the only one that
+  had the whole surface.
+- **Keep D1 and answer the criterion in the issue**, recording that native-first is deliberate because
+  the binary needs no bundler, starts 6–7× faster (`issues/system/0197`) and is one file. Then the page
+  should say *that*, rather than leaving the hosted command looking like a fallback for people who
+  could not install Rust.
+
+**The first, and it is close.** The one honest argument left for native-first is criterion 9's caveat: the
+hosted build shells out to `deno bundle`, which fetches `@esbuild/<platform>` from npm the first time, so
+the workflow this criterion wants to lead with has a network step the binary does not. That is a reason
+to fix the bundler before reordering the page, not a reason for the order — and it is the last thing on
+this issue's list either way.
