@@ -892,9 +892,14 @@ export function cliOf(
     // so a rejection is compiled a second time to get the engine's sentence out of the exception. Only
     // on the failing path, where the module is already known to be small enough to be wrong.
     (module: Uint8Array) => {
-      if (WebAssembly.validate(module)) return "";
+      // `as BufferSource`, which the repository spells the same way in four other places: a
+      // `Uint8Array` over an `ArrayBufferLike` is not an `ArrayBufferView<ArrayBuffer>` to
+      // TypeScript, because the buffer *could* be shared. This one never is — it came from a wac
+      // `u8[]` through `marshal` — and copying it to prove that would copy a module per call.
+      const bytes = module as BufferSource;
+      if (WebAssembly.validate(bytes)) return "";
       try {
-        new WebAssembly.Module(module);
+        new WebAssembly.Module(bytes);
         // Validate said no and compile said yes. Nothing should reach here; saying so beats "" ,
         // which would report the module as accepted by the field whose whole job is the answer.
         return "the engine disagreed with itself about this module";
