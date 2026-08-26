@@ -568,3 +568,32 @@ the table is that nothing here measures the cost of a wide capability struct, wh
 
 Not fixed here: extending the fixtures changes the numbers this issue argues from, and the argument is
 mid-decision. Recorded so the decision is not taken on a slope that flattened for the wrong reason.
+
+### Correcting the section above: it is `cap20` alone, and it stops at ten — agent-a, same day
+
+The note above says the series "stops adding distinct shapes at five" and that `cap10` and `cap20`
+"hold the same five". **Both are wrong**, and the mistake was counting `Pending<T>` return types when a
+shape is the whole `fn[…]` signature — the fields differ by parameter list too, and four of them are
+not `Pending` at all (`fn[void(string)]`, `fn[bool(u8[])]`).
+
+Counted properly:
+
+    fixture   fields   distinct full signatures   signatures emitted   wasm
+    cap1        1              1                        14             82 KB
+    cap5        5              5                        18             96 KB
+    cap10      10             10                        24            111 KB
+    cap20      20             10                        24            115 KB
+
+**`cap10` is correct.** Ten fields, ten distinct signatures. Only `cap20` is short: twenty fields over
+ten signatures, each appearing exactly twice.
+
+Which also explains the emitted counts, where the earlier version left them a coincidence: `cap10` and
+`cap20` both emit 24 because they carry the same ten shapes. The slope is real from 1 to 10 and flat
+from 10 to 20 **because `cap20` adds no shape `cap10` did not have**.
+
+So the conclusion stands and its scope halves: the flat top of the curve is the fixture, not the
+emitter, and `cap20` measures something cheaper than a real twenty-field struct by its own header's
+argument. What needs fixing is one file, and it needs ten more distinct signatures rather than a
+rebuild of the series.
+
+Nothing outside this issue references these fixtures — checked — so changing `cap20` breaks no test.
