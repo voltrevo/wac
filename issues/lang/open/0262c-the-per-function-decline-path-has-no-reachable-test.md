@@ -156,3 +156,61 @@ checker got there first*, and that is a property of today's checker rather than 
 next construct added to the parser ahead of the emitter makes them reachable again, which is exactly
 what the guard is for. So: retire the test's claim, keep the guard, and say in `emit.wac` that its
 declines are defence for a lag that is currently zero.
+
+## A fourth subject, found and fixed within the hour — agent-c, 2026-08-25
+
+Walking the diagnostic codes turned up `P.nope` — a name reached through a *struct* rather than a
+value. `checkMember` had that rule for enums (`E.nope` is a variant that is not there) and not for
+structs, so the checker was silent and the **emitter** declined:
+
+    wacc: cannot emit s1.wac — the exported function `f` is not in the module the emitter
+    produced — unresolved name P on line 1
+
+Which is the per-function decline this page needs a subject for, and it named the function. It is also
+a bug: the reference refuses it in its checker, so wacc was accepting a program it should not. Fixed in
+the same session, along with `P.v` and the typing of `P.m`, so it is no longer a subject.
+
+**That makes four for four**, and the pattern is now the finding rather than an accident:
+
+    an ill-typed operand                        was the emitter, until 0170a
+    a generic instantiated at an enum           was the emitter, until 0260c
+    a name reached through a struct             was the emitter, until this session
+    ...and every other construct tried          caught by the checker or the parser already
+
+Every construct that has ever reached this path did so **because the checker had a gap**, and each one
+stopped reaching it as soon as the gap was closed. So a test pointed at the decline path is a test
+whose subject is a defect, and keeping it green means keeping a defect. That is an argument for
+**retiring** the claim rather than hooking the emitter — and if it is hooked instead, the hook has to
+be a deliberate one that no checker fix can take away, not a program chosen for declining today.
+
+Not proof that the path is dead: an emitter can decline for reasons no checker models, and this is
+evidence about which constructs are *reachable from source*, not about the branch. But four subjects
+and four expiries is the whole evidence anyone has, and it points one way.
+
+## Why that program reaches the emitter at all, measured — agent-c, 2026-08-26
+
+The fixture this page keeps coming back to is `18446744073709551615.nofield`, and it is worth
+recording *why* the checker lets it through, because the answer is a disagreement about the literal
+ladder rather than a missing rule.
+
+    wacc       silent
+    reference  integer literal out of range
+               ^^^^^^^^^^^^^^^^^^^^ 18446744073709551615 exceeds i64 — only u64 can hold it
+
+`spec/spec/types.md:223` says the error is "a decimal literal past **`u64`**'s range", and this value
+is exactly `u64`'s maximum; two lines later, "where nothing is expected of it, a literal keeps the
+width its own notation gives it". Read together those say the literal is a `u64` and the complaint
+should be about `.nofield` — which is what both compilers say when the receiver is a `u64`
+*variable*: wacc *"no such field"*, the reference *"type 'u64' has no field 'nofield'"*.
+
+wacc's `naturalTypeOf` climbs i32 → i64 → unknown, so a value above `i64` has no type here, and a
+member access on an untyped receiver is silent by design. That is the whole of the silence.
+
+**Not fixed, because extending the ladder to `u64` is a language decision and this page is not where
+it should be taken.** It would also change what the differential sees: wacc would report *"no such
+field"* at the member where the reference reports *"out of range"* at the literal — a contradiction
+rather than the miss it is today, which is worse in a sweep even when it is better in a compiler.
+
+Recorded so the next person reads it as a ladder question rather than a missing member rule. Related:
+`mutateCheck.test.ts` prints this as `1 missed of 1 integer literal out of range`.
+

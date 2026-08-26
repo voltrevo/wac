@@ -336,7 +336,46 @@ string[] sources() {
     // is load-bearing for the syntax and was not pinned anywhere: it is one argument that separates
     // this from the construction reading, so it is the case that decides whether the justification is
     // still true. `issues/lang/0265c`.
-    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }");
+    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }",
+    // **A `match` expression whose arms are a subtype pair.** `spec/spec/enums.md` has the arms
+    // unifying exactly as a ternary's branches do, and the *emitter* took the first arm's type as the
+    // block's result and never looked at the rest — so the `else` arm's `Base` landed where a `Sub`
+    // was declared and the engine refused the module: *type error in fallthru[0] (expected (ref null
+    // 2), got (ref null 1))*. The checker said nothing, because it had unified them. Both arms are
+    // called, since taking the first arm's type is right for whichever arm happens to be first.
+    "struct Base { i32 b; } struct Sub : Base { i32 s; } enum E { A, B } " +
+      "export i32 f() { Sub s = Sub(3, 4); Base bb = Base(9); E e = E.B; " +
+      "Base w = match (e) { case A: s, else: bb }; return w.b; } " +
+      "export i32 g() { Sub s = Sub(3, 4); Base bb = Base(9); E e = E.A; " +
+      "Base w = match (e) { case A: s, else: bb }; return w.b; }",
+    // **The rest of that family, both constructs and both orders.** The bug was *which arm came
+    // first*: taking the first arm's type is right for whichever arm happens to be first, so a
+    // one-order test passes on the broken compiler. `spec/spec/enums.md` makes a `match`'s arms unify
+    // exactly as a ternary's, so the two are asked the same four questions — a subtype pair with the
+    // parent first, and a nullable pair each way, whose answers come back as an `i32` because rung 4
+    // compares against a literal and a `P?` is not one.
+    "struct Base { i32 b; } struct Sub : Base { i32 s; } " +
+      "export i32 f(bool c) { Sub s = Sub(3, 4); Base bb = Base(9); Base w = c ? s : bb; return w.b; } " +
+      "export i32 g(bool c) { Sub s = Sub(3, 4); Base bb = Base(9); Base w = c ? bb : s; return w.b; }",
+    "struct P { i32 x; } enum E { A, B } " +
+      "export i32 f(bool c) { P a = P(7); P? b = null; P? r = c ? a : b; return r is null ? 0 : r!.x; } " +
+      "export i32 g(bool c) { P a = P(7); P? b = null; P? r = c ? b : a; return r is null ? 0 : r!.x; }",
+    // **The enum is chosen inside**, because rung 4 hands arguments across the reference's JS
+    // boundary and an enum value does not cross it — *type incompatibility when transforming from/to
+    // JS*. A `bool` does, and the arm is picked from it.
+    "struct P { i32 x; } enum E { A, B } " +
+      "export i32 f(bool c) { P a = P(7); P? b = null; E e = c ? E.A : E.B; " +
+      "P? r = match (e) { case A: a, else: b }; return r is null ? 0 : r!.x; } " +
+      "export i32 g(bool c) { P a = P(7); P? b = null; E e = c ? E.A : E.B; " +
+      "P? r = match (e) { case A: b, else: a }; return r is null ? 0 : r!.x; }",
+    // **An `else` arm written *before* a `case`**, which the checker accepts and nothing ran. The
+    // question is whether a leading `else` swallows the arm after it — a `br_table` is built from the
+    // arms, and "the default is whichever one is spelled `else`" and "the default is the last arm" are
+    // the same sentence until an `else` is not last. Both compilers answer 2 for `A` and 1 for `B`, so
+    // it is the first: `case A` still wins its own variant. Found while walking the match rules for
+    // positions; the ordering is not stated anywhere and the two agreeing is the whole evidence.
+    "enum E { A, B } i32 pick(E e) { match (e) { else: { return 1; } case A: { return 2; } } return 0; } " +
+      "export i32 f() { return pick(E.A); } export i32 g() { return pick(E.B); }");
 }
 
 /** The calls, aligned with `sources()`. */
@@ -609,7 +648,14 @@ string[] calls() {
     "f",
     "f",
     "f",
-    "f");
+    "f",
+    // Both arms of the subtype `match`, then the ternary twin and the nullable pair each way.
+    "f;g",
+    "f true;f false;g true;g false",
+    "f true;f false;g true;g false",
+    "f true;f false;g true;g false",
+    // The leading-`else` match: `f` is the cased variant and `g` is the one the `else` catches.
+    "f;g");
 }
 
 /** The declared return type of `name` in `src`, or `""`. */

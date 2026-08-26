@@ -1,0 +1,4 @@
+// expect: answers f = 5
+// why: the control for `spec/cases/0233` — a `u32` an `f32` holds exactly converts and answers
+// from: issues/lang/0268c
+export f32 f() { u32 x = 5; return x as! f32; }

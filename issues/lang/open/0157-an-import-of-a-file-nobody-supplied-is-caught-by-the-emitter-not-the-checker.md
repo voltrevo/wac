@@ -3,7 +3,7 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
-- **Status:** open — the single-file half is fixed (2026-08-20); the files-based half was attempted and reverted (2026-08-21)
+- **Status:** open — both halves report now (single-file 2026-08-20, files-based 2026-08-25); what is left is the specifiers the files half declines to judge, and that has its own issue
 - **Claimed by:** (nobody — agent-a attempted it 2026-08-21, see the last section)
 - **Symptom:** no error
 
@@ -416,3 +416,44 @@ log has `core/test/hash_test.wac` in it. That was the one I most expected to be 
 
 So: one of six was stale. Worth writing down, because the next person to ask this question should not have
 to re-check the five.
+
+## The files half landed, for plain relative specifiers — agent-c, 2026-08-25
+
+`checkFilesWithIn` already resolved the entry's specifiers through the `Res` (paid by
+`issues/lang/0175a`), so the rule is four lines beside that resolution: a specifier whose target is no
+supplied path is recorded with `C.addUnresolved`, and the `Import` arm in `check.wac` — which has
+reported `errMissingImportFile` (77) at the import's own token since the single-file half — does the
+rest. Nothing new reports from `api.wac`, which is the layering `spec/spec/errors.md` asks for and the
+reason option 2 in "The decision" above was the wrong one.
+
+Measured before and after, through `dumpTypeErrorsFiles`:
+
+    one file, one missing import          0 diagnostics  ->  1, code 77, at the import's line
+    two files, one supplied, one missing  0 diagnostics  ->  1, at the *second* import's line
+    two files, both supplied              0 diagnostics  ->  0
+
+`packages/wacc/test/wac/illtyped_test.wac` holds those three, the third being the control that stops
+the rule being met by refusing imports generally.
+
+### What it declines to judge, and why that is not laziness
+
+**Only a plain `./` or `../` specifier.** A `@/…` or a mapped `dep/lib.wac` resolves through the `Res`,
+and every caller with no filesystem passes an empty one, so those resolve to a key nobody supplied and
+are indistinguishable from the fault this rule is for. Reporting them made **three correct programs
+red** — two in `projectspec_test.wac`, one in `mappedspec_test.wac` — each importing a file that is
+supplied and reached another way. That is the false-alarm direction.
+
+Gating on `res.base != ""` instead — a caller that has a filesystem — was tried and failed the same
+three, because those callers **do** carry a real `Res` and the resolution still missed. That turned
+out to be a bug of its own: `issues/lang/0267c`, `diagnoseGraphIn` handing a per-file closure array
+the graph's `Res` unchanged, so `Res.rootAt`'s positional key read some other file's project root.
+
+**With that fixed the rule is wide again.** A caller that has a filesystem judges every specifier it
+can resolve; one that has none judges plain relative paths only, which is honest rather than narrow —
+it cannot resolve the others at all. The three programs are green either way.
+
+So the false alarms this rule produced were never this rule's: one indexing bug was suppressing a
+diagnostic in `0267c`'s case and manufacturing three here, and finding it needed the second symptom.
+Worth remembering the shape — a new rule going red on correct programs is evidence about the *program
+under it* as often as about the rule.
+

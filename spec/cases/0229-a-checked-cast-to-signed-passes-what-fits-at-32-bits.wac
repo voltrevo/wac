@@ -1,0 +1,5 @@
+// expect: answers f = 5
+// why: the control for `spec/cases/0227` — the trap is a range test, so a `u32` inside `i32`'s range
+//      converts and answers
+// from: issues/lang/0268c
+export i32 f() { u32 x = 5; return x as! i32; }

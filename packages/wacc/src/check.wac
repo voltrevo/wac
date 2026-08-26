@@ -163,6 +163,26 @@ export i32 errUnknownModule() { return 52; }
  * phase field.
  */
 export i32 errMissingImportFile() { return 77; }
+
+/**
+ * A call whose type parameter nothing determines — `id(null)` for a `T id<T>(T a)`.
+ *
+ * **Its own code because `errCallArity` was carrying it**, and that headline names the one thing that
+ * is not wrong: the call has exactly as many arguments as the declaration takes. The annotation was
+ * already right — *"nothing in the call says what T is"* — so the diagnostic contradicted itself, and
+ * the help ("check the declaration for how many it takes") sent the reader to count them.
+ */
+export i32 errInferType() { return 78; }
+
+/**
+ * Two arguments that imply different types for one type parameter — `max(anI32, anF64)`.
+ *
+ * **The binder kept the first and dropped the rest**, so `max<T>(T a, T b)` bound `T` to `i32` from
+ * the first argument and the second was not compared against it. The call then had a type, and the
+ * only complaint left was about whatever the caller did with it: `max(x, y) as! i32` was reported as
+ * a cast between one type and itself, which is a true sentence about a call that should not exist.
+ */
+export i32 errTypeParamClash() { return 79; }
 /** A generic that instantiates itself with a larger argument, so it never terminates. */
 export i32 errInfiniteGeneric() { return 53; }
 /** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
@@ -2591,6 +2611,21 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
     }
     return;
   }
+  // **A negated literal in an unsigned slot is the operator, not the range.** `u32 f() { return -1; }`
+  // said *"literal out of range for its type"*, which tells the reader to pick a different literal —
+  // and none works, because `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright:
+  // *"it wants something with a negation, so … neither does an unsigned integer"*. wacc has that rule
+  // and could not reach it here: `-1` types as `i32` on its own and only the *slot* is unsigned,
+  // where the reference pushes the slot's type into the operand and answers *"unary '-' is not
+  // defined on u32"*. At the operator's token, which is where the reference points too.
+  if (want == "u32" || want == "u64") {
+    match (e.kind) {
+      case Unary(op, operand): {
+        if (tokenText(c, op) == "-") { c.reportTok(errOperandKind(), op, ""); return; }
+      }
+      else: { }
+    }
+  }
   // A range complaint names the **literal**, where a family mismatch names the whole expression:
   // `i32 x = -1.5` is reported at the `-` and `f32 x = -1.0e40` at the `1`. Measured, and the pair is
   // worth stating together, because either one alone reads as an off-by-one against the other.
@@ -3109,8 +3144,24 @@ export string typeOfExpr(C c, Expr e) {
      */
     case Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
-      if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe() ||
-          bk == kAndAnd() || bk == kOrOr()) {
+      if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe()) {
+        // **A comparison whose operands disagree has no type**, so whatever it sits in has nothing to
+        // be wrong about. `export i32 f() { i32 x = 1; u32 y = 1; return x != y; }` drew *"expected
+        // i32, found bool"* beside the operand complaint, and the reference draws only the operand
+        // one — the comparison it just refused is not a `bool`, it is nothing. Fifteen programs of
+        // the mutation sweep's "we report more diagnostics than the reference" queue are this.
+        //
+        // The condition mirrors the rule that reports it: both sides known and different. A literal
+        // answers unknown here and keeps the `bool`, which is what makes `x != 1` unaffected; and
+        // every differing pair that *is* legal goes through another node — `is` for identity, which
+        // is not a `Binary` at all. Measured: `u8` against `i32`, `i32` against `i64`, `f32` against
+        // `f64` and a struct against its parent are all refused already.
+        string cl = typeOfExpr(c, left);
+        string cr = typeOfExpr(c, right);
+        if (cl != typeNone() && cr != typeNone() && cl != cr) { return typeNone(); }
+        return "bool";
+      }
+      if (bk == kAndAnd() || bk == kOrOr()) {
         return "bool";
       }
       // **A string or bool literal is not polymorphic, so it does have a type to offer.** The
@@ -3233,30 +3284,11 @@ export string typeOfExpr(C c, Expr e) {
       //
       // `withoutNull` answers `""` for a type that is not nullable, so the bases are taken explicitly
       // rather than by comparing its output — which would call `P` and `Q` the same thing.
-      if (t != typeNone() && other != typeNone() && t != "" && other != "") {
-        string tb = endsWith(t, "?") ? withoutNull(t) : t;
-        string ob = endsWith(other, "?") ? withoutNull(other) : other;
-        if (tb == ob) { return endsWith(t, "?") ? t : other; }
-        // **And branches related by the hierarchy unify to the parent** — `c ? sub : base` is a `Base`,
-        // so `Sub r = c ? sub : base;` is a mistake, and it was the other half of the same queue row.
-        // Whichever type accepts the other is the common one.
-        //
-        // **Asked after the nullability case and not instead of it**, because `assignable` is
-        // deliberately blind to a `?` — that is what `nullableIntoNonNull` exists for — so both
-        // directions answer true for `P` against `P?` and whichever was asked first would win. The
-        // pair above decides that one; this decides the rest.
-        //
-        // **And only at equal nullability, for that same blindness.** `Sub?` against `Base` has
-        // different bases, so the pair above does not fire, and `assignable` then answers true in the
-        // `Base` direction — which would make this unify them to `Base` and lose the `?`. The
-        // reference calls that pair *"ternary branches have incompatible types: Sub? and Base"*, and
-        // an unknown type is silent while an invented one can suppress a complaint or raise a wrong
-        // one. So the `?`s have to match, and a mixed pair answers nothing until something reports it.
-        if (endsWith(t, "?") == endsWith(other, "?")) {
-          if (assignable(c, other, t)) { return other; }
-          if (assignable(c, t, other)) { return t; }
-        }
-      }
+      // **The arms' common type, by the function a `match` expression uses too.** Sharing it is what
+      // `spec/spec/enums.md` §enum-match-expr-4wnq7bk asks for — *"and by the same code"* — and the day
+      // these were two copies is the day they disagreed.
+      string joined = unifyArms(c, t, other);
+      if (joined != typeNone()) { return joined; }
       return typeNone();
     }
     // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
@@ -3280,7 +3312,11 @@ export string typeOfExpr(C c, Expr e) {
         if (litFamily(c, arms[i].value!) != litNone()) { continue; }
         string at = typeOfExpr(c, arms[i].value!);
         if (at == typeNone() || at == "") { return typeNone(); }
-        if (mt == "") { mt = at; } else if (at != mt) { return typeNone(); }
+        // The same unification a ternary's branches get — `unifyArms`, shared rather than restated.
+        // This required the arms to be *equal*, so a nullable arm or a subtype pair answered unknown,
+        // and unknown is silent: the identical program was refused with `?:` and accepted here.
+        if (mt == "") { mt = at; } else { mt = unifyArms(c, mt, at); }
+        if (mt == typeNone()) { return typeNone(); }
       }
       // Every arm was a literal, so the whole match takes its type from wherever it is going — which
       // is the slot's business and not this function's.
@@ -3562,6 +3598,39 @@ i32 literalDigits(C c, Expr e) {
   }
 }
 
+/**
+ * The common type of two arms, or `typeNone()` — the rule a ternary's branches and a `match`
+ * expression's arms **share**.
+ *
+ * `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
+ * branches are … and by the same code"*, and for a day it was not the same code: the ternary learned
+ * these two cases and the match kept requiring equality, so `P r = c ? a : b;` was refused and the
+ * identical `match` was accepted. One function now, which is what makes that sentence true
+ * structurally rather than by anyone remembering to change both.
+ *
+ * Two cases, in this order and not the other:
+ *
+ *   - **differing only in nullability** unify to the nullable one — `P` with `P?` is a `P?`;
+ *   - **at equal nullability**, whichever type accepts the other — `Sub` with `Base` is a `Base`.
+ *
+ * The order matters because `assignable` is deliberately blind to a `?` (see `nullableIntoNonNull`),
+ * so both directions answer true for `P` against `P?` and whichever ran first would win. And the
+ * hierarchy case is asked only at equal nullability for the same reason: `Sub?` against `Base` would
+ * otherwise unify to `Base` and lose the `?`, which the reference calls *incompatible types*.
+ */
+string unifyArms(C c, string a, string b) {
+  if (a == b) { return a; }
+  if (a == typeNone() || b == typeNone() || a == "" || b == "") { return typeNone(); }
+  string ab = endsWith(a, "?") ? withoutNull(a) : a;
+  string bb = endsWith(b, "?") ? withoutNull(b) : b;
+  if (ab == bb) { return endsWith(a, "?") ? a : b; }
+  if (endsWith(a, "?") == endsWith(b, "?")) {
+    if (assignable(c, b, a)) { return b; }
+    if (assignable(c, a, b)) { return a; }
+  }
+  return typeNone();
+}
+
 string naturalTypeOf(C c, Expr e) {
   // **Two literals joined are still a literal's family.** `("46316…" + "…").toBytes(1)` is a string
   // receiver however many pieces it was written in, and `typeOfExpr` answers unknown for it because
@@ -3714,7 +3783,18 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
         continue;
       }
       string got = typeOfExpr(c, attrs[i].value);
-      if (got != typeNone() && !assignable(c, want, got)) {
+      // **The same complaint the named spelling makes**, because this *is* the named spelling: the
+      // paragraph above says the field rules are a construction's, and `assignable` answers true for
+      // `P?` into `P` by design, so a slot asking only `assignable` takes a nullable in silence.
+      // `Card { p: a }` reported it and `<Card p={a} />` did not — one construct written two ways
+      // giving two answers, which is exactly what that paragraph says must not happen.
+      //
+      // **And nothing else could have caught it**: the reference has no JSX — it answers *expected
+      // expression, found '<'* — so no rung-3 differential covers this family. The test for it is
+      // wacc against itself, in `illtyped_test.wac`.
+      if (nullableIntoNonNull(c, want, got)) {
+        c.report(errNullableToNonNull(), attrs[i].value.line, attrs[i].value.col);
+      } else if (got != typeNone() && !assignable(c, want, got)) {
         c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
                      tokenText(c, attrs[i].nameTok) + " is " + want + ", and this is " + got);
       }
@@ -3730,7 +3810,12 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       continue;
     }
     string got = typeOfExpr(c, attrs[i].value);
-    if (got != typeNone() && !assignable(c, "string", got)) {
+    // A `string?` is not a `string`, and `assignable` says it is — see `nullableIntoNonNull`, which
+    // carries that complaint separately so the two do not both fire. Without asking it, the one value
+    // that might not be there was the one an attribute accepted, while an `i32` was refused.
+    if (nullableIntoNonNull(c, "string", got)) {
+      c.report(errNullableToNonNull(), attrs[i].value.line, attrs[i].value.col);
+    } else if (got != typeNone() && !assignable(c, "string", got)) {
       c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
                    "an attribute is a string, and " + tokenText(c, attrs[i].nameTok) +
                    " is " + got);
@@ -3743,7 +3828,10 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       continue;
     }
     string got = typeOfExpr(c, kids[i]);
-    if (got != typeNone() && !assignable(c, "Node", got)) {
+    // The same for a child, which is a `Node` by `spec/spec/jsx.md` and was taking a `Node?`.
+    if (nullableIntoNonNull(c, "Node", got)) {
+      c.report(errNullableToNonNull(), kids[i].line, kids[i].col);
+    } else if (got != typeNone() && !assignable(c, "Node", got)) {
       c.reportWith(errFieldMismatch(), kids[i].line, kids[i].col,
                    "a child is a Node, and this is " + got);
     }
@@ -4025,11 +4113,6 @@ void checkExpr(C c, Expr e) {
     // asked about. Both land on the `is`, which is this node's own position.
     case Is(left, target, other, negated): {
       checkExpr(c, left);
-      // **A type test needs no payload** — `[§enum-is-qualified-8jkq4wp]`: `s is Shape.Circle(1.0)`
-      // is an error rather than silently false. The right of `is` parses as an expression when it is
-      // qualified, so a variant *construction* arrives here looking like an ordinary identity test
-      // against a freshly built value, which can never be identical to anything. Asked of the shape
-      // rather than of the type, because the construction is what is wrong. `spec/cases/0076`.
       if (!(other is null) && isVariantConstruction(c, other!)) {
         c.report(errOperandKind(), e.line, e.col);
       }
@@ -4158,7 +4241,7 @@ void checkExpr(C c, Expr e) {
       // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
       // value is walked immediately afterwards, and leaving them in scope for the rest of the
       // function is over-permissive in the silent direction, which is the one to err in.
-      checkArmVariants(c, subject, arms);
+      checkArmVariants(c, subject, arms, e.line, e.col);
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
@@ -4177,7 +4260,7 @@ void checkExpr(C c, Expr e) {
         if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
         restoreNarrowing(c, subject, saved);
       }
-      checkArmValueTypes(c, arms);
+      checkArmValueTypes(c, arms, e.line, e.col);
     }
     // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
@@ -4258,12 +4341,14 @@ void checkExpr(C c, Expr e) {
       // for the same pair, so the two now agree. `issues/lang/0170a`.
       if (isPlainLiteral(c, els) && !isPlainLiteral(c, then)) {
         string lt = typeOfExpr(c, then);
-        if (lt != typeNone() && lt != "" && concreteShape(lt) && !literalFits(c, lt, els)) {
+        if (lt != typeNone() && lt != "" && (concreteShape(lt) || literalNeverFits(c, lt)) &&
+            !literalFits(c, lt, els)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       } else if (isPlainLiteral(c, then) && !isPlainLiteral(c, els)) {
         string rt2 = typeOfExpr(c, els);
-        if (rt2 != typeNone() && rt2 != "" && concreteShape(rt2) && !literalFits(c, rt2, then)) {
+        if (rt2 != typeNone() && rt2 != "" && (concreteShape(rt2) || literalNeverFits(c, rt2)) &&
+            !literalFits(c, rt2, then)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       }
@@ -5180,6 +5265,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   if (n == 0) { return; }
   string[] names = string[n]();
   string[] bound = string[n]();
+  bool[] clashed = bool[n]();
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = "";
@@ -5197,7 +5283,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     // `spec/cases/0085`.
     if (funcrefCall(c, args[i])) { continue; }
     string got = foundType(c, args[i]);
-    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
   }
   // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn[U(T)] f)` binds `U`
   // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
@@ -5216,7 +5302,12 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     for (i32 t = 0; t < n; t++) {
       if (bound[t] == "" || isActiveParam(c, bound[t])) { continue; }
       if (!mentionsActiveParam(c, bound[t])) { continue; }
-      c.reportWith(errCallArity(), call.line, call.col,
+      // **`errInfiniteGeneric`, not `errCallArity`.** `grow(b)` has one argument and `grow` takes
+      // one, so "wrong number of arguments" named the one thing that is right, and its help sent the
+      // reader to count them. Code 53 is this rule and already said so for the struct-field case —
+      // `a generic that instantiates itself for ever` — which is the same fault through a field
+      // rather than a call.
+      c.reportWith(errInfiniteGeneric(), call.line, call.col,
                    "instantiating " + name + " again with " + bound[t]);
       return;
     }
@@ -5237,9 +5328,31 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     if (funcrefCall(c, args[i])) { continue; }
     if (foundType(c, args[i]) == typeNone()) { return; }
   }
+  // **Disagreement first**, because an unbound parameter and a contested one are different faults and
+  // the contested one is the more specific: `max(anI32, anF64)` binds `T` from the first argument, so
+  // it is bound, and the rule below would have nothing to say.
+  for (i32 t = 0; t < n; t++) {
+    if (!clashed[t]) { continue; }
+    c.reportWith(errTypeParamClash(), call.line, call.col,
+                 "the arguments do not agree on what " + names[t] + " is");
+    return;
+  }
   for (i32 t = 0; t < n; t++) {
     if (bound[t] != "") { continue; }
-    c.reportWith(errCallArity(), call.line, call.col,
+    // **At the argument that should have said it**, which is what the reference names and is the one
+    // the reader has to change — `unbox(p)` for a `Box<T>` parameter is wrong at `p`, not at `unbox`.
+    // The first parameter mentioning this type parameter is the one: a later one would be a second
+    // chance to bind it, and there is no first chance to point at if none mentions it, so the call
+    // stands in.
+    i32 line = call.line;
+    i32 col = call.col;
+    for (i32 i = 0; i < args.len() && i < c.funcParamCount[at]; i++) {
+      if (!mentionsTypeParam(c.funcParamTypes[c.funcParamAt[at] + i], names[t])) { continue; }
+      line = args[i].line;
+      col = args[i].col;
+      break;
+    }
+    c.reportWith(errInferType(), line, col,
                  "nothing in the call says what " + names[t] + " is");
     return;
   }
@@ -6189,11 +6302,21 @@ string staticMethodType(C c, Expr obj, string name) {
     else: { }
   }
   if (owner == "" || c.isGeneric(owner)) { return typeNone(); }
-  i32 at = c.ownMethodAt(owner, name);
-  if (at < 0 || !c.methodStatics[at]) { return typeNone(); }
+  i32 at = c.methodAt(owner, name);
+  if (at < 0) { return typeNone(); }
+  // **An instance method reached through its type is an *unbound* reference**, whose first parameter
+  // is the receiver: `Base.get` is an `fn[i32(Base)]`, and rung 4's corpus passes those around. This
+  // answered `typeNone()` for them, so `return P.m;` in an `i32` function compared nothing against
+  // nothing and stayed quiet where the reference says *"expected i32, found fn(P) -> i32"*. The
+  // slot-driven paths typed these all along, which is why the corpus compiles and only a slot that
+  // asks *this* function was silent.
+  //
+  // `methodAt` rather than `ownMethodAt` for the same reason as the caller in `checkMember`:
+  // `Derived.get` inherits one.
   string out = "fn(";
+  if (!c.methodStatics[at]) { out = out + owner; }
   for (i32 i = 0; i < c.methodParamCount[at]; i++) {
-    if (i > 0) { out = out + ", "; }
+    if (out != "fn(") { out = out + ", "; }
     out = out + c.methodParamTypes[c.methodParamAt[at] + i];
   }
   return out + ") -> " + c.methodReturns[at];
@@ -6260,20 +6383,46 @@ string receiverType(C c, Expr obj) {
  * String against string, because in this checker a type *is* its canonical name and the written form
  * and the actual form are both one.
  */
-void bindTypeParams(C c, string written, string actual, string[] names, string[] bound) {
+/**
+ * Whether a written parameter type is one that could have said what `name` is.
+ *
+ * Decomposed the same way `bindTypeParams` decomposes — arrays, nullables and generic arguments —
+ * because the question is exactly its mirror: which parameter *would* have bound this. A substring
+ * test would answer yes for a type called `Tx`.
+ */
+bool mentionsTypeParam(string written, string name) {
+  if (written == "" || name == "") { return false; }
+  if (written == name) { return true; }
+  if (endsWith(written, "[]")) { return mentionsTypeParam(dropLast(written, 2), name); }
+  if (endsWith(written, "?")) { return mentionsTypeParam(dropLast(written, 1), name); }
+  if (genericBase(written) == "") { return false; }
+  string[] wargs = genericArgs(written);
+  for (i32 i = 0; i < wargs.len(); i++) {
+    if (mentionsTypeParam(wargs[i], name)) { return true; }
+  }
+  return false;
+}
+
+void bindTypeParams(C c, string written, string actual, string[] names, string[] bound,
+                    bool[] clashed) {
   if (written == "" || actual == "" || written == typeNone() || actual == typeNone()) { return; }
   for (i32 i = 0; i < names.len(); i++) {
     if (names[i] == written) {
+      // **A second argument disagreeing is recorded, not dropped.** The first binding still wins so
+      // every rule downstream sees the type it saw before; what changes is that the disagreement is
+      // no longer invisible. Only `checkGenericInference` reads the flags — `genericCallReturn` asks
+      // what the call *returns* and must keep answering that for a call it is not judging.
       if (bound[i] == "") { bound[i] = actual; }
+      else if (bound[i] != actual && i < clashed.len()) { clashed[i] = true; }
       return;
     }
   }
   if (endsWith(written, "[]") && endsWith(actual, "[]")) {
-    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound);
+    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound, clashed);
     return;
   }
   if (endsWith(written, "?") && endsWith(actual, "?")) {
-    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound);
+    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound, clashed);
     return;
   }
   string wb = genericBase(written);
@@ -6281,7 +6430,9 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
   string[] wargs = genericArgs(written);
   string[] aargs = genericArgs(actual);
   if (wargs.len() != aargs.len()) { return; }
-  for (i32 i = 0; i < wargs.len(); i++) { bindTypeParams(c, wargs[i], aargs[i], names, bound); }
+  for (i32 i = 0; i < wargs.len(); i++) {
+    bindTypeParams(c, wargs[i], aargs[i], names, bound, clashed);
+  }
 }
 
 /** A written type with the bound parameters put in, or unknown when any of them is still open. */
@@ -6331,9 +6482,19 @@ string genericCallReturn(C c, i32 at, Expr[] args) {
   }
   i32 count = c.funcParamCount[at];
   if (args.len() != count) { return typeNone(); }
+  bool[] clashed = bool[n]();
   for (i32 i = 0; i < count; i++) {
     string got = litKindOf(args[i]) != litNone() ? typeNone() : typeOfExpr(c, args[i]);
-    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
+  }
+  // **A contested parameter makes the call's type unknown**, which is what stops one fault becoming
+  // two diagnostics. `max(anI32, anF64)` bound `T` from the first argument, so the call still had a
+  // type and `max(x, y) as! i32` drew *"this cast is between one type and itself"* beside the real
+  // complaint — a true sentence about a call that should not exist. `checkGenericInference` reports
+  // the clash; this walk has to stop answering, or every rule downstream of the call speaks about a
+  // type nobody chose.
+  for (i32 i = 0; i < n; i++) {
+    if (clashed[i]) { return typeNone(); }
   }
   return applyBindings(c.funcReturns[at], names, bound);
 }
@@ -6408,6 +6569,36 @@ void checkMember(C c, Expr at, Expr obj, string name) {
       string en = tokenText(c, tok);
       if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) < 0) {
         c.report(errNoVariant(), at.line, at.col);
+        return;
+      }
+      // **And the struct sibling of that rule**, which was missing: `P.nope`, `P.v` and `P.m` all
+      // named something through a *type* rather than a value, so every rule below had nothing to ask
+      // and stayed silent — the reference refuses all three. `P.s`, a static, is the one form that is
+      // a value: `staticMethodType` gives it an `fn(…)` and a wrong slot is then an ordinary
+      // mismatch, which is why it must be let through here rather than caught.
+      //
+      // **Any method of the type is a value here**, static or not: `Counter.inc` is an *unbound*
+      // method reference, an `fn[void(Counter)]` that takes the receiver as its first argument, and
+      // the corpus passes them to functions and stores them in arrays. So this rule is only about a
+      // name the type does not have — a field named through the type, or nothing at all — and
+      // `methodAt` rather than `ownMethodAt` because `Derived.get` inherits one.
+      //
+      // Written the other way first, refusing an instance method as "not a value" on the reasoning
+      // that the reference refuses `return P.m;`. It does — on the *slot*, because `fn(P) -> i32` is
+      // not an `i32`, which is a type error about the return and not about the reference. Seven
+      // programs in rung 4's own corpus said so within the minute.
+      if (c.isStruct(en) && c.typeOfName(en) == typeNone()) {
+        if (c.methodAt(en, name) >= 0) { return; }
+        // A field is *present* and reached the wrong way, which is a different sentence from a name
+        // the type does not have — and worth the branch because the shared code says "static method"
+        // and a field is not one. The reference answers `cannot use static method 'P.v' as a value`
+        // here, which names the thing `v` is not.
+        if (c.hasField(en, name)) {
+          c.reportWith(errNoStaticMethod(), at.line, at.col,
+                       en + "." + name + " is a field, which is reached through a value");
+          return;
+        }
+        c.reportWith(errNoStaticMethod(), at.line, at.col, "no " + en + "." + name);
         return;
       }
     }
@@ -6738,11 +6929,23 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         // **Found by enumerating the sites rather than the programs.** Grepping every `!assignable(c,`
         // in this file and asking which had `nullableIntoNonNull` within six lines found nine that did
         // and eight that did not; this was the one of those eight with a program to prove it. The
-        // others are a JSX attribute and a component field, an `is`-test pair, a builtin's argument
-        // against its receiver, and `copyFrom`/`fill`'s element — none of them shown to leak, and none
-        // shown not to: probes for the last two were refused for arity by *both* compilers, which
-        // means the signature was guessed and the slot untested. Worth working through with correct
-        // programs rather than assuming the list is closed here.
+        // others were a JSX attribute and a component field, an `is`-test pair, a builtin's argument
+        // against its receiver, and `copyFrom`/`fill`'s element.
+        //
+        // **Two of those are settled now, and the way they were settled is the lesson.** The first
+        // probes for `copyFrom` and `fill` were refused for *arity* by both compilers, which reads
+        // exactly like "no gap here" — they had guessed the signature. `spec/spec/arrays.md` has
+        // `dst.fill(value, start, end)` and `dst.copyFrom(src, srcStart, dstStart, count)`; with the
+        // right shapes, `fill`'s value was a gap and is fixed beside `errBuiltinArg`, and `copyFrom`
+        // already reported. So one leaked and one did not, which no invalid probe could have told
+        // apart.
+        //
+        // **The list is closed now: eight sites, five real gaps.** This payload, `fill`'s value, a
+        // component's field, a JSX attribute and a JSX child. `copyFrom` and a builtin's argument
+        // against its receiver already reported, and the `is`-test pair is a warning about unrelated
+        // types rather than a slot a value passes through. Recall on the generated sweep never moved
+        // through any of it, because `generate.ts` builds none of these shapes — which is the whole
+        // argument for enumerating the *sites* and not the programs.
         if (nullableIntoNonNull(c, vwant, vgot)) {
           c.report(errNullableToNonNull(), args[i].line, args[i].col);
         } else if (vgot != typeNone() && vgot != "" && !assignable(c, vwant, vgot)) {
@@ -6843,7 +7046,13 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       reportLiteral(c, el, args[0], errBuiltinArg(), args[0].line, args[0].col);
     } else {
       string vt = typeOfExpr(c, args[0]);
-      if (vt != typeNone() && vt != "" && !assignable(c, el, vt)) {
+      // A nullable into a non-null element is its own complaint here as everywhere: `assignable`
+      // answers *true* for `P?` into `P` by design, so a slot that asks only `assignable` takes one in
+      // silence. `xs.fill(a, 0, xs.len())` for a `P? a` checked clean while `copyFrom` beside it
+      // reported. The reference says *'fill()' value must be P, got P?*.
+      if (nullableIntoNonNull(c, el, vt)) {
+        c.report(errNullableToNonNull(), args[0].line, args[0].col);
+      } else if (vt != typeNone() && vt != "" && !assignable(c, el, vt)) {
         c.reportWith(errBuiltinArg(), args[0].line, args[0].col, expectedFound(el, vt));
       }
     }
@@ -8007,7 +8216,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.switchDepth = c.switchDepth - 1;
     }
     case Match(subject, arms): {
-      checkArmVariants(c, subject, arms);
+      checkArmVariants(c, subject, arms, s.line, s.col);
       for (i32 i = 0; i < arms.len(); i++) {
         // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `case Circle:` is the
         // same question asked by the other syntax, and `s.radius` inside it means the payload. The
@@ -8049,7 +8258,7 @@ void checkStmt(C c, Stmt s, Ty want) {
  * disagreement between arms. Two concrete types that cannot stand in for one another in either
  * direction are the case worth reporting, and the second one is where the mistake reads.
  */
-void checkArmValueTypes(C c, Arm[] arms) {
+void checkArmValueTypes(C c, Arm[] arms, i32 line, i32 col) {
   string first = "";
   for (i32 i = 0; i < arms.len(); i++) {
     if (arms[i].value is null) { continue; }
@@ -8066,8 +8275,21 @@ void checkArmValueTypes(C c, Arm[] arms) {
     // `packages/std` has a payload whose type comes from the enum's instantiation, and what came back
     // was a name rather than a type — against `-1` that read as a disagreement and refused a working
     // file. Silence on anything else is the same rule the rest of this checker keeps.
-    if (!concreteShape(vt) || !concreteShape(first)) { continue; }
-    c.report(errArmTypes(), v.line, v.col);
+    // **Or a type a literal can never be**, which is the same widening the ternary's rule needed:
+    // `concreteShape` is what a literal *can* be, so a struct arm beside an integer arm satisfied
+    // neither side and this skipped it — and the emitter then wrote a module the engine refuses.
+    // `literalNeverFits` names only what this checker is sure of, a struct, an enum, an array or a
+    // funcref, so the caution the paragraph above is about is kept: a payload whose type comes back as
+    // a name is in neither half and still says nothing.
+    if (!(concreteShape(vt) || literalNeverFits(c, vt))) { continue; }
+    if (!(concreteShape(first) || literalNeverFits(c, first))) { continue; }
+    // **At the `match`, not at the arm.** The reference reports the whole expression — *match arms
+    // have incompatible types: P and i32* — and this reported the offending arm's value, so every
+    // report was a position the reference does not have. Nothing caught it because the case this rule
+    // already handled is in no differential; the widened case above is, and named it at once. A
+    // position the reference does not report is a *contradiction*, which is the one thing rung 3
+    // asserts outright.
+    c.report(errArmTypes(), line, col);
   }
 }
 
@@ -8096,6 +8318,27 @@ bool numericShape(string t) {
 }
 
 /** A primitive this checker is sure of. Anything else — a struct, a generic payload — stays silent. */
+/**
+ * A type a **plain** literal can never be — a struct, an enum, an array or a funcref.
+ *
+ * `concreteShape` answers the other half: the numbers, `bool` and `string`, which a literal *can* be
+ * and which `literalFits` then judges. Between them they cover every type this checker is sure about;
+ * a type parameter or an unresolved name is in neither and stays silent, which is the subset rule.
+ *
+ * **Why it exists.** The ternary's literal-against-a-branch rule asked `concreteShape` alone, so
+ * `c ? p : 1` for a struct `p` matched no branch of it and was accepted — and the emitter then wrote a
+ * module the engine refuses, which `wac build`'s own check calls a compiler bug. The reference says
+ * *ternary branches have incompatible types: P and i32*.
+ *
+ * The base is taken through a `?` because a plain literal is no more a `P?` than a `P`, and
+ * `isPlainLiteral` has already excluded `null` — which is the one literal a nullable does take, and
+ * why `c ? p : null` never reaches here.
+ */
+bool literalNeverFits(C c, string t) {
+  string base = endsWith(t, "?") ? withoutNull(t) : t;
+  return c.isStruct(base) || c.isEnum(base) || isArrayName(base) || startsWithFn(base);
+}
+
 bool concreteShape(string t) {
   return numericShape(t) || t == "bool" || t == "string";
 }
@@ -8787,7 +9030,18 @@ string enumOfSubject(C c, string t, bool built) {
   return owners == 1 ? only : "";
 }
 
-void checkArmVariants(C c, Expr subject, Arm[] arms) {
+/**
+ * **The three coverage rules point at what is wrong, not at the subject.**
+ *
+ * All three reported `subject.line, subject.col` — the `(e)` — which is the one part of a `match` that
+ * these rules are never complaining about. The reference names the `match` for an inexhaustive one and
+ * the offending `else` for the other two, and it is right: a reader sent to the subject has to work
+ * out for themselves that the subject is fine. Found by walking the diagnostic codes the generated
+ * sweeps do not reach and comparing positions; `errDuplicateElse` was the first of the three.
+ *
+ * `mline`/`mcol` are the `match` keyword's, from the node the caller is already holding.
+ */
+void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   string t = typeOfExpr(c, subject);
   if (t == typeNone() || t == "") { return; }
   // **A nullable subject has no arm for the null.** Asked before the enum question, because
@@ -8907,17 +9161,38 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
   // invisible here and reached the emitter, which indexed past the end of an array and trapped the
   // compiler. One `else` is the ordinary case and builds; two is a program nobody writes on purpose and
   // is refused now. `issues/lang/0239a`.
+  // **At the second `else`, not at the subject.** This reported the match's subject, which is a
+  // position the reference does not have — it names the offending keyword, and so should we: a second
+  // `else` is wrong *where it is written*, and pointing at `(e)` sends the reader to the one part of
+  // the statement that is fine. `Arm.elseTok` exists precisely because the keyword's token was once
+  // not kept (`issues/lang/0148`), so it is there to be used.
   i32 elseCount = 0;
-  for (i32 i = 0; i < arms.len(); i++) { if (arms[i].variantTok < 0) { elseCount = elseCount + 1; } }
-  bool hasElse = elseCount > 0;
-  if (elseCount > 1) { c.report(errDuplicateElse(), subject.line, subject.col); }
-
-  if (!hasElse && covered < total) {
-    c.report(errMatchInexhaustive(), subject.line, subject.col);
+  i32 firstElse = -1;
+  i32 secondElse = -1;
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].variantTok >= 0) { continue; }
+    elseCount = elseCount + 1;
+    if (elseCount == 1) { firstElse = arms[i].elseTok; }
+    if (elseCount == 2) { secondElse = arms[i].elseTok; }
   }
-  // And the other way round: once every variant is named, an `else` is a branch nothing reaches.
+  bool hasElse = elseCount > 0;
+  if (elseCount > 1) {
+    // The subject is the fallback for an else arm that somehow kept no token, rather than a report
+    // this rule can silently lose.
+    if (secondElse >= 0) { c.reportTok(errDuplicateElse(), secondElse, ""); }
+    else { c.report(errDuplicateElse(), subject.line, subject.col); }
+  }
+
+  // At the `match`, because an inexhaustive one is the *statement* being incomplete — there is no arm
+  // to point at, which is the whole complaint.
+  if (!hasElse && covered < total) {
+    c.report(errMatchInexhaustive(), mline, mcol);
+  }
+  // And the other way round: once every variant is named, an `else` is a branch nothing reaches — and
+  // here there is an arm to point at, so it gets pointed at.
   if (hasElse && covered == total) {
-    c.report(errElseUnreachable(), subject.line, subject.col);
+    if (firstElse >= 0) { c.reportTok(errElseUnreachable(), firstElse, ""); }
+    else { c.report(errElseUnreachable(), mline, mcol); }
   }
 }
 
@@ -9210,7 +9485,16 @@ export void checkModule(C c, Program prog) {
         // refused, and so was `i32[2](fill: "x")`. `spec/cases/0067` and `0068`.
         string constType = typeOfTy(c, type);
         // A constant is a value, and `void` is the absence of one. `spec/cases/0069`.
-        if (constType == "void") { c.report(errVoidType(), type.line, type.col); }
+        //
+        // **And then it has no type**, which is what keeps one mistake to one diagnostic. Leaving it
+        // as `void` meant the initialiser was checked against a type nobody chose: `const void A = 1`
+        // reported the `void` *and* "expected void, found i32" one token along. The reference says
+        // only the first. Unknown is the value this checker is silent about, which is exactly what a
+        // refused declaration should leave behind.
+        if (constType == "void") {
+          c.report(errVoidType(), type.line, type.col);
+          constType = typeNone();
+        }
         checkPackedNullable(c, constType, type);
         // A literal initialiser is asked whether it fits, exactly as a local's is — `const i32 A =
         // 1.5` is a float in an integer's slot. `spec/cases/0075`.

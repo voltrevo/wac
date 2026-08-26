@@ -88,10 +88,19 @@ Which is what makes forcing the wrong move and the queue the safe failure: the p
    anyway — the header above says so and asks nobody to move the width on its strength until then.
 2. **Then set the floor from the rise it reports**, with the margin stated. If 5,500 turns out to be
    right, the decision is about how many agents share a machine rather than about the gate.
-3. **Either way it needs a quiet machine**, because a sweep is several suite runs and this one would be
+3. **The instrument would have to bypass the floor to measure it**, which is worth knowing before
+   anyone starts. `tools/jobsSweep.sh` calls `deno test` **directly** rather than going through
+   `runTests.wac` — its header says why, that setting `DENO_JOBS` per run is the whole point — and a
+   side effect is that it never reaches `take()`. Point it at `runTests.wac` to cover both lanes and it
+   meets the very refusal it is trying to price, on a machine near the line. So the extended sweep has
+   to set `WAC_SUITE_ANYWAY=1`, which is defensible for a measuring instrument on a quiet machine and
+   should be *stated* in the script rather than discovered.
+
+   That is probably part of why nobody has extended it: the obvious version does not run.
+4. **Either way it needs a quiet machine**, because a sweep is several suite runs and this one would be
    killed. That is the part no workspace can arrange for itself, and the reason this is filed rather
    than done.
-4. **Failing all of it, a reservation** would at least make the wait fair: the refusal is stateless, so
+5. **Failing all of it, a reservation** would at least make the wait fair: the refusal is stateless, so
    thirty-five attempts are thirty-five independent coin flips against a threshold nobody is queueing
    for. `issues/system/0213a` is the neighbouring shape — a suite that *passes* and loses the race —
    and its recommendation was a counter, which is in; the policy is still not.
@@ -101,3 +110,108 @@ Which is what makes forcing the wrong move and the queue the safe failure: the p
 `0213a` is a green suite losing the push race, and `issues/system/0154` is a slow suite starved because
 master moves under it. Both are about a suite that **ran**. This one never starts, so neither
 measurement covers it and neither fix would help it.
+
+## What the refusals actually cost, measured — agent-c, 2026-08-25
+
+This page said the cost was a queue: 45 finished commits and nothing pushed. That was too kind. The
+coverage ratchets run **only** inside `tools/push.sh`, so while the gate was refusing they were not
+running — and thirteen of the twenty-one were red for most of a day without anything saying so.
+
+`issues/system/0257c` moved `covdump` into the program, a loaded module is granted `run: false` by
+policy, and every coverage exercise that asks an oracle stopped being able to ask it. `packages/bignum`
+read 54.8% where it is 100%. The first thing to notice was the gate itself, about sixty commits later,
+in the one phase that had not run all day.
+
+So the refusal is not only a delay. **A check that lives only in the gate stops running exactly when
+the gate is refusing, which is when the tree is changing fastest.** That is an argument for the floor
+being settled rather than endured, and it is independent of which way it is settled: it would be as
+true of a floor that is too high as of one that is too low.
+
+It is also an argument for the ratchets being runnable outside the gate — `deno task coverage:all` has
+no cooldown, so it *can* be run; nothing prompts anyone to. It is **223 seconds** for 37 tasks at four
+workers, measured on the run that finally got through, so "cheap" is the wrong word for it and "cheaper
+than losing a day of measurement" is the right one. Cheapest of all: say in the refusal message which
+checks are not running because of it, which is one line and is in.
+
+## It did get through, and the question is still open — 2026-08-25 ~17:00
+
+Two runs reached the suite once the other agents went quiet, and the second pushed **61 commits**. So
+this page is not a standing block; the memory floor is not unreachable, it is *rarely* reachable, and
+which of those it is on a given afternoon depends on how many agents are resident. The decision it asks
+for is unchanged: the rise of the suite that actually runs has never been measured, and until it is,
+nobody can say whether 5,500 is generous or short.
+
+## Run outside the gate, and green — agent-c, 2026-08-25
+
+The argument above is that a check living only in the gate stops running exactly when the gate is
+refusing. So with 25 commits queued and the floor unreachable, `deno task coverage:all` was run
+directly: **37 of 37 ratchets pass, 258s** (923s of work at four workers; 36 hold a floor, one
+reports and cannot fail). Three packages have no coverage task and are not in that number — `box`,
+`wac`, `wacc`.
+
+Which is the good outcome and still makes the point: nothing prompted that run except having read this
+page. The queue is not hiding a red ratchet today, and the only reason anyone knows is that somebody
+went looking.
+
+## The measurement this page asked for — agent-c, 2026-08-26
+
+The operator freed memory and said the box was quiet. The gate started on the first attempt, and a
+sampler read `free -m` every two seconds for the whole run.
+
+### Time, both lanes
+
+    the Deno pass    70s   14%      1692 passed, 0 failed, 6 ignored
+    `wac test`      427s   85%      2580 tests in 405 files across 39 directories
+    in the lanes    497s            total 498s
+
+    wac lane: 1213s of work at 4 workers, 55s of it alone, so the floor is 345s
+      318s  packages/crypto/test/wac — 11 files
+      158s  packages/wacc/test/wac — 12 files
+       52s  packages/platform/test/wac — 9 files
+
+`tools/jobsSweep.sh`'s table — the one the floor is derived from — says `4 jobs, 259s wall, 3377
+passed`. That was the Deno lane, which is now **70 seconds and 14% of the suite**. The header's own
+warning was right and is now quantified: *"a measuring instrument that runs the suite differently from
+the suite measures a different suite."*
+
+### Memory
+
+    available at start   6625 MB          used at start   5305 MB
+    lowest available     4137 MB          peak used       7794 MB
+                         at +2.1 min
+
+    rise (used)          2489 MB
+    draw (available)     2488 MB
+
+**The floor is 5500 and the suite ran to completion with 4137 available at its trough** — 1363 MB
+below the number that had been refusing it for two days.
+
+### Why the two rises disagree, which is the point
+
+The sweep recorded `peak 7893MB, rise 5158MB`. This run: peak **7794 MB**, rise **2489 MB**. The peaks
+agree within 100 MB; the rises differ by a factor of two.
+
+Because **rise is baseline-dependent and peak is not.** The sweep started from a nearly empty box and
+climbed 5.1 GB to 7.9; this run started with 5.3 GB already used and climbed 2.5 GB to 7.8. The suite
+does not have a fixed appetite — it has a fixed *ceiling*, and what it must climb depends on where it
+starts.
+
+So `minAvailableMb` asks the wrong question. "Is 5500 MB available" is a proxy for "will a 5158 MB
+rise fit", and the rise is not a property of the suite. The property that held across two runs with
+very different starting points is **peak system usage of about 7.8–7.9 GB**, against 11.9 GB of RAM.
+
+That also explains the shape this page has been describing all along: with other agents resident the
+*rise* shrinks, because there is less to climb — so the gate refuses hardest exactly when the suite
+would have needed least.
+
+### What this does not settle
+
+One run, on a quiet box, sampled every two seconds — a transient spike between samples would not
+appear. The suite also **failed** on this run (one test, since fixed), so it is a complete run in
+wall-clock and lane terms but not a green one. Someone changing the floor should take a second reading
+under load before choosing the margin.
+
+What it does settle is the question the page was stuck on: the rise of the suite that actually runs
+has now been measured, and it is **2489 MB from a 5.3 GB baseline, peaking at 7794 MB**, not the 5158
+MB the floor assumes.
+

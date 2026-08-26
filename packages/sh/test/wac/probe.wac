@@ -368,12 +368,16 @@ CallResult fakeCall(i32 handle, string name, i32 arg) { return CallResult(2, "",
 
 void fakeUnload(i32 handle) {}
 
+/** A world with no engine in it, which is what `FAULT_UNSUPPORTED` says in `Cli.validated`'s words. */
+string fakeValidated(u8[] module) { return "no engine in this world"; }
+
 Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
                 fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
                 fakeSend, fakeCloseSocket, fakeCloseSend, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
-                fakeCwd, fakePushChild, fakePopChild, fakeExec, fakeLoad, fakeCall, fakeUnload);
+                fakeCwd, fakePushChild, fakePopChild, fakeExec, fakeLoad, fakeCall, fakeUnload,
+                fakeValidated);
 }
 
 // ── What the coverage driver calls ────────────────────────────────────────────

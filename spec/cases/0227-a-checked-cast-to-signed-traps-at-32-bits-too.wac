@@ -1,0 +1,5 @@
+// expect: traps f
+// why: `[§wac-cast-matrix-6hkq4wz]` at 32 bits — a `u32` above `i32`'s maximum has no signed reading,
+//      and this is the branch of the range test that compares upward rather than against zero
+// from: issues/lang/0268c
+export i32 f() { u32 x = 4294967295; return x as! i32; }

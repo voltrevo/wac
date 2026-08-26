@@ -1,0 +1,5 @@
+// expect: traps f
+// why: `casts.md` — `as!` "traps if the i64 value has no exact f64 representation". `i64`'s maximum
+//      needs 63 bits of mantissa and an `f64` has 53, so this is the row that says so at 64 bits
+// from: issues/lang/0268c
+export f64 f() { i64 x = 9223372036854775807; return x as! f64; }

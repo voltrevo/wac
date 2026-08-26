@@ -161,10 +161,10 @@ have never appeared in a status line: they are invisible to every rung.
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
 | type check | **317 of 317** spec rejections and **371 of 371** acceptances one file at a time, 15 of 15 and 42 of 42 across files, and the ledger of known misses is empty. The row here said "303 of 304 … the one left is a multi-file case recorded with one file" until 2026-08-25; that case is gone and the number had moved. `test/wac/specsingle_test.wac` and `specmulti_test.wac` print these |
-| emit wasm | **every file in the repository** — 1075 of 1075 whole, 0 partial, 0 invalid, printed by `test/wac/corpusemit_test.wac`. It was 702 of 729 on 2026-08-20 and 411 of 414 six days before that. The figure here was "356 of 359", which no test produced any more — a measurement nothing prints goes stale in the document that cites it |
+| emit wasm | **every file in the repository** — 1077 of 1077 whole, 0 partial, 0 invalid, printed by `test/wac/corpusemit_test.wac`, read 2026-08-25. It was 702 of 729 on 2026-08-20 and 411 of 414 six days before that. The figure here was "356 of 359", which no test produced any more — a measurement nothing prints goes stale in the document that cites it |
 | self-host | done, and the reference cannot |
-| diagnostics: message | done, and the wording agrees where both speak |
-| diagnostics: annotation, hint, span | operands on **81%** (558 of 685), help on 42% (285), a real span on **73%** (501) — the counts as well as the rates, because `test/wac/diagnosticgap_test.wac` prints both and a bare percentage cannot be checked against it — ratcheted, so they cannot fall back. The corpus was 697 until 2026-08-25, when `C.report` began comparing a new diagnostic against *every* recorded one rather than only the previous: twelve of these were the same complaint twice, all twelve carrying help, so the rates fell by a point while the diagnostics did not change. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus |
+| diagnostics: message | done, and the wording agrees where both speak — with the caveat that "speak" used to be doing real work in that sentence. `spec/spec/naming.md` requires a keyword in a name position to be *"an error that names the keyword"*; wacc answered `unexpected token` in all nine such positions, so it spoke without saying the thing, and the row read as agreement. Fixed 2026-08-25, along with `override` on an enum method and an enum method missing `this` — the second of which named the wrong fault rather than none. All eleven are pinned by `test/wac/specclauses_test.wac`, and their positions were identical to the reference's throughout and still are — `test/parse_errors.test.ts` is what compares those. `issues/lang/0156` holds what is left: six parse clauses where the spec, wacc and the reference put the same information in different fields |
+| diagnostics: annotation, hint, span | operands on **82%** (562 of 689), help on 42% (292), a real span on **73%** (506) — the counts as well as the rates, because `test/wac/diagnosticgap_test.wac` prints both and a bare percentage cannot be checked against it — ratcheted, so they cannot fall back. The corpus was 697 until 2026-08-25, when `C.report` began comparing a new diagnostic against *every* recorded one rather than only the previous: twelve of these were the same complaint twice, all twelve carrying help, so the rates fell by a point while the diagnostics did not change. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus. The population was 685 and help 285 earlier on 2026-08-25. It is 690 because `issues/lang/0157` and `0267c` made five imports report that were silent — a corpus that grows because the compiler stopped missing things is the one direction these counts can move without the rates meaning less. Before that, the keyword-name and enum-method rules moved nine diagnostics out of the `unexpected token` family — the one the note in that test says is deliberately hintless because its specifics travel in the annotation — and two of the new codes carry help. The *rates* did not move, which is the honest summary: this raised the floor of what those diagnostics say, not the share that say anything |
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
@@ -206,11 +206,15 @@ hand-written cases a working corpus cannot contain: unterminated everything, eve
 precedence level, `else if` chains, trailing commas, a nested `>>>` close, and the comparisons that
 must *not* be read as type arguments.
 
-**Rung 3 now meets the spec.** 303 of the 304 single-file programs the suite calls illegal are
-refused and all 367 it calls legal are silent; across files it is 15 of 15 and 41 of 41; `spec/cases`
-is 111 of 111 with no named misses on either side. The one program left is a *multi-file* case the
-recorder kept one file of — `main.wac` importing from a `b.wac` nobody supplied — so refusing it
-would mean refusing every import.
+**Rung 3 now meets the spec**, and the figures are in the table above rather than repeated here.
+`test/wac/specsingle_test.wac` and `specmulti_test.wac` print the single- and multi-file counts;
+`test/wac/cases_test.wac` prints `spec/cases`, which is **236 of 236 met by wacc** — eleven more than earlier on 2026-08-25, because `issues/lang/0268c` added the checked-cast rows that had no case, and five of them were red until the emitter learned to trap.
+
+This paragraph carried its own copy of those numbers until 2026-08-25 — `303 of 304`, `367`, `41 of
+41`, and `spec/cases is 111 of 111` — every one of them stale, and the last by a factor of two. The
+table row had already been corrected and even says what it used to read; this sentence, four screens
+down, said the old thing. **Two places quoting one measurement is one place too many**, so what is
+left here names the printers and stops.
 
 Fifteen rules closed in one pass, each written as a case first: `const` initialisers that are not
 constant, packed nullables below the outermost `[]`, writing a narrowed name inside its own branch,
@@ -244,15 +248,25 @@ a variant construction at all.
 reference's bindgen metadata, so what is under test is the emitter and nothing else.
 `packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
 
-    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
+    6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
+
+**That figure read `34 of 34 … (1,663 tests)` until 2026-08-25, and the packages did not regress.**
+`runOnWacc.ts` runs `deno test`, which finds `*.test.ts`; `issues/system/0161` has been moving the
+suite to `*_test.wac`, and **32 of 38 packages now have no `.test.ts` at all**, so the sweep cannot
+see them. None of the 32 is reported wrong — each is `0 passed` with no cause but an empty search.
+The number above is what this tool can still measure, and it shrinks as the migration finishes.
+`issues/system/0267c` holds the decision about what should replace it, because a `*_test.wac` is
+compiled by wacc by construction: for those packages "passes on wacc-emitted code" is not a claim
+that can fail.
 
 **And `WAC_BIND_FROM=wacc` swaps the rest** — wacc's `exportSigsFiles` and `bindTypesFiles` for the
 description of the interface, `packages/wacc/tools/waccBindgen.ts` for the generator. The same sweep
 under it reads the same:
 
-    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
+    6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
 
-**That is priority 3 met without the reference in the room.** Every package in the repository stands
+**That is priority 3 met without the reference in the room** — over the six packages this sweep can
+still reach, which is the caveat the paragraph above is about rather than a change in what passes. Every package in the repository stands
 up on wacc's code, called through glue wacc described and wacc generated. The reference compiles
 wacc, and nothing else here.
 

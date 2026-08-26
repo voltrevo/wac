@@ -28,13 +28,10 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { diagnoseFiles, diagnoseFilesRendered } from "../../src/api.wac";
-import { wireField, wireLines } from "./wire_probe.wac";
+import { wireField, wireLines, ANNOTATION, HINT, SPAN } from "./wire_probe.wac";
 
 const string ORACLE = "packages/wacc/test/renderdiag_oracle.ts";
 const string CORPUS = "packages/wacc/test/specCases.json";
-const i32 ANNOTATION = 5;
-const i32 HINT = 6;
-const i32 SPAN = 7;
 
 /** One single-file case from the corpus: its path, its source, and whether it should compile. */
 struct Recorded {
@@ -205,13 +202,13 @@ export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core,
     string[] lines = wireLines(wire);
     for (i32 k = 0; k < lines.len(); k++) {
       diagnostics = diagnostics + 1;
-      if (wireField(lines[k], ANNOTATION) != "") { annotated = annotated + 1; }
-      if (wireField(lines[k], HINT) != "") { hinted = hinted + 1; }
+      if (wireField(lines[k], ANNOTATION()) != "") { annotated = annotated + 1; }
+      if (wireField(lines[k], HINT()) != "") { hinted = hinted + 1; }
       // **Recorded, not wide.** A correct span for `;` is 1, so counting `span > 1` would measure how
       // long the tokens happened to be. The wire carries `0` where nothing measured a width, which is
       // what makes "we did not look" distinguishable from "one character is the truth" — so this
       // reads the raw column rather than the rendered one, where a zero is already a one.
-      string span = wireField(lines[k], SPAN);
+      string span = wireField(lines[k], SPAN());
       if (span != "" && span != "0") { spanned = spanned + 1; }
     }
   }

@@ -350,14 +350,23 @@ for attempt in 1 2 3; do
   fi
 
   echo "== suite passed in ${elapsed}s (load now $(cut -d' ' -f1-3 /proc/loadavg)) =="
-  # **The threshold has to move when the suite does.** This said "several times the usual ~50s" above
-  # 180s, and the suite has been 205-230s since the wac lane became the largest one — so it fired on
-  # every green run, four times stale, which is a warning that cannot warn. Measured 2026-08-18:
-  # 208s, as 78s of Deno tests, 29s of the files that run alone, and 100s of `wac test`; the floor with
-  # the current set of checks is about 190s on five cores, and `deno task test` prints the split.
-  # 330s is where a run is genuinely out of the ordinary rather than merely slow.
-  if [ "$elapsed" -gt 330 ]; then
-    echo "   that is well above the ~210s this suite costs when nothing is wrong. Usually the machine"
+  # **The threshold has to move when the suite does, and it has moved twice.** It said "several times
+  # the usual ~50s" above 180s until 2026-08-18, when the wac lane became the largest and every green
+  # run tripped it — a warning that cannot warn. It was re-measured then at 208s (78s Deno, 29s alone,
+  # 100s `wac test`) and set to 330s.
+  #
+  # **Measured again 2026-08-26, on a quiet box the operator had just freed, and it had gone stale the
+  # same way:** two green runs at 498s and 418s, tripping 330 by 90-170s with nothing wrong. The split
+  # is what moved — `issues/system/0161` keeps migrating tests into the lane that costs more per test:
+  #
+  #     2026-08-18    Deno  78s    `wac test` 100s    alone 29s    total 208s
+  #     2026-08-26    Deno  45-70s `wac test` 372-427s             total 418-498s
+  #
+  # The wac lane quadrupled in eight days while the Deno lane shrank. 600s is where a run is out of the
+  # ordinary now; `where the time went` prints the split, and `packages/crypto/test/wac` alone is 318s
+  # of the 1213s of work, so that is the first place to look when this does fire.
+  if [ "$elapsed" -gt 600 ]; then
+    echo "   that is well above the ~420s this suite costs when nothing is wrong. Usually the machine"
     echo "   was busy — three agents share five cores — but check for a hung test too (issue 0036);"
     echo "   the load above tells you which, and the \`where the time went\` block says which lane."
     slow=$(grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -5)

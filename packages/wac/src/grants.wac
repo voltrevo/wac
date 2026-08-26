@@ -110,10 +110,24 @@ export Asked forCommand(string cmd) {
   if (cmd == "compile" || cmd == "bindgen" || cmd == "build") {
     return Asked(true, true, false, true, false);
   }
+  // `app` is a build that writes an executable instead of a module: the same three, and the
+  // executable bit is part of writing a file rather than a capability of its own.
+  if (cmd == "app") { return Asked(true, true, false, true, false); }
+  // Reading the modules it is asked about, and nothing else: `Cli.validated` is the engine answering
+  // in this process, so there is no program to start and no file to write.
+  if (cmd == "validate") { return Asked(true, false, false, false, false); }
+  // `app-run` reads one file and starts what is inside it, and the grants the program gets are the
+  // ones its own manifest declares — `runBytes` reads them from the module rather than passing on
+  // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
+  // handed what its parent does not hold, so narrowing here would cap what a built program declared.
+  if (cmd == "app-run") { return Asked(true, true, true, true, true); }
   // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
   // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
   // though the two now live in one program.
   if (cmd == "update") { return Asked(true, true, true, true, false); }
+  // Removing an installation reads three files, writes the profiles back and asks where `$WAC_HOME`
+  // is. It reaches no network and starts no program, and saying so is the point of this table.
+  if (cmd == "uninstall") { return Asked(true, true, false, true, false); }
   return Asked(true, true, true, true, true);
 }
 
@@ -258,5 +272,9 @@ export Cli narrowed(const Cli parent, Asked a) {
     parent.load,
     parent.call,
     parent.unload,
+    // Asking whether the engine would accept some bytes is not a capability over anything: it reads
+    // no file, starts nothing, and the bytes came from the caller. Passed on unconditionally for the
+    // same reason `write` is.
+    parent.validated,
   );
 }

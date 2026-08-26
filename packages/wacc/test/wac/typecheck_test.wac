@@ -148,7 +148,112 @@ string[] WRONG() {
     // that list came from `nullableIntoNonNull`'s existing callers plus the sweep's queue, and a
     // payload is in neither. Grepping every `!assignable(c,` in `check.wac` and asking which had
     // the nullability branch within six lines is what found it — nine had it and eight did not.
-    "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }");
+    "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }",
+    // **`fill`'s value**, the twelfth slot and the one the site enumeration pointed at but my first
+    // probes could not reach: they guessed the signature and were refused for arity by *both*
+    // compilers, which reads exactly like "no gap here". `spec/spec/arrays.md` has it as
+    // `dst.fill(value, start, end)` — value first — and with the right shape the slot is silent on
+    // a nullable. `copyFrom`, checked beside it, already reports.
+    "struct P { i32 x; } export void f(P? a, P[] xs) { xs.fill(a, 0, xs.len()); }",
+    // **A literal beside a struct in a ternary.** The rule for a literal against a non-literal
+    // branch is gated on `concreteShape`, which is the numbers, `bool` and `string` — so a struct
+    // fell through every branch of it and `c ? p : 1` was silent. The emitter then wrote a module
+    // the engine refuses, which `wac build`'s own check calls a compiler bug. The reference says
+    // *ternary branches have incompatible types: P and i32*.
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : 1; return r.x; }",
+    // The same pair in a `match`, which `checkArmValueTypes` gates on the same `concreteShape`
+    // and skipped for the same reason. The reference: *match arms have incompatible types: P and
+    // i32*.
+    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { case A: p, else: 1 }; return r.x; }",
+    // The other kinds `literalNeverFits` names, so the widening is pinned as a family rather than
+    // as the two cases that happened to be found: an array against an integer literal, and a
+    // struct against a string one.
+    "export i32 f(bool c, i32[] a) { i32[] r = c ? a : 1; return r[0]; }",
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : \"s\"; return r.x; }",
+    // **Ten rules that no corpus exercised.** `errArmTypes` reported at the arm where the
+    // reference reports the whole `match`, and had done since it was written — nothing caught it
+    // because no corpus contains a program that triggers it, so no differential ever had an
+    // opinion about its position. Measured: of 84 declared codes, `generate()`'s 10,013 programs,
+    // the 225 spec cases and every package source between them produce **60**.
+    //
+    // These are ten of the twenty-four that were left, each checked to report at the same place
+    // as the reference before being added — so what they pin is that it stays that way. The other
+    // fourteen are wacc-only rules, the three warnings (which `dumpTypeErrors` does not carry and
+    // the reference has no channel for), or shapes the reference refuses earlier for a different
+    // reason.
+    //
+    // **`errCharLiteral` is one of those and was tried here first.** `'ab'` is refused by both,
+    // at the same position — but the reference refuses it in its *lexer*, and this list is
+    // compared against `checkpos`, which is the type checker alone. So it read as *we report a
+    // diagnostic the reference does not*, which is a contradiction rather than a row. The same
+    // boundary that keeps `zz? q = null;` out of this list.
+    "export i32 f(i32 a, i32 a) { return a; }",
+    "struct B { i32 v; i32 m(this) { return 1; } } struct D : B { i32 w; i32 m(this) { return 2; } } export i32 f(D d) { return d.m(); }",
+    "struct B { i32 v; } struct D : B { i32 w; override i32 m(this) { return 1; } } export i32 f(D d) { return d.m(); }",
+    "export i32 f() { return i32; }",
+    "struct P { i32 v; } export void f(const P p) { p.v = 1; }",
+    "struct P { i32 v; } export i32 f() { return P.nope(); }",
+    "export void f(string s) { s[0] = \"a\"; }",
+    "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f(P p) { i32 x = p.m; return x; }",
+    // **Three rules that no generated program reaches**, added by walking the diagnostic codes rather
+    // than the generator: of 84 codes the sweeps exercise 60, and a code this list never carries is a
+    // code whose *position* nothing compares.
+    //
+    // Two of these agreed on the first run and are here to stay that way. The third did not, and
+    // finding it is why the walk was worth doing — see the `else` case below.
+    //
+    // Two more that the walk turned up are *not* here, and the reason is about this list rather than
+    // about them: the reference refuses a duplicate method and a second `default:` while **parsing**,
+    // so its checker — which is all this list compares against — says nothing, and adding them here
+    // asserts that we invent a diagnostic. They are asserted directly in `illtyped_test.wac`, which is
+    // also where the same split put a character literal.
+    "export i32 f() { u8 b = 1; return b as i32; }",
+    "export void f() { return 1; }",
+    // **The three match-coverage rules, all of which disagreed about position.** Each reported the
+    // match's *subject* — the one part of a `match` none of them is complaining about. The reference
+    // names the second `else`, the unreachable `else`, and the `match` keyword respectively, and they
+    // are here so that the agreement is now a test rather than a measurement someone took once.
+    "enum E { A, B }\n"
+      + "export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } }"
+      + " return 0; }",
+    "enum E { A, B }\n"
+      + "export i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } }"
+      + " return 0; }",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } return 0; }",
+    // **A name reached through a struct rather than through a value.** `checkMember` had this rule
+    // for enums — `E.nope` is a variant that is not there — and not for structs, so all three of
+    // these were accepted by the checker and declined by the *emitter*, which is a refusal with no
+    // position and no message. The reference refuses all three here.
+    //
+    // The fourth member of the family is not in this list because it is **legal**: `Base.get` is an
+    // unbound method reference, an `fn[i32(Base)]` taking the receiver first, and rung 4 has seven
+    // programs passing them to functions and storing them in arrays. The first version of this rule
+    // refused those, and that corpus is what said so.
+    "struct P { i32 v; } export i32 f() { return P.nope; }",
+    "struct P { i32 v; } export i32 f() { return P.v; }",
+    // Legal as a *value* and wrong in this *slot*, which is the reference's complaint too — it had no
+    // type at all here until `staticMethodType` learned the unbound signature.
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f() { return P.m; }",
+    // **Two arguments that disagree about one type parameter.** The binder kept the first and dropped
+    // the rest, so `max<T>(T a, T b)` bound `T` to `i32` and the call had a type — leaving the only
+    // complaint to be about what the caller did with it. The spec's own program says `as! i32`, and
+    // wacc answered *"this cast is between one type and itself"*: a true sentence about a call that
+    // should not exist. Both sides report at the call now.
+    //
+    // **They report different rules there, and this list only compares positions.** The reference's
+    // `checkpos` route answers *"undefined function or struct 'max'"* — it does not resolve the
+    // template on that path, where `referenceCheck.ts` does and gives the clash. Same column either
+    // way, which is all this list asks; the *rule* is pinned in `illtyped_test.wac` instead.
+    "T max<T>(T a, T b) { return a > b ? a : b; }\n"
+      + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }",
+    // **A negated literal in an unsigned slot is the operator, not the range.** This said *"literal
+    // out of range for its type"*, which tells the reader to pick a different literal — and none
+    // works: `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright. wacc had that
+    // rule and could not reach it, because `-1` types as `i32` on its own and only the slot is
+    // unsigned.
+    "u32 f() { return -1; }",
+    "u64 f() { return -1; }");
 }
 
 /**
@@ -180,6 +285,12 @@ string[] CLEAN() {
     "export i64 z() { i64 b = 9223372036854775807; return b; }",
     "export u64 u() { u64 b = 18446744073709551615; return b; }",
     "export i32 h() { i32 b = 0xFFFFFFFF; return b; }",
+    // **`null` beside a reference arm stays legal**, in both spellings — it is the one literal a
+    // nullable takes, and the reason `literalNeverFits` is asked only about *plain* literals.
+    // Without these two rows the widening above could refuse them and every other row would
+    // still pass.
+    "struct P { i32 x; } export i32 j(bool c, P p) { P? r = c ? p : null; return r is null ? 0 : r!.x; }",
+    "struct P { i32 x; } enum E { A, B } export i32 k(E e, P p) { P? r = match (e) { case A: p, else: null }; return r is null ? 0 : r!.x; }",
     // **The controls for the three rows above**, and the first is the one that matters: `is null` on a
     // *nullable* funcref is the ordinary way to ask whether one was supplied, which is why the rule was
     // written to skip funcrefs in the first place. A legal compound assignment and a widening cast are
