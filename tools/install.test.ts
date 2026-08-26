@@ -77,3 +77,41 @@ Deno.test("a profile that does not exist is not created", async () => {
   if (made) throw new Error("it created a profile that was not there");
   await Deno.remove(dir, { recursive: true });
 });
+
+// **An unwritable profile is reported, not thrown.** `install()` writes the binary, the cache, `env`
+// and `install.json5` and edits the profile last, so a `.bashrc` it cannot write used to abort the
+// whole command *after* every material step had succeeded — reporting failure over a usable
+// installation, with no way to re-run that could succeed. GitHub wac#26.
+//
+// The read was already guarded and the writes were not, which is why this looked like a missing
+// permission rather than a missing `try`.
+Deno.test("a profile that cannot be written is an outcome rather than a throw", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-install-ro-" });
+  const profile = `${dir}/.bashrc`;
+  await Deno.writeTextFile(profile, "export EDITOR=vi\n");
+  await Deno.chmod(profile, 0o444);
+
+  // **Skipped rather than failed when the mode does not bite.** Running as root, or on a filesystem
+  // that ignores the mode, makes an unwritable file writable — and a test that cannot arrange its
+  // precondition should say so instead of asserting the opposite of what it meant.
+  let enforced = true;
+  try {
+    await Deno.writeTextFile(profile, "touched\n");
+    enforced = false;
+  } catch { /* the mode holds, which is the case this test is for */ }
+
+  if (enforced) {
+    const said = await ensureProfileLine(profile, `${dir}/.wac`);
+    if (said !== "unwritable") throw new Error(`a read-only profile said ${said}`);
+    const text = await Deno.readTextFile(profile);
+    if (text !== "export EDITOR=vi\n") throw new Error(`it wrote anyway:\n${text}`);
+  }
+
+  // The canary: the same call against the same file, writable, must reach it. Without this the
+  // assertion above passes on an `ensureProfileLine` that answered "unwritable" for everything.
+  await Deno.chmod(profile, 0o644);
+  await Deno.writeTextFile(profile, "export EDITOR=vi\n");
+  const now = await ensureProfileLine(profile, `${dir}/.wac`);
+  if (now !== "added") throw new Error(`the writable case said ${now}`);
+  await Deno.remove(dir, { recursive: true });
+});

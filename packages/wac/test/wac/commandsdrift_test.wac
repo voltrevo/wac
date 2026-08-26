@@ -1,0 +1,105 @@
+// Every command the dispatcher accepts is named in `wac --help`. GitHub wac#29.
+//
+//     wac test --allow-read --allow-run --allow-env packages/wac/test/wac/commandsdrift_test.wac
+//
+// ## Why a derived test rather than a longer usage block
+//
+// The command surface is two lists: an if-chain of `cmd == "…"` arms, and the string `usage()`
+// returns. Nothing tied them together, and they had drifted three times by the time this was
+// written — twice with the native host printing lines the block did not have (`issues/system/0257c`
+// moved `sh`, `update`, `uninstall` and `app` into the program, and the usage moved after them), and
+// once the other way, with `validate`, `app-run`, `covdump`, `ctcompare` and `tracestat` accepted
+// and unnamed.
+//
+// wac#29 reports two of those five. The other three came from asking the dispatcher rather than the
+// report, which is the argument for deriving the set here: a test that pins today's list is the same
+// kind of thing that was already wrong, and would need editing by whoever adds the sixth.
+//
+// ## What it does not claim
+//
+// It reads one file with a fixed pattern, so it is only as good as that pattern — see
+// `test_the_derivation_found_the_commands_it_must_find`, which is the floor. That floor is a
+// *named set* rather than a count, because "found at least one" would pass on a pattern that
+// matched a single arm, and the failure this guards against is a pattern that stops matching a
+// spelling somebody changes.
+//
+// It also does not check the *other* direction — a usage line for a command the dispatcher does not
+// accept. That is the harmless direction and naming it here is cheaper than a second scan.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, Exec, FAULT_NONE, FileResult } from "std/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { binaryPath } from "../../../wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string SOURCE = "packages/wac/src/wac.wac";
+
+/** Every `cmd == "…"` the dispatcher tests, in the order it tests them, without duplicates. */
+string[] acceptedCommands(string src) {
+  string[] found = string[64](fill: "");
+  i32 n = 0;
+  string needle = "cmd == \"";
+  i32 at = 0;
+  while (at < src.len()) {
+    i32 rel = src.slice(at, src.len()).indexOf(needle);
+    if (rel < 0) { break; }
+    i32 start = at + rel + needle.len();
+    i32 endRel = src.slice(start, src.len()).indexOf("\"");
+    if (endRel < 0) { break; }
+    string name = src.slice(start, start + endRel);
+    at = start + endRel;
+    // `--help` and `-h` are flags the dispatcher happens to compare the same way; they are not
+    // commands and there is nothing for the list to say about them.
+    if (name == "--help" || name == "-h" || name == "help" || name == "") { continue; }
+    bool seen = false;
+    for (i32 i = 0; i < n; i++) { if (found[i] == name) { seen = true; } }
+    if (!seen && n < found.len()) { found[n] = name; n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+export string test_the_derivation_found_the_commands_it_must_find(Core core, Cli cli) {
+  T t = T.create();
+  // **The floor, and it is a set rather than a count.** If the pattern stops matching — the arms are
+  // rewritten as a `switch`, or the spacing changes — this fails here, saying so, instead of the
+  // test below passing vacuously over an empty list.
+  FileResult raw = cli.readFile(SOURCE).wait();
+  t.eqI32(raw.fault, FAULT_NONE(), "could not read " + SOURCE);
+  if (raw.fault != FAULT_NONE()) { return t.report(); }
+  string[] cmds = acceptedCommands(string.fromBytes(raw.bytes));
+  t.isTrue(cmds.len() >= 12, "only " + itoa(cmds.len()) + " commands derived from " + SOURCE);
+  string[] must = string[]("check", "build", "run", "test", "update", "app", "validate", "sh");
+  for (i32 i = 0; i < must.len(); i++) {
+    bool got = false;
+    for (i32 j = 0; j < cmds.len(); j++) { if (cmds[j] == must[i]) { got = true; } }
+    t.isTrue(got, "the derivation missed `" + must[i] + "`, so its pattern no longer matches");
+  }
+  return t.report();
+}
+
+export string test_every_accepted_command_is_named_in_the_usage_block(Core core, Cli cli) {
+  T t = T.create();
+  FileResult raw = cli.readFile(SOURCE).wait();
+  t.eqI32(raw.fault, FAULT_NONE(), "could not read " + SOURCE);
+  if (raw.fault != FAULT_NONE()) { return t.report(); }
+  string[] cmds = acceptedCommands(string.fromBytes(raw.bytes));
+
+  Exec r = cli.exec(binaryPath(cli), string[]("--help"), u8[0]()).wait();
+  t.isTrue(r.ran(), "wac --help did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  string help = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(help.len() > 200, "the help output is too short to be the usage block");
+
+  string missing = "";
+  for (i32 i = 0; i < cmds.len(); i++) {
+    // Two spellings count as named: its own line, `wac <cmd>`, and a share of the combined first
+    // line, `wac check|compile|bindgen`. Anything looser would be met by the word turning up inside
+    // a flag — `run` is in `--allow-run` on six lines.
+    bool named = contains(help, "wac " + cmds[i]) || contains(help, "|" + cmds[i]);
+    if (!named) { missing = missing + " " + cmds[i]; }
+  }
+  t.eqStr(missing, "", "the dispatcher accepts commands `wac --help` does not name —" + missing);
+  return t.report();
+}

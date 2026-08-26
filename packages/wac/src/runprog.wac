@@ -209,8 +209,18 @@ export i32 runModule(Core core, Cli cli, i32 argc, string path) {
 export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
   i32 grants = declaredGrants(wasm);
   if (grants < 0) {
-    core.warn("wac: " + shown + " carries no wac.manifest section — build it with "
-              + "packages/platform/native.ts");
+    // **Name the command, not the API behind it.** This said *"build it with
+    // packages/platform/native.ts"*, which `docs/your-own-project.md` describes as the lower-level
+    // compiler API and tells a reader not to reach for — so the one message a person meets after
+    // `wac compile` sent them away from the command and at the thing the guide says is not it.
+    // GitHub wac#28.
+    //
+    // `compile` is what produces a module with no manifest, so the sentence says which command to
+    // use *instead* rather than only which one to use: without that, "build it with `wac build`" is
+    // advice about a file whose provenance the reader has to work out for themselves.
+    core.warn("wac: " + shown + " carries no wac.manifest section, so it is a raw module rather "
+              + "than a program — `wac compile` writes one of these, and `wac build <entry.wac> "
+              + "-o <stem>` writes one that can run");
     return 1;
   }
   Child kid = cli.spawn(wasm, args, grants, "", true, false).wait();

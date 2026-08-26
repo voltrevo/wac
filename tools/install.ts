@@ -3,7 +3,15 @@
 //     deno task wac:install                 # into $WAC_HOME, default $HOME/.wac
 //     deno task wac:install --target deno   # ...hosted by Deno instead: no cargo, no Rust
 //     deno task wac:install --target node   # ...or by Node, run by its shebang either way
+//     deno task wac:install --no-profile    # ...and leave every shell profile alone
 //     deno task wac:build -o ./wac          # an uninstalled binary, nothing else touched
+//
+// **`--no-profile` is for a caller who manages PATH itself**, and for one that cannot write a
+// profile at all. Installing and editing an interactive shell's configuration are separate
+// operations with separate permissions: a container, a CI job or a read-only home can allow the
+// first and refuse the second. An unwritable profile is now reported beside a complete install
+// rather than aborting it after the material work is done — GitHub wac#26 — and this flag is how to
+// say up front that no profile should be touched.
 //
 // **`--target` installs the same command, not a lesser one.** `packages/wac/src/wac.wac` is the whole
 // surface and all three hosts run that one program — `issues/system/0257c`. Measured 2026-08-26: `wac
@@ -172,7 +180,7 @@ async function place(from: string, to: string): Promise<void> {
 export async function ensureProfileLine(
   profile: string,
   home: string,
-): Promise<"added" | "present" | "updated" | "absent"> {
+): Promise<"added" | "present" | "updated" | "absent" | "unwritable"> {
   let text: string;
   try {
     text = await Deno.readTextFile(profile);
@@ -190,15 +198,31 @@ export async function ensureProfileLine(
     // different homes and reading the profile.
     if (lines[at] === want) return "present";
     lines[at] = want;
-    await Deno.writeTextFile(profile, lines.join("\n"));
+    // **A profile this cannot write is not an install that failed.** The read is guarded and the
+    // write was not, so a read-only `.bashrc` threw out of `install()` after the binary, the cache,
+    // `env` and `install.json5` were all in place — reporting failure over a usable installation, and
+    // leaving no way to try again that could succeed. GitHub wac#26.
+    try {
+      await Deno.writeTextFile(profile, lines.join("\n"));
+    } catch {
+      return "unwritable";
+    }
     return "updated";
   }
   const sep = text.endsWith("\n") || text === "" ? "" : "\n";
-  await Deno.writeTextFile(profile, `${text}${sep}${want}\n`);
+  try {
+    await Deno.writeTextFile(profile, `${text}${sep}${want}\n`);
+  } catch {
+    return "unwritable";
+  }
   return "added";
 }
 
-export async function install(env: Deno.Env = Deno.env, target: Target = "native"): Promise<string> {
+export async function install(
+  env: Deno.Env = Deno.env,
+  target: Target = "native",
+  editProfiles = true,
+): Promise<string> {
   const home = wacHome(env);
   const built = await buildFor(target);
   await Deno.mkdir(`${home}/cache/git`, { recursive: true });
@@ -236,15 +260,31 @@ export async function install(env: Deno.Env = Deno.env, target: Target = "native
   );
 
   const touched: string[] = [];
+  const refused: string[] = [];
   const h = env.get("HOME");
-  if (h !== undefined && h !== "") {
+  if (editProfiles && h !== undefined && h !== "") {
     for (const p of PROFILES) {
       const what = await ensureProfileLine(`${h}/${p}`, home);
-      if (what !== "absent") touched.push(`${p} (${what})`);
+      if (what === "unwritable") refused.push(p);
+      else if (what !== "absent") touched.push(`${p} (${what})`);
     }
   }
+  // **What happened, including the part that did not.** Installing and editing an interactive shell's
+  // configuration are separate operations with separate permissions — a container, a CI job or a
+  // read-only home can allow the first and refuse the second — so an unwritable profile is reported
+  // beside a successful install rather than turned into a failed one, and the sentence says what to
+  // do instead. GitHub wac#26.
+  const line = !editProfiles
+    ? "not edited (--no-profile)"
+    : touched.length > 0
+    ? touched.join(", ")
+    : "none found";
+  const note = refused.length > 0
+    ? `\n  note    could not write ${refused.join(", ")} — the install is complete; add\n` +
+      `          \`. ${home}/env\` to your shell yourself, or re-run with --no-profile`
+    : "";
   return `${home}/bin/wac\n  cache   ${home}/cache/git\n  env     ${home}/env\n` +
-    `  profile ${touched.length > 0 ? touched.join(", ") : "none found"}`;
+    `  profile ${line}${note}`;
 }
 
 /** The compiler inside the binary, in bytes — which build of wacc this `wac` carries. */
@@ -281,7 +321,7 @@ if (import.meta.main) {
         console.error(`unknown target ${JSON.stringify(target)} — native, deno or node`);
         Deno.exit(2);
       }
-      console.log(`installed ${await install(Deno.env, target)}`);
+      console.log(`installed ${await install(Deno.env, target, !args.includes("--no-profile"))}`);
     } else if (mode === "build") {
       const at = args.indexOf("-o");
       if (at < 0 || args[at + 1] === undefined) {

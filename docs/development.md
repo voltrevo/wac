@@ -31,10 +31,16 @@ after it drains, which the serial lane did for free.
 A target narrows the lane, which it did not before: `deno task test packages/tty/` used to run every wac
 test in the repository.
 
-**`WAC_KEEP_AGGREGATE=1` keeps the generated aggregate**, as `.cache/wac-aggregate-<pid>-<group>.kept.wac`
-— the file the compiler actually saw, which is otherwise deleted before anything can fail. Reach for it
-when a test passes on its own and fails in a directory run: that difference is the aggregate, and
-`issues/lang/0154` is one bug that lives there.
+**`WAC_KEEP_AGGREGATE=1` keeps the generated aggregate**, as `.cache/wac-aggregate-<nanos>_test.wac`,
+and says where it left it. That is the file the compiler actually saw, and it is otherwise removed as
+soon as the compiler has read it. Reach for it when a test passes on its own and fails in a directory
+run: that difference is the aggregate, and `issues/lang/0154` is one bug that lives there.
+
+The name was `wac-aggregate-<pid>-<group>.kept.wac` here until 2026-08-26 and had not been that since
+`test` stopped being the Rust host's command. The variable had stopped being read at the same time, so
+between `issues/system/0257c` and GitHub wac#27 the aggregate was kept on every path but one and this
+paragraph described a switch that did nothing — which is why a reader could reasonably report it as
+working.
 
 A wait that is a *spin* is what makes that parallelism unsafe, and there were two — see
 `waitForPortWithin` in [`packages/wactest/src/daemon.wac`](../packages/wactest/src/daemon.wac). Four

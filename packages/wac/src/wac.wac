@@ -265,6 +265,25 @@ struct Fnv {
  * otherwise costs sixty-five real builds of real programs, and a test that slow is a test nobody runs.
  * The same reason `$WAC_TESTMOD_DIR` exists on the host's side of this.
  */
+/**
+ * Whether to keep the generated test aggregate — `WAC_KEEP_AGGREGATE=1`.
+ *
+ * **Documented and not implemented, until now.** `docs/development.md` describes this variable and
+ * three issues cite it as the way they measured something, but nothing in this program read it: the
+ * flag belonged to the Rust host's `test`, and `issues/system/0257c` moved the command into the wac
+ * program without it. What survived the move was neither behaviour — the aggregate was kept
+ * unconditionally on every path but one, which is GitHub wac#27.
+ *
+ * Any non-empty value that is not `0` counts, because a caller who writes `WAC_KEEP_AGGREGATE=yes`
+ * means yes, and a debugging switch that silently ignores its own value is worse than one that is
+ * generous about it.
+ */
+bool keepAggregate(Cli cli) {
+  u8[]? set = cli.env("WAC_KEEP_AGGREGATE").wait();
+  if ((set is null) || set!.len() == 0) { return false; }
+  return string.fromBytes(set!) != "0";
+}
+
 i32 keepBuilds(Cli cli) {
   u8[]? set = cli.env("WAC_BUILD_CACHE_KEEP").wait();
   if ((set is null) || set!.len() == 0) { return 64; }
@@ -808,7 +827,27 @@ string usage() {
        // command and this program knew nothing about it. It is here now, and so is the command —
        // which is what makes this the whole list rather than most of it.
        + "       wac app [--allow-…] <entry.wac> -o <dest>   an executable that runs itself — one\n"
-       + "                file, needing a `wac` on the machine that runs it";
+       + "                file, needing a `wac` on the machine that runs it\n"
+       // **The five the dispatcher accepted and this did not name.** The comment above claimed this
+       // was "the whole list rather than most of it" and it was short by `validate`, `app-run`,
+       // `covdump`, `ctcompare` and `tracestat` — each with a usage string of its own, reachable,
+       // and invisible to anyone reading `--help`. Reported as GitHub wac#29, which names two of
+       // them; the other three came from asking the dispatcher instead of the report.
+       //
+       // `commandsdrift_test.wac` now derives the accepted set from this file and requires every one
+       // to appear here, because a list maintained beside a dispatcher is a list that drifts — twice
+       // already, per the two comments above about the host printing lines this block did not.
+       + "       wac validate <module.wasm> […]   load each module and say whether the engine\n"
+       + "                accepts it, without running anything\n"
+       + "       wac covdump <module.wasm> [export|export:<cases>]…   the coverage a built module\n"
+       + "                recorded; `wac tracestat <module.wasm>` is the same for a --trace build\n"
+       + "       wac ctcompare <a.wasm> <b.wasm> [--all]   compare two builds for constant-time\n"
+       + "                differences\n"
+       // Named rather than hidden, and marked rather than advertised: it is a real command a reader
+       // will meet in the first two lines of any `wac app` output, so leaving it out of the list
+       // makes that file look like it calls something that does not exist.
+       + "       wac app-run <file> [args…]     runs a `wac app` executable — normally invoked for\n"
+       + "                you by the two lines at the top of one, rather than typed";
 }
 
 /**
@@ -1273,13 +1312,33 @@ export i32 main(Core core, Cli cli) {
   if (cmd == "uninstall") { return uninstallCommand(core, narrowed(cli, forCommand("uninstall")), argc); }
 
   if (cmd == "update") {
-    string dir = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".";
+    Cli ucli = narrowed(cli, forCommand("update"));
+    // **A bare `update` means the project you are in, not the directory you are in.** Every other
+    // project-aware command discovers it — `wac check main.wac` from `src/` finds the manifest one
+    // level up, because `projectRootAbs` walks to the nearest ancestor holding one. `update` alone
+    // read `.` literally and answered *"wac.json5 could not be read, so . is not a project"* from a
+    // directory whose project the command beside it had just found. GitHub wac#30.
+    //
+    // The same walk rather than a second one: it already stops at the filesystem root for an
+    // absolute path, and resolving the working directory first is what makes the boundary absolute.
+    // An explicitly named project keeps its exact meaning — `wac update ..` still means `..`, and a
+    // path that is not a project still says so, which is the diagnostic somebody may be relying on.
+    string dir = ".";
+    if (argc > 1) {
+      dir = string.fromBytes(cli.arg(1).wait());
+    } else {
+      string here = normalisePath(ucli.cwd().wait());
+      string found = projectRootAbs(Fs.onHost(ucli, 0), here, ".");
+      // Empty means no manifest anywhere above, and then `.` is the right thing to report on: the
+      // message names what the user is in rather than a root that was never found.
+      if (found != "") { dir = found; }
+    }
     string home = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wacHomeOf(cli);
     if (home == "") {
       core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
       return 2;
     }
-    return fetchAll(core, narrowed(cli, forCommand("update")), dir, home);
+    return fetchAll(core, ucli, dir, home);
   }
 
 
@@ -1342,6 +1401,9 @@ export i32 main(Core core, Cli cli) {
   // **What the caller typed**, kept because `entry` is about to stop being it: a directory target is
   // rewritten to the generated aggregate, and a message naming that names a file nobody asked about.
   string target = entry;
+  // The aggregate this run generated, or "" — the one thing that has to be cleaned up on every way
+  // out of this function. See where it is removed, below `gather`. GitHub wac#27.
+  string generated = "";
   // How many the `--ignore` list took out, which the summary reports: "there were none" and "you
   // excluded them all" are different answers to the same count.
   i32 ignoredCount = 0;
@@ -1420,9 +1482,26 @@ export i32 main(Core core, Cli cli) {
       return 1;
     }
     entry = aggregate;
+    generated = aggregate;
   }
 
   Sources src = gather(fs, cli, entry);
+  // **The aggregate is scratch, and this is the only place that has to know it.** `gather` has its
+  // bytes now and every later use of `entry` is as a *name* — a cache key, a diagnostic, a report
+  // heading — so nothing below reads the file again and it can go here, once, instead of at the
+  // thirty-odd ways out of this function.
+  //
+  // It used to go beside the run, after `runTests` answered. That covered a first run and nothing
+  // else: a second run writes a fresh aggregate, hits the build cache and returns before reaching it,
+  // and a compile failure returns earlier still — so `.cache/` grew by one file per invocation, which
+  // is the shape `issues/system/0136` is about. Reported as GitHub wac#27.
+  //
+  // Best effort, and deliberately not checked: a run that answered is not made wrong by a file that
+  // outlived it, and a message about failing to delete scratch would be noise over the test report.
+  if (generated != "" && !keepAggregate(cli)) { cli.remove(generated, false).wait(); }
+  if (generated != "" && keepAggregate(cli)) {
+    core.warn("wac: kept the generated aggregate at " + generated + " (WAC_KEEP_AGGREGATE)");
+  }
   if (src.missing != "" || src.why != "") {
     core.warn(src.why != "" ? "wacc: " + src.why : "wacc: cannot read " + src.missing);
     return 1;
@@ -1694,11 +1773,8 @@ export i32 main(Core core, Cli cli) {
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
                         covered ? covTableFilesIn(paths, texts, res, entry) : "",
                         hasFlag(cli, argc, "--verbose"), profileDir);
-    // **The aggregate is scratch and goes when the run does.** It is a generated file with a unique
-    // name, so leaving it would grow `.cache/` by one per invocation — `issues/system/0136` is the day
-    // this repository's disk filled from exactly that shape, one temporary directory per run that
-    // nothing removed. Best effort: a run that answered is not made wrong by a file that outlived it.
-    if (walked.len() > 0) { cli.remove(entry, false).wait(); }
+    // The aggregate is already gone — removed below `gather`, which is the one place that covers
+    // every way out of this function rather than only this one. GitHub wac#27.
     return code;
   }
 

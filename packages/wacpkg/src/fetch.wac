@@ -107,11 +107,30 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
   for (i32 i = 0; i < steps.len(); i++) {
     Mapping map = m.imports[i];
     if (steps[i].action == USE()) {
-      // Not consulted, not counted. The lock covers it and a branch that moved is not a reason.
-      resolved[i] = steps[i].commit;
+      // **Locked is not the same as present.** `plan` compares the manifest with the lock and never
+      // looks at the cache, so a lock entry was read as proof there was nothing to fetch — and a
+      // project whose cache had been removed sat in a loop: `wac update` said *nothing to fetch; 1
+      // mapping(s) already locked* while `wac check` refused to build and told the user to run `wac
+      // update`. The only way out was deleting the lock, which is the one file that was right.
+      // GitHub wac#25.
+      //
+      // A committed lockfile is supposed to make a project portable to a clean machine, so the
+      // absent-cache case is a *restore*: fetch the commit the lock already chose, without
+      // consulting the ref, and leave the lock exactly as it was.
+      string at = cachePath(wacHome, map.git, steps[i].commit);
+      if (at != "" && cli.stat(at + "/pack.pack").wait().isFile) {
+        // Not consulted, not counted. The lock covers it and a branch that moved is not a reason.
+        resolved[i] = steps[i].commit;
+        continue;
+      }
+      string back = fetchOne(core, cli, store, wacHome, map, "locked, and not in the cache",
+                             steps[i].commit);
+      if (back == "") { return 1; }
+      resolved[i] = back;
+      fetched = fetched + 1;
       continue;
     }
-    string got = fetchOne(core, cli, store, wacHome, map, steps[i].why);
+    string got = fetchOne(core, cli, store, wacHome, map, steps[i].why, "");
     if (got == "") { return 1; }
     resolved[i] = got;
     fetched = fetched + 1;
@@ -142,7 +161,21 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
  * `why` is the plan's reason, printed so that a fetch a person did not expect says what changed in
  * the manifest to cause it.
  */
-string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping map, string why) {
+/**
+ * Fetch one mapping, or restore one the lock already pins.
+ *
+ * `pin` is "" for an ordinary resolve — ask the server what `map.ref` names now — and a full commit
+ * when the lock already decided and only the *cache* is missing it. `issues` aside, that second case
+ * is GitHub wac#25: a committed `wac.lock` is supposed to make a project portable to a clean machine,
+ * and a lock entry was being read as proof there was nothing to fetch.
+ *
+ * The advertisement is still requested when pinned, because the capabilities come from it and a
+ * `want` without `ofs-delta` asks for a bigger pack. What is skipped is `resolveRef`: the ref may
+ * have moved since the lock was written, and following it would quietly relock the project to
+ * something else — which is the one thing a lockfile exists to prevent.
+ */
+string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping map, string why,
+                string pin) {
   string what = map.name + " (" + map.git + " @ " + map.ref + ")";
   core.log("wacfetch: " + what + (why == "" ? "" : " — " + why));
 
@@ -178,7 +211,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
     }
   }
 
-  Resolved hit = resolveRef(names, oids, map.ref);
+  Resolved hit = pin != "" ? Resolved(true, 0, pin, "the lock") : resolveRef(names, oids, map.ref);
   if (!hit.ok) {
     core.warn("wacfetch: " + map.name + ": `" + map.ref + "` "
               + (hit.code == 2 ? "is both a branch and a tag there; name it in full"
