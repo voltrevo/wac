@@ -114,6 +114,9 @@ export Asked forCommand(string cmd) {
   // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
   // though the two now live in one program.
   if (cmd == "update") { return Asked(true, true, true, true, false); }
+  // Removing an installation reads three files, writes the profiles back and asks where `$WAC_HOME`
+  // is. It reaches no network and starts no program, and saying so is the point of this table.
+  if (cmd == "uninstall") { return Asked(true, true, false, true, false); }
   return Asked(true, true, true, true, true);
 }
 

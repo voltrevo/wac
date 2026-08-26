@@ -776,7 +776,11 @@ string usage() {
        + "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
        + "                [-c script]           the shell, sealed unless granted\n"
        + "       wac update [project]           resolve and fetch what wac.lock does not cover,\n"
-       + "                and write the lock — the only command that reaches the network";
+       + "                and write the lock — the only command that reaches the network\n"
+       // Printed by the host until 2026-08-26, appended after this block because the command lived
+       // there. It is the program's now, so its line is too — `issues/system/0257c`.
+       + "       wac uninstall [--keep-cache]   remove what `deno task wac:install` put under\n"
+       + "                $WAC_HOME, the profile line, and nothing else";
 }
 
 /**
@@ -1145,6 +1149,8 @@ export i32 main(Core core, Cli cli) {
              " slots " + itoa(c.values.len()));
     return 0;
   }
+
+  if (cmd == "uninstall") { return uninstallCommand(core, narrowed(cli, forCommand("uninstall")), argc); }
 
   if (cmd == "update") {
     string dir = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".";
@@ -1684,4 +1690,110 @@ export i32 main(Core core, Cli cli) {
   }
   core.log(out + ": " + itoa(wasm.len()) + " bytes from " + itoa(src.n) + " file(s)");
   return 0;
+}
+
+/**
+ * Remove what `deno task wac:install` put under `$WAC_HOME`, and the line it added to a profile.
+ *
+ * **In the program, because it is a command and not engine work.** `issues/system/0257c` puts the
+ * command surface here; this was 59 lines of Rust doing filesystem calls the program can already
+ * make, which is the definition of a row that moves.
+ *
+ * The rules are the host's, kept exactly: a profile line is one containing `# wac`, the three files
+ * are `bin/wac`, `env` and `install.json5`, `bin/` goes only if it empties, the cache stays with
+ * `--keep-cache`, and `$WAC_HOME` itself goes only if nothing is left in it — otherwise the count is
+ * reported, because removing a directory somebody else is using is not this command's business.
+ */
+i32 uninstallCommand(Core core, Cli cli, i32 argc) {
+  bool keepCache = false;
+  for (i32 i = 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--keep-cache") { keepCache = true; }
+    else {
+      core.warn("usage: wac uninstall [--keep-cache]");
+      core.warn("wac: unknown argument " + a);
+      return 2;
+    }
+  }
+  string home = wacHomeOf(cli);
+  if (home == "") {
+    core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to uninstall from");
+    return 2;
+  }
+  string went = "";
+  i32 wentN = 0;
+
+  u8[]? h = cli.env("HOME").wait();
+  if (!(h is null) && h!.len() > 0) {
+    string hd = string.fromBytes(h!);
+    i32 lines = 0;
+    string[] profiles = string[](hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile");
+    for (i32 i = 0; i < profiles.len(); i++) { lines = lines + removeProfileLine(cli, profiles[i]); }
+    if (lines > 0) { went = went + (wentN > 0 ? ", " : "") + itoa(lines) + " profile line(s)"; wentN++; }
+  }
+
+  string[] named = string[]("bin/wac", "env", "install.json5");
+  for (i32 i = 0; i < named.len(); i++) {
+    Change gone = cli.remove(home + "/" + named[i], false).wait();
+    if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + named[i]; wentN++; }
+  }
+  // Only when it empties, which is what we want — a `bin` holding anything else is not ours.
+  cli.remove(home + "/bin", false).wait();
+  if (!keepCache) {
+    Change gone = cli.remove(home + "/cache", true).wait();
+    if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + "cache"; wentN++; }
+  }
+  string[]? left = cli.readDir(home).wait();
+  if (!(left is null)) {
+    if (left!.len() == 0) { cli.remove(home, false).wait(); }
+    else {
+      went = went + (wentN > 0 ? ", " : "") + "(" + itoa(left!.len()) + " other entr"
+           + (left!.len() == 1 ? "y" : "ies") + " left in " + home + ")";
+      wentN++;
+    }
+  }
+  // The host printed the list bare — `println!("{}", went.join(", "))` — and this is a differential
+  // against a command people have in their shell history, so the wording is not mine to improve.
+  core.log(wentN == 0 ? "nothing to remove" : went);
+  return 0;
+}
+
+/** Whether `hay` holds `needle`. Local because this file wants one substring test and no dependency. */
+bool holds(string hay, string needle) {
+  if (needle.len() == 0) { return true; }
+  if (needle.len() > hay.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= hay.len(); i++) {
+    if (hay.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/**
+ * A profile line is one carrying `# wac`, and the count of those removed. The host's rule exactly,
+ * including the join: `kept.join("\n")` there, so a file ending in a newline keeps its trailing
+ * empty line and one that does not, does not.
+ */
+i32 removeProfileLine(Cli cli, string profile) {
+  FileResult got = cli.readFile(profile).wait();
+  if (!got.ok) { return 0; }
+  string text = string.fromBytes(got.bytes);
+  string kept = "";
+  i32 dropped = 0;
+  i32 keptN = 0;
+  i32 at = 0;
+  while (at <= text.len()) {
+    i32 nl = at;
+    while (nl < text.len() && text.slice(nl, nl + 1) != "\n") { nl++; }
+    string line = text.slice(at, nl);
+    if (holds(line, "# wac")) { dropped++; }
+    else {
+      kept = kept + (keptN > 0 ? "\n" : "") + line;
+      keptN++;
+    }
+    if (nl >= text.len()) { break; }
+    at = nl + 1;
+  }
+  if (dropped == 0) { return 0; }
+  Change wrote = cli.writeFile(profile, kept.toBytes()).wait();
+  return wrote.ok() ? dropped : 0;
 }

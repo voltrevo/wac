@@ -1446,9 +1446,6 @@ fn main() {
         // the one, and it carries the flags this binary accepts.
         eprintln!("       wac app <entry.wac> -o <dest>  an executable that runs itself — one file,");
         eprintln!("                                      needing a `wac` on the machine that runs it");
-        eprintln!("       wac uninstall [--keep-cache]");
-        eprintln!("                                      remove what `deno task wac:install` put under");
-        eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
         std::process::exit(if asked { 0 } else { code });
     }
     if args.len() < 2 {
@@ -1511,9 +1508,6 @@ fn main() {
     // installed the command has a `$WAC_HOME` and no checkout. `design/lang/0009` D1.
     //
     // No `SEED.is_some()`: a build carrying only a shell can still take itself away.
-    if stem == "uninstall" {
-        std::process::exit(uninstall_command(&args[2..]));
-    }
     // **`test` is the program's, not the host's.** `issues/system/0257c` ruled that a host may
     // implement *running a module* and must not implement the *command surface*; `test` was a row in
     // its table and this interception is what kept it there, so the program's `wac test` never ran on
@@ -1713,117 +1707,8 @@ fn validate_modules(paths: &[String], quiet: bool) -> i32 {
     if bad > 0 { 1 } else { 0 }
 }
 
-/// `wac covdump <module.wasm>` — run `main` under the counters and print each one.
-///
-/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
-/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
-/// The aggregated report `--coverage` prints answers a different question — how much was reached —
-/// and cannot say how often.
-///
-/// The module is instantiated with no imports, which is what an instrumented single file needs.
-/// `$WAC_HOME`, or `$HOME/.wac`, with trailing slashes off. `None` when neither is set.
-///
-/// The same rule as `wacHome` in `tools/install.ts`, and it has to be: the two commands install and
-/// remove one tree, so a disagreement about where it is means one of them works on nothing.
-fn wac_home() -> Option<String> {
-    if let Ok(set) = std::env::var("WAC_HOME") {
-        if !set.is_empty() {
-            return Some(set.trim_end_matches('/').to_string());
-        }
-    }
-    let home = std::env::var("HOME").ok()?;
-    if home.is_empty() {
-        return None;
-    }
-    Some(format!("{home}/.wac"))
-}
 
-/// Drop every line carrying the marker from a profile. Returns how many went.
-fn remove_profile_line(profile: &str) -> usize {
-    let Ok(text) = std::fs::read_to_string(profile) else { return 0 };
-    let lines: Vec<&str> = text.split('\n').collect();
-    let kept: Vec<&str> = lines.iter().copied().filter(|l| !l.contains("# wac")).collect();
-    if kept.len() == lines.len() {
-        return 0;
-    }
-    if std::fs::write(profile, kept.join("\n")).is_err() {
-        return 0;
-    }
-    lines.len() - kept.len()
-}
 
-/// **`wac uninstall` — D1's other half, and the half `deno task wac:uninstall` cannot do.**
-///
-/// It removes what the installer wrote and **nothing else**: not a manifest, not a lockfile, not a
-/// source file, not a build product. Those live in projects rather than here, and a package manager
-/// that tidies your working directory is one nobody trusts twice. `$WAC_HOME` itself goes only if it
-/// is empty afterwards — somebody may keep their own things under it, and what is left is *named*
-/// rather than passed over, so "removed" and "found nothing" are never the same line.
-///
-/// The list is duplicated from `tools/install.ts` rather than shared, because there is nothing to
-/// share it through: one is Rust in the binary and the other is TypeScript that needs the checkout.
-/// `packages/wacc/test/wac/uninstall_test.wac` is what keeps them the same list — it builds one fake
-/// install per implementation and compares what survives, so a divergence is a failing test rather
-/// than a surprise in somebody's home directory years later.
-fn uninstall_command(args: &[String]) -> i32 {
-    let mut keep_cache = false;
-    for a in args {
-        match a.as_str() {
-            "--keep-cache" => keep_cache = true,
-            _ => {
-                eprintln!("usage: wac uninstall [--keep-cache]");
-                eprintln!("wac: unknown argument {a}");
-                return 2;
-            }
-        }
-    }
-    let Some(home) = wac_home() else {
-        eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to uninstall from");
-        return 2;
-    };
-    let mut went: Vec<String> = Vec::new();
-
-    // **The profile line first.** Removing the files and leaving every profile sourcing an `env`
-    // that is gone prints an error on every login, from a command the person has just removed. The
-    // task learned that by being run rather than by being tested, so the order is deliberate here.
-    if let Ok(h) = std::env::var("HOME") {
-        if !h.is_empty() {
-            let mut lines = 0;
-            for p in [".bashrc", ".zshrc", ".profile"] {
-                lines += remove_profile_line(&format!("{h}/{p}"));
-            }
-            if lines > 0 {
-                went.push(format!("{lines} profile line(s)"));
-            }
-        }
-    }
-    for name in ["bin/wac", "env", "install.json5"] {
-        if std::fs::remove_file(format!("{home}/{name}")).is_ok() {
-            went.push(name.to_string());
-        }
-    }
-    let _ = std::fs::remove_dir(format!("{home}/bin")); // only when empty, which is what we want
-    if !keep_cache && std::fs::remove_dir_all(format!("{home}/cache")).is_ok() {
-        went.push("cache".to_string());
-    }
-    if let Ok(entries) = std::fs::read_dir(&home) {
-        let left = entries.count();
-        if left == 0 {
-            let _ = std::fs::remove_dir(&home);
-        } else {
-            went.push(format!(
-                "({left} other entr{} left in {home})",
-                if left == 1 { "y" } else { "ies" }
-            ));
-        }
-    }
-    if went.is_empty() {
-        println!("nothing to remove");
-    } else {
-        println!("{}", went.join(", "));
-    }
-    0
-}
 
 fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
     run_as_with(m, wasm, manifest_text, AsChild { argv: std::env::args().skip(2).map(|a| a.into_bytes()).collect(), ..Default::default() })
