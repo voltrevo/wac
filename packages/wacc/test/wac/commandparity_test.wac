@@ -57,7 +57,7 @@
 // ## What it costs, measured 2026-08-25
 //
 // **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
-// three hosts instead of two and forty-two cases instead of six. (The wall figure is older than the
+// three hosts instead of two and fifty-two cases instead of six. (The wall figure is older than the
 // count: since the command became one program containing the shell and the fetcher it is 83.7s wall
 // and 97.4s of CPU, because each host now builds a 219-file program rather than a 44-file one.) Twenty-eight of them run
 // something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
@@ -269,6 +269,40 @@ string[][] cases() {
     string[]("ctcompare", "traced.wasm", "traced.wasm"),
     string[]("ctcompare", "--all", "traced.wasm", "traced.wasm"),
     string[]("ctcompare", "traced.wasm"),
+    // **The five commands that arrived after this table stopped growing** — `issues/system/0268a`
+    // step 2. `app`, `app-run`, `validate`, `sh` and `update` all became the wac program's in the days
+    // around `issues/system/0257c`, and none of them had a row. That is not a gap in the abstract: on
+    // 2026-08-26 `wac app` on the Node host could not mark its output executable — `packages/platform/
+    // build.ts` injected an fs missing `chmod` — and every instrument in the repository was green,
+    // this table included, because the command it broke was not in it.
+    //
+    // **`app` is the row with a capability behind it**, which is what makes it worth more than the
+    // other four put together. `writeApp` calls `Cli.setExecutable`, and a host that cannot answer
+    // gives status 1 and *cannot make thing executable* where the others give status 0 and a size —
+    // and `Said` compares status and both streams, so the row disagrees loudly rather than shrugging.
+    // Checked before it was written, because a row whose failure mode is untested is a row that
+    // cannot fail.
+    string[]("app", "src/hello.wac", "-o", "thing"),
+    string[]("app-run", "thing"),              // …and the artefact runs, which is the round trip
+    string[]("app", "src/hello.wac"),          // no `-o`, so `app`'s own usage
+    // `validate` needs the engine and nothing else, so its four shapes are cheap: a module that loads,
+    // a file that is not one, a path that is not there — unreadable counts as rejected, so one missing
+    // file does not hide the verdict on the others — and no arguments at all.
+    string[]("validate", "hello.wasm"),
+    string[]("validate", "notamodule.wasm"),
+    string[]("validate", "nosuch.wasm"),
+    string[]("validate"),
+    // The shell and the fetcher, which were separate payloads the binary carried until `0257c` put
+    // them in the one program. `echo` is a builtin, so this needs no grant and reaches no filesystem;
+    // `update` in a directory with no manifest is the one invocation of it that touches no network.
+    string[]("sh", "-c", "echo hi"),
+    string[]("update"),
+    // **`uninstall` is deliberately not here, and the reason is worth more than the row.** It removes
+    // `$WAC_HOME` and edits shell profiles. This harness hands each host an argv and a working
+    // directory; it does not hand it an isolated environment, so a row for `uninstall` would delete
+    // the installation of whoever ran the suite. The command whose capability failure would be worst
+    // to trigger on purpose is the one to leave uncovered and say so — `uninstall_test.wac` drives it
+    // against a fake `$WAC_HOME` instead, which is where a test that needs an environment belongs.
     string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
     // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
     // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
@@ -543,7 +577,12 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // returns 0, and the three modules run directly.
   // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
   // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
-  t.eqI32(zeroes, 19, "nineteen of these forty-two succeed on the native host; a different count " +
+  // **Twenty-four since 2026-08-26** and the five are worth naming, because the count is the only
+  // thing standing between a new row and a row that silently does nothing: `app` writes its artefact,
+  // `app-run` runs it, `validate hello.wasm` accepts a module, `sh -c "echo hi"` echoes, and `update`
+  // in a directory with no manifest says so and exits 0. The other five new rows are usage errors and
+  // rejections, which are the half of `issues/system/0268a` step 2 that had to fail.
+  t.eqI32(zeroes, 24, "twenty-four of these fifty-two succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

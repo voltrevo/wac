@@ -297,3 +297,40 @@ the Node walk went I would expect some to have V8 coverage that is simply not ci
 verification job rather than an inference, and symmetry is not evidence.
 
 Step 2 — parity rows for `app`, `sh`, `update`, `validate`, `uninstall` — is untouched.
+
+## 2026-08-26, step 2: the five commands that arrived after the table stopped growing
+
+`commandparity_test.wac` is 52 invocations across three hosts, up from 42. The ten new rows are `app`,
+`app-run`, `app` with no `-o`, four shapes of `validate`, `sh -c "echo hi"`, and `update` in a
+directory with no manifest.
+
+**`app` is worth more than the other nine together**, because it is the only one with a capability
+behind it: `writeApp` calls `Cli.setExecutable`. On 2026-08-26 the Node host could not answer that —
+`build.ts` injected an fs with no `chmod` — and every instrument here was green, this table included,
+because the command it broke had no row.
+
+Checked before writing it, rather than after: the harness compares `Said(status, stdout + stderr)`, so
+a host that cannot mark its output executable gives status 1 and *cannot make thing executable* where
+the others give status 0 and a size line. **The row can disagree.** A row whose failure mode is
+untested is a row that cannot fail, which is the same defect as a floor of zero one level along.
+
+**`uninstall` is deliberately absent.** It removes `$WAC_HOME` and edits shell profiles, and this
+harness gives each host an argv and a working directory but not an isolated environment — a row for it
+would delete the installation of whoever ran the suite. The command whose capability failure would be
+worst to trigger on purpose is the one to leave uncovered and *say so*.
+`packages/wacc/test/wac/uninstall_test.wac` drives it against a fake `$WAC_HOME`, which is where a test
+needing an environment belongs.
+
+The suite's own canary earned its place here: it counts how many rows exit 0, and went red at
+`got 24, want 19` until the five new successes were named. A count that must be updated deliberately is
+what separates adding a row from adding a row that does nothing.
+
+### Step 2 done, and what is left of this issue
+
+- **Step 1** — the ledger derives its hosts. Done.
+- **Step 3** — the Node walk. Done: 0 → 17.
+- **Step 2** — parity rows. Done, less `uninstall`, with the reason recorded.
+- **Left**: the V8 direction of the step-3 walk. Six entries derive wasmtime+deno with no V8, all
+  backed by `native_examples_test.wac` alone — `CLOSE_SEND`, `NOW_MILLIS`, `MONOTONIC_NANOS`,
+  `SLEEP_MILLIS`, `RANDOM_BYTES`, `CONNECT`. Symmetry with the Node case is a reason to look, not a
+  finding.
