@@ -1,0 +1,132 @@
+// The repository root holds ten files, and every one of them is named here.
+//
+//     wac test --allow-read --allow-run tools/
+//
+// ## Why
+//
+// Two strays reached the root and neither was noticed by anything:
+//
+//   - **`privkey.pem`** — an RSA private key, committed by `6a3922f9` *"tls: the two interop files
+//     move to wac"*. A test ran `openssl` without an output path, openssl wrote to the working
+//     directory, and the working directory is a **public repository**. It certified nothing here and
+//     nothing referenced it, so it was a throwaway from one run rather than a credential — which is
+//     luck, not a control.
+//   - **`-o`** — a file whose name is a mistyped flag, committed by `8285769c`. Someone wrote
+//     `... -o -o something` or similar and git took it at its word. Already removed by the time this
+//     was written.
+//
+// Both are the same shape: a command run at the root, writing where it was standing. That is not a
+// mistake anyone stops making, so it wants a check rather than more care.
+//
+// ## Why an allowlist rather than a pattern
+//
+// A pattern has to guess what a stray looks like, and the two above look nothing alike — one is a
+// well-formed `.pem`, the other is punctuation. What they have in common is only that nobody meant
+// them to be there, and the sole reliable way to express that is to say what *is* meant.
+//
+// The root is the one directory in this tree where an allowlist is cheap: ten files, changing a few
+// times a year, and every change to it is a deliberate act by somebody who should be saying why. A
+// new top-level document is one line here; a stray never is, because nobody adds a line for a file
+// they did not know they created.
+//
+// **Directories are not listed.** They are the tree's structure, they are governed by
+// `tools/wac/roottemp_test.wac` for the temporary kind, and adding one is already a visible act.
+// This is only about *files*, which is where both strays landed.
+//
+// **Read from `git ls-files`**, for the reason `flaky_test.wac` gives and `roottemp_test.wac`
+// repeats: an untracked stray is one agent's working directory and not the repository's problem,
+// and failing on one would make this guard everybody else's flake.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { tracked } from "../../packages/wactest/src/repo.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * Every file the repository root is meant to hold.
+ *
+ * Adding a line here is the deliberate act; if you are reading this because the test failed, the
+ * question to answer first is not "may I add it" but "did I mean to create it at the root at all".
+ */
+string[] expected() {
+  return string[](
+    ".gitignore",
+    "CLAUDE.md",         // the instructions every agent reads
+    "CONTRIBUTING.md",   // the compiler directory's rules
+    "MAP.md",            // generated; `deno task map --check` holds it
+    "MERGE.md",          // why a pre-2026-08-09 checkout cannot fetch this history
+    "README.md",
+    "SECURITY.md",
+    "WASM-WISHLIST.md",
+    "deno.json",
+    "deno.lock"
+  );
+}
+
+bool has(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
+}
+
+/** Whether `p` is at the root: a tracked path with no slash in it. */
+bool atRoot(string p) {
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { return false; } }
+  return true;
+}
+
+export string test_the_repository_root_holds_only_what_is_named_here(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  t.isTrue(all.len() >= 500, "only " + itoa(all.len()) + " tracked file(s) — did the walk resolve?");
+  if (all.len() < 500) { return t.report(); }
+
+  string extra = "";
+  i32 nExtra = 0;
+  i32 nRoot = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!atRoot(all[i])) { continue; }
+    nRoot = nRoot + 1;
+    if (has(expected(), all[i])) { continue; }
+    nExtra = nExtra + 1;
+    extra = extra + "\n  " + all[i];
+  }
+  // **A floor, so a walk that found no root files cannot pass as a clean root** — the failure this
+  // whole file is about, one level up.
+  t.isTrue(nRoot >= 5, "only " + itoa(nRoot) + " root file(s) found — did the filter resolve?");
+  t.eqI32(nExtra, 0,
+          itoa(nExtra) + " file(s) at the repository root that nothing expects. A command run at the "
+          + "root writes where it is standing, and this repository is public — check what it is "
+          + "before deciding. If it belongs, add it to `expected()` with a comment saying why:"
+          + extra);
+
+  // **And the other direction**, which is what stops the list becoming decoration: a name here that
+  // no longer exists is a line nobody removed, and the next reader takes the whole list on trust.
+  string gone = "";
+  i32 nGone = 0;
+  for (i32 i = 0; i < expected().len(); i++) {
+    if (has(all, expected()[i])) { continue; }
+    nGone = nGone + 1;
+    gone = gone + "\n  " + expected()[i];
+  }
+  t.eqI32(nGone, 0, itoa(nGone) + " name(s) in `expected()` that the root no longer holds — delete"
+                    + " them, or the list stops being a description of anything:" + gone);
+  return t.report();
+}
+
+/**
+ * **The check would catch the shape it was written for.**
+ *
+ * Both strays, by name, against the list as it stands — because a `has` that answered yes to
+ * everything would pass the sweep above and report a clean root forever.
+ */
+export string test_the_check_would_notice_either_stray() {
+  T t = T.create();
+  t.isFalse(has(expected(), "privkey.pem"), "a private key at the root is not expected");
+  t.isFalse(has(expected(), "-o"), "a mistyped flag at the root is not expected");
+  t.isTrue(has(expected(), "README.md"), "the list cannot find a file that is in it");
+  // And the root filter, whose two failure modes are both silent: one that answered false for
+  // everything would find no strays, and one that answered true would report every file in the tree.
+  t.isTrue(atRoot("README.md"), "a root file was not recognised as one");
+  t.isFalse(atRoot("packages/tls/test/data/privkey.pem"), "a nested path was treated as a root file");
+  return t.report();
+}

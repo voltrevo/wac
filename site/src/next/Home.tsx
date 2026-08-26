@@ -43,7 +43,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    16 sources, 968 KB, identical`;
+B == C    17 sources, 1,698 KB, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -245,10 +245,18 @@ export default function Home() {
         </P>
         <P>
           It is measured against the specification rather than against the other compiler. It
-          refuses <Lead>316 of 317</Lead> of the programs the spec calls illegal, and never invents
-          a diagnostic — silent on all <Lead>371</Lead> it calls legal. The second is the number
-          that matters: a checker reporting less than the spec can be finished, while one that
-          reports what the spec does not cannot be trusted at all.
+          refuses <Lead>all 317</Lead> of the one-file programs the spec calls illegal, and never
+          invents a diagnostic — silent on all <Lead>371</Lead> it calls legal. The second is the
+          number that matters: a checker reporting less than the spec can be finished, while one
+          that reports what the spec does not cannot be trusted at all.
+        </P>
+        <P>
+          <Lead>Both ledgers of known misses are empty</Lead>, which is the part worth saying out
+          loud. {m({ children: "specsingle_test.wac" })} keeps two lists — the illegal programs this
+          checker accepts, and the legal ones it refuses — and a program leaving either list fails
+          the test until somebody deletes the line. The second list was fourteen when the corpus was
+          recorded; eleven of those were one bug, a local aliasing something const could not be
+          rebound, which made every linked-list walk in the specification illegal.
         </P>
         <Caveat title="not finished">
           All 1075 of the repository&rsquo;s wac files compile whole now — it was 27 short of 729 five
@@ -371,7 +379,7 @@ export default function Home() {
         <P>
           <A href="#/checked">How each of those is checked →</A>{" "}
           <span style={{ color: c.dim }}>
-            — six kinds of evidence, starting with a foreign implementation on the other end.
+            — eight kinds of evidence, starting with a foreign implementation on the other end.
           </span>
         </P>
       </Section>

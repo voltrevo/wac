@@ -52,3 +52,18 @@ native/spike-v8/target/
 # stops is the next one.
 __pycache__/
 *.pyc
+
+# Keys and stray flags at the **repository root**, which is where a command run without an output
+# path writes. `privkey.pem` got in this way — an RSA key committed by the TLS interop migration,
+# because openssl was run at the root and openssl writes where it is standing. `-o` got in the same
+# way from a mistyped flag.
+#
+# Root-anchored on purpose: `packages/*/test/data` is full of deliberately committed `.pem` and
+# `.key` fixtures, and those are the point of that directory. Nothing belongs at the root.
+#
+# As with the caches above, removing them from the index does not remove them from history and is
+# not meant to; what it stops is the next one. `tools/wac/rootfiles_test.wac` is the half that
+# catches a stray this cannot predict — it names every file the root is meant to hold.
+/*.pem
+/*.key
+/-o

@@ -507,6 +507,53 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
   }
 });
 
+// ── The bootstrap block's two figures ──────────────────────────────────────
+
+Deno.test("site: the bootstrap block's source count and size are the tree's", async () => {
+  // The block on the front page reads `B == C  17 sources, 1,059 KB, identical`, and its own comment
+  // has admitted for months that both figures are typed and go stale — they said 11 sources and
+  // 266,818 bytes into 2026-08-20, and 16 sources and 968 KB into 2026-08-25. Twice caught by a
+  // person reading the page, which is not a method. The tag-count check above is the shape this
+  // copies.
+  //
+  // **The count is exact and the size has a tolerance**, and the difference is how each one moves.
+  // A source file is added a few times a year and is a deliberate act; the artefact's size changes
+  // with every commit to the compiler, so an exact check would be red for a reason nobody caused —
+  // `tools/wac/readmefigures_test.wac` argues that at length and this follows it.
+  //
+  // KB here is 1000 bytes, which is the unit the page has always used: it called 968,370 bytes
+  // "968 KB".
+  const root = new URL("../../", import.meta.url).pathname;
+  const page = await Deno.readTextFile(`${root}site/src/next/Home.tsx`);
+  const said = page.match(/B == C\s+([\d,]+) sources, ([\d,]+) KB, identical/);
+  if (said === null) throw new Error("the bootstrap block no longer states both figures — has the wording changed?");
+  const saidSources = Number(said[1].replace(/,/g, ""));
+  const saidKb = Number(said[2].replace(/,/g, ""));
+
+  let sources = 0;
+  for await (const e of Deno.readDir(`${root}packages/wacc/src`)) {
+    if (e.isFile && e.name.endsWith(".wac")) sources++;
+  }
+  if (sources < 5) throw new Error(`only ${sources} wacc sources found — did the walk resolve?`);
+  if (saidSources !== sources) {
+    throw new Error(`the site says ${saidSources} wacc sources; packages/wacc/src has ${sources}`);
+  }
+
+  // The seed is gitignored and one per agent, so a checkout that has never run `deno task seed` has
+  // nothing to compare against. Absent is not a failure — it is a checkout that cannot answer.
+  let bytes: number;
+  try {
+    bytes = (await Deno.stat(`${root}native/v8/seed/wacc.wasm`)).size;
+  } catch {
+    console.error("  (no native/v8/seed/wacc.wasm — run `deno task seed` to check the size too)");
+    return;
+  }
+  const kb = Math.round(bytes / 1000);
+  if (Math.abs(kb - saidKb) > saidKb * 0.1) {
+    throw new Error(`the site says ${saidKb} KB; the seed is ${kb} KB — more than 10% out, so it has stopped being true`);
+  }
+});
+
 // ── No page may carry a URL that is only right from one directory ───────────
 
 Deno.test("site: no runtime URL is relative to the directory it was written in", async () => {
