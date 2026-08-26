@@ -33,7 +33,10 @@ export struct Cap20 {
   fn[Pending<string>(u8[])] f14;
   fn[void(i32, i32)] f15;
   fn[Pending<bool>()] f16;
-  fn[Pending<i64[]>(string)] f17;
+  // Not `Pending<i64[]>`, which was here and does not emit — `issues/lang/0271a`. The boundary
+  // marshals `u8[]`, `i32[]`, `string[]` and `u8[][]` and nothing else, and an element outside that
+  // list produces an invalid module rather than a refusal. A size fixture must build.
+  fn[Pending<string[]>(i32)] f17;
   fn[i32(string)] f18;
   fn[Pending<u8[][]>(i32, string)] f19;
 }

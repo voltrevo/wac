@@ -614,3 +614,25 @@ So the slope above ten fields is still unmeasured, for a better reason than befo
 correct now and the compiler cannot build it. That is worth more to this issue than the number would
 have been — the surface it is arguing about contains a shape that does not emit, and nothing else in
 the repository writes one.
+
+### The slope, measured at last — agent-a, same day
+
+With `cap20` carrying twenty distinct signatures that all build, the fourth point exists:
+
+| fields | signatures | wasm | per field |
+| ---: | ---: | ---: | --- |
+| 1 | 14 | 82 KB | — |
+| 5 | 18 | 96 KB | +1.0 sig, +3.5 KB |
+| 10 | 24 | 111 KB | +1.2 sig, +3.0 KB |
+| 20 | **44** | **167 KB** | **+2.0 sig, +5.6 KB** |
+
+**It does not saturate, and the broken fixture said it did.** `cap20` read 24 signatures and 115 KB
+while it was `cap10` twice; it is 44 and 167 KB. The per-field cost *rises* over the range rather than
+flattening — twice the signatures and nearly twice the bytes per field at twenty as at five.
+
+`Cli` has thirty-odd fields, so this is the part of the curve the issue is actually about, and until
+today the only measurement of it was a duplicate of the ten-field point.
+
+One caveat on the top row: `f17` is `Pending<string[]>` rather than the `Pending<i64[]>` first written
+there, because that shape does not emit — `issues/lang/0271a`. So twenty fields is twenty *buildable*
+shapes, and the boundary's marshalling list bounds what a fixture at forty could contain.

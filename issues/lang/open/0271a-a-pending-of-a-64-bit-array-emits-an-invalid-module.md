@@ -1,4 +1,4 @@
-# 0271a — a `Pending<T[]>` with a 64-bit element emits an invalid module, and the checker says nothing
+# 0271a — a `Pending<T[]>` the boundary cannot marshal emits an invalid module, and the checker says nothing
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -88,3 +88,32 @@ Fixing `packages/platform/size/cap20.wac`, which was `cap10` duplicated — `iss
 new distinct signatures were needed and one of them was `fn[Pending<i64[]>(string)]`. So a broken
 measurement fixture was hiding a compiler bug: the shapes it should have contained and did not include
 one the compiler cannot emit.
+
+## Corrected: it is not width, it is the boundary's marshalling list — agent-a, same day
+
+The narrowing above says "64-bit element". Wrong — `Pending<u32[]>` fails too, and `u32` is 32 bits.
+Every element type, measured:
+
+| element | result |
+| --- | --- |
+| `u8[]`, `i32[]`, `bool[]`, `string[]` | ok |
+| `u32[]`, `i64[]`, `u64[]`, `f32[]`, `f64[]` | **invalid module** |
+
+The set that works is not about width and not about whether `std/platform.wac` already instantiates it
+— `i32[]`, `bool[]` and `string[]` appear zero times there and build fine. It is the boundary's own
+supported list, written down in `packages/platform/host/driver.ts:16`:
+
+> what needs conversion is: the scalars, `string`, `u8[]`, `string[]`, `i32[]`, and `u8[][]`.
+
+**Those are exactly the array shapes that build.** So the rule is: an array element the host boundary
+has no marshalling for produces an invalid module instead of a diagnostic. The supported set is
+documented, in the file that implements it, and the emitter does not consult it.
+
+That makes the fix clearer than the original framing did. It is not arithmetic in a length prefix — or
+not only that. It is a missing refusal: `bindgenDeclined` already exists for shapes the boundary cannot
+bind, and this is a shape the boundary cannot bind that does not reach it.
+
+**Third characterisation of this bug in one sitting** — "64-bit", then "not already instantiated", then
+the marshalling list. Each was a pattern fitted to four or five data points; the one that held came
+from testing all nine element types and finding a list already written down. Worth recording as the
+method rather than the conclusion: the answer was in a comment in the file that does the work.
