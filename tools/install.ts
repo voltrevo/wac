@@ -1,7 +1,22 @@
 // Install `wac`, or build one without installing — `design/lang/0009` D1.
 //
 //     deno task wac:install                 # into $WAC_HOME, default $HOME/.wac
+//     deno task wac:install --target deno   # ...hosted by Deno instead: no cargo, no Rust
+//     deno task wac:install --target node   # ...or by Node, run by its shebang either way
 //     deno task wac:build -o ./wac          # an uninstalled binary, nothing else touched
+//
+// **`--target` installs the same command, not a lesser one.** `packages/wac/src/wac.wac` is the whole
+// surface and all three hosts run that one program — `issues/system/0257c`. Measured 2026-08-26: `wac
+// app` writes byte-identical artefacts on all three, and `commandparity_test.wac` holds 52
+// invocations to the same answer. What `$WAC_HOME/bin/wac` *is* differs — a 67 MB binary, or a
+// JavaScript file with a shebang — and nothing that runs it needs to know which.
+//
+// **The trade is what it costs to get, not what you get.** Native needs cargo and reaches no network;
+// hosted needs neither cargo nor Rust and shells out to `deno bundle`, which fetches
+// `@esbuild/<platform>` from npm the first time. GitHub issue 22 asked for a JS-hosted command to be
+// the natural route for a JS project, and the operator's answer was that the cargo path stays primary
+// — this is the flag that makes the other one an *install* rather than a hundred-character build
+// command somebody copies out of a document.
 //
 // **Taking it away is `wac uninstall`, and is not here.** There were two uninstallers until
 // 2026-08-26 — a `wac:uninstall` task in this file and the subcommand — and the subcommand is the
@@ -72,6 +87,51 @@ function wacHome(env: Deno.Env = Deno.env): string {
   return `${home}/.wac`;
 }
 
+/** Which host the installed command runs on. */
+export type Target = "native" | "deno" | "node";
+
+/**
+ * Build the command for `target` and answer where it landed.
+ *
+ * **One program, three hosts** — `issues/system/0257c`. `packages/wac/src/wac.wac` is the whole
+ * command surface; the native binary embeds it as a payload and the JavaScript hosts get the same
+ * wasm through `packages/platform/build.ts`. So installing a Deno- or Node-hosted `wac` is not
+ * installing a lesser thing: measured on 2026-08-26, `wac app` on all three writes byte-identical
+ * artefacts, and `commandparity_test.wac` holds 52 invocations to the same answer.
+ *
+ * **What differs is what it costs to get.** The native build needs cargo and no network; the hosted
+ * build needs neither cargo nor a Rust toolchain and *does* shell out to `deno bundle`, which fetches
+ * `@esbuild/<platform>` from npm the first time. That is the whole trade, and `--target` is how
+ * somebody with Deno and no Rust makes it.
+ */
+async function buildFor(target: Target): Promise<string> {
+  if (target === "native") return await buildBinary();
+  const out = `${ROOT}/.cache/wac-install-${target}`;
+  // The same grants the seed carries — `tools/seed.sh`'s line — plus `run`, which the hosted build
+  // can have and the baked seed cannot: `run_seed` hands the program the manifest's grants, so the
+  // native binary's `--allow-run` reaches argv and not capabilities (`issues/system/0264c`). A JS
+  // host parses the shebang instead, so the artefact may as well be able to spawn.
+  const built = new Deno.Command("deno", {
+    args: [
+      "run", "-A", "packages/platform/build.ts", "packages/wac/src/wac.wac",
+      "--target", target, "-o", out,
+      "--allow-read", "--allow-write", "--allow-env", "--allow-net", "--allow-run",
+    ],
+    cwd: ROOT,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (!(await built.output()).success) {
+    throw new Error(
+      `the ${target}-hosted command did not build — see above. If that was the npm fetch, ` +
+        `\`deno cache npm:@esbuild/<your platform>\` does it once; the native target needs no ` +
+        `bundler at all.`,
+    );
+  }
+  await Deno.stat(out);
+  return out;
+}
+
 /** Build the binary in the tree and answer where it is. */
 async function buildBinary(): Promise<string> {
   // `tools/seed.sh` rather than `cargo build` alone: the seed is an input to the build, and the
@@ -138,9 +198,9 @@ export async function ensureProfileLine(
   return "added";
 }
 
-export async function install(env: Deno.Env = Deno.env): Promise<string> {
+export async function install(env: Deno.Env = Deno.env, target: Target = "native"): Promise<string> {
   const home = wacHome(env);
-  const built = await buildBinary();
+  const built = await buildFor(target);
   await Deno.mkdir(`${home}/cache/git`, { recursive: true });
   await place(built, `${home}/bin/wac`);
 
@@ -166,7 +226,12 @@ export async function install(env: Deno.Env = Deno.env): Promise<string> {
       `  home: ${JSON.stringify(home)},\n` +
       `  from: ${JSON.stringify(ROOT)},\n` +
       `  commit: ${JSON.stringify(await headCommit())},\n` +
-      `  seed: ${await seedSize()},\n` +
+      `  target: ${JSON.stringify(target)},\n` +
+      // **`seed` only for the native build**, because it is the size of `native/v8/seed/wacc.wasm` —
+      // the wasm that binary carries. A hosted install does not contain that file, and writing its
+      // size would describe something the artefact has no copy of. Nothing parses this file, so the
+      // fields are free to be honest; a reader seeing `target: "deno"` and no `seed` has the answer.
+      (target === "native" ? `  seed: ${await seedSize()},\n` : "") +
       `}\n`,
   );
 
@@ -210,7 +275,13 @@ if (import.meta.main) {
   const mode = args.shift() ?? "install";
   try {
     if (mode === "install") {
-      console.log(`installed ${await install()}`);
+      const ti = args.indexOf("--target");
+      const target = (ti >= 0 ? args[ti + 1] : "native") as Target;
+      if (target !== "native" && target !== "deno" && target !== "node") {
+        console.error(`unknown target ${JSON.stringify(target)} — native, deno or node`);
+        Deno.exit(2);
+      }
+      console.log(`installed ${await install(Deno.env, target)}`);
     } else if (mode === "build") {
       const at = args.indexOf("-o");
       if (at < 0 || args[at + 1] === undefined) {

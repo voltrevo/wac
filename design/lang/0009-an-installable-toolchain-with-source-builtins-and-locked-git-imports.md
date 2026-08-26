@@ -25,6 +25,22 @@ the build and is not needed to run the result. `deno task wac:build -o ./wac` pr
 binary. `wac uninstall [--keep-cache]` removes the binary, the cache, the profile line and the
 metadata, and never a manifest, a lockfile, a source file or a build product.
 
+**Amended 2026-08-26: `--target deno|node` installs the same command hosted by a JavaScript runtime.**
+Everything above still holds of the default and of the layout — same `$WAC_HOME`, same four things,
+same profile line, same `wac uninstall`. What changes is two sentences of it. *"Builds the native V8
+command"* is the default rather than the whole: `packages/wac/src/wac.wac` is the command and all
+three hosts run that one program (`issues/system/0257c`), so what `bin/wac` *is* — a binary, or a
+JavaScript file with a shebang — stops being something a caller can tell. And *"Deno bootstraps the
+build and is not needed to run the result"* is false of `--target deno`, where it is the runtime.
+
+**The native target stays the supported one**, and for a reason that is about getting it rather than
+having it: the hosted build shells out to `deno bundle`, which fetches `@esbuild/<platform>` from npm
+the first time, where `tools/seed.sh --bootstrap` reaches no network at all. GitHub issue 22 asked for
+the JS-hosted command to be the natural route for a JS project and the operator ruled that cargo stays
+primary; this flag is what makes the other route an *install* rather than a hundred-character build
+command copied out of a document. `install.json5` records which one you have, and omits `seed` for the
+hosted flavours, since that field is the size of a wasm file those installs do not contain.
+
 `app:wacbin` becomes `app:native-binary`, which is what it always was: the generic builder, not the
 dedicated one. *(2026-08-18: done — the task, the native-binary tool's usage line,
 `native/v8/README.md` and the test that names it. Closed issues keep the old spelling, because they

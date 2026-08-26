@@ -5,13 +5,20 @@ does not work yet it says so and names the issue, rather than being left out.
 
 ## Getting the command
 
-There is one way today, and it needs a checkout of this repository, Deno, and **Cargo**:
+**The supported way needs a checkout of this repository, Deno, and Cargo**, and it is the one to
+follow unless you have a reason not to:
 
 ```sh
 git clone <this repo> wac && cd wac
 bash tools/seed.sh --bootstrap    # once, from a fresh clone: builds the compiler the binary carries
 deno task --no-lock wac:install   # builds `wac` and puts it on PATH
 ```
+
+**There is a second way as of 2026-08-26** — `deno task wac:install --target deno` — which needs
+neither Cargo nor Rust and installs the same command to the same place. It is second rather than
+equal for one reason, stated where it is documented below: building it shells out to `deno bundle`,
+which fetches from npm the first time, so the route with no network requirement is this one. Nothing
+about the *result* is lesser; see "Without Cargo" below.
 
 **Why `bash` and `--no-lock` rather than `deno task seed:bootstrap`.** Both forms work; these two do
 not touch the network. `deno task` restores this repository's `deno.lock` before running anything, and
@@ -69,6 +76,18 @@ deno run -A <wac>/packages/platform/build.ts <wac>/packages/wac/src/wac.wac \
 repoint, and repointed the others. So for a day the one documented Cargo-free way to *have* the command
 named a deleted file. Everything the paragraphs below claim was still true of the program; the reader
 could not reach it.
+
+**And since 2026-08-26 you can install it rather than build it**, which is the difference between a
+command and a file you made:
+
+```sh
+cd <wac> && deno task wac:install --target deno    # or --target node
+wac check src/main.wac                             # …and it is on PATH like any other
+```
+
+Same `$WAC_HOME` layout as the native install, same one marked line in your shell profile, same
+`wac uninstall` to take it away. `$WAC_HOME/bin/wac` is a JavaScript file with a shebang instead of a
+67 MB binary, and nothing that runs it needs to know which. `install.json5` records which you have.
 
 `--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
 `build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
