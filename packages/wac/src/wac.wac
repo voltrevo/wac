@@ -47,7 +47,8 @@ import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../..
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
          from "./runprog.wac";
-import { aggregatePath, aggregateSource, flagValue, importable, runTests, sigsWithCounters,
+import { aggregatePath, aggregateSource, beside, flagValue, importable, noTrailingSlash, runTests,
+         sigsWithCounters,
          testFilesIn, unknownTestFlag, withoutIgnored } from "./testrun.wac";
 import { renderDiagnostics } from "../../wacc/src/render.wac";
 import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/files.wac";
@@ -1224,6 +1225,20 @@ export i32 main(Core core, Cli cli) {
   // How many the `--ignore` list took out, which the summary reports: "there were none" and "you
   // excluded them all" are different answers to the same count.
   i32 ignoredCount = 0;
+  // **A named file is not a way around `--ignore`.** The walk below is where the exclusion list is
+  // applied, and one file that is not a directory does not go through it — so
+  // `wac test --ignore a_test.wac a_test.wac` ran the file, contradicting the sentence above it. A
+  // caller building a target list and an ignore list from one source must get the same answer for a
+  // file as for the directory holding it; the alternative is an exclusion that works or not depending
+  // on how the caller happened to spell the target.
+  if (cmd == "test" && !fs.stat(entry).isDir
+      && withoutIgnored(string[](entry), flagValue(cli, argc, "--ignore")).len() == 0) {
+    // The walk's own spelling for a run that excluded everything, in the one-file shape: `0 ok`
+    // rather than nothing at all, because "excluded" and "no tests here" are different answers and
+    // the exit code cannot tell them apart.
+    core.log("1 file: 0 ok, 1 not run (--ignore)");
+    return 0;
+  }
   if (cmd == "test" && fs.stat(entry).isDir) {
     string[] found = testFilesIn(fs, entry);
     walked = withoutIgnored(found, flagValue(cli, argc, "--ignore"));
@@ -1240,7 +1255,7 @@ export i32 main(Core core, Cli cli) {
       }
       return 1;
     }
-    string aggregate = aggregatePath(core, cli);
+    string aggregate = "";
     string[] texts = string[walked.len()](fill: "");
     for (i32 i = 0; i < walked.len(); i++) {
       FileResult one = cli.readFile(walked[i]).wait();
@@ -1250,23 +1265,36 @@ export i32 main(Core core, Cli cli) {
       }
       texts[i] = string.fromBytes(one.bytes);
     }
-    // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
-    // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —
-    // naming a path the caller had not chosen, for a file they did not know existed. Reported against
-    // an external project on 2026-08-25; the native command never hit it because it writes its
-    // aggregate to a temporary directory of its own.
-    Change made = cli.mkdir(".cache", true).wait();
-    if (!made.ok()) {
-      core.warn("wac: cannot make .cache for the test aggregate — " + made.message);
-      return 1;
-    }
+    // **Two places the aggregate can live, and the imports it carries decide which.**
+    //
+    // `.cache/` is the ordinary one: the file is scratch, it is already ignored, and every import is
+    // `../` and then the path as the project spells it. That needs the walked files to be *under* the
+    // project, and a directory somewhere else has no relative name from `.cache/` — an absolute import
+    // is read relative to the importer, so there is nothing to emit. `wac test /tmp/somewhere` was
+    // refused for that reason once `test` became the program's, and it had worked before, because the
+    // host built its aggregate in a temporary directory of its own. `beside` is the way back: put the
+    // aggregate *in* the walked directory, where every file the walk found is at or below it and the
+    // `../` is not needed at all.
+    string up = "../";
     string[] imports = importable(cli, walked);
     if (imports.len() == 0) {
-      core.warn("wac: `test <directory>` needs the directory to be inside the project — "
-                + walked[0] + " is not under " + cli.cwd().wait());
-      return 2;
+      string dir = noTrailingSlash(entry);
+      imports = beside(dir, walked);
+      up = "";
+      aggregate = dir + "/" + baseName(aggregatePath(core, cli));
+    } else {
+      // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
+      // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —
+      // naming a path the caller had not chosen, for a file they did not know existed. Reported against
+      // an external project on 2026-08-25.
+      Change made = cli.mkdir(".cache", true).wait();
+      if (!made.ok()) {
+        core.warn("wac: cannot make .cache for the test aggregate — " + made.message);
+        return 1;
+      }
+      aggregate = aggregatePath(core, cli);
     }
-    Change wrote = cli.writeFile(aggregate, aggregateSource(imports, texts).toBytes()).wait();
+    Change wrote = cli.writeFile(aggregate, aggregateSource(imports, texts, up).toBytes()).wait();
     if (!wrote.ok()) {
       core.warn("wac: cannot write the aggregate " + aggregate + " — " + wrote.message);
       return 1;
@@ -1358,7 +1386,18 @@ export i32 main(Core core, Cli cli) {
   // is. Both or neither — a table without the counters describes a module that does not exist. That
   // path keeps the separate calls, because there is no folded form of it and a coverage build is
   // something a person waits for on purpose.
-  bool covered = hasFlag(cli, argc, "--coverage");
+  // **`WAC_PROFILE` asks for the same instrumented build without the flag**, because the thing that
+  // sets it is not typing a command line: `tools/mutate.ts` runs `wac test <entry>` and then reads the
+  // per-test line map to decide which tests a mutation could possibly reach. A profile is a coverage
+  // build read per test rather than once, so it needs the counters for the same reason and gets them
+  // the same way. `test` only — a `build` that quietly emitted a different module because a variable
+  // was set in the shell would be a build whose output does not follow from its arguments.
+  string profileDir = "";
+  if (cmd == "test") {
+    u8[]? want = cli.env("WAC_PROFILE").wait();
+    if (!(want is null) && want!.len() > 0) { profileDir = string.fromBytes(want!); }
+  }
+  bool covered = hasFlag(cli, argc, "--coverage") || profileDir != "";
   // **`--trace` is the other instrumented build**, and it is the same three exports meaning something
   // else: a journal of `(site, value)` in the order events happened rather than a count per point.
   // `wac ctcompare` reads it. The two cannot be asked for together — they are one counter array, and a
@@ -1495,7 +1534,7 @@ export i32 main(Core core, Cli cli) {
     i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
                         covered ? covTableFilesIn(paths, texts, res, entry) : "",
-                        hasFlag(cli, argc, "--verbose"));
+                        hasFlag(cli, argc, "--verbose"), profileDir);
     // **The aggregate is scratch and goes when the run does.** It is a generated file with a unique
     // name, so leaving it would grow `.cache/` by one per invocation — `issues/system/0136` is the day
     // this repository's disk filled from exactly that shape, one temporary directory per run that

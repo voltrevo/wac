@@ -440,10 +440,6 @@ struct HeldModule {
     /// `Core` and `Cli` built for it, in `main`'s order — kept because funcref slots are finite and a
     /// world rebuilt per call fails on the seventeenth. `entry.ts` learnt the same thing about `main`.
     world: Vec<v8::Global<v8::Value>>,
-    /// `LoadedModule.of` and `CallResult.of` as *this* module spells them, which is not the loader's spelling:
-    /// a monomorphisation binds under a mangled name and only the module is the authority on it.
-    loaded_of: Option<String>,
-    called_of: Option<String>,
 }
 
 /// Everything a dispatcher needs, reachable from a `fn` pointer that cannot close over anything.
@@ -631,7 +627,7 @@ fn run_seed(args: &[String]) -> i32 {
 /// belongs to the program rather than to the build, which is why the scan stops there — `wac run
 /// --allow-read prog.wac --allow-read` runs a program that may read and is passed the string.
 fn run_command(rest: &[String]) -> i32 {
-    build_and_call(rest, Entry::Main)
+    build_and_call(rest)
 }
 
 /// One entry that imports every test file and re-exports its tests, for a single build.
@@ -897,26 +893,6 @@ fn trap_said_bare(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> S
     got
 }
 
-/// How many tests a run skipped because it was not granted the capability they take.
-///
-/// **Counted because the summary is the line anybody reads.** Each file says which of its tests were
-/// skipped, once, in a line that scrolls past over eighty files — and the summary then said
-/// `15 files: 13 ok, 2 needing a host oracle` about a run that had skipped seventeen tests. Two people
-/// measured that directory hours apart, one with grants and one without, and disagreed by 15× on a
-/// single file; the counts differed by three tests and neither read that as the answer
-/// (`issues/system/0183`). A process-wide counter rather than a return value because the verdict codes
-/// are a contract `tools/mutate/native.ts` maps, and this is not a verdict.
-static UNGRANTED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Files where *nothing* ran because the run granted no capability — as against needing an oracle.
-///
-/// **Both answer 4, and the summary was labelling both "needing a host oracle".** `run_tests`'s own
-/// note two screens up says why that is wrong: "an oracle needs a host; a capability needs a flag on
-/// this command line, and a reader told 'needs an oracle' would go looking for the wrong thing." The
-/// per-file message had the distinction and the summary threw it away, because the caller sees only
-/// the exit code. `issues/system/0230a`'s differential is where it surfaced.
-static UNGRANTED_FILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// The grant flags this binary knows, by name. Written once because two commands ask the question
 /// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
 /// this as an argument?" — and a grant that is only in one of the lists is a grant that goes quiet
@@ -1124,16 +1100,14 @@ fn is_grant(a: &str) -> bool {
     )
 }
 
-fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
+fn build_and_call(rest: &[String]) -> i32 {
     let mut i = 0;
     let mut flags: Vec<String> = Vec::new();
-    let mut coverage = false;
-    // `--coverage` is a *build* flag rather than a grant, and only `test` has anything to do with the
-    // counters it produces — a program run with `run` would allocate them and nobody would read one.
-    // `--filter` is neither a grant nor a build flag: it changes which of the built module's
-    // exports get called, so it is taken here and carried through to the run.
-    let mut only: Option<String> = None;
-    let mut loud = false;
+    // **The three test flags are still named here, and still refused.** `--verbose`, `--filter` and
+    // `--coverage` belong to `wac test`, which is `packages/wac/src/testrun.wac` now; this is `run`.
+    // Each once had a `!= Entry::Tests` arm saying so, and with that variant gone the arm is the whole
+    // answer — the sentences are unchanged, because `commandparity_test.wac` compares them against the
+    // ones the wac program prints and a reader who mistyped deserves the same reply from either.
     while i < rest.len()
         && (rest[i].starts_with("--allow-")
             || rest[i] == "--coverage"
@@ -1141,46 +1115,24 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
             || rest[i] == "--verbose")
     {
         if rest[i] == "--verbose" {
-            if entry_point != Entry::Tests {
-                eprintln!("wac: --verbose is for `test`; a program says what it says");
-                return 2;
-            }
-            loud = true;
-            i += 1;
-            continue;
+            eprintln!("wac: --verbose is for `test`; a program says what it says");
+            return 2;
         }
         if rest[i] == "--filter" {
-            if entry_point != Entry::Tests {
-                eprintln!("wac: --filter is for `test`; there is one entry point here");
-                return 2;
-            }
-            match rest.get(i + 1) {
-                Some(v) if !v.starts_with("--") => {
-                    only = Some(v.clone());
-                    i += 1;
-                }
-                _ => {
-                    eprintln!("wac: --filter wants a substring of a test's name");
-                    return 2;
-                }
-            }
-        } else if rest[i] == "--coverage" {
-            coverage = entry_point == Entry::Tests;
-            if !coverage {
-                eprintln!("wac: --coverage is for `test`; nothing would read the counters here");
-                return 2;
-            }
-        } else {
-            flags.push(rest[i].clone());
+            eprintln!("wac: --filter is for `test`; there is one entry point here");
+            return 2;
         }
+        if rest[i] == "--coverage" {
+            eprintln!("wac: --coverage is for `test`; nothing would read the counters here");
+            return 2;
+        }
+        flags.push(rest[i].clone());
         i += 1;
     }
     if i >= rest.len() {
-        let what = if entry_point == Entry::Tests { "test" } else { "run" };
-        let tail = if entry_point == Entry::Tests { "" } else { " [args…]" };
         eprintln!(
-            "usage: wac {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
-             [--allow-run] <entry.wac>{tail}"
+            "usage: wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac> [args…]"
         );
         return 2;
     }
@@ -1194,10 +1146,9 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
         // list a reader is given is the one for the command they typed. The wac program in
         // `packages/wac/src/wac.wac` prints the same sentence and
         // `commandparity_test.wac` compares them.
-        let tail = if entry_point == Entry::Tests { ", --filter" } else { "" };
         eprintln!(
             "wac: unknown flag '{}' — --allow-read, --allow-write, --allow-net, --allow-env, \
-             --allow-run{tail}",
+             --allow-run",
             rest[i]
         );
         return 2;
@@ -1214,21 +1165,20 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // whole line for grants": `--` says the rest is the program's, whatever it looks like, and this
     // check stops there.
     //
-    // `test` does not come through here with program arguments — `test_command` sorts flags from
-    // targets in any position — so the check is the entry point's, not the parser's.
+    // This used to be conditional on the entry point being `main` rather than a test run, because
+    // `test` sorted flags from targets in any position and never reached here with program arguments.
+    // `run` is the only caller now, so the condition was the constant `true` and is gone.
     let mut program_args: &[String] = &rest[i + 1..];
-    if entry_point == Entry::Main {
-        let upto = program_args.iter().position(|a| a == "--").unwrap_or(program_args.len());
-        if let Some(bad) = program_args[..upto].iter().find(|a| is_grant(a)) {
-            eprintln!(
-                "wac: {bad} after the entry is a program argument, not a grant — write it before \
-                 {entry}, or after `--` if the program wants the string"
-            );
-            return 2;
-        }
-        if program_args.first().is_some_and(|a| a == "--") {
-            program_args = &program_args[1..];
-        }
+    let upto = program_args.iter().position(|a| a == "--").unwrap_or(program_args.len());
+    if let Some(bad) = program_args[..upto].iter().find(|a| is_grant(a)) {
+        eprintln!(
+            "wac: {bad} after the entry is a program argument, not a grant — write it before \
+             {entry}, or after `--` if the program wants the string"
+        );
+        return 2;
+    }
+    if program_args.first().is_some_and(|a| a == "--") {
+        program_args = &program_args[1..];
     }
 
     // **Sweep what earlier runs could not.** The directory below is removed on the way out, and that
@@ -1281,9 +1231,9 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // real and reaches the manifest. `--filter` is deliberately not in it — it selects exports of an
     // already-built module — and `--coverage` is left out of the cache entirely rather than keyed,
     // because that path writes a table beside the module and a hit would not.
-    let key = if coverage {
-        None
-    } else {
+    // `--coverage` used to make this `None` — that path wrote a table beside the module and a cache
+    // hit would not — but `run` refuses the flag outright now, so every build here is a plain one.
+    let key = {
         let mut key_flags = flags.clone();
         key_flags.push(format!("entry={entry}"));
         let (sources, whole) = closure_of(std::path::Path::new(&entry));
@@ -1301,9 +1251,6 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
         stem.display().to_string(),
         "--quiet".to_string(),
     ];
-    if coverage {
-        build.push("--coverage".to_string());
-    }
     build.extend(flags);
 
     start_v8();
@@ -1331,15 +1278,7 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
                     1
                 }
                 Some((manifest, text)) => run_as_with(&manifest, &bytes, &text, AsChild {
-                    entry: entry_point,
-                    cov: if coverage {
-                        std::fs::read_to_string(dir.join("prog.cov")).ok()
-                    } else {
-                        None
-                    },
                     argv: program_args.iter().map(|a| a.as_bytes().to_vec()).collect(),
-                    only: only.clone(),
-                    loud,
                     ..Default::default()
                 }),
             },
@@ -1430,6 +1369,22 @@ fn main() {
     if std::env::var_os("WAC_COMPILER_ID").is_none() {
         // SAFETY: single-threaded, before V8 starts and before any payload runs.
         unsafe { std::env::set_var("WAC_COMPILER_ID", compiler_id()) };
+    }
+    // **The binary's own version, for the same reason and by the same route.** `wac app` stamps it
+    // into the executable it writes and `wac app-run` refuses a file stamped with another — a check
+    // that has to survive the two being different installations, so it cannot be a constant either
+    // side compiles in. Both are the wac program now, and this is the only thing in that pair only
+    // the host knows.
+    //
+    // **Not `WAC_COMPILER_ID`, though it is right there and is a stronger key.** It hashes the seed's
+    // bytes as well, so it changes whenever anyone rebuilds the compiler — which in this repository is
+    // several times a day, and would make every `app` artefact stale by the afternoon. The version is
+    // the coarser question and the one that was being asked.
+    //
+    // Overwritable, like the id above: a test that wants to see the mismatch path says so.
+    if std::env::var_os("WAC_VERSION").is_none() {
+        // SAFETY: as above.
+        unsafe { std::env::set_var("WAC_VERSION", env!("CARGO_PKG_VERSION")) };
     }
     // **Asked for help, or given nothing.** The commands are in two places because they are
     // implemented in two places — the compiler inside answers `check`, `compile` and `build`, and
@@ -1595,43 +1550,12 @@ fn built_module_path(args: &[String]) -> Option<String> {
     entry.map(|e| format!("{}.wasm", &e[..e.len() - 4]))
 }
 
-/// What to call once the module is instantiated and its world is built.
-#[derive(Default, PartialEq, Clone, Copy)]
-enum Entry {
-    /// `main`, with the world its signature asks for. Every program.
-    #[default]
-    Main,
-    /// Every zero-argument `test*` export returning a `string` — `wac test`.
-    Tests,
-}
-
 /// What makes a child's world different from its parent's. `None` everywhere is the parent.
 #[derive(Default)]
 struct AsChild {
-    /// What is called after the world is built. A child is always `Main`.
-    entry: Entry,
-    /// The coverage table of an instrumented build — `index<TAB>line<TAB>col<TAB>kind<TAB>file` per
-    /// counter. Present only for `test --coverage`, and read where the counters still exist: they
-    /// live in the instance, which is gone by the time `run_as_with` has returned.
-    cov: Option<String>,
     argv: Vec<Vec<u8>>,
     grants: Option<Grants>,
     cwd: Option<String>,
-    /// Run only the tests whose name contains this. `test --filter`, and nothing else reads it.
-    only: Option<String>,
-    /// Run only the tests whose export name *ends* with this — one file's share of an aggregate
-    /// build. `issues/system/0192`; nothing else reads it.
-    file_suffix: Option<String>,
-    /// **The path to name in a message about this file**, when the module being run is an aggregate.
-    ///
-    /// Without it the two "every test in {}" lines below named `m.entry`, which for an aggregate is
-    /// `.cache/wac-aggregate-<pid>-<n>_test.wac` — a generated file the caller never typed and cannot
-    /// look at, in a sentence telling them what to do about their own. `issues/system/0230a`'s
-    /// differential is where that showed: the wac program cannot name that file, because its own
-    /// aggregate has a different name.
-    shown_entry: Option<String>,
-    /// Name every test as it passes, with what it took. `test --verbose`.
-    loud: bool,
     /// Where this program's output goes, instead of the terminal.
     out: Option<Arc<Stream>>,
     err: Option<Arc<Stream>>,
@@ -1725,15 +1649,9 @@ fn run_as(m: &Manifest, wasm: &[u8], as_child: AsChild) -> i32 {
 fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild) -> i32 {
     // Taken before `as_child` is unpacked into the host's state below, which is where it stops
     // being available.
-    let entry = as_child.entry;
-    let cov = as_child.cov.clone();
-    let only = as_child.only.clone();
-    let file_suffix = as_child.file_suffix.clone();
-    let shown_entry = as_child.shown_entry.clone();
     // Kept because a module with no `main` names the export to call in its first argument, and
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
-    let loud = as_child.loud;
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -1821,14 +1739,16 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         None => true,
     };
 
-    // **A test file has no world, and must not be asked for one.** A wac test is a pure function
-    // answering a report; it declares no capabilities, so its manifest has no `Core` — and building
-    // one first meant `wac test` refused every test file in the repository with *no struct Core in
-    // the manifest*, about a program that was right.
+    // **A module that wants no world must not be refused one it never asked for.** A wac test is the
+    // original case: a pure function answering a report, declaring no capabilities, so its manifest
+    // has no `Core` — and building one first meant every test file in the repository was refused with
+    // *no struct Core in the manifest*, about a program that was right. That path is
+    // `packages/wac/src/testrun.wac`'s now and reaches this through `Cli.load`, where the same
+    // reasoning holds for the same reason; `main_declares_nothing` is what carries it.
     let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => v,
         Err(e) => {
-            if entry == Entry::Tests || main_declares_nothing {
+            if main_declares_nothing {
                 // `HOST` is still wanted below — `read_string` reads a test's report through the
                 // module's own exports — so this falls through with an empty world rather than out.
                 v8::undefined(scope).into()
@@ -1980,11 +1900,6 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         });
     }
 
-    if entry == Entry::Tests {
-        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(),
-                         file_suffix.as_deref(), shown_entry.as_deref().unwrap_or(&m.entry),
-                         loud, core, cli);
-    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -2124,460 +2039,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     code
 }
 
-/// Run the tests a module exports, and say which failed.
-///
-/// **The convention is the repository's own, not a new one.** `harness/wacTestRun.ts` discovers a
-/// test as *an export whose name begins with `test` and which answers a `string`* — empty for a
-/// pass, the failure report otherwise. 125 files here are written that way and every one of them
-/// needed a Deno to run until now.
-///
-/// A test that takes arguments is an **oracle** test: the harness hands it a host function to
-/// compare against, and this host has nothing to hand it. Those are named and skipped rather than
-/// quietly left out of the count — a runner that reports "22 passed" for a file with 30 tests is
-/// worse than one that cannot run it at all.
-fn run_tests(
-    scope: &mut v8::PinScope,
-    exports: v8::Local<v8::Object>,
-    m: &Manifest,
-    cov: Option<&str>,
-    only: Option<&str>,
-    // One file's share of an aggregate build: only the exports whose name ends with this, and the
-    // suffix comes off before anything is printed. `issues/system/0192`.
-    file_suffix: Option<&str>,
-    // What to call the file in a message: the aggregate's member, or the entry when there is no
-    // aggregate. See `AsChild::shown_entry`.
-    shown_entry: &str,
-    loud: bool,
-    core: v8::Local<v8::Value>,
-    cli: Option<v8::Local<v8::Value>>,
-) -> i32 {
-    // **The counters are allocated by a call, not by instantiation.** Skip this and every
-    // instrumented function traps on its first branch with *dereferencing a null pointer* — a
-    // message about the program under test rather than about the missing call.
-    if cov.is_some() {
-        match get_export(scope, exports, "__cov_init") {
-            Some(f) => {
-                f.call(scope, exports.into(), &[]);
-            }
-            None => {
-                eprintln!("wac: this module carries no counters — was it built with --coverage?");
-                return 1;
-            }
-        }
-    }
-    // **Per test, when asked.** `tools/mutate.ts` narrows "run the suite" to "run the tests that
-    // reach this line", and it can only do that from a profile that says which test reached what.
-    // Without one it does not fail — it under-selects, records the mutant as unrun and drops it
-    // from the score, which is the failure `harness/wacTestProfile.test.ts` was written about.
-    // The env var is the one the Deno path already uses, so the tool needs no new spelling.
-    let profile_dir = std::env::var("WAC_PROFILE").ok().filter(|d| !d.is_empty());
-    let lines = cov.map(table_lines).unwrap_or_default();
-    let mut reached: Vec<(String, Vec<String>)> = Vec::new();
 
-    let mut passed = 0;
-    let mut failed = 0;
-    let mut skipped: Vec<String> = Vec::new();
-    // Wants a capability this run was not granted — distinct from wanting an oracle, because the
-    // remedy is a flag rather than a host.
-    let mut ungranted: Vec<String> = Vec::new();
-    // Counted apart from `skipped`, which means "this host cannot run it". A test the filter
-    // excluded is one the person asked not to run, and saying "0 passed" without saying that
-    // reads as a suite that has quietly emptied.
-    let mut filtered = 0;
 
-    for e in m.exports.iter().filter(|e| e.name.starts_with("test")) {
-        // One file's tests out of an aggregate. An *exact* suffix, not `contains`: `__f1` is a prefix
-        // of `__f10`, so a contains-match would run eleven files' tests under one file's heading.
-        if let Some(suffix) = file_suffix {
-            if !e.name.ends_with(suffix) {
-                continue;
-            }
-        }
-        // What the reader typed, and what the reader sees: the wrapper's suffix is this runner's
-        // bookkeeping and means nothing to anyone reading a failure.
-        let shown = file_suffix
-            .and_then(|s| e.name.strip_suffix(s))
-            .unwrap_or(&e.name)
-            .to_string();
-        if let Some(pat) = only {
-            if !e.name.contains(pat) {
-                filtered += 1;
-                continue;
-            }
-        }
-        if e.ret != "string" {
-            continue;
-        }
-        // **A test may take the capabilities a program takes** — `issues/system/0161` step 4. It
-        // declares them the way `main` does, by naming them, so nothing is ambient: a test that
-        // reads a file says so in its signature and gets nothing unless the run was granted it.
-        // Anything else in the parameter list is an *oracle* the host supplies, which this cannot,
-        // and those are still named and skipped.
-        let args: Vec<v8::Local<v8::Value>> = match e.params.as_slice() {
-            [] => Vec::new(),
-            [a] if a == "Core" => vec![core],
-            [a, b] if a == "Core" && b == "Cli" => {
-                // **Granted nothing means skipped, not failed.** A `Cli` exists either way — its
-                // capabilities refuse individually, with "Not granted to this application" — so
-                // running the test anyway would turn `wac test packages/` red for every file that
-                // declares a capability, which is the opposite of what declaring one should cost.
-                // Not a pass either: nothing was checked. The same answer as an oracle this host
-                // cannot supply, because it is the same situation.
-                let granted =
-                    m.grants.read || m.grants.write || m.grants.env || m.grants.net || m.grants.run;
-                match cli {
-                    Some(c) if granted => vec![core, c],
-                    _ => {
-                        ungranted.push(shown.clone());
-                        continue;
-                    }
-                }
-            }
-            // **A host type in a shape this does not serve is its own answer.** `(Cli)` on its own
-            // is not an oracle — every capability in it is one this runner can supply — so telling
-            // its author "needs an oracle from the host" sends them looking for a different host
-            // when the fix is one word in the signature. The same distinction the arms above are
-            // written for, applied to the case that reaches neither.
-            other
-                if other.iter().all(|p| p == "Core" || p == "Cli") =>
-            {
-                println!(
-                    "FAIL {} — takes ({}); a test takes (), (Core) or (Core, Cli)",
-                    shown,
-                    other.join(", ")
-                );
-                failed += 1;
-                continue;
-            }
-            _ => {
-                skipped.push(shown.clone());
-                continue;
-            }
-        };
-        let Some(f) = get_export(scope, exports, &e.name) else {
-            println!("FAIL {shown} — exported and not callable");
-            failed += 1;
-            continue;
-        };
-        let before = if profile_dir.is_some() && cov.is_some() {
-            counters_now(scope, exports)
-        } else {
-            Vec::new()
-        };
-        let began = std::time::Instant::now();
-        // **A `TryCatch` around the test itself.** A whole category of tests — `test_traps_*` — is
-        // *expected* to trap, so this is the ordinary path rather than an edge of it, and without one
-        // V8's default handler announced every trap on **stdout**: one passing file,
-        // `packages/crypto/test/wac/traps_test.wac`, printed 108 lines of
-        // `wasm://wasm/00083c3e:39651: Uncaught RuntimeError: unreachable` around the single line of
-        // its own report. The runner already says what happened, and says it better — it knows which
-        // test trapped and whether the test wanted to.
-        //
-        // **And the noise was the smaller half.** An uncaught trap leaves its exception *pending on
-        // the isolate*, and a pending exception makes the next `compile` walk into V8's own
-        // `Check failed: maybe_compiled.is_null() == i_isolate->has_exception()` and abort the
-        // process — the hazard the module loop in `validate_modules` already documents. Nothing here
-        // compiled twice until `Cli.load` existed (`issues/system/0240c`), which is why it had never
-        // been reached. Two agents found this from opposite ends within an hour; see the merge in
-        // this file's history.
-        let outcome = {
-            let tc = std::pin::pin!(v8::TryCatch::new(scope));
-            let mut tc = tc.init();
-            let out = f.call(&mut tc, exports.into(), &args);
-            tc.reset();
-            out
-        };
-        if profile_dir.is_some() && cov.is_some() {
-            let after = counters_now(scope, exports);
-            let mut mine: Vec<String> = Vec::new();
-            for (i, now) in after.iter().enumerate() {
-                if *now > before.get(i).copied().unwrap_or(0) {
-                    if let Some(l) = lines.get(i) {
-                        if !mine.contains(l) {
-                            mine.push(l.clone());
-                        }
-                    }
-                }
-            }
-            reached.push((shown.clone(), mine));
-        }
-        // **`test_traps_*` expects the trap.** A trap unwinds this module and nothing else — the
-        // tests after it run normally — so the runner has always survived one; what it could not do
-        // was let a test *say* it wanted one, and a trap was therefore unconditionally a failure.
-        // That is why 72 of this repository's test files are still TypeScript: `assertTraps` had
-        // nowhere to live in wac, and half the promises in `spec/spec/casts.md`, every bounds check
-        // and `!` on a null are about trapping. `issues/system/0161`.
-        //
-        // A name rather than an attribute because the runner works from the export list: it knows a
-        // test by its name and signature and nothing else.
-        let wants_trap = e.name.starts_with("test_traps_") || e.name.starts_with("testTraps");
-        match outcome {
-            None if wants_trap => {
-                if loud {
-                    let said = trap_said(scope, exports);
-                    println!(
-                        "ok   {} — trapped, as it says{} ({} ms)",
-                        shown,
-                        said,
-                        began.elapsed().as_millis()
-                    );
-                }
-                passed += 1;
-            }
-            None => {
-                // **The trap's own sentence, if it wrote one.** A trap leaves nothing to *return* —
-                // the call is over and V8 has unwound — which is why this said only "trapped" for as
-                // long as there was nowhere for a message to survive. `trap "…"` puts it in a global
-                // now and `$trap$message` reads it afterwards (`issues/lang/0147`), so the one line a
-                // reader gets when a test breaks can carry what the program wrote for that moment.
-                //
-                // Empty for an engine trap — a bounds check, a null dereference — which writes
-                // nothing; a previous message reported for one of those would be worse than none.
-                println!("FAIL {shown} — trapped{}", trap_said(scope, exports));
-                failed += 1;
-            }
-            Some(v) if wants_trap => {
-                // **Returning is the failure here, and the report is ignored on purpose.** A test
-                // named for a trap that returns cleanly has not observed the thing it is about, and
-                // an empty string from it would otherwise read as a pass.
-                let report = read_string(scope, v);
-                let tail = if report.is_empty() { String::new() } else { format!(" — {report}") };
-                println!("FAIL {shown} — returned instead of trapping{tail}");
-                failed += 1;
-            }
-            Some(v) => {
-                let report = read_string(scope, v);
-                if report.is_empty() {
-                    if loud {
-                        println!("ok   {shown} ({} ms)", began.elapsed().as_millis());
-                    }
-                    passed += 1;
-                } else {
-                    println!("FAIL {shown} — {report}");
-                    failed += 1;
-                }
-            }
-        }
-    }
-
-    if !skipped.is_empty() {
-        println!(
-            "{} test(s) need an oracle from the host and were skipped: {}",
-            skipped.len(),
-            skipped.join(", ")
-        );
-    }
-    if !ungranted.is_empty() {
-        UNGRANTED_TESTS.fetch_add(ungranted.len(), std::sync::atomic::Ordering::Relaxed);
-        println!(
-            "{} test(s) want a capability this run was not granted: {} — try `wac test --allow-read …`",
-            ungranted.len(),
-            ungranted.join(", ")
-        );
-    }
-    if passed == 0 && failed == 0 && filtered > 0 {
-        // **Not a failure, and not silence either.** Over a directory most files will not hold the
-        // test being filtered for, and reporting each as broken would drown the one that matched.
-        // A filter that matches nothing *anywhere* is still an error — `test_command` says so once,
-        // at the end, where it can see every file.
-        // **5, distinct from 4.** Both mean "nothing ran here", and the caller has to tell them
-        // apart: a file the filter passed over is fine during discovery and is a mistake when it
-        // is the file you named.
-        println!("(no test matches --filter {})", only.unwrap_or_default());
-        return 5;
-    }
-    if passed == 0 && failed == 0 {
-        // Two different nothings, and saying so is the difference between *this file is not a test
-        // file* and *this host cannot run these tests*. The tor and TLS suites are almost entirely
-        // the second: they compare against a real implementation, and the comparison arrives as an
-        // argument.
-        if skipped.is_empty() && ungranted.is_empty() {
-            eprintln!("wac: {} exports no tests — a test is `test*()` answering a string", m.entry);
-            if let Some(dir) = &profile_dir {
-                write_profile(dir, &m.entry, &lines, &reached, &skipped);
-            }
-            return 1;
-        }
-        // **4, and not a failure.** 31 of this repository's 83 test files are entirely of this
-        // kind — they compare against a real implementation and the comparison arrives as an
-        // argument. Calling that a failure would mean `wac test packages/` could never be green
-        // here, which would make the exit code useless for the one thing an exit code is for.
-        // **Named separately, because the remedies differ.** An oracle needs a host; a capability
-        // needs a flag on this command line, and a reader told "needs an oracle" would go looking
-        // for the wrong thing. Both are 4: nothing ran here, and neither is a failure.
-        if skipped.is_empty() {
-            UNGRANTED_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            eprintln!(
-                "wac: every test in {} wants a capability this run was not granted — try `--allow-read`",
-                shown_entry
-            );
-        } else {
-            eprintln!(
-                "wac: every test in {} needs an oracle from the host, which this cannot supply",
-                shown_entry
-            );
-        }
-        // **A profile even so, with nothing in `tests`.** A reader that sees no file at all has to
-        // guess whether this was asked and answered nothing or never asked, and guessing wrong the
-        // second way means treating every line these tests reach as unhit — which is the
-        // under-selection a profile exists to prevent. `issues/system/0161`.
-        if let Some(dir) = &profile_dir {
-            write_profile(dir, &m.entry, &lines, &reached, &skipped);
-        }
-        return 4;
-    }
-    if let Some(dir) = &profile_dir {
-        write_profile(dir, &m.entry, &lines, &reached, &skipped);
-    }
-    let tail = if filtered > 0 { format!(", {filtered} filtered out") } else { String::new() };
-    println!("{passed} passed, {failed} failed{tail}");
-    if let Some(table) = cov {
-        report_coverage(scope, exports, table);
-    }
-    // **3, not 1.** `spec/cli/wac.md` distinguishes "did not compile" from "ran and did something
-    // wrong" because a script needs to; a test that ran and failed is the same distinction one step
-    // further on, and returning 1 for both makes a red suite indistinguishable from a typo.
-    if failed > 0 { 3 } else { 0 }
-}
-
-/// What the run reached, per file, from the counters and the table that says what each one is.
-///
-/// Per file rather than one number, because "83%" over a package says nothing about where to look —
-/// and the table carries the file, so there is no reason to throw it away.
-/// Every counter, now.
-///
-/// `report_coverage` reads them once at the end; attribution needs them either side of each test,
-/// because what a test reached is the difference its own call made. Diffing rather than resetting:
-/// `__cov_init` allocates the array, and asking it to double as a reset would be relying on a
-/// detail of the generated code that nothing states.
-/// One file's attribution, in the shape `tools/mutate/profile.ts` reads.
-///
-/// One JSON per test file rather than one for the run: the tool walks a directory, and a run over
-/// eighty files would otherwise have to merge them itself. The name is the entry with its
-/// separators flattened, which is enough to be unique and readable in a directory listing.
-fn write_profile(
-    dir: &str,
-    entry: &str,
-    all: &[String],
-    reached: &[(String, Vec<String>)],
-    skipped: &[String],
-) {
-    if std::fs::create_dir_all(dir).is_err() {
-        return;
-    }
-    let mut uniq: Vec<&String> = Vec::new();
-    for l in all {
-        if !uniq.contains(&l) {
-            uniq.push(l);
-        }
-    }
-    let tests: serde_json::Map<String, serde_json::Value> = reached
-        .iter()
-        .map(|(name, ls)| (name.clone(), serde_json::json!(ls)))
-        .collect();
-    // **`skipped` is what makes this profile readable as complete or partial**, and an empty list
-    // says so positively. 17 of this repository's test files are *mixed* — `rsa_test.wac` runs 3 of
-    // its 12 tests here, the other 9 wanting an oracle the host supplies — so a reader taking the
-    // `tests` map at face value would treat every line reached only by the other 9 as unhit, and
-    // narrow a mutation sweep to tests that cannot notice it. Under-selection is a wrong verdict
-    // arriving as a *better* score, which is the failure mode nothing downstream can see.
-    // `issues/system/0161`.
-    let doc = serde_json::json!({
-        "entry": entry,
-        "all": uniq,
-        "tests": tests,
-        "skipped": skipped,
-    });
-    let stem: String = entry
-        .chars()
-        .map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c })
-        .collect();
-    let _ = std::fs::write(
-        std::path::Path::new(dir).join(format!("{stem}.json")),
-        doc.to_string(),
-    );
-}
-
-fn counters_now(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> Vec<i32> {
-    let Some(len_fn) = get_export(scope, exports, "__cov_len") else { return Vec::new() };
-    let Some(get_fn) = get_export(scope, exports, "__cov_get") else { return Vec::new() };
-    let Some(len) = len_fn.call(scope, exports.into(), &[]).and_then(|v| v.to_int32(scope)) else {
-        return Vec::new();
-    };
-    let len = len.value();
-    let mut out = Vec::with_capacity(len.max(0) as usize);
-    for i in 0..len {
-        let idx = v8::Integer::new(scope, i);
-        out.push(
-            get_fn
-                .call(scope, exports.into(), &[idx.into()])
-                .and_then(|v| v.to_int32(scope))
-                .map(|v| v.value())
-                .unwrap_or(0),
-        );
-    }
-    out
-}
-
-/// `index<TAB>line<TAB>col<TAB>kind<TAB>file` to the `file:line` a profile speaks in.
-fn table_lines(table: &str) -> Vec<String> {
-    table
-        .lines()
-        .map(|row| {
-            let c: Vec<&str> = row.split('\t').collect();
-            format!("{}:{}", c.get(4).unwrap_or(&""), c.get(1).unwrap_or(&""))
-        })
-        .collect()
-}
-
-fn report_coverage(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, table: &str) {
-    let Some(len_fn) = get_export(scope, exports, "__cov_len") else { return };
-    let Some(get_fn) = get_export(scope, exports, "__cov_get") else { return };
-    let Some(len) = len_fn.call(scope, exports.into(), &[]).and_then(|v| v.to_int32(scope)) else {
-        return;
-    };
-    let len = len.value();
-
-    let mut counts = Vec::with_capacity(len.max(0) as usize);
-    for i in 0..len {
-        let idx = v8::Integer::new(scope, i);
-        let n = get_fn
-            .call(scope, exports.into(), &[idx.into()])
-            .and_then(|v| v.to_int32(scope))
-            .map(|v| v.value())
-            .unwrap_or(0);
-        counts.push(n);
-    }
-
-    // Insertion-ordered, so the report reads in the order the table names files rather than in a
-    // hash's order — the same input twice has to print the same way.
-    let mut files: Vec<(String, i32, i32)> = Vec::new();
-    for row in table.lines() {
-        let mut cells = row.split('\t');
-        let Some(index) = cells.next().and_then(|c| c.parse::<usize>().ok()) else { continue };
-        let (_line, _col, _kind) = (cells.next(), cells.next(), cells.next());
-        let file = cells.next().unwrap_or("").to_string();
-        let hit = counts.get(index).copied().unwrap_or(0) > 0;
-        match files.iter_mut().find(|(f, _, _)| *f == file) {
-            Some(e) => {
-                e.1 += 1;
-                e.2 += i32::from(hit);
-            }
-            None => files.push((file, 1, i32::from(hit))),
-        }
-    }
-
-    let total: i32 = files.iter().map(|f| f.1).sum();
-    let taken: i32 = files.iter().map(|f| f.2).sum();
-    if total == 0 {
-        return;
-    }
-    println!();
-    println!("branch coverage: {taken} of {total} points ({}%)", taken * 100 / total);
-    for (file, n, c) in &files {
-        println!("  {c:>5} / {n:<5} {}", if file.is_empty() { "(unnamed)" } else { file });
-    }
-}
 
 /// Build one capability struct from the manifest's field order, through the module's own exports.
 fn build_struct<'s>(
@@ -3340,14 +2803,6 @@ fn dispatch(
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
-                entry: Entry::Main,
-                cov: None,
-                only: None,
-                file_suffix: None,
-                shown_entry: None,
-                loud: false,
-                // A spawned child is never a coverage run: `covdump` is the parent's command, and a
-                // child printing its parent's counters would interleave two tables.
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -3485,14 +2940,6 @@ fn dispatch(
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
-                entry: Entry::Main,
-                cov: None,
-                only: None,
-                file_suffix: None,
-                shown_entry: None,
-                loud: false,
-                // A spawned child is never a coverage run: `covdump` is the parent's command, and a
-                // child printing its parent's counters would interleave two tables.
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -5108,11 +4555,6 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
         }
     }
 
-    let of = |name: &str| -> Option<String> {
-        m.find_struct(name)
-            .and_then(|st| st.methods.iter().find(|mm| mm.name == "of"))
-            .map(|mm| mm.export_name.clone())
-    };
     // A ceiling of the caller's own: asking for more than this program holds is not an error, and the
     // module finds the capability denied — `spawn`'s rule, one layer in.
     let mine = HOST.with(|h| h.borrow().as_ref().map(|st| st.grants.clone())).unwrap_or_default();
@@ -5145,8 +4587,6 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
         },
         exports: m.exports.clone(),
         world,
-        loaded_of: of("LoadedModule"),
-        called_of: of("CallResult"),
     };
     Ok(HOST.with(|h| {
         let mut b = h.borrow_mut();
