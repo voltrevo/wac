@@ -1614,19 +1614,6 @@ enum Entry {
 /// What makes a child's world different from its parent's. `None` everywhere is the parent.
 #[derive(Default)]
 struct AsChild {
-    /// Call `__cov_init`, then the exports, then print the counters — `covdump`'s whole job.
-    ///
-    /// **Through the ordinary program path, not a bare instantiate.** The world is built from the
-    /// manifest and the grants are the ones it declares, which is what an exercise reading a corpus
-    /// off disk needs; a bare instantiate failed to *instantiate* rather than being refused, because
-    /// the imports were absent rather than denied. `issues/system/0221`.
-    dump_counters: bool,
-    /// The exports to call, in order, each with its trap caught. Empty means `main`.
-    ///
-    /// A trap ends the function it is in, so an exercise holding several trapping cases in one `main`
-    /// loses every one after the first. `Some(n)` calls `name(i)` for `i` in `0..n`; `None` calls
-    /// `name()` once.
-    cov_exports: Vec<(String, Option<i32>)>,
     /// What is called after the world is built. A child is always `Main`.
     entry: Entry,
     /// The coverage table of an instrumented build — `index<TAB>line<TAB>col<TAB>kind<TAB>file` per
@@ -1862,8 +1849,6 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
     let loud = as_child.loud;
-    let dump_counters = as_child.dump_counters;
-    let cov_exports = as_child.cov_exports.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -2115,19 +2100,6 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                          file_suffix.as_deref(), shown_entry.as_deref().unwrap_or(&m.entry),
                          loud, core, cli);
     }
-    // **The counters are allocated by a call, not by instantiation.** Skip this and every
-    // instrumented function traps on its first branch, with a message about the program rather
-    // than about the omission.
-    if dump_counters {
-        match get_export(scope, exports, "__cov_init") {
-            Some(f) => { f.call(scope, exports.into(), &[]); }
-            None => {
-                eprintln!("wac: {} carries no counters — was it built with coverage or tracing?",
-                          m.entry);
-                return 1;
-            }
-        }
-    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -2221,21 +2193,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             } else {
                 eprintln!("wac: {} trapped: {said}", m.entry);
             }
-            // **The counters still stand after a trap**, and they are the answer `covdump` was
-            // asked for: an exercise whose last case is meant to trap has done its work by the
-            // time it does.
-            if dump_counters {
-                call_for_counters(scope, exports, m, &cov_exports);
-                print_counters(scope, exports);
-            }
             return 1;
         }
     };
     let code = r.to_int32(scope).map(|i| i.value()).unwrap_or(0);
-    if dump_counters {
-        call_for_counters(scope, exports, m, &cov_exports);
-        print_counters(scope, exports);
-    }
 
     // **Work scheduled and never run is an error.** `main` returning is the program saying it is
     // done, and a continuation still waiting says it was not — the answer would simply never arrive,
@@ -3502,8 +3463,6 @@ fn dispatch(
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
-                dump_counters: false,
-                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -3649,8 +3608,6 @@ fn dispatch(
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
-                dump_counters: false,
-                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -5860,117 +5817,6 @@ fn run_host_program(
                 ),
             }
         }
-    }
-}
-
-/// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
-///
-/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
-/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
-/// The aggregated report `--coverage` prints answers a different question — how much was reached —
-/// and cannot say how often.
-///
-thread_local! {
-    /// Whether a counter table has been printed this process.
-    ///
-    /// **`covdump`'s exit status is about the dump, not about the program.** Running through the
-    /// ordinary program path means `run_as_with` hands back what `main` returned, and a coverage
-    /// exercise returns an accumulator: `packages/codec`'s came back as 205, which `covreport` read as
-    /// a failed `covdump` and reported with an empty message. The old bare-instantiate `covdump`
-    /// always exited 0 and every caller was written against that.
-    static COUNTERS_PRINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Written from inside a live run, because the counters are in the instance and the instance is gone
-/// once `run_as_with` has returned. `issues/system/0221`.
-fn print_counters(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) {
-    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
-        eprintln!("wac: the module has __cov_init and no __cov_len");
-        return;
-    };
-    let len = len_fn
-        .call(scope, exports.into(), &[])
-        .and_then(|v| v.to_int32(scope))
-        .map(|v| v.value())
-        .unwrap_or(0);
-    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
-        eprintln!("wac: the module has __cov_len and no __cov_get");
-        return;
-    };
-    for i in 0..len {
-        let idx = v8::Integer::new(scope, i);
-        let n = get_fn
-            .call(scope, exports.into(), &[idx.into()])
-            .and_then(|v| v.to_int32(scope))
-            .map(|v| v.value())
-            .unwrap_or(0);
-        println!("{i}\t{n}");
-    }
-    println!("{len} counter(s)");
-    COUNTERS_PRINTED.with(|p| p.set(true));
-}
-
-/// Call each named export in turn, **each trap caught** — after `main`, not instead of it.
-///
-/// A trap ends the function it is in and nothing else: the instance stays usable, which is what lets
-/// a trapping branch be counted as covered at all. So seven bounds cases are seven calls rather than
-/// seven runs, which is what the TypeScript did from the host and what a single `main` cannot express.
-///
-/// `call` answering `None` *is* the trap and is not an error here. A name that is not an export is,
-/// and is reported after the counters so a mistyped name cannot look like a package with no coverage.
-fn call_for_counters(
-    scope: &mut v8::PinScope,
-    exports: v8::Local<v8::Object>,
-    m: &Manifest,
-    names: &[(String, Option<i32>)],
-) {
-    let mut missing: Vec<&str> = Vec::new();
-    for (name, cases) in names {
-        match get_export(scope, exports, name) {
-            Some(f) => {
-                // **A `TryCatch` per call, and it is not optional** — the same reason
-                // `validate_command` has one per module, one paragraph over: a throw leaves an
-                // exception on the isolate, and the next operation meets V8's own check that a null
-                // result and a pending exception agree. That comment says "nothing else in this file
-                // needs one because nothing else compiles twice"; this calls twelve functions that
-                // are *meant* to trap, which is the same thing for calls.
-                //
-                // Without it `packages/bytes` measured 69 covered on one run and 73 on the next from
-                // an unchanged tree, which is what a swallowed call looks like from the outside.
-                //
-                // **A sweep is the same thing per case, and the `TryCatch` is per *call*.** One for
-                // the whole loop would leave the first trap pending through every case after it,
-                // which is the arrangement the paragraph above says aborts the process.
-                //
-                // The argument is passed only for a sweep. A wac export taking no parameter is a wasm
-                // function of arity zero, and handing it an extra value is harmless; handing a
-                // one-parameter function *no* value is not, so "call it once" and "call it with 0"
-                // stay distinct rather than being the same case spelled two ways.
-                match cases {
-                    None => {
-                        let tc = std::pin::pin!(v8::TryCatch::new(scope));
-                        let mut tc = tc.init();
-                        f.call(&tc, exports.into(), &[]);
-                        tc.reset();
-                    }
-                    Some(n) => {
-                        for i in 0..*n {
-                            let tc = std::pin::pin!(v8::TryCatch::new(scope));
-                            let mut tc = tc.init();
-                            let arg = v8::Integer::new(&tc, i);
-                            f.call(&tc, exports.into(), &[arg.into()]);
-                            tc.reset();
-                        }
-                    }
-                }
-            }
-            None => missing.push(name),
-        }
-    }
-    if !missing.is_empty() {
-        // Named and not silent: a mistyped export would otherwise read as a package whose trapping
-        // branches are simply uncovered, which is the same number a real gap gives.
-        eprintln!("wac: {} exports no {}", m.entry, missing.join(", "));
     }
 }
 
