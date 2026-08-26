@@ -907,6 +907,37 @@ function isInfiniteLoop(cond: Expr | null, body: Block): boolean {
  * Check a statement. Returns true if this statement always terminates
  * (returns or traps on every code path).
  */
+/**
+ * A constant case value as the 32 bits a `switch` compares, or null if it is not constant.
+ *
+ * `4294967295` and `-1` are the same case, measured: a `u32` scrutinee holding `4294967295` matches
+ * `case -1:` and one holding `1` does not. Any canonicalisation of the low 32 bits gives that, since
+ * two values equal mod 2^32 have equal masks — `asIntN` is used because it is what the emitter's
+ * reading means, not because a mask would decide differently. (It would not: wacc's copy of this
+ * wrapped as well until a canary showed the wrap changed no answer, a bijection on the masked value
+ * being unable to change an equality.)
+ *
+ * `wacIntLit` at width 32 is the shared reading, so this cannot disagree with the emitter about what a
+ * hex literal means — the reason that function exists.
+ *
+ * Negation is its own expression, so `-1` arrives as a unary around a literal; reading the literal
+ * alone would make `case -1:` collide with `case 1:` and report a duplicate that is not one.
+ */
+function constCase32(value: Expr | "default"): bigint | null {
+  if (value === "default") return null;
+  const lit = (e: Expr, negate: boolean): bigint | null => {
+    if (e.kind === "int") {
+      const r = wacIntLit(e.value, 32);
+      if (!r.ok) return null;
+      return BigInt.asIntN(32, negate ? -r.value : r.value);
+    }
+    if (e.kind === "unary" && e.op === "-") return lit(e.expr, !negate);
+    if (e.kind === "unary" && e.op === "+") return lit(e.expr, negate);
+    return null;
+  };
+  return lit(value, false);
+}
+
 function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
   switch (stmt.kind) {
 
@@ -1122,6 +1153,27 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
           caseTerminated = caseTerminated || t;
         }
         if (!caseTerminated) allReturn = false;
+      }
+      // **No case value twice** — spec `[§wac-switch-dupcase-7hq2nkv]`, `issues/lang/0266c`. A second
+      // `default:` is refused by the parser as unreachable, and a `match` naming one variant twice is
+      // refused as unreachable; this is the third of the same rule and was the one that was silent.
+      //
+      // **Compared as 32 bits rather than as written**, which is why it cannot go beside the
+      // `default` check in the parser: `case 1:` and `case 0x1:` are one case, and under a `u32`
+      // scrutinee so are `case 4294967295:` and `case 0xFFFFFFFF:`. A check on token text accepts
+      // exactly the pairs most likely to be a mistake while looking like it works.
+      //
+      // **Constant on both sides.** A case value need not be one here — `case k:` for a parameter
+      // compiles and compares at run time, since `emitSwitch` is an if-else chain — so arms equal only
+      // at run time are not refused. `issues/lang/0269a` is that decision; until it is taken this rule
+      // is deliberately partial and the spec clause says so.
+      const seen = new Map<bigint, { line: number; col: number }>();
+      for (const c of stmt.cases) {
+        const v = constCase32(c.value);
+        if (v === null) continue;
+        const first = seen.get(v);
+        if (first === undefined) { seen.set(v, { line: c.line, col: c.col }); continue; }
+        errAt(ctx, `two cases of this switch have the same value`, c.line, c.col);
       }
       ctx.inSwitch--;
       return allReturn && hasDefault;

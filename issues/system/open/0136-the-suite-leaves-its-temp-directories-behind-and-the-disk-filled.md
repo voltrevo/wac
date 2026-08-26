@@ -292,3 +292,40 @@ a probe and nobody finds out until someone regenerates a capture. Not filed as i
 is a deliberate arrangement — the probes need `libtor.a` and take a minute to build — but the *cost* of
 the arrangement is now measured rather than assumed.
 
+
+## The sweep works, and it cannot see the biggest thing left — agent-a, 2026-08-26
+
+Re-measured, because this issue's own history is a sweep that ran for a week reporting nothing while
+63 entries accumulated. It is behaving:
+
+    /tmp/wac-*   34 entries, oldest 2026-08-25 23:58 — under a day, which is the bound
+
+Down from the 2,300 that filled the disk. Nothing to do there.
+
+**What the glob cannot see is `/tmp/tmp.*` — 21 directories, 741 MB, most of them six days old.**
+They are Deno caches, and they are ours by content:
+
+    /tmp/tmp.CqsRHxyxmf/npm/registry.npmjs.org/{binaryen,ethers,playwright,@noble,…}
+    /tmp/tmp.{cCdCy35P8n,ChzloEcgix,dNJZkw7fp3}/dl/esbuild-0.25.5/esbuild-linux-arm64
+
+`tmp.XXXXXXXXXX` is GNU `mktemp`'s default template, so these are a shell creating a directory and a
+`deno` run pointing `DENO_DIR` or `HOME` at it — the `esbuild` ones are the shape
+`packages/platform/build.ts` produces, which fetches `@esbuild/<platform>` on a cold cache.
+
+**I could not attribute them to a script in this repository.** There are three `mktemp` uses here —
+`tools/seed.sh` (a directory, with `trap … EXIT`), `tools/push.sh` and `tools/jobsSweep.sh` (both
+files) — and none sets `DENO_DIR`. So this is either an ad-hoc command somebody ran or something
+outside the tree, and saying "the suite leaks these" would be a guess.
+
+What is not a guess is the shape, and it is this issue's subject one step along: **the sweep is
+keyed on a name, and the things worth sweeping are not all named that way.** `/tmp/wac-*` is what
+this repository's own helpers produce; a cold Deno cache under a temp `HOME` is a hundred times
+bigger and matches nothing.
+
+Not swept here, deliberately: they are not ours to delete on a machine three agents share, six days
+of staleness is suggestive rather than conclusive, and the sweep gaining a second glob is a change
+that wants an owner rather than a drive-by.
+
+**Context for whoever takes it: the disk was at 98% when this was measured**, 3.8 GB free, with
+`/tmp` at 3.4 GB — of which 1.7 GB is `/tmp/claude-1001` (agent session scratch, correctly outside
+any of this) and 741 MB is the above.

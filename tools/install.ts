@@ -1,8 +1,42 @@
 // Install `wac`, or build one without installing — `design/lang/0009` D1.
 //
 //     deno task wac:install                 # into $WAC_HOME, default $HOME/.wac
+//     deno task wac:install --target deno   # ...hosted by Deno instead: no cargo, no Rust
+//     deno task wac:install --target node   # ...or by Node, run by its shebang either way
+//     deno task wac:install --no-profile    # ...and leave every shell profile alone
 //     deno task wac:build -o ./wac          # an uninstalled binary, nothing else touched
-//     deno task wac:uninstall [--keep-cache]
+//
+// **`--no-profile` is for a caller who manages PATH itself**, and for one that cannot write a
+// profile at all. Installing and editing an interactive shell's configuration are separate
+// operations with separate permissions: a container, a CI job or a read-only home can allow the
+// first and refuse the second. An unwritable profile is now reported beside a complete install
+// rather than aborting it after the material work is done — GitHub wac#26 — and this flag is how to
+// say up front that no profile should be touched.
+//
+// **`--target` installs the same command, not a lesser one.** `packages/wac/src/wac.wac` is the whole
+// surface and all three hosts run that one program — `issues/system/0257c`. Measured 2026-08-26: `wac
+// app` writes byte-identical artefacts on all three, and `commandparity_test.wac` holds 52
+// invocations to the same answer. What `$WAC_HOME/bin/wac` *is* differs — a 67 MB binary, or a
+// JavaScript file with a shebang — and nothing that runs it needs to know which.
+//
+// **The trade is what it costs to get, not what you get.** Native needs cargo and reaches no network;
+// hosted needs neither cargo nor Rust and shells out to `deno bundle`, which fetches
+// `@esbuild/<platform>` from npm the first time. GitHub issue 22 asked for a JS-hosted command to be
+// the natural route for a JS project, and the operator's answer was that the cargo path stays primary
+// — this is the flag that makes the other one an *install* rather than a hundred-character build
+// command somebody copies out of a document.
+//
+// **Taking it away is `wac uninstall`, and is not here.** There were two uninstallers until
+// 2026-08-26 — a `wac:uninstall` task in this file and the subcommand — and the subcommand is the
+// one that can be used: this is a Deno program under `tools/`, so it needs the checkout, and
+// somebody who installed the command has a `$WAC_HOME` and no checkout. The version that only works
+// for people who do not need it was not worth writing the `$WAC_HOME` layout down twice for.
+//
+// A differential kept the two honest — `packages/wacc/test/wac/uninstall_test.wac` built the same
+// fake install twice and compared what survived each — and it went with them, on the operator's
+// ruling. It is the arrangement CLAUDE.md names: a test that exists to prove the retiree still
+// agrees makes the retiree an oracle. `uninstallCommand` in `packages/wac/src/wac.wac` is the
+// uninstaller, and that test now checks what it *does* rather than who it matches.
 //
 // D1's point is that there is no supported path from cloning this repository to *having* the
 // command: today you build it and put it somewhere by hand, and every document that mentions it
@@ -31,7 +65,11 @@
 // to. Running the install twice and diffing the profile is a test below, because "it looked fine
 // when I ran it once" is how a profile ends up with nine copies of the same line.
 //
-// ## What uninstall must not do
+// ## What an uninstall must not do — the constraint on what an install may write
+//
+// Kept here although the uninstaller left, because it is a rule about *this* file: anything an
+// install puts in `$WAC_HOME` outside the four names above is something `wac uninstall` will not
+// know to take away.
 //
 // D1: it removes the binary, the cache, the profile line and the metadata, and **never** a
 // manifest, a lockfile, a source file or a build product. Those live in projects, not here, and a
@@ -55,6 +93,51 @@ function wacHome(env: Deno.Env = Deno.env): string {
     throw new Error("neither WAC_HOME nor HOME is set, so there is nowhere to install to");
   }
   return `${home}/.wac`;
+}
+
+/** Which host the installed command runs on. */
+export type Target = "native" | "deno" | "node";
+
+/**
+ * Build the command for `target` and answer where it landed.
+ *
+ * **One program, three hosts** — `issues/system/0257c`. `packages/wac/src/wac.wac` is the whole
+ * command surface; the native binary embeds it as a payload and the JavaScript hosts get the same
+ * wasm through `packages/platform/build.ts`. So installing a Deno- or Node-hosted `wac` is not
+ * installing a lesser thing: measured on 2026-08-26, `wac app` on all three writes byte-identical
+ * artefacts, and `commandparity_test.wac` holds 52 invocations to the same answer.
+ *
+ * **What differs is what it costs to get.** The native build needs cargo and no network; the hosted
+ * build needs neither cargo nor a Rust toolchain and *does* shell out to `deno bundle`, which fetches
+ * `@esbuild/<platform>` from npm the first time. That is the whole trade, and `--target` is how
+ * somebody with Deno and no Rust makes it.
+ */
+async function buildFor(target: Target): Promise<string> {
+  if (target === "native") return await buildBinary();
+  const out = `${ROOT}/.cache/wac-install-${target}`;
+  // The same grants the seed carries — `tools/seed.sh`'s line — plus `run`, which the hosted build
+  // can have and the baked seed cannot: `run_seed` hands the program the manifest's grants, so the
+  // native binary's `--allow-run` reaches argv and not capabilities (`issues/system/0264c`). A JS
+  // host parses the shebang instead, so the artefact may as well be able to spawn.
+  const built = new Deno.Command("deno", {
+    args: [
+      "run", "-A", "packages/platform/build.ts", "packages/wac/src/wac.wac",
+      "--target", target, "-o", out,
+      "--allow-read", "--allow-write", "--allow-env", "--allow-net", "--allow-run",
+    ],
+    cwd: ROOT,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (!(await built.output()).success) {
+    throw new Error(
+      `the ${target}-hosted command did not build — see above. If that was the npm fetch, ` +
+        `\`deno cache npm:@esbuild/<your platform>\` does it once; the native target needs no ` +
+        `bundler at all.`,
+    );
+  }
+  await Deno.stat(out);
+  return out;
 }
 
 /** Build the binary in the tree and answer where it is. */
@@ -97,7 +180,7 @@ async function place(from: string, to: string): Promise<void> {
 export async function ensureProfileLine(
   profile: string,
   home: string,
-): Promise<"added" | "present" | "updated" | "absent"> {
+): Promise<"added" | "present" | "updated" | "absent" | "unwritable"> {
   let text: string;
   try {
     text = await Deno.readTextFile(profile);
@@ -115,32 +198,33 @@ export async function ensureProfileLine(
     // different homes and reading the profile.
     if (lines[at] === want) return "present";
     lines[at] = want;
-    await Deno.writeTextFile(profile, lines.join("\n"));
+    // **A profile this cannot write is not an install that failed.** The read is guarded and the
+    // write was not, so a read-only `.bashrc` threw out of `install()` after the binary, the cache,
+    // `env` and `install.json5` were all in place — reporting failure over a usable installation, and
+    // leaving no way to try again that could succeed. GitHub wac#26.
+    try {
+      await Deno.writeTextFile(profile, lines.join("\n"));
+    } catch {
+      return "unwritable";
+    }
     return "updated";
   }
   const sep = text.endsWith("\n") || text === "" ? "" : "\n";
-  await Deno.writeTextFile(profile, `${text}${sep}${want}\n`);
+  try {
+    await Deno.writeTextFile(profile, `${text}${sep}${want}\n`);
+  } catch {
+    return "unwritable";
+  }
   return "added";
 }
 
-/** Remove any line carrying the marker. Answers how many went. */
-export async function removeProfileLine(profile: string): Promise<number> {
-  let text: string;
-  try {
-    text = await Deno.readTextFile(profile);
-  } catch {
-    return 0;
-  }
-  const lines = text.split("\n");
-  const kept = lines.filter((l) => !l.includes(MARKER));
-  if (kept.length === lines.length) return 0;
-  await Deno.writeTextFile(profile, kept.join("\n"));
-  return lines.length - kept.length;
-}
-
-export async function install(env: Deno.Env = Deno.env): Promise<string> {
+export async function install(
+  env: Deno.Env = Deno.env,
+  target: Target = "native",
+  editProfiles = true,
+): Promise<string> {
   const home = wacHome(env);
-  const built = await buildBinary();
+  const built = await buildFor(target);
   await Deno.mkdir(`${home}/cache/git`, { recursive: true });
   await place(built, `${home}/bin/wac`);
 
@@ -166,60 +250,41 @@ export async function install(env: Deno.Env = Deno.env): Promise<string> {
       `  home: ${JSON.stringify(home)},\n` +
       `  from: ${JSON.stringify(ROOT)},\n` +
       `  commit: ${JSON.stringify(await headCommit())},\n` +
-      `  seed: ${await seedSize()},\n` +
+      `  target: ${JSON.stringify(target)},\n` +
+      // **`seed` only for the native build**, because it is the size of `native/v8/seed/wacc.wasm` —
+      // the wasm that binary carries. A hosted install does not contain that file, and writing its
+      // size would describe something the artefact has no copy of. Nothing parses this file, so the
+      // fields are free to be honest; a reader seeing `target: "deno"` and no `seed` has the answer.
+      (target === "native" ? `  seed: ${await seedSize()},\n` : "") +
       `}\n`,
   );
 
   const touched: string[] = [];
+  const refused: string[] = [];
   const h = env.get("HOME");
-  if (h !== undefined && h !== "") {
+  if (editProfiles && h !== undefined && h !== "") {
     for (const p of PROFILES) {
       const what = await ensureProfileLine(`${h}/${p}`, home);
-      if (what !== "absent") touched.push(`${p} (${what})`);
+      if (what === "unwritable") refused.push(p);
+      else if (what !== "absent") touched.push(`${p} (${what})`);
     }
   }
+  // **What happened, including the part that did not.** Installing and editing an interactive shell's
+  // configuration are separate operations with separate permissions — a container, a CI job or a
+  // read-only home can allow the first and refuse the second — so an unwritable profile is reported
+  // beside a successful install rather than turned into a failed one, and the sentence says what to
+  // do instead. GitHub wac#26.
+  const line = !editProfiles
+    ? "not edited (--no-profile)"
+    : touched.length > 0
+    ? touched.join(", ")
+    : "none found";
+  const note = refused.length > 0
+    ? `\n  note    could not write ${refused.join(", ")} — the install is complete; add\n` +
+      `          \`. ${home}/env\` to your shell yourself, or re-run with --no-profile`
+    : "";
   return `${home}/bin/wac\n  cache   ${home}/cache/git\n  env     ${home}/env\n` +
-    `  profile ${touched.length > 0 ? touched.join(", ") : "none found"}`;
-}
-
-export async function uninstall(env: Deno.Env = Deno.env, keepCache = false): Promise<string> {
-  const home = wacHome(env);
-  const went: string[] = [];
-
-  // **The profile line first, and this was missing.** The first version removed the files and the
-  // directory and left every profile sourcing an `env` that is no longer there — so a new shell
-  // prints an error on every login, from a command the person just removed. `removeProfileLine`
-  // existed and was tested on its own; nothing checked that `uninstall` called it, which is the
-  // difference between testing a part and testing the thing. Found by running it.
-  const h = env.get("HOME");
-  if (h !== undefined && h !== "") {
-    let lines = 0;
-    for (const p of PROFILES) lines += await removeProfileLine(`${h}/${p}`);
-    if (lines > 0) went.push(`${lines} profile line(s)`);
-  }
-  for (const path of [`${home}/bin/wac`, `${home}/env`, `${home}/install.json5`]) {
-    try {
-      await Deno.remove(path);
-      went.push(path.slice(home.length + 1));
-    } catch { /* not there is the state we wanted */ }
-  }
-  try {
-    await Deno.remove(`${home}/bin`);
-  } catch { /* not empty, or not there */ }
-  if (!keepCache) {
-    try {
-      await Deno.remove(`${home}/cache`, { recursive: true });
-      went.push("cache");
-    } catch { /* not there */ }
-  }
-  // Only if nothing else is in it. Somebody may keep things under `$WAC_HOME` that are not ours,
-  // and D1's rule is that uninstall removes what it installed and nothing else.
-  try {
-    const left = [...Deno.readDirSync(home)];
-    if (left.length === 0) await Deno.remove(home);
-    else went.push(`(${left.length} other entr${left.length === 1 ? "y" : "ies"} left in ${home})`);
-  } catch { /* home is gone or was never there */ }
-  return went.length > 0 ? went.join(", ") : "nothing to remove";
+    `  profile ${line}${note}`;
 }
 
 /** The compiler inside the binary, in bytes — which build of wacc this `wac` carries. */
@@ -250,9 +315,13 @@ if (import.meta.main) {
   const mode = args.shift() ?? "install";
   try {
     if (mode === "install") {
-      console.log(`installed ${await install()}`);
-    } else if (mode === "uninstall") {
-      console.log(`removed ${await uninstall(Deno.env, args.includes("--keep-cache"))}`);
+      const ti = args.indexOf("--target");
+      const target = (ti >= 0 ? args[ti + 1] : "native") as Target;
+      if (target !== "native" && target !== "deno" && target !== "node") {
+        console.error(`unknown target ${JSON.stringify(target)} — native, deno or node`);
+        Deno.exit(2);
+      }
+      console.log(`installed ${await install(Deno.env, target, !args.includes("--no-profile"))}`);
     } else if (mode === "build") {
       const at = args.indexOf("-o");
       if (at < 0 || args[at + 1] === undefined) {
@@ -262,7 +331,7 @@ if (import.meta.main) {
       await place(await buildBinary(), args[at + 1]);
       console.log(`built ${args[at + 1]}`);
     } else {
-      console.error(`unknown mode ${JSON.stringify(mode)}; expected install, uninstall or build`);
+      console.error(`unknown mode ${JSON.stringify(mode)}; expected install or build`);
       Deno.exit(2);
     }
   } catch (e) {

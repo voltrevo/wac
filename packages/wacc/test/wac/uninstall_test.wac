@@ -1,15 +1,22 @@
-// `wac uninstall` removes what an install wrote, and the same things the task removes.
+// `wac uninstall` removes what an install wrote, and nothing else.
 //
 // `[§wac-cli-uninstall-7kq3mvp]`
 //
-// **Two implementations of one list, and this is what keeps them one list.** `design/lang/0009` D1
-// asks for the subcommand because `deno task wac:uninstall` is a Deno program under `tools/` and
-// therefore needs this repository — which somebody who installed the command does not have. So the
-// layout is written down twice, in `tools/install.ts` and in `native/v8/src/main.rs`, with nothing
-// to share it through: one is TypeScript that needs the checkout and the other is Rust in the
-// binary. A list duplicated with no test between the copies is a list that will differ, and the
-// symptom is somebody's `~/.wac/env` surviving an uninstall and erroring on every login — which is
-// a thing that already happened once to the task, and was found by running it rather than by a test.
+// **There is one uninstaller now, and this file used to exist because there were two.** Until
+// 2026-08-26 the layout was written down twice — TypeScript in `tools/install.ts` behind a
+// `wac:uninstall` task, and the command itself — so the fourth case here was a differential: two
+// identical fake installs, one taken away with each, compared entry for entry. It found a real bug
+// once, an `~/.wac/env` surviving and erroring on every login.
+//
+// The operator retired the task rather than the differential, which removes the reason for both.
+// `design/lang/0009` D1 wanted the subcommand precisely because a Deno program under `tools/` needs
+// the checkout that somebody who *installed* the command does not have — so the task was the copy
+// that could not be used, and keeping a test to prove the unusable copy still agreed would have made
+// it an oracle. That is the arrangement CLAUDE.md names in as many words.
+//
+// What is left asks what the command does rather than who it matches, and `survivors` is where the
+// list lives: the three files an install writes, the cache under `--keep-cache` and without it, and
+// two files it must never touch.
 //
 // Nothing here installs anything real: `install()` shells out to a release `cargo build`, which is a
 // minute of work already covered by `tools/seedFresh.test.ts`. What is worth checking is the file
@@ -46,37 +53,6 @@ string fakeInstall(Cli cli, T t, string dir) {
 }
 
 /** Whether a path is there at all — a file or a directory, since both are removed here. */
-
-/**
- * `NAME=value` for everything `deno task` needs here, and nothing else.
- *
- * `issues/system/0198`: `Cli.exec` hands a child the whole host environment, which is an authority
- * nobody declared, and this directory was one of three the issue measured as needing something beyond
- * `PATH`. What it needs is the **proxy** — `deno task` resolves its dependencies over the network, and
- * this container reaches nothing except through the forward proxy, so without those names the task
- * fails to cache `binaryen` rather than failing to uninstall.
- *
- * `HOME` is a fixture directory, so Deno's cache is cold every run and the fetch is real rather than
- * incidental. Both spellings of each proxy name are offered because the tools disagree about case, and
- * a name that is not set is not passed at all — an empty `HTTP_PROXY` is a different instruction from
- * an absent one, and a machine with no proxy should get neither.
- */
-string[] denoTaskEnv(Cli cli, string wacHome, string home) {
-  string[] want = string[]("PATH", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-                           "http_proxy", "https_proxy", "no_proxy");
-  string[] all = string[want.len() + 2](fill: "");
-  i32 n = 0;
-  for (i32 i = 0; i < want.len(); i++) {
-    u8[]? v = cli.env(want[i]).wait();
-    if (!(v is null)) { all[n] = want[i] + "=" + string.fromBytes(v!); n = n + 1; }
-  }
-  all[n] = "WAC_HOME=" + wacHome; n = n + 1;
-  all[n] = "HOME=" + home; n = n + 1;
-  string[] exact = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { exact[i] = all[i]; }
-  return exact;
-}
-
 bool present(Cli cli, string path) {
   return cli.stat(path).wait().exists;
 }
@@ -174,52 +150,5 @@ export string test_removing_nothing_says_so_rather_than_failing(Core core, Cli c
   t.isTrue(string.fromBytes(r.stdout).indexOf("nothing to remove") >= 0,
            "it did not say there was nothing: " + string.fromBytes(r.stdout));
   cli.remove(dir, true).wait();
-  return t.report();
-}
-
-export string test_the_two_uninstallers_leave_the_same_tree(Core core, Cli cli) {
-  // **The differential, and the reason this file exists.** Two fake installs, identical; the task
-  // takes one and the subcommand takes the other; what is left has to match, entry for entry. A
-  // list that grows an item in one implementation and not in the other fails here rather than in
-  // somebody's home directory.
-  T t = T.create();
-  string root = scratch(cli, "uninstall-both");
-  string whyDir = freshDir(cli, root);
-  t.isTrue(whyDir == "", whyDir);
-  string taskHome = fixture(cli, t, root + "/task");
-  string binHome = fixture(cli, t, root + "/bin");
-
-  Exec a = cli.execWith("/bin/sh",
-      string[]("-c", "cd " + cli.cwd().wait() + " && exec deno task --quiet wac:uninstall"),
-      u8[0](), denoTaskEnv(cli, taskHome, root + "/task"), true, false).wait();
-  t.isTrue(a.ran() && a.status == 0, "the task failed: " + string.fromBytes(a.stderr));
-  Exec b = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](binHome, root + "/bin"),
-                   binaryPath(cli), string[]("uninstall"));
-  t.isTrue(b.ran() && b.status == 0, "the subcommand failed: " + string.fromBytes(b.stderr));
-  if (!a.ran() || !b.ran() || a.status != 0 || b.status != 0) { return t.report(); }
-
-  string[] left = string[]("bin/wac", "env", "install.json5", "cache/git/keepme",
-                           "wac.json5", "notes.txt");
-  string[] differ = string[left.len()](fill: "");
-  i32 n = 0;
-  for (i32 i = 0; i < left.len(); i++) {
-    bool onTask = present(cli, taskHome + "/" + left[i]);
-    bool onBin = present(cli, binHome + "/" + left[i]);
-    if (onTask != onBin) {
-      differ[n] = left[i] + ": the task " + (onTask ? "kept" : "removed") + " it and the subcommand " +
-                  (onBin ? "kept" : "removed") + " it";
-      n = n + 1;
-    }
-  }
-  string[] said = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { said[i] = differ[i]; }
-  t.eqI32(n, 0, "the two uninstallers disagree: " + joined(said, "; "));
-  t.eqStr(profileState(cli, root + "/task"), "", "task: the profile line");
-  t.eqStr(profileState(cli, root + "/bin"), "", "subcommand: the profile line");
-  // **The canary.** Every assertion above compares two answers, so two uninstallers that both did
-  // nothing agree perfectly. This says at least one thing really went.
-  t.isFalse(present(cli, binHome + "/bin/wac"), "the subcommand removed the binary at all");
-  core.log("    both uninstallers agree on " + itoa(left.len()) + " paths");
-  cli.remove(root, true).wait();
   return t.report();
 }

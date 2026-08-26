@@ -70,11 +70,11 @@ of those two turned out to say something the three known rows do not.
 
 | clause | the spec | wacc | the reference | pinned by |
 | --- | --- | --- | --- | --- |
-| `…-unexpected-q3kn8wp` | `unexpected token` + `expected expression` | `expected an expression` + `found ';'` | `expected expression, found ';'` | nothing |
-| `…-missing-semi-r7jm4xf` | `expected ';'` | `unexpected token` + `expected ';', found 'i32'` | `expected ';', found 'i32'` | nothing |
-| `…-missing-paren-k8fn3qp` | `expected ')'` | `unexpected token` + `expected ')', found ';'` | `expected ')', found ';'` | nothing |
-| `…-missing-brace-w5hd2jk` | `expected '}'` + `expected '}' to close block` + a **second label** | `unexpected token` + `expected '}', found 'eof'` | `expected '}', found ''` | nothing |
-| `…-bad-struct-h9pd5wn` | `expected field or method declaration` + `expected type name`, **one** diagnostic | `expected a type` + `found '='` + a help, then two more — **3** | `expected type, found '='`, then two more — **3** | nothing |
+| `…-unexpected-q3kn8wp` | `unexpected token` + `expected expression` | `expected an expression` + `found ';'` | `expected expression, found ';'` | `specclauses_test.wac`, as practice |
+| `…-missing-semi-r7jm4xf` | `expected ';'` | `unexpected token` + `expected ';', found 'i32'` | `expected ';', found 'i32'` | `specclauses_test.wac`, as practice |
+| `…-missing-paren-k8fn3qp` | `expected ')'` | `unexpected token` + `expected ')', found ';'` | `expected ')', found ';'` | `specclauses_test.wac`, as practice |
+| `…-missing-brace-w5hd2jk` | `expected '}'` + `expected '}' to close block` + a **second label** | `unexpected token` + `expected '}', found 'eof'` | `expected '}', found ''` | `specclauses_test.wac`, as practice |
+| `…-bad-struct-h9pd5wn` | `expected field or method declaration` + `expected type name`, **one** diagnostic | `expected a type` + `found '='` + a help, then two more — **3** | `expected type, found '='`, then two more — **3** | `specclauses_test.wac`, as practice |
 | `…-bad-type-n7qm3xf` | `expected type` + `unknown type 'foo'` | agrees | agrees | `specclauses_test.wac` |
 
 So five of the six are unpinned, and the one that is pinned is the one whose annotation the spec states
@@ -169,3 +169,34 @@ nine in total. And beside the `override` case sat `i32 make() { … }`, an enum 
 which was not vague but **wrong**: `perrMethodName` was carrying two faults, so it answered *"expected
 a method name"* and pointed at `{`, naming the one thing about that declaration that was correct.
 
+
+## 2026-08-26: all six are pinned now, and that changes what the decision costs — agent-a
+
+The table above still reads `pinned by | nothing` for five of the six rows. That was true when it was
+written and is not now: `packages/wacc/test/wac/specclauses_test.wac` carries
+`test_current_wording_for_an_unexpected_token`, `…_for_a_missing_semicolon`, `…_for_a_missing_paren`,
+`…_for_a_missing_brace` and `…_and_count_for_a_bad_struct_member`. Every one of the six is held to
+something.
+
+**What they pin is practice, not the contract**, and they say so in the place it will be read — the
+failure message. `t.eqStr(d[0], "unexpected token", "the message wacc uses today — spec: \`expected
+';'\`")`. So a run that goes red hands the reader both halves of this issue without their having to
+find this page.
+
+### Why that is worth noting rather than filing away
+
+**The decision now has a visible price and did not before.** Option 1 — change both compilers to the
+spec — turns those five tests red, which is the *point* of them: the cost of moving 282 diagnostics
+stops being a number in this issue and becomes a list of files. Option 3 — say the message is
+illustrative — is now the option that leaves a test asserting wording the spec contradicts, which is
+a thing somebody will trip over later.
+
+Neither is an argument for a particular option. It is that all three are now cheaper to *take*,
+because what changes is enumerated by something that runs.
+
+**And the unpinned column is the more interesting fact.** These tests were added after the table, and
+the table was not updated — so this page said "nothing checks this" about five rows that something
+checked. I read it, believed it, and went to write the tests before finding them already there. A
+table of what is covered goes stale exactly the way the coverage does; `issues/system/0268a` is the
+same failure in a different ledger, and the fix there was to derive the column rather than record it.
+Here it is one line, so it is one line — but the shape is worth seeing twice.

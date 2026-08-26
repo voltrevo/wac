@@ -5,13 +5,20 @@ does not work yet it says so and names the issue, rather than being left out.
 
 ## Getting the command
 
-There is one way today, and it needs a checkout of this repository, Deno, and **Cargo**:
+**The supported way needs a checkout of this repository, Deno, and Cargo**, and it is the one to
+follow unless you have a reason not to:
 
 ```sh
 git clone <this repo> wac && cd wac
 bash tools/seed.sh --bootstrap    # once, from a fresh clone: builds the compiler the binary carries
 deno task --no-lock wac:install   # builds `wac` and puts it on PATH
 ```
+
+**There is a second way as of 2026-08-26** — `deno task wac:install --target deno` — which needs
+neither Cargo nor Rust and installs the same command to the same place. It is second rather than
+equal for one reason, stated where it is documented below: building it shells out to `deno bundle`,
+which fetches from npm the first time, so the route with no network requirement is this one. Nothing
+about the *result* is lesser; see "Without Cargo" below.
 
 **Why `bash` and `--no-lock` rather than `deno task seed:bootstrap`.** Both forms work; these two do
 not touch the network. `deno task` restores this repository's `deno.lock` before running anything, and
@@ -57,18 +64,41 @@ a binary — and it is a developer fallback rather than the supported route, whi
 line above: that one compiles, and this one is the command.
 
 ```sh
-deno run -A <wac>/packages/platform/build.ts <wac>/packages/wacc/example/wacc.wac \
+deno run -A <wac>/packages/platform/build.ts <wac>/packages/wac/src/wac.wac \
   -o wac --target deno --allow-read --allow-write --allow-run --allow-env --allow-net
 ./wac run main.wac                       # compile and run, no file in between
 ```
 
+**The entry is `packages/wac/src/wac.wac`, and this line named the compiler's old example until
+2026-08-26** — packages/wacc/example/wacc.wac, unbackticked here because it no longer exists and
+`tools/wac/links_test.wac` would fail on it, which is the same trick that file plays on itself.
+`issues/system/0257c` moved the command out of that example, listed this page among the files to
+repoint, and repointed the others. So for a day the one documented Cargo-free way to *have* the command
+named a deleted file. Everything the paragraphs below claim was still true of the program; the reader
+could not reach it.
+
+**And since 2026-08-26 you can install it rather than build it**, which is the difference between a
+command and a file you made:
+
+```sh
+cd <wac> && deno task wac:install --target deno    # or --target node
+wac check src/main.wac                             # …and it is on PATH like any other
+```
+
+Same `$WAC_HOME` layout as the native install, same one marked line in your shell profile, same
+`wac uninstall` to take it away. `$WAC_HOME/bin/wac` is a JavaScript file with a shebang instead of a
+67 MB binary, and nothing that runs it needs to know which. `install.json5` records which you have.
+
 `--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
 `build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
 built module with the grants that module's own manifest declares. `test --coverage` works here too,
-over a file or a directory, and answers the same table as the binary. `sh` and `update` are still the
-native binary's alone, and **not for a reason that has anything to do with hosts**: the command is
-built from the *compiler's* example, so it carries what the compiler carries. Both are ordinary wac
-programs and belong in it. `issues/system/0257c`.
+over a file or a directory, though a directory answers a narrower table than the binary used to —
+see below. **`sh` and `update` are here too, since 2026-08-26**, which is the second half of
+`issues/system/0257c`: they were never host implementations, only separate payloads the binary
+embedded, so the command carried what the *compiler's* example carried and those two were outside it.
+One program now, and every host has them. Measured on a Deno-hosted build outside this repository:
+`./wac sh -c 'seq 1 20 | grep 7 | wc -l'` answers `2`, and `./wac update` answers
+`nothing to fetch; 0 mapping(s) already locked`.
 Every command they share is held to the same output on all three —
 `packages/wacc/test/wac/commandparity_test.wac`.
 
@@ -92,13 +122,22 @@ issue 22 reported it; `issues/system/0229a` has the measurement and the fix, and
 
 ### What the Deno path is, and is not
 
-**It is the `wac` command now, for everything but `sh` and `update`** — and those two are missing
-because of how the command is built rather than because a host cannot have them (`issues/system/0257c`). That is a change from what this
+**It is the `wac` command now, and since 2026-08-26 that includes `sh` and `update`** — which were
+missing because of how the command was built rather than because a host cannot have them
+(`issues/system/0257c`). That is a change from what this
 section said until 2026-08-25, and the paragraph above is where it happened: one program, built for
 Deno or Node, answering `check`, `compile`, `build`, `bindgen`, `run`, `test` — a file or a directory,
-with or without `--coverage` — and `wac <prog.wasm>`. It is the same wac program the native binary
+with or without `--coverage` — plus `sh`, `update`, `app`, `app-run`, `validate` and `uninstall`, and
+`wac <prog.wasm>`. It is the same wac program the native binary
 carries, so "the same" is by construction rather than by care, and
 `packages/wacc/test/wac/commandparity_test.wac` measures it invocation by invocation anyway.
+
+**One number this changed, and not for the better**: `wac test --coverage <directory>` now reports
+only the `*_test.wac` files the walk found, so the library the tests exercise is missing from the
+table and from the denominator. On a two-file project outside this repository the file form said
+`12 of 14 points (85%)` over `rot13_test.wac` and `rot13.wac`, and the directory form said
+`4 of 6 points (66%)` over the test file alone — same tests, same code, same run.
+`issues/system/0264c` is where the two implementations' disagreement is tracked.
 
 **What is still not the command**: the older, lower-level entry points, which remain because the
 compiler needs an API and not only a CLI. `native.ts` builds, `tools/check.ts` checks with the
@@ -108,9 +147,23 @@ originally about. Reach for the built command unless you are working on the comp
 that **`deno task check` is this repository's own TypeScript check**, not `wac check`.
 
 **One thing to know before you build it**: the hosted build shells out to `deno bundle`, which fetches
-`@esbuild/linux-x64` from npm the first time. On a machine with no network that fails after about a
-minute of silence. The binary has no such step, so an offline environment is still a reason to install
-it. `issues/system/0230a` tracks that too.
+`@esbuild/<your platform>` from npm the first time. The binary has no such step, so an offline
+environment is still a reason to install it.
+
+**That fetch used to happen in silence**, and twice — August and a later tour — somebody watched a
+command this page calls offline sit for ~72 and ~74 seconds and then fail on an npm URL. Since
+2026-08-26 a bundle still going after five seconds says so and names the package, and a failure that
+mentions npm says how to get it and how to avoid needing it:
+
+```
+wac: still bundling (worker) — the first bundle on a machine downloads npm:@esbuild/linux-arm64,
+     which needs the network. `deno cache npm:@esbuild/linux-arm64` does it once, ahead of time.
+```
+
+`deno cache npm:@esbuild/<your platform>` is the one-time step if you would rather do it deliberately;
+nothing requires it. **And it is only the bundler.** Compiling and installing reach no npm at all —
+`bash tools/seed.sh --bootstrap` and `deno task --no-lock wac:install` are the offline route to the
+whole command, which is why the failure message names them.
 
 **One thing here does need the network, once.** Compiling does not: the two commands above complete
 under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*

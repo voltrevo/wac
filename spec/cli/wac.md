@@ -24,6 +24,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 | `prog.wasm` | run that program — the module carries its own manifest, and its grants are the ones that manifest declares. A Deno- or Node-hosted `wac` does this too, since 2026-08-22 |
 | `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat`, `app`, `app-run` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
 | `run` and `test`, again | **also implemented in the wac program**, which is where every host but this one gets them. `issues/system/0230a` is giving the subcommands to all three hosts one at a time; this binary answers both in Rust first, and `packages/wacc/test/wac/commandparity_test.wac` holds each pair to the same output. Both stay — the Rust `run` runs the module in this process rather than relaying it, and the Rust `test` is the one that can answer `--coverage`: its counters are reached through exports the instrumentation injects, which no manifest lists, so the wac program cannot call them and refuses the flag rather than reporting zeroes (`issues/system/0243c`). The wac `test` walks a directory and builds one aggregate module too, since 2026-08-22 |
+| `audit` | which files in the closure can reach a host capability, grouped by the dependency they came from |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` — and `run`, which this binary intercepts above |
@@ -48,6 +49,7 @@ wac ctcompare [--all] a.wasm b.wasm  # two traced runs, and where their journals
 wac tracestat mod.wasm               # one traced run's size, and what it wanted
 wac app     main.wac -o thing        # an executable that runs itself, calling out to `wac`
 wac app-run thing [args…]            # ...what `./thing` execs; not normally typed
+wac audit   main.wac [--verbose]     # what each dependency can reach, and through what
 wac uninstall [--keep-cache]         # remove an installed `wac`, and nothing else
 wac update  [project]                # fetch what the lock does not cover, and lock it
 ```
@@ -313,10 +315,56 @@ belongs to the binary that reads it and wac is unstable by choice, so `app-run` 
 in the preamble with its own and stops. Running it anyway would trap somewhere inside a module built
 against a different contract, which is a worse message than the one it could have given.
 
+**Only two versions that both exist can differ, and today neither does.** No version is defined: a host
+publishes one through `WAC_VERSION` and none does, so `wac app` writes the mark with nothing after it
+and `app-run` refuses nothing for skew. That is the correct output rather than a gap — `native/v8` used
+to publish cargo's default `0.1.0`, which was not a decision anybody had taken, and it made that host's
+artefact differ from every other host's in the single line they were otherwise identical in. The rule
+above is written for the day a version is defined and holds unchanged until then: a blank on either
+side is a version that was never claimed, not a version that disagrees.
+
 The module is found by scanning for the first `\0asm`: shell text cannot contain a NUL, so there is
 no length header to keep in step and no second file. `app-run` is its own command rather than
 `wac thing` because `./thing` has to hand *itself* to `wac`, and a bare stem would collide with the
 subcommands the day somebody names a program `test`.
+
+### Auditing what it can reach
+
+`[§wac-cli-audit-6pn3wtq]` `wac audit <entry.wac>` answers **which files in the closure can reach a
+host capability, and through what** — grouped by the dependency each file came from, because a reader
+chooses dependencies rather than files. `--verbose` prints the file-by-file table underneath.
+
+**The question has a static answer because wac has no ambient authority.** A capability is a funcref
+field on `Cli` or `Core`; a function that is not handed one cannot call one, whatever its body says.
+There is no global to reach for and no `import fs`. So *what can this dependency touch* is a property
+of declared types, and a file can be cleared without reading it.
+
+`[§wac-cli-audit-bearing-9km4txr]` A **bearing type** is `Cli`, `Core`, or any type with a field —
+including an enum variant's field — or a method return whose type is bearing, to a fixpoint. A **file
+reaches** if any declaration in it names a bearing type in a field, a parameter or a return; otherwise
+it is **sealed**.
+
+The fixpoint is not decoration. `packages/platform/src/stream.wac` has `Cli cli;` in `Sink` and
+`packages/fs/src/fs.wac` has the variant `Host(Cli cli)`, so a file handed one of those holds the whole
+capability set without ever writing `Cli`. Auditing `packages/wac/src/wac.wac` finds four such files.
+
+`[§wac-cli-audit-sound-3tq8mnp]` **`sealed` is never wrong; `reaches` over-approximates.** A file that
+takes a `Cli` only to read `argCount` is reported as reaching, because the unit is the type rather than
+the field. The guarantee runs one way on purpose: a tool that might clear a file that can act is worth
+nothing, and one that names a file that cannot costs a reader a minute.
+
+Two limits, stated rather than left to be discovered:
+
+- **Derived authority is out of scope.** A `Socket` from `Cli.connect` is a live connection, and a file
+  holding one can reach the network without naming `Cli`. The seed is the two types a host
+  *constructs*.
+- **A generic bound to a bearing type at a distant call site is not tracked.** `Vec<Cli>` names `Cli`
+  and is caught; a `T` is not.
+
+`[§wac-cli-audit-denominator-2wq7knx]` **Every report states what it looked at**, including when
+nothing reaches and including when an internal bound was hit — a truncated table that says `sealed`
+about a file it ran out of room for is the one failure this must not have. `issues/system/0268a` is
+what an instrument that reports its hits and not its denominator costs.
 
 ### Taking it away
 
@@ -331,13 +379,17 @@ output rather than passed over, so *removed* and *found nothing* are never the s
 Running it twice is ordinary — it is what somebody does when they are not sure the first one
 worked — so the second prints `nothing to remove` and exits 0. That is not a failure.
 
-It is on the binary as well as being `deno task wac:uninstall`, and the reason is the whole point of
-installing anything: the task is a Deno program under `tools/`, so it needs this repository, and
+It is on the binary, and that is the whole point of installing anything: the `deno task
+wac:uninstall` it replaced was a Deno program under `tools/`, so it needed this repository, and
 somebody who installed the command has a `$WAC_HOME` and no checkout. Asking them to clone the
-compiler in order to remove the compiler is not an answer. The two are held to one list by
-`packages/wacc/test/wac/uninstall_test.wac`, which builds the same fake install twice and takes one
-away with each — duplicated knowledge with a test between the copies being a different thing from
-duplicated knowledge without one.
+compiler in order to remove the compiler is not an answer.
+
+**So the task went, 2026-08-26, and the subcommand is the only uninstaller.** The two were held to
+one list by a differential in `packages/wacc/test/wac/uninstall_test.wac` — the same fake install
+twice, one taken away with each — and retiring the copy that could not be used removes the reason for
+that as well: a test proving the retiree still agrees is what makes the retiree an oracle. What the
+file checks now is what this section says, against the command: the three files an install writes,
+the cache with `--keep-cache` and without, and two files it must never touch.
 
 ### A program that asks for nothing
 

@@ -493,3 +493,146 @@ Two consequences for whoever builds the economy.
 
 `$bind$callref_N` is not emitted for any of these, so the callback machinery in play here is one
 direction only: the module calling out, not the host calling in.
+
+## What `wac audit` can and cannot tell this issue — agent-a, 2026-08-26
+
+`wac audit` landed today and answers a neighbouring question: which files in a graph can reach a host
+capability, and through what. It is **not** the measurement this issue wants, and the gap is worth
+recording so nobody reaches for it expecting one.
+
+**It is type-level.** A file that takes a `Cli` to read `argCount` and one that opens sockets both read
+as `reaches`. This issue is about *which of `Cli`'s fields a program names*, which is finer.
+
+**And the cheap ways to get finer do not work**, measured rather than assumed. Over `packages/`, of the
+2,598 call sites whose method name matches a capability field:
+
+    on a receiver literally `cli` or `core`   2,056   79%
+    on `fs`                                     253
+    on `page`                                   164
+    on `sh` and a scatter of short names         125
+
+So keying on the receiver's name is a fifth short, and the misses cluster in `fs` and `page` — the
+wrapper types that *hold* a `Cli`, which is the interesting case rather than a rare one. Keying on the
+method name alone fails the other way: `remove`, `log`, `call`, `on`, `render` and `resolve` are
+ordinary method names, so a `Vec.remove` would count as the filesystem.
+
+Field-level attribution needs the checker's types. That is real work and it is not blocking this issue,
+because **this issue is not blocked on measurement.** The reproduction above is clean — three `Cli`
+fields for datagrams cost `wc.wac` 8.1% of its module and three callback signatures, and it names none
+of them. What is open is the design: how a capability struct is split so a program carries what it
+declares. A finer audit would make the per-program picture easier to see; it would not decide that.
+
+## Re-measured 2026-08-26, and the slope fixtures do not measure the slope — agent-a
+
+The numbers here are dated 2026-08-13 through 08-15. Eleven days on, same fixtures, same command
+(`packages/platform/native.ts`, which is what prints the signature count):
+
+| fixture | 2026-08-15 | 2026-08-26 |
+| --- | --- | --- |
+| `cli_only` | 187 KB, 45 signatures | **239 KB, 63 signatures** |
+| `core_only` | 10 signatures | **12 signatures** |
+| `none` | 721 bytes | 2 KB |
+
+**+28% in size and +40% in signatures**, on fixtures that have not changed. `issues/system/0129`,
+re-measured the same day, has the other half: the *host* side of the same boundary grew 86% in a
+comparable window. The two are one subject from either end.
+
+### The `cap*` series cannot answer the question it was built for
+
+    fixture   fields   distinct Pending<T> shapes   signatures   wasm
+    cap1        1              1                        14        82 KB
+    cap5        5              5                        18        96 KB
+    cap10      10              5                        24       111 KB
+    cap20      20              5                        24       115 KB
+
+**The series stops adding distinct shapes at five and repeats them.** `cap10` and `cap20` hold the
+same five — `Pending<bool>`, `Pending<i32>`, `Pending<i64>`, `Pending<string>`, `Pending<u8[]>` — four
+fields apiece in `cap20`.
+
+Which is the thing those files say must not happen, in their own headers:
+
+> The fields differ in return type on purpose, because a `Pending<T>` is monomorphised per `T`: a
+> struct with ten fields all answering `i32` would measure something cheaper than a real one.
+
+So `cap20` measures something cheaper than a real twenty-field struct, by the fixture's own argument.
+The flat `24` signatures at ten and twenty fields reads as *the cost saturates* and is really *the
+fixture stopped varying*. And this issue says what rests on it: the slope is "the number that decides
+whether emitting per *use* rather than per *mention* is worth building".
+
+`cap1` → `cap5` is still a real slope over distinct shapes, 14 → 18 signatures and 82 → 96 KB. Past
+five, the series measures field repetition.
+
+**What it needs is more shapes, not more fields** — `Pending<f64>`, `Pending<i32[]>`, `Pending<string[]>`,
+nested ones — so that `cap20` is twenty distinct monomorphisations. Until then the honest reading of
+the table is that nothing here measures the cost of a wide capability struct, which is what `Cli` is.
+
+Not fixed here: extending the fixtures changes the numbers this issue argues from, and the argument is
+mid-decision. Recorded so the decision is not taken on a slope that flattened for the wrong reason.
+
+### Correcting the section above: it is `cap20` alone, and it stops at ten — agent-a, same day
+
+The note above says the series "stops adding distinct shapes at five" and that `cap10` and `cap20`
+"hold the same five". **Both are wrong**, and the mistake was counting `Pending<T>` return types when a
+shape is the whole `fn[…]` signature — the fields differ by parameter list too, and four of them are
+not `Pending` at all (`fn[void(string)]`, `fn[bool(u8[])]`).
+
+Counted properly:
+
+    fixture   fields   distinct full signatures   signatures emitted   wasm
+    cap1        1              1                        14             82 KB
+    cap5        5              5                        18             96 KB
+    cap10      10             10                        24            111 KB
+    cap20      20             10                        24            115 KB
+
+**`cap10` is correct.** Ten fields, ten distinct signatures. Only `cap20` is short: twenty fields over
+ten signatures, each appearing exactly twice.
+
+Which also explains the emitted counts, where the earlier version left them a coincidence: `cap10` and
+`cap20` both emit 24 because they carry the same ten shapes. The slope is real from 1 to 10 and flat
+from 10 to 20 **because `cap20` adds no shape `cap10` did not have**.
+
+So the conclusion stands and its scope halves: the flat top of the curve is the fixture, not the
+emitter, and `cap20` measures something cheaper than a real twenty-field struct by its own header's
+argument. What needs fixing is one file, and it needs ten more distinct signatures rather than a
+rebuild of the series.
+
+Nothing outside this issue references these fixtures — checked — so changing `cap20` breaks no test.
+
+### `cap20` is fixed, and fixing it found a compiler bug — agent-a, same day
+
+`cap20.wac` held `f10`–`f19` as byte-for-byte copies of `f0`–`f9`. It now carries ten genuinely
+distinct signatures, so twenty fields mean twenty boundaries and the fourth point of the slope is a
+measurement rather than a repeat of the third.
+
+**One of the ten new signatures does not compile.** `fn[Pending<i64[]>(string)]` — a `Pending`
+monomorphised at a 64-bit array element, reached through a capability field — passes `wac check` with
+no diagnostics and emits a module the engine refuses, twelve bytes short in its section length.
+`u64[]` and `f64[]` too; `i32[]` is fine. `issues/lang/0271a` has the three-line reproduction and the
+narrowing.
+
+So the slope above ten fields is still unmeasured, for a better reason than before: the fixture is
+correct now and the compiler cannot build it. That is worth more to this issue than the number would
+have been — the surface it is arguing about contains a shape that does not emit, and nothing else in
+the repository writes one.
+
+### The slope, measured at last — agent-a, same day
+
+With `cap20` carrying twenty distinct signatures that all build, the fourth point exists:
+
+| fields | signatures | wasm | per field |
+| ---: | ---: | ---: | --- |
+| 1 | 14 | 82 KB | — |
+| 5 | 18 | 96 KB | +1.0 sig, +3.5 KB |
+| 10 | 24 | 111 KB | +1.2 sig, +3.0 KB |
+| 20 | **44** | **167 KB** | **+2.0 sig, +5.6 KB** |
+
+**It does not saturate, and the broken fixture said it did.** `cap20` read 24 signatures and 115 KB
+while it was `cap10` twice; it is 44 and 167 KB. The per-field cost *rises* over the range rather than
+flattening — twice the signatures and nearly twice the bytes per field at twenty as at five.
+
+`Cli` has thirty-odd fields, so this is the part of the curve the issue is actually about, and until
+today the only measurement of it was a duplicate of the ten-field point.
+
+One caveat on the top row: `f17` is `Pending<string[]>` rather than the `Pending<i64[]>` first written
+there, because that shape does not emit — `issues/lang/0271a`. So twenty fields is twenty *buildable*
+shapes, and the boundary's marshalling list bounds what a fixture at forty could contain.

@@ -447,6 +447,64 @@ export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
 }
 
 /**
+ * **A case value written twice is refused, and equality is 32 bits rather than spelling.**
+ *
+ * `[§wac-switch-dupcase-7hq2nkv]` `issues/lang/0266c`. The third of one rule: a second `default:` is
+ * refused by the parser, a `match` naming one variant twice by `errDuplicateCase`, and this was the
+ * one that was silent in both compilers.
+ *
+ * **Most of this test is the spellings, and that is the point.** A check comparing token text passes
+ * `case 1: case 1:` and accepts every other row below — the pairs a person is most likely to write by
+ * accident, since nobody types the same literal twice on purpose but `0x1` beside `1` and
+ * `0xFFFFFFFF` beside `4294967295` are exactly how it happens. Such a check would look like it worked.
+ *
+ * **`case -1:` beside `case 1:` is the control that matters**, because the fix for the rows above is
+ * to wrap to two's complement, and a fix that *masks* instead leaves `-1` and `4294967295` two cases
+ * apart while a fix that reads the literal under a negation makes `-1` and `1` the same one. Both are
+ * wrong answers rather than missed ones, so both need a row that fails when they happen.
+ *
+ * A non-constant case value is not covered, deliberately: `case k:` compiles and compares at run
+ * time, and whether it should is `issues/lang/0269a`.
+ */
+export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled() {
+  T t = T.create();
+
+  string[] duplicates = string[](
+    "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 1: { return 2; } } return 0; }\n",
+    "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 0x1: { return 2; } } return 0; }\n",
+    "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case 4294967295: { return 2; } } return 0; }\n",
+    "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case 0xFFFFFFFF: { return 2; } } return 0; }\n",
+    // **Two spellings with opposite signs, which is the case the 32-bit reading is for.** Measured: a
+    // `u32` holding `4294967295` matches `case -1:` and one holding `1` does not — which is
+    // `spec/spec/control.md`'s "signedness plays no part in an equality match" seen from the case side
+    // rather than the scrutinee's.
+    //
+    // This row went in after a canary, and not the way canaries usually pay: replacing the checker's
+    // two's-complement wrap with a plain mask broke *nothing*, so the wrap looked untested. It was not
+    // untested, it was **redundant** — `-1 & 0xFFFFFFFF` is already `4294967295` — and the wrap is now
+    // gone. The row stays because it is a real duplicate a reader could write, and because it is the
+    // only one here where the two arms disagree about sign.
+    "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case -1: { return 2; } } return 0; }\n");
+  for (i32 i = 0; i < duplicates.len(); i++) {
+    i32 n = dumpTypeErrors(duplicates[i].toBytes()).len() / 3;
+    t.isTrue(n > 0, "accepted a switch with one value twice: " + duplicates[i]);
+  }
+
+  // **The other direction, and it needs to be here or the rows above are satisfied by refusing every
+  // switch.** Two different values, a value that only looks like another under the wrong arithmetic,
+  // and a value that is not constant at all.
+  string[] legal = string[](
+    "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 2: { return 2; } } return 0; }\n",
+    "export i32 f(i32 n) { switch (n) { case -1: { return 1; } case 1: { return 2; } } return 0; }\n",
+    "export i32 f(i32 n, i32 k) { switch (n) { case k: { return 1; } default: { return 2; } } }\n");
+  for (i32 i = 0; i < legal.len(); i++) {
+    i32 n = dumpTypeErrors(legal[i].toBytes()).len() / 3;
+    t.eqI32(n, 0, "refused a legal switch: " + legal[i]);
+  }
+  return t.report();
+}
+
+/**
  * **Two duplicate-declaration rules, reported where the duplicate is written.**
  *
  * Both came out of walking the diagnostic codes for ones no generated program reaches, and comparing

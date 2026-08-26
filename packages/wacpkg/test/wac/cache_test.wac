@@ -89,7 +89,7 @@ export string test_the_path_is_a_function_of_the_home_the_repository_and_the_com
   t.isTrue(cachePath("/h/.wac", u, sha) != cachePath("/other", u, sha), "the home is in it");
   t.eqStr(cachePath("/h/.wac", u, sha), cachePath("/h/.wac", u, sha), "and nothing else is");
 
-  // It is under the root, which is what `wac:uninstall` removes — a path that escaped it would
+  // It is under the root, which is what `wac uninstall` removes — a path that escaped it would
   // survive an uninstall that reported having removed the cache.
   string root = cacheRoot("/h/.wac");
   string p = cachePath("/h/.wac", u, sha);

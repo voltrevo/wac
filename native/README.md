@@ -33,7 +33,7 @@ cargo build --release
 With `seed/wacc.json` and `seed/wacc.wasm` present at build time, this binary *is* a wac toolchain:
 
 ```
-wac build packages/wacc/example/wacc.wac --allow-read --allow-write -o native/seed/wacc
+wac build packages/wac/src/wac.wac --allow-read --allow-write -o native/seed/wacc
 cargo build --release
 ./target/release/wacland compile packages/wacc/src/api.wac out.wasm     # 3.2s, no JavaScript
 ./target/release/wacland check main.wac

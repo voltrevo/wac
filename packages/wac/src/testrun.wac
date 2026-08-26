@@ -17,7 +17,7 @@
 
 import { CallResult, Change, Cli, Core, FileResult, LoadedModule, Stat } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { itoa, itoa64, atoi } from "../../fmt/src/itoa.wac";
 import { parse } from "../../json/src/json.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -54,8 +54,45 @@ export string[] importable(Cli cli, string[] walked) {
   return out;
 }
 
+/**
+ * Where a directory run's generated aggregate goes.
+ *
+ * **The pid is what keeps two workers apart, and it was missing.** The name was the monotonic clock
+ * alone — which is *per process* and starts near zero, so four parallel workers sharing one `.cache/`
+ * produced names like `wac-aggregate-41_test.wac` at the same moment. Two of them wrote the same
+ * path, and one deleted it while the other was still between writing and compiling:
+ *
+ *     wacc: cannot read .cache/wac-aggregate-41_test.wac
+ *
+ * That is a gate failure with no failing test in it, and it arrived the day the removal moved to
+ * where it covers every exit (GitHub wac#27) — the collision was always there, and cleaning up
+ * promptly is what turned it from a stale file into a race.
+ *
+ * The retired Rust host named these `wac-aggregate-<pid>-<group>` and `docs/development.md` still
+ * described that after the command moved into wac. The pid in that name was not decoration.
+ *
+ * `ownPid` answers 0 when `/proc/self/stat` cannot be read, and 0 is fine here: it costs the
+ * cross-process uniqueness and leaves the clock, which is what this had all along.
+ */
 export string aggregatePath(Core core, Cli cli) {
-  return ".cache/wac-aggregate-" + itoa64(core.monotonicNanos().wait()) + "_test.wac";
+  return ".cache/wac-aggregate-" + itoa(ownPid(cli)) + "-"
+       + itoa64(core.monotonicNanos().wait()) + "_test.wac";
+}
+
+/**
+ * This process's pid, from `/proc/self/stat` — 0 when it cannot be read.
+ *
+ * The same question `tools/wac/suitegate.wac` asks, and for the same reason it gives: there is no
+ * `getpid` capability, and a program naming itself in a file other programs share is asking about
+ * the operating system rather than about itself. Not imported from there because `tools/` is not a
+ * dependency of the command; six lines is cheaper than that edge.
+ */
+i32 ownPid(Cli cli) {
+  FileResult f = cli.readFile("/proc/self/stat").wait();
+  if (!f.ok) { return 0; }
+  string s = string.fromBytes(f.bytes);
+  i32 sp = s.indexOf(" ");
+  return sp <= 0 ? 0 : atoi(s.slice(0, sp));
 }
 
 /**

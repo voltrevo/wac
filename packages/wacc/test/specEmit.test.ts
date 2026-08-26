@@ -25,6 +25,25 @@
 // asked it "can you emit this?", got an explicit reason back, and `continue`d before the counter — so
 // ten spec behaviours wacc cannot produce were a number in a log line that nothing could fail on. That
 // is `issues/lang/0170a`'s silence living in the instrument instead of the compiler.
+//
+// **Since 2026-08-26 it asks both decline instruments, which makes it a differential between them.**
+// `blocked()` walks a fresh `Env` speculatively; `emitDecline()` emits and reads what `declineFor`
+// recorded. `issues/lang/0170a` established that a whole family of declines — 24 of them — reaches
+// the first only as its catch-all or not at all, so a census wired to `blocked()` alone cannot see
+// them. Both are now asked for every accepted program, and the catch-all loses to a recorded reason.
+//
+// Two honest caveats about what that is worth:
+//
+//   - **`KNOWN_UNEMITTABLE` is empty, so nothing exercises the reason today.** The value is on the
+//     failure path: when a program does decline, the sentence printed beside its tag is the emitter's
+//     rather than "a type this emitter names only while emitting".
+//   - **The emit-path family is not reachable from a single-source program** — `issues/lang/0170a`
+//     had to force one to prove the wiring, and nothing written since reaches it either. So this is
+//     defence in depth, canaried one level up in `packages/wacc/test/wac/latearray0271_test.wac`,
+//     where a two-file program does reach it.
+//
+// What it *does* measure, every run: the two instruments agree across all 279 spec programs. Neither
+// declines something the other passes. That had never been checked.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
@@ -32,6 +51,8 @@ import { wacBind } from "../../../harness/wacBind.ts";
 const mod = await wacBind("packages/wacc/src/api.wac");
 const emit = mod.emit as (src: Uint8Array) => Uint8Array;
 const blocked = mod.blocked as (src: Uint8Array) => string;
+const emitDecline = mod.emitDecline as (src: Uint8Array) => string;
+const declineCatchAll = mod.declineCatchAll as () => string;
 const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
 const dumpErrors = mod.dumpErrors as (src: Uint8Array) => Int32Array;
 const enc = new TextEncoder();
@@ -90,7 +111,16 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
   for (const [tag, src] of accept) {
     const r = wacCompile(new Map([["/main.wac", src]]), "/main.wac");
     if (!r.ok) continue;                       // a case whose program the reference itself refuses
-    const why = blocked(enc.encode(src));
+    // **Two instruments, and the catch-all loses.** `blocked()` is a speculative walk over a fresh
+    // `Env`; a decline raised while emitting reaches it only as its last resort, "a type this emitter
+    // names only while emitting", which says types grew and not which. `emitDeclineRaw()` asks the
+    // emit path, where `declineFor` recorded the sentence. Same precedence as `blockedAgain` and
+    // `tighten_probe.wac`, shared through `typesGrewCatchAll()` rather than a literal in three files.
+    // `issues/lang/0271a`.
+    const spoke = blocked(enc.encode(src));
+    const why = spoke === "" || spoke === declineCatchAll()
+      ? (emitDecline(enc.encode(src)) || spoke)
+      : spoke;
     if (why !== "") {
       declined.push(`§${tag}: ${why.slice(0, 90)}`);
       continue;

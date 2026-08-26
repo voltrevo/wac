@@ -334,6 +334,31 @@ export i32 testNoFallthrough() {
 `[§wac-no-fallthru-r5kw2n8]` `testNoFallthrough()` returns `20` — only matching
 case executes, no fallthrough.
 
+`[§wac-switch-dupcase-7hq2nkv]` **Two case values that are both constant and equal are an error**,
+reported at the second one. A switch may have at most one `default:` for the reason that the second is
+unreachable; a repeated `case` value is unreachable for exactly the same reason, and `match` already
+refuses a variant named twice. The three are one rule.
+
+```wac
+export i32 f(i32 n) {
+  switch (n) {
+    case 1: { return 1; }
+    case 1: { return 2; }   // error: duplicate case value 1
+  }
+  return 0;
+}
+```
+
+**Equal as a 32-bit value, not as written.** `case 1:` and `case 0x1:` are the same case, and under a
+`u32` scrutinee so are `case 4294967295:` and `case 0xFFFFFFFF:` — a rule comparing what was typed
+would accept the pairs most likely to be a mistake, which is worse than no rule because it would be
+trusted.
+
+**Constant on both sides**, and that is a real limit rather than a hedge: a case value is not required
+to be constant today — `case k:` for a parameter `k` compiles and compares at run time — so two arms
+whose values are only equal at run time are not refused. `issues/lang/0269a` is the decision about
+whether that should remain legal; if it does not, this rule covers every case.
+
 ### trap
 
 `trap;` immediately terminates execution. Maps to wasm's `unreachable`

@@ -15,7 +15,19 @@
 //
 // The one thing here that only a host can answer is **which version of `wac` is running**, because
 // the check exists to catch a file built by one installation and run by another. It arrives as
-// `WAC_VERSION`, set beside `WAC_COMPILER_ID` by whichever host started this program.
+// `WAC_VERSION`, from whichever host started this program.
+//
+// **No host sets it, as of 2026-08-26, and the blank is the correct output.** `native/v8` set it from
+// cargo's default `0.1.0` and nothing else did, so one host stamped a version into `# wac-app` and the
+// other three stamped nothing — the executables built from one program by two `wac` commands differed
+// in exactly that line. The operator's ruling: *"we should avoid defining it for now, so the correct
+// output is the one that omits a version"*. `0.1.0` was never a decision, it was a default.
+//
+// So `wacVersion` answers `""` everywhere today, `preamble` writes the mark with nothing after it, and
+// the skew check below is **dormant rather than dead**: its rule is that only two versions which both
+// exist can differ, so it refuses nothing now and starts working unchanged the day one is defined. The
+// environment variable stays the seam; there is simply no host filling it, and a caller who exports one
+// is passed through — which is how `tools/wac/app_test.wac` still exercises the refusal.
 
 import { Change, Cli, Core, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -75,7 +87,40 @@ export i32 moduleAt(u8[] bytes) {
   return -1;
 }
 
-/** The version on the `APP_MARK` line of `head`, or "" if there is no such line. */
+/**
+ * Whether `head` carries an `APP_MARK` line at all — the question `builtBy` cannot answer.
+ *
+ * **`builtBy` returns `""` for two different files** and until 2026-08-26 the caller read it as one:
+ * a file with no marker, and a file marked by a host that published no version. The second is what
+ * every host but `native/v8` produces, because `WAC_VERSION` is set in `main.rs` and nowhere else —
+ * so `wac app` on a Deno- or Node-hosted `wac` wrote `# wac-app ` with nothing after it, and
+ * `app-run` answered *has a module in it but no `# wac-app ` line — not built by `wac app`* about a
+ * file it had just built. Unrunnable by every host including the one that made it.
+ *
+ * The version check below `was` already reasons correctly about the empty case in the other
+ * direction — *"a host that does not say its version cannot refuse for it"* — and could never reach
+ * it, because the conflated test five lines above had already rejected the file. One answer carrying
+ * two facts, and the layer that can tell them apart is this one: the marker's *presence* is a
+ * different question from its *content*.
+ */
+export bool hasAppMark(string head) {
+  i32 at = 0;
+  while (at <= head.len()) {
+    i32 nl = head.slice(at, head.len()).indexOf("\n");
+    i32 end = nl < 0 ? head.len() : at + nl;
+    string line = head.slice(at, end);
+    if (line.len() >= APP_MARK.len() && line.slice(0, APP_MARK.len()) == APP_MARK) { return true; }
+    if (nl < 0) { break; }
+    at = end + 1;
+  }
+  return false;
+}
+
+/**
+ * The version on the `APP_MARK` line of `head`, or "" if there is no such line **or it names none**.
+ *
+ * Ask `hasAppMark` to tell those two apart — see its note.
+ */
 export string builtBy(string head) {
   i32 at = 0;
   while (at <= head.len()) {
@@ -151,17 +196,27 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
   u8[] headBytes = u8[at]();
   for (i32 i = 0; i < at; i++) { headBytes[i] = f.bytes[i]; }
   string head = string.fromBytes(headBytes);
-  string was = builtBy(head);
-  if (was == "") {
+  // **Presence, not content** — `hasAppMark` rather than `builtBy(head) == ""`, which was the same
+  // test for a file nobody built with `wac app` and for one built by a host that publishes no
+  // version. See `hasAppMark`.
+  if (!hasAppMark(head)) {
     core.warn("wac: " + path + " has a module in it but no `" + APP_MARK + "` line — not built by "
               + "`wac app`");
     return 1;
   }
+  string was = builtBy(head);
   string mine = wacVersion(cli);
   // **A host that does not say its version cannot refuse for it.** Both sides read the same variable,
   // so an empty `mine` means this host published nothing rather than that the file is unmarked —
   // reporting a mismatch there would blame the artefact for the host's silence.
-  if (mine != "" && was != mine) {
+  //
+  // **And the same argument the other way, since 2026-08-26**: an empty `was` is a file whose builder
+  // published nothing, which is not a version this file disagrees with. Without it the message reads
+  // *was built by wac  and this is wac 0.1.0* — a mismatch reported against a blank, naming the
+  // artefact for its builder's silence. The two halves are one rule: **only two versions that both
+  // exist can differ.** A stamp is missing on every host but `native/v8` today, so this is the case
+  // rather than the corner — see `hasAppMark`, and `issues/system/0230a` for the stamp itself.
+  if (mine != "" && was != "" && was != mine) {
     core.warn("wac: " + path + " was built by wac " + was + " and this is wac " + mine);
     core.warn("     wac is unstable by choice, so a manifest from another version is not read");
     core.warn("     the same way. Rebuild it: wac app <entry.wac> -o " + path);

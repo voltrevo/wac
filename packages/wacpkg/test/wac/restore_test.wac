@@ -1,0 +1,122 @@
+// A committed lock plus an empty cache is a restore, not "nothing to fetch". GitHub wac#25.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wacpkg/test/wac/restore_test.wac
+//
+// ## The loop this closes
+//
+// `plan` compares the manifest with the lock and never looks at the cache, so a lock entry meant
+// *nothing to do*. Remove the cache and keep the lock — which is what a fresh machine, a clean CI
+// checkout or a `wac uninstall` leaves — and the project had no working command:
+//
+//     $ wac update
+//     wacfetch: nothing to fetch; 1 mapping(s) already locked
+//     $ wac check src/main.wac
+//     …the locked commit is not in the cache; run `wac update`
+//
+// The resolver was right to refuse to fetch implicitly and right to name `wac update`; the updater
+// was reading the lock as proof of presence. The only recovery was deleting `wac.lock`, which is the
+// one file that was correct.
+//
+// ## What is asserted, and why not the fetch itself
+//
+// Nothing here reaches the network — `example.invalid` is not a host — so the restore *attempt*
+// cannot succeed. That is the whole of what needs checking: the fix is that the prescribed command
+// stops claiming there is nothing to do, and the failure it reports instead is a network failure a
+// person can act on rather than a contradiction. `mappedspec_test.wac` covers the same cache layout
+// offline and is where the resolution side lives.
+//
+// The present-cache case is the control. Without it a `wac update` that always tried to fetch would
+// pass the first assertion, and re-fetching what is already on disk is the 18-to-20-second waste the
+// cache check in `fetchOne` exists to avoid.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, madeDir, putFile, scratch } from "../../../wactest/src/host.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { escapeRepo } from "../../src/cache.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
+
+const string REPO = "https://example.invalid/dep.git";
+const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+/** `wac update` in `dir`, with `$WAC_HOME` pointed at the fixture's cache. */
+Exec update(Cli cli, string home, string dir) {
+  return withEnv(cli, string[]("WAC_HOME"), string[](home), "/bin/sh",
+                 string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"));
+}
+
+/** A project mapping `dep/`, with the lock already pinning it. */
+string fixture(T t, Cli cli, string dir) {
+  t.eqStr(madeDir(cli, dir), "", "could not make " + dir);
+  t.eqStr(putFile(cli, dir + "/wac.json5",
+                  "{\n  imports: {\n    \"dep/\": { git: \"" + REPO +
+                  "\", ref: \"main\", subdir: \"src\" },\n  },\n}\n"), "", "the manifest");
+  t.eqStr(putFile(cli, dir + "/wac.lock",
+                  "{\n  imports: {\n    \"dep/\": {\n      git: \"" + REPO + "\",\n" +
+                  "      ref: \"main\",\n      subdir: \"src\",\n      commit: \"" + COMMIT +
+                  "\",\n    },\n  },\n}\n"), "", "the lock");
+  return dir;
+}
+
+/**
+ * The marker a finished checkout leaves.
+ *
+ * `fetchOne` writes `pack.pack` last, so its presence is what says a checkout completed — an
+ * interrupted one leaves a tree without it and is fetched again. The same file is what the restore
+ * path asks about, so the fixture has to write it rather than merely make the directory.
+ */
+bool cached(Cli cli, string home) {
+  return putFile(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + COMMIT + "/pack.pack",
+                 "not a real pack\n") == "";
+}
+
+export string test_a_locked_mapping_whose_cache_is_gone_is_fetched_rather_than_skipped(Core core,
+                                                                                       Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "restore-missing");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  fixture(t, cli, dir);
+
+  Exec r = update(cli, home, dir);
+  t.isTrue(r.ran(), "wac update did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+
+  // The sentence that was the bug. Anything else is progress; this exact claim is the contradiction.
+  t.isFalse(contains(said, "nothing to fetch"),
+            "a lock entry was read as proof the cache holds it: " + said);
+  // And it has to *say* it is restoring, because a person who wiped a cache wants to know that is
+  // what is happening rather than that their pins are being recomputed.
+  t.isTrue(contains(said, "not in the cache"),
+           "the restore should say why it is fetching: " + said);
+  t.isTrue(r.status != 0, "an offline restore of example.invalid reported success: " + said);
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+export string test_a_locked_mapping_already_in_the_cache_is_still_left_alone(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "restore-present");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  fixture(t, cli, dir);
+  t.isTrue(cached(cli, home), "could not write the fixture's cache entry");
+
+  Exec r = update(cli, home, dir);
+  t.isTrue(r.ran(), "wac update did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+
+  // **The control.** A restore that fired unconditionally would fix the test above and re-download a
+  // checkout that is already on disk on every run.
+  t.isTrue(contains(said, "nothing to fetch"),
+           "a cached lock entry should still be a no-op: " + said);
+  t.eqI32(r.status, 0, "a fully cached project failed to update: " + said);
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}

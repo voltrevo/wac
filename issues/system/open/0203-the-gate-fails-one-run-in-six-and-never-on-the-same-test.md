@@ -308,3 +308,43 @@ detector, a port waiter, a responder. Their thresholds were chosen on an idle ma
 retrying each one, the thing to ask is whether a test that decides something *did not happen in time*
 can be made to say so against work done rather than against a wall clock — because the gate's own
 memory floor already concedes that this box is not idle.
+
+## A ninth: two workers, one aggregate name — agent-a, 2026-08-26
+
+A gate failed with **no failing test in it**. Every file that reported reported `0 failed`, there was
+no `FAIL` line in 2,300 lines of log, and the lane still exited 1. The runner's own accounting is what
+named it, in the line this issue's method depends on existing:
+
+    packages/server/test/wac exited 1 with no failure of its own — it did not get as far as running tests
+    [w3] wacc: cannot read .cache/wac-aggregate-41_test.wac
+
+**`41` is not a nanosecond timestamp.** A directory run writes `.cache/wac-aggregate-<clock>_test.wac`
+from `core.monotonicNanos()`, which is *per process* and starts near zero. Four workers sharing one
+`.cache/` generate the same name within the same moment; two write the same path, and one removes it
+while the other is between writing and compiling.
+
+So `packages/server` is not the subject — it is whichever worker lost. On another run it is any
+directory, which is exactly this issue's *"never on the same test"*.
+
+**It is a fourth category for the table at the top.** The three here are real defects, load-sensitive
+bounds, and a guard looking in the wrong place. This is none: the code under test is fine, nothing
+raced inside it, and the harness did not mis-measure. Two runs of the *same tool* collided over a
+shared scratch name — a failure that needs concurrency to exist and belongs to neither run.
+
+**Fixed**, by putting a pid in the name — `wac-aggregate-<pid>-<clock>_test.wac` — read from
+`/proc/self/stat` the way `tools/wac/suitegate.wac` already does, in its own words *"keyed by pid so
+two of them never collide"*. `packages/wac/test/wac/aggregate_test.wac` pins the shape rather than
+racing two runs, because a race that reproduces sometimes is a test that passes sometimes.
+
+### Two things worth carrying beyond this instance
+
+**The collision predates the fix that exposed it.** GitHub wac#27 moved the aggregate's removal to
+where it covers every exit; before that the file was usually removed long after it had been read, so
+the same name being taken twice mostly went unnoticed. A correct fix turned a stale file into a race —
+worth expecting whenever cleanup gets tighter, because the old slack was hiding something.
+
+**And the name had a pid until the command moved hosts.** `docs/development.md` still described
+`wac-aggregate-<pid>-<group>`, and earlier the same day I resolved that drift by editing the *page* to
+match the code. The detail that looked like stale documentation was the mechanism. When a doc and the
+code disagree about something arbitrary-looking, what it was for is the question — not which of them
+is older.

@@ -62,6 +62,51 @@ import { childEntrySource, WORKER_MARKER } from "./host/children.ts";
  */
 export const COV_DUMP_DIR = `${Deno.cwd()}/.cache/cov-dump`;
 
+/**
+ * The `@esbuild/…` package `deno bundle` reaches for on this machine.
+ *
+ * **Named because a build that fetches it says so, and one that cannot says which.** `deno bundle`
+ * downloads the platform binary from npm the first time and nothing about that is visible: a fresh
+ * machine sits silent and then fails on a URL, which is what GitHub issue 22 hit twice — ~72s in
+ * August and ~74s on a later tour, both from a command the documentation calls offline.
+ *
+ * Exported so `packages/platform/test/esbuildadvice.test.ts` can check the mapping without a network:
+ * a wrong triple would make the advice worse than none, since `deno cache npm:@esbuild/linux-x64` on
+ * an arm machine succeeds and fixes nothing.
+ */
+export function esbuildPackage(
+  os: string = Deno.build.os,
+  arch: string = Deno.build.arch,
+): string {
+  // esbuild's own names, which are node's `process.platform`/`arch` and not Rust's target triple —
+  // `win32` rather than `windows`, `x64` rather than `x86_64`.
+  const plat = os === "windows" ? "win32" : os;
+  const cpu = arch === "x86_64" ? "x64" : arch === "aarch64" ? "arm64" : arch;
+  return `@esbuild/${plat}-${cpu}`;
+}
+
+/**
+ * What to throw when `deno bundle` fails, with the npm fetch named when that is what it looks like.
+ *
+ * **Keyed on what the bundler said, not on probing Deno's cache.** The cache layout is Deno's to
+ * change and a guess about it that goes stale would send somebody to fix a thing that is not wrong.
+ * A failure that mentions neither npm nor esbuild gets the bundler's own words and nothing added —
+ * advice attached to every failure is advice nobody reads by the third one.
+ *
+ * The escape hatch is part of the message on purpose: the binary needs no bundler at all, so
+ * "you cannot reach npm" has an answer better than "wait for the network".
+ */
+export function bundleFailure(said: string, pkg: string = esbuildPackage()): string {
+  const looksLikeTheFetch = /npm|esbuild|registry\.npmjs\.org/i.test(said);
+  if (!looksLikeTheFetch) return `deno bundle failed:\n${said}`;
+  return `deno bundle failed:\n${said}\n` +
+    `wac: this looks like the one-time npm fetch \`deno bundle\` needs — it downloads ${pkg} for\n` +
+    `     this platform. With a network: \`deno cache npm:${pkg}\`.\n` +
+    `     Without one, nothing here needs a bundler: the binary carries the compiler, and\n` +
+    `     \`bash tools/seed.sh --bootstrap\` then \`deno task --no-lock wac:install\` reaches it\n` +
+    `     without npm at all.\n`;
+}
+
 /** Whether this process is profiling, and so wants instrumented builds. Off is the normal case. */
 function profiling(): boolean {
   try {
@@ -641,13 +686,44 @@ async function produceApp(
       // builds writing one `-o` path is the one place where identical bytes would not save us.
       const dst = `${work}/${name}.${crypto.randomUUID()}.js`;
       await writeAtomic(src, source);
-      const res = new Deno.Command(Deno.execPath(), {
-        args: ["bundle", "--platform", "deno", "-o", dst, src],
-        stdout: "piped",
-        stderr: "piped",
-      }).outputSync();
+      // **A line only when there is silence to explain.** A warm bundle is ~70ms and there are
+      // twenty-seven of them in `packages/box`'s tests, so announcing every one is noise that gets
+      // filtered and then ignored. A timer says nothing in the normal case and speaks exactly when
+      // somebody is staring at a stopped terminal — GitHub issue 22, twice: *"it still sat silent for
+      // ~74 seconds before failing on the npm fetch"*.
+      //
+      // **Five seconds, chosen against the noise rather than against the fetch.** A warm bundle is
+      // ~70ms and a cold one here — proxy, small package — was under 2s end to end, so the threshold
+      // is not what decides whether the fetch is caught: anything under a minute catches a 74-second
+      // wait. What it decides is how often this fires when nothing is wrong, and `packages/box`'s
+      // tests run twenty-seven bundles on a machine that may be running three agents. Five is far
+      // above a loaded warm bundle and far below the wait worth narrating.
+      //
+      // `unrefTimer` so a build that finishes first is not held open by it.
+      const slow = setTimeout(() => {
+        console.error(
+          `wac: still bundling (${name}) — the first bundle on a machine downloads ` +
+            `npm:${esbuildPackage()}, which needs the network. ` +
+            `\`deno cache npm:${esbuildPackage()}\` does it once, ahead of time.`,
+        );
+      }, 5000);
+      Deno.unrefTimer(slow);
+      // **`output()` rather than `outputSync()`**, which is what makes the timer above possible at
+      // all: a synchronous subprocess blocks the event loop, so nothing scheduled can run while the
+      // thing worth narrating is happening. `bundle` was already async and every caller awaits it,
+      // so this changes when the line prints and nothing else.
+      let res;
+      try {
+        res = await new Deno.Command(Deno.execPath(), {
+          args: ["bundle", "--platform", "deno", "-o", dst, src],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+      } finally {
+        clearTimeout(slow);
+      }
       if (!res.success) {
-        throw new Error(`deno bundle failed:\n${new TextDecoder().decode(res.stderr)}`);
+        throw new Error(bundleFailure(new TextDecoder().decode(res.stderr)));
       }
       const out = await Deno.readTextFile(dst);
       await Deno.remove(dst).catch(() => {});
@@ -785,10 +861,18 @@ async function produceApp(
         (grants.net === true ? NODE_NET : "") +
           `import { runLauncherNode } from "${nodeRuntime}";\n` +
           `import * as wt from "node:worker_threads";\n` +
-          `import { readFile, writeFile, stat, readdir, mkdir, rm, rename, open } from "node:fs/promises";\n` +
+          // **`lstat` and `chmod` were missing until 2026-08-26**, and `runLauncherNode` declares both
+          // as *required* — the `as unknown as` below is what let an object short of two of them
+          // compile. Neither failed loudly: `setExecutable` answered `FAULT_UNSUPPORTED` — *this
+          // filesystem has no mode bits to set* — on an ordinary POSIX one, so `wac app` wrote a file
+          // it could not make executable; and `linkStat` answered a **zeroed `Stat`** for a file that
+          // is there, so `isFile` was false and `size` was 0 with nothing said. A wrong answer, not a
+          // refusal. The Deno target has neither bug because it reaches `Deno.*` directly and injects
+          // nothing.
+          `import { readFile, writeFile, stat, lstat, chmod, readdir, mkdir, rm, rename, open } from "node:fs/promises";\n` +
           `await runLauncherNode(\n` +
           `  wt as unknown as Parameters<typeof runLauncherNode>[0],\n` +
-          `  { readFile, writeFile, stat, readdir, mkdir, rm, rename, open } as unknown as Parameters<typeof runLauncherNode>[1],\n` +
+          `  { readFile, writeFile, stat, lstat, chmod, readdir, mkdir, rm, rename, open } as unknown as Parameters<typeof runLauncherNode>[1],\n` +
           `  process as unknown as Parameters<typeof runLauncherNode>[2],\n` +
           `  ${JSON.stringify(workerSource)},\n` +
           `  ${JSON.stringify(grants)},\n` +

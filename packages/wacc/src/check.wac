@@ -226,6 +226,15 @@ export i32 errElseUnreachable() { return 60; }
 export i32 errDuplicateElse() { return 204; }
 /** A `case` that binds one name twice, where the later binding silently won. `issues/lang/0239a`. */
 export i32 errDuplicateBinding() { return 205; }
+/**
+ * Two arms of one `switch` whose case values are both constant and equal.
+ *
+ * **A code of its own rather than `errDuplicateCase`**, for the reason that code's neighbour
+ * `errDuplicateElse` gives two entries up: 59's message names a *variant*, and a switch case value is
+ * not one. Reusing it reported `duplicate case for the same variant` at `case 1: … case 1:`, which is
+ * a sentence about a construct the program does not contain. `issues/lang/0266c`.
+ */
+export i32 errDuplicateCaseValue() { return 207; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -5921,6 +5930,39 @@ bool returnsOnlyFresh(C c, Stmt[] body) {
   return true;
 }
 
+/**
+ * A constant case value as the 32 bits a `switch` compares, so two spellings of one value are one.
+ *
+ * `==` on an `i32` is a 32-bit comparison and signedness plays no part in it — `spec/spec/control.md`
+ * says that of the subject type and it is equally true of the case values. So `4294967295` and `-1`
+ * are the same case, measured: a `u32` holding `4294967295` matches `case -1:` and one holding `1`
+ * does not.
+ *
+ * **The mask is the whole canonicalisation.** This wrapped to two's complement afterwards for a while,
+ * on the reasoning that otherwise `-1` and `4294967295` would be 2^32 apart — which is wrong, and a
+ * canary is what said so: `-1 & 0xFFFFFFFF` *is* `4294967295`, so they were already equal, and the
+ * wrap was a bijection on the masked value. A bijection cannot change an equality, so it decided
+ * nothing. Removing it changed no row of `illtyped_test.wac`, which is what "decided nothing" means
+ * when it is measured rather than argued.
+ */
+i64 switchCaseValue(C c, Expr e) {
+  i64 v = 0;
+  match (e.kind) {
+    // Negation is its own expression, so `case -1:` is a `Neg` around an `IntLit` and reading the
+    // literal alone would make it 1 — the same case as `case 1:`, which is a **wrong answer** and the
+    // exact shape this function exists to get right.
+    case IntLit(tok): { v = parseInt(tokenText(c, tok)); }
+    case Unary(op, operand): {
+      match (operand.kind) {
+        case IntLit(tok): { v = tokenText(c, op) == "-" ? 0 - parseInt(tokenText(c, tok)) : parseInt(tokenText(c, tok)); }
+        else: { }
+      }
+    }
+    else: { }
+  }
+  return v & 4294967295;
+}
+
 bool constExpr(C c, Expr e) {
   match (e.kind) {
     case Ident(tok): { return c.isConstName(tokenText(c, tok)); }
@@ -8208,6 +8250,37 @@ void checkStmt(C c, Stmt s, Ty want) {
           if (cvt != typeNone() && !isIntegerName(cvt)) {
             c.report(errSwitchSubject(), cases[i].line, cases[i].col);
           }
+        }
+      }
+      // **No case value twice**, reported at the second arm — `issues/lang/0266c`, and it is the same
+      // rule as the two above it rather than a new one. A second `default:` is unreachable and is
+      // refused; a variant named twice in a `match` is unreachable and is refused with
+      // `errDuplicateCase`, this very code; a repeated case value is unreachable for the same reason
+      // and was the one of the three that was silent. `[§wac-switch-dupcase-7hq2nkv]`.
+      //
+      // **Compared as a 32-bit value, not as written**, which is the whole difficulty and the reason
+      // this cannot live in the parser where the `default` rule does. `case 1:` and `case 0x1:` are
+      // one case; under a `u32` subject so are `case 4294967295:` and `case 0xFFFFFFFF:`. A check on
+      // token text accepts all three of those pairs — the ones most likely to be a real mistake — and
+      // looks like it works, which is worse than no check because it would be believed.
+      //
+      // **Constant on both sides.** A case value is not required to be one: `case k:` for a parameter
+      // compiles and compares at run time, because `emitSwitch` is an if-else chain. So two arms equal
+      // only at run time are not refused, and that is `issues/lang/0269a`'s decision rather than a gap
+      // here. `litKindOf` is the same test the type rule above uses, so the two agree about what a
+      // literal is.
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { continue; }
+        if (litKindOf(cases[i].value!) == litNone()) { continue; }
+        i64 vi = switchCaseValue(c, cases[i].value!);
+        for (i32 j = 0; j < i; j++) {
+          if (cases[j].value is null) { continue; }
+          if (litKindOf(cases[j].value!) == litNone()) { continue; }
+          if (switchCaseValue(c, cases[j].value!) != vi) { continue; }
+          c.report(errDuplicateCaseValue(), cases[i].line, cases[i].col);
+          // One report per arm: a value written three times is two mistakes, not three, and the
+          // second report would name the same arm.
+          break;
         }
       }
       // A `switch`, not a loop: a `break` here leaves it and a `continue` still needs one.

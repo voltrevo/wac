@@ -21,16 +21,24 @@ export struct Cap20 {
   fn[Pending<u8[]?>(string)] f7;
   fn[bool(u8[])] f8;
   fn[Pending<i32>(string, i32)] f9;
-  fn[Pending<i32>()] f10;
-  fn[Pending<u8[]>(i32)] f11;
-  fn[Pending<string>()] f12;
-  fn[Pending<bool>(i32, u8[])] f13;
-  fn[Pending<i64>()] f14;
-  fn[void(string)] f15;
-  fn[Pending<string[]?>(string)] f16;
-  fn[Pending<u8[]?>(string)] f17;
-  fn[bool(u8[])] f18;
-  fn[Pending<i32>(string, i32)] f19;
+  // **f10–f19 were f0–f9 again**, byte for byte, until 2026-08-26 — so this file was `cap10` twice and
+  // the fourth point of the slope in `issues/system/0147` was the third point. It read as the cost
+  // saturating above ten fields; there was no measurement above ten fields. These ten are distinct
+  // from each other and from the ten above, which is what the header two paragraphs up already asked
+  // for and what makes twenty fields mean twenty boundaries.
+  fn[Pending<u32>()] f10;
+  fn[Pending<u64>(i64)] f11;
+  fn[Pending<f64>()] f12;
+  fn[Pending<i32[]>(i32)] f13;
+  fn[Pending<string>(u8[])] f14;
+  fn[void(i32, i32)] f15;
+  fn[Pending<bool>()] f16;
+  // Not `Pending<i64[]>`, which was here and does not emit — `issues/lang/0271a`. The boundary
+  // marshals `u8[]`, `i32[]`, `string[]` and `u8[][]` and nothing else, and an element outside that
+  // list produces an invalid module rather than a refusal. A size fixture must build.
+  fn[Pending<string[]>(i32)] f17;
+  fn[i32(string)] f18;
+  fn[Pending<u8[][]>(i32, string)] f19;
 }
 
 export i32 main(Cap20 c) {

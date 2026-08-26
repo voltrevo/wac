@@ -304,6 +304,13 @@ two ways, which is the useful part rather than the count:
 - **one spawns `/bin/sh -c '… exec deno task --quiet wac:uninstall'`** and needs `PATH` and the proxy.
   `HOME` is a fixture directory, so Deno's cache is cold every run and the dependency fetch is real.
 
+  **Gone as of 2026-08-26, and with it the only site in that file that wanted more than two names.**
+  The operator retired the `wac:uninstall` task, so the differential that spawned it went too, and
+  `denoTaskEnv` — the seven-name proxy list this section is about — went with the test. The file is
+  four `onlyEnv` sites over `binaryPath(cli)` now, all of them the easy shape. Worth recording rather
+  than deleting the paragraph: the hard case was real, the canary below is what proved it, and the
+  next `deno task` spawned from a wac test will need exactly this list again.
+
 Canaried by removal, as with `tor`: with `PATH` alone the task fails at
 
     1: client error (Connect)
@@ -325,3 +332,54 @@ subset that spawns by bare word or through a shell, and the rest is mechanical.
 **Step 3 remains the only open decision** — `PATH` from the API, or from the call sites through a shared
 helper — and nothing above pre-empts it. Both conversions pass `PATH` explicitly, so they are already on
 the explicit side and would simply drop the name if the API supplied it.
+
+## The population is bigger than the enumeration says — agent-a, 2026-08-26
+
+Step 3 is the only open decision and its cost is *"122 call sites"*, from the census above. That census
+splits call sites by how they name their program and puts `/bin/sh` ×80 in the **86 named absolutely**,
+which is the column that needs no `PATH`. That is where it goes wrong: a shell command line is not
+PATH-free, because the shell resolves its own words through `PATH`. `/bin/sh -c 'exec deno task …'` is
+spelled absolutely and cannot run without one.
+
+Re-counted, taking each `/bin/sh` call's whole expression and reading every quoted fragment in it so
+concatenated lines are seen:
+
+    91  /bin/sh call sites
+    22  ...whose command line names an external program
+
+    deno 6, wc 4, env 2, cp 2, chmod 2, ln 1, cargo 1, find 1,
+    stat 1, ssh 1, ssh-keygen 1, node 1, grep 1, ss 1
+
+**A lower bound**, because a command assembled from a variable is invisible to it, and mildly noisy in
+the other direction — a word like `env` or `stat` can appear without being the program. So step 3's
+explicit option is about **144 sites rather than 122**, and the number that was wrong is the 86.
+
+### The interpreter population is real and small, which is the opposite of what I expected
+
+This issue says the shebang set *"is not visible in a grep for `exec("name"`"* and leaves it unmeasured.
+There are **49** files under `packages/`, `tools/`, `std/`, `harness/` and `example/` with an
+`#!/usr/bin/env` line — 25 `env -S`, 21 `python3`, 4 `bash`, 1 `node` — and every one of them needs
+`PATH` to start even when spawned by an absolute path, which is what the seal canary discovered.
+
+How many the suite actually spawns is the number that matters, and it is **8** by the tighter of two
+proxies: the script's basename appearing inside an `exec` call's own text, rather than merely somewhere
+in a file that also calls `exec`. The loose proxy said 28.
+
+Recording both because the difference is the finding: I ran the loose one first, and it over-counted by
+3.5× in the direction of the argument I was assembling. The interpreter set is a handful, not a hidden
+population — so it is a reason to be careful when converting a site, and it is **not** the weight
+against explicitness that the paragraph introducing it reads like.
+
+### What this does and does not settle
+
+It does not settle step 3, and nothing here is a recommendation. It corrects one input:
+
+- explicit through a shared helper costs about **144** mechanical call sites, not 122;
+- of those, the ~22 shell lines are the ones that need thought, because what they need depends on what
+  the line runs rather than on how `exec` was called;
+- the interpreter cases are ~8 and each is a one-name edit once noticed, but they fail at *startup* with
+  a message about the interpreter, which reads as a broken test rather than a missing grant.
+
+The last is the one worth carrying into whichever option is taken: **a missing `PATH` does not look like
+a permission error.** `/usr/bin/env: 'deno': No such file or directory` is what this repository will see,
+and it is the same sentence whether the cause is a grant nobody declared or a machine without Deno.

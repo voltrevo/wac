@@ -60,7 +60,7 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     deno task seed:native                             just `wacland`, the wasmtime host
     deno task wac:install                             build it and put it on PATH — $WAC_HOME
     deno task wac:build -o ./wac                      ...or just build one, installing nothing
-    deno task wac:uninstall [--keep-cache]            and take it away again
+    wac uninstall [--keep-cache]                      and take it away again — the command, not a task
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
 
@@ -68,8 +68,19 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
 builds the seed (fixpoint-checked), installs `bin/wac`, `cache/git/`, `env` and `install.json5`
 under `$WAC_HOME` (default `$HOME/.wac`), and adds one marked line to whichever of `.bashrc`,
 `.zshrc` and `.profile` already exist. Running it again is how you upgrade: the line is replaced
-only if it points somewhere else, and a profile that does not exist is not created. `wac:uninstall`
-removes exactly those things and never a manifest, a lockfile, a source file or a build product.
+only if it points somewhere else, and a profile that does not exist is not created.
+
+**`--no-profile` installs and touches no profile at all**, and a profile that exists but cannot be
+written is reported beside a complete install rather than failing it. Until 2026-08-26 an unwritable
+`.bashrc` aborted the command *after* the binary, the cache, `env` and `install.json5` were all in
+place, so it reported failure over a usable installation and re-running could not help — GitHub
+wac#26.
+
+**Taking it away is `wac uninstall`, a subcommand rather than a task**, and it removes exactly those
+things and never a manifest, a lockfile, a source file or a build product. There was a
+`deno task wac:uninstall` too until 2026-08-26; it went because it was the copy nobody who had
+installed the command could reach — a Deno program under `tools/` needs this checkout, and they have
+a `$WAC_HOME` and no checkout.
 
 **`deno task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
 

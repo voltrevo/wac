@@ -973,3 +973,46 @@ direction: giving `1 + "a"` a type where it used to have none made a *second* ru
 drew two diagnostics. `""` meaning "I don't know" is load-bearing in both directions, which is why
 replacing it is a sweep and not an edit — and why the recommendation above to treat this as a
 `decision` still stands.
+
+## The probe was reaching for the obvious instrument — agent-a, 2026-08-26
+
+This issue records, above, that *"`blockedFiles` answers `""` for every one of these, forced or not …
+so `emitDeclineFiles` is the instrument for anything in this family, and reaching for the obvious one
+costs a wrong conclusion."* `tighten_probe.wac` — introduced by this issue as *"the instrument
+`issues/lang/0170a` says it did not have"* — was calling `blockedFiles`, about 180 lines above where
+that was written.
+
+So its published baseline of **0 of 17** was not evidence about the 24 emit-path declines. It was the
+census wired to the one instrument that cannot see them.
+
+It now asks both and labels each row with which answered. Re-measured: **0 of 18, on both
+instruments**, 12.8s → 18.5s for the second compile per source. The number is unchanged and now means
+what it says.
+
+**Canarying it found a second bug.** Injecting a `Pending<i64[]>` source — one only the emit path
+declines, `issues/lang/0271a` — was reported, but as `[both]` carrying the catch-all, because the
+probe preferred the speculative walk's answer whenever it had one. That is the same precedence defect
+`blockedAgain` had, in the instrument built to watch it. `typesGrewCatchAll()` is now exported so both
+places share the rule rather than each hard-coding the sentence.
+
+**What this does not change:** the ten declines tabulated above were counted through `blockedFiles`,
+so the one row reading `a type this emitter names only while emitting` may now have a better sentence
+behind it. Re-running that census is worth doing and has not been done here.
+
+### And the same for the spec census — agent-a, same day
+
+`packages/wacc/test/specEmit.test.ts` had the other half of the problem: `blocked()` was the only
+decline instrument bound to it, and the single-source pair to `emitDeclineFiles` did not exist. So the
+census of what wacc cannot emit across the spec could not ask the emitter — the ten reasons tabulated
+above were all the speculative walk's, which is why one of them is the catch-all.
+
+`api.wac` now exports `emitDecline(u8[] src)` beside `blocked`, and `declineCatchAll()` so the three
+callers that need the precedence share it. The census asks both.
+
+**It changes no number today and I am not claiming it found anything.** `KNOWN_UNEMITTABLE` has been
+empty since 2026-08-20, and the emit-path family is still not reachable from a single-source program —
+this issue had to force one, and nothing written since reaches it either. The value is on the failure
+path: the next program to decline prints the emitter's sentence rather than the catch-all.
+
+**What it does measure every run is new**: the two instruments agree across all 279 spec programs,
+neither declining what the other passes. That cross-check had not existed.

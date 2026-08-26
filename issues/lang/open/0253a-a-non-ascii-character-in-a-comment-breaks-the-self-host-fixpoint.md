@@ -201,3 +201,41 @@ If it returns, the diff to take is between the two *stages* rather than between 
 run the same driver, so a disagreement is one build of wacc emitting different bytes from another build of
 the same source — a miscompilation, not a lexing difference. That is a narrower question than this issue
 has been asking.
+
+## It did reproduce, at the commit it was filed against — agent-a, 2026-08-25
+
+The section above is right that the reproduction *as written here* does not reproduce, and it was
+right to check. But the case written here is not the case that was observed. The observation was two
+em dashes in `std/platform.wac`'s `Captured.truncated` comment; the `é`-in-`check.wac` recipe was
+generalised from it while filing, and generalising is what went wrong. Four runs, each with
+`.cache/_selfhost.wac` and `.cache/_selfhost_stageA.txt` deleted and `deno task seed` between:
+
+| tree | that one line reads | rung 5 |
+|---|---|---|
+| `593ff44e` (this issue's parent) | `capped — 8 MiB —` | **fails** |
+| `c539c5b0` (this issue) | `capped at 8 MiB,` | passes |
+| `master` @ `2917cc41`, unmodified | `capped at 8 MiB,` | passes |
+| `master` @ `2917cc41`, that line put back | `capped — 8 MiB —` | **passes** |
+
+The first two are one line apart and nothing else, so at the time of filing the effect was real and the
+em dash was carrying it. The last two say it is gone now.
+
+**Gone rather than unreachable.** `packages/wacc/src/coretext.wac` still embeds `std/platform.wac`, and
+with the em-dash line restored on `master` today that text is sitting in the embedded copy while rung 5
+is green — so the path that carried the failure is still there and no longer fails on it.
+
+**So the honest status is "fixed, cause unidentified", not "was never real".** Somewhere in the 104
+commits between `c539c5b0` and `2917cc41` this stopped happening, and I did not bisect for which. That
+matters for whoever closes this: a fixpoint that was fragile for a day and is not any more is worth a
+line in whatever fixed it, and if nobody can name the commit then the fragility is unexplained rather
+than absent.
+
+**What I got wrong is worth keeping.** I filed a recipe I had not run — the `é`-in-`check.wac` form is a
+generalisation of the case I actually had, and a reader following it correctly found nothing. The
+reproduction in an issue should be the keystrokes that produced the failure, not the rule inferred from
+them.
+
+One thing found on the way, unrelated: a checkout whose seed predates the `Socket` field change cannot
+`deno task seed` at all — round 1 fails with *"wrong number of arguments to the constructor"* in
+`packages/box/src/applets/nc.wac` — and `deno task seed:bootstrap` is the way through, exactly as
+`CLAUDE.md` says.

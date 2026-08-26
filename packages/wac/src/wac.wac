@@ -39,11 +39,13 @@ import { Vec } from "core/vec.wac";
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
+         capReachFiles,
          covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn, missingImportFilesIn,
          wireHasErrors,
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
          manifestWire } from "../../wacc/src/api.wac";
 import { Built } from "../../wacc/src/emit.wac";
+import { field, linesOf } from "../../wacc/src/text.wac";
 import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
@@ -263,6 +265,25 @@ struct Fnv {
  * otherwise costs sixty-five real builds of real programs, and a test that slow is a test nobody runs.
  * The same reason `$WAC_TESTMOD_DIR` exists on the host's side of this.
  */
+/**
+ * Whether to keep the generated test aggregate — `WAC_KEEP_AGGREGATE=1`.
+ *
+ * **Documented and not implemented, until now.** `docs/development.md` describes this variable and
+ * three issues cite it as the way they measured something, but nothing in this program read it: the
+ * flag belonged to the Rust host's `test`, and `issues/system/0257c` moved the command into the wac
+ * program without it. What survived the move was neither behaviour — the aggregate was kept
+ * unconditionally on every path but one, which is GitHub wac#27.
+ *
+ * Any non-empty value that is not `0` counts, because a caller who writes `WAC_KEEP_AGGREGATE=yes`
+ * means yes, and a debugging switch that silently ignores its own value is worse than one that is
+ * generous about it.
+ */
+bool keepAggregate(Cli cli) {
+  u8[]? set = cli.env("WAC_KEEP_AGGREGATE").wait();
+  if ((set is null) || set!.len() == 0) { return false; }
+  return string.fromBytes(set!) != "0";
+}
+
 i32 keepBuilds(Cli cli) {
   u8[]? set = cli.env("WAC_BUILD_CACHE_KEEP").wait();
   if ((set is null) || set!.len() == 0) { return 64; }
@@ -792,6 +813,8 @@ string usage() {
        // embedded and this program knew nothing about them. `issues/system/0257c` moved the
        // commands here, so the usage moves with them: one list, printed by whichever host runs
        // this, instead of a list that was right only on the binary that happened to carry them.
+       + "       wac audit <entry.wac> [--verbose]   what each dependency can reach, and through\n"
+       + "                what — wac has no ambient authority, so a file handed no capability has none\n"
        + "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
        + "                [-c script]           the shell, sealed unless granted\n"
        + "       wac update [project]           resolve and fetch what wac.lock does not cover,\n"
@@ -804,7 +827,27 @@ string usage() {
        // command and this program knew nothing about it. It is here now, and so is the command —
        // which is what makes this the whole list rather than most of it.
        + "       wac app [--allow-…] <entry.wac> -o <dest>   an executable that runs itself — one\n"
-       + "                file, needing a `wac` on the machine that runs it";
+       + "                file, needing a `wac` on the machine that runs it\n"
+       // **The five the dispatcher accepted and this did not name.** The comment above claimed this
+       // was "the whole list rather than most of it" and it was short by `validate`, `app-run`,
+       // `covdump`, `ctcompare` and `tracestat` — each with a usage string of its own, reachable,
+       // and invisible to anyone reading `--help`. Reported as GitHub wac#29, which names two of
+       // them; the other three came from asking the dispatcher instead of the report.
+       //
+       // `commandsdrift_test.wac` now derives the accepted set from this file and requires every one
+       // to appear here, because a list maintained beside a dispatcher is a list that drifts — twice
+       // already, per the two comments above about the host printing lines this block did not.
+       + "       wac validate <module.wasm> […]   load each module and say whether the engine\n"
+       + "                accepts it, without running anything\n"
+       + "       wac covdump <module.wasm> [export|export:<cases>]…   the coverage a built module\n"
+       + "                recorded; `wac tracestat <module.wasm>` is the same for a --trace build\n"
+       + "       wac ctcompare <a.wasm> <b.wasm> [--all]   compare two builds for constant-time\n"
+       + "                differences\n"
+       // Named rather than hidden, and marked rather than advertised: it is a real command a reader
+       // will meet in the first two lines of any `wac app` output, so leaving it out of the list
+       // makes that file look like it calls something that does not exist.
+       + "       wac app-run <file> [args…]     runs a `wac app` executable — normally invoked for\n"
+       + "                you by the two lines at the top of one, rather than typed";
 }
 
 /**
@@ -1269,13 +1312,33 @@ export i32 main(Core core, Cli cli) {
   if (cmd == "uninstall") { return uninstallCommand(core, narrowed(cli, forCommand("uninstall")), argc); }
 
   if (cmd == "update") {
-    string dir = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".";
+    Cli ucli = narrowed(cli, forCommand("update"));
+    // **A bare `update` means the project you are in, not the directory you are in.** Every other
+    // project-aware command discovers it — `wac check main.wac` from `src/` finds the manifest one
+    // level up, because `projectRootAbs` walks to the nearest ancestor holding one. `update` alone
+    // read `.` literally and answered *"wac.json5 could not be read, so . is not a project"* from a
+    // directory whose project the command beside it had just found. GitHub wac#30.
+    //
+    // The same walk rather than a second one: it already stops at the filesystem root for an
+    // absolute path, and resolving the working directory first is what makes the boundary absolute.
+    // An explicitly named project keeps its exact meaning — `wac update ..` still means `..`, and a
+    // path that is not a project still says so, which is the diagnostic somebody may be relying on.
+    string dir = ".";
+    if (argc > 1) {
+      dir = string.fromBytes(cli.arg(1).wait());
+    } else {
+      string here = normalisePath(ucli.cwd().wait());
+      string found = projectRootAbs(Fs.onHost(ucli, 0), here, ".");
+      // Empty means no manifest anywhere above, and then `.` is the right thing to report on: the
+      // message names what the user is in rather than a root that was never found.
+      if (found != "") { dir = found; }
+    }
     string home = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wacHomeOf(cli);
     if (home == "") {
       core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
       return 2;
     }
-    return fetchAll(core, narrowed(cli, forCommand("update")), dir, home);
+    return fetchAll(core, ucli, dir, home);
   }
 
 
@@ -1307,7 +1370,7 @@ export i32 main(Core core, Cli cli) {
   // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
   // error is reported as one should not depend on an unrelated path happening to exist.
   if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run"
-      && cmd != "test" && cmd != "app") {
+      && cmd != "test" && cmd != "app" && cmd != "audit") {
     core.warn("wacc: unknown command '" + cmd
               + "' — check, compile, build, bindgen, run, test or app");
     return 2;
@@ -1338,6 +1401,9 @@ export i32 main(Core core, Cli cli) {
   // **What the caller typed**, kept because `entry` is about to stop being it: a directory target is
   // rewritten to the generated aggregate, and a message naming that names a file nobody asked about.
   string target = entry;
+  // The aggregate this run generated, or "" — the one thing that has to be cleaned up on every way
+  // out of this function. See where it is removed, below `gather`. GitHub wac#27.
+  string generated = "";
   // How many the `--ignore` list took out, which the summary reports: "there were none" and "you
   // excluded them all" are different answers to the same count.
   i32 ignoredCount = 0;
@@ -1416,9 +1482,26 @@ export i32 main(Core core, Cli cli) {
       return 1;
     }
     entry = aggregate;
+    generated = aggregate;
   }
 
   Sources src = gather(fs, cli, entry);
+  // **The aggregate is scratch, and this is the only place that has to know it.** `gather` has its
+  // bytes now and every later use of `entry` is as a *name* — a cache key, a diagnostic, a report
+  // heading — so nothing below reads the file again and it can go here, once, instead of at the
+  // thirty-odd ways out of this function.
+  //
+  // It used to go beside the run, after `runTests` answered. That covered a first run and nothing
+  // else: a second run writes a fresh aggregate, hits the build cache and returns before reaching it,
+  // and a compile failure returns earlier still — so `.cache/` grew by one file per invocation, which
+  // is the shape `issues/system/0136` is about. Reported as GitHub wac#27.
+  //
+  // Best effort, and deliberately not checked: a run that answered is not made wrong by a file that
+  // outlived it, and a message about failing to delete scratch would be noise over the test report.
+  if (generated != "" && !keepAggregate(cli)) { cli.remove(generated, false).wait(); }
+  if (generated != "" && keepAggregate(cli)) {
+    core.warn("wac: kept the generated aggregate at " + generated + " (WAC_KEEP_AGGREGATE)");
+  }
   if (src.missing != "" || src.why != "") {
     core.warn(src.why != "" ? "wacc: " + src.why : "wacc: cannot read " + src.missing);
     return 1;
@@ -1511,6 +1594,14 @@ export i32 main(Core core, Cli cli) {
   if (cmd == "check") {
     core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
     return 0;
+  }
+
+  // **`audit` stops here for the same reason `check` does**: it is a question about the source, and
+  // emitting a module to answer it would be a minute of work for a table that does not depend on one.
+  // It runs *after* the diagnostics above on purpose — an audit of a graph that does not type-check is
+  // an audit of something nobody can build, and the reader should be told which problem they have.
+  if (cmd == "audit") {
+    return auditReport(core, src, entry, hasFlag(cli, argc, "--verbose"));
   }
 
   // **One front end for the whole build**, which is what `buildFiles` exists for — `issues/lang/0129`
@@ -1682,11 +1773,8 @@ export i32 main(Core core, Cli cli) {
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
                         covered ? covTableFilesIn(paths, texts, res, entry) : "",
                         hasFlag(cli, argc, "--verbose"), profileDir);
-    // **The aggregate is scratch and goes when the run does.** It is a generated file with a unique
-    // name, so leaving it would grow `.cache/` by one per invocation — `issues/system/0136` is the day
-    // this repository's disk filled from exactly that shape, one temporary directory per run that
-    // nothing removed. Best effort: a run that answered is not made wrong by a file that outlived it.
-    if (walked.len() > 0) { cli.remove(entry, false).wait(); }
+    // The aggregate is already gone — removed below `gather`, which is the one place that covers
+    // every way out of this function rather than only this one. GitHub wac#27.
     return code;
   }
 
@@ -1904,6 +1992,142 @@ export i32 main(Core core, Cli cli) {
  * `--keep-cache`, and `$WAC_HOME` itself goes only if nothing is left in it — otherwise the count is
  * reported, because removing a directory somebody else is using is not this command's business.
  */
+/**
+ * `wac audit <entry.wac>` — which files can reach a host capability, and through what.
+ *
+ * **The question a person running somebody else's code asks**, and one wac can answer where most
+ * languages cannot: there is no ambient authority here, so a file that is never handed a `Cli` or a
+ * `Core` cannot perform an effect however its body is written. `capReachFiles` does the analysis and
+ * its header states the rule and the two things it does not model; this is the report.
+ *
+ * **Grouped by where the code came from, because that is the unit of trust.** A reader does not
+ * choose files, they choose dependencies — `wac update` writes a lock and every file under a mapping
+ * arrived together on one decision. So the default output is one line per mapping plus one for the
+ * local project, and `--verbose` is the file-by-file table underneath it.
+ *
+ * `design/system/0003` is the destination this is for: an Ethereum-centric distribution is a program
+ * holding keys, and *what can this reach* is the question its operator has to be able to answer
+ * without reading the closure.
+ */
+i32 auditReport(Core core, const Sources src, string entry, bool verbose) {
+  string table = capReachFiles(src.paths, src.texts);
+  if (table == "") {
+    core.warn("wac audit: the analysis answered nothing, which is a bug rather than a clean program");
+    return 1;
+  }
+  string[] rows = linesOf(table);
+
+  // One line per *mapping*, one for the local project and one for the built-ins — see `mappingRoots`
+  // for why the mapping list is derived rather than read straight off `mapSpec`.
+  string[] prefixes = string[src.mapN + 1](fill: "");
+  string[] roots = string[src.mapN + 1](fill: "");
+  i32 maps = mappingRoots(src, prefixes, roots);
+  i32 groups = maps + 2;
+  string[] label = string[groups](fill: "");
+  i32[] reach = i32[groups]();
+  i32[] total = i32[groups]();
+  string[] example = string[groups](fill: "");
+  label[0] = "(this project)";
+  for (i32 g = 1; g <= maps; g++) { label[g] = prefixes[g - 1] + "   " + roots[g - 1]; }
+  label[groups - 1] = "(built-in: std/, core/)";
+
+  i32 reaches = 0;
+  i32 files = 0;
+  string summary = "";
+  for (i32 r = 0; r < rows.len(); r++) {
+    if (rows[r] == "") { continue; }
+    if (rows[r].slice(0, 1) == "#") { summary = field(rows[r], 1); continue; }
+    string path = field(rows[r], 0);
+    string status = field(rows[r], 1);
+    string via = field(rows[r], 2);
+    i32 g = groupOf(path, roots, maps);
+    total[g] = total[g] + 1;
+    files = files + 1;
+    if (status == "reaches") {
+      reach[g] = reach[g] + 1;
+      reaches = reaches + 1;
+      if (example[g] == "") { example[g] = via; }
+    }
+    if (verbose) {
+      core.log((status == "reaches" ? "  reaches  " : "  sealed   ") + path
+               + (via == "" ? "" : "   via " + via));
+    }
+  }
+
+  if (verbose) { core.log(""); }
+  for (i32 g = 0; g < groups; g++) {
+    if (total[g] == 0) { continue; }
+    core.log(itoa(reach[g]) + " of " + itoa(total[g]) + " file(s) reach a capability   " + label[g]
+             + (example[g] == "" ? "   — sealed" : "   first via " + example[g]));
+  }
+  // **The denominator, and it is the point.** `issues/system/0268a` is what an instrument that reports
+  // only its hits costs; this one says what it looked at every time, including when nothing reaches.
+  core.log("");
+  core.log(entry + ": " + summary);
+  if (!verbose) { core.log("  `--verbose` for the file-by-file table"); }
+  return 0;
+}
+
+/**
+ * The mapping prefixes a graph used, and the directory each resolved to — one entry per *mapping*.
+ *
+ * **`mapTo` is per import, not per mapping**, and the difference is the whole of this function. A
+ * project importing two files through `dep/` has two entries, both naming a file; grouping on those
+ * put every *transitively* pulled file — the dependency's own imports, which nobody wrote a spec for
+ * — into the local project's count. Measured on a two-import project: `2 of 5 (this project)` where
+ * three of the five were the dependency's.
+ *
+ * So the root is derived rather than guessed at: the spec `dep/packages/crypto/src/sha256.wac`
+ * resolved to `<root>/packages/crypto/src/sha256.wac`, so stripping what follows the prefix leaves
+ * exactly `<root>`. No knowledge of the cache layout, which is `packages/wacpkg`'s and not this
+ * file's.
+ */
+i32 mappingRoots(const Sources src, string[] prefixes, string[] roots) {
+  i32 n = 0;
+  for (i32 m = 0; m < src.mapN; m++) {
+    string spec = src.mapSpec[m];
+    string to = src.mapTo[m];
+    i32 slash = spec.indexOf("/");
+    if (slash < 0 || to == "") { continue; }
+    string prefix = spec.slice(0, slash + 1);
+    string tail = spec.slice(slash + 1, spec.len());
+    if (tail.len() >= to.len()) { continue; }
+    string root = to.slice(0, to.len() - tail.len());
+    bool have = false;
+    for (i32 k = 0; k < n; k++) { if (prefixes[k] == prefix && roots[k] == root) { have = true; } }
+    if (have || n >= prefixes.len()) { continue; }
+    prefixes[n] = prefix;
+    roots[n] = root;
+    n = n + 1;
+  }
+  return n;
+}
+
+/**
+ * Which group a path belongs to: 0 local, 1..n a mapping, n+1 the built-ins.
+ *
+ * Longest root wins, because one mapping's directory can be a prefix of another's.
+ */
+i32 groupOf(string path, string[] roots, i32 n) {
+  i32 best = 0;
+  i32 bestLen = 0;
+  for (i32 m = 0; m < n; m++) {
+    string to = roots[m];
+    if (to == "" || to.len() <= bestLen) { continue; }
+    if (path.len() >= to.len() && path.slice(0, to.len()) == to) {
+      best = m + 1;
+      bestLen = to.len();
+    }
+  }
+  if (best > 0) { return best; }
+  // **The built-ins are their own line and not the reader's code.** `std/platform.wac` declares `Cli`,
+  // so it always reaches — counting it in "this project" adds a file nobody wrote to a number about
+  // what they did write.
+  if (path == "core" || (path.len() > 4 && path.slice(0, 4) == "std/")
+      || (path.len() > 5 && path.slice(0, 5) == "core/")) { return n + 1; }
+  return 0;
+}
+
 i32 uninstallCommand(Core core, Cli cli, i32 argc) {
   bool keepCache = false;
   for (i32 i = 1; i < argc; i++) {

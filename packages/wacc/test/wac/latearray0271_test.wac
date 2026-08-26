@@ -1,0 +1,113 @@
+// A generic instantiated at an array type emits, whatever the element is. `issues/lang/0271a`.
+//
+//     wac test packages/wacc/test/wac/latearray0271_test.wac
+//
+// ## What went wrong
+//
+// `emit.wac` counts the array helper functions — `$bind$arr_<el>_new/get/set/len` and, for a numeric
+// element, `_to_mem`/`_from_mem` — into `arrHelpers`, and every function index after them is that
+// count plus an offset. `Pending<i64[]>` introduces `i64[]`, and in a program that names it nowhere
+// else the type was registered while the *second* instantiation walk emitted the monomorphised
+// bodies — long after the count was taken.
+//
+// Six helpers emitted, none counted: the function section's vector declared six entries fewer than
+// it carried, twelve bytes of surplus type indices, and the engine refused the module with *"section
+// was shorter than expected size (1896 bytes expected, 1884 decoded)"*. `wac build` printed a size
+// and exited 0; only `native/v8`'s post-build validation (`issues/lang/0170a`) caught it.
+//
+// ## Why the fix is where it is
+//
+// The count cannot simply be taken later. Measured with checkpoints on `env.arrayCount` —
+// `counted=8 atFuncs=8 atMethodExports=8 atGuard=9` — the growth is in the walk that *emits*, and
+// that walk consumes the indices the counts produce. So the table is completed first instead: the
+// array types an instantiation names are registered before anything is counted, read off the
+// instance name with `typeArgAt`.
+//
+// That is a no-op for `i32[]` and `u8[]`, which is exactly why those two always worked —
+// `std/platform.wac` declares them, so they were in the table before the count either way.
+//
+// **Two wrong guesses preceded the checkpoints**, and both are recorded in the issue: that the
+// element's width mattered, and that moving the count below the *first* instantiation walk would be
+// enough. The instrument settled in one run what two rebuilds had not.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { emitDeclineFiles, buildFiles, describeSeparator } from "../../src/api.wac";
+import { Built } from "../../src/emit.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string ENTRY = "/t/main.wac";
+
+/** The reproduction, parameterised by the array element `Pending` is instantiated at. */
+string program(string elem) {
+  return "import { Pending } from \"std/platform.wac\";\n" +
+         "export struct C { fn[Pending<" + elem + "[]>(string)] f0; }\n" +
+         "export i32 main(C c) { return 0; }\n";
+}
+
+string why(string elem) {
+  return emitDeclineFiles(string[](ENTRY), string[](program(elem)), ENTRY);
+}
+
+/** How many bytes the build path produced for that element, or 0 if it declined. */
+i32 built(string elem) {
+  Built b = buildFiles(string[](ENTRY), string[](program(elem)), ENTRY);
+  return b.wasm.len();
+}
+
+/**
+ * Every element type, in one test, because the bug's whole shape was a *subset* of them failing.
+ *
+ * The first characterisation of this was "64-bit elements", from four rows. Asking all nine is what
+ * makes this test say something the four-row version could not — and it is cheap, because the
+ * failure was never about the element at all.
+ */
+export string test_a_pending_of_an_array_emits_for_every_element_type() {
+  T t = T.create();
+  string[] els = string[]("u8", "i8", "i32", "u32", "i64", "u64", "f32", "f64", "bool", "string");
+  for (i32 i = 0; i < els.len(); i++) {
+    string said = why(els[i]);
+    t.eqStr(said, "", "the emitter declined `Pending<" + els[i] + "[]>`");
+    // **A module, not merely no complaint.** `emitDeclineFiles` answering "" and the build producing
+    // nothing are different failures, and the second is the one `issues/lang/0170a` is about.
+    t.isTrue(built(els[i]) > 8,
+             "`Pending<" + els[i] + "[]>` emitted " + itoa(built(els[i])) + " bytes");
+  }
+  return t.report();
+}
+
+/**
+ * The one `std/platform.wac` already declares, kept as the control.
+ *
+ * `i32[]` passed throughout the bug's life, so a fix that broke it would be caught here rather than
+ * three packages away — and it is the row that proves the pre-registration is a no-op for a type the
+ * table already holds.
+ */
+export string test_the_element_that_always_worked_still_does() {
+  T t = T.create();
+  t.eqStr(why("i32"), "", "declined a program that has always built");
+  t.isTrue(built("i32") > 8, "`Pending<i32[]>` emitted nothing");
+  return t.report();
+}
+
+export string test_the_reason_the_build_path_reports_is_the_one_the_emitter_recorded() {
+  T t = T.create();
+  // A decline that does reach the build path must arrive with the emitter's own words rather than
+  // the speculative walk's catch-all. `blockedAgain` preferred that walk's answer whenever it had
+  // one, so a specific reason lost to "a type this emitter names only while emitting" — the sentence
+  // `api.wac` records as having cost four wrong guesses in a row.
+  //
+  // **The subject is a program the emitter genuinely cannot take.** A funcref nested inside another
+  // signature is declined by `supported()` and is not going to become legal, where the array case
+  // above now builds — so this asserts the plumbing without pinning a bug in place.
+  string src = "export struct C { fn[fn[i32(i32)](bool)] f0; }\n" +
+               "export i32 main(C c) { return 0; }\n";
+  Built b = buildFiles(string[](ENTRY), string[](src), ENTRY);
+  string sep = describeSeparator();
+  i32 at = b.described.indexOf(sep);
+  string blocked = at < 0 ? b.described : b.described.slice(0, at);
+  if (blocked == "") { return t.report(); }
+  t.isFalse(contains(blocked, "names only while emitting"),
+            "the build path reported the catch-all over the recorded reason: " + blocked);
+  return t.report();
+}

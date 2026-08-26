@@ -571,3 +571,316 @@ So one question decides all three:
 
 The second is the one to want. Recorded rather than taken because it changes an artefact other things
 read, and because this issue owns which subcommand lives where.
+
+## 2026-08-26: the eleven criteria, run rather than read — agent-a
+
+Everything below was exercised on a two-file ROT13 project in an empty directory outside this checkout,
+against a Deno-hosted and a Node-hosted `wac` built from `packages/wac/src/wac.wac` at `d5732c29`, both
+offline under `--cached-only`. **Nine of the eleven are met, one has a caveat, and one is a decision this
+issue has not taken.**
+
+| # | criterion | verdict |
+|---|---|---|
+| 1 | a documented Cargo-free Deno-hosted `wac` | **met, and was broken until today** — see below |
+| 2 | a Node-hosted equivalent | met — `--target node`, 2,353 KB, same answers |
+| 3 | `check` `run` `build` `test` `bindgen` `update` | met, plus `sh`, `app`, `app-run`, `validate`, `uninstall` |
+| 4 | native and hosted share semantics | met by construction — one program, and the native duplicate is deleted. One number regressed with the deletion: `issues/system/0264c` |
+| 5 | one project/source resolution | met — `issues/system/0229a` |
+| 6 | `@/` identical for check/run/build/test/bindgen | met, all five run |
+| 7 | tested from root, nested, relative, absolute | met — `packages/platform/test/project.test.ts`, and re-run by hand here |
+| 8 | a Cargo-free user can test and execute | met — `2 passed, 0 failed`, and the built artefact prints `Uryyb, JNP!` |
+| 9 | ordinary offline work fetches no npm | met for the *commands*; **building the hosted command still shells out to `deno bundle`** |
+| 10 | `update` is the only network command | met |
+| 11 | the docs lead with the JS-hosted command for JS/TS projects | **not met, and it is a decision — below** |
+
+Verbatim, to make the row above checkable:
+
+    $ ./wac check src/main.wac
+    src/main.wac: 4 file(s), no diagnostics
+    $ ./wac test src                       # with no .cache/ in the project
+    2 passed, 0 failed
+    1 file: 1 ok
+    $ ./wac test "$PWD/src"                # absolute, also with no .cache/
+    2 passed, 0 failed
+    $ ./wac build src/main.wac -o rot13 && ./wac rot13.wasm
+    rot13.wasm: 244822 bytes from 4 file(s)
+    Uryyb, JNP!
+    $ ./wac bindgen --js src/main.wac out/glue.gen.js && node --check out/glue.gen.js
+    out/glue.gen.js: 296024 bytes
+    $ ./wac sh -c 'seq 1 20 | grep 7 | wc -l'
+    2
+    $ ./wac update
+    wacfetch: nothing to fetch; 0 mapping(s) already locked
+
+**Every item the 2026-08-25 GitHub follow-up listed as remaining is now closed except the bundler.**
+`update` and `sh` are hosted. The fresh-project `.cache/` failure is fixed — the directory is made
+rather than assumed. An absolute directory works, through `beside`. `bindgen` honours its positional
+output, which the help had advertised and the code ignored. `wac --help` prints `run` and `test` once
+each. The `/tmp/wac-run-<pid>` collision across PID namespaces is fixed by a timestamp in the name and a
+sweep that asks age.
+
+### Criterion 1 was broken for a day, by the change that made criterion 3 true
+
+`issues/system/0257c` moved the command out of `packages/wacc/example/wacc.wac`, listed this page and
+`docs/your-own-project.md` among what it touches, and repointed everything except the documentation. So
+the single documented Cargo-free way to *have* the command named a deleted file, and the reader's first
+command failed. Fixed today, along with the same dead path in `native/README.md`, `native/v8/README.md`
+and both `build.rs` headers, and the `native/v8` README's three-payload block, which `0257c` made one.
+
+**The guard for this exists and the path walked past it.**
+`tools/wac/links_test.wac`'s `test_every_backticked_repository_path_names_a_file_that_exists` is exactly
+the check — every backticked repository path in a prose file must name something on disk, hundreds of
+them across the tree, with a floor assertion so the scan cannot quietly stop matching. It did not fire,
+because **it scans backticks and the rotted path was a bare argument inside a ```sh fence.** Prose says
+`packages/platform/native.ts` and gets checked; the command block underneath says the same kind of thing
+with no backticks and does not. I found this by tripping the guard with my own fix, which quoted the dead
+path to explain it — so the check works, and its coverage stops at the boundary where a reader is most
+likely to copy something.
+
+Extending it to fenced blocks is not free: a fence holds output as well as commands, and `native/`'s
+READMEs print paths that are deliberately hypothetical. The narrower version is worth more — **a token
+inside a fence that starts at a directory the repository root has, and ends in a source extension** — which
+is what `rootedPaths` already decides, applied to a different slice of the file.
+
+There is also a stronger shape already in the tree: `packages/platform/test/wac/nativecli_test.wac`
+*runs* the `native.ts` spelling this page documents, so the command is checked rather than the path. The
+hosted-build spelling deserves the same, and it is now cheap to assert — measured here, the Deno target
+builds in **8.7s** under `--cached-only` with esbuild already fetched.
+
+### Criterion 11 is a decision, and it collides with `design/lang/0009` D1
+
+The criterion asks that `docs/your-own-project.md` "presents the JS-hosted command as the natural
+workflow for existing JS/TS projects, with native installation as the standalone workflow". The page
+still opens *"There is one way today, and it needs a checkout of this repository, Deno, and Cargo"* and
+puts the hosted command in a subsection headed "Without Cargo". That is not an oversight: D1 makes
+`deno task wac:install` **the supported way to have the command**, and a page that led with the hosted
+build would contradict a design decision this issue does not own.
+
+The two are not both satisfiable as written, so pick one:
+
+- **Amend D1** to "one command, three hosts; the binary is the standalone packaging", and reorder the
+  page so a reader with Deno or Node already installed never reads about Cargo. This is what the
+  criterion asks for and what the architecture now supports — the binary and the hosted build run the
+  same program, so "supported" attaching to one host is a leftover from when it was the only one that
+  had the whole surface.
+- **Keep D1 and answer the criterion in the issue**, recording that native-first is deliberate because
+  the binary needs no bundler, starts 6–7× faster (`issues/system/0197`) and is one file. Then the page
+  should say *that*, rather than leaving the hosted command looking like a fallback for people who
+  could not install Rust.
+
+**The first, and it is close.** The one honest argument left for native-first is criterion 9's caveat: the
+hosted build shells out to `deno bundle`, which fetches `@esbuild/<platform>` from npm the first time, so
+the workflow this criterion wants to lead with has a network step the binary does not. That is a reason
+to fix the bundler before reordering the page, not a reason for the order — and it is the last thing on
+this issue's list either way.
+
+## 2026-08-26: `wac app` is byte-identical across hosts except for one line, and that line breaks it — agent-a
+
+The operator's expectation, and it is the right one:
+
+> The deno-based wac and v8-based wac, when producing an executable for another user program, should
+> produce byte identical executables. Both assume there is an ambient `wac` command, these can be
+> backed by different hosts, but those different hosts should do the same thing.
+
+**Nearly true, and worth recording how nearly.** One entry program, `wac app`-ed on three hosts:
+
+| built by | bytes |
+|---|---|
+| Deno-hosted `wac` | 245,060 |
+| Node-hosted `wac` | 245,060 — **identical to the Deno one** |
+| native binary | 245,065 |
+
+Remove line 2 from the first and third and they are **identical, 245,049 bytes each**. The whole
+difference is:
+
+    deno    # wac-app
+    native  # wac-app 0.1.0
+
+Cross-flavour execution works in the direction that can be tested today: with the Deno-hosted `wac` as
+the ambient one on `PATH`, the **native-built** artefact runs and prints its output. So the
+"any flavour runs it" property holds; what does not is the stamp.
+
+### Why the stamp is empty, and why that is a decision rather than work
+
+`WAC_VERSION` is set in `native/v8/src/main.rs` and nowhere else, from `env!("CARGO_PKG_VERSION")`.
+That file's own note says why it is the host's job: *"a check that has to survive the two being
+different installations, so it cannot be a constant either side compiles in… this is the only thing in
+that pair only the host knows."*
+
+The JS hosts have no Cargo, so there is nothing for them to read, and **the version has to come from
+somewhere that is not a second copy.** `native/v8/Cargo.toml` is the only version string in the tree.
+Three ways, and the third is the one to want:
+
+- **`build.ts` reads `Cargo.toml` and injects the string.** Cheapest, and wrong in the way this
+  repository minds: a hosted build made from a checkout would stamp the version of a binary nobody
+  built, and the file the JS host reads would be one it has no other reason to know about.
+- **A version constant in wac, compiled into the program.** Removes the host from the question — but
+  the note above is right that it must not be a constant either side compiles in, because then the
+  stamp says what the *program* was built from and the check is asking about the *installation*.
+- **`wac:install` writes the version into `$WAC_HOME/install.json5`, and every host reads it from
+  there.** It already writes that file. The version then belongs to the installation, which is what
+  the check has always been asking about, and a host that was never installed — a build run straight
+  out of a checkout — correctly publishes nothing.
+
+The third also answers a question the first two dodge: **what the version of a Deno-hosted `wac` even
+is.** It is not the binary's, because there is no binary. It is the installation's.
+
+### Fixed here, because it is not the same question
+
+An empty stamp made the artefact **unrunnable by every host, including the one that built it**:
+
+    $ ./app_deno
+    wac: ./app_deno has a module in it but no `# wac-app ` line — not built by `wac app`
+
+`builtBy` answers `""` both for *no marker line* and for *a marker line naming no version*, and
+`appRun` read it as the first. The version check five lines below already reasons correctly about the
+blank in the other direction — *"a host that does not say its version cannot refuse for it"* — and
+could never be reached, because the conflated test had already rejected the file. Split into
+`hasAppMark` (presence) and `builtBy` (content), with the same tolerance added the other way: only two
+versions that both exist can differ. `tools/wac/app_test.wac` has the case, canaried.
+
+So a hosted-built app runs everywhere as of today, and the stamp above would make the bytes match too.
+
+### And two capabilities the Node target never had
+
+`packages/platform/build.ts`'s Node launcher injected an fs object short of `lstat` and `chmod`, both
+of which `runLauncherNode` declares as **required** — the `as unknown as` cast is what let it compile.
+Neither failed in a way anyone would see:
+
+    node wac app … -o thing   wac: cannot make thing executable — this filesystem has no mode bits to set
+    cli.linkStat(a real file)  deno → isFile=yes size>0=yes
+                               node → isFile=no  size>0=no
+
+The second is the bad one: a **zeroed `Stat` for a file that is there**, which is a wrong answer rather
+than a refusal. Fixed. The Deno target has neither, because it reaches `Deno.*` directly and injects
+nothing — so this was never a difference between what the hosts *are*, only between what one of them
+was handed.
+
+**The general shape, for the next injected boundary:** a required field lost to `as unknown as` on a
+capability whose failure mode is a default value. The type said `lstat`, the caller did not pass it,
+and the reader got a zeroed struct. Worth a test that asks each host the same question about the same
+file rather than a type that a cast can silence.
+
+### Ruled 2026-08-26: no version, so the blank is the correct output — the operator
+
+The three options above are moot, and the answer is none of them:
+
+> for versioning, we should avoid defining it for now, so the correct output is the one that omits a
+> version
+
+Which inverts what the section above assumed. It read the native binary's `# wac-app 0.1.0` as the
+right answer and the hosted `# wac-app ` as the gap to close. **It is the other way round:** `0.1.0` is
+`native/v8/Cargo.toml`'s default, not a version anybody decided, and it reached an artefact format by
+the accident of that host being the one written in Rust. Three hosts wrote nothing because they had
+nothing to write, which was correct, and one wrote a number because cargo requires a field.
+
+Done, and the three hosts now produce byte-identical `wac app` output:
+
+- `native/v8/src/main.rs` no longer sets `WAC_VERSION`. The block is replaced by the reasoning, kept
+  because "not `WAC_COMPILER_ID`, though it is right there" is the first wrong turn available to
+  anybody revisiting this.
+- `packages/wac/src/app.wac`'s header says the blank is correct rather than describing a host that
+  fills it.
+- `spec/cli/wac.md` `[§wac-cli-app-skew-3vq9mkt]` keeps the rule and adds the state: only two versions
+  that both exist can differ, and today neither does.
+
+**The check is dormant, not deleted**, which is the one judgement call in here. "For now" is not
+"never", the rule is spec'd, and it costs a comparison that is always false. What it must not become is
+unreachable *and* untested, so `test_an_app_built_by_another_version_is_refused` supplies both sides
+through `WAC_VERSION` on the shell line — the same seam a host would use — and a second assertion in the
+same test runs the identical artefact with the variable absent and requires it to *work*. That pair is
+the whole rule: refuse when two versions disagree, run when either is missing.
+
+If the deferral ever ends, `install.json5` is where a version should come from rather than any of the
+three options above — it is the installation's number, and the installation is what the check has always
+been asking about. Recorded, not recommended.
+
+### 2026-08-26: the last unchecked report from the issue — cross-project cache reuse — does not reproduce
+
+The second GitHub comment ended with a friction item nothing in this issue ever answered:
+
+> Every fresh project mapping the same repository/commit took 18–20 seconds and reported writing the
+> same 8.75 MB pack to the same global cache path, even though the checkout was already present.
+> Cross-project cache reuse appears incomplete.
+
+Run rather than reasoned about, with a `$WAC_HOME` of its own so the cache starts empty, three
+projects with the same one-line mapping to `https://github.com/voltrevo/wac @ master`:
+
+| | wall | what it said |
+|---|---|---|
+| project 1, empty cache | **6.1s** | `9466944 bytes, 2981 objects -> …/pack.pack` |
+| project 2, fresh project, same commit | **0.42s** | `819ad18199c4 is already in the cache -> …` |
+| project 1 again, now locked | **0.06s** | `nothing to fetch; 1 mapping(s) already locked` |
+
+**Reuse works and says so.** The second project writes no pack, and the cache hit is an explicit line
+rather than something to infer from the clock. What remains in the 0.42s is resolving `master` to a
+commit, which is a question only the remote can answer and is the reason `ref` exists.
+
+Not filed, because there is nothing to file. Recorded here because "we did not reproduce it" is a
+different fact from "nobody looked", and this was the one observation in GitHub issue 22 in neither
+state until today.
+
+**One thing found on the way, and it is a documentation gap rather than a defect.** `file://` is not a
+transport — `wacfetch: dep/: 'file://' is not a transport this toolchain has; HTTPS only` — which is a
+good message and is nowhere in `docs/your-own-project.md`. It matters here more than it looks: this
+repository has `~/bare-repos` as its source of truth, so the obvious way to test a mapping without the
+network is the one that does not work, and the obvious next move is to reach for GitHub, which the
+same page calls *not authoritative*.
+
+### 2026-08-26: the bundler's silence, reported a second time and now fixed
+
+The author of GitHub issue 22 came back:
+
+> The remaining direct issue is the hosted build's `deno bundle`/esbuild dependency. In my fresh tour
+> it still sat silent for ~74 seconds before failing on the npm fetch. The promised progress message
+> has not landed on current master.
+
+Correct on both counts. The message was listed as work and not done — this entry is it.
+
+**`deno bundle` stays.** The operator's ruling: using it to build the hosted command is a sensible
+thing to do, and it is not the wasm it is there for — the embedded module is bit-for-bit the native
+seed minus its manifest section, so the bundler exists to inline the generated glue. `--cached-only`
+is not available either way: `deno bundle` rejects it on 2.9.1 (*"tip: to pass '--cached-only' as a
+value, use `-- --cached-only`"*), it is a `deno run`/`deno cache` flag, and the bundle is a separate
+subprocess that inherits none of the parent's. What the issue saw succeed under it was
+`deno run --cached-only … native.ts`, the compiler.
+
+So the fix is honesty about the wait, in three parts:
+
+- **A line after five seconds**, naming the package for *this* platform. Chosen against noise rather
+  than against the fetch: a warm bundle is ~70ms and `packages/box`'s tests run twenty-seven of them,
+  so the threshold decides how often this fires when nothing is wrong, not whether a 74-second wait is
+  caught.
+- **`output()` instead of `outputSync()`**, which is what makes the line possible at all — a
+  synchronous subprocess blocks the event loop, so nothing scheduled can run during the one interval
+  worth narrating.
+- **`bundleFailure`**, which appends the prefetch command *and the offline route* when the bundler's
+  stderr mentions npm, and adds nothing when it does not. Keyed on what the bundler said rather than
+  on probing Deno's cache layout, which is Deno's to change.
+
+**Measured here, and the measurement is why the threshold moved.** With `DENO_DIR` pointed at an empty
+directory — a fresh machine — the whole build took **1.5s** and the cache came back holding
+`dl/esbuild-0.25.5/esbuild-linux-arm64` and `npm/registry.npmjs.org/@esbuild`, 20 MB. The fetch
+happened and was fast, because this container has a local proxy. **So this environment cannot
+reproduce the reported wait**, and a threshold tuned to what is observable here would have been tuned
+to the wrong thing.
+
+Which left the line itself unverified, so it was canaried rather than assumed: threshold to 1ms, warm
+build, and all three bundles announce themselves —
+
+    wac: still bundling (worker) — the first bundle on a machine downloads npm:@esbuild/linux-arm64, …
+    wac: still bundling (childwasm) — …
+    wac: still bundling (launcher) — …
+
+then restored, and the same build is silent again.
+
+`packages/platform/test/esbuildadvice.test.ts` covers the two strings: the platform mapping for five
+targets, that this machine's answer is npm's spelling and not Rust's, that npm-mentioning stderr gets
+both the prefetch and the offline route, that unrelated stderr gets neither, and a canary that the two
+branches differ — because both of the middle assertions pass if the function returns its input
+unchanged.
+
+**A wrong triple would be worse than no advice**, which is most of what that test is about:
+`deno cache npm:@esbuild/linux-x64` on an arm machine *succeeds* and fixes nothing, so the reader pays
+for a download and believes they have done the thing. esbuild's names are node's
+`process.platform`/`arch` — `win32`, `x64` — and `Deno.build` speaks Rust's — `windows`, `x86_64`.
