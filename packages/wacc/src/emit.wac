@@ -4336,6 +4336,30 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // **Every array a host can hold, and the accessors it needs to hold one.** `_to_mem` and
   // `_from_mem` move bytes, so only a numeric element has them; `string[]` and `u8[][]` had no
   // helpers at all and a host asking for one saw `$bind$arr_u8Arr_new is not a function`.
+  // **The array types an instantiation names, registered before anything is counted.**
+  //
+  // `Pending<i64[]>` introduces `i64[]`, and nothing else in such a program mentions it — so it was
+  // registered while the *second* instantiation walk emitted the monomorphised bodies, long after
+  // `arrHelpers` had been counted. Six helpers were emitted for it and none counted, and the function
+  // section's vector declared six entries fewer than it carried. `issues/lang/0271a`.
+  //
+  // **Measured, after two wrong guesses.** Checkpoints on `env.arrayCount` gave
+  // `counted=8 atFuncs=8 atMethodExports=8 atGuard=9`, which is what says the registration is in the
+  // emitting walk rather than in the pass that discovers instances — and therefore that the counts
+  // cannot simply be taken later, because that walk needs the indices they produce.
+  //
+  // Registering here instead is a no-op for every type that was already in the table: `i32[]` and
+  // `u8[]` are declared by `std/platform.wac`, which is why they always worked. `typeArgAt` reads the
+  // argument out of the instance name, so this asks nothing new of the tables.
+  for (i32 pi = 0; pi < env.instCount; pi++) {
+    if (genericBaseOf(env.instName[pi]) == "") { continue; }
+    for (i32 ai = 0; ai < 8; ai++) {
+      string arg = typeArgAt(env.instName[pi], ai);
+      if (arg == "") { break; }
+      if (isArrayType(arg)) { env.arrayType(arg); }
+    }
+  }
+
   // **What the helper counts were taken over**, so the guard below `declTypes` can tell whether an
   // array or a struct arrived after them. It is not enough that the *type section* agrees: these two
   // counts fix `arrayHelpersAt`, `structHelpersAt` and every function index after them, and they are

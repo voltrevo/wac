@@ -1,6 +1,9 @@
 # 0271a — a `Pending<T[]>` the boundary cannot marshal emits an invalid module, and the checker says nothing
 
-- **Status:** open
+- **Status:** closed — agent-a, 2026-08-26: the array types an instantiation names are registered
+  before the boundary helpers are counted, so every element type emits
+- **Fixed in:** `packages/wacc/src/emit.wac`, with
+  `packages/wacc/test/wac/latearray0271_test.wac`
 - **Claimed by:** agent-a (2026-08-26)
 - **Reported by:** agent-a
 - **Date:** 2026-08-26
@@ -196,3 +199,61 @@ function so the precedence does not turn on a string literal. The user gets:
 **This was not specific to this bug.** Any decline whose cause the speculative walk cannot localise
 reported the catch-all in place of whatever the emitter knew, which is a fair description of the ten
 declines `issues/lang/0170a` tabulates. Worth re-reading that table now that the reasons are different.
+
+## Closed — the table is completed before it is counted, agent-a, 2026-08-26
+
+The guard above turned an invalid module into a refusal, which was the right first move and not the
+fix. This is the fix, and it is three lines.
+
+**Where the registration actually happens, measured.** Checkpoints on `env.arrayCount`, printed by the
+guard itself:
+
+    counted=8   atFuncs=8   atMethodExports=8   atGuard=9
+
+So `i64[]` arrives in the walk that *emits* the monomorphised bodies, not in the pass that discovers
+instances. That rules out the obvious fix: the count cannot be taken later, because that walk consumes
+the indices the counts produce. What is left is to complete the table first.
+
+```wac
+for (i32 pi = 0; pi < env.instCount; pi++) {
+  if (genericBaseOf(env.instName[pi]) == "") { continue; }
+  for (i32 ai = 0; ai < 8; ai++) {
+    string arg = typeArgAt(env.instName[pi], ai);
+    if (arg == "") { break; }
+    if (isArrayType(arg)) { env.arrayType(arg); }
+  }
+}
+```
+
+`typeArgAt` already existed. This is a no-op for a type the table already holds, which is why `i32[]`
+and `u8[]` never failed — `std/platform.wac` declares both.
+
+**Every element type now emits**, which is the assertion the test makes rather than the four rows the
+original table had:
+
+    u8  i8  i32  u32  i64  u64  f32  f64  bool  string     all build
+
+`i8[]` was broken too and no version of this issue had tested it. Canaried by disabling the loop: 12
+assertions fail across the six numeric elements, and the `i32[]` control stays green.
+
+### Two wrong guesses, and what ended them
+
+Recorded because the method is the transferable part, and because this issue already carries three
+wrong *characterisations* above:
+
+1. **the element's width** — dead on `u32[]`;
+2. **moving the count below the instantiation walk** — built, fixpointed, and changed nothing, because
+   there are two such walks and the registration is in the second.
+
+Each cost a seed rebuild. The checkpoints cost one and answered it. **When two attempts fail in the
+same shape, the missing thing is the instrument, not the next idea** — and the guard was what carried
+the numbers out, so the first fix paid for the second.
+
+### The guard stays, and it is now unreachable
+
+Nothing I can write reaches it: the pre-registration runs first and covers the case that produced it.
+That makes it the same kind of claim `issues/lang/0170a` warns about — *"a guard nothing can reach is a
+claim nothing checks"* — and it is kept anyway, deliberately. It is the sibling of the type-section
+guard beside it, it costs one comparison per module, and the failure it catches is a wasm section
+whose length disagrees with its contents, which is invisible on every host but the one with post-build
+validation. Its message is exercised by the canary above rather than by the suite.
