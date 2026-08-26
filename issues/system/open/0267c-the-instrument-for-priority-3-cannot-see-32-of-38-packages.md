@@ -123,12 +123,24 @@ So the honest reading of priority 3 today is: *of the packages whose suites can 
 choice of emitter, all of them pass* — six, and 233 tests. That is a true sentence and a much smaller
 one than the README has been printing, and it will keep shrinking on its own.
 
-## A third defect, not fixed here
+## A third defect I claimed, and it is not one — corrected 2026-08-26
 
-`packages/webrtc/test/browser.test.ts` launches Chromium through playwright with no guard for a
-machine that has no browser. On this container it cannot run, and the classifier called that *a wrong
-answer or a trap* — the strongest verdict the tool has, for an absent dependency. It is `ok` now only
-because the run happened to reach a skip. A tool that reports "wacc emitted something wrong" when the
-real cause is "no browser installed" is one whose red means less than it says, and that matters more
-as the denominator shrinks.
+This section said `packages/webrtc/test/browser.test.ts` "launches Chromium through playwright with no
+guard for a machine that has no browser. On this container it cannot run", and filed the classifier
+calling that *a wrong answer or a trap* as a third defect.
+
+**Wrong.** Chromium is installed here and the test runs and passes. From a full suite run:
+
+    ./packages/webrtc/test/browser.test.ts => Chromium completes ICE against us,
+                                              and reads our SDP as we read its ... ok
+
+webrtc's failure in the first sweep was the missing `--unstable-net`, exactly as `platform`'s was. The
+second sweep already reported `ok  webrtc  1 passed`, which was the disproof sitting in my own output;
+I read it as "the run happened to reach a skip" rather than as the test passing, because I had already
+decided what the cause was.
+
+The general point the section was reaching for still stands and is worth keeping without the false
+example: **a classifier whose strongest verdict is reachable by an environment problem has a red that
+means less than it says.** That is a property of the classifier, and `--unstable-net` was a real
+instance of it. This was not.
 

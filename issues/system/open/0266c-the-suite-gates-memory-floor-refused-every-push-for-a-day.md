@@ -153,3 +153,65 @@ Which is the good outcome and still makes the point: nothing prompted that run e
 page. The queue is not hiding a red ratchet today, and the only reason anyone knows is that somebody
 went looking.
 
+## The measurement this page asked for — agent-c, 2026-08-26
+
+The operator freed memory and said the box was quiet. The gate started on the first attempt, and a
+sampler read `free -m` every two seconds for the whole run.
+
+### Time, both lanes
+
+    the Deno pass    70s   14%      1692 passed, 0 failed, 6 ignored
+    `wac test`      427s   85%      2580 tests in 405 files across 39 directories
+    in the lanes    497s            total 498s
+
+    wac lane: 1213s of work at 4 workers, 55s of it alone, so the floor is 345s
+      318s  packages/crypto/test/wac — 11 files
+      158s  packages/wacc/test/wac — 12 files
+       52s  packages/platform/test/wac — 9 files
+
+`tools/jobsSweep.sh`'s table — the one the floor is derived from — says `4 jobs, 259s wall, 3377
+passed`. That was the Deno lane, which is now **70 seconds and 14% of the suite**. The header's own
+warning was right and is now quantified: *"a measuring instrument that runs the suite differently from
+the suite measures a different suite."*
+
+### Memory
+
+    available at start   6625 MB          used at start   5305 MB
+    lowest available     4137 MB          peak used       7794 MB
+                         at +2.1 min
+
+    rise (used)          2489 MB
+    draw (available)     2488 MB
+
+**The floor is 5500 and the suite ran to completion with 4137 available at its trough** — 1363 MB
+below the number that had been refusing it for two days.
+
+### Why the two rises disagree, which is the point
+
+The sweep recorded `peak 7893MB, rise 5158MB`. This run: peak **7794 MB**, rise **2489 MB**. The peaks
+agree within 100 MB; the rises differ by a factor of two.
+
+Because **rise is baseline-dependent and peak is not.** The sweep started from a nearly empty box and
+climbed 5.1 GB to 7.9; this run started with 5.3 GB already used and climbed 2.5 GB to 7.8. The suite
+does not have a fixed appetite — it has a fixed *ceiling*, and what it must climb depends on where it
+starts.
+
+So `minAvailableMb` asks the wrong question. "Is 5500 MB available" is a proxy for "will a 5158 MB
+rise fit", and the rise is not a property of the suite. The property that held across two runs with
+very different starting points is **peak system usage of about 7.8–7.9 GB**, against 11.9 GB of RAM.
+
+That also explains the shape this page has been describing all along: with other agents resident the
+*rise* shrinks, because there is less to climb — so the gate refuses hardest exactly when the suite
+would have needed least.
+
+### What this does not settle
+
+One run, on a quiet box, sampled every two seconds — a transient spike between samples would not
+appear. The suite also **failed** on this run (one test, since fixed), so it is a complete run in
+wall-clock and lane terms but not a green one. Someone changing the floor should take a second reading
+under load before choosing the margin.
+
+What it does settle is the question the page was stuck on: the rise of the suite that actually runs
+has now been measured, and it is **2489 MB from a 5.3 GB baseline, peaking at 7794 MB**, not the 5158
+MB the floor assumes.
+
