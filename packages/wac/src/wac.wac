@@ -346,8 +346,20 @@ string dirOf(string path) {
  * answers the same; the caller still gets the ordinary error, one compile later.
  */
 string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] paths, string[] texts,
-                      string stem) {
-  if (cmd != "build" || stem == "") { return ""; }
+                      string stem, string target) {
+  // **`test` is cacheable too, and keyed on what the caller named.** `issues/system/0204` gave the
+  // native `wac test` a module cache and it lived in the host path only `run` reaches now — measured
+  // after the move, `packages/box/test/wac` was 18s cold and 7s warm where a hit is about one.
+  //
+  // The key cannot use `entry`: for a directory that is the generated aggregate, whose *name* carries
+  // the clock so two runs never collide, so every run would miss. `target` is what the caller typed
+  // and is stable, and the aggregate's own text is in the key anyway through `texts` — so the same
+  // directory with the same sources answers the same key, and one file changing changes it.
+  if (cmd == "test") {
+    if (target == "") { return ""; }
+  } else if (cmd != "build" || stem == "") {
+    return "";
+  }
   if (hasFlag(cli, argc, "--coverage") || hasFlag(cli, argc, "--trace")) { return ""; }
   if (hasFlag(cli, argc, "--no-cache")) { return ""; }
   if (unknownFlag(cli, argc) != "") { return ""; }
@@ -364,12 +376,16 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
   Fnv h = Fnv.start();
   h.eat("wac-build 1");
   h.eat(string.fromBytes(id!));
-  h.eat(entry);
-  h.eat(baseName(stem) + ".wasm");
+  h.eat(cmd);
+  h.eat(cmd == "test" ? target : entry);
+  h.eat(cmd == "test" ? "" : baseName(stem) + ".wasm");
   // A bitmask, not a list — `grantsIn` answers the five bits that go into the manifest.
   h.eat(itoa(grantsIn(cli, argc)));
   for (i32 i = 0; i < paths.len(); i++) {
-    h.eat(paths[i]);
+    // **The aggregate's path is replaced, its text is not.** It is `.cache/wac-aggregate-<clock>`,
+    // different on every run and the same file every time; hashing the name would make the key
+    // unrepeatable, and dropping the text would make it stand for less than it claims.
+    h.eat(paths[i] == entry && cmd == "test" ? "<entry>" : paths[i]);
     h.eat(texts[i]);
   }
   return home + "/cache/build/" + h.hex() + ".wasm";
@@ -971,6 +987,38 @@ string wasmBeside(string entry) {
   return entry + ".wasm";
 }
 
+/**
+ * Store a built module under its key, if there is a key and it is worth storing.
+ *
+ * **Written beside and moved into place**, because three agents share this machine and a reader that
+ * catches a half-written entry gets a truncated module rather than a miss. `rename` is atomic on
+ * every filesystem this runs on — `std/platform.wac` says so where it explains why `rename` is in
+ * the same tier as `writeFile` — so a concurrent build sees the old entry or the new one and never
+ * part of either.
+ *
+ * `distinct` is the temporary name's disambiguator, since this world has no pid: two builds racing on
+ * one key are building the same program, and what distinguishes them is where each was asked to put
+ * it. For `build` that is the output stem; for `test` there is no output, and the aggregate's own
+ * path serves — it carries the clock, so no two runs share one.
+ *
+ * A failure to store is not a failure to build: the artefact the caller asked for is already made,
+ * and the next run simply compiles again. Nothing here reports.
+ */
+void rememberBuild(Cli cli, string cachePath, u8[] whole, string distinct) {
+  if (cachePath == "") { return; }
+  string cacheDir = dirOf(cachePath);
+  cli.mkdir(cacheDir, true).wait();
+  Fnv u = Fnv.start();
+  u.eat(distinct);
+  string tmp = cachePath + ".tmp" + u.hex();
+  Change wroteTmp = cli.writeFile(tmp, whole).wait();
+  if (wroteTmp.ok()) {
+    Change moved = cli.rename(tmp, cachePath).wait();
+    if (!moved.ok()) { cli.remove(tmp, false).wait(); }
+  }
+  sweepBuildCache(cli, cacheDir);
+}
+
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 1) {
@@ -1387,10 +1435,40 @@ export i32 main(Core core, Cli cli) {
   //
   // Above the compile and below the gather, because the sources *are* the key: there is no way to know
   // a build is a repeat without reading what it reads. Gathering is the cheap half.
-  string cachePath = buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc));
+  // **Read before the cache is asked, because it decides whether the cache may answer.** `WAC_PROFILE`
+  // turns on an instrumented build without `--coverage` on the command line — see `covered` below —
+  // and `buildCachePath` only knows about the flag. A hit would serve the *plain* module to a run
+  // whose whole purpose is the counters, and the profile would come back empty rather than wrong,
+  // which is the kind of empty that reads as "this entry has no tests".
+  string profileDir = "";
+  if (cmd == "test") {
+    u8[]? want = cli.env("WAC_PROFILE").wait();
+    if (!(want is null) && want!.len() > 0) { profileDir = string.fromBytes(want!); }
+  }
+  string cachePath = profileDir != ""
+                   ? ""
+                   : buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc), target);
   if (cachePath != "") {
     FileResult hit = fs.readFile(cachePath);
-    if (hit.ok && hit.bytes.len() > 8) {
+    if (hit.ok && hit.bytes.len() > 8 && cmd == "test") {
+      // **A cached test module is run, not written.** `build`'s hit ends in a file because the file is
+      // what was asked for; `test`'s hit ends in the tests, and the module carries its own manifest so
+      // there is nothing else to reconstruct. `covTable` is empty by construction: `buildCachePath`
+      // refuses a `--coverage` line, and `WAC_PROFILE` turns that on.
+      string cachedManifest = manifestIn(hit.bytes);
+      if (cachedManifest != "") {
+        string badFlagHit = unknownTestFlag(cli, argc, entry);
+        if (badFlagHit != "") {
+          core.warn("wac: unknown flag '" + badFlagHit + "' — --allow-read, --allow-write, "
+                    + "--allow-net, --allow-env, --allow-run, --filter");
+          return 2;
+        }
+        return runTests(core, cli, target, hit.bytes, cachedManifest, grantsIn(cli, argc),
+                        flagValue(cli, argc, "--filter"), walked, ignoredCount, target, "",
+                        hasFlag(cli, argc, "--verbose"), profileDir);
+      }
+    }
+    if (hit.ok && hit.bytes.len() > 8 && cmd != "test") {
       string stemHit = outStem(cli, argc);
       Change wroteHit = fs.writeFile(stemHit + ".wasm", hit.bytes);
       if (!wroteHit.ok()) {
@@ -1460,11 +1538,6 @@ export i32 main(Core core, Cli cli) {
   // build read per test rather than once, so it needs the counters for the same reason and gets them
   // the same way. `test` only — a `build` that quietly emitted a different module because a variable
   // was set in the shell would be a build whose output does not follow from its arguments.
-  string profileDir = "";
-  if (cmd == "test") {
-    u8[]? want = cli.env("WAC_PROFILE").wait();
-    if (!(want is null) && want!.len() > 0) { profileDir = string.fromBytes(want!); }
-  }
   bool covered = hasFlag(cli, argc, "--coverage") || profileDir != "";
   // **`--trace` is the other instrumented build**, and it is the same three exports meaning something
   // else: a journal of `(site, value)` in the order events happened rather than a count per point.
@@ -1599,7 +1672,13 @@ export i32 main(Core core, Cli cli) {
     i32 grants = grantsIn(cli, argc);
     string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
                                   baseName(stem(entry)) + ".wasm", grants);
-    i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
+    u8[] wholeTest = withManifestSection(wasm, manifest);
+    // **Remembered before the tests run, not after.** What is cached is the *build*, and whether the
+    // tests pass is not a property of it — a failing suite recompiled from scratch on every run would
+    // be the case that most wants the cache. `cachePath` is already "" for a `--coverage` or profiling
+    // line, and for a warned program the diagnostics pass above has returned.
+    rememberBuild(cli, cachePath, wholeTest, entry);
+    i32 code = runTests(core, cli, entry, wholeTest, manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
                         covered ? covTableFilesIn(paths, texts, res, entry) : "",
                         hasFlag(cli, argc, "--verbose"), profileDir);
@@ -1770,28 +1849,7 @@ export i32 main(Core core, Cli cli) {
     // rendered diagnostics beside the artefact, which is a second file to write, evict and validate for
     // a case worth fixing rather than caching. A warned program pays full price every build, and any
     // `diags` still here is a warning — `wireHasErrors` returned above.
-    if (cachePath != "" && diags == "") {
-      string cacheDir = dirOf(cachePath);
-      cli.mkdir(cacheDir, true).wait();
-      // **Written beside and moved into place**, because three agents share this machine and a reader
-      // that catches a half-written entry gets a truncated module rather than a miss. `rename` is
-      // atomic on every filesystem this runs on — `std/platform.wac` says so where it explains why
-      // `rename` is in the same tier as `writeFile` — so a concurrent build sees the old entry or the
-      // new one and never part of either.
-      //
-      // The temporary name carries the *destination*, since this world has no pid: two builds racing
-      // on one key are building the same program, and what distinguishes them is where each was asked
-      // to put it. Two that also share a destination are already in conflict over the artefact itself.
-      Fnv u = Fnv.start();
-      u.eat(stem);
-      string tmp = cachePath + ".tmp" + u.hex();
-      Change wroteTmp = cli.writeFile(tmp, whole).wait();
-      if (wroteTmp.ok()) {
-        Change moved = cli.rename(tmp, cachePath).wait();
-        if (!moved.ok()) { cli.remove(tmp, false).wait(); }
-      }
-      sweepBuildCache(cli, cacheDir);
-    }
+    if (diags == "") { rememberBuild(cli, cachePath, whole, stem); }
     // **Inside the module, and only there.** A `.json` went beside it until 2026-08-20, because the
     // wasmtime host predated the section and took a manifest path as its argument. Both hosts read the
     // section now (`native/manifest`), so the pair was a second copy of one thing with nothing left

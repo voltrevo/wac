@@ -1,0 +1,82 @@
+// A pipeline needs no filesystem grant.
+//
+//     $ boxsh            # built with no grants at all
+//     echo hi | cat
+//     cat: : Not granted to this application
+//
+// `cat` was not reading a file. It had no operand, so `lib/input.wac` takes its "standard input is
+// standard input, whatever the filesystem is" branch and calls `cli.openInput("")` — where `""` is the
+// **reset** to the process's own stream and not a path. In a sealed shell the applet's world is
+// `platform`'s substitute (`shrun.wac`'s `boxRun` → `childCli`), and that joined the sentinel onto the
+// frame's directory: `parent.openInput(joinPath(cwd, ""))` is `parent.openInput(cwd)`, a *directory*,
+// which the parent then grant-checks and refuses.
+//
+// So every streaming applet — `cat`, `grep`, `head`, `wc`, `tr` — needed `--allow-read` to read a pipe,
+// and with the grant it was opening a directory whose bytes it then never used, because the substitute
+// answers the reads from the frame's queue. `sort` was unaffected: it does not take that branch.
+//
+// **Built with no grants deliberately.** Every other box test grants something, which is why sixty
+// commands over a sealed shell never showed this. The absence of the flags below is the test.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// This was `test/pipeUngranted.test.ts`, and what it needed from TypeScript was `buildApp` with an
+// empty grant record. `wac build` with no grant flags is the same statement in the language being
+// tested: the grants a program has are the ones its build declared, so a build that declares none
+// produces the program this is about. The refusal it must *not* see comes from the runtime's grant
+// check rather than from either host's shim, and `packages/platform/test/native_examples.test.ts`'s
+// `probe` case is what holds the two hosts to the same answer about grants — so moving this one does
+// not leave that comparison unmade.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+const string ENTRY = "packages/box/example/boxsh.wac";
+
+export string test_a_pipeline_in_a_shell_with_no_grants_at_all(Core core, Cli cli) {
+  T t = T.create();
+  string cwd = cli.cwd().wait();
+  string wac = cwd + "/native/v8/target/release/wac";
+  string dir = cwd + "/.cache/box-pipeungranted";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string stem = dir + "/boxsh";
+
+  // **No grant flags.** Everything else in this package builds with at least `--allow-read`; the whole
+  // point here is a shell that was given nothing and still has to move bytes between its own stages.
+  Exec built = cli.exec(wac, string[]("build", ENTRY, "-o", stem, "--quiet"), u8[0]()).wait();
+  t.isTrue(built.ran(), "the wac binary ran — " + built.error);
+  t.eqI32(built.status, 0, "wac build failed: " + string.fromBytes(built.stderr));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  // Two pipelines, because the bug was in the branch a stage takes when it has *no operand*: `cat`
+  // with nothing to open, and `tr`, which is the other shape of the same branch.
+  Exec ran = cli.exec(wac, string[](stem + ".wasm"),
+                      "echo hi | cat\necho a b | tr ' ' '-'\n".toBytes()).wait();
+  t.isTrue(ran.ran(), "the built shell ran — " + ran.error);
+  if (!ran.ran()) { return t.report(); }
+  string said = string.fromBytes(ran.stdout);
+  string err = string.fromBytes(ran.stderr);
+
+  // Asserted before the output, because "Not granted" *is* the failure this file exists for and the
+  // stdout comparison below would report it as a missing line rather than as a refusal.
+  t.isTrue(!contains(err, "Not granted"),
+           "a stage was refused a grant it should not need: " + err + "\n--- stdout: " + said);
+  t.eqStr(said, "hi\na-b\n", "the pipelines' output — stderr: " + err);
+
+  // **And the grant canary, which the host-side version did not have.** Everything above is an
+  // assertion that a refusal did *not* happen, and that passes for free if the build quietly had the
+  // grant after all — a `--allow-read` slipped into the line above, or a compiler that stopped
+  // recording an empty grant set, and this file would go green while testing nothing. So: a read that
+  // genuinely needs the grant must still be refused by the same binary in the same build.
+  Exec needs = cli.exec(wac, string[](stem + ".wasm"), "cat /etc/hostname\n".toBytes()).wait();
+  t.isTrue(needs.ran(), "the built shell ran again — " + needs.error);
+  if (needs.ran()) {
+    t.isTrue(contains(string.fromBytes(needs.stderr), "Not granted"),
+             "reading a real file was allowed, so this build was not ungranted and the assertions " +
+             "above prove nothing — stderr: " + string.fromBytes(needs.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
