@@ -161,3 +161,43 @@ include Node; 17 exclude the v8 binary* — each number derived from the tests a
 
 It also makes the entry that names a test which no longer spawns what it claims fail, rather than
 quietly meaning less. That is the property this ledger was written to have and does not yet.
+
+## 2026-08-26: derived, and the derive corrected me twice before it printed a number
+
+`Cover` carries the backing test's **path** now, and `hostsOf` reads that file. `where(op, test, note)`,
+`sameAs(op, other, note)` for the four entries that borrow another's test, `gap(op, note)`. Printed by
+an ordinary run:
+
+    conformance: 37 of 44 opcodes have a comparison; 7 are named gaps
+                 0 include the Node host; 8 do not include the V8 binary
+
+**The hand-written table in the section above is wrong, and that is the argument for this change.**
+It says `native_hostfs_test.wac` compares wasmtime and Deno. Line 113 of that file spawns
+`root(cli) + "/native/v8/target/release/wac"`. It drives *three* hosts, and I read it wrong forty
+minutes before writing this. The count of rows omitting the V8 binary is 8, not the 17 I published.
+
+**The floor test caught its own tool twice**, which is what it is for:
+
+- First derive: 26 rows without V8, because the pattern list had three helper spellings and
+  `native_test.wac` reaches the binary as a **literal path** with no helper. Its own note says *"run by
+  both native binaries"*, so the entry contradicted the derive, loudly.
+- The pattern list gained the literal path and `cli.exec("deno"`, and the number went 26 → 8.
+
+A derive that under-reports silently is no better than a list that over-reports silently. What makes
+this an instrument is `test_every_entry_names_a_file_that_says_which_hosts_it_drives`: an entry that
+derives **no** host fails, and the ledger as a whole must derive at least three distinct hosts. Without
+those, both wrong numbers above would have shipped looking fine.
+
+`sameAs` is checked as well, which nothing did while it was the sentence `"as CONNECT"`: the opcode
+borrowed has to exist and has to be a `where`.
+
+### The Node figure means something narrower than it looks
+
+`0 include the Node host` is true of the **entries**. It is not true of the repository: five tests
+under `packages/platform/test/wac/` drive Node — `runtimes_test.wac`, `spawn_test.wac`,
+`load_test.wac`, `node_net_test.wac`, `echod_test.wac` — and **no ledger entry names any of them.**
+
+So the next step is not "write Node tests". It is: go through those five, and for each opcode they
+exercise, either point the entry at them or add the entry. Some of the surface is very likely Node-
+covered already and recorded as though it were not — which is the same failure as `LINK_STAT`, in the
+opposite direction.
