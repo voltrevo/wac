@@ -215,3 +215,57 @@ What it does settle is the question the page was stuck on: the rise of the suite
 has now been measured, and it is **2489 MB from a 5.3 GB baseline, peaking at 7794 MB**, not the 5158
 MB the floor assumes.
 
+
+## 2026-08-26: the floor is too low, and the refusals were right — agent-a
+
+Read off the table already in `tools/runTests.wac`, before running anything. It has two columns and
+**the floor was taken from the one that under-reports.**
+
+    jobs   wall      peak      rise      anon   result
+    4      259s    7893MB    5158MB    5905MB   3377 passed      <- the default
+
+`rise` is `memory.current` high minus low; `anon` is the same for `memory.stat`'s anonymous pages. The
+floor is 5,500 — derived from the 5,158 — and the anon rise at the same width is **5,905**.
+
+**`memory.current` rising by less than `anon` is not a contradiction, it is the failure mode.** The
+kernel evicts page cache to satisfy anonymous allocation, so the charge for the cgroup as a whole grows
+more slowly than the part that cannot be reclaimed. The gap opens exactly when memory is tight, which
+is when the floor is being consulted. `jobsSweep.sh` already says which of the two matters, in the
+comment beside the sampler:
+
+> `anon` from `memory.stat` is the part that has to be found: it cannot be reclaimed, only swapped or
+> OOM-killed. `tools/suiteGate.ts` compares its floor against `MemAvailable`, which *already* counts
+> reclaimable cache as available.
+
+So the instrument names the right column and the floor was set from the other one.
+
+**And that table is the Deno lane alone**, which this page already notes: 3,377 tests when it was
+taken, 1,690 by 2026-08-21, against 2,387 in the `wac test` lane that the sweep never runs. The
+defence offered in `runTests.wac` — *"the peak is the machine's rather than a lane's"* — holds only if
+the two lanes never overlap and Deno's is the heavier of them. Neither is established, and both
+would have to be true.
+
+### What this changes
+
+Both facts point the same way, and it is not the way this issue assumed when it opened: **5,500 is too
+small, and the thirty-five refusals were correct.** The gate was not being pedantic about a machine
+that had room; it was declining to start a suite that would not have fitted.
+
+- **Raising the floor to match the evidence makes refusals more frequent, not fewer.** The number to
+  raise it to is at least 5,905 and probably more once the wac lane is in the measurement.
+- **So the floor is not the fix for the refusals.** What produced them is contention — three resident
+  agents holding 2.28 GB before anything is built, as this page measured. That is a scheduling
+  problem: a queue, or fewer concurrent agents, or a suite that needs less.
+- **`WAC_SUITE_ANYWAY=1` is worse than it looks.** Forcing past a floor that is already too low is how
+  a run meets `issues/system/0142`'s silent kill, and this page says so; the numbers above are why it
+  is not a remote risk.
+
+### What is still worth measuring, and what is not
+
+Step 1 as written — extend the sweep to both lanes — is still the right work, and it will move the
+floor **up**. What is no longer worth doing is re-measuring to find out whether 5,500 is too generous:
+the table in the tree already answers that, and the answer is no.
+
+I have not run a sweep. Everything above is arithmetic on numbers this repository recorded on
+2026-08-15 and a comment written beside the sampler that produced them; a sweep is six suite runs and
+the better part of an hour, and it would confirm a direction rather than establish one.
