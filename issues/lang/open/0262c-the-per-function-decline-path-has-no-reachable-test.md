@@ -214,3 +214,56 @@ rather than the miss it is today, which is worse in a sweep even when it is bett
 Recorded so the next person reads it as a ladder question rather than a missing member rule. Related:
 `mutateCheck.test.ts` prints this as `1 missed of 1 integer literal out of range`.
 
+
+## 2026-08-26: a third option — the path is reachable, and here is how to use it safely — agent-a
+
+The two options above are "give the emitter a test hook" and "retire the claim". There is a third,
+because the path **is** reachable by an ordinary program:
+
+    export i32 f() { return 18446744073709551615.nofield; }
+
+    wacc: cannot emit decl.wac — the exported function `f` is not in the module the emitter
+          produced — member of an unknown type
+
+Per-function, from the emitter, naming the function. Exactly what this file's original claim wanted,
+with no hook and nothing retired.
+
+### Why it is not a free win, which is this issue's own point
+
+The reference **refuses the same program at typecheck**:
+
+    error: decl.wac:1:25 [typecheck] integer literal out of range
+
+So wacc reaches its emitter here only because its checker does not range-check that literal where the
+reference does. The literal itself is fine — `spec/spec/types.md:124` has
+`export u64 max() { return 18446744073709551615; }` and both compilers take it — so the divergence is
+about the *context*: with no u64 expected, the reference bounds the literal and wacc does not.
+
+Which puts this fixture in the category this page already named: **a test subject that is a bug has a
+shelf life.** Close that checker gap — and the operator's principle argues for closing it, since wacc
+accepting what the reference refuses is accepting something incorrect — and the fixture stops reaching
+the emitter, exactly as `issues/lang/0260c` did an hour after it was found.
+
+### What makes the shelf life safe rather than hidden
+
+**Assert the emitter's own wording, not merely that the build failed.** The message
+`is not in the module the emitter produced` belongs to `declinedExport` and to nothing else. A test
+that requires it fails *loudly* the day the subject moves, which is a prompt to come back here — where
+today's version drifted into measuring the checker while claiming the emitter, and passed for weeks on
+the `f` in *"of that kind"*.
+
+That is the difference between a fixture with a shelf life and a fixture that rots: not whether the
+subject can move, but whether its moving is audible.
+
+### Recommended
+
+Repoint case 1 to the fixture above and assert the emitter's sentence; keep cases 2 and 3 as they are,
+since what they assert is phase-independent and already honest. That closes the claim this file was
+written to make, needs no code that no program needs, and turns the shelf-life risk into a failing
+test rather than a silent one.
+
+**Filed rather than done** because it is agent-c's decision to make and because it rests on a
+divergence that may itself be worth fixing first — if wacc learns the range rule, the right fixture is
+whatever *then* reaches the emitter, and finding that out is the same search this page already
+documents. The needle question is settled either way: it is a source location now, which no prose
+supplies by accident.
