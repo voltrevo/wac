@@ -169,6 +169,45 @@ is an ergonomic improvement rather than the resolution of this document, and it 
 questions of its own — chiefly what happens when a method's letter appears in a non-lambda parameter
 too, as it would in a `fold`. Keeping it here would have made this document wait on those.
 
+### `fold` is the example worth leading with
+
+`Pending.then` is what prompted this, and it is the *worst* advertisement for it: `U` appears once,
+only in the lambda's return, so every call needs the type written. The shape every collection API
+wants is better:
+
+```wac
+U fold<U>(const this, U seed, fn[U(U, T)] f)      // on Vec<T>
+```
+
+and it needs **no written type argument in the common case**, because `U` appears in `seed`, which is
+not a lambda:
+
+```wac
+i32 total = v.fold(0, (i32 acc, i32 x) => acc + x);        // U from seed and the slot
+i64 wide  = v.fold<i64>(0, (i64 acc, i32 x) => acc + x);   // written, when you want it
+```
+
+A bare literal takes its type from the slot — measured 2026-08-26, `id(0)` is `i32` or `i64`
+depending on where it lands — so the seed does not need a cast either.
+
+That matters for how this decision reads. The fear about C is that it makes every generic call
+noisy; `fold` is the demonstration that it does not. Writing the argument is the **escape**, used
+where nothing else determines the letter, which for a well-designed API is rare.
+
+`core/vec.wac` has no `map`, `fold` or `filter` today. They are the obvious first users.
+
+### Acceptance criteria
+
+1. `Vec<T>.fold<U>` can be **declared** — today the declaration checks and the call is refused.
+2. `v.fold(0, (i32 acc, i32 x) => acc + x)` compiles with **no** written type argument.
+3. `v.fold<i64>(0, (i64 acc, i32 x) => acc + x)` compiles with one.
+4. `p.then<Foo>((i64 at) => Foo.create())` compiles — the `Pending` case, where the argument is
+   required because `U` appears only in the lambda's return.
+5. A three-link chain of inline lambdas compiles, which is the operator's constraint:
+   `p.then<A>(f).then<B>(g).then<Foo>(h)`.
+6. The emitter produces **distinct instantiations** for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>`
+   — the third level of monomorphisation, and the thing most likely to be got wrong quietly.
+
 ### What is left to build
 
 C needs no inference work, but it is not free:
