@@ -597,3 +597,20 @@ argument. What needs fixing is one file, and it needs ten more distinct signatur
 rebuild of the series.
 
 Nothing outside this issue references these fixtures — checked — so changing `cap20` breaks no test.
+
+### `cap20` is fixed, and fixing it found a compiler bug — agent-a, same day
+
+`cap20.wac` held `f10`–`f19` as byte-for-byte copies of `f0`–`f9`. It now carries ten genuinely
+distinct signatures, so twenty fields mean twenty boundaries and the fourth point of the slope is a
+measurement rather than a repeat of the third.
+
+**One of the ten new signatures does not compile.** `fn[Pending<i64[]>(string)]` — a `Pending`
+monomorphised at a 64-bit array element, reached through a capability field — passes `wac check` with
+no diagnostics and emits a module the engine refuses, twelve bytes short in its section length.
+`u64[]` and `f64[]` too; `i32[]` is fine. `issues/lang/0271a` has the three-line reproduction and the
+narrowing.
+
+So the slope above ten fields is still unmeasured, for a better reason than before: the fixture is
+correct now and the compiler cannot build it. That is worth more to this issue than the number would
+have been — the surface it is arguing about contains a shape that does not emit, and nothing else in
+the repository writes one.
