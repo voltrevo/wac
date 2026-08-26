@@ -375,5 +375,8 @@ export Cli childCli(Frame f, const Cli parent) {
     parent.load,
     parent.call,
     parent.unload,
+    // Forwarded unchanged: a frame is a view of stdio and the working directory, and asking the
+    // engine about some bytes touches neither.
+    parent.validated,
   );
 }

@@ -2232,6 +2232,28 @@ export struct Cli {
    */
   fn[void(i32)] unload;
 
+  /**
+   * Would the engine accept these bytes as a module? "" if it would, and why not if it would not.
+   *
+   * **Compiles and stops there**, which is the whole difference from `load` and the reason this is
+   * its own field rather than a flag on it. `load` wants a `wac.manifest` section, instantiates, and
+   * builds a world out of the exports — three things that can fail for reasons that are nothing to do
+   * with the bytes being a well-formed module. A program asking "did the compiler emit something the
+   * engine will take" is asking about the *bytes*.
+   *
+   * **The question only a host can answer**, and so the one thing about modules that stayed on this
+   * side of `issues/system/0257c`'s line. wac has no `WebAssembly.validate`, so
+   * `packages/wacc/test/wac/corpusemit_test.wac` used to run each module it emitted — a fork per
+   * module, 142s of the 193s it took — and `wac validate` was a host command for want of this.
+   *
+   * **Not `Pending`, for `load`'s reason:** nothing crosses to a launcher. The engine is here.
+   *
+   * A host with no engine to ask answers a refusal, as every unsupported capability does. That is not
+   * the same as "these bytes are bad", so the sentence has to say which — `FAULT_UNSUPPORTED`'s words
+   * rather than a bare "rejected".
+   */
+  fn[string(u8[])] validated;
+
 
   Cli of(
     fn[Pending<i32>()] argCount,
@@ -2273,7 +2295,8 @@ export struct Cli {
     fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith,
     fn[LoadedModule(u8[], i32)] load,
     fn[CallResult(i32, string, i32)] call,
-    fn[void(i32)] unload
+    fn[void(i32)] unload,
+    fn[string(u8[])] validated
   ) {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
@@ -2281,7 +2304,7 @@ export struct Cli {
       connect, listen, accept, recv, send, closeSocket, closeSend, bindDatagram, receiveFrom, sendTo,
       spawn, spawnSelf, closeFeed, exitCode, cwd,
       pushChild, popChild, execWith,
-      load, call, unload
+      load, call, unload, validated
     );
   }
 }

@@ -113,6 +113,9 @@ export Asked forCommand(string cmd) {
   // `app` is a build that writes an executable instead of a module: the same three, and the
   // executable bit is part of writing a file rather than a capability of its own.
   if (cmd == "app") { return Asked(true, true, false, true, false); }
+  // Reading the modules it is asked about, and nothing else: `Cli.validated` is the engine answering
+  // in this process, so there is no program to start and no file to write.
+  if (cmd == "validate") { return Asked(true, false, false, false, false); }
   // `app-run` reads one file and starts what is inside it, and the grants the program gets are the
   // ones its own manifest declares — `runBytes` reads them from the module rather than passing on
   // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
@@ -269,5 +272,9 @@ export Cli narrowed(const Cli parent, Asked a) {
     parent.load,
     parent.call,
     parent.unload,
+    // Asking whether the engine would accept some bytes is not a capability over anything: it reads
+    // no file, starts nothing, and the bytes came from the caller. Passed on unconditionally for the
+    // same reason `write` is.
+    parent.validated,
   );
 }

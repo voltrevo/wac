@@ -979,6 +979,17 @@ export i32 main(Core core, Cli cli) {
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
 
+  // **Asking for help is not an error.** The native binary used to translate this on the way out —
+  // it ran the program for its usage block and then exited 0 if the caller had said `--help`, because
+  // the program had no way to tell it apart from a mistake. With the binary handing every argument
+  // over unchanged, the distinction is this program's to make, and it is the same one every tool
+  // makes: a usage block somebody asked for is the answer, and the same block at somebody who
+  // mistyped is a refusal. `spec/cli/wac.md` `[§wac-cli-usage-3nkq8wj]`.
+  if (cmd == "--help" || cmd == "-h" || cmd == "help") {
+    core.warn(usage());
+    return 0;
+  }
+
   // **A module is a program, and that is decided by what the first argument *is*.** `wac prog.wasm`
   // is the most basic thing this command does and it worked only on the native binary until
   // 2026-08-22 — the other two printed the usage block at somebody holding a built program.
@@ -990,6 +1001,37 @@ export i32 main(Core core, Cli cli) {
   // 'prog.wasm'" — a message about the wrong thing entirely.
   if (cmd.len() > 5 && cmd.slice(cmd.len() - 5, cmd.len()) == ".wasm") {
     return runModule(core, cli, argc, cmd);
+  }
+
+  // **`validate` needs the engine and nothing else**, so it is up here with the other two commands
+  // that skip the compile. It was the host's until 2026-08-26 for want of `Cli.validated`, which is
+  // the one thing about a module only a host can answer — see that field's note. The command around
+  // it is a loop and a count, which is what a command is.
+  if (cmd == "validate") {
+    if (argc < 2) {
+      core.warn("usage: wac validate <module.wasm> […]");
+      return 2;
+    }
+    i32 bad = 0;
+    for (i32 i = 1; i < argc; i++) {
+      string path = string.fromBytes(cli.arg(i).wait());
+      FileResult f = cli.readFile(path).wait();
+      if (!f.ok) {
+        // **Unreadable counts as rejected**, so one missing path does not hide the verdict on the
+        // others — the caller asked about a list and gets an answer about the whole list.
+        string words = faultWords(f.fault);
+        core.log("unreadable " + path + " — " + (words == "" ? f.error : words));
+        bad = bad + 1;
+        continue;
+      }
+      string why = cli.validated(f.bytes);
+      if (why != "") {
+        core.log("rejected " + path);
+        bad = bad + 1;
+      }
+    }
+    core.log(itoa(argc - 1) + " module(s): " + itoa(bad) + " rejected");
+    return bad > 0 ? 1 : 0;
   }
 
   // **`app-run` needs no compiler and asks for none**, which is why it is up here with the module
