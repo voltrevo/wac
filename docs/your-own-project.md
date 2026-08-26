@@ -128,9 +128,23 @@ originally about. Reach for the built command unless you are working on the comp
 that **`deno task check` is this repository's own TypeScript check**, not `wac check`.
 
 **One thing to know before you build it**: the hosted build shells out to `deno bundle`, which fetches
-`@esbuild/linux-x64` from npm the first time. On a machine with no network that fails after about a
-minute of silence. The binary has no such step, so an offline environment is still a reason to install
-it. `issues/system/0230a` tracks that too.
+`@esbuild/<your platform>` from npm the first time. The binary has no such step, so an offline
+environment is still a reason to install it.
+
+**That fetch used to happen in silence**, and twice — August and a later tour — somebody watched a
+command this page calls offline sit for ~72 and ~74 seconds and then fail on an npm URL. Since
+2026-08-26 a bundle still going after five seconds says so and names the package, and a failure that
+mentions npm says how to get it and how to avoid needing it:
+
+```
+wac: still bundling (worker) — the first bundle on a machine downloads npm:@esbuild/linux-arm64,
+     which needs the network. `deno cache npm:@esbuild/linux-arm64` does it once, ahead of time.
+```
+
+`deno cache npm:@esbuild/<your platform>` is the one-time step if you would rather do it deliberately;
+nothing requires it. **And it is only the bundler.** Compiling and installing reach no npm at all —
+`bash tools/seed.sh --bootstrap` and `deno task --no-lock wac:install` are the offline route to the
+whole command, which is why the failure message names them.
 
 **One thing here does need the network, once.** Compiling does not: the two commands above complete
 under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*

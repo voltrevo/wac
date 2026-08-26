@@ -826,3 +826,61 @@ good message and is nowhere in `docs/your-own-project.md`. It matters here more 
 repository has `~/bare-repos` as its source of truth, so the obvious way to test a mapping without the
 network is the one that does not work, and the obvious next move is to reach for GitHub, which the
 same page calls *not authoritative*.
+
+### 2026-08-26: the bundler's silence, reported a second time and now fixed
+
+The author of GitHub issue 22 came back:
+
+> The remaining direct issue is the hosted build's `deno bundle`/esbuild dependency. In my fresh tour
+> it still sat silent for ~74 seconds before failing on the npm fetch. The promised progress message
+> has not landed on current master.
+
+Correct on both counts. The message was listed as work and not done — this entry is it.
+
+**`deno bundle` stays.** The operator's ruling: using it to build the hosted command is a sensible
+thing to do, and it is not the wasm it is there for — the embedded module is bit-for-bit the native
+seed minus its manifest section, so the bundler exists to inline the generated glue. `--cached-only`
+is not available either way: `deno bundle` rejects it on 2.9.1 (*"tip: to pass '--cached-only' as a
+value, use `-- --cached-only`"*), it is a `deno run`/`deno cache` flag, and the bundle is a separate
+subprocess that inherits none of the parent's. What the issue saw succeed under it was
+`deno run --cached-only … native.ts`, the compiler.
+
+So the fix is honesty about the wait, in three parts:
+
+- **A line after five seconds**, naming the package for *this* platform. Chosen against noise rather
+  than against the fetch: a warm bundle is ~70ms and `packages/box`'s tests run twenty-seven of them,
+  so the threshold decides how often this fires when nothing is wrong, not whether a 74-second wait is
+  caught.
+- **`output()` instead of `outputSync()`**, which is what makes the line possible at all — a
+  synchronous subprocess blocks the event loop, so nothing scheduled can run during the one interval
+  worth narrating.
+- **`bundleFailure`**, which appends the prefetch command *and the offline route* when the bundler's
+  stderr mentions npm, and adds nothing when it does not. Keyed on what the bundler said rather than
+  on probing Deno's cache layout, which is Deno's to change.
+
+**Measured here, and the measurement is why the threshold moved.** With `DENO_DIR` pointed at an empty
+directory — a fresh machine — the whole build took **1.5s** and the cache came back holding
+`dl/esbuild-0.25.5/esbuild-linux-arm64` and `npm/registry.npmjs.org/@esbuild`, 20 MB. The fetch
+happened and was fast, because this container has a local proxy. **So this environment cannot
+reproduce the reported wait**, and a threshold tuned to what is observable here would have been tuned
+to the wrong thing.
+
+Which left the line itself unverified, so it was canaried rather than assumed: threshold to 1ms, warm
+build, and all three bundles announce themselves —
+
+    wac: still bundling (worker) — the first bundle on a machine downloads npm:@esbuild/linux-arm64, …
+    wac: still bundling (childwasm) — …
+    wac: still bundling (launcher) — …
+
+then restored, and the same build is silent again.
+
+`packages/platform/test/esbuildadvice.test.ts` covers the two strings: the platform mapping for five
+targets, that this machine's answer is npm's spelling and not Rust's, that npm-mentioning stderr gets
+both the prefetch and the offline route, that unrelated stderr gets neither, and a canary that the two
+branches differ — because both of the middle assertions pass if the function returns its input
+unchanged.
+
+**A wrong triple would be worse than no advice**, which is most of what that test is about:
+`deno cache npm:@esbuild/linux-x64` on an arm machine *succeeds* and fixes nothing, so the reader pays
+for a download and believes they have done the thing. esbuild's names are node's
+`process.platform`/`arch` — `win32`, `x64` — and `Deno.build` speaks Rust's — `windows`, `x86_64`.
