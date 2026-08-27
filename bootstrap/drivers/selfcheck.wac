@@ -1,0 +1,19 @@
+// **A driver with no state at all**, which is the only kind a wac module can have: wac has no
+// mutable module-level variable, so a boundary that fills a buffer across several calls cannot be
+// written in wac. Everything here is a local, and the answer is one i32.
+//
+// It compiles a program and reports the module's length and a checksum of its bytes. That is
+// enough to compare two compilers exactly without a single reference crossing into the host —
+// which matters because the compiler being asked was built by another compiler, and the question
+// is whether the two agree.
+
+import { emit } from "./api.wac";
+
+export i32 selfcheck() {
+  u8[] out = emit("export i32 answer() { return 6 * 7; }".toBytes());
+  i32 h = 0;
+  for (i32 i = 0; i < out.len(); i++) {
+    h = (h * 31 + out[i]) & 65535;
+  }
+  return out.len() * 100000 + h;
+}

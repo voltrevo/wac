@@ -260,6 +260,13 @@ export i32 drv_envFuncs() {
   return e2.funcs.len();
 }
 
+// Why the *linked* build declined, which `blocked` cannot say: it takes one source and the
+// question is about a file set.
+export i32 drv_declineFiles() {
+  declined = blockedFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return declined.len();
+}
+
 i32 main() {
   return 0;
 }
