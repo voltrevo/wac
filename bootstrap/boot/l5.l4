@@ -2035,6 +2035,9 @@ i32 match_body(i32 wantValue, i32 out) {
   i32 level = scrdepth;
   i32 saved = scratch_begin();
   i32 armty = TY_I32;
+  // Where the default arm's code sits in the scratch, so it can be moved to the end. See below.
+  i32 elseAt = 0 - 1;
+  i32 elseLen = 0;
   want(123);
   while (ispunct(125) == 0 & kind() != K_EOF) {
     // **`else:` is an arm with no tag test.** It reads like a variant named `else` otherwise, and a
@@ -2043,6 +2046,7 @@ i32 match_body(i32 wantValue, i32 out) {
     if (isword("else")) {
       next();
       want(58);
+      elseAt = dp;
       i32 emark = nloc;
       if (wantValue) {
         armty = expr();
@@ -2052,6 +2056,7 @@ i32 match_body(i32 wantValue, i32 out) {
       }
       nloc = emark;
       word("br"); label(done); nl();
+      elseLen = dp - elseAt;
     } else {
     eatword("case");
     i32 vp = tstart();
@@ -2108,7 +2113,18 @@ i32 match_body(i32 wantValue, i32 out) {
 
   word("block"); label(done); sp(); word("->");
   if (wantValue) { slotvaltype(armty); nl(); } else { nl(); }
-  scratch_copy(level, armlen);
+  // **The default arm goes last however it was written.** It has no tag test, so wherever its code
+  // sits is where the match stops — and written before the cases it answers every one of them.
+  // wacc's own `typeOfE` writes `match (callee.kind) { else: ... case Member(obj, nameTok): ... }`,
+  // so every method call took the default and came back untyped: `.len()` on an array was declined
+  // as an untyped call in a compiler that had read the arm for it and jumped over it.
+  if (elseAt == 0 - 1) {
+    scratch_copy(level, armlen);
+  } else {
+    scratch_copy_range(level, 0, elseAt);
+    scratch_copy_range(level, elseAt + elseLen, armlen - elseAt - elseLen);
+    scratch_copy_range(level, elseAt, elseLen);
+  }
   // A tag matching no arm falls out. wac's `match` is exhaustive and this rung does not check it,
   // so the expression form has to leave *something* — and an unreachable default is the honest one.
   if (wantValue) { zero_of(armty); }
@@ -2632,10 +2648,14 @@ i32 scratch_end(i32 out, i32 saved) {
   return n;
 }
 
-i32 scratch_copy(i32 level, i32 n) {
+i32 scratch_copy_range(i32 level, i32 from, i32 n) {
   i32 k = 0;
-  while (k < n) { emit1(load8(SCR + level * 1048576 + k)); k = k + 1; }
+  while (k < n) { emit1(load8(SCR + level * 1048576 + from + k)); k = k + 1; }
   return 0;
+}
+
+i32 scratch_copy(i32 level, i32 n) {
+  return scratch_copy_range(level, 0, n);
 }
 
 i32 mowner = -1;

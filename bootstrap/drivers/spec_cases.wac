@@ -194,6 +194,72 @@ export i32 drv_linkEmit(i32 entryDecls) {
   return built.len();
 }
 
+// wacc carries core's source inside it — `import { Node } from "core"` is answered from
+// coretext.wac rather than from any file the caller supplies. When nine JSX cases all decline
+// with "a match on something that is not an enum", the question is whether that text arrives.
+u8[] coreBuf;
+
+export i32 drv_coreSource() {
+  coreBuf = coreSource().toBytes();
+  return coreBuf.len();
+}
+
+export i32 drv_coreByte(i32 i) {
+  return coreBuf[i];
+}
+
+// wacc's own predicates, callable one at a time. `.len()` on any array is declined as an untyped
+// call, and every path to typing it goes through one of these — so ask them directly rather than
+// inferring which from a decline three phases later.
+export i32 drv_isArrayName() {
+  return isArrayName(string.fromBytes(inbuf)) ? 1 : 0;
+}
+
+export i32 drv_isArrayType() {
+  return isArrayType(string.fromBytes(inbuf)) ? 1 : 0;
+}
+
+export i32 drv_endsWithBrackets() {
+  return endsWith(string.fromBytes(inbuf), "[]") ? 1 : 0;
+}
+
+// wacc's own rendering of what it made of a program — the fastest way to see a type it inferred
+// rather than deduce it from a decline three phases later.
+u8[] dumpBuf;
+
+export i32 drv_dump() {
+  dumpBuf = dump(inbuf).toBytes();
+  return dumpBuf.len();
+}
+
+export i32 drv_dumpByte(i32 i) {
+  return dumpBuf[i];
+}
+
+// A fresh Env, measured. Every local the emitter knows about lives in `locals`, and `addLocal`
+// gives up quietly when it is full — so an Env whose arrays came out the wrong size would make
+// every local invisible to `typeOfE` while leaving name-based lookups working, which is exactly
+// the shape of "every builtin method is an untyped call and every struct method is fine".
+export i32 drv_envLocals() {
+  Env e2 = Env.create();
+  return e2.locals.len();
+}
+
+export i32 drv_envLocalTypes() {
+  Env e2 = Env.create();
+  return e2.localTypes.len();
+}
+
+export i32 drv_envDeclNames() {
+  Env e2 = Env.create();
+  return e2.declNames.len();
+}
+
+export i32 drv_envFuncs() {
+  Env e2 = Env.create();
+  return e2.funcs.len();
+}
+
 i32 main() {
   return 0;
 }
