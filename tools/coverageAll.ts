@@ -47,7 +47,7 @@ const verbose = Deno.args.includes("--verbose");
 const startedAll = performance.now();
 
 /**
- * Every `coverage:*` task there is, read from `deno.json` rather than listed here.
+ * Every `coverage:*` task there is, read from `tasks.json5` rather than listed here.
  *
  * **It was a literal, and it had drifted.** Nineteen names against twenty-one tasks: `raster` and
  * `wacpkg` existed, were never swept, and so had ratchets that nothing enforced — a sweep that
@@ -55,8 +55,20 @@ const startedAll = performance.now();
  * package it skipped regresses. Both passed when this was found, which is the only reason it cost
  * nothing. Deriving it means adding a task is the whole of adding it to the sweep.
  */
-const TASKS = (JSON.parse(Deno.readTextFileSync("deno.json")) as { tasks: Record<string, string> })
-  .tasks;
+const TASKS = ((): Record<string, string> => {
+  // **`tasks.json5`, since 2026-08-27**, when `wac task` replaced `deno task` and the registry left
+  // `deno.json`. A hand-rolled strip rather than a JSON5 parser: this needs the keys and the command
+  // lines, the file is a flat table of strings, and `packages/json`'s `parseJson5` is the real one —
+  // reachable from wac, which this file is not yet.
+  //
+  // This read `deno.json` and got `undefined` the day the tasks moved, which is a crash inside the
+  // gate's coverage phase rather than a message: `Object.keys(undefined)`. A sweep for the string
+  // `deno task` does not find a file that reads the registry as *data*.
+  const raw = Deno.readTextFileSync("tasks.json5")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/,(\s*[}\]])/g, "$1");
+  return JSON.parse(raw) as Record<string, string>;
+})();
 const PACKAGES = Object.keys(TASKS)
   .filter((t) => t.startsWith("coverage:") && t !== "coverage:all")
   .map((t) => t.slice("coverage:".length))
@@ -127,7 +139,10 @@ const worker = async () => {
   while (next < PACKAGES.length) {
     const pkg = PACKAGES[next++];
     const started = performance.now();
-    const cmd = new Deno.Command("deno", {
+    // **The checkout's binary, not `wac` on PATH.** An installed build is a different compiler than
+    // the one these ratchets are measuring, and the gate is about this tree. Same reason
+    // `tools/push.sh` names it in a variable.
+    const cmd = new Deno.Command("./native/v8/target/release/wac", {
       args: ["task", `coverage:${pkg}`],
       stdout: "piped",
       stderr: "piped",

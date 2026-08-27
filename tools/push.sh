@@ -456,7 +456,11 @@ for attempt in 1 2 3; do
     echo "       wac task coverage:<pkg> --verbose"
     echo "   A branch you cannot reach is not a failure — record it in that package's cov.ts with the"
     echo "   argument for why, which is what every entry there already carries."
-    echo "   If this is a gap you did not open and cannot close, `tools/push.sh` says how this check"
+  # **Escaped, because bash runs backticks inside double quotes.** Printing this message spawned a
+  # whole second gate — a full suite, inside the failure handler of the first — and the only
+  # reason nobody met it is that the coverage ratchets are almost never red. Found on 2026-08-27
+  # when they were, and the gate took forty minutes to report a failure it had already decided.
+  echo '   If this is a gap you did not open and cannot close, tools/push.sh says how this check'
     echo "   went from blocking to reporting once before, and on what argument."
     exit 1
   fi
