@@ -1481,13 +1481,15 @@ export struct Env {
    * Where each linked file begins, as a line number, and every top-level name with the file that
    * declared it.
    *
-   * Linking by concatenation put every file's declarations in one pool, and a pool cannot hold two
-   * meanings for one name — `sha256.wac` and `sha512.wac` both declare a `K`. What distinguishes
-   * them is **where they are**: the blob is the files end to end, so a line number names a file
-   * exactly, and every token carries its line. A name declared in the second file is registered
-   * under a key of its own, and a reference resolves to the declaration in its *own* file before it
-   * resolves to anyone else's — which is the language's rule (a file sees its own names, then what
-   * it imported) arrived at from the only direction available here.
+   * Linking puts every file's declarations in one pool, and a pool cannot hold two meanings for one
+   * name — `sha256.wac` and `sha512.wac` both declare a `K`. What distinguishes them is **which file
+   * they are in**: a name declared in the second file is registered under a key of its own, and a
+   * reference resolves to the declaration in its *own* file before it resolves to anyone else's —
+   * which is the language's rule, a file sees its own names and then what it imported.
+   *
+   * **The file used to be derived from the line**, because linking was concatenation and a line
+   * number named a file exactly. `Env.curFile` says it outright now; the derivation was deleted with
+   * the concatenation in phase C15.
    */
   i32 fileCount;
   /**
@@ -2090,7 +2092,7 @@ export struct Env {
   /** How many i32 slots the journal gets, or 0 for the default. `issues/lang/0059`. */
   i32 traceSlots;
 
-  /** How many of the blob's declarations are the entry's, or -1 for a single file. */
+  /** How many of the program's declarations are the entry file's, or -1 for a single file. */
   i32 entryDecls;
 
   /**
@@ -2180,7 +2182,8 @@ export struct Env {
    * Which file the lambda is written in, or -1 for a concatenated source.
    *
    * **The third part of the key, and the reason is the sentence above it.** *"A line and a column
-   * name exactly one expression in a linked program"* is true of the blob and false of a graph:
+   * name exactly one expression in a linked program"* is true of one concatenated source and false
+   * of a graph:
    * `packages/box` has 167 files and plenty of them have a lambda at the same line and column as
    * another. Without this, `lambdaAtPos` answers with whichever file's lambda was registered first,
    * and `Pending<bool>.then` was emitted calling a three-parameter function through a four-parameter
@@ -2445,7 +2448,7 @@ export struct Env {
   bool usedData;
 
   /**
-   * The file the walk is currently inside, or -1 when it is walking the concatenated blob.
+   * The file the walk is currently inside, or -1 where nothing has said.
    *
    * **On `Env` rather than a parameter, deliberately.** A declaration's file used to be recovered
    * from its line by `fileOf`, which works only because every line of one big string is unique. Per
@@ -2465,8 +2468,8 @@ export struct Env {
    * **Recorded rather than derived.** The obvious derivation is a field's owning struct, whose key
    * `declFiles` maps to a file; it is wrong for exactly the case that matters. A generic
    * instantiation's fields are owned by a *made-up* name — `env.fieldOwners[…] = inst` — which no
-   * declaration ever produced, so the lookup answers "nowhere", the resolver falls back to the blob,
-   * and a per-file token index is read against the wrong array. Two files were enough:
+   * declaration ever produced, so the lookup answers "nowhere", the resolver falls back to whatever
+   * source the caller has, and a per-file token index is read against the wrong array. Two files were enough:
    * `struct Holder { Vec<i32> xs; }` in one and a use in the other.
    */
   i32[] fieldTyFiles;
@@ -2475,7 +2478,7 @@ export struct Env {
    * For each constant, the file whose token array its initialiser expression indexes.
    *
    * `constInits` is written once, by the pass that declares constants, and read in six places while
-   * the module is emitted — all of which have only the blob's `src`/`lexed` in scope. That is fine
+   * the module is emitted — all of which have only the caller's `src`/`lexed` in scope. That is fine
    * while there is one array and wrong the moment there are many: `packages/box` declined with array
    * types named `array "./applets/uniq.wac"[]`, which is an initialiser read at another file's
    * offsets.
@@ -2488,7 +2491,7 @@ export struct Env {
    * This is the general form of the two tables above, and the shape "analysis from `map<path, ast>`"
    * actually takes: anything stored as tokens now and resolved later has to carry the file it came
    * from, and the resolver has to have somewhere to look that file up. Empty while the emitter walks
-   * a concatenated source, in which case every lookup falls back to the blob and nothing changes.
+   * one file, in which case every lookup falls back to that file and nothing changes.
    */
   u8[][] fileSrcs;
   Lexed?[] fileLexeds;
@@ -3178,7 +3181,7 @@ export string sourceOf(string[] paths, string[] sources, string path) {
  * `""` means a file was named that the caller did not supply — the one failure this cannot paper
  * over, since the missing declarations would otherwise look merely undefined.
  */
-/** How many newlines a source has, which is what its span in the linked blob costs. */
+/** How many newlines a source has, which is how far the next file's lines start from. */
 i32 countLines(string s) {
   u8[] b = s.toBytes();
   i32 n = 0;
@@ -3189,7 +3192,12 @@ i32 countLines(string s) {
 }
 
 /**
- * The entry and everything it imports, linked into one blob.
+ * The entry and everything it imports, read and parsed — one tree per file, `true` if it linked.
+ *
+ * **It returned the files concatenated into one string until phase C14.** Nothing walks such a
+ * thing now: `outSrc`/`outLexed`/`outProg` are the graph, and what the emitter does with them is
+ * `Front.mergedDecls`. What survives of the concatenation is the arithmetic that told a declaration
+ * which file it was in, and only because `starts` is still how a caller asks that of the linker.
  *
  * `res` is the project each file sits in, for `@/` — `design/lang/0009` D7. A `res` shorter than
  * `paths` is ordinary rather than a caller's mistake: only a file writing `@/` has a root worth
@@ -3271,13 +3279,14 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
       if (filePaths.len() > 2) { filePaths[2] = queueSpec[qi]; }
       return false;
     }
-    // A newline between files, so a file that ends mid-line cannot join itself to the next one —
-    // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
-    // **A running count, not a rescan.** This was `countLines(out)`, which calls `s.toBytes()` on
-    // the whole blob so far and walks it — once per file, over a string growing towards a megabyte.
-    // `packages/box` links 170 files, so it allocated and scanned about 110 MB to answer 170
-    // questions whose answers it already had. The value is identical: `out` only ever grows by
-    // `body + "\n"`.
+    // The line each file would begin on if they were laid end to end, which is what `starts` is and
+    // the only thing left of their ever having been. A newline between them, because a file that
+    // ends mid-line would otherwise join itself to the next.
+    //
+    // **A running count, not a rescan.** This was `countLines(out)` over the accumulated text, once
+    // per file, on a string growing towards a megabyte: `packages/box` links 170 files, so it
+    // allocated and scanned about 110 MB to answer 170 questions whose answers it already had.
+    // There is no accumulated text at all since phase C14, and the count is the same number.
     if (starts.len() > sn) { starts[sn] = outLines + 1; }
     // **And what the file was called.** The line boundaries say which file a declaration came from
     // and nothing said what its name was, which is the whole of what a bind name for a
@@ -3573,12 +3582,13 @@ struct Front {
    * **The same program, per file** — `srcs[i]`, `lexeds[i]` and `progs[i]` are the file
    * `filePathsOf[i]` names, in link order.
    *
-   * `src`/`lexed`/`prog` above are the concatenation of all of them, which is what the emitter has
-   * always walked. Both are here while the walks move across one at a time; the invariant that makes
-   * that safe is that the blob's declarations **are** each file's declarations in link order, so a
-   * nested loop visits the same declarations in the same sequence. What checks it is the output:
-   * every step of this migration is verified by `packages/json` and `packages/box` hashing the
-   * same with the cache off, and by the seed reaching a fixed point.
+   * `src`/`lexed`/`prog` above are the **entry's**, which is what a walk falls back to when nothing
+   * has said which file it is in — and for a single-file caller they are the only ones there are.
+   * They were the concatenation of every file until phase C14, and the emitter walked that.
+   *
+   * Every step of that migration was verified the same way: `packages/json`, `packages/sh`,
+   * `packages/box` and `packages/git` emitting byte-identical modules with the cache off, and the
+   * seed reaching a fixed point.
    */
   u8[][] srcs;
   Lexed?[] lexeds;
@@ -4499,19 +4509,14 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
-  // **Still the blob, and the next step is not a loop around this call.** `collectDeclarations` is
-  // three *ordered* passes over every declaration — structs, then a fixpoint that resolves parents,
-  // then constants, then functions — and the comments inside say so: "Structs first of all",
-  // "Function names first, over the whole file". Calling it once per file interleaves them into
-  // file0-structs, file0-consts, file0-funcs, file1-structs, and the compiler that comes out traps.
-  // Measured on 2026-08-27, which is how the passes came to be written down here.
+  // **Why the passes below are loops over files inside a pass, rather than the other way round.**
+  // `collectDeclarations` was three *ordered* passes over every declaration — structs, then a
+  // fixpoint resolving parents, then constants, then functions — and calling it once per file
+  // interleaves them into file0-structs, file0-consts, file0-funcs, file1-structs. The compiler that
+  // comes out traps. Measured on 2026-08-27, which is why it is written down.
   //
-  // Going per-file means inverting the loops — files *inside* each pass — so the phase has to be
-  // decomposed into its passes first. That is the next step.
-  // **The first walk to go per file.** `scanTokenTypes` depends on no ordering — the answer is the
-  // union over every file — so it is the one piece that can move before the passes are decomposed.
-  // It also proves the plumbing end to end: `srcs[i]`/`lexeds[i]` are the file's own arrays, and the
-  // module comes out byte-identical.
+  // `scanTokenTypes` is the exception and went first for that reason: it depends on no ordering, the
+  // answer being the union over every file.
   if (fileCountOf(progs) > 0) {
     for (i32 i = 0; i < progs.len(); i++) {
       if (progs[i] is null) { continue; }
@@ -4733,11 +4738,10 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // Settling walked every function, so an ambiguous name has been reached by now if there is one.
   if (env.ambiguous || env.full) { return bareModule(); }
 
-  // **The walks below read the merged tree rather than the blob's parse.** Same declarations in the
-  // same order, but each one knows its file — so `src` and `lexed` move to that file for the length
-  // of the declaration and back to the blob afterwards, and `env.curFile` says which file a name is
-  // being resolved from. A caller that supplied no per-file trees gets `env.declFile` answering -1,
-  // and every walk reads the blob exactly as it did.
+  // **The walks below read the merged tree.** Each declaration knows its file — so `src` and
+  // `lexed` move to that file for the length
+  // of the declaration and back to the entry's afterwards, and `env.curFile` says which file a name
+  // is being resolved from.
   Decl[] decls = f.mergedDecls.len() > 0 ? f.mergedDecls : prog.decls;
   u8[] blobSrc = src;
   Lexed blobLexed = lexed;
