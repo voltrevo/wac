@@ -320,7 +320,7 @@ rather than stylistic, so they are recorded there and repeated here:
 | 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
 | 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
 | 3 — the postfix path | **done** 2026-08-27 — `ExprKind.Call` carries `Ty[] typeArgs`; `v.fold<i64>(0, f)` parses. Not yet *bound* — that is 0010 C |
-| 4 — name resolution | **not started** — this is the feature |
+| 4 — name resolution | **not started** — this is the feature, and it splits in two: see below |
 | 5 — the diagnostic | **done** 2026-08-27 — `perrTypeArgsThenValue`; the checker's `TypeName` arm branches on whether the name is a function; and the method-type-parameter refusal stops promising a workaround. `issues/lang/0235a` is covered on both halves |
 | 6 — the emitter | **not started**, and the only large one |
 | 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
@@ -341,6 +341,29 @@ rather than stylistic, so they are recorded there and repeated here:
 | 9 | `Cell<Typoo>()` says unknown type `Typoo` | **yes** |
 | 10 | `a < b > c` and `g(a < b, c > e)` stop compiling, with the rule and escape named | **yes** — `spec/cases/0236`, `0237`, and `packages/wacc/test/wac/typeargsrule_test.wac` asserts the words |
 | 11 | one instantiation per written type argument, shared with the inferred one | **no** — needs step 6 |
+
+### Step 4 splits, and the cheaper half is the one this document is named for
+
+Scoped 2026-08-27 while implementing steps 2 and 3. The two halves reuse different machinery and only
+one of them needs the thing `design/lang/0010` calls the only large piece.
+
+**A generic free function — `zero<i32>()`, criteria 1 and 2 — needs no new level of
+monomorphisation.** `zero<i32>()` already parses as a `Construct` whose `Ty` carries the arguments,
+because `zero<i32>()` and `Vec<i32>(…)` are the same syntax; and the emitter already registers,
+orders and emits one function per generic-function instance, discovering them at call sites through
+`genericCallInstance`. That function binds the letters by matching *declared parameter types against
+actual argument types* — so the written-argument case is the same registration with the binding
+handed to it instead of inferred. What blocks it today is the **checker**, which reports `unknown
+type 'zero'` from `typeOfTy` before anything else runs.
+
+**A method with its own letters — criteria in `design/lang/0010` — does need it**, because the
+instance is a *pair*: `Box<i32>.map<i64>` multiplies the owner's instantiation by the method's
+arguments, and the emission loops match instances against top-level declarations, which a method is
+not. That is 0010's item 3.
+
+So the order that gets the most for the least is: the free-function half first — it is the sentence
+this document is titled with, *"so a generic free function is usable"* — and the method half with
+0010, where its cost is already written down.
 
 ### What the implementation taught, that the document did not predict
 
