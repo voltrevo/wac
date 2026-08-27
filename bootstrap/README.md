@@ -63,16 +63,27 @@ interesting half, because the two numbers are not the same kind of thing.
     what a human must read to trust it
       wac-L0 assembler, one of the two           832 lines   (the other is the check, not the trust)
       wac-L1 interpreter, hand-written         1,804 lines
+      the flattener, in ts/l5.ts                 191 lines
                                                -----------
-                                               2,636 lines
+                                               2,827 lines
 
     what is derived from that, and checked by running it
       wac-L2 ... wac-L5                        5,986 lines
       the second assembler                     1,212 lines
 
+    what produces no artefact at all
+      the instruments                          1,209 lines
+      the tests                                1,512 lines
+
+**The flattener is in the first column and it took a while to notice.** wac-L5 ignores `import`,
+so something has to do the linking, and that something is 191 lines of TypeScript that resolves
+specifiers, concatenates modules and *renames the colliding private declarations of two of them*.
+A bug there produces a wrong program quietly, which is the definition of code that has to be
+trusted. It is the cost of the shortcut, and leaving it out of the count was flattering.
+
 The reference's 19,499 lines are all in the first column: every one of them is trusted because
-somebody read it. Here, 2,636 are — and one of those two files is checked against a second
-implementation of the same written format, so even the root has two witnesses rather than one.
+somebody read it. Here, 2,827 are — and one of those three files is checked against a second
+implementation of the same written format, so even the root has a witness.
 
 That is the case for a ladder, and it is a different case from "fewer lines".
 

@@ -446,3 +446,26 @@ program, and that program does not use it.
 
 Left as it is, deliberately. wac-L5 is the minimum that compiles wacc, and a feature added here has
 to be paid for in the rung below as well.
+
+## The TypeScript, excluding tests
+
+    the bootstrap path                       1,269 lines    965 without comments
+      assemble.ts       the wac-L0 assembler   832
+      l5.ts             driver and flattener   262
+      l2.ts l3.ts l4.ts drivers                175
+    hand-run helpers                           194 lines    141
+      repl.ts run.ts
+    instruments                              1,209 lines    933
+                                             ---------
+                                             2,672 lines  2,039
+
+Only the first group can produce a wrong artefact. The instruments measure and the helpers are for
+reading with, so a mistake in either shows up as a bad reading rather than a bad compiler — which
+is the same reason `against_real_wac.ts` is deliberately not a test.
+
+**Within the bootstrap path, 191 lines are a linker.** `ts/l5.ts` is 262 lines of which only 51
+drive the compiler — bytes in at 16 MiB, text out at 4 MiB. The rest resolves specifiers,
+concatenates modules and renames declarations that collide, which is the work `import` would have
+done if wac-L5 implemented it. That is what the shortcut costs, and it is TypeScript that has to be
+trusted, so it belongs in the same column as the assembler rather than the same column as the
+tests.
