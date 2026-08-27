@@ -3531,7 +3531,7 @@ export string covTableLinked(string[] paths, string[] sources, Res res, string e
   if (blob == "") { return ""; }
   Env env = Env.create();
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                    names, filePaths, false);
+                    names, filePaths, false, srcs, lexeds, progs);
 }
 
 /** `index\tline\tcol\tkind\tfile` per point of a *traced* build, which has the index points too. */
@@ -3547,7 +3547,7 @@ export string traceTableLinked(string[] paths, string[] sources, Res res, string
                           srcs, lexeds, progs);
   if (blob == "") { return ""; }
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                    names, filePaths, true);
+                    names, filePaths, true, srcs, lexeds, progs);
 }
 
 /**
@@ -4421,12 +4421,22 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
 }
 
 /** The point table for an instrumented build, which only emitting can produce. */
+/**
+ * What each counter of a coverage build *is*, by emitting the module a second time and keeping the
+ * table rather than the bytes.
+ *
+ * **With the same per-file trees the real build gets.** The counters and this table are lined up by
+ * index alone, so the two compiles have to enumerate the same points in the same order — and until
+ * 2026-08-27 one of them was handed the graph and the other a concatenation, which is two different
+ * walks agreeing by luck. `harness/covTableParity.test.ts` is the check that would have caught it.
+ */
 string covTableOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
-                  string[] filePaths, bool traced) {
+                  string[] filePaths, bool traced,
+                  u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
   Env probe = Env.create();
   probe.trace = traced;
   emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, false, true, probe,
-                   u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                   srcs, lexeds, progs);
   return probe.covTable;
 }
 
@@ -8804,10 +8814,19 @@ void traceIndex(B fb, Env env, i32 line, i32 col) {
   traceAppend(fb, env, idx, tmp);
 }
 
-/** One row of the table that says what a point is: the file's own line, not the blob's. */
+/**
+ * One row of the table that says what a point is: the file's own line, not the blob's.
+ *
+ * **Per file there is no translation to do.** `line` is already that file's own, and `env.curFile`
+ * already says which file — so the subtraction below is for a caller that handed the emitter one
+ * concatenated source, where the line is the blob's and the file has to be recovered from it. Doing
+ * it anyway to a per-file line names the wrong file and a line before the start of it.
+ */
 void covTableRow(Env env, i32 idx, string kind, i32 line, i32 col) {
-  i32 f = env.fileOf(line);
-  i32 localLine = f < env.fileCount ? line - env.fileFirstLine[f] + 1 : line;
+  bool perFile = env.curFile >= 0;
+  i32 f = perFile ? env.curFile : env.fileOf(line);
+  i32 localLine = perFile ? line
+                : (f < env.fileCount ? line - env.fileFirstLine[f] + 1 : line);
   string path = f < env.filePaths.len() ? env.filePaths[f] : "";
   env.covTable = env.covTable + numText(idx) + "\t" + numText(localLine) + "\t" + numText(col)
                  + "\t" + kind + "\t" + path + "\n";
