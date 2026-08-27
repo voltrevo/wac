@@ -3518,6 +3518,16 @@ struct Front {
   u8[][] srcs;
   Lexed?[] lexeds;
   Program?[] progs;
+  /**
+   * Every file's declarations, in link order, and the file each came from.
+   *
+   * **The concatenation of the *trees*, where `prog` is the parse of the concatenated *text*.** They
+   * hold the same declarations in the same order — that is the invariant the whole migration rests on
+   * — but a declaration in this one knows which file it belongs to, so the walks that emit can ask.
+   * Which is the difference between a program that happens to be one string and a `map<path, ast>`.
+   */
+  Decl[] mergedDecls;
+  i32[] mergedFiles;
   string[] filePathsOf;
   i32 fileCount;
   /** The linker's tables, which the blocked walk still reads after the `Env` is built. */
@@ -4598,7 +4608,24 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   }
 
   i32 fileCount = fileCountOf(progs);
-  return Front(env, src, lexed, prog, srcs, lexeds, progs, filePaths, fileCount,
+  // The merged tree, beside the blob's parse. Built here because this is where both exist.
+  i32 total = 0;
+  for (i32 i = 0; i < progs.len(); i++) { if (progs[i] is not null) { total = total + progs[i]!.decls.len(); } }
+  // Defaults to the blob's own declarations, which is exactly right for a caller that supplied no
+  // trees: same list, and every file index 0 because there is only one source.
+  Decl[] merged = prog.decls;
+  i32[] mergedAt = i32[merged.len()](fill: 0);
+  if (total > 0 && prog.decls.len() > 0) {
+    merged = Decl[total](fill: prog.decls[0]);
+    mergedAt = i32[total](fill: 0);
+    i32 mi = 0;
+    for (i32 i = 0; i < progs.len(); i++) {
+      if (progs[i] is null) { continue; }
+      Decl[] ds = progs[i]!.decls;
+      for (i32 d = 0; d < ds.len(); d++) { merged[mi] = ds[d]; mergedAt[mi] = i; mi = mi + 1; }
+    }
+  }
+  return Front(env, src, lexed, prog, srcs, lexeds, progs, merged, mergedAt, filePaths, fileCount,
                starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
 
