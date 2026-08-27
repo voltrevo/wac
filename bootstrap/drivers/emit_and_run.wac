@@ -1,0 +1,22 @@
+// **The oracle for the whole ladder.** wac-L5 compiles wacc from source; this asks the wacc it
+// built to compile a wac program, hands the bytes back a byte at a time, and lets the host run
+// them. If the inner module answers 42 then every rung did its job: an assembler written twice,
+// an interpreter, three compilers, and the real compiler compiled by the last of them.
+//
+// A byte at a time because a wasm GC array cannot cross into JavaScript. The result is held in a
+// global between the two calls, which is also the only thing here that is not a plain function.
+
+u8[] built;
+
+export i32 build() {
+  built = emit("export i32 answer() { return 6 * 7; }".toBytes());
+  return built.len();
+}
+
+export i32 byteAt(i32 i) {
+  return built[i];
+}
+
+i32 main() {
+  return build();
+}

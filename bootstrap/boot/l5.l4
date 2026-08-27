@@ -1162,12 +1162,22 @@ i32 construct(i32 t) {
     }
     want(40);
     if (sized) {
-      // `T[n](fill: v)` — the fill is evaluated and dropped, because `array.new_default` zeroes and
-      // stage 2 does not carry a value into it. A gap, and the spec says so.
-      i32 nf = args(A_NONE, 0, 0);
-      i32 k = 0;
+      // **`T[n](fill: v)` fills.** It used to evaluate the fill and drop it, which left every
+      // element null — and an array of structs whose elements are all null is a program that
+      // validates, runs, and traps on the first read. `array.new` is the instruction for this
+      // and takes the value beneath the size, so the size goes into a slot while the fill is
+      // read and comes back out after it.
+      i32 hsize = slot_new(TY_I32);
+      word("local.set"); slotname(hsize); nl();
+      i32 nf = args(A_ELEM, types[at].elem, 0);
+      i32 k = 1;
       while (k < nf) { line("drop"); k = k + 1; }
-      word("array.new_default"); tyname(at); nl();
+      word("local.get"); slotname(hsize); nl();
+      if (nf == 0) {
+        word("array.new_default"); tyname(at); nl();
+      } else {
+        word("array.new"); tyname(at); nl();
+      }
     } else {
       // `T[](a, b, c)` — a literal, whose length is how many arguments it has.
       i32 n2 = args(A_ELEM, types[at].elem, 0);
