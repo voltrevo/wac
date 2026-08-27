@@ -235,6 +235,41 @@ const programs: [string, string, number][] = [
 
   ["a packed u16 element reads unsigned", `
     i32 main() { u16[] xs = u16[2](); xs[0] = 65535; return xs[0]; }`, 65535],
+  // --- stage 3b: strings
+  //
+  // `string` is a GC array of bytes — the same array type a `u8[]` is — so `.len()` and `[i]` work
+  // on it with no second implementation, and a literal and a built string are one kind of value.
+  // A literal lives in linear memory as a length and its bytes, which is how every rung below
+  // writes one; an emitted `$__strlit` lifts it into the array.
+
+  ["a literal, its length and its bytes", `
+    i32 main() { string s = "hello"; return s.len() * 100 + s[0]; }`, 604],
+
+  ["concatenation, which is what 659 sites in wacc's source do", `
+    i32 main() {
+      string a = "Point";
+      string b = "sum";
+      string j = a + "_" + b;
+      return j.len() * 1000 + j[5] * 10 + (j[0] == 80 ? 1 : 0);
+    }`, 9951],
+
+  ["an empty literal", `i32 main() { return ("" + "ab").len(); }`, 2],
+
+  ["a string through a parameter and a return", `
+    string twice(string s) { return s + s; }
+    i32 main() { string d = twice("ab"); return d.len() * 10 + d[2]; }`, 137],
+
+  ["a string in a struct", `
+    struct Named { string name; i32 id; }
+    i32 main() { Named n = Named("abc", 7); return n.name.len() * 10 + n.id; }`, 37],
+
+  ["strings compare by content, not identity, when written out", `
+    bool same(string a, string b) {
+      if (a.len() != b.len()) { return false; }
+      for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+      return true;
+    }
+    i32 main() { return same("ab" + "c", "abc") ? 1 : 0; }`, 1],
 ];
 
 for (const [name, source, want] of programs) {

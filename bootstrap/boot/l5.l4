@@ -430,6 +430,20 @@ i32 binop_signed(i32 t, i32 name) { opprefix(t); emits(name); signedsuffix(t); r
 // spec says so rather than this pretending otherwise.
 // The primitive named at the cursor, or -1. One list, consulted by `parse_type` and by the
 // expression grammar, so that a type name means the same thing in both.
+// **`string` is a GC array of bytes**, and the same array type a `u8[]` is — so `.len()` and `[i]`
+// work on it without a second implementation, and a literal and a built string are one kind of
+// value. wac's `string` is immutable and this is not, which is a gap and not a difference anything
+// here can observe.
+i32 strty = -1;
+
+i32 string_type() {
+  if (strty == 0 - 1) { strty = ty_array(TY_U8); }
+  return strty;
+}
+
+i32 usedstr = 0;
+i32 usedcat = 0;
+
 i32 prim_type() {
   if (isword("i32")) { return TY_I32; }
   if (isword("bool")) { return TY_BOOL; }
@@ -443,16 +457,21 @@ i32 prim_type() {
   return 0 - 1;
 }
 
+// `string` is a type name but not a primitive: it answers an array type, so it cannot come from the
+// same list as the ones that answer themselves.
+i32 is_string_word() { return isword("string"); }
+
 i32 parse_type() {
   i32 t = 0;
   i32 pr = prim_type();
+  if (is_string_word()) { next(); t = string_type(); } else {
   if (pr != 0 - 1) { t = pr; next(); } else {
     i32 p = tstart();
     i32 n = tlen();
     next();
     t = ty_named(p, n);
     if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
-  }
+  }}
   while (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); }
   if (ispunct(63)) { next(); }
   return t;
@@ -649,7 +668,13 @@ i32 field_index(i32 t, i32 p, i32 n) {
 }
 
 i32 primary() {
-  if (kind() == K_STR) { konst(str_add(tstart(), tlen())); next(); return postfix(0); }
+  if (kind() == K_STR) {
+    konst(str_add(tstart(), tlen()));
+    usedstr = 1;
+    line("call $__strlit");
+    next();
+    return postfix(string_type());
+  }
   if (kind() == K_INT) { konst(val()); next(); return TY_I32; }
   if (ispunct(40)) { next(); i32 t0 = expr(); want(41); return postfix(t0); }
   if (ispunct(45)) {
@@ -759,7 +784,11 @@ i32 add() {
     i32 op = val();
     next();
     mul();
-    if (op == 43) { binop(t, "add"); } else { binop(t, "sub"); }
+    if (op == 43) {
+      if (t == strty & strty != 0 - 1) { usedcat = 1; line("call $__concat"); } else {
+        binop(t, "add");
+      }
+    } else { binop(t, "sub"); }
   }
   return t;
 }
@@ -1531,6 +1560,113 @@ i32 collect() {
   return 0;
 }
 
+// The two functions a string needs, emitted as text because they are the same every time. A literal
+// lives in linear memory as a length and its bytes — which is how every rung below writes one — and
+// this is what lifts it into a GC array.
+i32 emit_runtime() {
+  i32 at2 = string_type();
+  if (usedstr) {
+    word("func"); line("$__strlit -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    line("param i32 $off");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$s");
+    line("local i32 $i");
+    line("local i32 $n");
+    line("local.get $off");
+    line("i32.load 4 0");
+    line("local.set $n");
+    line("local.get $n");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $s");
+    line("block $d ->");
+    line("loop $l ->");
+    line("local.get $i");
+    line("local.get $n");
+    line("i32.ge_u");
+    line("br_if $d");
+    line("local.get $s");
+    line("local.get $i");
+    line("local.get $off");
+    line("local.get $i");
+    line("i32.add");
+    line("i32.load8_u 1 4");
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l");
+    line("end");
+    line("end");
+    line("local.get $s");
+    line("end");
+    nl();
+  }
+  if (usedcat) {
+    word("func"); line("$__concat -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$r");
+    line("local i32 $i");
+    line("local i32 $an");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $an");
+    line("local.get $an");
+    line("local.get $b");
+    line("array.len");
+    line("i32.add");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $r");
+    line("block $d1 ->");
+    line("loop $l1 ->");
+    line("local.get $i");
+    line("local.get $an");
+    line("i32.ge_u");
+    line("br_if $d1");
+    line("local.get $r");
+    line("local.get $i");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l1");
+    line("end");
+    line("end");
+    line("i32.const 0");
+    line("local.set $i");
+    line("block $d2 ->");
+    line("loop $l2 ->");
+    line("local.get $i");
+    line("local.get $b");
+    line("array.len");
+    line("i32.ge_u");
+    line("br_if $d2");
+    line("local.get $r");
+    line("local.get $an");
+    line("local.get $i");
+    line("i32.add");
+    line("local.get $b");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l2");
+    line("end");
+    line("end");
+    line("local.get $r");
+    line("end");
+    nl();
+  }
+  return 0;
+}
+
 i32 compile(i32 s, i32 out) {
   src = s;
   srclen = 0;
@@ -1600,6 +1736,7 @@ i32 compile(i32 s, i32 out) {
       next();
     }}}}
   }
+  emit_runtime();
   emit_strdata();
   emit_typedecls();
   i32 ti = 0;
