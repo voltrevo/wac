@@ -263,11 +263,27 @@ export string test_only_sanctioned_files_reach_the_reference(Core core, Cli cli)
  * **with a sha256**, and `specmulti_test.wac` refuses a corpus taken from a different file. The path
  * is data, not just prose.
  *
- * **So the boundary should be declared rather than walked to.** The operator's goal is *"only rerun
- * these tests if that subproject actually changed"* — which needs a runner to know which tests are
- * the subproject's own, and that is this list, not a directory. A `// test-lane:`-style marker on the
- * five, or this array read by the runner, gets the same rule with no churn and no rewritten history.
- * The move is worth revisiting only if the reference's tests ever need to *ship* separately.
+ * **So the boundary should be declared rather than walked to** — and then, measured, not acted on.
+ *
+ * ## The skip would save under a second, and it would skip the cheap half
+ *
+ * The goal was *"only rerun these tests if that subproject actually changed"*. Timed on 2026-08-27:
+ *
+ *     the subproject's own, 12 files   661 tests    943 ms
+ *     the five below,        5 files   612 tests   10.8 s
+ *
+ * The reference's *internal* tests — the ones a `compiler/`-unchanged check would skip — cost **under
+ * a second** of a four-minute suite. All the time is in the five project-level differentials, and
+ * those are exactly the ones such a rule must keep running, because they answer to `spec/` and to the
+ * tree rather than to `compiler/`.
+ *
+ * So the rule is real and the saving is not, and buying it means a runner that decides not to run
+ * something — a way for a test to be silently absent, which is a failure this repository has filed
+ * more than once. The list below stays as the *record* of which tests are which, which is worth
+ * having on its own; nothing reads it to skip anything.
+ *
+ * Revisit if the reference's tests ever need to *ship* separately, or if they grow by an order of
+ * magnitude.
  */
 string[] reachesOutward() {
   return string[](
