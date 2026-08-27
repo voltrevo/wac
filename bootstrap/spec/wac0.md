@@ -25,16 +25,23 @@ porting rather than rewriting.
 - `return`, `if`/`else`, `while`, blocks;
 - `+ - * / %`, `== != < <= > >=`, unary `-` and `!`, parentheses, calls, and assignment;
 - `//` comments;
-- one function may call another declared later in the file.
+- one function may call another declared later in the file;
+- **globals**: `i32 name = 7;` at the top level, mutable, initialised to a literal;
+- **memory**: `load(a)`, `store(a, v)`, `load8(a)`, `store8(a, v)`, spelled as calls so the lexer
+  needs no new tokens and the parser no new syntax;
+- **string literals**: `"text"` is the address of a length-prefixed block, exactly as in wx, so
+  `load(s)` is its length and `load8(s + 4 + i)` its i'th byte — literals without a string type.
+
+Those last three are not decoration. They are what a language needs before a compiler can be written
+in it, which is the only thing wac-0 is for.
 
 Every function is exported under its own name. There is no `export` keyword because there is nothing
 a program would want to keep private from its only caller.
 
 ## What is not, and where it goes
 
-`struct`, arrays, strings, `enum`/`match`, methods, `T?` and generics are all absent. The first three
-belong in wac-0 and are the next thing to add; the rest belong in **wac-1**, which is written in
-wac-0 and is the last intermediate before wac itself.
+`struct`, arrays, `enum`/`match`, methods, `T?` and generics are all absent, and all of them belong
+to **wac-1** — which is written in wac-0 and is the last intermediate before wac itself.
 
 There is no type checking, because there is one type. That changes the moment structs land, and it
 is the honest reason to keep them out of v1: a type checker is a different program from a parser and

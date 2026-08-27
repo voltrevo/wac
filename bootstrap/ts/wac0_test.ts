@@ -116,6 +116,47 @@ for (const [name, source, want] of programs) {
   });
 }
 
+// The three things a compiler needs of its own language, and the reason this rung had to grow
+// before wac-1 could be written in it.
+const forCompilers: [string, string, number][] = [
+  ["a global, read and written", `
+    i32 cursor = 4096;
+    i32 bump() { cursor = cursor + 4; return cursor; }
+    i32 main() { bump(); bump(); return cursor; }`, 4104],
+
+  ["a negative global", `
+    i32 g = -7;
+    i32 main() { return g + 10; }`, 3],
+
+  ["memory, by word and by byte", `
+    i32 main() {
+      store(4096, 70000);
+      store8(4200, 65);
+      return load(4096) + load8(4200);
+    }`, 70065],
+
+  ["string literals are length-prefixed blocks", `
+    i32 strlen(i32 s) { return load(s); }
+    i32 strbyte(i32 s, i32 i) { return load8(s + 4 + i); }
+    i32 main() { return strlen("hello") * 100 + strbyte("hi", 1); }`, 605],
+
+  ["two literals do not share an offset", `
+    i32 strlen(i32 s) { return load(s); }
+    i32 main() { return strlen("abc") * 10 + strlen("de"); }`, 32],
+
+  ["a store answers zero rather than re-reading", `
+    i32 n = 0;
+    i32 bump() { n = n + 1; return 4096; }
+    i32 main() { store(bump(), 5); return n; }`, 1],
+];
+
+for (const [name, source, want] of forCompilers) {
+  Deno.test(`wac-0: ${name} = ${want}`, async () => {
+    const got = await wac0Run(source);
+    if (got !== want) throw new Error(`got ${got}, want ${want}`);
+  });
+}
+
 Deno.test("wac-0: every function is exported, not only main", async () => {
   const got = await wac0Run(
     `i32 twice(i32 n) { return n * 2; }\ni32 main() { return 0; }`,

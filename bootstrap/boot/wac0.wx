@@ -15,6 +15,8 @@
 (memory 64)
 
 (global TOK 262144)
+(global GLO 1310720)
+(global STRS 1376256)
 (global LOC 786432)
 (global BODY 1048576)
 
@@ -26,12 +28,16 @@
 (global nslot 0)        // wasm local slots used, which only ever grows
 (global labn 0)
 (global src 0)
+(global nglo 0)
+(global nstr 0)
+(global strnext 1024)
 
 // Token kinds. wx has no constants, so these are globals nothing assigns to.
 (global K_EOF 0)
 (global K_INT 1)
 (global K_NAME 2)
 (global K_PUNCT 3)
+(global K_STR 4)
 
 // ---------------------------------------------------------------- emitting
 
@@ -125,6 +131,14 @@
                             (tset ntok K_INT s0 (- p s0) v)
                             (set ntok (+ ntok 1))
                             0)
+                        (if (== c 34)
+                            (do (set p (+ p 1))
+                                (let s2 p)
+                                (while (& (!= (at p) 0) (!= (at p) 34)) (set p (+ p 1)))
+                                (tset ntok K_STR s2 (- p s2) 0)
+                                (set ntok (+ ntok 1))
+                                (set p (+ p 1))
+                                0)
                         (if (is-alpha c)
                             (do (let s1 p)
                                 (while (is-alnum (at p)) (set p (+ p 1)))
@@ -142,7 +156,7 @@
                                 (tset ntok K_PUNCT p w pack)
                                 (set ntok (+ ntok 1))
                                 (set p (+ p w))
-                                0)))))))
+                                0))))))))
       (tset ntok K_EOF p 0 0)
       0))
 
@@ -204,6 +218,62 @@
 
 (fn slotname ((slot i32)) i32 (do (emits "$v") (emitn slot)))
 
+// ---------------------------------------------------------------- globals and literals
+
+(fn glo-add ((p i32) (n i32)) i32
+  (do (let base (+ GLO (* nglo 12)))
+      (store base p)
+      (store (+ base 4) n)
+      (store (+ base 8) nglo)
+      (set nglo (+ nglo 1))
+      (- nglo 1)))
+
+(fn glo-find ((p i32) (n i32)) i32
+  (do (let i 0)
+      (let found (- 0 1))
+      (while (< i nglo)
+        (do (let base (+ GLO (* i 12)))
+            (if (& (== n (load (+ base 4))) (samebytes p n (load base)))
+                (set found i)
+                0)
+            (set i (+ i 1))
+            0))
+      found))
+
+(fn gloname ((i i32)) i32 (do (emits "$g") (emitn i)))
+
+// A literal is the address of a length-prefixed block, the same shape wx uses — so a wac-0 program
+// reads its own strings with the `load` and `load8` it already has, and there is no string type.
+(fn str-add ((p i32) (n i32)) i32
+  (do (let base (+ STRS (* nstr 12)))
+      (let off strnext)
+      (store base off)
+      (store (+ base 4) p)
+      (store (+ base 8) n)
+      (set nstr (+ nstr 1))
+      (set strnext (+ strnext (* 4 (/ (+ (+ 4 n) 3) 4))))
+      off))
+
+(fn hexd ((d i32)) i32 (if (< d 10) (+ 48 d) (+ 87 d)))
+(fn emithex ((b i32)) i32
+  (do (emit1 92) (emit1 120) (emit1 (hexd (/ b 16))) (emit1 (hexd (% b 16)))))
+
+(fn emit-strdata () i32
+  (do (let i 0)
+      (while (< i nstr)
+        (do (let base (+ STRS (* i 12)))
+            (let p (load (+ base 4)))
+            (let n (load (+ base 8)))
+            (word "data") (emitn (load base)) (sp) (emit1 34)
+            (emithex (% n 256)) (emithex (% (/ n 256) 256))
+            (emithex (% (/ n 65536) 256)) (emithex (/ n 16777216))
+            (let j 0)
+            (while (< j n) (emithex (at (+ p j))) (set j (+ j 1)))
+            (emit1 34) (nl)
+            (set i (+ i 1))
+            0))
+      0))
+
 // ---------------------------------------------------------------- expressions
 //
 // Precedence climbing. Each level parses the one below it and then loops on its own operators, so
@@ -211,7 +281,9 @@
 // tree here.
 
 (fn primary () i32
-  (do (if (== (kind) K_INT)
+  (do (if (== (kind) K_STR)
+          (do (konst (str-add (tstart tp) (tlen tp))) (next) 0)
+      (if (== (kind) K_INT)
           (do (konst (val)) (next) 0)
           (if (is-punct 40)
               (do (next) (expr) (want 41) 0)
@@ -221,7 +293,7 @@
                       (do (next) (unary) (line "i32.eqz") 0)
                       (if (== (kind) K_NAME)
                           (name-or-call)
-                          (unexpected))))))
+                          (unexpected)))))))
       0))
 
 (fn unary () i32 (primary))
@@ -233,21 +305,42 @@
       (if (is-punct 40)
           (do (next)
               (let nargs 0)
+              (let bi (builtin p n))
               (while (if (is-punct 41) 0 1)
                 (expr)
                 (set nargs (+ nargs 1))
                 (if (is-punct 44) (do (next) 0) 0))
               (want 41)
-              (word "call")
-              (emit1 36)
-              (emitname p n)
-              (nl)
+              (if (== bi 0)
+                  (do (word "call") (emit1 36) (emitname p n) (nl) 0)
+                  (emit-builtin bi))
               0)
           (do (let slot (loc-find p n))
               (if (== slot (- 0 1))
-                  (unexpected)
+                  (do (let g (glo-find p n))
+                      (if (== g (- 0 1))
+                          (unexpected)
+                          (do (word "global.get") (gloname g) (nl) 0))
+                      0)
                   (do (word "local.get") (slotname slot) (nl) 0))
               0))
+      0))
+
+// The four memory operations are spelled as calls, so the parser needs no new syntax and the lexer
+// no new tokens. A name that is one of them never reaches the call path.
+(fn builtin ((p i32) (n i32)) i32
+  (if (texteq p n "load") 1
+    (if (texteq p n "store") 2
+      (if (texteq p n "load8") 3
+        (if (texteq p n "store8") 4 0)))))
+
+// A store answers 0, because every wac-0 expression answers something and wasm's store answers
+// nothing — re-reading what was written would run the address expression twice.
+(fn emit-builtin ((b i32)) i32
+  (do (if (== b 1) (do (word "i32.load") (word "1") (line "0")) 0)
+      (if (== b 3) (do (word "i32.load8_u") (word "1") (line "0")) 0)
+      (if (== b 2) (do (word "i32.store") (word "1") (line "0") (konst 0)) 0)
+      (if (== b 4) (do (word "i32.store8") (word "1") (line "0") (konst 0)) 0)
       0))
 
 (fn emitname ((p i32) (n i32)) i32
@@ -340,9 +433,10 @@
       (if (& (== (kind) K_NAME) (== (tkind (+ tp 1)) K_PUNCT))
           (if (== (tval (+ tp 1)) 61)
               (do (next) (next) (expr) (want 59)
-                  (word "local.set")
-                  (slotname (loc-find p n))
-                  (nl)
+                  (let slot (loc-find p n))
+                  (if (== slot (- 0 1))
+                      (do (word "global.set") (gloname (glo-find p n)) (nl) 0)
+                      (do (word "local.set") (slotname slot) (nl) 0))
                   0)
               (do (expr) (want 59) (line "drop") 0))
           (do (expr) (want 59) (line "drop") 0))
@@ -381,12 +475,29 @@
 
 // ---------------------------------------------------------------- functions
 
-(fn function ((out i32)) i32
-  (do (next)                                    // the return type, always i32
-      (let np (tstart tp))
-      (let nn (tlen tp))
+// `i32 name = 7;` at the top level is a global; `i32 name(` is a function. One token of lookahead
+// past the name tells them apart, which is the whole of wac-0's ambiguity.
+(fn toplevel ((out i32)) i32
+  (do (next)
+      (let tp0 (tstart tp))
+      (let tn0 (tlen tp))
       (next)
-      (want 40)
+      (if (is-punct 40)
+          (function out tp0 tn0)
+          (do (want 61)
+              (let neg 0)
+              (if (is-punct 45) (do (next) (set neg 1) 0) 0)
+              (let v (val))
+              (next)
+              (want 59)
+              (word "global") (gloname (glo-add tp0 tn0)) (sp)
+              (word "i32") (word "mut") (word "=")
+              (emitn (if neg (- 0 v) v)) (nl) (nl)
+              0))
+      0))
+
+(fn function ((out i32) (np i32) (nn i32)) i32
+  (do (want 40)
       (set nloc 0)
       (set nslot 0)
       (while (if (is-punct 41) 0 1)
@@ -441,5 +552,14 @@
       (set tp 0)
       (set dst out)
       (set dp 0)
-      (while (!= (kind) K_EOF) (function out))
+      (set nglo 0)
+      (set nstr 0)
+      (set strnext 1024)
+      (line "memory 64")
+      // wx literals have no escapes — sx's reader stops at the first `"` — so the quotes around an
+      // export name are written as bytes.
+      (word "export") (emit1 34) (emits "memory") (emit1 34) (sp) (line "memory")
+      (nl)
+      (while (!= (kind) K_EOF) (toplevel out))
+      (emit-strdata)
       dp))
