@@ -154,25 +154,42 @@ seven touching funcrefs, and **zero** touching any of those three. The assembler
 
 ### The two things to do
 
-1. **Pin the three.** A case each in `ts/l5_test.ts` for a float, an array copy and a fill, and a
-   trim. Cheap, and it converts three features from "present" to "supported".
-2. **Make compiling `core/` a test.** It is what keeps generics and funcrefs honest, and today it
-   only happens inside `ts/against_real_wac.ts`, which is deliberately *not* a test. Seven small
-   files, and without them the most intricate machinery in `boot/l5.l4` rests on twenty-two
-   hand-written cases.
+1. **Pin the three.** A case each in `ts/l5_test.ts` for a float, an array copy, a fill and a trim.
+   Cheap, ours, and it converts three features from "present" to "supported".
+2. **Write our own regression cases for generics and funcrefs** if the existing twenty-two look
+   thin — but they are ours and they are enough to catch a change breaking something, which is what
+   a test is for.
 
-### The principle behind it
+### Not: make compiling `core/` a test
 
-**wac-L0 should be complete for wasm as wac emits it; wac-L5 should track wacc.**
+Considered and rejected. `core/` is idiomatic wac and should be **free to use every feature wac
+has**. Gating on it would mean that the next time `core/` reaches for something wac-L5 lacks, the
+suite goes red and the pressure is to grow wac-L5 to match — which is exactly the accident this
+rung is supposed to avoid. wac-L5 tracks *wacc*, and core is not wacc.
 
-They are different kinds of artefact. The format is implemented twice, read by humans, and
-described in a spec other people would have to implement — it wants to be finished and stable, and
-wasm is not moving. Losing a feature there costs a spec change and two implementations. wac-L5 is
-derived, checked by running it, and cheap to change, so it can follow wacc and grow when wacc does.
+The existing arrangement is already right and was nearly broken by this: `ts/against_real_wac.ts`
+compiles `core/` and says so in its own header —
 
-That also corrects something I had been eliding: I have been counting lines in the trusted root as
-though they were all the same weight. Twenty lines of `"f32.add": 0x92` in an opcode table are not
-twenty lines of parser. The count is a proxy and a coarse one.
+> This is the only honest gauge of how far L5 is, and it is deliberately not a test: the number is
+> expected to be wrong for a long time, and a test that fails every day is a test nobody reads.
+
+So `core/` stays a **signal** rather than a **gate**. If it grows a feature wac-L5 lacks, the
+number moves from 24 to 23 and we decide whether to care, instead of a red suite deciding for us.
+
+### The growth rule, and its trigger
+
+**wac-L5 grows when wacc needs something.** Not when `core/` does, not when the corpus does, not
+when a spec case does. Those are all signals worth reading and none of them is a reason on its own.
+
+The **subset guard** is what makes that operable: a check on wacc's side that the bootstrap can
+still compile it. It is the safety net *and* the growth trigger — a wacc change that reaches
+outside wac-L5's subset fails at the moment it is written, and that failure is the notification
+that a rung needs to grow. Without it, the first anyone knows is a broken bootstrap much later.
+
+Keeping generics and funcrefs is then honest rather than aspirational, as long as it is said
+plainly: **present, regression-tested by our own cases, not certified against all of wac.** If
+wacc adopts generics, the first move is to run wacc through and find out what is missing — not to
+assume the feature is finished because it is there.
 
 ## What wacc could still change, for wacc's sake — **question**
 
