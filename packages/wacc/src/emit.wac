@@ -17,7 +17,8 @@ import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
-  Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
+  Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
+  Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import {
@@ -174,13 +175,20 @@ i32 valType(string t) {
  * Everything else reaching it is a bug, and `writeValType` says so instead of guessing.
  */
 /** Whether the struct a parent token names is itself a template. `issues/lang/0172a`. */
-bool parentIsGeneric(Program prog, u8[] src, Lexed lexed, i32 parentTok) {
+bool parentIsGeneric(Env env, Program prog, u8[] src, Lexed lexed, i32 parentTok) {
   if (parentTok < 0) { return false; }
+  // **The name from the caller's file, the search across all of them.** The parent token is written
+  // where the child is; the struct it names can be declared anywhere in the graph, and each candidate
+  // is read against the file that declares it.
   string pn = tokenTextOf(src, lexed, parentTok);
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] pd = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  for (i32 d = 0; d < pd.len(); d++) {
+    i32 pf = env.declFile(d);
+    u8[] psrc = srcFor(env.fileSrcs, src, pf);
+    Lexed plex = lexFor(env.fileLexeds, lexed, pf);
+    match (pd[d].kind) {
       case StructDecl(nameTok, ptok, fields, methods, exported, isConst, typeParams): {
-        if (tokenTextOf(src, lexed, nameTok) != pn) { continue; }
+        if (tokenTextOf(psrc, plex, nameTok) != pn) { continue; }
         if (typeParams.len() > 0) { return true; }
       }
       else: { }
@@ -577,11 +585,17 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
       if (targs.len() == 0) { return ""; }
       string raw = tokenTextOf(src, lexed, tok);
       Program pg = env.prog!;
-      for (i32 d = 0; d < pg.decls.len(); d++) {
-        match (pg.decls[d].kind) {
+      // **The declaration's name comes from the file that declares it; the type arguments from the
+      // file that writes the call.** Both are in play in one iteration, which is why this cannot use
+      // the walk preamble the pass-level loops use: only the name comparison moves.
+      Decl[] gd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+      for (i32 d = 0; d < gd.len(); d++) {
+        u8[] gs = srcFor(env.fileSrcs, src, env.declFile(d));
+        Lexed gl = lexFor(env.fileLexeds, lexed, env.declFile(d));
+        match (gd[d].kind) {
           case Func(nameTok, returnType, params, body, exported, typeParams): {
             if (typeParams.len() != targs.len()) { continue; }
-            if (tokenTextOf(src, lexed, nameTok) != raw) { continue; }
+            if (tokenTextOf(gs, gl, nameTok) != raw) { continue; }
             string inst = raw + "<";
             for (i32 i = 0; i < targs.len(); i++) {
               string a = env.canonType(typeOfTyName(env, src, lexed, targs[i]));
@@ -613,11 +627,15 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
   if (env.prog is null) { return ""; }
   string raw = tokenTextOf(src, lexed, tok);
   Program pg = env.prog!;
-  for (i32 d = 0; d < pg.decls.len(); d++) {
-    match (pg.decls[d].kind) {
+  // The name and the parameter types belong to the declaring file; the arguments to this one.
+  Decl[] cd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  for (i32 d = 0; d < cd.len(); d++) {
+    u8[] cs = srcFor(env.fileSrcs, src, env.declFile(d));
+    Lexed cl = lexFor(env.fileLexeds, lexed, env.declFile(d));
+    match (cd[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() == 0) { continue; }
-        if (tokenTextOf(src, lexed, nameTok) != raw) { continue; }
+        if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
         if (params.len() != args.len()) { return ""; }
         string[] bound = string[typeParams.len()]();
         for (i32 i = 0; i < args.len(); i++) {
@@ -627,7 +645,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
           // type is the answer — `ident(7)` is `ident<i32>` — which is the one place in this emitter
           // a literal's type comes from the literal.
           if (at == "") { at = naturalLiteralType(args[i]); }
-          if (!bindTypeParams(env, src, lexed, params[i].type, at, typeParams, bound)) { return ""; }
+          if (!bindTypeParams(env, cs, cl, params[i].type, at, typeParams, bound)) { return ""; }
         }
         string inst = raw + "<";
         for (i32 i = 0; i < bound.len(); i++) {
@@ -886,16 +904,21 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
   string tmpl = templateOf(ownerInst);
   if (tmpl == "") { return ""; }
   Program pg = env.prog!;
-  for (i32 d = 0; d < pg.decls.len(); d++) {
-    match (pg.decls[d].kind) {
+  // The template, its method and that method's parameter types are read against the file that
+  // declares them; `args` are written here.
+  Decl[] md = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  for (i32 d = 0; d < md.len(); d++) {
+    u8[] ms = srcFor(env.fileSrcs, src, env.declFile(d));
+    Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
+    match (md[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
-        if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
+        if (tokenTextOf(ms, ml, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
-          if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
+          if (tokenTextOf(ms, ml, methods[m].nameTok) != mname) { continue; }
           if (methods[m].typeParams.len() == 0) { continue; }
           if (methods[m].params.len() != args.len()) { return ""; }
-          i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
+          i32 opushed = pushSubstitution(env, ms, ml, typeParams, ownerInst, tmpl);
           string[] bound = string[methods[m].typeParams.len()]();
           bool ok = true;
           for (i32 i = 0; i < args.len(); i++) {
@@ -907,7 +930,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
             // that as a refusal is how the letter went unbound and the module was declined with *a
             // value of a type this emitter cannot write: U*.
             if (at == "") { continue; }
-            bindTypeParams(env, src, lexed, methods[m].params[i].type, at,
+            bindTypeParams(env, ms, ml, methods[m].params[i].type, at,
                            methods[m].typeParams, bound);
           }
           string of = ownerInst + "." + mname;
@@ -2153,6 +2176,17 @@ export struct Env {
    * call site of `lambdaAtPos` has to change.
    */
   string[] lambdaInst;
+  /**
+   * Which file the lambda is written in, or -1 for a concatenated source.
+   *
+   * **The third part of the key, and the reason is the sentence above it.** *"A line and a column
+   * name exactly one expression in a linked program"* is true of the blob and false of a graph:
+   * `packages/box` has 167 files and plenty of them have a lambda at the same line and column as
+   * another. Without this, `lambdaAtPos` answers with whichever file's lambda was registered first,
+   * and `Pending<bool>.then` was emitted calling a three-parameter function through a four-parameter
+   * signature — an invalid module rather than a wrong answer, which is the good version of this.
+   */
+  i32[] lambdaFile;
   i32 lambdaCount;
   /**
    * The emission ordinal of the first hoisted lambda — the number of ordinary functions before them.
@@ -2443,6 +2477,21 @@ export struct Env {
   u8[][] fileSrcs;
   Lexed?[] fileLexeds;
 
+  /**
+   * Every file's declarations in link order, and the file each came from.
+   *
+   * The same pair `Front` carries, put here for the passes that are reached through helpers rather
+   * than called from the driver — lambda discovery is four call sites deep and walks the whole
+   * program. Empty for a caller that supplied one concatenated source.
+   */
+  Decl[] mergedDecls;
+  i32[] mergedFiles;
+
+  /** The file declaration `d` of the merged tree came from, or -1 when there is no merged tree. */
+  i32 declFile(const this, i32 d) {
+    return d >= 0 && d < this.mergedFiles.len() ? this.mergedFiles[d] : 0 - 1;
+  }
+
   /** Whether the local at `i` is a promoted cell. */
   bool localIsCell(const this, i32 at) {
     return at >= 0 && at < this.localCell.len() && this.localCell[at];
@@ -2593,6 +2642,7 @@ export struct Env {
       // The instantiation is part of the key — see `lambdaInst`. `curInst` is `""` outside a generic,
       // so ordinary code compares equal to the entries the plain walk recorded.
       if (this.lambdaLine[i] == line && this.lambdaCol[i] == col &&
+          this.lambdaFile[i] == this.curFile &&
           this.lambdaInst[i] == this.curInst) { return i; }
     }
     return -1;
@@ -2665,14 +2715,16 @@ export struct Env {
                string[256](), string[256](), 0, "", false, 0, -1,
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
-               string[1024](fill: ""), i32[1024](), i32[1024](), string[1024](fill: ""), 0, 0,
+               string[1024](fill: ""), i32[1024](), i32[1024](), string[1024](fill: ""),
+               i32[1024](), 0, 0,
                string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
                false, string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
                i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false, 0 - 1,
-               i32[16384](), i32[4096](), u8[][0](fill: u8[0]()), Lexed?[0]());
+               i32[16384](), i32[4096](), u8[][0](fill: u8[0]()), Lexed?[0](),
+               Decl[](), i32[0]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -4433,6 +4485,10 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     // So a later phase can resolve what an earlier one recorded — see `Env.fileSrcs`.
     env.fileSrcs = srcs;
     env.fileLexeds = lexeds;
+    // **Before any pass, because every pass below walks it.** `Env.mergedDecls`.
+    Merged mg = mergedTreeOf(progs);
+    env.mergedDecls = mg.decls;
+    env.mergedFiles = mg.files;
     for (i32 i = 0; i < progs.len(); i++) {
       if (progs[i] is null) { continue; }
       env.curFile = i;
@@ -4608,24 +4664,8 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   }
 
   i32 fileCount = fileCountOf(progs);
-  // The merged tree, beside the blob's parse. Built here because this is where both exist.
-  i32 total = 0;
-  for (i32 i = 0; i < progs.len(); i++) { if (progs[i] is not null) { total = total + progs[i]!.decls.len(); } }
-  // Defaults to the blob's own declarations, which is exactly right for a caller that supplied no
-  // trees: same list, and every file index 0 because there is only one source.
-  Decl[] merged = prog.decls;
-  i32[] mergedAt = i32[merged.len()](fill: 0);
-  if (total > 0 && prog.decls.len() > 0) {
-    merged = Decl[total](fill: prog.decls[0]);
-    mergedAt = i32[total](fill: 0);
-    i32 mi = 0;
-    for (i32 i = 0; i < progs.len(); i++) {
-      if (progs[i] is null) { continue; }
-      Decl[] ds = progs[i]!.decls;
-      for (i32 d = 0; d < ds.len(); d++) { merged[mi] = ds[d]; mergedAt[mi] = i; mi = mi + 1; }
-    }
-  }
-  return Front(env, src, lexed, prog, srcs, lexeds, progs, merged, mergedAt, filePaths, fileCount,
+  return Front(env, src, lexed, prog, srcs, lexeds, progs, env.mergedDecls, env.mergedFiles,
+               filePaths, fileCount,
                starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
 
@@ -4653,6 +4693,15 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // Settling walked every function, so an ambiguous name has been reached by now if there is one.
   if (env.ambiguous || env.full) { return bareModule(); }
 
+  // **The walks below read the merged tree rather than the blob's parse.** Same declarations in the
+  // same order, but each one knows its file — so `src` and `lexed` move to that file for the length
+  // of the declaration and back to the blob afterwards, and `env.curFile` says which file a name is
+  // being resolved from. A caller that supplied no per-file trees gets `env.declFile` answering -1,
+  // and every walk reads the blob exactly as it did.
+  Decl[] decls = f.mergedDecls.len() > 0 ? f.mergedDecls : prog.decls;
+  u8[] blobSrc = src;
+  Lexed blobLexed = lexed;
+
   B types = B.create();
   B funcs = B.create();
   B exports = B.create();
@@ -4661,8 +4710,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 exportCount = 0;
   i32 countAt = 0;
 
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] pd1 = decls;
+  for (i32 d = 0; d < pd1.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+    lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+    match (pd1[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         if (env.funcIndex[countAt] < 0) { countAt = countAt + 1; continue; }
@@ -4687,12 +4740,17 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       else: { }
     }
   }
+  env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
   // **A pre-pass for the array types.** Their entries come first in the type section, so every
   // function type index is offset by however many there are — and the set is only complete once every
   // signature and every local has been looked at. Walking the declarations twice is the cost of a
   // type that has to be declared before it is used.
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] pd2 = decls;
+  for (i32 d = 0; d < pd2.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+    lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+    match (pd2[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
@@ -4746,6 +4804,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       else: { }
     }
   }
+  env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
 
   // **After every declaration has named its types**, which is the pass above: a `u8[]` that appears
   // only in a signature — `export u8[] echo(u8[] b)` — is registered there and nowhere earlier, so
@@ -4829,8 +4888,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       countAt = countAt + 1;
       continue;
     }
-    for (i32 di = 0; di < prog.decls.len(); di++) {
-      match (prog.decls[di].kind) {
+    Decl[] pd3 = decls;
+    for (i32 di = 0; di < pd3.len(); di++) {
+      env.curFile = env.declFile(di);
+      src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+      lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+      match (pd3[di].kind) {
         // One function per instance, in the same place in the order its registration put it.
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() == 0) { continue; }
@@ -4863,6 +4926,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         else: { }
       }
     }
+    env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
   }
 
 
@@ -4944,8 +5008,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // **Every function's signature, before the section is sized.** They share the table with the
   // `fn[...]` types the source writes, which is the whole point: a function and a reference to it
   // have to name one type index, not two identical ones.
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] pd4 = decls;
+  for (i32 d = 0; d < pd4.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+    lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+    match (pd4[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         registerFuncTypes(env, src, lexed, returnType, params, "");
@@ -4971,6 +5039,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       else: { }
     }
   }
+  env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
   // The instances, in the order `collectInstances` registered them: after every declaration and
   // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
   // bug — every call after the first helper reaches the wrong function — and it is why the last
@@ -4989,8 +5058,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       registerMethodInstanceTypes(env, src, lexed, prog, ii);
       continue;
     }
-    for (i32 di = 0; di < prog.decls.len(); di++) {
-      match (prog.decls[di].kind) {
+    Decl[] pd5 = decls;
+    for (i32 di = 0; di < pd5.len(); di++) {
+      env.curFile = env.declFile(di);
+      src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+      lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+      match (pd5[di].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -5034,6 +5107,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         else: { }
       }
     }
+    env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
   }
 
 
@@ -5143,13 +5217,21 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // that signature and the env-taking one its bound wrapper needs — and neither is registered by
   // anything else, because no declaration names them. The instrument said it exactly: "9 counted,
   // 11 wanted".
+  // **Each against the file the lambda is written in** — the parameters are that file's tokens, and
+  // reading them against another array builds a signature nobody will name again, so the real one is
+  // registered later and the guard below declines the module. `Env.lambdaFile`.
+  u8[] csrc0 = src; Lexed clex0 = lexed; i32 ccf0 = env.curFile;
   for (i32 li = 0; li < env.lambdaCount; li++) {
     if (env.lambdaCapCount[li] == 0 || env.lambdaSigs[li] == "") { continue; }
+    env.curFile = env.lambdaFile[li];
+    src = srcFor(env.fileSrcs, csrc0, env.curFile);
+    lexed = lexFor(env.fileLexeds, clex0, env.curFile);
     string rsig = emittedSigOf(env, src, lexed, sigReturn(env.lambdaSigs[li]),
                                env.lambdaParams[li], captureStructName(li));
     env.sigType(rsig);
     env.sigType(envSig(rsig));
   }
+  env.curFile = ccf0; src = csrc0; lexed = clex0;
 
   // **Before the sweep**, so each one gets its pair: a lambda is a `fn[…]` *value*, so the expression
   // site names `pairType(sig)`, and a signature registered after the sweep has no pair — which the
@@ -5281,8 +5363,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // to match, and a wrong answer if it did not. `issues/lang/0094`.
   i32 index = env.cbSigCount;
   i32 emitAt = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] pd6 = decls;
+  for (i32 d = 0; d < pd6.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+    lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+    match (pd6[d].kind) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string eowner = nameKeyOf(env, src, lexed, nameTok);
@@ -5320,6 +5406,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       else: { }
     }
   }
+  env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
 
   // The instances, in the order `collectInstances` registered them: after every declaration and
   // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
@@ -5345,8 +5432,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       string mowner = mof.slice(0, mdot);
       string mnm = mof.slice(mdot + 1, mof.len());
       string mtmpl = templateOf(mowner);
-      for (i32 md = 0; md < prog.decls.len(); md++) {
-        match (prog.decls[md].kind) {
+      Decl[] pd7 = decls;
+      for (i32 md = 0; md < pd7.len(); md++) {
+        env.curFile = env.declFile(md);
+        src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+        lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+        match (pd7[md].kind) {
           case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != mtmpl) { continue; }
@@ -5371,10 +5462,15 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           else: { }
         }
       }
+      env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
       continue;
     }
-    for (i32 di = 0; di < prog.decls.len(); di++) {
-      match (prog.decls[di].kind) {
+    Decl[] pd8 = decls;
+    for (i32 di = 0; di < pd8.len(); di++) {
+      env.curFile = env.declFile(di);
+      src = srcFor(env.fileSrcs, blobSrc, env.curFile);
+      lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
+      match (pd8[di].kind) {
         // **Never exported.** An instance's name is not a name anybody wrote, and two modules that
         // happened to infer the same one would collide on it.
         case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -5430,6 +5526,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         else: { }
       }
     }
+    env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
   }
 
 
@@ -5469,9 +5566,15 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // The signature is the one the walk recorded — the `fn[…]` the lambda is *used as*, not one rebuilt
   // from its parameters — so the hoisted function's type and the pair's type are the same string by
   // construction rather than by agreement.
+  u8[] lsrc0 = src; Lexed llex0 = lexed; i32 lcf0 = env.curFile;
   for (i32 li = 0; li < env.lambdaCount; li++) {
     string lsig = env.lambdaSigs[li];
     if (lsig == "") { continue; }
+    // **The file it was written in**, which is the third part of its key — its body's tokens index
+    // that file's array and nothing else. `Env.lambdaFile`.
+    env.curFile = env.lambdaFile[li];
+    src = srcFor(env.fileSrcs, lsrc0, env.curFile);
+    lexed = lexFor(env.fileLexeds, llex0, env.curFile);
     // Its own line and column, which the walk recorded — a lambda has no name token, and the entry
     // coverage point needs a position rather than a token. Passing -1 read `lexed.tokens[-…]`.
     // **The capture struct is the receiver**, which is what makes tier one's bound wrapper carry it:
@@ -5493,6 +5596,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     env.emittingLambda = wasEmitting;
     index = index + 1;
   }
+  env.curFile = lcf0; src = lsrc0; lexed = llex0;
 
   emitMemEnsure(funcs, code, env);
   // In `arrayTypes` order, which is the order the exports below name them in — a helper's index is
@@ -5753,7 +5857,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     // — so their index carries that term too. Naming them without it overwrote the builtins' names.
     i32 lat = env.cbSigCount + env.lambdaFirst + stringHelpers + li;
     if (lat < 0 || lat >= fnName.len()) { continue; }
-    fnName[lat] = "$lambda$" + numText(env.lambdaLine[li]) + ":" + numText(env.lambdaCol[li]);
+    fnName[lat] = "$lambda$" + (env.lambdaFile[li] < 0 ? "" : numText(env.lambdaFile[li]) + "/")
+                + numText(env.lambdaLine[li]) + ":" + numText(env.lambdaCol[li]);
   }
   // **The wrappers, named after what they wrap.** Every function in this module has a name — the test
   // that says so exists because a trap inside an unnamed one reports `wasm-function[N]` and nothing
@@ -8841,8 +8946,13 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
   // the function section and every index after it. Recomputing from zero makes a second caller
   // harmless instead of catastrophic.
   env.lambdaCount = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w1d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w1s = src; Lexed w1l = lexed; i32 w1f = env.curFile;
+  for (i32 d = 0; d < w1d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w1s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w1l, env.curFile);
+    match (w1d[d].kind) {
       // **A module-level constant's initialiser**, which is emitted in `__wac_start`. The walk did not
       // visit it, so `const fn[i32()] ANSWER = () => 42;` declined with "this module has 0" lambdas —
       // true, and no help at all. The wanted type is written on the declaration, so this is the same
@@ -8945,6 +9055,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
       else: { }
     }
   }
+  env.curFile = w1f; src = w1s; lexed = w1l;
 
 }
 
@@ -8992,8 +9103,13 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
   string mname = of.slice(dot + 1, of.len());
   string tmpl = templateOf(ownerInst);
   if (tmpl == "") { return 0; }
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w2d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w2s = src; Lexed w2l = lexed; i32 w2f = env.curFile;
+  for (i32 d = 0; d < w2d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w2s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w2l, env.curFile);
+    match (w2d[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
@@ -9004,12 +9120,14 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
           i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
                                               methodInstTail(env.instName[i], of, mname));
           env.curInst = env.instName[i];
+          env.curFile = w2f;
           return opushed + mpushed;
         }
       }
       else: { }
     }
   }
+  env.curFile = w2f; src = w2s; lexed = w2l;
   return 0;
 }
 
@@ -9020,26 +9138,38 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
     // declaration's name — so without this arm the three cases below fall through and answer 0, and
     // a lambda hoisted out of `pick<i32>` is emitted with `U` unbound. `issues/lang/0277b`.
     if (isMethodInstance(env, ii)) { return pushMethodInstSubstitution(env, src, lexed, prog, ii); }
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w3d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w3s = src; Lexed w3l = lexed; i32 w3f = env.curFile;
+    for (i32 d = 0; d < w3d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w3s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w3l, env.curFile);
+      match (w3d[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
-          return pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+          env.curFile = w3f;
+          return pushed;
         }
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
-          return pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+          env.curFile = w3f;
+          return pushed;
         }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
-          return pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+          env.curFile = w3f;
+          return pushed;
         }
         else: { }
       }
     }
+    env.curFile = w3f; src = w3s; lexed = w3l;
   }
   return 0;
 }
@@ -9065,8 +9195,13 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
   string mname = of.slice(dot + 1, of.len());
   string tmpl = templateOf(ownerInst);
   if (tmpl == "") { return; }
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w4d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w4s = src; Lexed w4l = lexed; i32 w4f = env.curFile;
+  for (i32 d = 0; d < w4d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w4s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w4l, env.curFile);
+    match (w4d[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
@@ -9097,6 +9232,7 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
       else: { }
     }
   }
+  env.curFile = w4f; src = w4s; lexed = w4l;
 }
 
 void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
@@ -9106,8 +9242,13 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       findLambdasInMethodInstance(env, src, lexed, prog, ii);
       continue;
     }
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w5d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w5s = src; Lexed w5l = lexed; i32 w5f = env.curFile;
+    for (i32 d = 0; d < w5d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w5s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w5l, env.curFile);
+      match (w5d[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -9188,6 +9329,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
         else: { }
       }
     }
+    env.curFile = w5f; src = w5s; lexed = w5l;
   }
 }
 
@@ -9371,6 +9513,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       env.lambdaLine[env.lambdaCount] = e.line;
       env.lambdaCol[env.lambdaCount] = e.col;
       env.lambdaInst[env.lambdaCount] = env.curInst;
+      env.lambdaFile[env.lambdaCount] = env.curFile;
       env.lambdaCount = env.lambdaCount + 1;
       // The body's returns answer to *this* lambda's return type, not the enclosing function's, and
       // its parameters are in scope for it — restored after, so they do not leak to what follows.
@@ -11205,6 +11348,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       for (i32 i = 0; i < env.lambdaCount; i++) {
         for (i32 j = 0; j < i; j++) {
           if (env.lambdaLine[j] == env.lambdaLine[i] && env.lambdaCol[j] == env.lambdaCol[i] &&
+              env.lambdaFile[j] == env.lambdaFile[i] &&
               env.lambdaInst[j] == env.lambdaInst[i]) { dup = dup + 1; }
         }
       }
@@ -11935,8 +12079,13 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
     string mname = of.slice(dot + 1, of.len());
     string tmpl = templateOf(ownerInst);
     if (tmpl == "") { return; }
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w6d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w6s = src; Lexed w6l = lexed; i32 w6f = env.curFile;
+    for (i32 d = 0; d < w6d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w6s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w6l, env.curFile);
+      match (w6d[d].kind) {
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
@@ -12000,6 +12149,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
         else: { }
       }
     }
+    env.curFile = w6f; src = w6s; lexed = w6l;
   }
 }
 
@@ -12012,8 +12162,13 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
   string mname = of.slice(dot + 1, of.len());
   string tmpl = templateOf(ownerInst);
   if (tmpl == "") { return; }
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w7d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w7s = src; Lexed w7l = lexed; i32 w7f = env.curFile;
+  for (i32 d = 0; d < w7d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w7s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w7l, env.curFile);
+    match (w7d[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
@@ -12036,6 +12191,7 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
       else: { }
     }
   }
+  env.curFile = w7f; src = w7s; lexed = w7l;
 }
 
 void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
@@ -12052,8 +12208,13 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
     // `canEmit` remembers the first thing that stopped it for the report. Keeping that would name a
     // round-zero shortage as the reason a file was not emitted.
     string savedBlocked = env.blocked;
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w8d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w8s = src; Lexed w8l = lexed; i32 w8f = env.curFile;
+    for (i32 d = 0; d < w8d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w8s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w8l, env.curFile);
+      match (w8d[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() > 0) { continue; }
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
@@ -12086,6 +12247,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
         else: { }
       }
     }
+    env.curFile = w8f; src = w8s; lexed = w8l;
     env.blocked = savedBlocked;
     for (i32 i = 0; i < env.instCount; i++) {
       string inst = env.instName[i];
@@ -12100,8 +12262,13 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
         registerOneMethodInstance(env, src, lexed, prog, i);
         continue;
       }
-      for (i32 d = 0; d < prog.decls.len(); d++) {
-        match (prog.decls[d].kind) {
+      Decl[] w9d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+      u8[] w9s = src; Lexed w9l = lexed; i32 w9f = env.curFile;
+      for (i32 d = 0; d < w9d.len(); d++) {
+        env.curFile = env.declFile(d);
+        src = srcFor(env.fileSrcs, w9s, env.curFile);
+        lexed = lexFor(env.fileLexeds, w9l, env.curFile);
+        match (w9d[d].kind) {
           case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
@@ -12119,7 +12286,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // registered here would never be visited by it. Carrying only the token changes nothing,
               // which is what two earlier attempts at this ran into. Every declaration is collected by
               // now, so the parent resolves.
-              i32 pt = parentIsGeneric(prog, src, lexed, parentTok) ? -1 : parentTok;
+              i32 pt = parentIsGeneric(env, prog, src, lexed, parentTok) ? -1 : parentTok;
               env.structParentToks[env.structCount] = pt;
               env.structParents[env.structCount] =
                   pt < 0 ? "" : nameKeyOf(env, src, lexed, pt);
@@ -12296,6 +12463,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           else: { }
         }
       }
+      env.curFile = w9f; src = w9s; lexed = w9l;
     }
     // **Building one counts as progress.** A body walked in the round before an instance existed
     // stops at the first thing it cannot resolve, so the call further down it — the only place a
@@ -12588,8 +12756,13 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // **Every type a body can name**, before anything is emitted: an instantiation written only as a
   // local's type is still one the module has to build. The array pre-pass walks the same ground
   // later and registering a type twice is free, which is why this can be the blunt version.
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w10d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w10s = src; Lexed w10l = lexed; i32 w10f = env.curFile;
+  for (i32 d = 0; d < w10d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w10s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w10l, env.curFile);
+    match (w10d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         collectArrayTypesIn(env, src, lexed, params, body);
@@ -12618,6 +12791,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       else: { }
     }
   }
+  env.curFile = w10f; src = w10s; lexed = w10l;
 }
 
 /** The file a declared key came from, or -1 when nothing declared it. */
@@ -12765,8 +12939,13 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
  */
 string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecls) {
   i32 at = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w11d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w11s = src; Lexed w11l = lexed; i32 w11f = env.curFile;
+  for (i32 d = 0; d < w11d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w11s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w11l, env.curFile);
+    match (w11d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         // Only the entry file's exports become the module's, which is what the counter checks too.
@@ -12788,10 +12967,12 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
           // Empty is still possible and still says something: the function was dropped without any
           // decline being recorded, which is a different bug from a decline this message could quote.
           string why = at < env.funcWhy.len() ? env.funcWhy[at] : "";
-          return (exported ? "the exported function `" : "the function `") +
-                 tokenTextOf(src, lexed, nameTok) +
-                 "` is not in the module the emitter produced" +
-                 (why == "" ? ", and no reason was recorded" : " — " + why);
+          string msg = (exported ? "the exported function `" : "the function `") +
+                       tokenTextOf(src, lexed, nameTok) +
+                       "` is not in the module the emitter produced" +
+                       (why == "" ? ", and no reason was recorded" : " — " + why);
+          env.curFile = w11f;
+          return msg;
         }
         at = at + 1;
       }
@@ -12806,13 +12987,19 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
       else: { }
     }
   }
+  env.curFile = w11f; src = w11s; lexed = w11l;
   return "";
 }
 
 string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
   i32 at = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w12d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w12s = src; Lexed w12l = lexed; i32 w12f = env.curFile;
+  for (i32 d = 0; d < w12d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w12s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w12l, env.curFile);
+    match (w12d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         // **Two questions, because they have different answers.** `funcOk` is the settling's
@@ -12827,9 +13014,11 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
           string why = env.blocked;
           env.blocked = was;
-          return why == "" ? (exported ? "an export it declined: " : "a function it declined: ") +
-                             tokenTextOf(src, lexed, nameTok)
-                           : why;
+          string msg = why == "" ? (exported ? "an export it declined: " : "a function it declined: ") +
+                                   tokenTextOf(src, lexed, nameTok)
+                                 : why;
+          env.curFile = w12f;
+          return msg;
         }
         at = at + 1;
       }
@@ -12853,6 +13042,7 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
       else: { }
     }
   }
+  env.curFile = w12f; src = w12s; lexed = w12l;
   return "";
 }
 
@@ -12860,8 +13050,13 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 round = 0; round < 16; round++) {
     bool changed = false;
     i32 at = 0;
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w13d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w13s = src; Lexed w13l = lexed; i32 w13f = env.curFile;
+    for (i32 d = 0; d < w13d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w13s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w13l, env.curFile);
+      match (w13d[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() > 0) { continue; }
           if (env.funcOk[at] &&
@@ -12909,6 +13104,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
         else: { }
       }
     }
+    env.curFile = w13f; src = w13s; lexed = w13l;
     for (i32 ii = 0; ii < env.instCount; ii++) {
     // **Only the ones registration built.** An instance discovered after the fixed point gave up —
     // or one whose template is not in this module — has no members in the tables, and emitting its
@@ -12916,8 +13112,13 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
     // reports as a `struct.get` on a number several functions later.
     // A function instance builds no type, so it is "built" when its own entry is registered.
   if (!env.isStructName(env.instName[ii]) && env.funcAt(env.instName[ii]) < 0) { continue; }
-      for (i32 di = 0; di < prog.decls.len(); di++) {
-        match (prog.decls[di].kind) {
+      Decl[] w14d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+      u8[] w14s = src; Lexed w14l = lexed; i32 w14f = env.curFile;
+      for (i32 di = 0; di < w14d.len(); di++) {
+        env.curFile = env.declFile(di);
+        src = srcFor(env.fileSrcs, w14s, env.curFile);
+        lexed = lexFor(env.fileLexeds, w14l, env.curFile);
+        match (w14d[di].kind) {
           case EnumDecl(nameTok, variants, exported, methods, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -12981,6 +13182,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
           else: { }
         }
       }
+      env.curFile = w14f; src = w14s; lexed = w14l;
     }
     if (!changed) { break; }
   }
@@ -13867,8 +14069,13 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
   for (i32 ii = 0; ii < env.instCount; ii++) {
     string inst = env.instName[ii];
     if (!env.isStructName(inst)) { continue; }
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w15d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w15s = src; Lexed w15l = lexed; i32 w15f = env.curFile;
+    for (i32 d = 0; d < w15d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w15s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w15l, env.curFile);
+      match (w15d[d].kind) {
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -13888,11 +14095,17 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
         else: { }
       }
     }
+    env.curFile = w15f; src = w15s; lexed = w15l;
   }
   for (i32 si = 0; si < bindStructCount; si++) {
     string owner = bindStructs[si];
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] w16d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] w16s = src; Lexed w16l = lexed; i32 w16f = env.curFile;
+    for (i32 d = 0; d < w16d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, w16s, env.curFile);
+      lexed = lexFor(env.fileLexeds, w16l, env.curFile);
+      match (w16d[d].kind) {
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
           // **The key, not the text.** Five files here declare a `Reader`; the first keeps the name
@@ -13926,6 +14139,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
         else: { }
       }
     }
+    env.curFile = w16f; src = w16s; lexed = w16l;
   }
   return n;
 }
@@ -14071,18 +14285,25 @@ string bindKeyOf(Env env, string key) {
 string templatePathOf(Env env, u8[] src, Lexed lexed, string tpl) {
   if (env.prog is null) { return ""; }
   Program pg = env.prog!;
-  for (i32 d = 0; d < pg.decls.len(); d++) {
-    match (pg.decls[d].kind) {
+  // **The merged tree answers this one directly.** The question is *which file declares the
+  // template*, which used to be `fileFor` deriving it from a blob line; a declaration in the merged
+  // tree knows.
+  Decl[] td = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  for (i32 d = 0; d < td.len(); d++) {
+    i32 tf = env.declFile(d);
+    u8[] ts = srcFor(env.fileSrcs, src, tf);
+    Lexed tl = lexFor(env.fileLexeds, lexed, tf);
+    match (td[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
-        if (tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
-        i32 f = fileFor(env, lexed, nameTok, 0 - 1);
+        if (tokenTextOf(ts, tl, nameTok) != tpl) { continue; }
+        i32 f = tf >= 0 ? tf : fileFor(env, tl, nameTok, 0 - 1);
         return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() == 0) { continue; }
-        if (tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
-        i32 f = fileFor(env, lexed, nameTok, 0 - 1);
+        if (tokenTextOf(ts, tl, nameTok) != tpl) { continue; }
+        i32 f = tf >= 0 ? tf : fileFor(env, tl, nameTok, 0 - 1);
         return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
       }
       else: { }
@@ -14196,8 +14417,13 @@ string bindNameOf(string spelling) {
  */
 i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
   i32 n = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w17d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w17s = src; Lexed w17l = lexed; i32 w17f = env.curFile;
+  for (i32 d = 0; d < w17d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w17s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w17l, env.curFile);
+    match (w17d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < params.len(); i++) {
@@ -14207,6 +14433,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
       else: { }
     }
   }
+  env.curFile = w17f; src = w17s; lexed = w17l;
   // **Every funcref *field* needs a dispatcher too.** `Core` is a struct of eight of them — `log`,
   // `waitAny`, `nowMillis` — and a host builds one by handing in JavaScript functions; `Pending<i64>`
   // is another three. Collecting only from parameters left those with no `wac.cb<j>` to go through
@@ -14245,8 +14472,13 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
 /** The funcref types in the signatures of `owner`'s methods, an instance's substituted like its own. */
 i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, string owner) {
   string tpl = isInstance(owner) ? templateOf(owner) : "";
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w18d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w18s = src; Lexed w18l = lexed; i32 w18f = env.curFile;
+  for (i32 d = 0; d < w18d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w18s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w18l, env.curFile);
+    match (w18d[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string want = tpl == "" ? owner : tpl;
         if (tokenTextOf(src, lexed, nameTok) != want) { continue; }
@@ -14272,6 +14504,7 @@ i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, 
       else: { }
     }
   }
+  env.curFile = w18f; src = w18s; lexed = w18l;
   return n;
 }
 
@@ -14309,8 +14542,13 @@ i32 addOutSig(string[] out, i32 n, string t) {
 
 i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
   i32 n = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] w19d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w19s = src; Lexed w19l = lexed; i32 w19f = env.curFile;
+  for (i32 d = 0; d < w19d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w19s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w19l, env.curFile);
+    match (w19d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
@@ -14336,6 +14574,7 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
       else: { }
     }
   }
+  env.curFile = w19f; src = w19s; lexed = w19l;
   return n;
 }
 
@@ -14791,9 +15030,14 @@ i32 structGetOp(string t) {
  */
 i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] out, i32 entryDecls) {
   i32 n = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
+  Decl[] w20d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] w20s = src; Lexed w20l = lexed; i32 w20f = env.curFile;
+  for (i32 d = 0; d < w20d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, w20s, env.curFile);
+    lexed = lexFor(env.fileLexeds, w20l, env.curFile);
     if (entryDecls >= 0 && d >= entryDecls) { break; }
-    match (prog.decls[d].kind) {
+    match (w20d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, returnType)));
@@ -14830,6 +15074,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
       else: { }
     }
   }
+  env.curFile = w20f; src = w20s; lexed = w20l;
   // Transitively, through fields **and through method signatures** — a fixed point, since a struct
   // can hold one that holds another. A method that returns a type nothing bound is a method the glue
   // silently drops, which is the one accessor some types exist for.
@@ -14840,8 +15085,13 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
       for (i32 f = 0; f < fc; f++) {
         n = noteBindStructIn(env, out, n, env.fieldTypeAt(out[i], f));
       }
-      for (i32 d = 0; d < prog.decls.len(); d++) {
-        match (prog.decls[d].kind) {
+      Decl[] w21d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+      u8[] w21s = src; Lexed w21l = lexed; i32 w21f = env.curFile;
+      for (i32 d = 0; d < w21d.len(); d++) {
+        env.curFile = env.declFile(d);
+        src = srcFor(env.fileSrcs, w21s, env.curFile);
+        lexed = lexFor(env.fileLexeds, w21l, env.curFile);
+        match (w21d[d].kind) {
           case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() > 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
@@ -14869,6 +15119,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
           else: { }
         }
       }
+      env.curFile = w21f; src = w21s; lexed = w21l;
     }
     if (n == before) { return n; }
   }
@@ -15542,4 +15793,45 @@ void emitSaturate(B fb, Env env, string from, string to) {
 void emitBound(B fb, bool wide, i64 v) {
   if (wide) { fb.byte(66); fb.i64leb(v); }
   else { fb.byte(65); fb.i32leb(v as@ i32); }
+}
+
+
+/** Every file's declarations in link order, and the file each came from. */
+struct Merged {
+  Decl[] decls;
+  i32[] files;
+}
+
+/**
+ * The merged tree: each file's own parse, concatenated as *trees* rather than as text.
+ *
+ * The order is link order, which is the order `linkFiles` wrote the files into the blob — so this
+ * list and the blob's parse hold the same declarations at the same indices. That is the invariant
+ * the migration away from the blob rests on, and it is what lets a walk switch from one to the other
+ * without reordering anything it emits.
+ */
+Merged mergedTreeOf(Program?[] progs) {
+  i32 total = 0;
+  for (i32 i = 0; i < progs.len(); i++) {
+    if (progs[i] is not null) { total = total + progs[i]!.decls.len(); }
+  }
+  if (total == 0) { return Merged(Decl[](), i32[0]()); }
+  Decl[] merged = Decl[total](fill: firstDeclOf(progs));
+  i32[] at = i32[total](fill: 0);
+  i32 mi = 0;
+  for (i32 i = 0; i < progs.len(); i++) {
+    if (progs[i] is null) { continue; }
+    Decl[] ds = progs[i]!.decls;
+    for (i32 d = 0; d < ds.len(); d++) { merged[mi] = ds[d]; at[mi] = i; mi = mi + 1; }
+  }
+  return Merged(merged, at);
+}
+
+/** Any declaration, to fill the array with — every slot is written before it is read. */
+Decl firstDeclOf(Program?[] progs) {
+  for (i32 i = 0; i < progs.len(); i++) {
+    if (progs[i] is null) { continue; }
+    if (progs[i]!.decls.len() > 0) { return progs[i]!.decls[0]; }
+  }
+  return Decl(DeclKind.Import(0 - 1, 0 - 1, ImportItem[]()), 0, 0);
 }
