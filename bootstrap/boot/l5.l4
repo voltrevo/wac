@@ -1601,6 +1601,57 @@ i32 primary() {
 }
 
 // `x as i64`, `n as u32`. `as!` is a *checked* cast in wac and traps on overflow; stage 3 emits the
+
+// **The conversion that belongs in front of code already written.** A binary operator's left
+// operand is emitted before its right is even read, and wasm wants both the same width — so
+// when the *right* turns out to be the wider one, `0 - v` on an i64 being the case, the
+// instruction has to go where the left's code ended. The buffer is opened at that mark and the
+// instruction dropped in, which is cheaper than emitting every right operand to scratch on the
+// chance that this happens. The block forms have no choice but scratch; this one does.
+i32 insert_op(i32 mark, i32 s) {
+  i32 n = load(s) + 1;
+  if (dp + n >= emit_room()) { overflowed = 1; tp = ntok; return 0; }
+  i32 i = dp;
+  while (i > mark) {
+    store8(dst + i + n - 1, load8(dst + i - 1));
+    i = i - 1;
+  }
+  dp = dp + n;
+  i32 back = dp;
+  dp = mark;
+  emits(s);
+  nl();
+  dp = back;
+  return 0;
+}
+
+// Both operands at one width, and the answer's type. `convert` moves the right, which is on
+// top; this moves the left, which is not.
+i32 balance(i32 mark, i32 lt, i32 rt) {
+  if (ty_isnum(lt) == 0 | ty_isnum(rt) == 0) { return lt; }
+  if (ty_float(lt) == 0 & ty_float(rt)) {
+    if (ty_wide(lt)) {
+      if (ty_signed(lt)) { insert_op(mark, "f64.convert_i64_s"); } else {
+        insert_op(mark, "f64.convert_i64_u");
+      }
+    } else {
+      if (ty_signed(lt)) { insert_op(mark, "f64.convert_i32_s"); } else {
+        insert_op(mark, "f64.convert_i32_u");
+      }
+    }
+    if (ty_narrowfloat(rt)) { insert_op(mark, "f32.demote_f64"); }
+    return rt;
+  }
+  if (ty_float(lt) == 0 & ty_float(rt) == 0 & ty_wide(rt) & ty_wide(lt) == 0) {
+    if (ty_signed(lt)) { insert_op(mark, "i64.extend_i32_s"); } else {
+      insert_op(mark, "i64.extend_i32_u");
+    }
+    return rt;
+  }
+  convert(lt, rt);
+  return lt;
+}
+
 // same conversion and does not check, which is a gap the spec names.
 i32 cast() {
   i32 t = primary();
@@ -1655,7 +1706,7 @@ i32 mul() {
   while (ispunct(42) | ispunct(47) | ispunct(37)) {
     i32 op = val();
     next();
-    convert(t, cast());
+    i32 m_cast = dp; t = balance(m_cast, t, cast());
     if (op == 42) { binop(t, "mul"); } else {
       if (op == 47) { binop_signed(t, "div"); } else { binop_signed(t, "rem"); }
     }
@@ -1668,7 +1719,7 @@ i32 add() {
   while (ispunct(43) | ispunct(45)) {
     i32 op = val();
     next();
-    convert(t, mul());
+    i32 m_mul = dp; t = balance(m_mul, t, mul());
     if (op == 43) {
       if (t == strty & strty != 0 - 1) { usedcat = 1; line("call $__concat"); } else {
         binop(t, "add");
@@ -1689,7 +1740,7 @@ i32 shift() {
     // operand's type says, which is the whole point of writing it.
     i32 logical = 0;
     if (op == 15934 & ispunct(62)) { next(); logical = 1; }
-    convert(t, add());
+    i32 m_add = dp; t = balance(m_add, t, add());
     if (op == 15420) { binop(t, "shl"); } else {
       if (logical) { opprefix(t); emits("shr_u"); nl(); } else { binop_signed(t, "shr"); }
     }
@@ -1702,7 +1753,7 @@ i32 rel() {
   while (ispunct(60) | ispunct(62) | ispunct(15676) | ispunct(15678)) {
     i32 op = val();
     next();
-    convert(t, shift());
+    i32 m_shift = dp; t = balance(m_shift, t, shift());
     if (op == 60) { binop_signed(t, "lt"); } else {
       if (op == 62) { binop_signed(t, "gt"); } else {
         if (op == 15676) { binop_signed(t, "le"); } else { binop_signed(t, "ge"); }
@@ -1742,7 +1793,7 @@ i32 equality() {
       if (op == 15649) { line("i32.eqz"); }
       t = TY_BOOL;
     } else {
-    convert(t, rel());
+    i32 m_rel = dp; t = balance(m_rel, t, rel());
     if (t == strty & strty != 0 - 1) {
       // **Two strings compare by content.** `i32.eq` on two references answers whether they are the
       // same object, which for a literal built fresh at every use is always false.
@@ -1760,19 +1811,19 @@ i32 equality() {
 
 i32 bitand() {
   i32 t = equality();
-  while (ispunct(38)) { next(); convert(t, equality()); binop(t, "and"); }
+  while (ispunct(38)) { next(); i32 m_equality = dp; t = balance(m_equality, t, equality()); binop(t, "and"); }
   return t;
 }
 
 i32 bitxor() {
   i32 t = bitand();
-  while (ispunct(94)) { next(); convert(t, bitand()); binop(t, "xor"); }
+  while (ispunct(94)) { next(); i32 m_bitand = dp; t = balance(m_bitand, t, bitand()); binop(t, "xor"); }
   return t;
 }
 
 i32 bitor() {
   i32 t = bitxor();
-  while (ispunct(124)) { next(); convert(t, bitxor()); binop(t, "or"); }
+  while (ispunct(124)) { next(); i32 m_bitxor = dp; t = balance(m_bitxor, t, bitxor()); binop(t, "or"); }
   return t;
 }
 
