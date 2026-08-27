@@ -331,7 +331,7 @@ rather than stylistic, so they are recorded there and repeated here:
 | # | criterion | state |
 |---|---|---|
 | 1 | `zero<i32>()` callable | **yes** — `spec/cases/0239`, answers 7 |
-| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. Worth a decision of its own rather than smuggling in here |
+| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. **Filed as `issues/lang/0273b`** rather than smuggled in here, because it is a decision and it shares [0012](0012-synthesising-a-lambdas-return-type.md) §1's ordering trap |
 | 3 | `fn[i32(i32)] g = id<i32>;` | **yes** — `spec/cases/0242`, answers 6. Needed `typeOfE` an answer as well as the emission: the emitter could write the value and could not say what it was, and declined the module as *untyped a type used as a value* |
 | 4 | `Option<i32>.None.orElse(7)` | **yes** |
 | 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |
