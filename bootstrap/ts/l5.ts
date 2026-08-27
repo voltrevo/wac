@@ -37,68 +37,113 @@ export async function l5Compiler(): Promise<WebAssembly.Module> {
  * Depth first and post-order, so a file is emitted after everything it imports; visited once, so a
  * diamond does not duplicate a declaration.
  */
-export async function flatten(
-  entry: string,
-  seen = new Set<string>(),
-  claimed = new Map<string, string>(),
-): Promise<string> {
+// **Flattening is two passes, not one.** Which of two colliding names has to be renamed cannot
+// be decided as the modules arrive: lex.wac has a private `emit` and api.wac an exported one, and
+// api.wac is the later of the two — so the answer is to rename the *earlier*, which by then has
+// already been written out. So the first pass collects the modules in dependency order and the
+// second decides every rename with all of them in hand.
+export async function flatten(entry: string): Promise<string> {
+  const mods: Mod[] = [];
+  await gather(entry, new Set<string>(), mods);
+
+  // Every top-level name, and which modules declare it.
+  const owners = new Map<string, { mod: string; exported: boolean }[]>();
+  for (const m of mods) {
+    m.decls = topLevelDecls(m.text);
+    for (const d of m.decls) {
+      const list = owners.get(d.name) ?? [];
+      list.push({ mod: m.mod, exported: d.exported });
+      owners.set(d.name, list);
+    }
+  }
+
+  const renames = new Map<string, Map<string, string>>();
+  const renameIn = (mod: string, from: string, to: string) => {
+    const m = renames.get(mod) ?? new Map<string, string>();
+    m.set(from, to);
+    renames.set(mod, m);
+  };
+
+  // A module that aliases an import *and* declares its own thing with the original's name — the
+  // whole point of `import { isBuiltinSpec as coreIsBuiltinSpec }` in files.wac is that it can
+  // then export a wrapper of the same name. Its own declaration is renamed apart first, while
+  // the two are still spelled differently, because undoing the alias would fuse them into one
+  // self-calling function.
+  for (const m of mods) {
+    for (const orig of m.aliases.values()) {
+      if (m.decls.some((d) => d.name === orig)) renameIn(m.mod, orig, `${orig}_${m.mod}`);
+    }
+  }
+
+  // Then the collisions. The keeper is the one exported, if exactly one is — nothing outside a
+  // module can be referring to a private name, so renaming a private one is always safe, and
+  // renaming an exported one would break whoever imports it. Two exported declarations of one
+  // name is a clash a flattener cannot resolve, and is left for the assembler to report.
+  for (const [name, list] of owners) {
+    if (list.length < 2) continue;
+    const exported = list.filter((o) => o.exported);
+    if (exported.length > 1) continue;
+    const keeper = exported.length === 1 ? exported[0].mod : list[0].mod;
+    for (const o of list) {
+      if (o.mod === keeper) continue;
+      renameIn(o.mod, name, `${name}_${o.mod}`);
+    }
+  }
+
+  let out = "";
+  for (const m of mods) {
+    const rewrite = new Map([...(renames.get(m.mod) ?? []), ...m.aliases]);
+    out += (rewrite.size === 0 ? m.text : unalias(m.text, rewrite)) + "\n";
+  }
+  return out;
+}
+
+type Mod = {
+  path: string;
+  mod: string;
+  text: string;
+  aliases: Map<string, string>;
+  decls: { name: string; exported: boolean }[];
+};
+
+// Dependency order, each module once, imports before the module that asks for them.
+async function gather(entry: string, seen: Set<string>, out: Mod[]): Promise<void> {
   const path = await Deno.realPath(entry);
-  if (seen.has(path)) return "";
+  if (seen.has(path)) return;
   seen.add(path);
   const text = await Deno.readTextFile(path);
   const dir = path.slice(0, path.lastIndexOf("/"));
-  let out = "";
+
   // `import { x as y }` renames a declaration for this module only, and concatenating the
-  // modules loses the rename along with the import. So the alias is undone here — every
-  // occurrence of `y` outside a string or a comment becomes `x`, which is what the importing
-  // module meant by it. Six of these exist in the corpus and all six read like renames rather
-  // than like words that could also be someone's local: `pathResolveFrom`, `coreIsBuiltinSpec`.
+  // modules loses the rename along with the import. So the alias is undone — every occurrence
+  // of `y` outside a string or a comment becomes `x`, which is what the importing module meant.
   const aliases = new Map<string, string>();
   for (const m of text.matchAll(/^\s*import\s*\{([^}]*)\}\s*from\s*"([^"]+)"\s*;/gm)) {
-    out += await flatten(await resolve(dir, m[2]), seen, claimed);
+    await gather(await resolve(dir, m[2]), seen, out);
     for (const item of m[1].split(",")) {
       const a = item.trim().match(/^(\w+)\s+as\s+(\w+)$/);
       if (a) aliases.set(a[2], a[1]);
     }
   }
-  // A module may alias an import *and* declare its own thing with the original's name — the
-  // whole point of `import { isBuiltinSpec as coreIsBuiltinSpec }` in files.wac is that it can
-  // then export a wrapper of the same name. Undoing the alias would fuse the two into one
-  // self-calling function, so this module's own declaration is renamed apart first, while the
-  // two are still spelled differently.
-  const renames = new Map<string, string>();
-  const mod = path.slice(path.lastIndexOf("/") + 1).replace(/\.wac$/, "");
-  for (const orig of aliases.values()) {
-    const declared = new RegExp(
-      `^\\s*(export\\s+)?(struct|enum)?\\s*[\\w<>\\[\\]?]*\\s*\\b${orig}\\b\\s*[({]`,
-      "m",
-    );
-    if (declared.test(text)) renames.set(orig, `${orig}_${mod}`);
-  }
-  // **Two modules may each declare their own private thing with the same name** — bindgen.wac
-  // and manifest.wac both have an `orVoid`, and neither exports it, which is entirely legal
-  // until they are concatenated. The later one is renamed, which is safe precisely because it
-  // is private: nothing outside this module can be referring to it. An *exported* name that
-  // collides is a different matter and is left alone, because renaming it would break whoever
-  // imports it — and the assembler says so plainly if that ever happens.
-  for (const d of topLevelDecls(text)) {
-    if (!d.exported && claimed.has(d.name)) renames.set(d.name, `${d.name}_${mod}`);
-    if (!claimed.has(d.name)) claimed.set(d.name, mod);
-  }
-  const rewrite = new Map([...renames, ...aliases]);
-  return out + (rewrite.size === 0 ? text : unalias(text, rewrite)) + "\n";
+  out.push({
+    path,
+    mod: path.slice(path.lastIndexOf("/") + 1).replace(/\.wac$/, ""),
+    text,
+    aliases,
+    decls: [],
+  });
 }
 
-// The names this module declares at the top level, and whether each is exported. A declaration
-// is what starts at brace depth zero and reaches a `(`, a `{` or an `=` — a function, a struct,
-// an enum or a global. Comments and strings are stepped over, because a `{` inside either would
-// otherwise leave the depth wrong for the rest of the file.
+
+// The names a module declares at the top level, and whether each is exported. A declaration is
+// what starts at brace depth zero and reaches a `(`, a `{` or an `=` — a function, a struct, an
+// enum or a global. Comments and strings are stepped over, because a brace inside either would
+// leave the depth wrong for the rest of the file.
 function topLevelDecls(text: string): { name: string; exported: boolean }[] {
   const out: { name: string; exported: boolean }[] = [];
-  const lines = text.split("\n");
   let depth = 0;
   let inBlockComment = false;
-  for (const raw of lines) {
+  for (const raw of text.split("\n")) {
     let line = "";
     for (let i = 0; i < raw.length; i++) {
       if (inBlockComment) {
