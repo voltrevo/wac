@@ -398,6 +398,32 @@ const programs: [string, string, number][] = [
   // Its letters appear in its *return type*, before anything has bound them — so the whole
   // declaration has to be recognised before that type is parsed. Not instantiated: calling one is
   // refused rather than compiled into something plausible.
+  // A lexer written in wac is full of these three, and no invented program had any of them.
+  ["character literals, including escapes", `
+    i32 main() { return 'A' * 100 + '\\n'; }`, 6510],
+
+  ["hexadecimal literals", `
+    i32 main() { return 0x80 + 0xC0 + 0xff; }`, 447],
+
+  ["else: as a match arm, statement and expression", `
+    enum K { A(i32 v), B, C }
+    i32 f(K k) { match (k) { case A(v): { return v; } else: { return 9; } } return 0; }
+    i32 g(K k) { return match (k) { case A(v): v, else: 9 }; }
+    i32 main() { return f(A(4)) * 1000 + f(B) * 100 + g(A(2)) * 10 + g(C); }`, 4929],
+
+  // wasm's `struct.set` wants the reference before the value, and a compound write reads before it
+  // writes — so the base is parked in a slot, read through, combined, and pushed again.
+  ["compound writes through a field and an element", `
+    struct C { i32 n; i32 bump(this) { this.n++; return this.n; } }
+    i32 main() {
+      C c = C(5);
+      c.bump(); c.bump();
+      c.n += 3;
+      i32[] xs = i32[2]();
+      xs[0] = 5; xs[0] += 3; xs[0]++;
+      return c.n * 100 + xs[0];
+    }`, 1009],
+
   ["a generic free function, declared and not called", `
     enum Option<T> { Some(T v), None }
     Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }

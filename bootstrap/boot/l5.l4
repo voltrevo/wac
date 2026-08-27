@@ -71,6 +71,14 @@ i32 isspace(i32 c) { return c == 32 | c == 10 | c == 13 | c == 9; }
 i32 isdigit(i32 c) { return c >= 48 & c <= 57; }
 i32 isalpha(i32 c) { return c == 95 | (c >= 97 & c <= 122) | (c >= 65 & c <= 90); }
 i32 isalnum(i32 c) { return isalpha(c) | isdigit(c); }
+i32 isxdigit(i32 c) {
+  return (c >= 48 & c <= 57) | (c >= 97 & c <= 102) | (c >= 65 & c <= 70);
+}
+i32 hexval(i32 c) {
+  if (c <= 57) { return c - 48; }
+  if (c >= 97) { return c - 87; }
+  return c - 55;
+}
 
 i32 texteq(i32 p, i32 n, i32 s) {
   i32 r = 1;
@@ -123,10 +131,44 @@ i32 lex() {
           if (isdigit(c)) {
             i32 v = 0;
             i32 s0 = p;
-            while (isdigit(at(p))) { v = v * 10 + at(p) - 48; p = p + 1; }
+            // `0x80` — a byte range, a mask, a UTF-8 lead. A lexer written in wac is full of them
+            // and there is no other way to write one. `_` separates digits in wac and means nothing.
+            if (c == 48 & (at(p + 1) == 120 | at(p + 1) == 88)) {
+              p = p + 2;
+              while (isxdigit(at(p)) | at(p) == 95) {
+                if (at(p) != 95) { v = v * 16 + hexval(at(p)); }
+                p = p + 1;
+              }
+            } else {
+              while (isdigit(at(p)) | at(p) == 95) {
+                if (at(p) != 95) { v = v * 10 + at(p) - 48; }
+                p = p + 1;
+              }
+            }
             toks[ntok] = Tok(K_INT, s0, p - s0, v);
             ntok = ntok + 1;
           } else {
+            // **A character literal is a number.** `'0'` and `'\n'` are how a lexer written in wac
+            // spells a byte; there is no character type, so this makes an INT and nothing
+            // downstream needs to know it was written with quotes.
+            if (c == 39) {
+              p = p + 1;
+              i32 cv = at(p);
+              if (cv == 92) {
+                p = p + 1;
+                i32 e = at(p);
+                cv = e;
+                if (e == 110) { cv = 10; }
+                if (e == 116) { cv = 9; }
+                if (e == 114) { cv = 13; }
+                if (e == 48) { cv = 0; }
+              }
+              p = p + 1;
+              i32 cs = p;
+              if (at(p) == 39) { p = p + 1; }
+              toks[ntok] = Tok(K_INT, cs, 1, cv);
+              ntok = ntok + 1;
+            } else {
             if (c == 34) {
               p = p + 1;
               i32 s1 = p;
@@ -165,7 +207,7 @@ i32 lex() {
                 p = p + w;
               }
             }
-          }
+          }}
         }
       }
     }
@@ -1345,6 +1387,22 @@ i32 match_body(i32 wantValue, i32 out) {
   i32 armty = TY_I32;
   want(123);
   while (ispunct(125) == 0) {
+    // **`else:` is an arm with no tag test.** It reads like a variant named `else` otherwise, and a
+    // `match` with a default is what wac writes whenever the interesting cases are a minority —
+    // which in a compiler over an AST is most of them.
+    if (isword("else")) {
+      next();
+      want(58);
+      i32 emark = nloc;
+      if (wantValue) {
+        armty = expr();
+        if (ispunct(44)) { next(); }
+      } else {
+        if (ispunct(123)) { block(); } else { statement(); }
+      }
+      nloc = emark;
+      word("br"); label(done); nl();
+    } else {
     eatword("case");
     i32 vp = tstart();
     i32 vn = tlen();
@@ -1393,6 +1451,7 @@ i32 match_body(i32 wantValue, i32 out) {
     nloc = mark;
     word("br"); label(done); nl();
     line("end");
+    }
   }
   want(125);
   i32 armlen = scratch_end(out, saved);
@@ -1475,7 +1534,12 @@ i32 chain_is_store() {
           i = i + 1;
         }
       } else {
-        if (toks[i].kind == K_PUNCT & toks[i].val == 61) { ans = 1; }
+        if (toks[i].kind == K_PUNCT) {
+          i32 v = toks[i].val;
+          // Everything that writes: plain, compound, and the two increments.
+          if (v == 61 | v == 15659 | v == 15661 | v == 15658 | v == 15663
+              | v == 11051 | v == 11565) { ans = 1; }
+        }
         going = 0;
       }
     }
@@ -1483,8 +1547,39 @@ i32 chain_is_store() {
   return ans;
 }
 
+// Which write is at the cursor: 0 for none, 61 for `=`, the operator's byte for a compound, and
+// 11051/11565 for the increments.
+i32 write_op() {
+  if (ispunct(61)) { return 61; }
+  if (ispunct(15659)) { return 43; }
+  if (ispunct(15661)) { return 45; }
+  if (ispunct(15658)) { return 42; }
+  if (ispunct(15663)) { return 47; }
+  if (ispunct(11051)) { return 11051; }
+  if (ispunct(11565)) { return 11565; }
+  return 0;
+}
+
+// The new value, given the old one is already on the stack. `++` is `+= 1` with the 1 implied.
+i32 write_value(i32 op, i32 t) {
+  next();
+  if (op == 11051) { konst(1); binop(t, "add"); return 0; }
+  if (op == 11565) { konst(1); binop(t, "sub"); return 0; }
+  if (op == 61) { return 0; }
+  coerce(t, expr());
+  if (op == 43) { binop(t, "add"); }
+  if (op == 45) { binop(t, "sub"); }
+  if (op == 42) { binop(t, "mul"); }
+  if (op == 47) { binop_signed(t, "div"); }
+  return 0;
+}
+
 // The base, then the value, then the store — so the walk stops one step short of the end and
 // remembers what it was about to do.
+//
+// **A compound write reads before it writes**, and wasm's `struct.set` wants the reference *before*
+// the value — so the base is parked in a slot, read through, combined, and pushed again. `this.pos++`
+// is three temporaries and no other shape works.
 i32 store_through() {
   i32 t = primary_base();
   while (1) {
@@ -1496,27 +1591,63 @@ i32 store_through() {
       i32 fi = field_index(t, fp, fn2);
       if (fi == 0 - 1) { oops(); return 0; }
       i32 ft = fields[types[t].fstart + fi].ty;
-      if (ispunct(61)) {
-        next();
-        expr();
+      i32 wop = write_op();
+      if (wop != 0) {
+        if (wop == 61) {
+          next();
+          expr();
+          want(59);
+          word("struct.set"); tyname(t); sp(); emitn(fi); nl();
+          return 0;
+        }
+        // A compound: the base is on the stack once and is needed twice.
+        i32 base = slot_new(t);
+        i32 val = slot_new(ft);
+        word("local.tee"); slotname(base); nl();
+        word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+        write_value(wop, ft);
         want(59);
+        word("local.set"); slotname(val); nl();
+        word("local.get"); slotname(base); nl();
+        word("local.get"); slotname(val); nl();
         word("struct.set"); tyname(t); sp(); emitn(fi); nl();
         return 0;
       }
       word("struct.get"); tyname(t); sp(); emitn(fi); nl();
       t = ft;
     } else {
+      i32 arr = slot_new(t);
+      word("local.set"); slotname(arr); nl();
       next();
+      i32 idx = slot_new(TY_I32);
       expr();
+      word("local.set"); slotname(idx); nl();
       want(93);
       i32 et = types[t].elem;
-      if (ispunct(61)) {
-        next();
-        expr();
+      i32 wop2 = write_op();
+      if (wop2 != 0) {
+        word("local.get"); slotname(arr); nl();
+        word("local.get"); slotname(idx); nl();
+        if (wop2 == 61) {
+          next();
+          expr();
+          want(59);
+          word("array.set"); tyname(t); nl();
+          return 0;
+        }
+        i32 val2 = slot_new(et);
+        word("local.get"); slotname(arr); nl();
+        word("local.get"); slotname(idx); nl();
+        word("array.get"); tyname(t); nl();
+        write_value(wop2, et);
         want(59);
+        word("local.set"); slotname(val2); nl();
+        word("local.get"); slotname(val2); nl();
         word("array.set"); tyname(t); nl();
         return 0;
       }
+      word("local.get"); slotname(arr); nl();
+      word("local.get"); slotname(idx); nl();
       if (ty_packed(et) != 0) {
         emits("array.get"); signedsuffix(et); sp(); tyname(t); nl();
       } else {
@@ -2334,12 +2465,12 @@ i32 compile(i32 s, i32 out) {
   srclen = 0;
   while (load8(src + srclen) != 0) { srclen = srclen + 1; }
 
-  types = Ty[2048]();
-  fields = Field[8192]();
-  fparams = i32[4096]();
+  types = Ty[16384]();
+  fields = Field[65536]();
+  fparams = i32[16384]();
   nfparam = 0;
-  vars = Var[2048]();
-  meths = Meth[2048]();
+  vars = Var[8192]();
+  meths = Meth[16384]();
   ntype = 0;
   nfield = 0;
   nvar = 0;
@@ -2350,12 +2481,12 @@ i32 compile(i32 s, i32 out) {
   // reads a 0 as the number type.
   i32 nt = 0;
   while (nt < NUMTYPES) { ty_new(T_NUM, 0, 0, 0); nt = nt + 1; }
-  locs = Local[4096]();
-  slotty = i32[4096]();
-  glos = Glo[1024]();
-  strs = Str[4096]();
-  fns = Fn[4096]();
-  gfns = GFn[512]();
+  locs = Local[16384]();
+  slotty = i32[16384]();
+  glos = Glo[8192]();
+  strs = Str[65536]();
+  fns = Fn[16384]();
+  gfns = GFn[4096]();
   ngfn = 0;
   nloc = 0;
   nslot = 0;
@@ -2368,11 +2499,11 @@ i32 compile(i32 s, i32 out) {
   usedstr = 0;
   usedcat = 0;
   usedeq = 0;
-  tmpls = Tmpl[512]();
-  tparams = TParam[1024]();
-  insts = Inst[2048]();
-  iargs = i32[16384]();
-  subs = Sub[256]();
+  tmpls = Tmpl[4096]();
+  tparams = TParam[8192]();
+  insts = Inst[16384]();
+  iargs = i32[65536]();
+  subs = Sub[2048]();
   ntmpl = 0;
   ntparam = 0;
   ninst = 0;
