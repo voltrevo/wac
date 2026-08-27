@@ -5,9 +5,9 @@
   scheduler plumbing rather than a declaration — see *What is left to build* item 1, which understated
   itself. `spec/cases/0245`–`0249` are the landed behaviour.
 
-  **One limitation, found after the criteria were ticked and worth knowing before relying on this:**
-  a method with its own letters is not found through a *project* import — `issues/lang/0275b`. Every
-  case here is a single file, so the criteria are all met in the one place the bug cannot appear.
+  **The first real user is `core/vec.wac`'s `fold`**, added 2026-08-27 — the method this document is
+  written about, and the absence this document used as its evidence. `core/test/vec_test.wac` covers
+  the three shapes: inferred, written, and a `U` that is not `T`.
 
   Decided 2026-08-26; the objection that had ruled C out was removed by
   [0011](0011-a-call-may-name-its-type-arguments.md). Option D moved to

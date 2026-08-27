@@ -8,6 +8,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Vec } from "core/vec.wac";
 import { Option } from "core/option.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 struct P { i32 v; }
 
@@ -214,5 +215,33 @@ export string test_with_capacity() {
   t.eqI32(v.get(63), 63, "the last element fits");
   v.push(64);
   t.eqI32(v.capacity(), 128, "the 65th grows it");
+  return t.report();
+}
+
+/**
+ * `fold`, the first method in this repository with a type parameter of its own.
+ *
+ * The three shapes are the point rather than the arithmetic. **Inferred** is what almost every call
+ * looks like — the seed says `U` is `i32` and nothing is written. **Written** is the case the seed
+ * cannot answer: `0` alone would make the accumulator an `i32`. **A `U` that is not `T`** is why the
+ * letter exists at all — folding a `Vec<i32>` into a `string` is what a method fixed to the element
+ * type could not do.
+ *
+ * `design/lang/0010` is the document about exactly this method, and this file's `Vec` having no
+ * `fold` was that document's own evidence that the feature was missing.
+ */
+export string test_fold() {
+  T t = T.create();
+  Vec<i32> v = Vec<i32>.create();
+  v.push(4); v.push(5); v.push(3);
+
+  t.eqI32(v.fold(0, (i32 a, i32 x) => a + x), 12, "inferred: the seed says U is i32");
+  t.eqI64(v.fold<i64>(0 as i64, (i64 a, i32 x) => a + (x as i64)), 12 as i64,
+          "written: the seed alone would have said i32");
+  t.eqStr(v.fold<string>("", (string s, i32 x) => s + itoa(x)), "453",
+          "a U that is not T, and in the vector's order");
+
+  Vec<i32> blank = Vec<i32>.create();
+  t.eqI32(blank.fold(7, (i32 a, i32 x) => a + x), 7, "an empty vector folds to its seed");
   return t.report();
 }
