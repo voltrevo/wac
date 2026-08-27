@@ -12352,6 +12352,18 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
             i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                            env.instOf[ii]);
             for (i32 m = 0; m < methods.len(); m++) {
+              // **A method with its own letters is not walkable here** — only the owner's
+              // substitution is in force, so its body reads `Cell<U>` and `U` is a name no table
+              // knows. The registration and type passes already skip it for the same reason; this
+              // one did not, and walked it every round, recording *a call to Cell* as the module's
+              // decline reason. Its instances are walked where both substitutions are pushed.
+              //
+              // `at` still advances: the declined template entry exists and every index after it
+              // depends on this cursor.
+              if (methods[m].typeParams.len() > 0) {
+                at = at + 1;
+                continue;
+              }
               if (env.funcOk[at] &&
                   !canEmit(src, lexed, env, methods[m].params, methods[m].body,
                            methods[m].hasThis ? env.instName[ii] : "",
@@ -12370,6 +12382,18 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
             i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
             for (i32 m = 0; m < methods.len(); m++) {
+              // **A method with its own letters is not walkable here** — only the owner's
+              // substitution is in force, so its body reads `Cell<U>` and `U` is a name no table
+              // knows. The registration and type passes already skip it for the same reason; this
+              // one did not, and walked it every round, recording *a call to Cell* as the module's
+              // decline reason. Its instances are walked where both substitutions are pushed.
+              //
+              // `at` still advances: the declined template entry exists and every index after it
+              // depends on this cursor.
+              if (methods[m].typeParams.len() > 0) {
+                at = at + 1;
+                continue;
+              }
               if (env.funcOk[at] &&
                   !canEmit(src, lexed, env, methods[m].params, methods[m].body,
                            methods[m].hasThis ? env.instName[ii] : "",

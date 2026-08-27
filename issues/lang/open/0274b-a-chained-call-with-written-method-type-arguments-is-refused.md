@@ -21,7 +21,8 @@ What still fails is only this:
 Cell<bool> b = c.then<i64>((i32 x) => (x * 3) as i64).then<bool>((i64 y) => y > 5);
 ```
 
-    wacc: cannot emit … — a call to Cell
+    wacc: cannot emit … — a call to `Cell<U>`, which this expression is emitted as
+                          and which is not in the program
 
 **Naming the intermediate now works**, so the workaround is a local:
 
@@ -115,11 +116,22 @@ inside the body resolved to `Cell<U>`:
 
     a call to Cell [n=Cell<U> | Cell<i32>- Cell<bool>- Cell<i32>.then<i64>+ Cell<i64>- Cell<i64>.then<bool>+]
 
-So the remaining bug is not discovery and not registration: it is that **some pass walks the method's
-body with only the owner's substitution in force**, leaving the method's own letter unbound, and
-`Cell<U>` is not a struct any table knows. Finding which pass is the whole of what is left —
-`registerMethodInstances` and the emission block both push the inner substitution, so it is a third
-walk over the same bodies.
+So the remaining bug is not discovery and not registration: it is that **something reaches emission
+with the method's own letter unbound**, and `Cell<U>` is not a struct any table knows.
+
+One such walk has been found and fixed: the emittability fixed-point pass walked every instance
+method with only the owner's substitution pushed, including those with their own letters — the
+registration and type passes both skip those for exactly this reason and that one did not. It was
+recording *a call to Cell* as the module's decline reason every round, which is the message this
+issue was originally written around. Skipping it there did not make the chain compile, but it did
+uncover the real one: the message is now `haveRequired`'s, at the **emission** site, which is where
+"not ready" and "not possible" are the same thing.
+
+So what is left is narrower again: a construction inside a method instance's body is *emitted* with
+the inner substitution missing. `registerMethodInstances` and the emission block both push it, so the
+next question is which third thing emits that body — or whether the instance is being skipped at
+emission (`funcIndex < 0`) and the decline is the call to it rather than the body itself. Those two
+are distinguishable by whether `funcOk` is true for `Cell<i64>.then<bool>` at the end.
 
 ### The earlier measurement, kept because it is how the first half was found
 
