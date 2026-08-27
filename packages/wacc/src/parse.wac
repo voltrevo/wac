@@ -1359,17 +1359,19 @@ bool looksLikeConstructionOrCall(P p) {
   // follows it. `?` belongs in that set as much as `[`: an array of nullable instantiations is how a
   // hash table spells an empty slot.
   //
-  // **`.` is deliberately not in that set**, and the comment here used to name `Map<K, V>.create()`
-  // as though it were. It is not a spelling this language has: `issues/lang/0088`. Adding it is one
-  // token of parsing and would be wrong on its own, because `parseConstructionOrCall`'s `.` branch
-  // builds its base from the *name token* and drops the type arguments — so `Cell<i32>.of(3)` would
-  // be accepted and mean `Cell.of(3)`, which is a spelling whose meaning is "ignore what you wrote".
+  // **`.` is in that set since 2026-08-26**, and it took the other half with it. The comment here
+  // used to say why it could not be: *"adding it is one token of parsing and would be wrong on its
+  // own, because `parseConstructionOrCall`'s `.` branch builds its base from the name token and drops
+  // the type arguments — so `Cell<i32>.of(3)` would be accepted and mean `Cell.of(3)`, which is a
+  // spelling whose meaning is 'ignore what you wrote'."* That branch now builds an
+  // `ExprKind.TypeName` when arguments were written, so the two changes landed together.
+  // `issues/lang/0088`, `design/lang/0011`.
   if (next == kLt()) {
     i32 after = afterTypeArgs(p, 1);
     if (after < 0) { return false; }
     i32 following = p.kindAt(after);
     return following == kLbrack() || following == kLparen() || following == kLbrace()
-        || following == kQuestion();
+        || following == kQuestion() || following == kDot();
   }
 
   if (next == kLbrack() || next == kQuestion()) {
@@ -1434,7 +1436,12 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
     p.advance();
     i32 methodTok = -1;
     if (p.at1(kIdent())) { methodTok = p.advance(); } else { p.fail(perrMethodName()); }
-    Expr base = Expr(ExprKind.Ident(nameTok), line, col);
+    // **Carrying the type arguments, which this used to drop.** With none written the base stays an
+    // `Ident`, so every existing `Type.method(…)` parses exactly as before; with some, it becomes a
+    // `TypeName` and `Cell<i32>.of(3)` means what it says rather than `Cell.of(3)`.
+    Expr base = nameArgs.len() == 0
+        ? Expr(ExprKind.Ident(nameTok), line, col)
+        : Expr(ExprKind.TypeName(tyNamed(nameTok, nameArgs, line, col)), line, col);
     Expr member = Expr(ExprKind.Member(base, methodTok), line, col);
     if (p.at1(kLparen())) {
       p.advance();

@@ -349,6 +349,11 @@ void printExpr(Pr w, Expr e) {
       w.sp(); printExpr(w, operand);
       w.close();
     }
+    case TypeName(qual): {
+      w.open("typename", e.line, e.col);
+      w.sp(); printTy(w, qual);
+      w.close();
+    }
     case Construct(ctype, args, named): {
       w.open("construct", e.line, e.col);
       w.sp(); printTy(w, ctype);

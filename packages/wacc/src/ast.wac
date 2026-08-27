@@ -138,6 +138,18 @@ export enum ExprKind {
   Unwrap(Expr operand),
   /** `Point(1, 2)` or `Point(x: 1, y: 2)`; one of the two lists is empty. */
   Construct(Ty ctype, Expr[] args, NamedArg[] named),
+  /**
+   * A written type standing where an expression is parsed, and **only** as the object of a
+   * `Member`: `Maybe<i32>.Just(4)`, `Result<i32, string>.Err(e)`.
+   *
+   * It exists because `Ident(tok)` has nowhere to put type arguments, so the `.` branch of
+   * `parseConstructionOrCall` used to drop them — which is why `Cell<i32>.of(3)` was refused rather
+   * than parsed, and why accepting it without this would have meant `Cell.of(3)`, a spelling whose
+   * meaning is "ignore what you wrote". `issues/lang/0088`, `design/lang/0011`.
+   *
+   * Anywhere other than a `Member`'s object this is an error: a type is not a value.
+   */
+  TypeName(Ty qualifier),
   /** `++`/`--`; `prefix` distinguishes `++i` from `i++`. */
   Incr(Lvalue target, i32 op, bool prefix),
   /**

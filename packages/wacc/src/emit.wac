@@ -5625,6 +5625,17 @@ string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, 
       if (!env.isEnumName(on)) { return ""; }
       return env.variantKeyIn(on, tokenTextOf(src, lexed, nameTok));
     }
+    // **`Maybe<i32>.Just(4)` — the instantiation is written rather than taken from the slot**, which
+    // is the whole of `issues/lang/0088`. It is the arm above with the written type standing where
+    // `want` stood: `typeOfTyName` answers the instance and registers it, and the variant is then
+    // looked up in that instance exactly as a slot-derived one is. No `want` is consulted, which is
+    // the point — this spelling exists for the positions that have no slot.
+    case TypeName(nt): {
+      string inst = typeOfTyName(env, src, lexed, nt);
+      if (inst == "") { return ""; }
+      string vw = inst + "." + tokenTextOf(src, lexed, nameTok);
+      return env.enumOf(vw) == inst ? vw : "";
+    }
     else: { return ""; }
   }
 }
@@ -6945,6 +6956,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(68);
       fb.f64bits(v);
     }
+    // **A type is not a value**, so nothing here can emit one. It reaches the emitter only for a
+    // program the checker should have refused: `TypeName` is valid solely as the object of a
+    // `Member`, where resolving the member consumes it. Emitting nothing would produce a module
+    // that computes the wrong thing silently, so this traps — the same treatment every other
+    // "cannot happen" in this walk gets. `issues/lang/0088`.
+    case TypeName(tn): { trap; }
     case BoolLit(value): {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
@@ -8906,6 +8923,10 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     //
     // Found by forcing a wanted type into each arm in turn: the `Call` arm did not run at all, which
     // no amount of reading the call arm would have shown.
+    // **A type is not a value**, so this reaches the emitter only for a program the checker should
+    // already have refused — `TypeName` is valid solely as the object of a `Member`, where the
+    // member resolution consumes it. `issues/lang/0088`.
+    case TypeName(tn): { }
     case Construct(ctype, args, named): {
       // **Resolve the name only when an argument is actually a lambda.** `typeOfTyName` resolves
       // through `env`'s declaration tables, and that lookup *marks the module ambiguous* as a side
@@ -10357,6 +10378,10 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // `MapEntry<K,V>` field. The language spells it this way everywhere else too, and
     // `templateStatic` says so for `Vec.create()`; nothing said it for a plain construction, so the
     // name reached the call path looking like a function nobody declared. `issues/lang/0092`.
+    // **A type is not a value**, so this reaches the emitter only for a program the checker should
+    // already have refused — `TypeName` is valid solely as the object of a `Member`, where the
+    // member resolution consumes it. `issues/lang/0088`.
+    case TypeName(tn): { return unsupportedValue(src, lexed, env, e); }
     case Construct(ctype, args, named): {
       string cn = typeOfTyName(env, src, lexed, ctype);
       if (!env.isStructName(cn) && isInstance(want) && templateOf(want) == cn
@@ -10599,6 +10624,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return knownEscapes(src, lexed, tok) ? "" : "a string literal with an escape this slice cannot read";
     }
     case NullLit: { return "null"; }
+    // **A type is not a value.** Reaches here only for a program the checker should have refused:
+    // `TypeName` is valid solely as a `Member`'s object. `issues/lang/0088`.
+    case TypeName(tn): { return "a type used as a value"; }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       if (env.localAt(nm) >= 0) { return ""; }
@@ -12343,6 +12371,7 @@ string kindOfExpr(Expr e) {
     case JsxText(startOff, endOff): { return "JSX text"; }
     case BoolLit(value): { return "bool literal"; }
     case NullLit: { return "null"; }
+    case TypeName(named): { return "a type used as a value"; }
     case Ident(tok): { return "name"; }
     case Unary(op, operand): { return "unary"; }
     case Binary(op, left, right): { return "binary"; }
@@ -12375,6 +12404,14 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
       string n = nameKeyOf(env, src, lexed, tok);
       if (env.constAt(n) >= 0) { return ""; }
       return env.isStructName(n) ? n : "";
+    }
+    // **`Cell<i32>.of(3)` — the owner is written, so no slot is consulted.** `templateStatic` is
+    // the arm for `Cell.of(3)`, which has to take the instantiation from the slot it lands in and
+    // therefore cannot work in receiver position; this is the spelling that does.
+    // `issues/lang/0088`, `design/lang/0011`.
+    case TypeName(nt): {
+      string inst = typeOfTyName(env, src, lexed, nt);
+      return inst != "" && env.isStructName(inst) ? inst : "";
     }
     else: { return ""; }
   }

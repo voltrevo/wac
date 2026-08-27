@@ -85,6 +85,33 @@ What has no expected type is a construction whose value goes nowhere in particul
 expression statement, or a method call on a fresh receiver. `Vec().len()` is an error, and the fix
 is the two statements idiomatic wac already writes.
 
+### A written instantiation may qualify a variant or a static
+
+Receiver position is the case above with no fix available by rewriting, because there is no slot to
+split the expression into two statements *around*. An enum's variant and a generic struct's static
+method may therefore be qualified by an instantiation written out:
+
+```wac
+i32 a = Maybe<i32>.Just(4).orElse(0);
+i32 b = Maybe<i32>.Absent.orElse(7);
+i32 c = Cell<i32>.of(23).get();
+```
+
+`[§wacc-written-instantiation]` All three work. This is the one place a type argument list stands
+where an expression is parsed, and it is narrower than it looks: `Ty<Args>` is an expression **only**
+as the object of a `.`, so it is always followed by a member name and never stands alone. `Maybe<i32>`
+as a value, an argument or an operand is still an error, and `IDENT <` in every other expression
+position is still a comparison.
+
+The restriction is what keeps it unambiguous without lookahead. `a < b` cannot become an
+instantiation by accident because an instantiation must be followed by `.` and a name, and `a < b > .c`
+is not something anyone writes.
+
+`[§wacc-written-instantiation]` The rule this relaxes is *"type arguments are inferred, never
+written"* under **Generic functions** below, which still holds for a call's own type parameters:
+`identity<i32>(4)` is refused. What is written here belongs to the *receiver's* type, not to the
+method's.
+
 ### Across modules
 
 A materialised struct belongs to the **template's** file, so the ordinary export and import rules

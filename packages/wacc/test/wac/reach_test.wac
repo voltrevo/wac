@@ -93,6 +93,10 @@ string[] expressionLabels() {
     // between tags holds no expression of its own — it is a span of the source — so it belongs with
     // the leaves rather than the grid.
     "JsxText", "IntLit", "FloatLit", "StrLit", "BoolLit", "NullLit", "Ident",
+    // `TypeName` holds a **`Ty`** rather than an `Expr` — `Maybe<i32>` in `Maybe<i32>.Just(4)` —
+    // so there is no sub-expression to bury a fault in, and it is a leaf for this grid's purpose
+    // even though it is not one for the checker's. `issues/lang/0088`.
+    "TypeName",
     // **A real cell now.** This was empty while the syntax was in flight — a placeholder that kept
     // the completeness check green and covered nothing. A lambda parses now (`design/lang/0002` tier
     // two), so here is the debt paid: the body is walked, and something wrong inside it is reported.
@@ -131,6 +135,7 @@ string[] expressionSources() {
     "import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(" + SUB +
     ")}/>; } string itoa(i32 v) { return \"\"; }",
     "", "", "", "", "", "", "",
+    "",                                   // TypeName — a leaf here; see the label list above
     "void f(i32 p, f64 q) { fn[i32()] g = () => " + SUB + "; }",
     "void f(i32 p, f64 q) { fn[i32()] g = () => { return " + SUB + "; }; }");
 }
