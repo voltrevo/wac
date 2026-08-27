@@ -11,6 +11,8 @@
 import { flatten, l5ToL0 } from "./l5.ts";
 import { assemble } from "./assemble.ts";
 
+export type Tally = { total: number; ok: number; wrong: string[] };
+
 const HERE = new URL(".", import.meta.url).pathname;
 const dir = Deno.args[0] ?? `${HERE}../../wac/spec/cases`;
 const api = `${HERE}../../wac/packages/wacc/src/api.wac`;
@@ -163,9 +165,12 @@ for (const name of files) {
       if (outcome !== "ok") wrong.push(`${name.padEnd(58)} ${outcome}  ${detail}`);
       continue;
     }
-    // One file goes through `emit`, which is the path that works; more than one has to go
-    // through `emitFiles`, which is the only one that can see an import.
-    const mod = fileSet.length === 1 ? emitted() : emittedFrom(fileSet, entry);
+    // **A file with an import has to be linked, even when it is the only file.** `emit` takes
+    // one source and resolves nothing, so `import { Node } from "core"` reaches the checker as
+    // an unresolved name — which is what nine JSX cases were declining on. `emitFiles` is the
+    // entry point that walks the import graph, and it is the one to use whenever there is one.
+    const linked = fileSet.length > 1 || /^\s*import\b/m.test(src);
+    const mod = linked ? emittedFrom(fileSet, entry) : emitted();
     if (mod === null) {
       outcome = "no module";
       detail = declineText().slice(0, 60);
@@ -208,9 +213,17 @@ for (const name of files) {
   if (outcome !== "ok") wrong.push(`${name.padEnd(58)} ${outcome}  ${detail}`);
 }
 
-console.log(`${files.length} cases\n`);
-for (const [k, n] of [...tally].sort()) console.log(`  ${String(n).padStart(4)}  ${k}`);
-if (wrong.length > 0) {
-  console.log(`\nnot as expected (${wrong.length}):`);
-  for (const w of wrong.slice(0, 40)) console.log(`  ${w}`);
+export const result: Tally = {
+  total: files.length,
+  ok: [...tally].filter(([k]) => k.endsWith(": ok")).reduce((a, [, n]) => a + n, 0),
+  wrong,
+};
+
+if (import.meta.main) {
+  console.log(`${files.length} cases\n`);
+  for (const [k, n] of [...tally].sort()) console.log(`  ${String(n).padStart(4)}  ${k}`);
+  if (wrong.length > 0) {
+    console.log(`\nnot as expected (${wrong.length}):`);
+    for (const w of wrong.slice(0, 40)) console.log(`  ${w}`);
+  }
 }
