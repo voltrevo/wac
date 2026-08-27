@@ -4016,6 +4016,15 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
   emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                    names, filePaths, false, false, env, srcs, lexeds, progs);
   if (env.fullWhy != "") { return env.fullWhy; }
+  // **Ambiguity is a decline this could not say.** `emitModuleOfFront` bares out on
+  // `env.ambiguous || env.full`, and this asked only about `full` — so a module refused because a
+  // name means two things answered the empty string, which reads as "it emitted fine" to every
+  // caller and to anyone debugging. The name has been recorded in `ambiguousName` the whole time.
+  if (env.ambiguous) {
+    string which = env.ambiguousName != "" ? "`" + env.ambiguousName + "`" : "a name";
+    return "the module was refused because " + which + " is declared in more than one file and a "
+         + "use of it could mean either";
+  }
   if (env.full) { return "declined with no reason recorded"; }
   return "";
 }
