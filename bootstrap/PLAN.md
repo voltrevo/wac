@@ -128,56 +128,71 @@ must be unique across a program* — with the flattener's refusal as its enforce
 
 ---
 
-## What wacc could change, and what needs no change at all — **question**
+## What is worth keeping — **open**
 
-Measured over the 18 modules `emitFiles` actually links, with comments and string literals
-stripped so prose cannot match.
+**The goal is not a smaller ladder.** It is a ladder worth trusting, and one that can grow when
+wacc wants more. So "wacc does not use it" is the wrong test — the right one is **"is anything
+exercising it?"**, because an implemented-but-unexercised feature is worse than either alternative:
+it will be subtly wrong on the day somebody finally needs it, and it will look supported until
+then.
 
-**Four features wac-L5 implements that wacc never uses.** These need no change to wacc: they are
-simply dead weight, and I added them because I was measuring against the *corpus* when the target
-was only ever wacc.
+Measured over the 18 modules `emitFiles` links, comments and strings stripped, plus what our own
+suite covers:
 
-    feature                sites in wacc   lines in l5.l4   in the assemblers
-    generics                           0              109   —
-    funcrefs / call_ref                0               39   the declarative element segment
-    copyFrom / fill                    0                7   array.copy in both
-    .trim()                            0                7   —
+    feature            used by wacc   exercised by                       verdict
+    generics                      0   core/ — map 21, vec 11, result 5   keep, it has an oracle
+    funcrefs                      0   core/ — map 4, option 1, vec 1     keep, it has an oracle
+    f64 / f32                     4   nothing in the suite               keep, but pin it
+    copyFrom / fill               0   nothing in the suite               keep, but pin it
+    .trim()                       0   nothing in the suite               keep, but pin it
 
-Nothing that must go through wac-L5 needs them either: the four files in `drivers/` use neither,
-and the 252 spec cases run through the *built wacc* — real wacc, with full generics — so deleting
-them costs that oracle nothing. The only users are 18 cases in `ts/l5_test.ts`, which test features
-nothing needs. Deleting them does mean wac-L5 can no longer compile `core/`, so
-`against_real_wac.ts` would read *17 of 17* rather than *24 of 24*.
+**So the debt is not the unused features. It is three features that went in on throwaway probes
+and were never pinned.** Floats, `copyFrom`/`fill` and `trim` were each checked by hand against a
+scratch script and then left with no test. `ts/l5_test.ts` has fifteen cases touching generics and
+seven touching funcrefs, and **zero** touching any of those three. The assemblers have
+`tests/l0/floats.l0` and `floats32.l0`, so the *format* is covered and the *rung* is not.
 
-**One change to wacc removes floats entirely.** Every float in wacc is at a boundary, packed from
-integer bits and immediately unpacked:
+### The two things to do
+
+1. **Pin the three.** A case each in `ts/l5_test.ts` for a float, an array copy and a fill, and a
+   trim. Cheap, and it converts three features from "present" to "supported".
+2. **Make compiling `core/` a test.** It is what keeps generics and funcrefs honest, and today it
+   only happens inside `ts/against_real_wac.ts`, which is deliberately *not* a test. Seven small
+   files, and without them the most intricate machinery in `boot/l5.l4` rests on twenty-two
+   hand-written cases.
+
+### The principle behind it
+
+**wac-L0 should be complete for wasm as wac emits it; wac-L5 should track wacc.**
+
+They are different kinds of artefact. The format is implemented twice, read by humans, and
+described in a spec other people would have to implement — it wants to be finished and stable, and
+wasm is not moving. Losing a feature there costs a spec change and two implementations. wac-L5 is
+derived, checked by running it, and cheap to change, so it can follow wacc and grow when wacc does.
+
+That also corrects something I had been eliding: I have been counting lines in the trusted root as
+though they were all the same weight. Twenty lines of `"f32.add": 0x92` in an opcode table are not
+twenty lines of parser. The count is a proxy and a coarse one.
+
+## What wacc could still change, for wacc's sake — **question**
+
+Not about shrinking the ladder any more, but still worth proposing, because it makes *wacc* clearer:
+
+**Every float in wacc is a carrier, never a number.**
 
     lit.wac      decimalToF64 computes q and biased as integers, then f64.fromBits(q as@ u64)
     emit.wac     void f64bits(this, f64 v) { u64 bits = f64.toBits(v); ... }
     emit.wac     void f32bits(this, f32 v) { u32 bits = f32.toBits(v); ... }
     emit.wac     f64 v = floatLit(...); fb.f32bits(v as~ f32);
 
-A float is never added, compared, or used as a number — it is a carrier between two functions.
-Make `floatLit` answer `u64` and `f32bits`/`f64bits` take bits, about six edits, and wacc needs no
-float type at all. That removes 53 lines from `boot/l5.l4`, roughly 100 across the two assemblers,
-and **the only non-LEB immediate in the wac-L0 format** — the eight raw bytes of `f64.const` — so
-`spec/l0.md` gets shorter too.
+Not one addition, comparison or conversion — packed from bits and unpacked two calls later. Making
+`floatLit` answer `u64` and the bits functions take bits, about six edits, would say what the code
+means. That the ladder would then need no float type is a side effect rather than the reason.
 
-**What this is worth.** The trusted root is the number the whole argument turns on:
-
-    today          assemble.ts 832 + l1.l0 1,804 + the flattener 191   = 2,827
-    after          assemble.ts ~700 + l1.l0 1,804 + the flattener ~114 = ~2,618
-
-and `boot/l5.l4` loses about 215 of its 3,100 lines.
-
-**The risk, and the fix for it.** All of this rests on wacc staying inside wac-L5's subset, and
-nothing enforces that today — a future wacc that reaches for a generic would fail in a way nobody
-would connect to this decision. So it should come with a **subset guard**: a check that the
-bootstrap can compile wacc's source, run on wacc's side, so reaching outside the subset fails
-loudly at the moment it is written rather than at the next bootstrap.
-
-That is the same principle as the collision rule above: a bootstrap constraint should be stated and
-enforced, not discovered.
+**And whatever is agreed, it needs a subset guard.** Nothing enforces that wacc stays inside
+wac-L5's subset, so a future wacc that reaches outside would fail in a way nobody connects to this
+decision. A check on wacc's side that the bootstrap can still compile it turns that into a loud
+failure at the moment it is written. Same principle as the collision rule above.
 
 ---
 
