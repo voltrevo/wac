@@ -222,6 +222,39 @@ C needs no inference work, but it is not free:
    registers its methods per instantiation, so `Pending<i64>.then<Foo>` is a longer name in the same
    table.
 
+### Progress — agent-b, 2026-08-27
+
+**The syntax exists.** `design/lang/0011` steps 1–3 landed, so `v.fold<i64>(0, f)` parses and the
+type arguments reach the checker as `ExprKind.Call`'s `typeArgs`. Before that they were a parse
+error, which made item 2's refusal message worse than it looked: *"no Box<i32>.map without its type
+arguments"* reads as an instruction, and following it answered `a type name is not a value` under the
+`<`, about a different program.
+
+**One of the three refusals now does useful work rather than only refusing.** `C.methodTypeParams`
+holds the letters rather than a flag, so the *count* is checkable without binding anything —
+`b.map<i64, i32>(f)` is wrong for every possible binding at once and is told so. The three messages
+are now distinct and each is true:
+
+    b.map(widen)              no Box<i32>.map — it has a type parameter of its own
+    b.map<i64>(widen)         no Box<i32>.map yet — written type arguments are parsed and not bound
+    b.map<i64, i32>(widen)    Box<i32>.map takes 1 type argument, and 2 were written
+
+**What is left is item 3, and it is the whole of what is left.** Binding the letters in the checker
+is small — the substitution machinery is a stack of (from, to) pairs with a push/pop count, and a
+method's letters are a second push on it. What that would produce on its own is a call the checker
+accepts and the emitter declines, which is a worse answer than today's single clear refusal. So the
+checker half should land *with* the emitter half rather than before it.
+
+Item 1 is deliberately not done: declaring `Pending<U> then<U>(…)` while no call to it can be emitted
+adds a method nobody can reach.
+
+**Where the emitter's decline is**, for whoever picks this up: one site, `emit.wac`'s
+`funcMethodGeneric[ma]` guard in the `canEmit` walk. The instance machinery it would have to join is
+`pushSubstitution`/`popSubstitution` — which already returns how many pairs it pushed, so a second
+push for the method's letters is the shape it was built for — and `collectInstances`, whose comment
+warns that discovery order and registration order have to agree because the function table's order is
+the module's numbering.
+
 ## Not recommended: leaving it refused
 
 The terminal form — `then` returning nothing — is landed and useful, and `drain` composes fine
