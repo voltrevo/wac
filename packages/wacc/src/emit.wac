@@ -1489,7 +1489,6 @@ export struct Env {
    * resolves to anyone else's — which is the language's rule (a file sees its own names, then what
    * it imported) arrived at from the only direction available here.
    */
-  i32[] fileFirstLine;
   i32 fileCount;
   /**
    * Which file imports which, as (from, to) pairs.
@@ -2720,7 +2719,7 @@ export struct Env {
                // `string[4096]`s by eye and watching the build fail unchanged.
                string[16384](), string[16384](), string[65536](), i32[16384](), i32[16384](), 0,
                bool[16384](), i32[16384](), 0,
-               i32[1024](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
+               0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), bool[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                // **`funcRecv` and `funcMethodGeneric`, raised with the rest of the function table
@@ -2748,15 +2747,7 @@ export struct Env {
                Decl[](), i32[0]());
   }
 
-  /** Which linked file a line belongs to; 0 when nothing was linked. */
-  i32 fileOf(const this, i32 line) {
-    i32 at = 0;
-    for (i32 i = 0; i < this.fileCount; i++) {
-      if (this.fileFirstLine[i] <= line) { at = i; }
-    }
-    return at;
-  }
-
+  
   /**
    * Register a top-level name, and answer with the key everything else will use for it.
    *
@@ -4415,8 +4406,9 @@ void emitStructFields(B types, Env env, string owner) {
 
 u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                   string[] filePaths) {
-  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false, false, false,
-                          u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+  Front1 g = oneFile(filePaths.len() > 0 ? filePaths[0] : "", src);
+  return emitModuleOfWith(g.src, entryDecls, starts, edges, names, filePaths, false, false, false,
+                          g.srcs, g.lexeds, g.progs);
 }
 
 /** The point table for an instrumented build, which only emitting can produce. */
@@ -4464,24 +4456,24 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
 /** `frontOfRawIn` with no per-file trees — for the callers that have only a source. */
 Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                  string[] filePaths, bool checked, bool covered, Env envIn) {
-  return frontOfRawIn(src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn,
-                      u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+  Front1 g = oneFile(filePaths.len() > 0 ? filePaths[0] : "", src);
+  return frontOfRawIn(g.src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn,
+                      g.srcs, g.lexeds, g.progs);
 }
 
 Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                    string[] filePaths, bool checked, bool covered, Env envIn,
                    u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
-  // **The concatenation is lexed and parsed only when there are no per-file trees.** Nothing walks
-  // its declarations any more — every walk reads `Env.mergedDecls` — so for a caller that supplied
-  // the graph, this would be a second full lex and parse of the whole program for a list nobody
-  // reads. `src` and `lexed` still travel as the fallback for a `curFile` of -1.
-  bool haveTrees = fileCountOf(progs) > 0;
-  Lexed lexed = haveTrees ? Lexed(i32[0](), 0, i32[0](), 0) : lex(src);
-  Program prog = Program(Decl[]());
-  if (!haveTrees) {
-    P p = P.create(src, lexed.tokens, lexed.tokenCount);
-    prog = parseProgram(p);
-  }
+  // **Nothing is lexed or parsed here.** Every caller hands over the graph — a lone source is the
+  // graph of one file, built by `oneFile` — and every walk reads `Env.mergedDecls`. This used to
+  // lex and parse a concatenation of the whole program for a declaration list nobody read.
+  //
+  // `src` and `lexed` still travel, as the fallback for a `curFile` of -1: they are the entry's, and
+  // for a single-file caller they are the only ones there are.
+  Lexed lexed = lexeds.len() > 0 && (lexeds[0] is not null)
+    ? lexeds[0]!
+    : Lexed(i32[0](), 0, i32[0](), 0);
+  Program prog = progs.len() > 0 && (progs[0] is not null) ? progs[0]! : Program(Decl[]());
 
   Env env = envIn;
   env.checked = checked;
@@ -4492,7 +4484,6 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // before it is loaded would be scoped to file 0 whatever line it is on.
   for (i32 i = 0; i < starts.len(); i++) {
     if (starts[i] == 0) { continue; }
-    env.fileFirstLine[env.fileCount] = starts[i];
     if (env.fileCount < env.filePaths.len() && i - 1 < filePaths.len() && i >= 1) {
       env.filePaths[env.fileCount] = filePaths[i - 1];
     }
@@ -8822,10 +8813,12 @@ void traceIndex(B fb, Env env, i32 line, i32 col) {
  * it anyway to a per-file line names the wrong file and a line before the start of it.
  */
 void covTableRow(Env env, i32 idx, string kind, i32 line, i32 col) {
-  bool perFile = env.curFile >= 0;
-  i32 f = perFile ? env.curFile : env.fileOf(line);
-  i32 localLine = perFile ? line
-                : (f < env.fileCount ? line - env.fileFirstLine[f] + 1 : line);
+  // **The line is the file's own, always.** It used to be a line of the concatenated source, which
+  // is why this subtracted the file's first line to get back to something a reader recognises;
+  // there is no concatenation now, so there is nothing to subtract. `env.curFile` says which file,
+  // and when the walk has not set it there is one file or none to choose between.
+  i32 f = env.curFile >= 0 ? env.curFile : (env.fileCount == 1 ? 0 : 0 - 1);
+  i32 localLine = line;
   string path = f < env.filePaths.len() ? env.filePaths[f] : "";
   env.covTable = env.covTable + numText(idx) + "\t" + numText(localLine) + "\t" + numText(col)
                  + "\t" + kind + "\t" + path + "\n";
@@ -11919,8 +11912,9 @@ export string emitBlocked(u8[] src) {
  */
 export string emitDeclineRaw(u8[] src) {
   Env env = Env.create();
-  emitModuleOfInto(src, -1, i32[1](), i32[1](), string[1](), string[1](), false, false, env,
-                   u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+  Front1 g = oneFile("", src);
+  emitModuleOfInto(g.src, -1, i32[1](), i32[1](), string[1](), string[1](), false, false, env,
+                   g.srcs, g.lexeds, g.progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   if (env.full) { return "declined with no reason recorded"; }
   return "";
@@ -12572,14 +12566,24 @@ i32 fileCountOf(Program?[] progs) {
 }
 
 /**
- * The file a token belongs to.
+ * The file a token belongs to: the walk's own if it has one, then the caller's.
  *
- * The walk's own file if it has one, then the caller's, and only then the blob's line arithmetic —
- * which is right exactly when every line in play came from one concatenated string.
+ * **And otherwise the only file there is, or nothing.** This used to end in `env.fileOf(line)`,
+ * arithmetic over the line offsets of the concatenated source — right exactly when every line in
+ * play came from one string, and quietly wrong the moment they did not. There is no such string
+ * now: a lone source is the graph of one file (`oneFile`), so the answer when nobody knows is 0 if
+ * there is one file and *unknown* if there are many.
+ *
+ * -1 is what `srcFor` and `lexFor` already read as "use what the caller has", so an unknown answer
+ * degrades to the caller's own source rather than to another file's.
+ *
+ * Measured before it was changed: with a decline wired into this branch, nothing in the probes or
+ * in `packages/wacc/test/wac` reached it. That is why this is a simplification rather than a fix.
  */
 i32 fileFor(Env env, Lexed lexed, i32 tok, i32 file) {
   if (env.curFile >= 0) { return env.curFile; }
-  return file >= 0 ? file : env.fileOf(tokenLine(lexed, tok));
+  if (file >= 0) { return file; }
+  return env.fileCount == 1 ? 0 : 0 - 1;
 }
 
 /**
@@ -15880,4 +15884,29 @@ Decl firstDeclOf(Program?[] progs) {
     if (progs[i]!.decls.len() > 0) { return progs[i]!.decls[0]; }
   }
   return Decl(DeclKind.Import(0 - 1, 0 - 1, ImportItem[]()), 0, 0);
+}
+
+/**
+ * One source as the graph of one file it is — `srcs`, `lexeds`, `progs` for a single-file caller.
+ *
+ * **So there is one path.** Every entry point that takes a lone `u8[]` used to hand the emitter no
+ * trees at all, which selected a second branch through the whole front: the one the concatenation
+ * left behind. A file on its own is not a different kind of program.
+ */
+Front1 oneFile(string path, u8[] src) {
+  Frontend fe = frontendOf(path == "" ? "x.wac" : path, src);
+  u8[][] srcs = u8[][1](fill: fe.src);
+  Lexed?[] lexeds = Lexed?[1]();
+  Program?[] progs = Program?[1]();
+  lexeds[0] = fe.lexed;
+  progs[0] = fe.prog;
+  return Front1(fe.src, srcs, lexeds, progs);
+}
+
+/** What `oneFile` hands back: the source the tokens index, and the three per-file arrays. */
+struct Front1 {
+  u8[] src;
+  u8[][] srcs;
+  Lexed?[] lexeds;
+  Program?[] progs;
 }
