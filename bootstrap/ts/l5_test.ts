@@ -403,7 +403,7 @@ const programs: [string, string, number][] = [
     i32 main() { return 'A' * 100 + '\\n'; }`, 6510],
 
   ["hexadecimal literals", `
-    i32 main() { return 0x80 + 0xC0 + 0xff; }`, 447],
+    i32 main() { return 0x80 + 0xC0 + 0xff; }`, 575],
 
   ["else: as a match arm, statement and expression", `
     enum K { A(i32 v), B, C }
