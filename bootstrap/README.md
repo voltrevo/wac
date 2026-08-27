@@ -6,22 +6,49 @@ reference compiler it would replace?**
 
 The question is a number, and this repository exists to produce it rather than to argue about it.
 
-## The idea being tested
+## The ladder
 
-Today a cold `wac` checkout builds its first `wacc.wasm` with `compiler/`, a TypeScript compiler for
-a subset of wac. That is the last large piece of TypeScript on the language's critical path, and
-`design/lang/0003` in the wac repository has already demoted it to one job. A ladder would replace it:
+Each rung is written in the rung below. Only L0 is written by hand, and only L0 is trusted by
+reading rather than by derivation.
 
-1. a **hand-written root** in a format that converts to wasm by inspection — not a compiler but an
-   *interpreter*, for a language whose syntax is trivial to read;
-2. one or two **intermediates**, each written in the language of the rung below and frozen once it
-   works;
-3. **wacc**, whose own sources are pinned to the features the last rung provides — the same
-   discipline they are under today with the reference.
+| | language | what it adds | its compiler is written in | size |
+|---|---|---|---|---|
+| **L0** | `sx` | s-expressions, closures, a heap | **hand-written `.wax`** | 1,630 instructions |
+| **L1** | `wx` | i32, memory, functions, `while`, literals | sx | 200 lines |
+| **L2** | `wac-0` | C-family syntax, globals, scopes | wx | 452 lines |
+| **L3** | `wac-1` | structs, arrays, `enum`/`match`, methods, **wasm GC** | wac-0 | 991 lines |
+| **L4** | `wac-2` | generics, nullables, the wac ABI — *not built* | wac-1 | — |
 
-The interpreter-not-compiler choice is the point of the experiment. A hand-written *compiler* has to
-encode wasm; an interpreter only has to walk a tree, and bootstrap speed is irrelevant because it
-runs once per cold checkout.
+**L4 is the language `packages/wacc/src` is written in**: full wac minus the nine omissions
+`compiler/README.md` documents, and *with* generics. Its compiler — `wacc0` — is the last program in
+the chain, and compiling `packages/wacc/src` with it produces `wacc.wasm`, after which wac is
+self-hosting as it already is today.
+
+**Generics live in L4's compiler, not in L3's language.** They are the most expensive feature to
+implement and the cheapest to live without, so putting them in wac-1 would mean implementing
+monomorphisation in wac-0's compiler as well — paying for them twice, at the rung where code costs
+most to write. The tax for leaving them out is a growable vector hand-written per element type: 25
+lines each, perhaps five of them, measured in `ts/wac1_test.ts`.
+
+## Underneath it: `.wax`
+
+Not a rung. It is the assembly text every rung emits — line-oriented, one instruction per line,
+every label and index named — and it exists so that no step of the bootstrap needs a binary nobody
+can read. LEB128, section framing and index assignment are written **twice**, in TypeScript and in
+Rust, and the two are required to agree byte for byte on every module in the repository.
+
+That differential is also the thing wac's own ladder would lose by retiring its reference compiler,
+which `design/lang/0003` calls the instrument behind most of this year's defects. It is worth
+practising here.
+
+## Two rules that make it a ladder rather than three unrelated languages
+
+**Every rung emits `.wax` text, not wasm bytes.** So nothing above the assembler re-implements
+LEB128 or section framing — work with a known answer and a new place to be wrong.
+
+**From L2 up, the syntax is C-family and each rung is a superset of the one below.** A rung's
+compiler is the previous compiler plus features, ported upward rather than rewritten, which is what
+makes the ladder converge on wac instead of wandering.
 
 ## What is here
 
