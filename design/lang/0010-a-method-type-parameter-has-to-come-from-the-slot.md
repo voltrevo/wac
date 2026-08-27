@@ -294,13 +294,27 @@ What changes is the *count*: one method becomes one entry per discovered set of 
 arguments. Registration and emission must therefore enumerate the same (method, argument-set) pairs
 in the same order, which they will if both read one discovery list in list order.
 
-**Four loops, not three**, and this is the part a plan made from the registration side alone gets
-wrong. Instances are walked to count functions, to declare their types, to emit their bodies, and to
-register their members — each with its own `for (i32 m = 0; m < methods.len(); m++)` over the same
-methods. All four need the same pairing, and a miss in any one of them slides `emitAt` against
-`funcIndex` for every function after it. That is the fifty-seven-invalid-modules failure, and it does
-not show up on a small test: a hand-written case with no strings has no helpers, so nothing sits
-after the slid entries to notice.
+**Forty-three loops, and this design is the wrong one — tried, measured, reverted.** I built it far
+enough to register the extra entries and reseed, then counted: `emit.wac` has **43**
+`for (i32 m = 0; m < methods.len(); m++)` walks, **six** of them the bare `{ at = at + 1; }` shape
+whose entire job is to advance an index in step with a sequence written elsewhere.
+
+Making one method register N entries means every one of those walks has to count N. A miss in any
+single one slides the function index for everything after it, which is the fifty-seven-invalid-modules
+failure — and it does not show on a small test, because a hand-written case with no strings has no
+helpers, so nothing sits after the slid entries to notice.
+
+That count is the argument, and it is why the *first* instinct here was right after all: **append,
+do not interleave.** A pass that registers method instances after every instance has been registered
+adds entries at the end of the function table, where no existing walk's indices move — so the 43
+loops keep counting exactly what they counted before and none of them needs to know. The matching
+emission has to be a pass in the same position, and the thing to establish before writing either is
+which passes are decl-walk-driven and which iterate the table by index, because only the second kind
+sees an appended entry for free.
+
+**So the honest state is: the syntax and the diagnostics landed, this piece did not, and the reason
+is measured rather than guessed.** The reverted attempt cost one reseed and is worth exactly the
+sentence above.
 
 **`popSubstitution` clears where it would need to restore.** Emitting the body wants two pushes — the
 owner's letters from `Box<i32>`, then the method's from `<i64>` — and `pushSubstitution` already
