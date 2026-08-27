@@ -6,11 +6,18 @@
 //
 // ## What this is
 //
-// One half of a **cosmetic surface**: the printer. It reads the AST either frontend produces
-// and writes it out with indentation instead of braces and `def` instead of a leading return
-// type. It compiles nothing and checks nothing. The other half is `wapyLex.ts` + `wapyParse.ts`,
-// which read wapy back; `spec/spec/wapy.md` specifies the correspondence, and
-// `wapyRoundTrip.test.ts` holds the two halves to it.
+// One half of a **cosmetic surface**: the printer. It reads the AST the frontend produces and
+// writes it out with indentation instead of braces and `def` instead of a leading return type. It
+// compiles nothing and checks nothing.
+//
+// **The other half is `packages/wacc/src/wapyparse.wac`**, and used to be wapyLex.ts + wapyParse.ts
+// here — deleted on 2026-08-27, once wacc could read wapy and the reference had no caller left for
+// its own reader. `spec/spec/wapy.md` specifies the correspondence and
+// `packages/wacc/test/wapyRoundTrip.test.ts` holds the two halves to it: this file renders every
+// tracked `.wac` file and wacc reads it back, which is a comparison between two implementations
+// rather than between a printer and its own reader.
+//
+// `wapyLex.ts` stays for `SPELLINGS`, which the site's editor highlights wapy with.
 //
 // ## What this is not
 //
@@ -31,8 +38,8 @@
 // those, the packages have **no** bare use of `and`, `or`, `True`, `False` or `self`; every `not` is
 // part of `is not null`, which is wac syntax; and `None` appears only as a variant name. The
 // real collisions are `pass` and `range` as ordinary variables, and both are distinguishable by
-// position. Which is why the reverse direction is possible at all — see the `word()` rule in
-// `wapyParse.ts`, which is where that distinction is actually made.
+// position. Which is why the reverse direction is possible at all — the rule now lives in
+// `packages/wacc/src/wapylex.wac`, and lived in wapyParse.ts's `word()` until that file went.
 //
 // ## Why this direction is the one with a test
 //
