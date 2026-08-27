@@ -1,0 +1,130 @@
+// Which names are both a shell builtin and a box applet, derived rather than listed.
+// `issues/system/0201`.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/box/test/wac/shadowed_test.wac
+//
+// ## What this watches, and why it is not the fix
+//
+// `packages/sh` has builtins whose names box also ships as applets. In a shell the builtin wins, so
+// `mkdir` with no operand refuses in one line where `box mkdir` gives GNU's two. Which should win is a
+// decision `issues/system/0201` states with two options and does not pick, and nothing here picks it.
+//
+// What is missing whichever way it goes is *visibility*. `operands_test.wac` skips the two divergent
+// names with a `continue`, so today:
+//
+//   - a fix would make the skip silently unnecessary rather than announce itself;
+//   - a **new** shadowed name — a builtin added with an applet twin, or the reverse — would be
+//     invisible, because the skip list is two names written by hand.
+//
+// So this derives the set from both sides and pins it. The known divergences are a shrink-only list,
+// the shape `KNOWN_UNEMITTABLE` uses in `packages/wacc/test/specEmit.test.ts`: an entry that stops
+// diverging fails with "take it out", and a name that starts is a new row nobody chose.
+//
+// ## Why derived and not the four from the issue
+//
+// The issue measured four — `echo`, `ls`, `mkdir`, `rm` — by cross-referencing by hand. A hand count is
+// right on the day and silent afterwards, which is the same failure this file exists to close one level
+// down. `builtinNames()` is an export and the applets are a directory, so both sides can be asked.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core } from "std/platform.wac";
+import { builtinNames } from "../../../sh/src/exec.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+string appletDir() { return "packages/box/src/applets"; }
+
+/** `mkdir.wac` → `mkdir`; anything not a `.wac` file answers "". */
+string appletName(string file) {
+  i32 n = file.len();
+  if (n <= 4 || file.slice(n - 4, n) != ".wac") { return ""; }
+  return file.slice(0, n - 4);
+}
+
+/** Every name that is both a builtin and an applet, in `builtinNames()`'s order. */
+string[] shadowed(Cli cli) {
+  string[]? files = cli.readDir(appletDir()).wait();
+  if (files is null) { return string[0](); }
+  string[] b = builtinNames();
+  string[] hit = string[b.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    for (i32 j = 0; j < files!.len(); j++) {
+      if (appletName(files![j]) == b[i]) { hit[n] = b[i]; n = n + 1; }
+    }
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
+  return out;
+}
+
+/**
+ * The shadowed names whose shell answer differs from their applet's, as measured on 2026-08-20.
+ *
+ * Shrink-only. Both are the missing-operand path, which `packages/box/src/lib/operands.wac`
+ * standardises and which the builtins do not go through — so the divergence is one code path rather
+ * than two commands, and `issues/system/0201` measures the cost of closing it as two error paths.
+ */
+bool knownDivergent(string name) { return name == "mkdir" || name == "rm"; }
+
+export string test_the_shadowed_names_are_the_ones_we_think_they_are(Core core, Cli cli) {
+  T t = T.create();
+  string[] got = shadowed(cli);
+  // **A floor first**, because the derivation reads a directory and calls an export, and either could
+  // stop answering — an empty intersection would otherwise pass every assertion below by vacuity.
+  t.isTrue(got.len() >= 4,
+           "only " + itoa(got.len()) + " shadowed names derived; the scan or the export has moved");
+  string joined = "";
+  for (i32 i = 0; i < got.len(); i++) { joined = joined + (i == 0 ? "" : " ") + got[i]; }
+  // Pinned, so a builtin gaining an applet twin — or an applet gaining a builtin — is a decision
+  // somebody makes rather than a thing that happens. `issues/system/0201` measured these four.
+  t.eqStr(joined, "echo ls mkdir rm",
+          "the set of names that are both a builtin and an applet has changed");
+  return t.report();
+}
+
+export string test_every_known_divergence_is_still_shadowed(Core core, Cli cli) {
+  T t = T.create();
+  string[] got = shadowed(cli);
+  // The same floor as above rather than an early return: a derivation that answered nothing would
+  // otherwise satisfy this test by having no rows to disagree about, which is the way a check like
+  // this goes quiet without going red.
+  t.isTrue(got.len() >= 4, "the derivation answered " + itoa(got.len()) + " names");
+  if (got.len() == 0) { return t.report(); }
+  // The other direction of the same pin: a name on the shrink-only list that is no longer shadowed at
+  // all — because the builtin went, which is `issues/system/0201`'s first option — must be taken off
+  // the list rather than left asserting something about a name nobody shadows.
+  string missing = "";
+  string[] known = string[]("mkdir", "rm");
+  for (i32 k = 0; k < known.len(); k++) {
+    bool still = false;
+    for (i32 i = 0; i < got.len(); i++) { if (got[i] == known[k]) { still = true; } }
+    if (!still) { missing = missing + " " + known[k]; }
+  }
+  t.eqStr(missing, "",
+          "no longer shadowed, so `knownDivergent` should lose it —" + missing +
+          " (issues/system/0201 has been decided; empty the list and raise operands_test's count)");
+  return t.report();
+}
+
+export string test_a_shadowed_name_that_is_not_known_to_diverge_is_named(Core core, Cli cli) {
+  T t = T.create();
+  string[] got = shadowed(cli);
+  // The same floor as above rather than an early return: a derivation that answered nothing would
+  // otherwise satisfy this test by having no rows to disagree about, which is the way a check like
+  // this goes quiet without going red.
+  t.isTrue(got.len() >= 4, "the derivation answered " + itoa(got.len()) + " names");
+  if (got.len() == 0) { return t.report(); }
+  // `echo` and `ls` were compared three ways on 2026-08-20 — GNU, the applet, the builtin — and agree.
+  // They are shadowed and harmless, which is worth stating: the defect is not shadowing, it is the two
+  // error paths that do not go through `operands.wac`.
+  string news = "";
+  for (i32 i = 0; i < got.len(); i++) {
+    if (knownDivergent(got[i])) { continue; }
+    if (got[i] == "echo" || got[i] == "ls") { continue; }
+    news = news + " " + got[i];
+  }
+  t.eqStr(news, "",
+          "a new shadowed name nobody has compared against the real tool —" + news +
+          " (compare it three ways: GNU, `box <name>`, and the shell's builtin)");
+  return t.report();
+}
