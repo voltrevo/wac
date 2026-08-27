@@ -269,3 +269,37 @@ the table in the tree already answers that, and the answer is no.
 I have not run a sweep. Everything above is arithmetic on numbers this repository recorded on
 2026-08-15 and a comment written beside the sampler that produced them; a sweep is six suite runs and
 the better part of an hour, and it would confirm a direction rather than establish one.
+
+## Decided: 4000 — operator, 2026-08-26
+
+`minAvailableMb()` is 4000. The decision this page asked for is taken, and the reasoning is beside the
+constant in `tools/wac/suitegate.wac` rather than only here.
+
+**What it rests on.** The table the old floor came from is the Deno lane alone at 3,230–3,377 tests —
+about 14% of the suite now. The full-suite sampling above rose **2489 MB** and peaked at 7794 of
+11.9 GB. A floor of 5500 is roughly twice the measured requirement, and it refused thirty-five pushes
+in a day with 45 finished commits behind them.
+
+**Correcting my own section above.** *"2026-08-26: the floor is too low, and the refusals were right"*
+argued from the `anon` column (5905) that 5500 was too small. Two things were wrong with it as a
+conclusion, though the observation about the column stands:
+
+- it compared **5905 from the old Deno-only sweep** against a floor meant for today's suite, which is
+  the same stale-workload error the page had already identified in the 5158;
+- it treated `anon`-versus-`memory.current` as settling the floor's *value*, when the prior question
+  is whether a start-time availability check predicts anything at all — which the baseline-dependence
+  of rise says it does not.
+
+I also, in conversation, read the 4137 trough as "the gate would have refused a run that completed".
+It would not have: that run **started at 6625**, above the floor, and dipped mid-run. A trough is not
+a start condition and the two are not comparable. The rise is the comparable number, and it is 2489.
+
+**What is still not measured, and is the one thing that would settle this:** the cgroup `anon` rise
+for the suite as it is now. One instrumented run. Until someone takes it, 4000 is a judgement made
+against the best numbers in the tree rather than a derived figure — which is a better position than
+5500 was in, and not the same as a good one.
+
+**The risk, stated plainly.** 3000 admitted runs that then died, three in one afternoon
+(`issues/system/0142`). 4000 is 1000 MB above that, and the reason it is not the same bet is that those
+runs rose 4.9 GB where this one rose 2.5. If killed lanes reappear, this constant is the first thing to
+suspect — a floor that is too low does not fail loudly.
