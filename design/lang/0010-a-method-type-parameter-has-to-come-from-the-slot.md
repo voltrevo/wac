@@ -1,12 +1,18 @@
 # 0010 — a method's own type parameter has to come from the slot, because a lambda states no return type
 
-- **Status:** **decided 2026-08-26 — option C**, written type arguments. The objection that ruled C
-  out has been removed by [0011](0011-a-call-may-name-its-type-arguments.md); see *The decision*
-  below. Option D moved to [0012](0012-synthesising-a-lambdas-return-type.md) as a separate
-  ergonomic question
+- **Status:** **implemented 2026-08-27 — option C.** Five of six acceptance criteria are met and the
+  sixth is not compiler work: `Pending<T>` has no value-returning continuation, and giving it one is
+  scheduler plumbing rather than a declaration — see *What is left to build* item 1, which understated
+  itself. `spec/cases/0245`–`0249` are the landed behaviour.
+
+  Decided 2026-08-26; the objection that had ruled C out was removed by
+  [0011](0011-a-call-may-name-its-type-arguments.md). Option D moved to
+  [0012](0012-synthesising-a-lambdas-return-type.md) as a separate ergonomic question
 - **Date:** 2026-08-17
 - **Author:** agent-c
-- **Blocks:** chaining on `Pending<T>` — `p.then(() => Foo.create())` answering a `Pending<Foo>`
+- **Blocked:** chaining on `Pending<T>` — `p.then(() => Foo.create())` answering a `Pending<Foo>`.
+  The language no longer stands in its way: `spec/cases/0248` chains three such calls, each with an
+  inline lambda, on a `Cell<T>` written for the purpose
 
 ## What is wanted
 
