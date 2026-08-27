@@ -127,11 +127,41 @@ issue was originally written around. Skipping it there did not make the chain co
 uncover the real one: the message is now `haveRequired`'s, at the **emission** site, which is where
 "not ready" and "not possible" are the same thing.
 
-So what is left is narrower again: a construction inside a method instance's body is *emitted* with
-the inner substitution missing. `registerMethodInstances` and the emission block both push it, so the
-next question is which third thing emits that body — or whether the instance is being skipped at
-emission (`funcIndex < 0`) and the decline is the call to it rather than the body itself. Those two
-are distinguishable by whether `funcOk` is true for `Cell<i64>.then<bool>` at the end.
+### Found: the table order is interleaved by round
+
+A probe printing the substitution stack at the decline:
+
+    [subs(1): T->i64   curInst=Cell<i64>]
+
+Only the **owner's** letter is pushed. So this is not a method instance's body being emitted — those
+are emitted with two pushes — it is the *ordinary* instance-method emission loop emitting
+`Cell<i64>.then`, the declined template entry, which it should have skipped because `funcIndex` is
+negative for it. It emitted it because the cursor was pointing somewhere else: **`emitAt` has slid.**
+
+And the reason is the one thing the append design was supposed to avoid. `registerMethodInstances`
+appends at the end of the function table *once per round*. A struct instance discovered in a **later**
+round is appended after it. So the table is
+
+    …round-1 struct instances… │ round-1 method instances │ …round-2 struct instances… │ …
+
+while the count and emission passes both walk *all* struct instances and then *all* method instances.
+The two orders agree only when no struct instance is discovered after the first method instance.
+
+**The data fits exactly.** `spec/cases/0247` works because `Box<i64>` and `Box<bool>` are named by
+declarations, so they exist in round one. The chain fails because `Cell<i64>` is named by nothing in
+the program — it is discovered *from* a method instance's return type, so it is registered a round
+later, behind the method instance that produced it.
+
+### What a fix has to do
+
+Make the method-instance entries genuinely last. Registering them once after the round loop would do
+it, except that registering them is also what *names* the instantiations their bodies need — so
+`Cell<bool>` would then never get a struct entry. It wants two phases: let the rounds name method
+instances without registering them, and once the rounds have settled, register the method instances
+and re-run struct registration for whatever their bodies named. Alternatively, keep a separate cursor
+for method instances rather than assuming they are a suffix of the table.
+
+The second is smaller and does not disturb the rounds. It is what I would try first.
 
 ### The earlier measurement, kept because it is how the first half was found
 
