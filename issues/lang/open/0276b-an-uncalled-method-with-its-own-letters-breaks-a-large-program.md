@@ -126,8 +126,22 @@ So one registration of `fold`'s **own** signature produces all three, and the qu
 
 `registerFuncTypes`'s seven callers all guard against it, and the placeholder change stops the
 instance registration resolving its types — and it still happens, so the caller is neither. It is
-worth finding by printing the signature at `sigType`'s entry and stopping on the first one containing
-a bare letter: that names the caller in one run, where four probes of reading did not.
+worth finding by trapping in `sigType` on the first type containing a bare letter — which works, and
+fires on `box` — but the **native host gives no frames**, so the trap has to be run under Deno, where
+`memory: a-trap-with-no-message-still-has-a-stack` says the function shows three frames down.
+`harness/waccBuild.ts` is the way in; `waccArtifacts` needs the file map rather than a path.
+
+**The trap also makes the registration visible where the module still builds**, which is the useful
+part: it turns a silent leak into a failure. With it in, none of these trip it — they all build:
+
+- `fold`'s exact shape on a local generic struct, uncalled;
+- `core/vec.wac`'s `fold` with one, two, and **six** instantiations, including `Vec<u8[]>`;
+- a program with `Option` from `at` beside them;
+- a **capability** app (`Core`, `Cli`) using `Vec<string>`, which is the shape `box` is.
+
+So it is not the number of instantiations, not the element types, not capabilities and not bindgen on
+their own. Something else about `box`'s graph does it, and the trap plus a Deno host will say what in
+one run.
 
 ## Where to look next
 
