@@ -698,8 +698,15 @@ i32 parse_type() {
       }
     }
   }}}
-  while (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); }
-  if (ispunct(63)) { next(); }
+  // **`?` and `[]` in any order and any number.** `Expr?[]` is an array of nullable `Expr` and
+  // `Expr[]?` is a nullable array of `Expr` — the same wasm type here, because every reference this
+  // emits is already nullable, but two different spellings and only one of them parsed.
+  i32 going = 1;
+  while (going) {
+    going = 0;
+    if (ispunct(63)) { next(); going = 1; }
+    if (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); going = 1; }
+  }
   return t;
 }
 
@@ -758,11 +765,13 @@ i32 skip_type(i32 i) {
   }
   i = i + 1;
   i = skip_targs(i);
-  while (toks[i].kind == K_PUNCT & toks[i].val == 91) {
-    if ((toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) == 0) { return i; }
-    i = i + 2;
+  i32 more = 1;
+  while (more) {
+    more = 0;
+    if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; more = 1; }
+    if (toks[i].kind == K_PUNCT & toks[i].val == 91
+        & toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) { i = i + 2; more = 1; }
   }
-  if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; }
   return i;
 }
 
@@ -961,6 +970,8 @@ i32 args() {
 // `Point(a, b)`, and `T[n]()` / `T[](a, b)` for an array. wac writes a construction as a call, so
 // one token of lookahead past the name is what tells them apart.
 i32 construct(i32 t) {
+  // `Expr?[4]()` — the element is nullable, which is a spelling rather than a different type here.
+  if (ispunct(63)) { next(); }
   if (ispunct(91)) {
     next();
     i32 sized = 0;
@@ -1108,6 +1119,23 @@ i32 primary() {
   // else that begins an expression does.
   i32 pt = prim_type();
   if (pt != 0 - 1) { next(); return construct(pt); }
+  // `string.fromBytes(b)` is the identity, because a `string` here *is* a `u8[]` — the same reason
+  // `s.toBytes()` is. Checked before the construction path, which would read the `.` as a missing
+  // `(` and refuse.
+  if (is_string_word() & aheadIs(1, 46)) {
+    next(); next();
+    i32 mp3 = tstart();
+    i32 mn3 = tlen();
+    next();
+    if (texteq(mp3, mn3, "fromBytes")) {
+      want(40);
+      expr();
+      want(41);
+      return postfix(string_type());
+    }
+    oops();
+    return 0;
+  }
   if (is_string_word()) { next(); return construct(string_type()); }
   if (kind() == K_NAME) {
     i32 p = tstart();
@@ -1117,9 +1145,9 @@ i32 primary() {
     // construction of whatever `T` is — and only `parse_type` consulted the substitution, so the
     // expression grammar read `T` as a name nobody had declared.
     i32 sb = sub_find(p, n);
-    if (sb != 0 - 1 & (ispunct(40) | ispunct(91))) { return postfix(construct(sb)); }
+    if (sb != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(sb)); }
     i32 st = ty_named(p, n);
-    if (st != 0 - 1 & (ispunct(40) | ispunct(91))) { return postfix(construct(st)); }
+    if (st != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(st)); }
     i32 tmc = tmpl_find(p, n);
     if (tmc != 0 - 1) {
       // `Option.Some(v)` — the enum names the variant. Which *instantiation* comes from the slot,
@@ -1315,9 +1343,32 @@ i32 rel() {
 
 i32 equality() {
   i32 t = rel();
+  // **`x is null`**, which is how wac spells it — 158 times in `packages/wacc/src` against three
+  // `== null`. Both compile to `ref.is_null`; `==` on two references would be `i32.eq`, which is a
+  // type error, so the spelling that reads best is also the only one that works.
+  while (isword("is")) {
+    next();
+    if (eatword("not")) {
+      eatword("null");
+      line("ref.is_null");
+      line("i32.eqz");
+    } else {
+      eatword("null");
+      line("ref.is_null");
+    }
+    t = TY_BOOL;
+  }
   while (ispunct(15677) | ispunct(15649)) {
     i32 op = val();
     next();
+    // **Checked before the right operand is parsed**, not after — `rel()` would have consumed the
+    // `null` and emitted a `ref.null` for it, and then `ref.is_null` would test the wrong thing.
+    if (isword("null")) {
+      next();
+      line("ref.is_null");
+      if (op == 15649) { line("i32.eqz"); }
+      t = TY_BOOL;
+    } else {
     coerce(t, rel());
     if (t == strty & strty != 0 - 1) {
       // **Two strings compare by content.** `i32.eq` on two references answers whether they are the
@@ -1329,6 +1380,7 @@ i32 equality() {
       if (op == 15677) { binop(t, "eq"); } else { binop(t, "ne"); }
     }
     t = TY_BOOL;
+    }
   }
   return t;
 }

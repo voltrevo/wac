@@ -444,6 +444,35 @@ const programs: [string, string, number][] = [
       return n;
     }`, 25],
 
+  // How wac actually spells a null test: 158 `is null` in `packages/wacc/src` against three
+  // `== null`. Both compile to `ref.is_null`, because `==` on two references is `i32.eq` and that
+  // is a type error — so the spelling that reads best is also the only one that works.
+  ["is null, is not null, == null", `
+    struct E { i32 v; }
+    i32 main() {
+      E a = null;
+      E b = E(7);
+      return (a is null ? 1 : 0) * 1000
+           + (b is null ? 1 : 0) * 100
+           + (b is not null ? b.v : 0) * 10
+           + (a == null ? 1 : 0);
+    }`, 1071],
+
+  // `Expr?[]` is an array of nullable and `Expr[]?` a nullable array — the same wasm type here,
+  // because every reference this emits is already nullable, but two spellings and only one parsed.
+  ["? and [] in either order", `
+    struct E { i32 v; }
+    i32 main() {
+      E?[] xs = E?[3]();
+      xs[0] = E(7);
+      E[]? ys = E[2]();
+      ys[0] = E(4);
+      return (xs[1] is null ? 1 : 0) * 100 + xs[0].v * 10 + ys[0].v;
+    }`, 174],
+
+  ["string.fromBytes, which is the identity too", `
+    i32 main() { return string.fromBytes("hey".toBytes()).len(); }`, 3],
+
   ["a generic free function, declared and not called", `
     enum Option<T> { Some(T v), None }
     Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }
