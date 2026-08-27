@@ -356,6 +356,29 @@ const programs: [string, string, number][] = [
     struct P { i32 x; }
     struct Box<T> { T v; T get(const this) { return this.v; } }
     i32 main() { Box<P> b = Box(P(5)); return b.get().x; }`, 5],
+
+  // --- funcrefs
+  //
+  // A function as a value, called through `call_ref`, which names the *signature* rather than the
+  // function. wasm needs the target declared in an element segment first, which the assembler emits
+  // by scanning the bodies — so nothing in the source has to say it twice.
+
+  ["a funcref parameter, called", `
+    i32 add(i32 a, i32 b) { return a + b; }
+    i32 apply(fn[i32(i32, i32)] f, i32 x, i32 y) { return f(x, y); }
+    i32 main() { fn[i32(i32, i32)] g = add; return apply(g, 40, 2); }`, 42],
+
+  // The funcref is on the stack before its arguments and `call_ref` wants it after, so it is parked
+  // in a slot while they are emitted.
+  ["a funcref in a struct field, called", `
+    i32 dbl(i32 n) { return n * 2; }
+    struct Op { fn[i32(i32)] f; }
+    i32 main() { fn[i32(i32)] d = dbl; Op o = Op(d); return o.f(21); }`, 42],
+
+  ["a funcref returned", `
+    i32 dbl(i32 n) { return n * 2; }
+    fn[i32(i32)] pick() { return dbl; }
+    i32 main() { fn[i32(i32)] f = pick(); return f(21); }`, 42],
 ];
 
 // wac compiles a whole program into one wasm module, so an import is a file to *include* rather

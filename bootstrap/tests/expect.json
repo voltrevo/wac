@@ -3,5 +3,6 @@
   "tests/l0/loop.l0": 55,
   "boot/l1.l0": 720,
   "tests/l0/gc.l0": 7,
-  "tests/l0/bytes.l0": 211
+  "tests/l0/bytes.l0": 211,
+  "tests/l0/funcref.l0": 42
 }

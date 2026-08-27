@@ -652,6 +652,12 @@ fn heap_type(tok: &str, ix: &Index, line: usize) -> Result<Vec<u8>, WaxError> {
         "none" => return Ok(vec![0x71]),
         "any" => return Ok(vec![0x6e]),
         "eq" => return Ok(vec![0x6d]),
+        // `none` and `nofunc` are two different bottoms: wasm's reference types are two hierarchies
+        // that never meet, so a null for a funcref is not the null everything else uses.
+        "nofunc" => return Ok(vec![0x73]),
+        "func" => return Ok(vec![0x70]),
+        "noextern" => return Ok(vec![0x72]),
+        "extern" => return Ok(vec![0x6f]),
         _ => {}
     }
     match ix.type_of.get(tok) {
@@ -809,6 +815,22 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
                 out.push(0xd0);
                 out.extend(heap_type(&t[1], ix, n)?);
             }
+            // A function as a value, and a call through one. `call_ref` names the *signature*, not
+            // the function — which is the whole difference between it and `call`.
+            "ref.func" => match ix.func_of.get(&t[1]) {
+                Some(at) => {
+                    out.push(0xd2);
+                    out.extend(uleb(*at));
+                }
+                None => return err(n, format!("no function {}", t[1])),
+            },
+            "call_ref" => match ix.type_of.get(&t[1]) {
+                Some(at) => {
+                    out.push(0x14);
+                    out.extend(uleb(*at));
+                }
+                None => return err(n, format!("no type {}", t[1])),
+            },
             // `ref.test` and `ref.cast` are written with the nullability they test for, the same two
             // spellings a value type uses, because the opcode differs by exactly that.
             "ref.test" | "ref.cast" => {
@@ -1004,6 +1026,32 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, WaxError> {
         exports.push(b);
     }
     out.extend(section(7, vector(exports)));
+
+    // **A `ref.func` needs its target declared first.** wasm refuses a reference to a function that
+    // no element segment mentions — the rule exists so an engine knows which functions can escape —
+    // and the way to say "these, and they are not a table" is a *declarative* segment. So the
+    // bodies are scanned for `ref.func` before any of them is emitted.
+    let mut referenced: Vec<u32> = Vec::new();
+    for f in &m.funcs {
+        for l in &f.body {
+            if l.tokens[0] != "ref.func" {
+                continue;
+            }
+            match ix.func_of.get(&l.tokens[1]) {
+                Some(at) => {
+                    if !referenced.contains(at) {
+                        referenced.push(*at);
+                    }
+                }
+                None => return err(l.n, format!("no function {}", l.tokens[1])),
+            }
+        }
+    }
+    if !referenced.is_empty() {
+        let mut e = vec![0x03, 0x00];
+        e.extend(vector(referenced.iter().map(|a| uleb(*a)).collect()));
+        out.extend(section(9, vector(vec![e])));
+    }
 
     // Sections are written in ascending id, which wasm requires: code (10) before data (11).
     let mut codes = Vec::new();

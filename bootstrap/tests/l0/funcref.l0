@@ -1,0 +1,29 @@
+; A function as a value, called through its signature rather than by name.
+type $Bin func i32 i32 -> i32
+
+func $add -> i32
+  param i32 $a
+  param i32 $b
+  local.get $a
+  local.get $b
+  i32.add
+end
+
+func $apply -> i32
+  param refnull $Bin $f
+  param i32 $x
+  param i32 $y
+  local.get $x
+  local.get $y
+  local.get $f
+  call_ref $Bin
+end
+
+func $main -> i32
+  ref.func $add
+  i32.const 40
+  i32.const 2
+  call $apply
+end
+
+export "main" func $main

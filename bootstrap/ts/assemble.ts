@@ -443,6 +443,12 @@ function heapType(tok: string, ix: Index, lineNo: number): number[] {
   if (tok === "none") return [0x71];
   if (tok === "any") return [0x6e];
   if (tok === "eq") return [0x6d];
+  // **`none` and `nofunc` are two different bottoms.** wasm's reference types are two hierarchies
+  // that never meet, so a null for a funcref is not the null everything else uses.
+  if (tok === "nofunc") return [0x73];
+  if (tok === "func") return [0x70];
+  if (tok === "noextern") return [0x72];
+  if (tok === "extern") return [0x6f];
   const at = ix.typeOf.get(tok);
   if (at === undefined) throw new WaxError(lineNo, `no type ${tok}`);
   return sleb(BigInt(at));
@@ -538,6 +544,20 @@ function emitBody(f: Func, ix: Index): number[] {
       case "ref.eq": out.push(0xd3); break;
       case "ref.as_non_null": out.push(0xd4); break;
       case "ref.null": out.push(0xd0, ...heapType(t[1], ix, n)); break;
+      // A function as a value, and a call through one. `call_ref` names the *signature*, not the
+      // function — which is the whole difference between it and `call`.
+      case "ref.func": {
+        const at = ix.funcOf.get(t[1]);
+        if (at === undefined) throw new WaxError(n, `no function ${t[1]}`);
+        out.push(0xd2, ...uleb(at));
+        break;
+      }
+      case "call_ref": {
+        const at = ix.typeOf.get(t[1]);
+        if (at === undefined) throw new WaxError(n, `no type ${t[1]}`);
+        out.push(0x14, ...uleb(at));
+        break;
+      }
       // `ref.test` and `ref.cast` are written with the nullability they test for, the same two
       // spellings a value type uses, because the opcode differs by exactly that.
       case "ref.test": case "ref.cast": {
@@ -639,6 +659,23 @@ export function assemble(source: string): Uint8Array {
     if (at === undefined) throw new WaxError(0, `export names no function ${e.target}`);
     return [...name(e.name), 0x00, ...uleb(at)];
   }))));
+
+  // **A `ref.func` needs its target declared first.** wasm refuses a reference to a function that
+  // no element segment mentions — the rule exists so an engine knows which functions can escape —
+  // and the way to say "these, and they are not a table" is a *declarative* segment. So the bodies
+  // are scanned for `ref.func` before any of them is emitted, and every name found goes in one.
+  const referenced: number[] = [];
+  for (const f of m.funcs) {
+    for (const l of f.body) {
+      if (l.tokens[0] !== "ref.func") continue;
+      const at = ix.funcOf.get(l.tokens[1]);
+      if (at === undefined) throw new WaxError(l.n, `no function ${l.tokens[1]}`);
+      if (!referenced.includes(at)) referenced.push(at);
+    }
+  }
+  if (referenced.length > 0) {
+    out.push(...section(9, vec([[0x03, 0x00, ...vec(referenced.map((a) => uleb(a)))]])));
+  }
 
   // Sections are written in ascending id, which wasm requires: code (10) before data (11).
   out.push(...section(10, vec(m.funcs.map((f) => {

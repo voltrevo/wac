@@ -340,6 +340,13 @@ struct Field { i32 nameptr; i32 namelen; i32 ty; }
 Field[] fields;
 i32 nfield = 0;
 
+// **A funcref's parameters get their own table.** They used to share the struct field table, and a
+// funcref written *inside* a struct's field list appends to it while the struct is halfway through
+// filling it — so `struct Op { fn[i32(i32)] f; }` took the funcref's parameter as its own field 0.
+// Two producers, one array, one of them nested inside the other's range.
+i32[] fparams;
+i32 nfparam = 0;
+
 // **The numeric lattice.** wasm has two integer value types and wac has eight names for them, which
 // differ in width and in signedness — and those two facts decide which instruction every operator
 // emits. `u32 / u32` is `i32.div_u` and `i32 / i32` is `i32.div_s`, and nothing else in the
@@ -348,6 +355,9 @@ i32 T_NUM = 0;
 i32 T_STRUCT = 2;
 i32 T_ARRAY = 3;
 i32 T_ENUM = 4;
+// A funcref: `fn[R(A, B)]`. Its parameters live in the field table and its result in `elem`, so it
+// reuses the two things a struct already needed.
+i32 T_FUNC = 5;
 
 // Reserved indices, in this order, so that `valtype(0)` is `i32` and the first struct cannot take
 // the slot.
@@ -406,7 +416,9 @@ i32 ty_array(i32 elem) {
 
 i32 tyname(i32 t) {
   if (types[t].kind == T_ARRAY) { emits("$a"); } else {
-    if (types[t].kind == T_ENUM) { emits("$e"); } else { emits("$s"); }
+    if (types[t].kind == T_ENUM) { emits("$e"); } else {
+      if (types[t].kind == T_FUNC) { emits("$f"); } else { emits("$s"); }
+    }
   }
   return emitn(t);
 }
@@ -437,6 +449,17 @@ i32 opprefix(i32 t) { if (ty_wide(t)) { emits("i64."); } else { emits("i32."); }
 i32 signedsuffix(i32 t) { if (ty_signed(t)) { emits("_s"); } else { emits("_u"); } return 0; }
 
 i32 binop(i32 t, i32 name) { opprefix(t); emits(name); return nl(); }
+
+// The zero of a type. `none` and `nofunc` are two different bottoms — wasm's reference types are two
+// hierarchies that never meet — so a funcref's null is not the one everything else uses.
+i32 zero_of(i32 t) {
+  if (ty_isnum(t)) {
+    if (ty_wide(t)) { word("i64.const"); emitn(0); return nl(); }
+    return konst(0);
+  }
+  if (types[t].kind == T_FUNC) { return line("ref.null nofunc"); }
+  return line("ref.null none");
+}
 
 i32 binop_signed(i32 t, i32 name) { opprefix(t); emits(name); signedsuffix(t); return nl(); }
 
@@ -509,9 +532,49 @@ i32 instantiate(i32 tm) {
   return ty;
 }
 
+// `fn[R(A, B)]`. The result comes first in wac and last in wasm, which is the only thing to get
+// right here. Deduplicated by shape, so two parameters of the same funcref type are one wasm type.
+i32 parse_functype() {
+  next();
+  want(91);
+  i32 ret = parse_type();
+  want(40);
+  i32 fstart = nfparam;
+  i32 np = 0;
+  while (ispunct(41) == 0) {
+    i32 pt2 = parse_type();
+    fparams[nfparam] = pt2;
+    nfparam = nfparam + 1;
+    np = np + 1;
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  want(93);
+  // Same shape, same type — a funcref is structural, unlike a struct.
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntype) {
+    if (types[i].kind == T_FUNC & types[i].elem == ret & types[i].nfields == np) {
+      i32 k = 0;
+      i32 same = 1;
+      while (k < np) {
+        if (fparams[types[i].fstart + k] != fparams[fstart + k]) { same = 0; }
+        k = k + 1;
+      }
+      if (same) { found = i; }
+    }
+    i = i + 1;
+  }
+  if (found != 0 - 1) { nfparam = fstart; return found; }
+  i32 ft = ty_new(T_FUNC, 0, 0, ret);
+  types[ft] = Ty(T_FUNC, 0, 0, ret, fstart, np);
+  return ft;
+}
+
 i32 parse_type() {
   i32 t = 0;
   i32 pr = prim_type();
+  if (isword("fn")) { t = parse_functype(); } else {
   if (is_string_word()) { next(); t = string_type(); } else {
   if (pr != 0 - 1) { t = pr; next(); } else {
     i32 p = tstart();
@@ -525,7 +588,7 @@ i32 parse_type() {
         if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
       }
     }
-  }}
+  }}}
   while (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); }
   if (ispunct(63)) { next(); }
   return t;
@@ -540,15 +603,10 @@ i32 looks_like_member() {
   if (toks[i].kind != K_NAME) { return 0; }
   if (texteq(toks[i].start, toks[i].len, "const")) { return 1; }
   if (texteq(toks[i].start, toks[i].len, "export")) { return 1; }
-  i = i + 1;
-  i = skip_targs(i);
-  while (toks[i].kind == K_PUNCT & toks[i].val == 91) {
-    if ((toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) == 0) { return 0; }
-    i = i + 2;
-  }
-  if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; }
-  if (toks[i].kind != K_NAME) { return 0; }
-  return toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 40;
+  i32 e = skip_type(i);
+  if (e == 0 - 1) { return 0; }
+  if (toks[e].kind != K_NAME) { return 0; }
+  return toks[e + 1].kind == K_PUNCT & toks[e + 1].val == 40;
 }
 
 // Steps over `<…>`, counting `>>` as two closers — which is what `Vec<Vec<i32>>` ends with, because
@@ -569,18 +627,41 @@ i32 skip_targs(i32 i) {
   return i;
 }
 
-// A type followed by a name, which is how a declaration begins and nothing else does.
-i32 looks_like_decl() {
-  i32 i = tp;
-  if (toks[i].kind != K_NAME) { return 0; }
+// Steps over a whole type, whatever shape it has, and answers where it ends — or -1 if what is
+// there is not one. **One skipper, consulted by every lookahead**, because a type that `parse_type`
+// reads and a lookahead does not is a declaration that silently becomes an expression: `fn[i32(i32)]
+// g = add;` was exactly that until this existed.
+i32 skip_type(i32 i) {
+  if (toks[i].kind != K_NAME) { return 0 - 1; }
+  if (texteq(toks[i].start, toks[i].len, "fn")) {
+    i = i + 1;
+    if ((toks[i].kind == K_PUNCT & toks[i].val == 91) == 0) { return 0 - 1; }
+    i32 depth = 0;
+    while (1) {
+      if (toks[i].kind == K_EOF) { return 0 - 1; }
+      if (toks[i].kind == K_PUNCT) {
+        if (toks[i].val == 91) { depth = depth + 1; }
+        if (toks[i].val == 93) { depth = depth - 1; }
+      }
+      i = i + 1;
+      if (depth <= 0) { return i; }
+    }
+  }
   i = i + 1;
   i = skip_targs(i);
   while (toks[i].kind == K_PUNCT & toks[i].val == 91) {
-    if ((toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) == 0) { return 0; }
+    if ((toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) == 0) { return i; }
     i = i + 2;
   }
   if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; }
-  return toks[i].kind == K_NAME;
+  return i;
+}
+
+// A type followed by a name, which is how a declaration begins and nothing else does.
+i32 looks_like_decl() {
+  i32 e = skip_type(tp);
+  if (e == 0 - 1) { return 0; }
+  return toks[e].kind == K_NAME;
 }
 
 // ---------------------------------------------------------------- generics
@@ -775,7 +856,18 @@ i32 construct(i32 t) {
 
 // `.field`, `.len()`, `.method()`, and `[i]`.
 i32 postfix(i32 t) {
-  while (ispunct(46) | ispunct(91) | ispunct(33)) {
+  while (ispunct(46) | ispunct(91) | ispunct(33) | (ispunct(40) & types[t].kind == T_FUNC)) {
+    // **A funcref that arrived as a value, now being called.** It is already on the stack and
+    // `call_ref` wants it *after* the arguments, so it is parked in a slot while they are emitted.
+    if (ispunct(40) & types[t].kind == T_FUNC) {
+      i32 held = slot_new(t);
+      word("local.set"); slotname(held); nl();
+      next();
+      args();
+      word("local.get"); slotname(held); nl();
+      word("call_ref"); tyname(t); nl();
+      t = types[t].elem;
+    } else {
     if (ispunct(33)) {
       // `x!` — an assertion that a nullable is not null. Every reference here is already nullable,
       // so this is a no-op on the value and a promise the engine will not check.
@@ -823,7 +915,7 @@ i32 postfix(i32 t) {
         }
         t = et;
       }
-    }
+    }}
   }
   return t;
 }
@@ -913,6 +1005,42 @@ i32 primary() {
     }
     i32 vi = var_find(p, n);
     if (vi != 0 - 1) { return postfix(construct_variant(vi)); }
+    // **The locals first.** A parameter of funcref type called as `f(x)` is not a call to a
+    // function named `f`, and checking the call shape before the name is bound emits one anyway.
+    i32 li = loc_find(p, n);
+    if (li != 0 - 1) {
+      // A call *through* a value: the arguments go first and the function last, which is what
+      // `call_ref` takes — and it names the signature rather than the function.
+      if (types[loc_type(li)].kind == T_FUNC & ispunct(40)) {
+        next();
+        args();
+        word("local.get"); slotname(li); nl();
+        word("call_ref"); tyname(loc_type(li)); nl();
+        return postfix(types[loc_type(li)].elem);
+      }
+      word("local.get"); slotname(li); nl();
+      return postfix(loc_type(li));
+    }
+    i32 gi = glo_find(p, n);
+    if (gi != 0 - 1) {
+      if (types[glo_type(gi)].kind == T_FUNC & ispunct(40)) {
+        next();
+        args();
+        word("global.get"); gloname(gi); nl();
+        word("call_ref"); tyname(glo_type(gi)); nl();
+        return postfix(types[glo_type(gi)].elem);
+      }
+      word("global.get"); gloname(gi); nl();
+      return postfix(glo_type(gi));
+    }
+    // A function's *name*, with no call after it, is the function as a value. Which funcref type it
+    // has comes from the slot, the same way a bare template name gets its arguments.
+    i32 fnv = fn_find(p, n);
+    if (fnv != 0 - 1 & ispunct(40) == 0) {
+      word("ref.func"); emit1(36); emitname(p, n); nl();
+      if (expect_ty != 0 - 1) { return postfix(expect_ty); }
+      return postfix(0);
+    }
     if (ispunct(40)) {
       next();
       args();
@@ -922,10 +1050,6 @@ i32 primary() {
       if (fi2 != 0 - 1) { rt = fns[fi2].ret; }
       return postfix(rt);
     }
-    i32 li = loc_find(p, n);
-    if (li != 0 - 1) { word("local.get"); slotname(li); nl(); return postfix(loc_type(li)); }
-    i32 gi = glo_find(p, n);
-    if (gi != 0 - 1) { word("global.get"); gloname(gi); nl(); return postfix(glo_type(gi)); }
     // A bare `Type.staticMethod(...)` reaches here as a name with no local: wac writes a static
     // call that way, and stage 2 resolves it as `$Type_name`.
     if (ispunct(46)) {
@@ -1182,11 +1306,7 @@ i32 match_body(i32 wantValue, i32 out) {
   scratch_copy(level, armlen);
   // A tag matching no arm falls out. wac's `match` is exhaustive and this rung does not check it,
   // so the expression form has to leave *something* — and an unreachable default is the honest one.
-  if (wantValue) {
-    if (ty_isnum(armty)) {
-      if (ty_wide(armty)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
-    } else { line("ref.null none"); }
-  }
+  if (wantValue) { zero_of(armty); }
   line("end");
   return armty;
 }
@@ -1235,9 +1355,7 @@ i32 declaration() {
   expect_ty = t;
   if (ispunct(61)) { next(); expr(); expect_ty = savedExpect; } else {
     expect_ty = savedExpect;
-    if (ty_isnum(t)) {
-      if (ty_wide(t)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
-    } else { line("ref.null none"); }
+    zero_of(t);
   }
   want(59);
   word("local.set"); slotname(loc_add(p, n, t)); nl();
@@ -1603,9 +1721,7 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   }
   i32 k = 0;
   while (k < blen) { emit1(load8(BODY + k)); k = k + 1; }
-  if (ty_isnum(ret)) {
-    if (ty_wide(ret)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
-  } else { line("ref.null none"); }
+  zero_of(ret);
   line("end");
   if (mowner == 0 - 1) {
     word("export"); emit1(34); emitname(np, nn); emit1(34); sp();
@@ -1642,6 +1758,18 @@ i32 emit_typedecls() {
     }
     if (types[i].kind == T_ENUM) {
       word("type"); tyname(i); sp(); word("struct"); word("i32"); line("anyref");
+    }
+    if (types[i].kind == T_FUNC) {
+      word("type"); tyname(i); sp(); word("func");
+      i32 fp = 0;
+      while (fp < types[i].nfields) {
+        slotvaltype(fparams[types[i].fstart + fp]);
+        sp();
+        fp = fp + 1;
+      }
+      word("->");
+      slotvaltype(types[i].elem);
+      nl();
     }
     i = i + 1;
   }
@@ -2057,6 +2185,8 @@ i32 compile(i32 s, i32 out) {
 
   types = Ty[2048]();
   fields = Field[8192]();
+  fparams = i32[4096]();
+  nfparam = 0;
   vars = Var[2048]();
   meths = Meth[2048]();
   ntype = 0;
