@@ -118,9 +118,20 @@ replace that, the Rust host needs:
 2. **The flattener, in Rust.** The real work: about 190 lines that resolve specifiers, order
    modules, undo aliases and rename collisions. **An argument for shrinking it first** — see the
    flattener section — because otherwise it is written twice at full size.
-3. **To pin down what the seed actually is.** `seed.sh` sets `ENTRY=packages/wac/src/wac.wac`, the
-   whole CLI, while `native/v8/build.rs` reads `seed/wacc.wasm`. Those are not obviously the same
-   artefact, and the difference matters before anything is promised.
+3. ~~**To pin down what the seed actually is.**~~ **Answered.** `native/v8/build.rs` says it: the
+   file is named `wacc.wasm` for historical reasons and is the whole CLI, produced by
+
+       wac task app:native packages/wac/src/wac.wac --allow-read --allow-write -o .../seed/wacc.wasm
+
+   **And a compiled module is not yet that artefact.** `packages/platform/native.ts` — the path
+   `seed.sh --bootstrap` takes — compiles, then builds a manifest and appends it as a `wac.manifest`
+   *custom section* (`withManifestSection`, wasm section id 0). So replacing Deno needs three
+   things and only the first exists: the module, the manifest, and the section.
+
+   The manifest is metadata about a program's exports, and **wacc itself can answer for it** —
+   `api.wac` exports `exportSigsFiles`, `bindTypesFiles` and `describeFiles`. So the ladder builds
+   wacc, that wacc describes the CLI, and the host assembles the section. Nothing has to
+   reimplement what the reference knows.
 
 ---
 
