@@ -7,17 +7,36 @@ Four rungs exist and all four work.
     boot/sx.wax          1,630 instructions   the root, hand-written
     boot/wx.sx             200 lines          a compiler for wx, written in sx
     boot/wac0.wx           452 lines          a compiler for wac-0, written in wx
-    boot/wac1.wac0         754 lines          a compiler for wac-1, written in wac-0
+    boot/wac1.wac0         993 lines          a compiler for wac-1, written in wac-0
 
 **wac-1 is the first rung with a type system**, and the first that emits **wasm GC** — structs and
 arrays are engine types, so there is no allocator, no layout arithmetic and no `free` anywhere in
 the ladder. `struct Node { i32 value; Node[] kids; }` walks its own tree through five languages and
 two interpreters.
 
-754 lines is the largest rung so far and the first that is not obviously cheap. The type system is
+It has `enum` with payloads, `match`, and methods:
+
+    enum Expr { Num(i32 v); Add(Expr a, Expr b); Neg(Expr a); }
+
+    i32 eval(Expr e) {
+      match (e) {
+        case Num(v): { return v; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Neg(a): { return 0 - eval(a); }
+      }
+      return 0;
+    }
+
+993 lines is the largest rung by far and the first that is not obviously cheap. The type system is
 most of it: every expression answers a type index, because `p.x` has to know which struct to read
 from and a local of struct type has to be declared `refnull $s1` rather than `i32`. wac-0's compiler
 never had to know what an expression *was*.
+
+**Enums cost almost nothing on top of that**, which is the argument for GC made concrete. An enum is
+`struct { i32 tag; anyref payload }` with a nameless struct per variant, so it needs no subtyping —
+which `.wax` does not have — and a `match` is an integer compare and a `ref.cast`, both of which the
+engine does. A method is a function whose name is its owner's and its own, joined; `p.sum()`
+resolves at compile time to `call $Point_sum`, because there is no subtyping to make it ambiguous.
 
 **wac-0 is where the ladder starts looking like wac** — C-family syntax, functions with typed
 parameters, `i32` declarations with real shadowing, `return`/`if`/`else`/`while`, precedence

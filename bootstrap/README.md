@@ -63,6 +63,18 @@ lines of wac-0, emitting **wasm GC**. No allocator anywhere in the ladder:
       return sum;
     }
 
-**Next is `enum` with payloads and `match`** — the feature that changes what writing a compiler
-feels like, and the cheapest one wasm GC gives away: a struct per variant, and `ref.test` for the
-match. `NOTES.md` has the numbers and the bugs.
+...and `enum` with payloads, `match`, and methods:
+
+    enum Expr { Num(i32 v); Add(Expr a, Expr b); Neg(Expr a); }
+
+    i32 eval(Expr e) {
+      match (e) {
+        case Num(v): { return v; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Neg(a): { return 0 - eval(a); }
+      }
+      return 0;
+    }
+
+which is the shape wac's own compiler is written in. **What is left is a type checker, `T?` and
+generics.** `NOTES.md` has the numbers and the bugs.

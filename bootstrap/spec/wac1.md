@@ -43,11 +43,41 @@ That is also why `.wax` grew a type section with recursive groups. `struct Node 
 needs the struct and the array in the same group, because outside one a type may only name types
 already defined.
 
+## Enums, match and methods
+
+    enum Expr { Num(i32 v); Add(Expr a, Expr b); Neg(Expr a); }
+
+    i32 eval(Expr e) {
+      match (e) {
+        case Num(v): { return v; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Neg(a): { return 0 - eval(a); }
+      }
+      return 0;
+    }
+
+**An enum is one struct and a payload**: `struct { i32 tag; anyref payload }`, with a separate
+nameless struct per variant holding its fields. That needs no subtyping — which `.wax` does not
+have — and a `match` becomes an integer compare on the tag and a `ref.cast` inside the arm, both of
+which the engine does.
+
+`match` is a **statement**, so an arm may `return` and none has to answer anything. There is no
+exhaustiveness check: a value whose tag matches no arm falls out of the match, which is what wac-1
+does everywhere else it has no type checker. An arm's bindings are locals scoped to the arm.
+
+Variant names are **global**, as they are in the languages that spell them this way. Two enums with
+a `None` apiece would collide, and a rung this size is allowed to say so by not having a rule.
+
+**A method is a function whose name is its owner's and its own, joined.** `p.sum()` resolves at
+compile time to `call $Point_sum` — no vtable, no receiver in the call, because wac-1 has no
+subtyping to make it ambiguous. `this` is the first parameter and has the owner's type. Methods are
+not exported, because their names are not ones a caller outside the module could have written.
+
 ## What is not, and what is next
 
-`enum` with payloads and `match`, methods, `T?` and generics. The first two are the ones worth
-having: wac's own compiler has 265 `match`es over its AST, and on wasm GC an enum is a struct per
-variant and a `match` is `ref.test`, which the engine does.
+`T?` and generics, and a type checker. The last is the interesting one: everything above is tracked
+well enough to pick an instruction and no further, so a wrong type reaches the engine and is refused
+with a message about a wasm type rather than a wac one.
 
 Nothing here is type-*checked*. The compiler tracks types to decide which instruction to emit, and
 believes what it is told; a wrong one reaches the assembler and then the engine, which refuses it

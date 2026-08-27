@@ -96,6 +96,74 @@ const cases: [string, string, number][] = [
   ["an array of references starts null", `
     struct P { i32 v; }
     i32 main() { P[] ps = P[2](); if (isnull(ps[0])) { return 7; } return 0; }`, 7],
+  // --- enums with payloads, and match
+
+  ["an enum with three shapes of variant", `
+    enum Shape { Circle(i32 r); Rect(i32 w, i32 h); Empty; }
+    i32 area(Shape s) {
+      match (s) {
+        case Circle(r): { return 3 * r * r; }
+        case Rect(w, h): { return w * h; }
+        case Empty: { return 0; }
+      }
+      return 0 - 1;
+    }
+    i32 main() {
+      return area(Circle(2)) * 10000 + area(Rect(3, 4)) * 100 + area(Empty);
+    }`, 121200],
+
+  // The shape wac's own compiler is written in, and the reason `match` is the feature worth having.
+  ["a recursive enum, and an evaluator over it", `
+    enum Expr { Num(i32 v); Add(Expr a, Expr b); Mul(Expr a, Expr b); Neg(Expr a); }
+    i32 eval(Expr e) {
+      match (e) {
+        case Num(v): { return v; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Mul(a, b): { return eval(a) * eval(b); }
+        case Neg(a): { return 0 - eval(a); }
+      }
+      return 0;
+    }
+    i32 main() { return eval(Mul(Add(Num(2), Num(3)), Neg(Num(4)))); }`, -20],
+
+  ["a match arm's bindings do not leak", `
+    enum E { A(i32 v); B(i32 v); }
+    i32 pick(E e) {
+      i32 v = 100;
+      match (e) { case A(v): { return v; } case B(v): { return v * 2; } }
+      return v;
+    }
+    i32 main() { return pick(A(7)) * 100 + pick(B(3)); }`, 706],
+
+  ["an enum in a struct, and an array of enums", `
+    enum Tok { Num(i32 v); Plus; }
+    i32 val(Tok t) { match (t) { case Num(v): { return v; } case Plus: { return 0; } } return 0; }
+    i32 main() {
+      Tok[] ts = Tok[3]();
+      ts[0] = Num(4);
+      ts[1] = Plus;
+      ts[2] = Num(5);
+      return val(ts[0]) * 10 + val(ts[2]);
+    }`, 45],
+
+  // --- methods
+
+  ["a method, and a method calling one on `this`", `
+    struct Point {
+      i32 x;
+      i32 y;
+      i32 sum(this) { return this.x + this.y; }
+      i32 scaled(this, i32 k) { return this.sum() * k; }
+    }
+    i32 main() { Point p = Point(3, 4); return p.sum() * 100 + p.scaled(2); }`, 714],
+
+  ["a method returning a struct", `
+    struct Point {
+      i32 x;
+      i32 y;
+      Point flip(this) { return Point(this.y, this.x); }
+    }
+    i32 main() { Point q = Point(3, 4).flip(); return q.x * 10 + q.y; }`, 43],
 ];
 
 for (const [name, source, want] of cases) {
