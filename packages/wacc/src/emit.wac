@@ -5145,6 +5145,10 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
               i32 op2 = pushSubstitution(env, src, lexed, typeParams, mowner, mtmpl);
               i32 mp2 = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
                                               methodInstTail(env.instName[ii], mof, mnm));
+              // **The method instance names `curInst`**, because it is the key the lambda table is
+              // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
+              // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.
+              env.curInst = env.instName[ii];
               emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                            "", methods[m].returnType, methods[m].params, methods[m].body,
                            methods[m].hasThis ? mowner : "", index, declTypes, methods[m].nameTok);
@@ -8763,9 +8767,48 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
  * Answers 0 for an instantiation this module did not build, which is the same silence the
  * registration loops take for one.
  */
+/**
+ * Both substitutions for a method instantiation, and `curInst` set to name it.
+ *
+ * The count returned covers both pushes, so the single `popSubstitution` the caller already makes
+ * unwinds them together — it subtracts a count and clears `curInst`, which is exactly right here.
+ */
+i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32 i) {
+  string of = env.instOf[i];
+  i32 dot = of.indexOf(".");
+  if (dot <= 0) { return 0; }
+  string ownerInst = of.slice(0, dot);
+  string mname = of.slice(dot + 1, of.len());
+  string tmpl = templateOf(ownerInst);
+  if (tmpl == "") { return 0; }
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
+          if (methods[m].typeParams.len() == 0) { continue; }
+          i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
+          i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
+                                              methodInstTail(env.instName[i], of, mname));
+          env.curInst = env.instName[i];
+          return opushed + mpushed;
+        }
+      }
+      else: { }
+    }
+  }
+  return 0;
+}
+
 i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string inst) {
   for (i32 ii = 0; ii < env.instCount; ii++) {
     if (env.instName[ii] != inst) { continue; }
+    // **A method instantiation needs both**, and its `instOf` is `Cell<bool>.pick`, which matches no
+    // declaration's name — so without this arm the three cases below fall through and answer 0, and
+    // a lambda hoisted out of `pick<i32>` is emitted with `U` unbound. `issues/lang/0277b`.
+    if (isMethodInstance(env, ii)) { return pushMethodInstSubstitution(env, src, lexed, prog, ii); }
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -8790,9 +8833,68 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
   return 0;
 }
 
+/**
+ * The lambdas in one method instantiation's body — `Cell<bool>.pick<i32>` rather than `Cell<bool>`.
+ *
+ * The third monomorphisation level reaches the lambda table here. The owner-instance walk binds the
+ * owner's letters only, so a lambda capturing anything typed by the *method's* letter was recorded
+ * against a type that names it, and the capture cell built from that type is unwritable. Both
+ * substitutions, in the order `registerOneMethodInstance` uses them.
+ *
+ * **`curInst` is the method instance, not the owner's**, which differs from the emitter's own
+ * registration on purpose: it is the key `Env.lambdaAtPos` matches on, so `pick<i32>` and `pick<i64>`
+ * have to record separate copies of the same written lambda or one hoisted function serves both with
+ * the wrong type for one. `pushInstSubstitution` sets it to the same string on the way back out.
+ */
+void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32 i) {
+  string of = env.instOf[i];
+  i32 dot = of.indexOf(".");
+  if (dot <= 0) { return; }
+  string ownerInst = of.slice(0, dot);
+  string mname = of.slice(dot + 1, of.len());
+  string tmpl = templateOf(ownerInst);
+  if (tmpl == "") { return; }
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
+          if (methods[m].typeParams.len() == 0) { continue; }
+          i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
+          i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
+                                              methodInstTail(env.instName[i], of, mname));
+          env.curInst = env.instName[i];
+          env.walkCount = 0;
+          env.assignedCount = 0;
+          env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
+          env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+          i32 mfirst = env.lambdaCount;
+          if (methods[m].hasThis) { env.walkDeclare("this", ownerInst); }
+          for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
+            env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[pi].nameTok),
+                            typeOfTyName(env, src, lexed, methods[m].params[pi].type));
+          }
+          findLambdas(env, src, lexed, methods[m].body,
+                      typeOfTyName(env, src, lexed, methods[m].returnType));
+          markWritingLambdas(env, mfirst);
+          popSubstitutionInner(env, mpushed);
+          popSubstitution(env, opushed);
+        }
+      }
+      else: { }
+    }
+  }
+}
+
 void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 ii = 0; ii < env.instCount; ii++) {
     if (env.lambdasRecordedFor(env.instName[ii])) { continue; }
+    if (isMethodInstance(env, ii)) {
+      findLambdasInMethodInstance(env, src, lexed, prog, ii);
+      continue;
+    }
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -8817,6 +8919,11 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
           for (i32 m = 0; m < methods.len(); m++) {
+            // **A method with its own letters is walked per *method* instance, above.** This
+            // substitution binds the owner's `T` and nothing else, so a lambda in `map<U>` recorded
+            // here captures a value still typed `U` — and the cell struct built for that capture is
+            // what `writeValType` then cannot write. `issues/lang/0277b`.
+            if (methods[m].typeParams.len() > 0) { continue; }
             env.walkCount = 0;
             env.assignedCount = 0;
             env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
@@ -8842,6 +8949,11 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
           for (i32 m = 0; m < methods.len(); m++) {
+            // **A method with its own letters is walked per *method* instance, above.** This
+            // substitution binds the owner's `T` and nothing else, so a lambda in `map<U>` recorded
+            // here captures a value still typed `U` — and the cell struct built for that capture is
+            // what `writeValType` then cannot write. `issues/lang/0277b`.
+            if (methods[m].typeParams.len() > 0) { continue; }
             env.walkCount = 0;
             env.assignedCount = 0;
             env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
@@ -11617,12 +11729,26 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
           for (i32 m = 0; m < methods.len(); m++) {
             if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
             if (methods[m].typeParams.len() == 0) { continue; }
+            // **Its lambdas, before the verdict that reads them.** A method instance is discovered
+            // *here*, inside the fixpoint, so the pre-pass that records generic instances' lambdas
+            // has already run and the one after the fixpoint is too late: `canEmit` below asks the
+            // lambda table and would be told the module has none, which it reports as *a lambda
+            // (this module has 0)* and never revisits. Every other instantiation is named before the
+            // fixpoint starts, which is why this is the only place that needs it.
+            // `issues/lang/0277b`.
+            if (!env.lambdasRecordedFor(env.instName[i])) {
+              findLambdasInMethodInstance(env, src, lexed, prog, i);
+            }
             // **Both substitutions**: the owner's letters from `Box<i32>`, then the method's from the
             // `map<i64>` tail. The inner pair leaves `curInst` alone, which is right — this function
             // belongs to the owner's instantiation.
             i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
             i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
                                                 methodInstTail(env.instName[i], of, mname));
+            // **The method instance names `curInst`**, because it is the key the lambda table is
+            // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
+            // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.
+            env.curInst = env.instName[i];
             string[] ipts = string[methods[m].params.len()]();
             for (i32 a = 0; a < methods[m].params.len(); a++) {
               ipts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
@@ -11683,6 +11809,10 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
           i32 op = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
           i32 mp = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
                                          methodInstTail(env.instName[i], of, mname));
+          // **The method instance names `curInst`**, because it is the key the lambda table is
+          // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
+          // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.
+          env.curInst = env.instName[i];
           registerFuncTypes(env, src, lexed, methods[m].returnType, methods[m].params,
                             methods[m].hasThis ? ownerInst : "");
           popSubstitutionInner(env, mp);
@@ -11801,7 +11931,14 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
               // type first named while that method is being emitted is one the section was already
               // written without.
-              collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+              // **Not a method with its own letters.** This substitution binds the owner's `T` only,
+              // so walking `pick<U>`'s body here registers whatever it names in terms of `U` — a
+              // local declared `fn[U(i32)]` becomes a signature the type section cannot write. The
+              // method instance registers those types itself, with both substitutions pushed, which
+              // is the only place they can be resolved. `issues/lang/0277b`.
+              if (methods[m].typeParams.len() == 0) {
+                collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+              }
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
               // **The receiver, which this site did not record.** `addFunc` keeps only the declared
@@ -11925,7 +12062,14 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
               // type first named while that method is being emitted is one the section was already
               // written without.
-              collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+              // **Not a method with its own letters.** This substitution binds the owner's `T` only,
+              // so walking `pick<U>`'s body here registers whatever it names in terms of `U` — a
+              // local declared `fn[U(i32)]` becomes a signature the type section cannot write. The
+              // method instance registers those types itself, with both substitutions pushed, which
+              // is the only place they can be resolved. `issues/lang/0277b`.
+              if (methods[m].typeParams.len() == 0) {
+                collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+              }
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), empts);
               // The receiver, as at the struct-instance site above: `funcRecv` is where it lives, and
