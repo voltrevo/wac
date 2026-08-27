@@ -1,0 +1,185 @@
+// Whether a range of commits changes documentation and nothing a test could execute.
+//
+//     wac run --allow-read --allow-run tools/docsOnly.wac -- [base] [tip]   # default origin/master HEAD
+//
+// Exit 0 means documentation only, exit 1 means not, and either way it says why in one line. It is
+// meant to be asked by `tools/push.sh` before it spends four minutes on the coverage ratchets.
+//
+// **This was tools/docsOnly.ts** — unbackticked because it no longer exists — ported on 2026-08-27, the same day `wac task` replaced
+// `deno task`. The gate no longer starts a JavaScript host for anything, and a predicate the gate
+// asks is the last place to reintroduce one. The argument below is unchanged from the TypeScript;
+// what changed is the fifth test, which is described in `tools/wac/docsonly_test.wac`.
+//
+// ## What "documentation only" has to mean here, which is narrower than "only markdown changed"
+//
+// **A `.md` file can hold a program.** `spec/spec/*.md` is prose with code in it, and three separate
+// consumers execute those fences: `packages/wacc/test/wac/specfences_test.wac` compiles every one that
+// checks clean, `tools/wac/docsignatures_test.wac` matches their `export` lines against real
+// declarations, and `compiler/wacSpec.test.ts` runs them against the reference. Editing a fence is
+// editing a program, so the file's extension is not the question — its ```wac blocks are.
+//
+// So the predicate is: every changed path ends in `.md`, **and** no ```wac fence differs from the
+// base *in a file whose fences something executes*. A fence appearing, vanishing, or changing by one
+// byte is enough to say no.
+//
+// **Which files those are is derived from the consumers, not guessed:** `spec/**` (walked whole by
+// `compiler/wacSpec.test.ts`, and `spec/spec` by `specfences_test.wac`) and `packages/*/README.md`
+// (`docsignatures_test.wac`). A ```wac fence in an issue or a design note is quoted, not compiled —
+// this very file's predicate first called my own prose commit non-documentary because it quoted a
+// four-line reproduction into `issues/lang/open/0235a`, which nothing runs.
+//
+// `tools/wac/docsonly_test.wac` pins that list by finding every consumer of the fence idiom, so a
+// fourth one cannot appear without failing and pointing here.
+//
+// Non-wac fences are ignored on purpose. Issues and design notes are full of ```text and bare fences
+// holding measurements and terminal output; treating those as code would make almost every prose edit
+// non-documentary and the predicate worthless. Nothing compiles them.
+//
+// ## What a caller may do with a yes, and what it may not
+//
+// **It may not skip the suite.** A pure prose edit routinely breaks it, by design:
+// `compiler/wacSpec.test.ts` asserts `N issues, M closed.` against the files in `issues/*/`, and the
+// website's `Checked.tsx` carries a count of tagged claims that `spec/` has to agree with. Both are
+// markdown reading markdown, both live in the suite rather than in `wac task docs`, and both go red on
+// an edit this predicate calls documentation. That is correct of them and a hard limit on this.
+//
+// What it may skip is work that reads *code* — the coverage ratchets measure branch coverage of each
+// package's own sources, and a markdown edit with no fence in it cannot move them.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { itoa } from "../packages/fmt/src/itoa.wac";
+import { startsWith, endsWith, joined } from "../packages/wactest/src/strings.wac";
+import { nonEmptyLines } from "../packages/wactest/src/repo.wac";
+
+/** The marker that opens a wac fence, and the three backticks that close any fence. */
+export string fenceOpen() { return "```wac"; }
+export string fenceClose() { return "```"; }
+
+/**
+ * Every ```wac fence body in `text`, in order.
+ *
+ * A fence opens on a line that is exactly ```` ```wac ```` and closes on the next line *starting*
+ * with three backticks — which is what the TypeScript's `/^```wac\n([\s\S]*?)^```/gm` said, written
+ * out. Each body keeps its trailing newline, so a fence and the same fence with a blank line added
+ * are different.
+ */
+export string[] wacFenceBodies(string text) {
+  Vec<string> out = Vec<string>.create();
+  // Not `nonEmptyLines`: a blank line inside a fence is part of the program.
+  string[] lines = allLines(text);
+  i32 i = 0;
+  while (i < lines.len()) {
+    if (lines[i] != fenceOpen()) { i = i + 1; continue; }
+    i = i + 1;
+    string body = "";
+    while (i < lines.len() && !startsWith(lines[i], fenceClose())) {
+      body = body + lines[i] + "\n";
+      i = i + 1;
+    }
+    // An unterminated fence still counts as one. Refusing to see it would let a truncated document
+    // read as having no program in it, which is the direction that answers "skip the work".
+    out.push(body);
+    i = i + 1;
+  }
+  return out.toArray();
+}
+
+/**
+ * The fences of `text` as one string, for comparing two revisions of a file.
+ *
+ * **Joined on a fence terminator, which cannot occur inside a fence.** The separator only has to be
+ * a string no fence body can contain, so two fences regrouped as one compare unequal — a line of
+ * three backticks ends a fence by definition, so nothing between two of them holds one. It was a
+ * space between newlines until 2026-08-27, and the byte written was a NUL: the file read as binary
+ * to git and to every diff tool, which is how it was noticed.
+ */
+export string wacFences(string text) {
+  return joined(wacFenceBodies(text), "\n" + fenceClose() + "\n");
+}
+
+/** `s` cut at newlines, keeping the empty pieces — `nonEmptyLines` drops them, and a fence needs them. */
+export string[] allLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    out[at] = s.slice(start, i);
+    at = at + 1;
+    start = i + 1;
+  }
+  return out;
+}
+
+/** Whether anything executes the ```wac fences in this file — see the header. */
+export bool fencesAreRun(string path) {
+  if (startsWith(path, "spec/")) { return true; }
+  // `packages/<one segment>/README.md`, which is what `/^packages\/[^/]+\/README\.md$/` said.
+  if (!startsWith(path, "packages/") || !endsWith(path, "/README.md")) { return false; }
+  string middle = path.slice("packages/".len(), path.len() - "/README.md".len());
+  return middle.len() > 0 && middle.indexOf("/") < 0;
+}
+
+/** A file's content at a revision, or "" when it did not exist there. */
+string at(Cli cli, string rev, string path) {
+  Exec r = cli.exec("git", string[]("show", rev + ":" + path), u8[0]()).wait();
+  return (r.ran() && r.status == 0) ? string.fromBytes(r.stdout) : "";
+}
+
+export struct Verdict {
+  bool docsOnly;
+  string why;
+}
+
+/**
+ * Whether `base..tip` is documentation only.
+ *
+ * `tip` is `HEAD` for every caller that matters, and a parameter anyway: the header calls this "a
+ * range of commits" and a function that hard-codes one end of its range cannot be driven over a
+ * range that already exists. The two spec commits this was checked against are in
+ * `tools/wac/docsonly_test.wac`.
+ */
+export Verdict verdict(Core core, Cli cli, string base, string tip) {
+  Exec names = cli.exec("git", string[]("diff", "--name-only", base + ".." + tip), u8[0]()).wait();
+  if (!names.ran() || names.status != 0) {
+    return Verdict(false, "cannot diff against " + base);
+  }
+  string[] changed = nonEmptyLines(string.fromBytes(names.stdout));
+  // **Nothing changed is not documentation.** It is a caller asking the wrong question, and answering
+  // "yes, skip the expensive part" to it would be the one wrong answer with no upside.
+  if (changed.len() == 0) { return Verdict(false, "nothing changed against " + base); }
+
+  Vec<string> notMd = Vec<string>.create();
+  for (i32 i = 0; i < changed.len(); i++) {
+    if (!endsWith(changed[i], ".md")) { notMd.push(changed[i]); }
+  }
+  if (notMd.len() > 0) {
+    i32 show = notMd.len() < 3 ? notMd.len() : 3;
+    string[] head = string[show](fill: "");
+    for (i32 i = 0; i < show; i++) { head[i] = notMd.get(i); }
+    string more = notMd.len() > 3 ? " and " + itoa(notMd.len() - 3) + " more" : "";
+    return Verdict(false, itoa(notMd.len()) + " non-markdown file(s) changed: "
+                          + joined(head, ", ") + more);
+  }
+
+  for (i32 i = 0; i < changed.len(); i++) {
+    if (!fencesAreRun(changed[i])) { continue; }
+    if (wacFences(at(cli, base, changed[i])) != wacFences(at(cli, tip, changed[i]))) {
+      return Verdict(false, "a " + fenceOpen() + " fence changed in " + changed[i]);
+    }
+  }
+  return Verdict(true, itoa(changed.len()) + " markdown file(s), no " + fenceOpen() + " fence changed");
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  string base = argc > 0 ? string.fromBytes(cli.arg(0).wait()) : "origin/master";
+  string tip = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : "HEAD";
+  Verdict v = verdict(core, cli, base, tip);
+  core.warn(v.why);
+  return v.docsOnly ? 0 : 1;
+}

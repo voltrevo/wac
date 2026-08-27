@@ -75,8 +75,8 @@
 
 import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std/platform.wac";
 import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
-import { startsWith, endsWith, joined, has } from "../packages/wactest/src/strings.wac";
-import { Slot, take, refused, release, refuseIfNested, killedLaneNote, warningsSoFar,
+import { contains, startsWith, endsWith, joined, has } from "../packages/wactest/src/strings.wac";
+import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, warningsSoFar,
          clearWarnings, envOf } from "./wac/suitegate.wac";
 import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles }
   from "./wac/suitehouse.wac";
@@ -739,7 +739,8 @@ Opts parseArgs(Cli cli) {
       continue;
     }
     // A subcommand is consumed by `main` before this and is not a target.
-    if (argv[i] == "free" || argv[i] == "guard" || argv[i] == "sweep") { continue; }
+    if (argv[i] == "free" || argv[i] == "guard" || argv[i] == "sweep"
+        || argv[i] == "lock" || argv[i] == "unlock") { continue; }
     if (startsWith(argv[i], "-")) { extra.push(argv[i]); continue; }
     targets.push(argv[i]);
   }
@@ -1288,6 +1289,33 @@ export i32 main(Core core, Cli cli) {
   // at 95% is exactly the moment you do not want to run a suite to clean up after one.
   if (sub == "free") { freeCaches(cli); return 0; }
   if (sub == "guard") { guardCodeCache(core, cli); return 0; }
+  // **`lock` and `unlock`, which `tools/push.sh` holds across the whole gate.** The suite alone used
+  // to hold it, so a batch could pass, lose the push to another agent, and re-run everything —
+  // `issues/system/0213a` measured three green suites and no push in a single batch, and two gates in
+  // one day each ran the whole thing twice. A run that starts should be a run that can land.
+  //
+  // The pid is the caller's, because the caller is what stays alive; see `takeAs`. `--queue` waits for
+  // the *lock* and for nothing else: a machine short of memory, or an agent inside its cooldown, is
+  // not a queue to join. Refusing is still the default and still the right answer — the useful
+  // response to "someone else is pushing" is to go and do something else.
+  if (sub == "lock") {
+    i32 held = argv.len() > 1 ? atoi(argv[1]) : 0;
+    if (held <= 0) { core.warn("runTests: `lock` needs the caller's pid"); return 2; }
+    bool queue = argv.len() > 2 && argv[2] == "--queue";
+    Slot got = takeAs(core, cli, held);
+    while (!got.taken && queue && contains(got.why, "started one")) {
+      core.warn("   waiting for the gate: " + got.why);
+      core.sleepMillis(15000).wait();
+      got = takeAs(core, cli, held);
+    }
+    if (!got.taken) { return refused(core, got); }
+    return 0;
+  }
+  if (sub == "unlock") {
+    i32 held = argv.len() > 1 ? atoi(argv[1]) : 0;
+    if (held > 0) { release(cli, Slot(true, 0, "", held)); }
+    return 0;
+  }
   if (sub == "sweep") {
     sweepStaleTemp(core, cli);
     dropUnreachableTranspiles(core, cli);

@@ -1,0 +1,189 @@
+// `tools/docsOnly.wac` — the predicate the gate asks before skipping work that reads code.
+//
+//     wac test --allow-read --allow-run tools/wac/docsonly_test.wac
+//
+// **This was tools/docsOnly.test.ts** — unbackticked because it no longer exists, ported on 2026-08-27 with the program it tests.
+//
+// The interesting half is not the fence extraction, it is the **list of files whose fences something
+// executes**. That list is hard-coded in `fencesAreRun`, and a hard-coded list of consumers is the
+// shape this repository keeps being bitten by — so the last test here derives the consumers from the
+// tree and fails if a fourth one appears.
+//
+// ## The last test changed shape in the port, and the reason is the port
+//
+// The TypeScript searched for two *extraction idioms* — `matchAll(/^` before the marker, and
+// `indexOf("` before it — reasoning that searching for the marker itself hits
+// `packages/wacc/src/coretext.wac`, which embeds `std/` and `core/`'s doc comments as string literals
+// and parses nothing.
+//
+// **Both idioms stopped matching the moment this was ported.** `tools/docsOnly.wac` names the marker
+// once, in `fenceOpen()`, and finds a fence by comparing whole lines — so it uses neither, and a
+// search for them would have found two consumers and called the third missing. The guard would have
+// gone blind to the very file that defines the extractor, which is the second time that has happened
+// to this test: it could not see `docsOnly.ts` either until 2026-08-27, because a stray NUL made the
+// file binary and ripgrep skips those.
+//
+// So this searches for the **marker**, and names the false friends. Three files mention it in prose
+// and parse nothing, and saying so costs three lines that a reader can check. An idiom list looks
+// tighter and is not — it tracks how the code is *written* rather than what it is *about*, and that
+// is exactly what a port changes.
+//
+// It also does the search in wac against `git ls-files` rather than shelling out to `rg`. The tool on
+// PATH in this container is ugrep, which answers some patterns with a false negative, and a guard
+// whose whole job is to not miss a file should not be built on one that can.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { contains, joined } from "../../packages/wactest/src/strings.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { Verdict, fenceOpen, fencesAreRun, verdict, wacFenceBodies, wacFences } from "../docsOnly.wac";
+
+export string test_a_fence_is_found_and_the_prose_around_it_is_not(Core core, Cli cli) {
+  T t = T.create();
+  string text = "words\n\n" + fenceOpen() + "\nexport i32 f() { return 1; }\n```\n\nmore words\n";
+  string[] found = wacFenceBodies(text);
+  t.eqI32(found.len(), 1, "one fence in a document with one");
+  if (found.len() == 1) {
+    t.eqStr(found[0], "export i32 f() { return 1; }\n", "the fence body, and nothing around it");
+  }
+  t.eqI32(wacFenceBodies("no fences here\n").len(), 0, "a document with none");
+  t.eqStr(wacFences("no fences here\n"), "", "...joins to nothing");
+  return t.report();
+}
+
+export string test_a_non_wac_fence_is_not_a_program(Core core, Cli cli) {
+  T t = T.create();
+  // Issues and design notes are full of these — measurements, terminal output, tables. Treating them
+  // as code would make almost every prose edit non-documentary, which is the failure that would make
+  // the predicate worthless rather than wrong.
+  string text = "```\n$ wac build m.wac\n8 bytes\n```\n```text\nrise 2489 MB\n```\n";
+  t.eqStr(wacFences(text), "", "a bare fence and a ```text fence hold no program");
+  return t.report();
+}
+
+export string test_two_fences_differing_anywhere_compare_unequal(Core core, Cli cli) {
+  T t = T.create();
+  string a = fenceOpen() + "\nexport i32 f() { return 1; }\n```\n";
+  string b = fenceOpen() + "\nexport i32 f() { return 2; }\n```\n";
+  t.isTrue(wacFences(a) != wacFences(b), "a one-byte change compared equal");
+  // And the joiner must not let a move between fences look like no change.
+  string one = fenceOpen() + "\nA\nB\n```\n";
+  string two = fenceOpen() + "\nA\n```\n" + fenceOpen() + "\nB\n```\n";
+  t.isTrue(wacFences(one) != wacFences(two), "regrouping two fences as one compared equal");
+  // A blank line added inside a fence is a change to the program's text, so it must show.
+  string spaced = fenceOpen() + "\nA\n\nB\n```\n";
+  t.isTrue(wacFences(one) != wacFences(spaced), "a blank line inside a fence compared equal");
+  return t.report();
+}
+
+export string test_fences_are_executed_in_spec_and_package_readmes_and_nowhere_else(Core core, Cli cli) {
+  T t = T.create();
+  t.isTrue(fencesAreRun("spec/spec/types.md"), "spec/spec");
+  t.isTrue(fencesAreRun("spec/cli/wac.md"), "elsewhere under spec/");
+  t.isTrue(fencesAreRun("packages/json/README.md"), "a package README");
+  t.isTrue(!fencesAreRun("issues/lang/open/0235a-written-type-arguments-parse-as-a-comparison.md"),
+           "an issue");
+  t.isTrue(!fencesAreRun("design/lang/0011-a-call-may-name-its-type-arguments.md"), "a design note");
+  t.isTrue(!fencesAreRun("docs/development.md"), "docs/");
+  t.isTrue(!fencesAreRun("README.md"), "the root README");
+  // A README one level deeper is not a package README — `packages/box/example/README.md` is a real
+  // file and a stranger to `docsignatures_test.wac`, which walks `packages/*/README.md` and no
+  // further. There are five of these in the tree, so this is a case rather than a hypothetical.
+  t.isTrue(!fencesAreRun("packages/box/example/README.md"), "a README below a package");
+  return t.report();
+}
+
+export string test_the_verdict_over_two_ranges_that_are_in_this_repository(Core core, Cli cli) {
+  T t = T.create();
+  // **Real commits, because every assertion above is about a string literal.** The extraction can be
+  // right on a fixture and the wiring — which paths are asked, which revisions are read — still wrong,
+  // and the wiring is the half that decides whether the gate skips four minutes of work.
+  //
+  // `e572aee2` is the case this exists for, and it is not a contrived one: four markdown files, of
+  // which `spec/spec/generics.md` changed 231 bytes of prose with its 24 fences byte-identical, and
+  // two issue files that *did* change fences — 3 to 0 and 0 to 1 — which are correctly not consulted
+  // because nothing compiles a fence in `issues/`. Checked against an independent extraction on
+  // 2026-08-27 before being written down here.
+  //
+  // `c11f5ef5` is the contrast, and a large one: 219 non-markdown files.
+  Verdict docs = verdict(core, cli, "e572aee2~1", "e572aee2");
+  t.isTrue(docs.docsOnly, "e572aee2 is markdown with no fence changed, but got: " + docs.why);
+  t.eqStr(docs.why, "4 markdown file(s), no " + fenceOpen() + " fence changed", "and says so");
+
+  Verdict code = verdict(core, cli, "c11f5ef5~1", "c11f5ef5");
+  t.isTrue(!code.docsOnly, "c11f5ef5 changed 219 non-markdown files");
+  t.isTrue(contains(code.why, "219 non-markdown"), "and counts them: " + code.why);
+
+  // The two answers that are refusals rather than findings. Both must be `false`: a caller that
+  // cannot be told is a caller that must do the work.
+  Verdict empty = verdict(core, cli, "HEAD", "HEAD");
+  t.isTrue(!empty.docsOnly, "an empty range is not documentation");
+  t.isTrue(contains(empty.why, "nothing changed"), "and says which: " + empty.why);
+  Verdict bad = verdict(core, cli, "no/such/rev", "HEAD");
+  t.isTrue(!bad.docsOnly, "a base git cannot resolve is not documentation");
+  t.isTrue(contains(bad.why, "cannot diff"), "and says which: " + bad.why);
+  return t.report();
+}
+
+export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, Cli cli) {
+  T t = T.create();
+  // **Derived, because the list in `fencesAreRun` is the whole risk.** If someone teaches a fourth
+  // test to compile fences — from `docs/`, say — that helper would quietly answer false for it and the
+  // gate would skip work that mattered. This fails instead, naming the file.
+  string[] known = string[](
+    "packages/wacc/test/wac/specfences_test.wac",
+    "tools/wac/docsignatures_test.wac",
+    "compiler/wacSpec.test.ts",
+    "tools/docsOnly.wac",
+    "tools/wac/docsonly_test.wac",
+    // The three false friends: prose, not parsers.
+    "packages/wacc/src/coretext.wac",
+    "std/platform.wac",
+    "core/map.wac"
+  );
+  string[] why = string[](
+    "compiles every fence in spec/spec that checks clean",
+    "matches export lines in packages/*/README.md",
+    "runs spec/**'s fences against the reference",
+    "defines wacFences, the extractor this predicate is built on",
+    "this file, which contains the search needle itself",
+    "embeds std/ and core/'s doc comments as string literals, and parses nothing",
+    "doc comments with wac examples in them",
+    "a doc comment with a wac example in it"
+  );
+  t.eqI32(known.len(), why.len(), "every known file needs its reason");
+
+  string[] files = sourceFiles(core, cli, string[](".ts", ".wac"), string[]());
+  t.isTrue(files.len() > 500,
+           "only " + itoa(files.len()) + " sources found — the corpus has moved, not the answer");
+
+  string needle = fenceOpen();
+  i32 found = 0;
+  string strangers = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult f = cli.readFile(files[i]).wait();
+    if (!f.ok) { continue; }
+    if (!contains(string.fromBytes(f.bytes), needle)) { continue; }
+    found = found + 1;
+    bool listed = false;
+    for (i32 k = 0; k < known.len(); k++) { if (known[k] == files[i]) { listed = true; } }
+    if (!listed) { strangers = strangers + "\n  " + files[i]; }
+  }
+  // A floor: if the search stops matching, every assertion here passes by finding nothing.
+  t.isTrue(found >= 5, "only " + itoa(found) + " files mention a fence marker; the search has stopped matching");
+  t.eqStr(strangers, "",
+          "a file mentions " + needle + " and this test does not know about it." +
+          "\n  If it executes fences from a path outside spec/ or packages/*/README.md, widen fencesAreRun." +
+          "\n  If it only quotes one, add it to `known` above with the reason.");
+
+  // The other direction: a name in `known` that has gone away is a line nobody will ever delete.
+  string gone = "";
+  for (i32 k = 0; k < known.len(); k++) {
+    bool present = false;
+    for (i32 i = 0; i < files.len(); i++) { if (files[i] == known[k]) { present = true; } }
+    if (!present) { gone = gone + "\n  " + known[k] + " — " + why[k]; }
+  }
+  t.eqStr(gone, "", "`known` names a file that is no longer tracked");
+  return t.report();
+}

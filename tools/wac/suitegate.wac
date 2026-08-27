@@ -45,6 +45,14 @@ import { JsonValue, JsonObject } from "../../packages/json/src/value.wac";
 
 /** Shared by every agent, because the resource being protected is shared. */
 string lockPath() { return "/tmp/wac-suite.lock"; }
+/**
+ * How `tools/push.sh` tells a suite it started that the lock is already held on its behalf.
+ *
+ * The value is the holding process's pid, and `take` checks it against the lock file rather than
+ * believing it — a `Slot` with `pid` 0 is one nothing will release, which is what keeps a nested
+ * suite from dropping its parent's lock on the way out.
+ */
+export string gateEnv() { return "WAC_GATE_LOCK"; }
 /** Per agent, so "you ran one recently" is about you. */
 string lastRunPath(string who) { return "/tmp/wac-suite-last-" + who; }
 /** One per live heavy runner, keyed by pid so two of them never collide. */
@@ -307,6 +315,14 @@ string advice() {
     "   *push*, not on the next edit, and a cooldown spent watching the clock is the one cost this\n" +
     "   refusal was not meant to have. Come back to it when something is ready to go out.\n" +
     "\n" +
+    "   **This is the ordinary answer, not bad luck.** Only one gate can land a push, so a second\n" +
+    "   one running beside it competes for five cores to produce a result that cannot be used:\n" +
+    "   the loser re-runs everything after merging. And the cooldown is not rationing — pushing\n" +
+    "   on every change is wasteful whoever else is idle, and twenty minutes between them is\n" +
+    "   already an aggressive rate. The batch you are accumulating is the point.\n" +
+    "\n" +
+    "   `tools/push.sh --queue` waits for the lock instead, if you have a reason to.\n" +
+    "\n" +
     "   Meanwhile, run what you touched — none of these have a cooldown:\n" +
     "     wac test packages/<name>/test/wac        the package\n" +
     "     wac test path/to/one_test.wac            one file\n" +
@@ -343,11 +359,36 @@ export struct Slot {
  * the lock; `WAC_SUITE_RETRY=1` skips only the cooldown, which is the rule about reaching for the
  * suite by reflex rather than about a script finishing a job it started.
  */
-export Slot take(Core core, Cli cli) {
+export Slot take(Core core, Cli cli) { return takeAs(core, cli, ownPid(cli)); }
+
+/**
+ * `take`, recording `pid` as the holder rather than this process.
+ *
+ * `tools/push.sh` needs this: it holds the lock across the whole gate, but it is a shell script and
+ * cannot call in here directly — it runs a one-shot `runTests.wac -- lock $$`, which exits at once.
+ * Recording *that* pid would leave a lock whose holder is dead the instant it is written, and
+ * `alive()` would let the next agent walk straight through it.
+ */
+export Slot takeAs(Core core, Cli cli, i32 pid) {
   string who = agentName(cli);
-  i32 pid = ownPid(cli);
   bool forced = envOf(cli, "WAC_SUITE_ANYWAY") == "1";
   bool retry = envOf(cli, "WAC_SUITE_RETRY") == "1";
+
+  // **The gate above us already holds it.** `tools/push.sh` takes this lock before it pulls and keeps
+  // it until it has pushed, so that a run which *starts* is a run that can *land* — the suite alone
+  // used to hold it, and a batch could pass, lose the push to another agent, and re-run everything.
+  // `issues/system/0213a` measured three green suites and no push in one batch.
+  //
+  // So a suite invoked *by* that gate must not ask for a lock its own parent is holding. The parent
+  // says so by exporting its pid, which is checked against the lock rather than trusted: an inherited
+  // variable from a dead gate would otherwise wave a run straight past every refusal there is.
+  string held = envOf(cli, gateEnv());
+  if (held != "") {
+    Note mine = readLock(cli);
+    if (mine.present && itoa(mine.pid) == held && alive(cli, mine.pid)) {
+      return Slot(true, 0, "", 0);
+    }
+  }
 
   if (!forced) {
     Note held = readLock(cli);
@@ -429,6 +470,7 @@ export i32 refused(Core core, Slot slot) {
  * Only if it is still ours: a forced run by somebody else may have taken it in the meantime, and
  * releasing theirs would be worse than leaving ours.
  */
+/** Release only what we took: a `Slot` with no pid is a borrowed lock and is not ours to drop. */
 export void release(Cli cli, Slot slot) {
   if (!slot.taken) { return; }
   Note now = readLock(cli);
