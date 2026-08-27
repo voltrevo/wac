@@ -76,3 +76,28 @@ entirely. The order there puts it last for that reason.
 Stripped is still **a compiler that runs**, not a binary that is trusted. The smallest this can get
 is the subset that builds wacc's sources; it does not get to zero, because something has to turn
 text into the first module and this is the only thing that does.
+
+### Measured, 2026-08-27
+
+Following imports from `packages/platform/native.ts`, which is what `bash tools/seed.sh --bootstrap`
+runs, the bootstrap reaches **13 of the 17 modules here**. The other four are 1,338 lines and none of
+them is dead:
+
+| module | who needs it |
+| --- | --- |
+| `wapyPrint.ts` | renders wac as wapy — the last capability wacc does not have |
+| `wapyLex.ts` | `SPELLINGS`, which the site's editor highlights wapy with, and the printer |
+| `wacDiag.ts` | rendering a diagnostic, for the oracles and the site |
+| `wacInstance.ts` | instantiating a module, for tests that run what they compiled |
+
+So "stripped to the seed" is no longer a deletion. Everything left that the bootstrap does not need
+is something with a live consumer, and removing it means **building the replacement first** — a wapy
+printer in wac being the largest of them. compiler/wapyParse.ts went that way on 2026-08-27: the
+replacement (`packages/wacc/src/wapyparse.wac`) and a better oracle for it
+(`packages/wacc/test/wapyRoundTrip.test.ts`, which reads the printer's output with a *different*
+implementation) landed first, and then 1,943 lines came out in one commit.
+
+What the bootstrap is handed, for anyone asking the same question: the 24 files of
+`packages/wacc/src/api.wac`'s graph, plus the `core/` files that graph imports.
+`harness/bootstrapParses.test.ts` asks the reference to parse exactly that set in 320 ms, which is
+the cheap version of the question this section is about.
