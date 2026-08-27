@@ -22,7 +22,7 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
 import { coreSource, isBuiltinSpec } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
-import { importSpecs, resolveFrom, resolveFromIn } from "./files.wac";
+import { importSpecs, importSpecsOf, resolveFrom, resolveFromIn } from "./files.wac";
 import { Res, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
@@ -724,7 +724,9 @@ Edges edgesOfIn(string[] paths, string[] sources, Res res) {
   i32 upper = 0;
   for (i32 i = 0; i < n; i++) {
     string src = i < sources.len() ? sources[i] : "";
-    specsOf[i] = importSpecs(src.toBytes());
+    // **By path**, because wapy spells an import differently and a graph walked as wac stops at the
+    // first `.wapy` file — see `importSpecsOf`.
+    specsOf[i] = importSpecsOf(i < paths.len() ? paths[i] : "", src.toBytes());
     upper = upper + specsOf[i].len();
   }
   // **Sized at the upper bound and filled once.** The count pass existed to size `to` exactly; a

@@ -194,6 +194,52 @@ export string test_the_checker_reads_a_wapy_counted_loop(Core core) {
   return t.report();
 }
 
+/**
+ * A `.wapy` file importing a `.wac` one, and a three-deep graph alternating between them.
+ *
+ * **Moved here from `compiler/wacFrontend.test.ts`** when the reference's wapy reader was deleted.
+ * Its claim is the one worth keeping and is not the same as the cases above: not that a translation
+ * step exists and works, but that *a wapy file is a wac module* — importable from wac, able to
+ * import wac, and indistinguishable to everything downstream. The direction matters because the two
+ * are separate paths through the linker: a wapy *entry* is counted by `declCountOf`, and a wapy
+ * import is not.
+ */
+export string test_either_surface_may_import_the_other(Core core) {
+  T t = T.create();
+  string[] p = string[]("g/a.wapy", "g/b.wac", "g/c.wapy");
+  string[] s = string[](
+    "@export\ndef one() -> i32:\n    return 1\n",
+    "import { one } from \"./a.wapy\";\nexport i32 two() { return one() + 1; }\n",
+    "from \"./b.wac\" import two\n@export\ndef three() -> i32:\n    return two() + 1\n");
+  u8[] w = emitFiles(p, s, "g/c.wapy");
+  t.isTrue(w.len() > 8, "a three-deep graph alternating surfaces emits: "
+                        + (w.len() > 8 ? "" : diagnoseGraph(p, s, "g/c.wapy")));
+  t.eqStr(diagnoseGraph(p, s, "g/c.wapy"), "", "and checks clean");
+  return t.report();
+}
+
+/**
+ * A mistake in a wapy file is reported at the line its author wrote.
+ *
+ * There is no mapping step to get wrong: the frontend never converts to wac text, so the positions
+ * in the tree are the only ones that ever existed — which is the argument `issues/lang/0279a` makes
+ * for reading wapy rather than transpiling it, and this is the test of it.
+ */
+export string test_a_wapy_diagnostic_names_the_line_its_author_wrote(Core core) {
+  T t = T.create();
+  string[] p = string[]("g/bad.wapy");
+  string[] s = string[]("## A comment,\n"
+                      + "## over two lines.\n"
+                      + "@export\n"
+                      + "def f(x: i32) -> i32:\n"
+                      + "    y: i32 = \"not a number\"\n"
+                      + "    return y\n");
+  string d = diagnoseGraph(p, s, "g/bad.wapy");
+  t.isTrue(d != "", "a type error in a wapy file is reported");
+  t.isTrue(d.indexOf("\t5\t") >= 0, "at line 5, where the author put it — got: " + d);
+  return t.report();
+}
+
 /** `s` with the first `from` replaced by `to`. */
 string replace(string s, string from, string to) {
   i32 at = s.indexOf(from);

@@ -23,17 +23,29 @@ import { resolveFrom as pathResolveFrom, resolveFromIn as pathResolveIn,
          resolveFromAt as pathResolveAt,
          normalisePath as pathNormalise } from "./path.wac";
 import { isBuiltinSpec as coreIsBuiltinSpec } from "./coretext.wac";
+import { Frontend, frontendOf } from "./frontend.wac";
 
 /**
- * The path each `import … from "…"` in `src` names, in source order.
+ * The path each `import … from "…"` in `src` names, in source order — read as **wac**.
  *
  * An import with a bare word rather than a string — `import { Read } from core;` — contributes
  * nothing, and deliberately: `core` is carried by the linker, so there is no file to read.
+ *
+ * **Prefer `importSpecsOf` when the path is in hand.** wapy spells an import `from "./m.wac" import
+ * a, b`, which this reads as nothing at all — so a graph walked with this one stops at the first
+ * wapy file and the edges beyond it do not exist. The checker resolved imports off such a walk and
+ * reported `no file was supplied at that path` for a file that was right there.
  */
 export string[] importSpecs(u8[] src) {
-  Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
-  Program prog = parseProgram(p);
+  return importSpecsOf("x.wac", src);
+}
+
+/** The same, read by whichever frontend `path` names — see `frontend.wac`. */
+export string[] importSpecsOf(string path, u8[] src) {
+  Frontend fe = frontendOf(path, src);
+  Lexed lexed = fe.lexed;
+  Program prog = fe.prog;
+  src = fe.src;
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {

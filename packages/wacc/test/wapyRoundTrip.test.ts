@@ -92,7 +92,12 @@ function tracked(): string[] {
   return new TextDecoder().decode(out.stdout).split("\n").filter(Boolean);
 }
 
-Deno.test("wapy round trip: the printer's output is what wacc reads back", async () => {
+// `[§wac-wapy-roundtrip-5vd2qnw]` — *"Converting wac to wapy and parsing the result produces the
+// same syntax tree as parsing the original, for every file in `spec/tour.wac` and every package in
+// this repository."* This test is what that clause is about; it named the reference's round trip
+// until 2026-08-27, and the clause is stronger now than the sentence promises, because the parse it
+// is compared against is a *different implementation's*.
+Deno.test("[§wac-wapy-roundtrip-5vd2qnw] wapy round trip: the printer's output is what wacc reads back", async () => {
   const api = await waccApi() as unknown as {
     dump: (src: Uint8Array) => string;
     dumpWapy: (src: Uint8Array) => string;
