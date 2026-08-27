@@ -255,6 +255,48 @@ push for the method's letters is the shape it was built for — and `collectInst
 warns that discovery order and registration order have to agree because the function table's order is
 the module's numbering.
 
+### A design for item 3, from reading the emitter — agent-b, 2026-08-27
+
+Not implemented. Written down because the reading is most of the work and the alternative is somebody
+doing it again.
+
+**The shape to add is a fourth name.** The emitter already has three: a function `zero`, a generic
+function instance `zero<i32>`, and a generic struct's method `Box<i32>.map` — registered by
+`collectInstances` as `addFunc(inst + "." + methodName, …)` with `funcRecv = inst`, and immediately
+*declined*, because `funcMethodGeneric` is set for it. The fourth is `Box<i32>.map<i64>`, with
+`funcRecv = Box<i32>` exactly as the third has.
+
+**Register and emit in separate passes, after the struct-instance passes, rather than woven into
+them.** Registration order and emission order have to agree — the function table's order is the
+module's numbering, and the comment at the head of the emission loop records that the last attempt at
+getting it wrong "compiled the corpus into fifty-seven invalid modules". A pass of its own placed
+after the instance pass in *both* keeps the two aligned by construction, and is a much smaller edit
+than a branch inside each of the three loops that walk instances.
+
+**`popSubstitution` clears where it would need to restore.** Emitting the body wants two pushes — the
+owner's letters from `Box<i32>`, then the method's from `<i64>` — and `pushSubstitution` already
+returns how many pairs it pushed, so the stack part nests correctly. What does not is `curInst` and
+`curGeneric`: `popSubstitution` sets both to `""` rather than to what they were, so an inner pop
+silently drops the outer instance. A save-and-restore variant is the fix, and `Env.lambdaInst` is the
+thing that would notice if it were missed, since it keys a lambda by the instantiation it is inside.
+
+**Discovery is at the call site**, like `genericCallInstance`, and wants the owner instance and the
+written arguments — which `ExprKind.Call`'s `typeArgs` now carries (`design/lang/0011` step 3). The
+instance name must be built through `env.canonType`, for the reason `issues/lang/0260c` gives: a
+variant canonicalises to its enum, and two spellings of one type must not become two instances.
+
+**The checker half is small and must not land first.** `C.methodTypeParams` holds the letters, so
+binding them is `applyBindings` over the method's parameter and return types after `substituteType`
+has done the owner's. On its own it produces a call the checker accepts and the emitter declines,
+which is a worse answer than the single clear refusal there is today.
+
+**What to check it against**, since the failure mode is a module that loads and computes the wrong
+thing: `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` must be distinct instantiations (criterion 6),
+and a written argument agreeing with an inferred one must produce *one*. `design/lang/0011`'s
+`typeargsrule_test.wac` measures that for free functions in emitted bytes rather than by running the
+program, because both copies compute the same answer and only the size differs — the same instrument
+works here.
+
 ## Not recommended: leaving it refused
 
 The terminal form — `then` returning nothing — is landed and useful, and `drain` composes fine
