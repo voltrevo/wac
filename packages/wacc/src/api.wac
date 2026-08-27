@@ -29,11 +29,26 @@ import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
-  Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
-  Program prog = parseProgram(p);
-  Pr w = Pr.create(src, lexed.tokens, lexed.tokenCount);
-  return printProgram(w, prog);
+  return dumpAs("x.wac", src);
+}
+
+/**
+ * The same for a `.wapy` source, so the two surfaces can be compared as **trees**.
+ *
+ * `spec/spec/wapy.md` says the two are one language in two layouts, and the only way to hold that to
+ * account is to read a program written both ways and compare what came back. This is the surface
+ * that lets a caller outside wac do it — `packages/wacc/test/wapyRoundTrip.test.ts` renders every
+ * tracked `.wac` file to wapy and asks for both.
+ */
+export string dumpWapy(u8[] src) {
+  return dumpAs("x.wapy", src);
+}
+
+/** Whichever frontend `path` names, rendered — see `frontend.wac`. */
+string dumpAs(string path, u8[] src) {
+  Frontend fe = frontendOf(path, src);
+  Pr w = Pr.create(fe.src, fe.lexed.tokens, fe.lexed.tokenCount);
+  return printProgram(w, fe.prog);
 }
 
 /**

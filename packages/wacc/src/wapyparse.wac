@@ -803,7 +803,15 @@ Res takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
       continue;
     }
     if (isSwitch) {
-      cases.push(Case(exprIn(w, jf + 1, upto), body, jln, jcl));
+      // **`case _:` is the default arm**, which wac spells `default:`. `Case` says so with a null
+      // value, and reading `_` as an ordinary expression instead builds a case testing a variable
+      // nobody declared — accepted here and refused three phases later, or worse, matched.
+      // `compiler/wapyPrint.ts` emits it (`c.value === "default" ? "_" : …`) and this frontend did
+      // not read it back, which is what `packages/wacc/test/wapyRoundTrip.test.ts` found on the
+      // first corpus it was pointed at: five `spec/cases`, `spec/tour.wac` and `json`'s printer.
+      bool isDefault = jf + 2 == upto && kindOf(w, jf + 1) == kIdent()
+                    && textOf(w, jf + 1) == "_";
+      cases.push(Case(isDefault ? null : exprIn(w, jf + 1, upto), body, jln, jcl));
       j = after;
       continue;
     }

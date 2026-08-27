@@ -83,6 +83,10 @@ string[] oracle() {
     "packages/wacc/test/renderdiag_oracle.ts",
     "packages/wacc/test/specEmit.test.ts",
     "packages/wacc/test/sweep.test.ts",
+    // The **printer**, not the compiler: it renders every tracked `.wac` file to wapy so that wacc
+    // can read it back. That is the one thing the reference still has and wacc does not, and the
+    // comparison is what `design/lang/0003` calls a second opinion rather than a fallback.
+    "packages/wacc/test/wapyRoundTrip.test.ts",
     // `issues/lang/0105` names this one as keeping the reference *on purpose*: it records the
     // spec's own programs with the reference's answers, which is what makes them an oracle.
     "packages/wacc/tools/specCases.ts",
