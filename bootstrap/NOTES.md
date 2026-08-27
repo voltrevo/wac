@@ -253,6 +253,67 @@ a browser tab, offline. The 19,499-line TypeScript path cannot do that at any si
 at the top of `boot/l1.l0`, so the host walks the heap and renders. A hundred instructions saved in
 the rung that is hardest to write, spent on nothing.
 
+## How big is L5, against L4?
+
+**Roughly fifteen to twenty times.** L4's compiler is 1,003 lines; L5's is somewhere around
+16,000-22,000.
+
+The estimate comes from the reference compiler, which is the same program in TypeScript. The parts
+L5 needs:
+
+    lex             366
+    parse         1,734
+    resolve       2,571
+    instance        275
+    emitFunc      3,539
+    typecheck    ~1,500     -- inference only; wasm validation is the checker
+    bindgen       1,062
+                 11,047 lines of TypeScript
+
+`wasmBuildBin`'s 3,010 lines are **not** on the list, because L5 emits wac-L0 text and the assembler
+does the encoding. That is the ladder's one structural saving and it is a seventh of the program.
+Expanding TypeScript into wac-L4 at 1.5-2x gives the range above.
+
+## Why the ratio breaks at L5
+
+Every rung so far has cost about 2.2x the one below - 200, 452, 1,003. L5 does not, and the reason
+is not that it is one more feature.
+
+**L0 through L4 are languages we designed. L5 is a language we are handed.** It has to accept
+whatever `packages/wacc/src` happens to use, and that is 34,494 lines of existing wac:
+
+| what it uses | count | how hard for L5 |
+|---|---:|---|
+| `for` loops | 1,013 | desugars to `while` |
+| casts `as` / `as!` | 969 | one instruction per type pair, plus a check for `as!` |
+| `i64`/`u32`/`u8`... | 910 | a numeric lattice; every operator picks signed or unsigned |
+| string concatenation | 659 | a real string type with a runtime concat |
+| ternary | 450 | desugars to `if` |
+| `const` | 331 | parse and ignore - L5 has no checker |
+| generic instantiations | 283 | **monomorphisation** |
+| `match` | 254 | L4 already has it |
+| `trap` | 90 | one instruction |
+| imports | 44 | a module graph |
+
+**The difficulty is concentrated, not spread.** Around 2,000 of those occurrences are desugaring -
+maybe 150 lines of compiler between them. The breadth is in integers and casts, which is tedious and
+mechanical. The one genuinely hard feature is **generics**: substitution through a generic body,
+emission per instantiation, name mangling, and a fixpoint, because an instance's body can name
+instances that do not exist yet. That is `resolve` + `instance` + a slice of `emitFunc` - call it
+3,000 of the 11,000.
+
+## The encouraging measurement
+
+**wacc declares no generic types of its own.** All 283 instantiations are of about six types that
+come from `core/` and `std/` - `Box`, `Vec`, `Pending`, `Option`, `Map`, `Cell`.
+
+That makes the lever smaller than "rewrite wacc". Monomorphic versions of six library types would
+remove the ladder's single most expensive feature, and they are our code.
+
+It is still probably the wrong trade: it means adding redundancy to `core/` for every other user in
+order to serve the bootstrap, in a repository whose stated rule is to delete what nothing needs. But
+it is worth knowing that the choice is six types rather than thirty-four thousand lines.
+
 ## What this does not settle
 
 L1 exists and cost 167 lines. **The open question is now L2: a compiler for wac's C-family syntax,
