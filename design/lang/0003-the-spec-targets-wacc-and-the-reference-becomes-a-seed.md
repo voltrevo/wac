@@ -198,10 +198,26 @@ What that decides, concretely:
 - **`compiler/README.md`'s omissions table stops being a warning list and becomes a record.** It says
   what the seed cannot do; the answer to "should we avoid this so the seed keeps working" is no.
 
-**One clause, found by wiring the playground to wacc on 2026-08-13**: `.wapy` — the indentation
-surface `compiler/wacFrontend.ts` dispatches to — exists only in the reference. Sending a `.wapy`
-file there is not falling back to the seed; it is using the only compiler that has that front end.
-Until wacc grows one, "the reference is for the bootstrap" reads "the bootstrap and wapy".
+**One clause, found by wiring the playground to wacc on 2026-08-13, and discharged on 2026-08-27**:
+`.wapy` — the indentation surface `compiler/wacFrontend.ts` dispatches to — existed only in the
+reference. Sending a `.wapy` file there was not falling back to the seed; it was using the only
+compiler that had that front end, so "the reference is for the bootstrap" read "the bootstrap and
+wapy" for a fortnight.
+
+wacc reads it now. `packages/wacc/src/frontend.wac` dispatches on the extension where a path and
+some bytes become a tree, and a wapy file compiles to the module its wac twin does —
+`packages/wacc/test/wac/wapylink_test.wac` compares the bytes, and the reference's own rendering of
+`packages/json/src/value.wac` compiles identically from either surface. The playground and
+`site/tools/site.test.ts` ask wacc about every example, including the two wapy ones.
+
+**Why it took a de-concatenation to do four lines of dispatch** is `issues/lang/0279a`: the emitter
+compiled a *concatenation of the graph's source text*, so a file arrived as text and there was
+nowhere for a second reader to be. Phases C9–C14 gave each file its own parse, and the dispatch
+became a small change at a seam that now exists.
+
+What the reference still has and wacc does not is the printer — `compiler/wapyPrint.ts`, wac *to*
+wapy. Reading a surface and writing it are different directions, and only one of them is a compiler
+front end.
 
 What still holds: the bootstrap path itself. `harness/wacBind.ts` and `harness/waccBuild.ts` build
 wacc with `{ from: "reference", wasmFrom: "reference" }` — passed as arguments now, not announced in
