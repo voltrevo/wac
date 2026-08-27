@@ -30,9 +30,10 @@ and the tooling this experiment needed to get there:
     ts/assemble.ts       463 lines      the assembler
     rust/src/lib.rs      770 lines      the assembler again, so the two can disagree
 
-**1,157 lines is under the 1,500 I guessed the root had to stay below**, and that was the number the
-experiment existed to produce. A line of `.wax` is one wasm instruction, so this is about what a
-300–400 line C program would be; the expansion factor for writing in assembly is roughly three.
+**The root came in under the 1,500 lines I guessed it had to stay below**, and finished at 1,457
+with everything the second rung asked of it. A line of `.wax` is one wasm instruction, so that is
+about what a 400-line C program would be; the expansion factor for writing in assembly is roughly
+three.
 
 ## What sx actually is
 
@@ -71,37 +72,33 @@ expression that followed the file, so the program ran and answered a plausible n
 real cost of s-expression syntax at a rung with no diagnostics: unbalanced input is not an error,
 it is a different program.
 
-## What sx is not, and what that costs
+## What sx still is not
 
-Missing, and each would have to exist before a compiler could be written in it:
+Everything the second rung needed has been added. What is left is what a *third* rung would want:
 
-- **byte output.** sx answers an `i32` and cannot emit anything. A compiler needs to write a wasm
-  module, so this is the one genuinely required addition: an imported `putc`, a primitive, and a way
-  to hold bytes. Perhaps 60 lines.
-- **strings**, as distinct from symbols. A compiler needs literals and names it did not intern.
-- **`let`**, and more list utilities. Both are writable *in sx* once `fn` exists, so they cost source
-  in the next rung rather than lines in the root.
-- **tail calls.** Recursion consumes the wasm stack, so a long list is a deep stack. A bootstrap can
-  raise the stack limit, but a compiler looping over a large file may hit it.
-- **any error reporting at all.** A malformed program traps, and a trap in wasm has no message.
+- **strings**, as distinct from symbols. Every fixed word wx emits is a quoted symbol, which works
+  because the reader's only delimiters are whitespace and parentheses — but a lexer for wac needs
+  literals it did not intern, and building them a byte at a time is where a typo hides for a week.
+- **tail calls.** Recursion consumes the wasm stack, so a long list is a deep stack. wx's compiler
+  recurses over the program tree and is fine; a lexer looping over 37,000 lines may not be.
+- **any error reporting at all.** A malformed program traps, and a trap in wasm carries no message —
+  which is how three of the four bugs below presented.
 
-Call it **~1,400 lines** for a root a compiler could be written against. That is the honest figure to
-plan with, and it is still an order of magnitude under the reference.
+## The bugs, because they say what writing this is like
 
-## The two bugs, because they say what writing this is like
-
-**An `if` given a result type whose else-arm produces nothing.** Made twice. wasm reports it as
-*expected 1 element on the stack for fallthru* against a function **index**, so finding it means
-counting `func` lines. A map from byte offsets back to source lines is the obvious next tool.
+**An `if` given a result type whose else-arm produces nothing.** Made twice, in `.wax`. wasm reports
+it as *expected 1 element on the stack for fallthru* against a function **index**, so finding it
+means counting `func` lines. A map from byte offsets back to source lines is the obvious next tool.
 
 **The tag bit needs an alignment invariant, and the allocator was not keeping it.** An object's
 value is its address plus one, so addresses must be even. A symbol allocates `12 + len` bytes, so an
 odd-length name leaves the heap odd, the next object's value comes out even, and `$is_fix` calls it a
-fixnum. `$alloc` now rounds up to a word.
+fixnum. `$alloc` rounds up to a word now.
 
-**Stage one could not have caught it.** It read `(1 2 (3 4) 5)` — a program with no symbols in it, so
-every allocation was a 12-byte pair and the heap stayed aligned by luck. The bug appeared the moment
-the evaluator interned `+`. A staged test that passes tells you the stage passed and nothing else.
+**Stage one could not have caught that one.** It read `(1 2 (3 4) 5)` — a program with no symbols in
+it, so every allocation was a 12-byte pair and the heap stayed aligned by luck. The bug appeared the
+moment the evaluator interned `+`. A staged test that passes tells you the stage passed, and nothing
+else.
 
 ## What this does not settle
 
