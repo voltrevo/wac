@@ -434,7 +434,10 @@ i32 TY_I8 = 5;
 i32 TY_U16 = 6;
 i32 TY_I16 = 7;
 i32 TY_U64 = 8;
-i32 NUMTYPES = 9;
+// **`void` is a type here**, so that a function's result is one thing the whole compiler agrees on
+// rather than a flag beside it. It is the only one that emits no value type at all.
+i32 TY_VOID = 9;
+i32 NUMTYPES = 10;
 
 // Is it held in an i64? Everything else this rung has fits an i32.
 i32 ty_wide(i32 t) { return t == TY_I64 | t == TY_U64; }
@@ -500,6 +503,7 @@ i32 valtype(i32 t) {
 // The value type a local or a parameter of this type takes. A packed type has none — wasm has no i8
 // *value* — so it widens to i32, which is what reading one answers anyway.
 i32 slotvaltype(i32 t) {
+  if (t == TY_VOID) { return 0; }
   if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
   if (ty_wide(t)) { emits("i64"); return 0; }
   emits("i32");
@@ -530,6 +534,7 @@ i32 coerce(i32 t, i32 rt) {
 // The zero of a type. `none` and `nofunc` are two different bottoms — wasm's reference types are two
 // hierarchies that never meet — so a funcref's null is not the one everything else uses.
 i32 zero_of(i32 t) {
+  if (t == TY_VOID) { return 0; }
   if (ty_isnum(t)) {
     if (ty_wide(t)) { word("i64.const"); emitn(0); return nl(); }
     return konst(0);
@@ -561,6 +566,7 @@ i32 usedcat = 0;
 i32 usedeq = 0;
 
 i32 prim_type() {
+  if (isword("void")) { return TY_VOID; }
   if (isword("i32")) { return TY_I32; }
   if (isword("bool")) { return TY_BOOL; }
   if (isword("i64")) { return TY_I64; }
@@ -800,6 +806,10 @@ i32 cur_inst_ty = -1;
 i32 expect_ty = -1;
 // The enclosing function's return type, so `return Option.None;` knows which `Option` it means.
 i32 cur_ret = -1;
+// The enclosing loop's two labels, so `break` and `continue` know where to go. Saved and restored
+// around each loop rather than kept in a stack, because that is what nesting needs and no more.
+i32 loop_out = -1;
+i32 loop_in = -1;
 // When set, a declaration fills this type index instead of looking one up by name.
 i32 forced_ty = -1;
 
@@ -1725,9 +1735,9 @@ i32 assign_or_expr() {
   }
   i32 dt = expr();
   want(59);
-  // A call whose result is a value has to be dropped; one that answers nothing must not be. Stage 2
-  // has no void, so everything answers something and everything is dropped.
-  line("drop");
+  // A call whose result is a value has to be dropped; one that answers nothing must not be, and
+  // wasm counts the stack exactly enough to notice either mistake.
+  if (dt != TY_VOID) { line("drop"); }
   return 0;
 }
 
@@ -1752,6 +1762,10 @@ i32 while_statement() {
   next();
   i32 lo = newlabel();
   i32 li = newlabel();
+  i32 so = loop_out;
+  i32 si = loop_in;
+  loop_out = lo;
+  loop_in = li;
   word("block"); label(lo); sp(); line("->");
   word("loop"); label(li); sp(); line("->");
   want(40);
@@ -1763,6 +1777,8 @@ i32 while_statement() {
   word("br"); label(li); nl();
   line("end");
   line("end");
+  loop_out = so;
+  loop_in = si;
   return 0;
 }
 
@@ -1790,7 +1806,19 @@ i32 for_statement() {
   i32 stepAt = tp;
   while (ispunct(41) == 0) { next(); }
   want(41);
+  // **`continue` must run the step.** So the body sits inside a block of its own and `continue`
+  // branches to *its* end, which falls through to the step — branching to the loop directly would
+  // skip it and spin.
+  i32 lc = newlabel();
+  i32 so2 = loop_out;
+  i32 si2 = loop_in;
+  loop_out = lo;
+  loop_in = lc;
+  word("block"); label(lc); sp(); line("->");
   if (ispunct(123)) { block(); } else { statement(); }
+  line("end");
+  loop_out = so2;
+  loop_in = si2;
   i32 afterBody = tp;
   tp = stepAt;
   if (ispunct(41) == 0) { assign_or_expr_nosemi(); }
@@ -1844,13 +1872,23 @@ i32 statement() {
     next();
     i32 savedE = expect_ty;
     expect_ty = cur_ret;
-    if (ispunct(59)) { konst(0); } else { expr(); }
+    if (ispunct(59)) { zero_of(cur_ret); } else { expr(); }
     expect_ty = savedE;
     want(59);
     line("return");
     return 0;
   }
   if (isword("trap")) { next(); want(59); line("unreachable"); return 0; }
+  if (isword("break")) {
+    next(); want(59);
+    if (loop_out == 0 - 1) { oops(); } else { word("br"); label(loop_out); nl(); }
+    return 0;
+  }
+  if (isword("continue")) {
+    next(); want(59);
+    if (loop_in == 0 - 1) { oops(); } else { word("br"); label(loop_in); nl(); }
+    return 0;
+  }
   if (isword("match")) { next(); match_body(0, outbuf); return 0; }
   if (isword("if")) { return if_statement(); }
   if (isword("while")) { return while_statement(); }
@@ -2513,6 +2551,8 @@ i32 compile(i32 s, i32 out) {
   forced_ty = 0 - 1;
   expect_ty = 0 - 1;
   cur_ret = 0 - 1;
+  loop_out = 0 - 1;
+  loop_in = 0 - 1;
 
   lex();
   collect();

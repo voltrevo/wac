@@ -424,6 +424,26 @@ const programs: [string, string, number][] = [
       return c.n * 100 + xs[0];
     }`, 1009],
 
+  // A function that answers nothing, which wasm counts the stack exactly enough to notice either
+  // way: a call to it must not be dropped, and a call to anything else must.
+  ["void, and a bare return", `
+    i32 n;
+    void bump() { n++; }
+    void setIf(i32 c) { if (c == 0) { return; } n = 7; }
+    i32 main() { bump(); bump(); i32 a = n; setIf(0); setIf(1); return a * 10 + n; }`, 27],
+
+  ["break", `
+    i32 main() { i32 n = 0; while (1) { n++; if (n > 4) { break; } } return n; }`, 5],
+
+  // `continue` must run the step, or the loop spins. So the body sits in a block of its own and
+  // `continue` branches to *its* end, which falls through to the step.
+  ["continue in a for runs the step", `
+    i32 main() {
+      i32 n = 0;
+      for (i32 i = 0; i < 10; i++) { if (i % 2 == 0) { continue; } n += i; }
+      return n;
+    }`, 25],
+
   ["a generic free function, declared and not called", `
     enum Option<T> { Some(T v), None }
     Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }
