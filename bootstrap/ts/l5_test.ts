@@ -270,6 +270,92 @@ const programs: [string, string, number][] = [
       return true;
     }
     i32 main() { return same("ab" + "c", "abc") ? 1 : 0; }`, 1],
+
+  // --- stage 4: generics, monomorphised
+  //
+  // A generic declaration is not compiled where it is written. Its token index is recorded, and its
+  // body is re-read once per instantiation with the letters bound — which is cheap here because the
+  // parser's whole state is one integer into the token array, so "read this again, in another
+  // world" is an assignment.
+
+  ["a generic instantiated twice", `
+    struct Box<T> {
+      T v;
+      T get(const this) { return this.v; }
+    }
+    export i32 main() {
+      Box<i32> a = Box(7);
+      Box<bool> b = Box(true);
+      return a.get() * 10 + (b.get() ? 1 : 0);
+    }`, 71],
+
+  ["the slot supplies the type argument", `
+    struct Box<T> { T v; }
+    i32 main() { Box<i32> a = Box(7); return a.v; }`, 7],
+
+  ["...and it can be written out instead", `
+    struct Box<T> { T v; }
+    i32 main() { Box<i32> a = Box<i32>(7); return a.v; }`, 7],
+
+  ["a generic with an array field and methods", `
+    struct Vec<T> {
+      T[] data;
+      i32 n;
+      i32 push(this, T v) { this.data[this.n] = v; this.n = this.n + 1; return this.n; }
+      T get(const this, i32 i) { return this.data[i]; }
+    }
+    i32 main() {
+      Vec<i32> v = Vec(i32[8](), 0);
+      v.push(4); v.push(9);
+      return v.get(0) * 10 + v.get(1);
+    }`, 49],
+
+  ["a generic enum, with match", `
+    enum Option<T> {
+      Some(T v), None
+      T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+    }
+    i32 main() {
+      Option<i32> a = Some(7);
+      Option<i32> b = None;
+      return a.orElse(1) * 10 + b.orElse(3);
+    }`, 73],
+
+  // `>>` closes two argument lists and the lexer packs it into a shift, which is right everywhere
+  // else — so the token is rewritten in place as the second `>` and read again.
+  ["nested: Vec<Vec<i32>>", `
+    struct Vec<T> {
+      T[] data;
+      i32 n;
+      i32 push(this, T v) { this.data[this.n] = v; this.n = this.n + 1; return this.n; }
+      T get(const this, i32 i) { return this.data[i]; }
+    }
+    i32 main() {
+      Vec<i32> inner = Vec(i32[4](), 0);
+      inner.push(42);
+      Vec<Vec<i32>> outer = Vec(Vec<i32>[4](), 0);
+      outer.push(inner);
+      return outer.get(0).get(0);
+    }`, 42],
+
+  ["two type parameters", `
+    struct Pair<A, B> { A a; B b; A first(const this) { return this.a; } }
+    i32 main() { Pair<i32, bool> p = Pair(9, true); return p.first(); }`, 9],
+
+  // The arm answers a reference, so the block's result type is not `i32` — and it is written before
+  // any arm has been read. The arms go to scratch and the header is written in front of them.
+  ["a generic enum over a struct, whose match answers a reference", `
+    struct P { i32 x; }
+    enum Option<T> {
+      Some(T v), None
+      T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+    }
+    i32 main() { Option<P> o = Some(P(6)); return o.orElse(P(0)).x; }`, 6],
+
+  ["a generic over a struct", `
+    struct P { i32 x; }
+    struct Box<T> { T v; T get(const this) { return this.v; } }
+    i32 main() { Box<P> b = Box(P(5)); return b.get().x; }`, 5],
 ];
 
 // wac compiles a whole program into one wasm module, so an import is a file to *include* rather

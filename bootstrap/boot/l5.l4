@@ -18,6 +18,7 @@ i32 tp = 0;
 i32 src = 0;
 i32 dst = 0;
 i32 dp = 0;
+i32 outbuf = 0;
 i32 labn = 0;
 
 // Token kinds.
@@ -187,6 +188,20 @@ i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
 i32 oops() { nl(); line("!! wac-L5: unexpected token"); return 0; }
 i32 want(i32 v) { if (eat(v)) { return 0; } return oops(); }
 i32 eatword(i32 s) { if (isword(s)) { next(); return 1; } return 0; }
+
+// **`>>` closes two type-argument lists**, and `Vec<Vec<i32>>` ends with one token that has to be
+// consumed twice. The lexer is right to pack it — it is a shift everywhere else — so the token is
+// rewritten in place as the *second* `>` and left where it is. The next closer finds a plain one.
+i32 at_gt() { return ispunct(62) | ispunct(15934); }
+
+i32 eat_gt() {
+  if (ispunct(62)) { next(); return 1; }
+  if (ispunct(15934)) {
+    toks[tp] = Tok(K_PUNCT, toks[tp].start + 1, 1, 62);
+    return 1;
+  }
+  return 0;
+}
 
 // ---------------------------------------------------------------- locals
 //
@@ -461,6 +476,39 @@ i32 prim_type() {
 // same list as the ones that answer themselves.
 i32 is_string_word() { return isword("string"); }
 
+// `Vec<i32>` — or `Vec` with no arguments inside its own body, which means the instantiation being
+// expanded. A fresh type index is handed out per distinct argument list and the expansion happens
+// later, in rounds.
+i32 instantiate(i32 tm) {
+  if (ispunct(60) == 0) {
+    // A bare template name: inside its own expansion it means *this* instantiation, and at a
+    // declaration it means whatever the slot said.
+    if (cur_inst_ty != 0 - 1) { return cur_inst_ty; }
+    if (expect_ty != 0 - 1) { return expect_ty; }
+    return ty_new(T_STRUCT, tmpls[tm].nameptr, tmpls[tm].namelen, 0);
+  }
+  next();
+  i32 astart = niarg;
+  i32 na = 0;
+  while (at_gt() == 0) {
+    iargs[niarg] = parse_type();
+    niarg = niarg + 1;
+    na = na + 1;
+    if (ispunct(44)) { next(); }
+  }
+  eat_gt();
+  i32 have = inst_find(tm, astart, na);
+  if (have != 0 - 1) {
+    niarg = astart;
+    return insts[have].ty;
+  }
+  i32 ty = ty_new(tmpls[tm].kind, tmpls[tm].nameptr, tmpls[tm].namelen, 0);
+  insts[ninst] = Inst(tm, ty, astart, na, 0, 0);
+  ninst = ninst + 1;
+  expand_one(ninst - 1);
+  return ty;
+}
+
 i32 parse_type() {
   i32 t = 0;
   i32 pr = prim_type();
@@ -469,8 +517,14 @@ i32 parse_type() {
     i32 p = tstart();
     i32 n = tlen();
     next();
-    t = ty_named(p, n);
-    if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+    i32 sv = sub_find(p, n);
+    if (sv != 0 - 1) { t = sv; } else {
+      i32 tm = tmpl_find(p, n);
+      if (tm != 0 - 1) { t = instantiate(tm); } else {
+        t = ty_named(p, n);
+        if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+      }
+    }
   }}
   while (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); }
   if (ispunct(63)) { next(); }
@@ -487,10 +541,7 @@ i32 looks_like_member() {
   if (texteq(toks[i].start, toks[i].len, "const")) { return 1; }
   if (texteq(toks[i].start, toks[i].len, "export")) { return 1; }
   i = i + 1;
-  if (toks[i].kind == K_PUNCT & toks[i].val == 60) {
-    while ((toks[i].kind == K_PUNCT & toks[i].val == 62) == 0) { i = i + 1; }
-    i = i + 1;
-  }
+  i = skip_targs(i);
   while (toks[i].kind == K_PUNCT & toks[i].val == 91) {
     if ((toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) == 0) { return 0; }
     i = i + 2;
@@ -500,14 +551,115 @@ i32 looks_like_member() {
   return toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 40;
 }
 
+// Steps over `<…>`, counting `>>` as two closers — which is what `Vec<Vec<i32>>` ends with, because
+// the lexer packs it into a shift and is right to everywhere else.
+i32 skip_targs(i32 i) {
+  if ((toks[i].kind == K_PUNCT & toks[i].val == 60) == 0) { return i; }
+  i32 depth = 0;
+  while (1) {
+    if (toks[i].kind == K_EOF) { return i; }
+    if (toks[i].kind == K_PUNCT) {
+      if (toks[i].val == 60) { depth = depth + 1; }
+      if (toks[i].val == 62) { depth = depth - 1; }
+      if (toks[i].val == 15934) { depth = depth - 2; }
+    }
+    i = i + 1;
+    if (depth <= 0) { return i; }
+  }
+  return i;
+}
+
 // A type followed by a name, which is how a declaration begins and nothing else does.
 i32 looks_like_decl() {
   i32 i = tp;
   if (toks[i].kind != K_NAME) { return 0; }
   i = i + 1;
-  while (toks[i].kind == K_PUNCT & toks[i].val == 91) { i = i + 2; }
+  i = skip_targs(i);
+  while (toks[i].kind == K_PUNCT & toks[i].val == 91) {
+    if ((toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) == 0) { return 0; }
+    i = i + 2;
+  }
   if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; }
   return toks[i].kind == K_NAME;
+}
+
+// ---------------------------------------------------------------- generics
+//
+// **Monomorphisation, by rewinding.** A generic declaration is not compiled where it is written; its
+// token index is recorded and its body is re-parsed once per instantiation, with the letters bound.
+// That is cheap here for a reason peculiar to this compiler: the parser's entire state is one
+// integer into the token array, so "read this declaration again, in another world" is an assignment.
+//
+// The rounds are a fixpoint, because expanding `Vec<i32>` can name `Option<i32>`, which did not
+// exist when the round started.
+
+struct Tmpl { i32 nameptr; i32 namelen; i32 kind; i32 tokAt; i32 pstart; i32 nparams; }
+Tmpl[] tmpls;
+i32 ntmpl = 0;
+
+struct TParam { i32 nameptr; i32 namelen; }
+TParam[] tparams;
+i32 ntparam = 0;
+
+struct Inst { i32 tmpl; i32 ty; i32 astart; i32 nargs; i32 expanded; i32 emitted; }
+Inst[] insts;
+i32 ninst = 0;
+
+i32[] iargs;
+i32 niarg = 0;
+
+struct Sub { i32 nameptr; i32 namelen; i32 ty; }
+Sub[] subs;
+i32 nsub = 0;
+
+// The instantiation being expanded, so that `Vec(…)` inside `Vec<T>`'s own body means this one.
+i32 cur_inst_ty = -1;
+// **The slot supplies the type argument.** `Box<i32> a = Box(7);` writes the arguments once, and
+// wac reads the second `Box` as `Box<i32>` from the declaration it is initialising. Without this a
+// bare template name has nothing to instantiate it with.
+i32 expect_ty = -1;
+// When set, a declaration fills this type index instead of looking one up by name.
+i32 forced_ty = -1;
+
+// Innermost binding wins, which matters when a generic's body names another generic's letter.
+i32 sub_find(i32 p, i32 n) {
+  i32 i = nsub;
+  i32 found = 0 - 1;
+  while (i > 0) {
+    i = i - 1;
+    if (found == 0 - 1) {
+      if (subs[i].namelen == n & samebytes(p, n, subs[i].nameptr)) { found = subs[i].ty; }
+    }
+  }
+  return found;
+}
+
+i32 tmpl_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntmpl) {
+    if (tmpls[i].namelen == n & samebytes(p, n, tmpls[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 inst_find(i32 tm, i32 astart, i32 na) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ninst) {
+    if (insts[i].tmpl == tm & insts[i].nargs == na) {
+      i32 k = 0;
+      i32 same = 1;
+      while (k < na) {
+        if (iargs[insts[i].astart + k] != iargs[astart + k]) { same = 0; }
+        k = k + 1;
+      }
+      if (same) { found = i; }
+    }
+    i = i + 1;
+  }
+  return found;
 }
 
 // ---------------------------------------------------------------- variants and methods
@@ -548,6 +700,10 @@ i32 meth_find(i32 owner, i32 p, i32 n) {
 i32 mangled(i32 owner, i32 p, i32 n) {
   emit1(36);
   emitname(types[owner].nameptr, types[owner].namelen);
+  emit1(95);
+  // The owner's *type index*, so `Vec<i32>.push` and `Vec<string>.push` are two functions with two
+  // names. A template's own name is shared by every instantiation of it and cannot do this alone.
+  emitn(owner);
   emit1(95);
   return emitname(p, n);
 }
@@ -700,7 +856,7 @@ i32 primary() {
   if (isword("true")) { next(); konst(1); return TY_BOOL; }
   if (isword("false")) { next(); konst(0); return TY_BOOL; }
   if (isword("null")) { next(); line("ref.null none"); return 0; }
-  if (isword("match")) { return match_expr(); }
+  if (isword("match")) { return match_expr(outbuf); }
   // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
   // else that begins an expression does.
   i32 pt = prim_type();
@@ -711,6 +867,11 @@ i32 primary() {
     next();
     i32 st = ty_named(p, n);
     if (st != 0 - 1 & (ispunct(40) | ispunct(91))) { return postfix(construct(st)); }
+    i32 tmc = tmpl_find(p, n);
+    if (tmc != 0 - 1) {
+      i32 ity = instantiate(tmc);
+      return postfix(construct(ity));
+    }
     i32 vi = var_find(p, n);
     if (vi != 0 - 1) { return postfix(construct_variant(vi)); }
     if (ispunct(40)) {
@@ -908,15 +1069,18 @@ i32 construct_variant(i32 vi) {
 // body is followed by `,` in the expression form and by `;` in the statement form. Both compile to
 // the same shape — the scrutinee in a slot, one block per arm, a tag compare and a branch — so the
 // only difference here is whether the arms leave a value.
-i32 match_body(i32 wantValue) {
+i32 match_body(i32 wantValue, i32 out) {
   want(40);
   i32 et = expr();
   want(41);
   i32 slot = slot_new(et);
   word("local.set"); slotname(slot); nl();
   i32 done = newlabel();
-  word("block"); label(done); sp(); word("->");
-  if (wantValue) { line("i32"); } else { nl(); }
+  // The arms go to scratch, because the block's result type is one of theirs and none of them has
+  // been read yet.
+  i32 level = scrdepth;
+  i32 saved = scratch_begin();
+  i32 armty = TY_I32;
   want(123);
   while (ispunct(125) == 0) {
     eatword("case");
@@ -959,7 +1123,7 @@ i32 match_body(i32 wantValue) {
     }
     want(58);
     if (wantValue) {
-      expr();
+      armty = expr();
       if (ispunct(44)) { next(); }
     } else {
       if (ispunct(123)) { block(); } else { statement(); }
@@ -969,17 +1133,25 @@ i32 match_body(i32 wantValue) {
     line("end");
   }
   want(125);
+  i32 armlen = scratch_end(out, saved);
+
+  word("block"); label(done); sp(); word("->");
+  if (wantValue) { slotvaltype(armty); nl(); } else { nl(); }
+  scratch_copy(level, armlen);
   // A tag matching no arm falls out. wac's `match` is exhaustive and this rung does not check it,
-  // so the expression form has to leave *something* — and an unreachable zero is the honest one.
-  if (wantValue) { konst(0); }
+  // so the expression form has to leave *something* — and an unreachable default is the honest one.
+  if (wantValue) {
+    if (ty_isnum(armty)) {
+      if (ty_wide(armty)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
+    } else { line("ref.null none"); }
+  }
   line("end");
-  return 0;
+  return armty;
 }
 
-i32 match_expr() {
+i32 match_expr(i32 out) {
   next();
-  match_body(1);
-  return 0;
+  return match_body(1, out);
 }
 
 i32 ternary() {
@@ -1017,7 +1189,10 @@ i32 declaration() {
   i32 p = tstart();
   i32 n = tlen();
   next();
-  if (ispunct(61)) { next(); expr(); } else {
+  i32 savedExpect = expect_ty;
+  expect_ty = t;
+  if (ispunct(61)) { next(); expr(); expect_ty = savedExpect; } else {
+    expect_ty = savedExpect;
     if (ty_isnum(t)) {
       if (ty_wide(t)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
     } else { line("ref.null none"); }
@@ -1286,7 +1461,7 @@ i32 statement() {
     return 0;
   }
   if (isword("trap")) { next(); want(59); line("unreachable"); return 0; }
-  if (isword("match")) { next(); match_body(0); return 0; }
+  if (isword("match")) { next(); match_body(0, outbuf); return 0; }
   if (isword("if")) { return if_statement(); }
   if (isword("while")) { return while_statement(); }
   if (isword("for")) { return for_statement(); }
@@ -1300,6 +1475,36 @@ i32 statement() {
 // 64 pages is 4,194,304 bytes, so the last valid address is one below that — a scratch buffer
 // placed *at* the limit is out of bounds on its first byte.
 i32 BODY = 3145728;
+
+// **A scratch stack**, because a block's result type is written before its arms are parsed and only
+// the arms know it. Emit them here, learn the type, then write the header in front — the same trick
+// a function body already needed for its locals, one level down and nestable.
+i32 SCR = 3407872;
+i32 scrdepth = 0;
+i32 scrsaved = 0;
+
+i32 scratch_begin() {
+  scrsaved = dp;
+  scrdepth = scrdepth + 1;
+  dst = SCR + (scrdepth - 1) * 65536;
+  dp = 0;
+  return scrsaved;
+}
+
+// Answers the length written; the caller copies it after emitting whatever had to come first.
+i32 scratch_end(i32 out, i32 saved) {
+  i32 n = dp;
+  scrdepth = scrdepth - 1;
+  if (scrdepth > 0) { dst = SCR + (scrdepth - 1) * 65536; } else { dst = out; }
+  dp = saved;
+  return n;
+}
+
+i32 scratch_copy(i32 level, i32 n) {
+  i32 k = 0;
+  while (k < n) { emit1(load8(SCR + level * 65536 + k)); k = k + 1; }
+  return 0;
+}
 
 i32 mowner = -1;
 
@@ -1326,10 +1531,13 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   i32 nparams = nslot;
 
   i32 outp = dp;
+  i32 savedout = outbuf;
+  outbuf = BODY;
   dst = BODY;
   dp = 0;
   block();
   i32 blen = dp;
+  outbuf = savedout;
 
   dst = out;
   dp = outp;
@@ -1398,16 +1606,52 @@ i32 emit_typedecls() {
 
 // `struct Name { T f; … methods }` — a field is a type and a name and a `;`, a method is a type and
 // a name and a `(`.
+// Records a generic declaration and answers 1, or answers 0 and leaves the cursor where it was.
+// The token index it keeps is of the `struct` or `enum` keyword, because that is where re-reading
+// has to start.
+i32 record_template(i32 kind) {
+  i32 at = tp;
+  next();
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  if (ispunct(60) == 0) { tp = at; return 0; }
+  next();
+  i32 pstart = ntparam;
+  i32 np = 0;
+  while (at_gt() == 0) {
+    tparams[ntparam] = TParam(tstart(), tlen());
+    ntparam = ntparam + 1;
+    np = np + 1;
+    next();
+    if (ispunct(44)) { next(); }
+  }
+  eat_gt();
+  tmpls[ntmpl] = Tmpl(p, n, kind, at, pstart, np);
+  ntmpl = ntmpl + 1;
+  // Skip the body: it is read again, once per instantiation.
+  while (ispunct(123) == 0) { next(); }
+  i32 depth = 1;
+  next();
+  while (depth > 0) {
+    if (ispunct(123)) { depth = depth + 1; }
+    if (ispunct(125)) { depth = depth - 1; }
+    next();
+  }
+  return 1;
+}
+
 i32 struct_decl(i32 emitting, i32 out) {
   next();
   i32 p = tstart();
   i32 n = tlen();
   next();
-  // A generic header — `struct Vec<T>` — is read and dropped. Stage 2 has no monomorphisation, so a
-  // generic declaration compiles as if its letters were one unknown struct. That is stage 4's job.
-  if (ispunct(60)) { while (ispunct(62) == 0) { next(); } next(); }
-  i32 t = ty_named(p, n);
-  if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+  if (ispunct(60)) { next(); while (at_gt() == 0) { next(); } eat_gt(); }
+  i32 t = forced_ty;
+  if (t == 0 - 1) {
+    t = ty_named(p, n);
+    if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+  }
   if (emitting == 0) { types[t] = Ty(T_STRUCT, p, n, 0, nfield, 0); }
   want(123);
   i32 count = 0;
@@ -1455,9 +1699,12 @@ i32 enum_decl(i32 emitting, i32 out) {
   i32 p = tstart();
   i32 n = tlen();
   next();
-  if (ispunct(60)) { while (ispunct(62) == 0) { next(); } next(); }
-  i32 t = ty_named(p, n);
-  if (t == 0 - 1) { t = ty_new(T_ENUM, p, n, 0); }
+  if (ispunct(60)) { next(); while (at_gt() == 0) { next(); } eat_gt(); }
+  i32 t = forced_ty;
+  if (t == 0 - 1) {
+    t = ty_named(p, n);
+    if (t == 0 - 1) { t = ty_new(T_ENUM, p, n, 0); }
+  }
   if (emitting == 0) { types[t] = Ty(T_ENUM, p, n, 0, nvar, 0); }
   want(123);
   i32 count = 0;
@@ -1533,8 +1780,12 @@ i32 collect() {
   while (kind() != K_EOF) {
     eatword("export");
     if (isword("import")) { while (ispunct(59) == 0) { next(); } next(); } else {
-    if (isword("struct")) { struct_decl(0, 0); } else {
-    if (isword("enum")) { enum_decl(0, 0); } else {
+    if (isword("struct")) {
+      if (record_template(T_STRUCT) == 0) { struct_decl(0, 0); }
+    } else {
+    if (isword("enum")) {
+      if (record_template(T_ENUM) == 0) { enum_decl(0, 0); }
+    } else {
     i32 ret = parse_type();
     i32 p = tstart();
     i32 n = tlen();
@@ -1667,6 +1918,82 @@ i32 emit_runtime() {
   return 0;
 }
 
+// Bind a template's letters to an instantiation's arguments, and answer how many were pushed.
+i32 push_subs(i32 ii) {
+  i32 tm = insts[ii].tmpl;
+  i32 k = 0;
+  while (k < tmpls[tm].nparams) {
+    subs[nsub] = Sub(tparams[tmpls[tm].pstart + k].nameptr,
+                     tparams[tmpls[tm].pstart + k].namelen,
+                     iargs[insts[ii].astart + k]);
+    nsub = nsub + 1;
+    k = k + 1;
+  }
+  return tmpls[tm].nparams;
+}
+
+// **Expanded where it is created, not in a later pass.** An instantiation is first named inside a
+// function body, which is long after any pass over the declarations could have run — so the moment
+// `Vec<i32>` is written down, its fields and its methods are read out of the template with `T`
+// bound, and the parser rewinds to do it.
+//
+// The entry is marked expanded *before* the body is read, so `Vec<T>` holding a `Vec<T>` finds the
+// entry that is already there rather than making a second one. That is what terminates it.
+i32 expand_one(i32 i) {
+  if (insts[i].expanded) { return 0; }
+  insts[i] = Inst(insts[i].tmpl, insts[i].ty, insts[i].astart, insts[i].nargs, 1, 0);
+  i32 pushed = push_subs(i);
+  i32 saved = tp;
+  i32 savedcur = cur_inst_ty;
+  i32 savedforced = forced_ty;
+  i32 savedexpect = expect_ty;
+  cur_inst_ty = insts[i].ty;
+  forced_ty = insts[i].ty;
+  expect_ty = 0 - 1;
+  tp = tmpls[insts[i].tmpl].tokAt;
+  if (tmpls[insts[i].tmpl].kind == T_ENUM) { enum_decl(0, 0); } else { struct_decl(0, 0); }
+  forced_ty = savedforced;
+  cur_inst_ty = savedcur;
+  expect_ty = savedexpect;
+  tp = saved;
+  nsub = nsub - pushed;
+  return 0;
+}
+
+i32 expand_types() {
+  i32 going = 1;
+  while (going) {
+    going = 0;
+    i32 i = 0;
+    while (i < ninst) {
+      if (insts[i].expanded == 0) { expand_one(i); going = 1; }
+      i = i + 1;
+    }
+  }
+  return 0;
+}
+
+// One specialised copy of every generic's methods, per instantiation. Runs after the types have
+// settled, because a method body can name an instantiation and its *type* has to exist by then.
+i32 emit_generic_methods(i32 out) {
+  i32 i = 0;
+  while (i < ninst) {
+    i32 pushed = push_subs(i);
+    i32 saved = tp;
+    i32 savedcur = cur_inst_ty;
+    cur_inst_ty = insts[i].ty;
+    forced_ty = insts[i].ty;
+    tp = tmpls[insts[i].tmpl].tokAt;
+    if (tmpls[insts[i].tmpl].kind == T_ENUM) { enum_decl(1, out); } else { struct_decl(1, out); }
+    forced_ty = 0 - 1;
+    cur_inst_ty = savedcur;
+    tp = saved;
+    nsub = nsub - pushed;
+    i = i + 1;
+  }
+  return 0;
+}
+
 i32 compile(i32 s, i32 out) {
   src = s;
   srclen = 0;
@@ -1698,11 +2025,29 @@ i32 compile(i32 s, i32 out) {
   nfn = 0;
   strnext = 1024;
   labn = 0;
+  strty = 0 - 1;
+  usedstr = 0;
+  usedcat = 0;
+  tmpls = Tmpl[512]();
+  tparams = TParam[1024]();
+  insts = Inst[2048]();
+  iargs = i32[16384]();
+  subs = Sub[256]();
+  ntmpl = 0;
+  ntparam = 0;
+  ninst = 0;
+  niarg = 0;
+  nsub = 0;
+  cur_inst_ty = 0 - 1;
+  forced_ty = 0 - 1;
 
   lex();
   collect();
+  // Every instantiation named anywhere in the program now has a type index; this fills them in.
+  expand_types();
 
   tp = 0;
+  outbuf = out;
   dst = out;
   dp = 0;
   line("memory 64");
@@ -1720,8 +2065,12 @@ i32 compile(i32 s, i32 out) {
   while (kind() != K_EOF) {
     eatword("export");
     if (isword("import")) { while (ispunct(59) == 0) { next(); } next(); } else {
-    if (isword("struct")) { struct_decl(1, out); } else {
-    if (isword("enum")) { enum_decl(1, out); } else {
+    if (isword("struct")) {
+      if (record_template(T_STRUCT) == 0) { struct_decl(1, out); }
+    } else {
+    if (isword("enum")) {
+      if (record_template(T_ENUM) == 0) { enum_decl(1, out); }
+    } else {
     i32 ret = parse_type();
     i32 p = tstart();
     i32 n = tlen();
@@ -1736,6 +2085,9 @@ i32 compile(i32 s, i32 out) {
       next();
     }}}}
   }
+  emit_generic_methods(out);
+  // A method body can name an instantiation that nothing else did, so the types settle once more.
+  expand_types();
   emit_runtime();
   emit_strdata();
   emit_typedecls();

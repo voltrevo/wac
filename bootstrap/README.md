@@ -20,7 +20,7 @@ everything above it is trusted by derivation.
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 200 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 452 lines |
 | **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,005 lines |
-| **wac-L5** | wac itself — *stages 1–3: syntax, types, integers, strings* | wac-L4 | 1,486 lines so far |
+| **wac-L5** | wac itself — *all four stages, in outline* | wac-L4 | 1,748 lines |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names
