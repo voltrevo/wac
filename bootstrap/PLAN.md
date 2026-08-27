@@ -113,11 +113,18 @@ Two things worth keeping from doing it:
 `tools/seed.sh --bootstrap` exists for a clone with no binary, and today it reaches for Deno. To
 replace that, the Rust host needs:
 
-1. **A `build` mode** — an entry and a file set in, a `.wasm` on disk out. It has `--l0`, `--bench`
-   and run-`main` today.
-2. **The flattener, in Rust.** The real work: about 190 lines that resolve specifiers, order
-   modules, undo aliases and rename collisions. **An argument for shrinking it first** — see the
-   flattener section — because otherwise it is written twice at full size.
+1. ~~**A `build` mode.**~~ **Done.** `-o FILE` in all three hosts, plus `--flat` and `--dump-flat`
+   in the Rust one.
+2. ~~**The flattener, in Rust.**~~ **Done.** `rust-ladder/src/flatten.rs`, hand-written parsers
+   rather than a regex crate, so that somebody comparing it against `js/flatten.js` reads two
+   statements of one rule. It agrees byte for byte — on the fixture, as a test, and on wacc's whole
+   18-module graph. The Rust host now goes from wacc's *source tree* to 659,236 bytes of wasm in
+   828 ms with no JavaScript anywhere, identical to what Deno and Node build.
+
+   It cost two bugs, both from the port dropping something the regular expression said. The names
+   in an import may span lines, and `\{([^}]*)\}` crosses a newline where a line-by-line scan does
+   not. And `from` has to be *required* between the brace and the quote — without it, a line merely
+   starting with `import` matched a string thousands of lines away.
 3. ~~**To pin down what the seed actually is.**~~ **Answered.** `native/v8/build.rs` says it: the
    file is named `wacc.wasm` for historical reasons and is the whole CLI, produced by
 

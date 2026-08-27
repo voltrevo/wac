@@ -19,6 +19,8 @@
 
 use std::path::PathBuf;
 
+mod flatten;
+
 /// Where a compiler rung expects its source and leaves its output, in its own linear memory.
 struct Seam {
     src: usize,
@@ -163,8 +165,12 @@ fn l5_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
 ///
 /// One cold run per process, and no averaging. The ladder is built from the interpreter every
 /// time, so a second run in the same process would measure a warm V8 rather than the thing.
-fn bench(scope: &mut v8::PinScope, path: &str) {
-    let program = std::fs::read_to_string(path).expect("cannot read the program");
+fn bench(scope: &mut v8::PinScope, path: &str, already_flat: bool) {
+    let program = if already_flat {
+        std::fs::read_to_string(path).expect("cannot read the program")
+    } else {
+        flatten::flatten(std::path::Path::new(path)).unwrap_or_else(|e| panic!("{e}"))
+    };
     let t0 = std::time::Instant::now();
 
     let compiler_l0 = l5_compiler_l0(scope);
@@ -213,9 +219,15 @@ fn main() {
         eprintln!("  --l0      print the wac-L0 instead");
         eprintln!("  --bench   time the three phases, one cold run");
         eprintln!("  -o FILE   write the wasm module");
+        eprintln!("  --flat    the file is already one program; do not resolve imports");
+        eprintln!("  --dump-flat  print the flattened program and stop");
         std::process::exit(2);
     }
     let want_l0 = args.iter().any(|a| a == "--l0");
+    // **Flattened unless told not to.** A wac program is a module graph, and the ladder takes one
+    // program — so the host resolves the imports, exactly as the JavaScript hosts do. `--flat`
+    // says the file is already whole, which is what the benchmark wants.
+    let already_flat = args.iter().any(|a| a == "--flat");
     let want_bench = args.iter().any(|a| a == "--bench");
     let out_path = args.iter().position(|a| a == "-o").and_then(|i| args.get(i + 1)).cloned();
 
@@ -226,10 +238,18 @@ fn main() {
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
     if want_bench {
-        bench(scope, &args[0]);
+        bench(scope, &args[0], already_flat);
         return;
     }
-    let program = std::fs::read_to_string(&args[0]).expect("cannot read the program");
+    let program = if already_flat {
+        std::fs::read_to_string(&args[0]).expect("cannot read the program")
+    } else {
+        flatten::flatten(std::path::Path::new(&args[0])).unwrap_or_else(|e| panic!("{e}"))
+    };
+    if args.iter().any(|a| a == "--dump-flat") {
+        print!("{program}");
+        return;
+    }
     let started = std::time::Instant::now();
     let l0 = l5_to_l0(scope, &program);
     let refusals = l0.lines().filter(|l| l.starts_with("!!")).count();

@@ -121,3 +121,29 @@ Deno.test({
     }
   },
 });
+
+// **The flattener is written twice too**, in `js/flatten.js` and `rust-ladder/src/flatten.rs`,
+// because the Rust host has to reach wacc's source tree without a JavaScript runtime anywhere.
+// Two implementations of one rule need the same check the two assemblers get.
+//
+// The fixture has imports, a diamond and a `lib/` subdirectory, which is what makes it a test of
+// flattening rather than of reading one file.
+Deno.test({
+  name: "the flattener agrees between JavaScript and Rust",
+  ignore: !(await have(BIN)),
+  fn: async () => {
+    const entry = `${HERE}../tests/l5/imports.l5`;
+    const { flatten } = await import("./l5.ts");
+    const fromJs = await flatten(entry);
+    const fromRust = await l0From(BIN, [entry, "--dump-flat"]);
+    if (fromJs !== fromRust) {
+      const a = fromJs.split("\n");
+      const b = fromRust.split("\n");
+      const at = a.findIndex((l, i) => l !== b[i]);
+      throw new Error(
+        `they disagree at line ${at + 1} of ${a.length}/${b.length}:\n` +
+          `  js:   ${a[at]}\n  rust: ${b[at]}`,
+      );
+    }
+  },
+});
