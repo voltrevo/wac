@@ -96,6 +96,146 @@ fn split_top(text: &str) -> Vec<String> {
     out
 }
 
+/// A struct or enum a host can hold, as `bindTypesFiles` describes it.
+pub struct BindType {
+    pub name: String,
+    pub bind: String,
+    pub fields: Vec<(String, String)>,
+    /// `(name, hasThis, ret, params)`
+    pub methods: Vec<(String, bool, String, Vec<String>)>,
+    /// `(name, payload)`
+    pub variants: Vec<(String, Vec<(String, String)>)>,
+}
+
+/// A callback signature the module imports a dispatcher for.
+pub struct Callback {
+    pub index: i64,
+    pub ret: String,
+    pub params: Vec<String>,
+    pub wac: String,
+}
+
+/// Split on `sep`, ignoring any that sits inside brackets.
+///
+/// A type can hold the separator: `Map<u8[],i32>` is one field type with a comma in it, and a
+/// naive split turns `index:Map<u8[],i32>` into a field of type `Map<u8[]` and a second one called
+/// `i32>` — a wire that says the right thing, read wrongly.
+fn split_on(text: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in text.chars() {
+        match c {
+            '<' | '[' | '(' => depth += 1,
+            '>' | ']' | ')' => depth -= 1,
+            _ => {}
+        }
+        if c == sep && depth == 0 {
+            out.push(cur.clone());
+            cur.clear();
+            continue;
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// The `S`, `E` and `M` lines: a struct, an enum, and a method belonging to one.
+pub fn parse_bind_types(wire: &str) -> Vec<BindType> {
+    let mut out: Vec<BindType> = Vec::new();
+    for line in wire.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('\t').collect();
+        match cells.first().copied() {
+            Some("S") | Some("E") => {
+                let is_struct = cells[0] == "S";
+                let mut t = BindType {
+                    name: cells.get(1).unwrap_or(&"").to_string(),
+                    bind: cells.get(2).unwrap_or(&"").to_string(),
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                };
+                let body = cells.get(3).copied().unwrap_or("");
+                if is_struct && !body.is_empty() {
+                    for f in split_on(body, ',') {
+                        if let Some(at) = f.find(':') {
+                            t.fields.push((f[..at].to_string(), f[at + 1..].to_string()));
+                        }
+                    }
+                }
+                if !is_struct && !body.is_empty() {
+                    for v in split_on(body, ';') {
+                        let mut bits = v.splitn(2, ':');
+                        let name = bits.next().unwrap_or("").to_string();
+                        let rest = bits.next().unwrap_or("");
+                        let mut payload = Vec::new();
+                        if !rest.is_empty() {
+                            for f in split_on(rest, '|') {
+                                if let Some(at) = f.find(':') {
+                                    payload.push((f[..at].to_string(), f[at + 1..].to_string()));
+                                }
+                            }
+                        }
+                        t.variants.push((name, payload));
+                    }
+                }
+                out.push(t);
+            }
+            Some("M") => {
+                let owner = cells.get(1).copied().unwrap_or("");
+                let Some(t) = out.iter_mut().find(|t| t.bind == owner) else { continue };
+                let params = cells.get(5).copied().unwrap_or("");
+                t.methods.push((
+                    cells.get(2).unwrap_or(&"").to_string(),
+                    cells.get(3).copied() == Some("this"),
+                    cells.get(4).unwrap_or(&"").to_string(),
+                    if params.is_empty() { Vec::new() } else { split_on(params, ',') },
+                ));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The `C` lines, in the order `wac.cb<j>` is numbered.
+pub fn parse_callbacks(wire: &str) -> Vec<Callback> {
+    let mut out = Vec::new();
+    for line in wire.split('\n') {
+        if !line.starts_with("C\t") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('\t').collect();
+        let params = cells.get(3).copied().unwrap_or("");
+        out.push(Callback {
+            index: cells.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
+            ret: cells.get(2).unwrap_or(&"").to_string(),
+            params: if params.is_empty() { Vec::new() } else { split_on(params, ',') },
+            wac: cells.get(4).unwrap_or(&"").to_string(),
+        });
+    }
+    out
+}
+
+/// The `A` lines: a name that is another type under a different spelling.
+pub fn parse_aliases(wire: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in wire.split('\n') {
+        if !line.starts_with("A\t") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('\t').collect();
+        out.push((cells.get(1).unwrap_or(&"").to_string(), cells.get(2).unwrap_or(&"").to_string()));
+    }
+    out
+}
+
 /// JSON string escaping, for the handful of characters a path or a type name can hold.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -115,82 +255,265 @@ fn json_str(s: &str) -> String {
     out
 }
 
-/// The manifest text, formatted the way `JSON.stringify(m, null, 2)` formats it.
+/// Just enough JSON to write a manifest, and to write it the way `JSON.stringify(m, null, 2)`
+/// writes it — two spaces per level, no space before a colon, and no trailing commas. The
+/// formatting is part of the answer here rather than a presentation choice, because the check is a
+/// byte comparison against what `native.ts` produced.
+#[derive(Clone)]
+pub enum Json {
+    Str(String),
+    Bool(bool),
+    Num(i64),
+    Arr(Vec<Json>),
+    Obj(Vec<(String, Json)>),
+}
+
+impl Json {
+    fn write(&self, out: &mut String, indent: usize) {
+        let pad = "  ".repeat(indent);
+        let inner = "  ".repeat(indent + 1);
+        match self {
+            Json::Str(v) => out.push_str(&json_str(v)),
+            Json::Bool(v) => out.push_str(if *v { "true" } else { "false" }),
+            Json::Num(v) => out.push_str(&v.to_string()),
+            // An empty array or object is `[]` and `{}` on one line, which is what
+            // `JSON.stringify` does and is easy to get wrong by always expanding.
+            Json::Arr(items) if items.is_empty() => out.push_str("[]"),
+            Json::Obj(pairs) if pairs.is_empty() => out.push_str("{}"),
+            Json::Arr(items) => {
+                out.push_str("[\n");
+                for (i, it) in items.iter().enumerate() {
+                    out.push_str(&inner);
+                    it.write(out, indent + 1);
+                    out.push_str(if i + 1 == items.len() { "\n" } else { ",\n" });
+                }
+                out.push_str(&pad);
+                out.push(']');
+            }
+            Json::Obj(pairs) => {
+                out.push_str("{\n");
+                for (i, (k, v)) in pairs.iter().enumerate() {
+                    out.push_str(&inner);
+                    out.push_str(&json_str(k));
+                    out.push_str(": ");
+                    v.write(out, indent + 1);
+                    out.push_str(if i + 1 == pairs.len() { "\n" } else { ",\n" });
+                }
+                out.push_str(&pad);
+                out.push('}');
+            }
+        }
+    }
+
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out, 0);
+        out.push('\n');
+        out
+    }
+}
+
+fn s(v: &str) -> Json {
+    Json::Str(v.to_string())
+}
+
+fn strings(v: &[String]) -> Json {
+    Json::Arr(v.iter().map(|x| Json::Str(x.clone())).collect())
+}
+
+/// Name-and-type pairs, the shape a field takes in the manifest.
+fn named(pairs: &[(String, String)]) -> Json {
+    Json::Arr(
+        pairs
+            .iter()
+            .map(|(n, t)| Json::Obj(vec![("name".into(), s(n)), ("type".into(), s(t))]))
+            .collect(),
+    )
+}
+
+/// The manifest, as `native.ts` builds it.
 ///
-/// Two spaces, a newline at the end, and the key order of the `Manifest` type — a differential
-/// against the Deno path compares the bytes, so the shape is part of the answer rather than a
-/// presentation choice.
+/// **The mangling is resolved here, once**, against the module this describes — which is why a
+/// method's export name is computed at this point rather than in each runtime that reads the file.
+#[allow(clippy::too_many_arguments)]
 pub fn manifest_json(
     entry: &str,
     wasm_name: &str,
     grants: Grants,
     bind: &[(String, String)],
     sigs: &[Sig],
+    callbacks: &[Callback],
+    types: &[BindType],
+    aliases: &[(String, String)],
 ) -> String {
-    let mut s = String::new();
-    s.push_str("{\n  \"version\": 1,\n");
-    s.push_str(&format!("  \"entry\": {},\n", json_str(entry)));
-    s.push_str(&format!("  \"wasm\": {},\n", json_str(wasm_name)));
-    s.push_str("  \"grants\": {\n");
-    for (i, (k, v)) in [
-        ("read", grants.read),
-        ("write", grants.write),
-        ("env", grants.env),
-        ("net", grants.net),
-        ("run", grants.run),
-    ]
-    .iter()
-    .enumerate()
-    {
-        s.push_str(&format!("    \"{k}\": {v}{}\n", if i == 4 { "" } else { "," }));
-    }
-    s.push_str("  },\n");
-    // Callbacks and structs are empty for a program that hands the host no function reference and
-    // no struct. Filling them needs `bindTypesFiles`' `S`/`E`/`M` lines — see PLAN.md.
-    s.push_str("  \"callbacks\": [],\n");
-    if bind.is_empty() {
-        s.push_str("  \"bind\": {},\n");
-    } else {
-        s.push_str("  \"bind\": {\n");
-        for (i, (k, v)) in bind.iter().enumerate() {
-            s.push_str(&format!(
-                "    {}: {}{}\n",
-                json_str(k),
-                json_str(v),
-                if i + 1 == bind.len() { "" } else { "," }
-            ));
+    let mut structs: Vec<(String, Json)> = types
+        .iter()
+        .map(|t| {
+            let methods = Json::Arr(
+                t.methods
+                    .iter()
+                    .map(|(name, has_this, ret, params)| {
+                        Json::Obj(vec![
+                            ("name".into(), s(name)),
+                            ("isStatic".into(), Json::Bool(!has_this)),
+                            ("params".into(), strings(params)),
+                            ("ret".into(), s(if ret.is_empty() { "void" } else { ret })),
+                            (
+                                "export".into(),
+                                s(&format!(
+                                    "$bind${}_{}_{}",
+                                    if *has_this { "m" } else { "sm" },
+                                    t.bind,
+                                    name
+                                )),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            );
+            let variants = Json::Arr(
+                t.variants
+                    .iter()
+                    .map(|(name, payload)| {
+                        Json::Obj(vec![
+                            ("name".into(), s(name)),
+                            ("fields".into(), named(payload)),
+                            ("make".into(), s(&format!("$bind$e_{}_{}_new", t.bind, name))),
+                        ])
+                    })
+                    .collect(),
+            );
+            (
+                t.name.clone(),
+                Json::Obj(vec![
+                    ("name".into(), s(&t.name)),
+                    ("bind".into(), s(&t.bind)),
+                    ("fields".into(), named(&t.fields)),
+                    ("methods".into(), methods),
+                    ("variants".into(), variants),
+                ]),
+            )
+        })
+        .collect();
+
+    // An alias is a second spelling of a type already described: copy the description and change
+    // the name. Skipped when something already answers to that name.
+    for (of, name) in aliases {
+        if structs.iter().any(|(n, _)| n == name) {
+            continue;
         }
-        s.push_str("  },\n");
+        let Some((_, Json::Obj(fields))) = structs.iter().find(|(n, _)| n == of) else { continue };
+        let mut copy = fields.clone();
+        if let Some(slot) = copy.iter_mut().find(|(k, _)| k == "name") {
+            slot.1 = s(name);
+        }
+        structs.push((name.clone(), Json::Obj(copy)));
     }
-    s.push_str("  \"structs\": [],\n");
-    if sigs.is_empty() {
-        s.push_str("  \"exports\": []\n");
-    } else {
-        s.push_str("  \"exports\": [\n");
-        for (i, e) in sigs.iter().enumerate() {
-            s.push_str("    {\n");
-            s.push_str(&format!("      \"name\": {},\n", json_str(&e.name)));
-            if e.params.is_empty() {
-                s.push_str("      \"params\": [],\n");
-            } else {
-                s.push_str("      \"params\": [\n");
-                for (k, p) in e.params.iter().enumerate() {
-                    s.push_str(&format!(
-                        "        {}{}\n",
-                        json_str(p),
-                        if k + 1 == e.params.len() { "" } else { "," }
-                    ));
-                }
-                s.push_str("      ],\n");
+
+    let m = Json::Obj(vec![
+        ("version".into(), Json::Num(1)),
+        ("entry".into(), s(entry)),
+        ("wasm".into(), s(wasm_name)),
+        (
+            "grants".into(),
+            Json::Obj(vec![
+                ("read".into(), Json::Bool(grants.read)),
+                ("write".into(), Json::Bool(grants.write)),
+                ("env".into(), Json::Bool(grants.env)),
+                ("net".into(), Json::Bool(grants.net)),
+                ("run".into(), Json::Bool(grants.run)),
+            ]),
+        ),
+        (
+            "callbacks".into(),
+            Json::Arr(
+                callbacks
+                    .iter()
+                    .map(|c| {
+                        Json::Obj(vec![
+                            ("field".into(), s(&format!("cb{}", c.index))),
+                            ("helper".into(), s(&format!("$bind$fnref_{}", c.index))),
+                            ("type".into(), s(&c.wac)),
+                            ("params".into(), strings(&c.params)),
+                            ("ret".into(), s(if c.ret.is_empty() { "void" } else { &c.ret })),
+                            // Both compilers emit this many trampolines per signature.
+                            ("slots".into(), Json::Num(16)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "bind".into(),
+            Json::Obj(bind.iter().map(|(k, v)| (k.clone(), s(v))).collect()),
+        ),
+        ("structs".into(), Json::Arr(structs.into_iter().map(|(_, j)| j).collect())),
+        (
+            "exports".into(),
+            Json::Arr(
+                sigs.iter()
+                    .filter(|e| !e.name.starts_with("$bind$"))
+                    .map(|e| {
+                        Json::Obj(vec![
+                            ("name".into(), s(&e.name)),
+                            ("params".into(), strings(&e.params)),
+                            ("ret".into(), s(if e.ret.is_empty() { "void" } else { &e.ret })),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ]);
+    m.text()
+}
+
+/// Every name a module exports, read out of its export section.
+///
+/// **Read rather than instantiated.** The obvious way is to instantiate the module and ask
+/// JavaScript for the keys — which works until the module *imports* something, and then wants an
+/// import object nobody has. A module's exports are in the file; taking them from there needs no
+/// engine and no imports.
+pub fn export_names(wasm: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut p = 8; // past the magic and the version
+    let read = |p: &mut usize| -> u32 {
+        let mut n = 0u32;
+        let mut shift = 0;
+        loop {
+            if *p >= wasm.len() {
+                return n;
             }
-            let ret = if e.ret.is_empty() { "void" } else { &e.ret };
-            s.push_str(&format!("      \"ret\": {}\n", json_str(ret)));
-            s.push_str(&format!("    }}{}\n", if i + 1 == sigs.len() { "" } else { "," }));
+            let b = wasm[*p];
+            *p += 1;
+            n |= ((b & 0x7f) as u32) << shift;
+            shift += 7;
+            if b & 0x80 == 0 {
+                return n;
+            }
         }
-        s.push_str("  ]\n");
+    };
+    while p < wasm.len() {
+        let id = wasm[p];
+        p += 1;
+        let len = read(&mut p) as usize;
+        let end = p + len;
+        if id == 7 {
+            let count = read(&mut p);
+            for _ in 0..count {
+                let n = read(&mut p) as usize;
+                if p + n > wasm.len() {
+                    return out;
+                }
+                out.push(String::from_utf8_lossy(&wasm[p..p + n]).into_owned());
+                p += n;
+                p += 1; // the kind
+                read(&mut p); // the index
+            }
+            return out;
+        }
+        p = end;
     }
-    s.push_str("}\n");
-    s
+    out
 }
 
 fn uleb(mut n: u32) -> Vec<u8> {

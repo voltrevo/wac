@@ -108,7 +108,7 @@ Two things worth keeping from doing it:
 
 ---
 
-## The unified wac binary — **doing**
+## The unified wac binary — **done, bar the wiring**
 
 `tools/seed.sh --bootstrap` exists for a clone with no binary, and today it reaches for Deno. To
 replace that, the Rust host needs:
@@ -162,9 +162,24 @@ read off the module's own export list, which is where `native.ts` reads the `bin
 `ts/manifest_test.ts` builds one program both ways and compares the two manifests byte for byte,
 so a change to wac's format fails here rather than downstream of a bootstrap.
 
-**Its limit, stated:** a program with no structs and no callbacks. Filling those needs
-`bindTypesFiles`' `S`/`E`/`M` lines parsed, which is the next piece and is what the `wac` CLI —
-which hands the host both — will need.
+**And the whole seed matches.** `ts/seed_matches.ts` builds `packages/wac/src/wac.wac` both ways
+and compares: **1,731,572 bytes, identical** — module, manifest and section. The CLI's manifest is
+110,935 bytes of it, with 64 callbacks, 703 bind entries and 31 structs, and every one of them
+agrees. So `native/v8/build.rs` can embed either, and the artefact no longer needs a JavaScript
+runtime to exist.
+
+    wac's own path, with Deno        451 ms
+    the ladder, no Deno           16,836 ms
+
+Two things that cost a wrong answer first. The `bind` table excludes `$bind$m_` and `$bind$sm_` —
+methods, which a host reaches through the struct's entry — and *not* `$bind$fnref_`, which is
+exactly the sort of thing a host needs to find by name. And a module's exports have to be read out
+of its export section rather than by instantiating it: the CLI *imports* its callback dispatchers,
+so instantiating it wants an import object nobody has.
+
+**What is left is wiring, not building.** `tools/seed.sh --bootstrap` still reaches for Deno; it
+would reach for the ladder instead. That is a change in wac's repo, and the same conversation as
+the flattener's fifteen edits.
 
 **The boundary question is answered by having done it.** wacboot writes the manifest because that
 is the only way to close the loop without Deno: wac's own pipeline is `native.ts`, and that is

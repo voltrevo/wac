@@ -102,6 +102,11 @@ impl<'s> Wacc<'s> {
         self.text(scope, "drv_exportSigs")
     }
 
+    /// The `S`/`E`/`M`/`C`/`A` lines describing every type and callback a host can hold.
+    pub fn bind_types(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
+        self.text(scope, "drv_bindTypes")
+    }
+
     /// Why a linked build declined, or `""`.
     pub fn decline(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
         let n = self.call(scope, "drv_declineFiles", &[]);

@@ -205,19 +205,21 @@ fn bench(scope: &mut v8::PinScope, path: &str, already_flat: bool) {
 /// itself — which is where `native.ts` reads them from too, since they are a property of what was
 /// built rather than of what was asked for.
 ///
-/// `$bind$sm_` and `$bind$fnref_` are left out: the first is a state-machine helper and the second
-/// is a callback trampoline, and both are reached another way.
-fn bind_table(scope: &mut v8::PinScope, module: &[u8]) -> Vec<(String, String)> {
-    let w = wacc::Wacc::new(scope, module.to_vec());
-    let mut out: Vec<(String, String)> = w
-        .export_names(scope)
+/// **`$bind$m_` and `$bind$sm_` are the ones left out** — a method and a static method, which a
+/// host reaches through the struct's entry in `structs` rather than through this table. Everything
+/// else stays, `$bind$fnref_*` included: a callback trampoline is exactly the sort of thing a host
+/// needs to find by name.
+fn bind_table(module: &[u8]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = manifest::export_names(module)
         .into_iter()
         .filter(|n| {
-            n.starts_with("$bind$") && !n.starts_with("$bind$sm_") && !n.starts_with("$bind$fnref_")
+            n.starts_with("$bind$") && !n.starts_with("$bind$sm_") && !n.starts_with("$bind$m_")
         })
         .map(|n| (n["$bind$".len()..].to_string(), n))
         .collect();
-    out.dedup();
+    // First seen wins, as an object literal's keys do — `dedup` alone would only drop neighbours.
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|(k, _)| seen.insert(k.clone()));
     out
 }
 
@@ -296,7 +298,8 @@ fn main() {
             // function's wac signature was. `native.ts` writes one after compiling and so does
             // this — see `manifest.rs` for why that copy is checked rather than trusted.
             let sigs = manifest::parse_sigs(&w.export_sigs(scope));
-            let bind = bind_table(scope, &module);
+            let wire = w.bind_types(scope);
+            let bind = bind_table(&module);
             let stem = path.strip_suffix(".wasm").unwrap_or(&path);
             let base = stem.rsplit('/').next().unwrap_or(stem);
             let text = manifest::manifest_json(
@@ -305,6 +308,9 @@ fn main() {
                 manifest::Grants::from_args(&args),
                 &bind,
                 &sigs,
+                &manifest::parse_callbacks(&wire),
+                &manifest::parse_bind_types(&wire),
+                &manifest::parse_aliases(&wire),
             );
             std::fs::write(&path, manifest::with_manifest_section(&module, &text))
                 .expect("cannot write the module");
