@@ -620,6 +620,7 @@ global $s_fn    i32 mut = 1
 global $s_def   i32 mut = 1
 global $s_set   i32 mut = 1
 global $s_do    i32 mut = 1
+global $booted  i32 mut = 0
 
 func $is_sym -> i32
   param i32 $v
@@ -1595,6 +1596,48 @@ func $run_at -> i32
   call $unfix
 end
 
+; **The same evaluator, without the reset** — and this is the whole of what makes a prompt possible.
+; `run_at` boots every time, which is right for a test that wants a clean world. Here the world is
+; the point: `$boot` runs once, so a definition typed at one prompt is there at the next, and the
+; heap keeps everything it has been told.
+;
+; It answers the **tagged** value rather than unfixing it, because the caller wants to print it and
+; a pair is not a number. The reader on the other side knows the object layout, which is four words
+; long and written at the top of this file.
+func $eval_at -> i32
+  param i32 $at
+  local i32 $v
+  local i32 $last
+  global.get $booted
+  i32.eqz
+  if $first ->
+    call $boot
+    i32.const 1
+    global.set $booted
+  else
+    nop
+  end
+  local.get $at
+  global.set $pos
+  i32.const 1
+  local.set $last
+  block $done ->
+    loop $form ->
+      call $read
+      local.tee $v
+      i32.const 3
+      i32.eq
+      br_if $done
+      local.get $v
+      i32.const 1
+      call $eval
+      local.set $last
+      br $form
+    end
+  end
+  local.get $last
+end
+
 func $main -> i32
   i32.const 1024
   call $run_at
@@ -1602,4 +1645,5 @@ end
 
 export "main" func $main
 export "run_at" func $run_at
+export "eval_at" func $eval_at
 export "memory" memory

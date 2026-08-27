@@ -100,6 +100,29 @@ it, so every allocation was a 12-byte pair and the heap stayed aligned by luck. 
 moment the evaluator interned `+`. A staged test that passes tells you the stage passed, and nothing
 else.
 
+## The thing worth building, which is not a smaller compiler
+
+The line counts above answer a question about cost, and cost is not the reason to do this. Here is
+the reason.
+
+**An interpreter is a prompt, and a compiler can never be one.** `ts/repl.ts` is a working sx REPL:
+definitions survive between lines, `(fact 10)` answers 3628800, a list prints as `(1 2 3 4)` and an
+improper one as `(1 . 2)`. That came free — `$eval_at` is `$run_at` without the reset, nine lines —
+because the rung underneath it interprets rather than compiles.
+
+wac has no prompt and structurally cannot get one. It is a compiler, so the only way to ask what an
+expression does is to build a module and run it. **If the last rung interprets wac instead of
+compiling it, `wac repl` falls out of the bootstrap** — and so does a stepper, and so does anything
+that wants to stop in the middle and look.
+
+And the whole chain has no imports and no host. Every rung is a pure wasm module, which means the
+entire bootstrap — 1,457 readable instructions at the bottom, a live wac prompt at the top — fits in
+a browser tab, offline. The 19,499-line TypeScript path cannot do that at any size.
+
+**The printer lives outside.** sx has none and needs none: the object layout is four words, written
+at the top of `boot/sx.wax`, so the host walks the heap and renders. A hundred instructions saved in
+the rung that is hardest to write, spent on nothing.
+
 ## What this does not settle
 
 L1 exists and cost 167 lines. **The open question is now L2: a compiler for wac's C-family syntax,
