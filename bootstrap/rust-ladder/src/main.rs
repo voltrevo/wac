@@ -20,6 +20,7 @@
 use std::path::PathBuf;
 
 mod flatten;
+mod wacc;
 
 /// Where a compiler rung expects its source and leaves its output, in its own linear memory.
 struct Seam {
@@ -221,6 +222,7 @@ fn main() {
         eprintln!("  -o FILE   write the wasm module");
         eprintln!("  --flat    the file is already one program; do not resolve imports");
         eprintln!("  --dump-flat  print the flattened program and stop");
+        eprintln!("  --with-wacc <entry>  build wacc, then use it to compile <entry>");
         std::process::exit(2);
     }
     let want_l0 = args.iter().any(|a| a == "--l0");
@@ -236,6 +238,41 @@ fn main() {
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
     let scope = &mut v8::ContextScope::new(handle_scope, context);
+
+    // **The ladder builds wacc, and wacc builds the program.** Which is what a bootstrap is for:
+    // past this point the compiler doing the work is the real one, and the ladder's only job was
+    // to bring it into existence.
+    if let Some(i) = args.iter().position(|a| a == "--with-wacc") {
+        let target = args.get(i + 1).expect("--with-wacc needs an entry");
+        // The driver is concatenated rather than imported, because it reaches names from every
+        // module in the graph — which a file wacc *links* could not do, and a file spliced onto a
+        // flattened graph can.
+        let driver = read("drivers/spec_cases.wac");
+        let waccc = flatten::flatten(std::path::Path::new(&args[0])).unwrap_or_else(|e| panic!("{e}"));
+        let l0 = l5_to_l0(scope, &format!("{waccc}\n{driver}"));
+        let refused = l0.lines().filter(|l| l.starts_with("!!")).count();
+        if refused > 0 {
+            eprintln!("wac-L5 refused {refused} things in wacc");
+            std::process::exit(1);
+        }
+        let w = wacc::Wacc::new(scope, assemble(&l0));
+
+        // The file set, as wacc's own linker wants it: repo-relative keys so a `../..` specifier
+        // resolves, which is the same shape `emitFiles` is documented to take.
+        let (paths, sources) = flatten::file_set(std::path::Path::new(target))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let key = flatten::key_of(std::path::Path::new(target)).unwrap_or_else(|e| panic!("{e}"));
+        let module = w.emit_files(scope, &paths, &sources, &key);
+        if module.len() <= 8 {
+            eprintln!("wacc declined {target}: {}", w.decline(scope));
+            std::process::exit(1);
+        }
+        eprintln!("wacc built {target}: {} bytes", module.len());
+        if let Some(path) = out_path {
+            std::fs::write(&path, &module).expect("cannot write the module");
+        }
+        return;
+    }
 
     if want_bench {
         bench(scope, &args[0], already_flat);

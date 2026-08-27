@@ -108,7 +108,7 @@ Two things worth keeping from doing it:
 
 ---
 
-## The unified wac binary — **open**
+## The unified wac binary — **doing**
 
 `tools/seed.sh --bootstrap` exists for a clone with no binary, and today it reaches for Deno. To
 replace that, the Rust host needs:
@@ -139,6 +139,31 @@ replace that, the Rust host needs:
    `api.wac` exports `exportSigsFiles`, `bindTypesFiles` and `describeFiles`. So the ladder builds
    wacc, that wacc describes the CLI, and the host assembles the section. Nothing has to
    reimplement what the reference knows.
+
+### Where it stands
+
+**The module is reached, with no JavaScript in the path.** `ladder <wacc> --with-wacc <entry>`
+builds wacc with wac-L5 and then uses *that wacc* to compile the entry:
+
+    wacc built packages/wac/src/wac.wac: 1,620,620 bytes, 8.8 s
+
+which is the same size the Deno path produces for the same entry. Past the first step the compiler
+doing the work is the real one, which is what a bootstrap is for.
+
+**Driving it is byte at a time, and that is where the 8.8 s goes.** The natural move is the
+`$bind$` layer every wacc-built module exports — but the wacc *wac-L5* builds has none, because
+wac-L5 does not emit bindgen. The first compiler in the chain is the one that has to be driven
+without help, so `drivers/spec_cases.wac` is concatenated onto its source and every value crosses
+as an i32. Four million V8 calls for a 1.6 MB answer.
+
+**What is left is the manifest.** `native.ts` compiles and then appends a `wac.manifest` custom
+section; a module without it is not the artefact `build.rs` embeds. Two things to settle:
+
+- The manifest's shape, which `describeFiles` can answer for but which then has to be assembled
+  into whatever `withManifestSection` writes today.
+- **Where the boundary is.** wacboot producing `wacc.wasm` may be the right end of its job, with
+  wac's own pipeline doing the rest — except that pipeline is `native.ts`, which is Deno. That is
+  the circularity the criterion is about, and it is worth deciding rather than assuming.
 
 ---
 

@@ -416,3 +416,77 @@ fn unalias(text: &str, aliases: &[(String, String)]) -> String {
     }
     out
 }
+
+/// The file set for `emitFiles`, keyed the way a program spells its own imports.
+///
+/// **Repo-relative, not bare filenames.** `print.wac` reaches `../../bytes/src/buf.wac`, so a key
+/// of `print.wac` would resolve that to nowhere. The root is found by walking up to the outermost
+/// directory the walk touched, which is the same answer `flatten` computes implicitly.
+pub fn file_set(entry: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut mods: Vec<Mod> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    gather_paths(entry, &mut seen, &mut mods, &mut paths)?;
+    let root = common_root(&paths);
+    let keys = paths
+        .iter()
+        .map(|p| p.strip_prefix(&root).unwrap_or(p).to_string_lossy().into_owned())
+        .collect();
+    let texts = paths
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap_or_default())
+        .collect();
+    Ok((keys, texts))
+}
+
+/// The key one file has in that set.
+pub fn key_of(entry: &Path) -> Result<String, String> {
+    let mut mods: Vec<Mod> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    gather_paths(entry, &mut seen, &mut mods, &mut paths)?;
+    let root = common_root(&paths);
+    let real = entry.canonicalize().map_err(|e| format!("{}: {e}", entry.display()))?;
+    Ok(real.strip_prefix(&root).unwrap_or(&real).to_string_lossy().into_owned())
+}
+
+/// The deepest directory every path is under.
+fn common_root(paths: &[PathBuf]) -> PathBuf {
+    let mut root = match paths.first().and_then(|p| p.parent()) {
+        Some(d) => d.to_path_buf(),
+        None => return PathBuf::from("/"),
+    };
+    for p in paths {
+        while !p.starts_with(&root) {
+            match root.parent() {
+                Some(up) => root = up.to_path_buf(),
+                None => return PathBuf::from("/"),
+            }
+        }
+    }
+    root
+}
+
+/// `gather`, recording the paths as well as the modules.
+fn gather_paths(
+    entry: &Path,
+    seen: &mut HashSet<PathBuf>,
+    out: &mut Vec<Mod>,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let path = entry.canonicalize().map_err(|e| format!("{}: {e}", entry.display()))?;
+    if !seen.insert(path.clone()) {
+        return Ok(());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    for (_, spec) in imports(&text) {
+        let next = resolve(&dir, &spec);
+        if next.is_file() {
+            gather_paths(&next, seen, out, paths)?;
+        }
+    }
+    paths.push(path.clone());
+    out.push(Mod { name: String::new(), text, aliases: Vec::new(), decls: Vec::new() });
+    Ok(())
+}
