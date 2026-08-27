@@ -832,7 +832,7 @@ export i32 maxOf(i32 a, i32 b, i32 c) {
       [p("vec2.wapy")]: `# The same language, laid out with indentation instead of braces.
 #
 # This is not Python: it does not accept Python, and it is not trying to.
-# It borrows the shapes — def, class, and/or/not, None, self — and stops there.
+# It borrows the shapes — def, class, and/or/not, None — and stops there.
 # The file's extension is the only thing that selects this surface.
 
 @export
@@ -841,12 +841,12 @@ class Vec2:
     y: f64
 
     ## Length, without the square root.
-    def lenSq(const self) -> f64:
-        return self.x * self.x + self.y * self.y
+    def lenSq(const this) -> f64:
+        return this.x * this.x + this.y * this.y
 
-    def scale(self, k: f64) -> void:
-        self.x = self.x * k
-        self.y = self.y * k
+    def scale(this, k: f64) -> void:
+        this.x = this.x * k
+        this.y = this.y * k
 
 @export
 def longest(pts: f64[]) -> f64:
@@ -874,8 +874,8 @@ class Shape(enum):
     Circle(r: f64)
     Rect(w: f64, h: f64)
 
-    def area(const self) -> f64:
-        return match self {
+    def area(const this) -> f64:
+        return match this {
           case Circle(r): 3.14159 * r * r,
           case Rect(w, h): w * h
         }

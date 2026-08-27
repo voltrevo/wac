@@ -179,8 +179,11 @@ export default function Language() {
           <Lead>It is not Python.</Lead> It does not accept Python, and copying Python into a{" "}
           {m({ children: ".wapy" })} file is an explicit anti-goal. It borrows Python&rsquo;s
           shapes — {m({ children: "def" })}, {m({ children: "class" })},{" "}
-          {m({ children: "and" })}/{m({ children: "or" })}/{m({ children: "not" })},{" "}
-          {m({ children: "self" })} — and keeps wac&rsquo;s types, its semantics and its errors.
+          {m({ children: "and" })}/{m({ children: "or" })}/{m({ children: "not" })} and{" "}
+          {m({ children: "None" })} — and keeps wac&rsquo;s types, its semantics and its errors.
+          The receiver is {m({ children: "this" })} on both surfaces: it was{" "}
+          {m({ children: "self" })} until 2026-08-27, and it was the one respelling that cost
+          something, because it was the only one whose wac spelling is also a legal identifier.
           It has its own lexer and parser producing the same syntax tree, so a diagnostic names the
           line its author actually wrote.
         </P>

@@ -73,15 +73,15 @@ class Histogram:
     def of(n: i32) -> Histogram:
         return Histogram(i32[n]())
 
-    def add(self, v: i32) -> void:
+    def add(this, v: i32) -> void:
         i: i32 = 0 if v < 0 else v
-        self.bins[i % self.bins.len()]++
+        this.bins[i % this.bins.len()]++
 
-    def peak(const self) -> i32:
+    def peak(const this) -> i32:
         best: i32 = 0
-        for i in range(0, self.bins.len()):
-            if self.bins[i] > best:
-                best = self.bins[i]
+        for i in range(0, this.bins.len()):
+            if this.bins[i] > best:
+                best = this.bins[i]
         return best`;
 
 // Editable and runnable, in wapy, compiled by the same `wacCompile` call as every other demo on
