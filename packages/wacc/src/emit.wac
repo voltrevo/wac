@@ -3087,7 +3087,8 @@ i32 countLines(string s) {
 i32 linkQueueSize() { return 1024; }
 
 string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
-                 i32[] edges, string[] names, string[] filePaths) {
+                 i32[] edges, string[] names, string[] filePaths,
+                 u8[][] outSrc, Lexed?[] outLexed, Program?[] outProg) {
   // **One file under two keys is refused here**, which is the one place both routes pass through:
   // `frontOf` turns `""` into a null front and `emitLinkedWith2` turns it into a bare module, so
   // saying it once covers `wac build`, the `emitFiles*` family and every decline report. Nominal
@@ -3179,6 +3180,18 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     Lexed lexed = lex(b);
     P p = P.create(b, lexed.tokens, lexed.tokenCount);
     Program prog = parseProgram(p);
+    // **Kept, rather than thrown away.** This parse already happens — it is how the import walk below
+    // finds a file's edges — and until 2026-08-27 the tree was discarded and the file's *text* was
+    // appended to a blob that the emitter then lexed and parsed a second time, as one unit. Handing
+    // the per-file tree out costs nothing and is what lets a caller work from `map<path, ast>`.
+    //
+    // Indexed like `filePaths`, so `outProg[i]` is the program of `filePaths[i]`. Guarded on length
+    // the same way, so a caller that does not want them passes empty arrays and pays nothing.
+    if (outProg.len() > sn - 1 && sn >= 1) {
+      if (outSrc.len() > sn - 1) { outSrc[sn - 1] = b; }
+      if (outLexed.len() > sn - 1) { outLexed[sn - 1] = lexed; }
+      outProg[sn - 1] = prog;
+    }
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         case Import(pathTok, prefixTok, items): {
@@ -3371,7 +3384,8 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, str
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (blob == "") { return bareModule(); }
   Env env = Env.create();
   env.trace = true;
@@ -3386,7 +3400,8 @@ export string covTableLinked(string[] paths, string[] sources, Res res, string e
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (blob == "") { return ""; }
   Env env = Env.create();
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -3399,7 +3414,8 @@ export string traceTableLinked(string[] paths, string[] sources, Res res, string
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (blob == "") { return ""; }
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, true);
@@ -3447,7 +3463,8 @@ Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (blob == "") { return null; }
   return frontOfRaw(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)),
                     starts, edges, names, filePaths, false, false, Env.create());
@@ -3907,7 +3924,8 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bo
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (blob == "") { return bareModule(); }
   return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                           names, filePaths, checked, covered, traced);
@@ -3930,7 +3948,8 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (blob == "") { return "the graph did not link"; }
   Env env = Env.create();
   emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -11540,7 +11559,8 @@ export string missingImportParts(string[] paths, string[] sources, Res res, stri
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (starts[0] != 4) { return ""; }
   if (filePaths.len() < 3 || filePaths[1] == "" || filePaths[2] == "") { return ""; }
   return filePaths[0] + "\t" + filePaths[1] + "\t" + filePaths[2];
@@ -11555,7 +11575,8 @@ string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   // inferred from a sentinel and say neither a path nor a position — `issues/lang/0157` is that.
   string twoKeys = twoKeysForOneFile(paths);
   if (twoKeys != "") { return twoKeys; }
-  linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   // **Three ways to run out, and they used to be one sentence about the caller's file map.** The
   // sentinel is set by `linkFiles` at each guard; `0` means it never ran out and the refusal really is
   // a file nobody supplied. `issues/lang/0179a`.
@@ -12684,7 +12705,8 @@ export string namesLinked(string[] paths, string[] sources, Res res, string entr
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, string[512]());
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, string[512](),
+                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   return blob == "" ? "" : emitNamesOf(blob.toBytes(), starts, edges, names);
 }
 
