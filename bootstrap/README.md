@@ -15,11 +15,11 @@ everything above it is trusted by derivation.
 
 | | adds | its implementation is written in | size |
 |---|---|---|---|
-| **wac-L0** | wasm as text: one instruction per line, every index named, structs and arrays | TypeScript **and** Rust, outside the ladder | 399 + 687 lines |
+| **wac-L0** | wasm as text: one instruction per line, every index named, structs, arrays, packed bytes | TypeScript **and** Rust, outside the ladder | 405 + 693 lines |
 | **wac-L1** | s-expressions, closures, a heap — an interpreter, not a compiler | **hand-written wac-L0** | 1,630 instructions |
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 200 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 452 lines |
-| **wac-L4** | structs, arrays, `enum`/`match`, methods, **wasm GC** | wac-L3 | 991 lines |
+| **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,005 lines |
 | **wac-L5** | generics, nullables, the wac ABI — *not built* | wac-L4 | — |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not

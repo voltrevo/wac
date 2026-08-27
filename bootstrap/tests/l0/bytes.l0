@@ -1,0 +1,29 @@
+; A packed array: the element is one byte, so reading it takes `array.get_u` and answers an i32.
+type $Bytes array i8
+
+func $main -> i32
+  local refnull $Bytes $b
+  i32.const 4
+  array.new_default $Bytes
+  local.tee $b
+  i32.const 0
+  i32.const 200
+  array.set $Bytes
+  local.get $b
+  i32.const 1
+  i32.const 7
+  array.set $Bytes
+  ; 200 read unsigned is 200; read signed it would be -56, which is the whole point of having both.
+  local.get $b
+  i32.const 0
+  array.get_u $Bytes
+  local.get $b
+  i32.const 1
+  array.get_u $Bytes
+  i32.add
+  local.get $b
+  array.len
+  i32.add
+end
+
+export "main" func $main

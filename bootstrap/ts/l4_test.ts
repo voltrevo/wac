@@ -197,6 +197,67 @@ const cases: [string, string, number][] = [
       while (i < 100) { v.push(i * i); i = i + 1; }
       return v.get(9) * 1000 + v.len();
     }`, 81100],
+  // **A byte string in GC**, which is what the rung above needs to make `Point_sum` out of two
+  // names without poking bytes into a fixed buffer. `u8` is a storage type — wasm has no i8 value —
+  // so it is legal only as an element, reading one takes `array.get_u`, and the answer is an i32.
+  ["a byte array, built and read", `
+    i32 main() {
+      u8[] b = u8[3]();
+      b[0] = 200;
+      b[1] = 7;
+      return b[0] + b[1] + b.len();
+    }`, 210],
+
+  ["a literal copied into one", `
+    u8[] fromLiteral(i32 lit) {
+      i32 n = load(lit);
+      u8[] s = u8[n]();
+      i32 i = 0;
+      while (i < n) { s[i] = load8(lit + 4 + i); i = i + 1; }
+      return s;
+    }
+    i32 main() { u8[] h = fromLiteral("hello"); return h.len() * 1000 + h[0] + h[4]; }`, 5215],
+
+  ["joined, compared, and indexed", `
+    u8[] fromLiteral(i32 lit) {
+      i32 n = load(lit);
+      u8[] s = u8[n]();
+      i32 i = 0;
+      while (i < n) { s[i] = load8(lit + 4 + i); i = i + 1; }
+      return s;
+    }
+    u8[] join(u8[] a, i32 sep, u8[] b) {
+      u8[] out = u8[a.len() + 1 + b.len()]();
+      i32 i = 0;
+      while (i < a.len()) { out[i] = a[i]; i = i + 1; }
+      out[a.len()] = sep;
+      i32 j = 0;
+      while (j < b.len()) { out[a.len() + 1 + j] = b[j]; j = j + 1; }
+      return out;
+    }
+    i32 same(u8[] a, u8[] b) {
+      if (a.len() != b.len()) { return 0; }
+      i32 i = 0;
+      while (i < a.len()) { if (a[i] != b[i]) { return 0; } i = i + 1; }
+      return 1;
+    }
+    i32 main() {
+      u8[] name = join(fromLiteral("Point"), 95, fromLiteral("sum"));
+      return name.len() * 1000
+           + same(name, fromLiteral("Point_sum")) * 100
+           + same(name, fromLiteral("Point_add")) * 10
+           + name[5];
+    }`, 9195],
+
+  ["a byte array in a struct", `
+    struct Named { u8[] name; i32 id; }
+    i32 main() {
+      u8[] n = u8[2]();
+      n[0] = 65;
+      n[1] = 66;
+      Named x = Named(n, 9);
+      return x.name[1] * 100 + x.name.len() * 10 + x.id;
+    }`, 6629],
 ];
 
 for (const [name, source, want] of cases) {

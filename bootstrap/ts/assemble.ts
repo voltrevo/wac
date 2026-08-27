@@ -17,6 +17,11 @@ type PlainType = { k: "num" | "abs"; byte: number; name: string };
 const NUM: Record<string, PlainType> = {
   i32: { k: "num", byte: 0x7f, name: "i32" },
   i64: { k: "num", byte: 0x7e, name: "i64" },
+  // **Packed, and only valid where a field or an element goes.** wasm has no i8 value, so a local
+  // or a parameter of this type is refused by the engine — which is the same place every other type
+  // mistake in this format is caught, so the assembler does not duplicate the rule.
+  i8: { k: "num", byte: 0x78, name: "i8" },
+  i16: { k: "num", byte: 0x77, name: "i16" },
 };
 
 // The abstract heap types, spelled as value types. Their bytes are the same in both positions,

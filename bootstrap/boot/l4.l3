@@ -64,6 +64,11 @@ i32 T_I32 = 0;
 i32 T_STRUCT = 1;
 i32 T_ARRAY = 2;
 i32 T_ENUM = 3;
+// **`u8` is a storage type, not a value type.** wasm has no i8 value, so it is legal only as an
+// array element or a struct field, and reading one takes `array.get_u` and answers an i32. That is
+// what gives wac-L4 a byte string it can build and grow, which is what the rung above needs to make
+// a mangled name out of two others.
+i32 T_U8 = 4;
 
 // ---------------------------------------------------------------- emitting
 
@@ -302,7 +307,9 @@ i32 tyname(i32 t) {
 }
 
 i32 valtype(i32 t) {
-  if (t == 0) { emits("i32"); } else { word("refnull"); tyname(t); }
+  if (ty_kind(t) == T_I32) { emits("i32"); } else {
+    if (ty_kind(t) == T_U8) { emits("i8"); } else { word("refnull"); tyname(t); }
+  }
   return 0;
 }
 
@@ -447,12 +454,13 @@ i32 emit_strdata() {
 i32 parse_type() {
   i32 t = 0;
   if (isword("i32")) { next(); } else {
+  if (isword("u8")) { t = 1; next(); } else {
     i32 p = tstart(tp);
     i32 n = tlen(tp);
     next();
     t = ty_findstruct(p, n);
     if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
-  }
+  }}
   while (ispunct(91)) { next(); want(93); t = ty_array(t); }
   return t;
 }
@@ -620,8 +628,10 @@ i32 postfix(i32 t) {
       want(93);
       if (ty_kind(t) != T_ARRAY) { oops(); }
       i32 et = ty_elem(t);
-      word("array.get"); tyname(t); nl();
-      t = et;
+      if (ty_kind(et) == T_U8) { word("array.get_u"); tyname(t); nl(); t = 0; } else {
+        word("array.get"); tyname(t); nl();
+        t = et;
+      }
     }
   }
   return t;
@@ -637,6 +647,7 @@ i32 primary() {
   if (isword("null")) { next(); line("ref.null none"); return 0; }
   // `i32[3]()` starts with a type, and nothing else that begins an expression does.
   if (isword("i32")) { next(); return array_construct(0); }
+  if (isword("u8")) { next(); return array_construct(1); }
   if (kind() == K_NAME) { return postfix(name_expr()); }
   oops();
   return 0;
@@ -761,8 +772,10 @@ i32 assign_or_expr() {
           word("array.set"); tyname(t); nl();
           return 0;
         }
-        word("array.get"); tyname(t); nl();
-        t = et;
+        if (ty_kind(et) == T_U8) { word("array.get_u"); tyname(t); nl(); t = 0; } else {
+          word("array.get"); tyname(t); nl();
+          t = et;
+        }
       }
     }
   }
@@ -1164,6 +1177,9 @@ i32 compile(i32 s, i32 out) {
   // as the number type, and the module is refused for a type mismatch that the compiler believes
   // cannot happen.
   ty_new(T_I32, 0, 0, 0);
+  // Index 1 is `u8`, for the same reason index 0 is `i32`: a type nothing declares still needs a
+  // slot, or the first thing that does takes it.
+  ty_new(T_U8, 0, 0, 0);
   nfield = 0;
   nfunc = 0;
   nstr = 0;

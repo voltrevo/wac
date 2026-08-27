@@ -33,6 +33,11 @@ fn plain(tok: &str) -> Option<ValType> {
     Some(match tok {
         "i32" => ValType::Plain(0x7f, "i32"),
         "i64" => ValType::Plain(0x7e, "i64"),
+        // Packed, and only valid where a field or an element goes. wasm has no i8 value, so a local
+        // of this type is refused by the engine — the same place every other type mistake here is
+        // caught, so the assembler does not duplicate the rule.
+        "i8" => ValType::Plain(0x78, "i8"),
+        "i16" => ValType::Plain(0x77, "i16"),
         "anyref" => ValType::Plain(0x6e, "anyref"),
         "eqref" => ValType::Plain(0x6d, "eqref"),
         "i31ref" => ValType::Plain(0x6c, "i31ref"),
