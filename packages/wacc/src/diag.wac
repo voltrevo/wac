@@ -48,6 +48,29 @@ export string parseMessage(i32 code) {
   if (code == 31) { return "'override' is not allowed on an enum method"; }
   if (code == 32) { return "an enum method must take 'this'"; }
   if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
+    // **wapy's structure parser, codes 40-53.** A `.wapy` file's diagnostics arrive as *parse* errors,
+  // which is the right phase for most of them — `packages/wacc/src/wapyparse.wac` is a parser. The
+  // first four are the lexer's and are the exception; they are here rather than in `lexMessage`
+  // because that is where the frontend puts them, and one table that is occasionally the wrong phase
+  // beats two tables that disagree about the code.
+  //
+  // **Unnamed is worse than mislabelled.** Without these the renderer fell back to "the parser
+  // refused this" at the position of the end-of-file token, which reads as a compiler bug rather
+  // than as a wapy program with a missing colon in it.
+  if (code == 40) { return "a tab in the leading whitespace"; }
+  if (code == 41) { return "wapy spells this differently"; }
+  if (code == 42) { return "this dedent lands on no enclosing block"; }
+  if (code == 43) { return "a bracket is still open at the end of the file"; }
+  if (code == 44) { return "the indentation of this line is not a block"; }
+  if (code == 45) { return "expected something here"; }
+  if (code == 46) { return "this is not a declaration wapy has"; }
+  if (code == 47) { return "a parameter is written `name: Type`"; }
+  if (code == 48) { return "this block header has no body — an empty one is `pass`"; }
+  if (code == 49) { return "`this` takes either no annotation or the class it is in"; }
+  if (code == 50) { return "a decorator is `@export`, `@const` or `@override`"; }
+  if (code == 51) { return "junk after the expression"; }
+  if (code == 52) { return "a counted loop is `for i in range(a, b)` or `for init; cond; update`"; }
+  if (code == 53) { return "an import is `from \"./m.wac\" import a, b as c`"; }
   return "the parser refused this";
 }
 

@@ -247,6 +247,17 @@ export function resolveSpecifier(
 
 /** Resolve a relative import path against an absolute base path. */
 export function resolvePath(baseFile: string, rel: string): string {
+  // **An absolute specifier is already a key.** Joining one onto a directory is meaningless
+  // wherever it happens, and it happened: instantiating a generic over a type from another file
+  // injects an import of that type into the *generic's* file, with the type's program-map key as
+  // the specifier. For `Vec<Toks>` that is `core/vec.wac` importing `/home/…/wapytok.wac`, which
+  // joined to `core/` and lost its leading slash — reported as `file not found in programs map`
+  // against a path one character different from a key that was right there.
+  //
+  // Nothing had reached it because no file the reference compiles used `Vec<SomeLocalStruct>`:
+  // every `Vec` in its closure is over `i32`, `string` or a type parameter. `packages/wacc/src`'s
+  // wapy frontend is the first, and it fails on nine types at once.
+  if (rel.startsWith("/")) return rel;
   // baseFile is like "/dir/file.wac" or "dir/file.wac"
   const dir = baseFile.includes("/")
     ? baseFile.slice(0, baseFile.lastIndexOf("/"))
@@ -583,6 +594,17 @@ function buildOrigins(
  * which never imported it — so the import is injected and the substituted type renamed to match.
  */
 function relativeImportPath(from: string, to: string): string {
+  // **Two key spaces cannot address each other.** A builtin is keyed relatively — `core/vec.wac` —
+  // and a repository file may be keyed absolutely, and there is no relative path from one to the
+  // other: `core` and `/home/…` share no prefix, so the walk emitted `.././home/…`, which
+  // `resolvePath` collapsed to `home/…` and looked up as a key one character from a real one.
+  //
+  // It is the case the `CORE` branch at the call site already reasons about — *"a provider's module
+  // has no relative path to write"* — arriving from the other direction, and it is reached by
+  // instantiating a generic over a type from another file. Nothing had, because every `Vec` in the
+  // reference's own closure is over `i32`, `string` or a type parameter; `packages/wacc/src`'s wapy
+  // frontend is the first to write `Vec<SomeStruct>` and it failed on nine types at once.
+  if (to.startsWith("/") && !from.startsWith("/")) { return to; }
   const fromDir = from.includes("/") ? from.slice(0, from.lastIndexOf("/")).split("/") : [];
   const toParts = to.split("/");
   let i = 0;

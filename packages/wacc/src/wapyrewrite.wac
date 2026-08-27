@@ -52,7 +52,7 @@ export i32 matching(Toks t, i32 i) {
 
 /** `t` cut at every depth-0 `sep`, the separators dropped. */
 export Vec<Toks> splitTop(Toks t, i32 sep) {
-  Vec<Toks> out = Vec<Toks>.create();
+  Vec<Toks> out = Vec.create();
   i32 start = 0;
   for (i32 i = 0; i < toksLen(t); i++) {
     if (kindAt(t, i) != sep || depthAt(t, i) != 0) { continue; }

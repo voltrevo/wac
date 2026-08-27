@@ -25,7 +25,7 @@ export struct Toks {
   Vec<i32> a;
 }
 
-export Toks toksNew() { return Toks(Vec<i32>.create()); }
+export Toks toksNew() { return Toks(Vec.create()); }
 
 /** How many tokens are in it. */
 export i32 toksLen(Toks t) { return t.a.len() / tokenStride(); }
