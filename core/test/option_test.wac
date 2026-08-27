@@ -58,9 +58,11 @@ export string test_map_option() {
   // mapOption is a generic *function*: T comes from the Option, U from the callback's
   // return type, and the call site names neither.
   Option<i32> some = Option.Some(21);
-  Option<i32> none = Option.None;
   t.eqI32(mapOption(some, double).orElse(0), 42, "mapped");
-  t.isTrue(mapOption(none, double).isNone(), "None maps to None");
+  // **Written inline**, which needed `issues/lang/0088`: an argument is a slot, but it is a slot for
+  // `Option<T>` with `T` still open, so `Option.None` alone did not say which `None` this is. The
+  // local existed only to carry that, and `some` keeps its own because it is used twice.
+  t.isTrue(mapOption(Option<i32>.None, double).isNone(), "None maps to None");
   // A different U, which is the half a method could not have expressed.
   t.eqStr(mapOption(some, describe).orElse("?"), "pos", "mapped to another type");
   return t.report();

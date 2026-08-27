@@ -1,0 +1,27 @@
+// expect: answers f = 34
+// only: wacc
+// spec:  §wacc-written-instantiation
+// why: a written instantiation may qualify an enum's variant and a generic struct's static. Both
+//      already worked where a slot supplied the instantiation — `Maybe<i32> m = Maybe.Just(4)` — and
+//      receiver position has no slot, so `Maybe.Just(4).orElse(0)` was `undefined variable` and
+//      there was no spelling that worked. The parser accepted the type arguments and the `.` branch
+//      dropped them, which is why writing them was refused rather than obeyed.
+// from: issues/lang/0088
+enum Maybe<T> {
+  Just(T v), Absent
+  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; }
+}
+
+struct Cell<T> {
+  T value;
+  Cell<T> of(T x) { return Cell<T>(x); }
+  T get(const this) { return this.value; }
+}
+
+export i32 f() {
+  // A variant with a payload, a variant without one, and a generic struct's static — each in
+  // receiver position, where the slot that would otherwise supply the instantiation does not exist.
+  return Maybe<i32>.Just(4).orElse(0)
+       + Maybe<i32>.Absent.orElse(7)
+       + Cell<i32>.of(23).get();
+}

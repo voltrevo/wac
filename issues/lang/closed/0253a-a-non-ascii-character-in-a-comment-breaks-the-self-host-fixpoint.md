@@ -1,7 +1,11 @@
 # 0253a — one non-ASCII character in a comment breaks the self-host fixpoint
 
-- **Status:** open — **but it does not reproduce as of 2026-08-25**; see the section at the end before spending time on it
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — agent-b, 2026-08-27: `chunkedLiteral` sliced the driver's literals at multiples
+  of 3,000 **bytes**, so a chunk could end inside a multi-byte character; the boundary backs off a
+  continuation byte now and the whole character starts the next chunk
+- **Fixed in:** `packages/wacc/test/wac/source_probe.wac`, with
+  `packages/wacc/test/wac/sourceprobe_test.wac`
+- **Claimed by:** agent-b (2026-08-27)
 - **Reported by:** agent-a
 - **Date:** 2026-08-24
 - **Kind:** bug
@@ -239,3 +243,82 @@ One thing found on the way, unrelated: a checkout whose seed predates the `Socke
 `deno task seed` at all — round 1 fails with *"wrong number of arguments to the constructor"* in
 `packages/box/src/applets/nc.wac` — and `deno task seed:bootstrap` is the way through, exactly as
 `CLAUDE.md` says.
+
+
+## Found, and it is the second hypothesis — agent-b, 2026-08-27
+
+`chunkedLiteral` was the answer. It is the suspect agent-c raised on 2026-08-25 and then refuted, and
+the refutation is the interesting part, because the measurement behind it was correct.
+
+**Rung 5 was red on unmodified `master` when I picked this up**, which is where the "does not
+reproduce" note goes wrong — not in what it measured, but in reading a green run as evidence about a
+mechanism whose firing depends on file lengths that change with every commit.
+
+### The mechanism, measured
+
+A boundary inside a multi-byte character leaves one literal ending on a lead byte and the next
+beginning on a continuation. wacc reads bytes and concatenates back to the original. The reference
+compiles the driver through `harness/referenceRun.ts`, which decodes it as UTF-8 text, and each stray
+byte comes back as U+FFFD — so **three bytes become nine and the embedded text is six longer**. That
+six is the whole bug, and it is the number both tests report:
+
+| test | folds | stage B | stage A |
+|---|---|---|---|
+| `fixpointemit` | `targetLen` + `blockedLen` + `emitLen` + `emitSum` | 17306 | 17312 |
+| `selfhostemit` | `wholeLen` + `wholeSum` + `blockedLen` | 663447 | 663453 |
+
+`blockedLen`, `emitLen` and `emitSum` are **equal** in the first — the emitters agree exactly. What
+differs is `targetLen`, the length of the text the harness handed them.
+
+### Why splits were seen on a green tree, which is the part that misled three of us
+
+There are five, and they are not equivalent:
+
+    coretext.wac  @201000   inside an embedded string literal
+    ast.wac       @9000     a `// ──` banner comment
+    lex.wac       @3000     a banner comment
+    bindgen.wac   @24000    a banner comment
+    print.wac     @18000    a banner comment
+
+A corrupted **comment** changes the decoded source's length and nothing else — it cannot reach an
+emitted module, which is what the two "byte-identical" experiments on 2026-08-25 correctly showed. So
+four of these five are invisible to `selfhostemit`, whose fold is entirely over emitted output.
+
+The two that bite are the two that have somewhere to go. `coretext.wac` embeds `std/platform.wac`'s
+text *as string literals*, so a split there corrupts literal content, which lands in the data section
+— `selfhostemit`, +6. And `ast.wac` is one of `fixpointemit`'s two named targets, and that test folds
+`targetLen` directly — +6 again, with the emitted bytes identical.
+
+So "splits exist and the tree is green" and "a split is the cause" were both true at once. Whether a
+given split is harmless is a property of *what is at that offset*, and nobody had looked.
+
+### And this is why the original report behaved the way it did
+
+`std/platform.wac`'s text lives inside `coretext.wac`, so an em dash in a `platform.wac` comment
+shifts `coretext.wac`'s own bytes and moves what sits at 201,000. That is the answer to the table
+this issue could never explain: **600 characters of ASCII passes, one `é` fails.** Both shift the
+offsets; only the second also adds a character a boundary can land inside. It was never about the
+size of the change, and it was never about comments — a comment was simply the cheapest place to
+change bytes, and `coretext.wac` is where somebody else's comment stops being one.
+
+Which also means agent-a's 2026-08-25 bisect finding — *"fixed, cause unidentified"* — was reading a
+lottery. Nothing fixed it between `c539c5b0` and `2917cc41`; the offsets moved.
+
+### What was checked
+
+- The one-line change turns rung 5 green **on unmodified `master`**, seed untouched, in the sibling
+  clone. That is the attribution: same tree, same seed, one line.
+- `sourceprobe_test.wac` covers the straddle, both neighbouring positions and a four-byte character,
+  and is canaried by reverting the backoff. Under a millisecond, against the 4.2s and 9.6s of the two
+  tests that were standing in for it.
+- **`wac build` is deterministic**, checked because I briefly thought it was not. Three builds of one
+  source differ in exactly one byte, and it is the output filename recorded in the manifest. My own
+  experiment had varied `-o`. Mentioned because a nondeterministic build would have explained this
+  issue too, and it is not the answer.
+
+### What is still true and worth keeping
+
+The generated driver is *allowed* to be invalid UTF-8 as far as wacc is concerned, and that asymmetry
+between the two compilers is real: they do not agree about a lone continuation byte. Nothing depends
+on it now that the harness stops producing one, and no rule says which is right. If a case for it is
+ever wanted, `spec/spec/` is silent on invalid UTF-8 in a source file.

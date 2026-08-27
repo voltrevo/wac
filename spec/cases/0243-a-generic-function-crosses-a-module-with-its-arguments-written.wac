@@ -1,0 +1,15 @@
+// expect: answers f = 5
+// only: wacc
+// spec:  §wacc-written-type-args
+// why: a materialised generic belongs to the **template's** file, and a written type argument is
+//      discovered at the *call*, which is in another one. So the two halves of the instance meet
+//      across a module boundary and this is the case that says they do. `pick<i32>` also writes an
+//      argument inference would have found on its own, which must be the same instance rather than a
+//      second one — the import rewriting has one name to rewrite either way.
+// from: design/lang/0011
+// ---- lib.wac ----
+export T zero<T>() { return 0; }
+export T pick<T>(T a, T b) { return a; }
+// ---- main.wac ----
+import { zero, pick } from "./lib.wac";
+export i32 f() { i32 z = zero<i32>(); return z + pick<i32>(3, 4) + 2; }

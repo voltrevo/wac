@@ -1,0 +1,20 @@
+// expect: answers f = 2
+// only: wacc
+// spec:  §wacc-written-type-args
+// why: two letters rather than one, and an argument that is itself an instantiation — so the list
+//      ends in `>>`, which the lexer reads as one shift token and the parser splits. That splitting
+//      already had a case for it in *type* position (`Vec<Vec<i32>>`); this is the first in
+//      expression position, where the token is reached by a different road.
+//
+//      `first<Box<i32>, i32>` also writes what inference would have found on its own, which is the
+//      case worth having beside `0239`: there the written argument supplies something inference
+//      cannot reach, and here it agrees with what inference would have said.
+// from: design/lang/0011
+struct Box<T> { T v; }
+T first<T, E>(T a, E b) { return a; }
+export i32 f() {
+  i32 a = first<i32, string>(3, "x");
+  Box<i32> bx = Box<i32>(4);
+  Box<i32> b = first<Box<i32>, i32>(bx, 9);
+  return a + b.v - 5;
+}

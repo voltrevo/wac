@@ -317,9 +317,18 @@ void printExpr(Pr w, Expr e) {
       w.sp(); printExpr(w, els);
       w.close();
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       w.open("call", e.line, e.col);
       w.sp(); printExpr(w, callee);
+      // **Only when written**, so every call that names none prints exactly as it did before this
+      // field existed. `rung2` compares this printer's output against the reference's, and the
+      // reference has no such field — a `targs` node on every call would differ on all of them
+      // rather than on the handful that write one.
+      if (callTargs.len() > 0) {
+        w.open("targs", e.line, e.col);
+        for (i32 i = 0; i < callTargs.len(); i++) { w.sp(); printTy(w, callTargs[i]); }
+        w.close();
+      }
       printExprList(w, args);
       w.close();
     }
@@ -347,6 +356,11 @@ void printExpr(Pr w, Expr e) {
     case Unwrap(operand): {
       w.open("unwrap", e.line, e.col);
       w.sp(); printExpr(w, operand);
+      w.close();
+    }
+    case TypeName(qual): {
+      w.open("typename", e.line, e.col);
+      w.sp(); printTy(w, qual);
       w.close();
     }
     case Construct(ctype, args, named): {

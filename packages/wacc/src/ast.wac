@@ -131,13 +131,42 @@ export enum ExprKind {
    */
   Is(Expr left, Ty? target, Expr? other, bool negated),
   Ternary(Expr cond, Expr then, Expr els),
-  Call(Expr callee, Expr[] args),
+  /**
+   * A call, with the type arguments **written at the call** if any were.
+   *
+   * `typeArgs` is empty for every call that does not write them, which is all of them outside a
+   * postfix method call — a free function's are carried by `Construct`'s `Ty` instead, because
+   * `zero<i32>()` and `Vec<i32>(…)` are the same syntax and the parser cannot tell them apart.
+   * So this field exists for `recv.m<U>(x)`, where the letters belong to the *method* rather than
+   * to its owner and there is nowhere else to put them.
+   *
+   * Widening `Call` rather than adding a variant: type arguments belong to a call, and an empty
+   * list is exactly what every existing site means. A new variant would have wanted "not valid
+   * here" in about fifty arms of the exhaustive matches to say the same nothing.
+   *
+   * `design/lang/0011` step 3, which is what makes
+   * [0010](../../../design/lang/0010-a-method-type-parameter-has-to-come-from-the-slot.md) option C
+   * writable.
+   */
+  Call(Expr callee, Expr[] args, Ty[] typeArgs),
   Index(Expr arr, Expr index),
   Member(Expr obj, i32 nameTok),
   /** `x!` — the non-null assertion. */
   Unwrap(Expr operand),
   /** `Point(1, 2)` or `Point(x: 1, y: 2)`; one of the two lists is empty. */
   Construct(Ty ctype, Expr[] args, NamedArg[] named),
+  /**
+   * A written type standing where an expression is parsed, and **only** as the object of a
+   * `Member`: `Maybe<i32>.Just(4)`, `Result<i32, string>.Err(e)`.
+   *
+   * It exists because `Ident(tok)` has nowhere to put type arguments, so the `.` branch of
+   * `parseConstructionOrCall` used to drop them — which is why `Cell<i32>.of(3)` was refused rather
+   * than parsed, and why accepting it without this would have meant `Cell.of(3)`, a spelling whose
+   * meaning is "ignore what you wrote". `issues/lang/0088`, `design/lang/0011`.
+   *
+   * Anywhere other than a `Member`'s object this is an error: a type is not a value.
+   */
+  TypeName(Ty qualifier),
   /** `++`/`--`; `prefix` distinguishes `++i` from `i++`. */
   Incr(Lvalue target, i32 op, bool prefix),
   /**

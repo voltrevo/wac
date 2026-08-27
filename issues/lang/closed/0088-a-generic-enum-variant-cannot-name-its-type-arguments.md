@@ -1,8 +1,11 @@
 # 0088 — a generic enum's variant cannot name its type arguments, and a generic struct can
 
-- **Status:** open — **the syntax is no longer a decision**: `design/lang/0011` rules it type syntax
-  and says this "needs none of this and can land first". Both diagnostics were already fixed
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — agent-b, 2026-08-27: the syntax was decided by `design/lang/0011` and
+  implemented; `Maybe<i32>.Just(4)` and `Cell<i32>.of(23)` compile
+- **Fixed in:** `packages/wacc/src/{parse,ast,emit,print}.wac`, with
+  `spec/cases/0235-a-written-instantiation-qualifies-a-variant-and-a-static.wac` and
+  `[§wacc-written-instantiation]` in `spec/spec/generics.md`
+- **Claimed by:** agent-b (2026-08-27)
 - **Reported by:** agent-c
 - **Date:** 2026-08-10
 - **Kind:** missing feature
@@ -131,22 +134,24 @@ than widening `isGeneric`, because at least one caller reads `!isGeneric(recv)` 
 check a variant's arity and would change meaning under it — so widening it is its own change, with
 its own measurement of what moves. Left here as the next thing to take.
 
-## The syntax question is answered — agent-a, 2026-08-26
 
-`design/lang/0011` was accepted with the operator on 2026-08-26 and lists this issue under **Gathers**.
-Its position table settles what this page was waiting on:
+## Closed — agent-b, 2026-08-27
 
-| position | today | which |
-|---|---|---|
-| `Cell<i32>()` — construct a written type | **works**, receiver position included | type syntax |
-| `Maybe<i32>.Just(4)` — a variant of a written type | `expected expression, found '.'` | type syntax |
+The decision this was waiting on is `design/lang/0011`, and the answer is the simple rule: if it
+parses as a type argument list, it is one. This issue is that rule's first step.
 
-and then says plainly: *"The second row is arguably already a bug rather than a missing feature: it
-writes a type, like the first, and is refused."*
+`parseConstructionOrCall` was already accepting the type arguments and the `.` branch was dropping
+them — which is why writing them out was *refused* rather than obeyed, and why the diagnostic
+described a missing name. They are carried into a new `ExprKind.TypeName` now, and `variantOfMemberAt`
+and `staticOwner` resolve the instantiation rather than the bare name.
 
-So this is type syntax, the inconsistency this page reported is real, and — 0011's own scheduling note
-— **`issues/lang/0088` needs none of this and can land first.** It does not depend on written call type
-arguments, on the parse trigger, or on the monomorphisation work that makes up the rest of 0011.
+Narrower than the title suggests, deliberately: `Ty<Args>` is an expression **only** as the object of
+a `.`, so it is always followed by a member name and never stands alone. That is what makes it
+unambiguous without lookahead — `a < b` cannot become an instantiation by accident, because one must
+be followed by `.` and a name. `Maybe<i32>` as a value, an argument or an operand is still an error,
+and `identity<i32>(4)` — a *call* naming its own type arguments — is still refused, which is the rest
+of `design/lang/0011`.
 
-Reclassified rather than closed: the work is unchanged and unstarted, but nobody needs to decide
-anything before doing it.
+Case 0235 answers 34, from a variant with a payload, a variant without one, and a generic struct's
+static, each in receiver position where no slot exists to supply the instantiation. All 237 cases
+still met by wacc.

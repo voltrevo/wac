@@ -1,0 +1,263 @@
+// `design/lang/0011`'s rule, and the two programs it costs.
+//
+// The rule is one sentence — **if it parses as a type argument list, it is one** — and it replaced a
+// follow set of `[ ( { ? .` that had grown an entry at a time. What makes it worth a test of its own
+// is not the constructs it allows but the ones it takes away: `a < b > c` and `g(a < b, c > e)` were
+// legal and are not, and the operator's decision was that a simple rule is worth that, with
+// parentheses as the escape.
+//
+// **A refusal is only half of what is being checked here.** Anyone can make those two programs stop
+// compiling; the reason this file exists is the *message*. `a < b > c` fails at the `c`, which is a
+// hundred columns from the `<` that decided it, and the parser's own account of that was `expected
+// ';', found 'c'` — an error about a semicolon nobody omitted, in the house style `perrKeywordName`
+// was given its own code to avoid. So every case here asserts the words, not the count.
+//
+// Neither shape occurs in the 135,000 lines of wac in this repository, which is what made the trade
+// affordable and is recorded in the design document rather than here, because it is a fact about
+// today's corpus and this is a fact about the language.
+//
+// **2.8s**, measured 2026-08-27, and most of it is the last test. Sixteen short sources through the
+// checker cost almost nothing; five of them are also *emitted*, because whether a written type
+// argument and an inferred one land on one instantiation shows in the module's size and nowhere in
+// what the program answers. No subprocess either way.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFilesRendered, emit } from "../../src/api.wac";
+
+/** One source through the checker, rendered the way a user sees it. */
+string said(string src) {
+  return diagnoseFilesRendered(string[]("m.wac"), string[](src), "m.wac");
+}
+
+/**
+ * The rule takes two comparison shapes, and says so in words the author can act on.
+ *
+ * Both were legal before `design/lang/0011`. `a < b > c` is the bare shape; `g(a < b, c > e)` is the
+ * one that hides inside an argument list, where the `,` reads as an argument separator to a human
+ * and as a type-argument separator to the parser. They are listed separately because a rule that
+ * caught only the first would look fixed.
+ */
+export string test_a_double_comparison_is_refused_and_the_message_names_the_escape() {
+  T t = T.create();
+
+  string bare = said("export i32 main() { i32 a = 1; i32 b = 2; i32 c = 3; return a < b > c ? 1 : 0; }");
+  t.isTrue(contains(bare, "type arguments"),
+           "the bare shape is refused for being a type argument list — got " + bare);
+  t.isTrue(contains(bare, "parenthesise"),
+           "and the message names the escape rather than only the complaint — got " + bare);
+
+  string inArgs = said("i32 g(i32 x, bool y) { return 1; }\n" +
+                       "export i32 main() { i32 a = 1; i32 b = 2; i32 c = 3; i32 e = 4;\n" +
+                       "  return g(a < b, c > e); }");
+  t.isTrue(contains(inArgs, "type arguments"),
+           "the shape inside an argument list is refused too — got " + inArgs);
+  t.isTrue(contains(inArgs, "parenthesise"),
+           "and names the same escape — got " + inArgs);
+
+  // **Not a semicolon.** The failure this replaces, kept as a negative so a regression to the old
+  // wording is a red test rather than a quieter one.
+  t.isTrue(!contains(bare, "expected ';'"),
+           "and does not report a semicolon nobody omitted — got " + bare);
+
+  return t.report();
+}
+
+/**
+ * An ordinary double comparison on a **call** still compiles, and needs no parentheses.
+ *
+ * This is the case that decides whether the rule is usable, because it is the shape people actually
+ * write. It survives for a reason with nothing to do with `<`: `list.len()` is a call, a call is not
+ * a type, so the type parse fails and the `<` is arithmetic again. There is no special case for it
+ * anywhere — which is the point, and is why a test says so.
+ */
+export string test_a_comparison_against_a_call_is_still_a_comparison() {
+  T t = T.create();
+  string clean = said("export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
+                      "  return count < list.len() > 0 ? 1 : 0; }");
+  t.isTrue(!contains(clean, "error"),
+           "a comparison whose operand is a call is untouched by the rule — got " + clean);
+  return t.report();
+}
+
+/**
+ * A generic function named with its type arguments is a **value**.
+ *
+ * `design/lang/0011` criterion 3, and this test is the inversion its own earlier version predicted:
+ * it asserted the refusal and said *"when step 4 lands this becomes a compiling program and this test
+ * inverts"*. It landed, so it did.
+ *
+ * There is no `&f` in wac, so a bare name is the whole of the syntax for a funcref — and a generic
+ * function's bare name has no type, because its signature is written in letters and a letter is not a
+ * type any assignment can be checked against. Writing the arguments is what supplies them.
+ *
+ * The two neighbouring refusals stay, and say which is which: `id<i32>` and `a<b>` are the same
+ * parse, so only the *name* separates a generic function from a comparison, and a non-generic
+ * function is a third thing again.
+ */
+export string test_a_generic_function_is_a_value_when_it_names_its_type_arguments() {
+  T t = T.create();
+
+  string ok = said("i32 id<T>(T x) { return 1; }\n" +
+                   "export i32 f() { fn[i32(i32)] g = id<i32>; return g(7); }");
+  t.isTrue(!contains(ok, "error"),
+           "a generic function with its arguments written is assignable to a funcref — got " + ok);
+
+  string plain = said("i32 id(i32 x) { return 1; }\n" +
+                      "export i32 f() { fn[i32(i32)] g = id<i32>; return g(7); }");
+  t.isTrue(contains(plain, "not a generic one, so it takes no type arguments"),
+           "a non-generic function is told it has no letters to supply — got " + plain);
+
+  string many = said("i32 id<T>(T x) { return 1; }\n" +
+                     "export i32 f() { fn[i32(i32)] g = id<i32, f64>; return g(7); }");
+  t.isTrue(contains(many, "takes 1 type argument, and 2 were written"),
+           "and a wrong count is a wrong count here too — got " + many);
+
+  // The comparison advice is asserted by the first test in this file, on `a < b > c`. It is not
+  // repeated here with a `?` after the `>`, because that shape is a syntax error under *both*
+  // readings — `a < b >` has no right operand — so it would be testing the parser's recovery rather
+  // than the rule.
+  return t.report();
+}
+
+/**
+ * Receiver position is the exception, and exempting it does not exempt what is written in it.
+ *
+ * `Maybe<i32>.Just(4)` is the construct `issues/lang/0088` added, and it is the one place a written
+ * instantiation stands where an expression is parsed. The checker's `TypeName` arm refuses one
+ * anywhere else, so this position needs an exemption — and the first version of that exemption
+ * returned without looking, which left `Maybe<Typoo>.Just(4)` with **no diagnostic at all**. That is
+ * a worse answer than the false alarm it replaced and nothing else in the compiler would have caught
+ * it, so both halves are asserted here.
+ */
+export string test_the_receiver_exemption_still_resolves_what_is_written() {
+  T t = T.create();
+  string decl = "enum Maybe<T> { Just(T v), Absent\n" +
+                "  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; } }\n";
+
+  string good = said(decl + "export i32 main() { return Maybe<i32>.Just(4).orElse(0); }");
+  t.isTrue(!contains(good, "error"),
+           "a written instantiation in receiver position is legal — got " + good);
+
+  string bad = said(decl + "export i32 main() { return Maybe<Typoo>.Just(4).orElse(0); }");
+  t.isTrue(contains(bad, "unknown type 'Typoo'"),
+           "and an unknown name inside one is still reported — got " + bad);
+  return t.report();
+}
+
+/**
+ * A method's own type arguments **parse**, and the refusal stops promising a workaround.
+ *
+ * `design/lang/0011` step 3. Before it, `b.map<i64>(f)` was a parse error and the checker's advice
+ * for `b.map(f)` was *"no Box<i32>.map without its type arguments"* — which reads as an instruction,
+ * and following it answered `a type name is not a value` under the `<`, about a different program.
+ * That is `issues/lang/0235a`'s postfix half.
+ *
+ * They parse now and are still not bound — `design/lang/0010` option C is what binds them — so both
+ * spellings are refused, and the note says which of the two the caller did rather than pointing at
+ * an escape that is not there. **The refusal is the subject here**: when option C lands the second
+ * of these compiles and this test changes with it.
+ */
+export string test_a_methods_own_type_arguments_parse_and_the_refusal_is_honest() {
+  T t = T.create();
+  string decl = "struct Box<T> {\n" +
+                "  T v;\n" +
+                "  U map<U>(const this, fn[U(T)] f) { return f(this.v); }\n" +
+                "}\n" +
+                "i64 widen(i32 x) { return 7; }\n";
+
+  string without = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3); i64 r = b.map(widen); return 0; }");
+  t.isTrue(contains(without, "it has a type parameter of its own"),
+           "not writing them names the blocker — got " + without);
+  t.isTrue(!contains(without, "without its type arguments"),
+           "and no longer reads as advice to write them — got " + without);
+
+  string with = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3); i64 r = b.map<i64>(widen); return 0; }");
+  t.isTrue(contains(with, "parsed and not yet bound"),
+           "writing them parses, and is told they are not bound yet — got " + with);
+  // The parse error this replaces, as a negative: `<` used to end the expression and `i64` was read
+  // as a type name in value position.
+  t.isTrue(!contains(with, "a type name is not a value"),
+           "and is not the unrelated diagnostic the `<` used to produce — got " + with);
+
+  // **The arity is answerable without binding anything**, which is why the checker records the
+  // letters rather than a flag. Two arguments for one letter is wrong for every possible binding at
+  // once, and "not yet bound" would have read as "come back later" when coming back would not help.
+  string tooMany = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
+                        "  i64 r = b.map<i64, i32>(widen); return 0; }");
+  t.isTrue(contains(tooMany, "takes 1 type argument, and 2 were written"),
+           "a wrong count is reported as a wrong count — got " + tooMany);
+  t.isTrue(!contains(tooMany, "not yet bound"),
+           "and not as something that might work later — got " + tooMany);
+  return t.report();
+}
+
+/**
+ * A generic free function is callable, which is the sentence `design/lang/0011` is titled with.
+ *
+ * `T zero<T>()` mentions `T` nowhere an argument can supply it, so argument-directed inference
+ * cannot reach it. The declaration checked and every call was refused, which meant the person who
+ * wrote an unusable generic never found out and only a caller did.
+ */
+export string test_a_generic_function_can_be_called_with_its_type_arguments() {
+  T t = T.create();
+  string decl = "T zero<T>() { return 0; }\n";
+
+  t.isTrue(!contains(said(decl + "export i32 f() { i32 z = zero<i32>(); return z; }"), "error"),
+           "writing the argument supplies what inference cannot reach");
+  t.isTrue(contains(said(decl + "export i32 f() { i32 z = zero(); return z; }"),
+                    "nothing in the call says what T is"),
+           "and not writing it is still the old refusal, which is the reason the feature exists");
+  t.isTrue(contains(said(decl + "export i32 f() { i32 z = zero<i32, f64>(); return z; }"),
+                    "zero takes 1 type argument, and 2 were written"),
+           "a wrong count is a wrong count, not an inference failure");
+  t.isTrue(contains(said(decl + "export i32 f() { i32 z = zero<Typoo>(); return z; }"),
+                    "unknown type 'Typoo'"),
+           "and the count being right does not excuse an argument that names no type");
+  return t.report();
+}
+
+/**
+ * **A written instantiation and an inferred one that agree are one instantiation**, and a differing
+ * one is a second. Measured in emitted bytes, because that is the only place the answer shows.
+ *
+ * `design/lang/0010` calls the third level of monomorphisation "the thing most likely to be got
+ * wrong quietly", and this is the first level where the same worry applies: the binding is all a
+ * written argument changes, so if it did not join the machinery an inferred one already uses, a
+ * program mixing the two spellings would carry two copies of one function and two `T`s that are the
+ * same type. Nothing about that is visible in what the program *answers* — both copies compute the
+ * same thing — so a test that only ran it would pass.
+ */
+export string test_a_written_and_an_inferred_instantiation_are_the_same_one() {
+  T t = T.create();
+  string decl = "T identity<T>(T x) { return x; }\n";
+  string bothInferred = decl + "export i32 f() { return identity(4) + identity(5); }";
+  string mixed       = decl + "export i32 f() { return identity(4) + identity<i32>(5); }";
+  string twoTypes    = decl + "export i32 f() { return identity(4) + (identity<i64>(5 as i64) as! i32); }";
+
+  i32 a = emit(bothInferred.toBytes()).len();
+  i32 b = emit(mixed.toBytes()).len();
+  i32 c = emit(twoTypes.toBytes()).len();
+
+  t.isTrue(a > 200, "the all-inferred program emitted something — " + itoa(a));
+  t.eqI32(b, a, "mixing a written and an inferred argument for the same type emits the same module");
+  t.isTrue(c > b, "and a second type argument emits a second instantiation — " + itoa(c) +
+                  " against " + itoa(b));
+
+  // **The sharp case, from `issues/lang/0260c`.** `typeOfE` of `Colour.Red` is the *variant*, so the
+  // inferred path binds `T = Colour.Red` and canonicalises it to `Colour` before naming the
+  // instance — without that step it built a `Hold<Colour.Red>`, a different struct with a different
+  // type index, and produced a module the emitter was happy with and the engine would not load. The
+  // written path spells `Colour` directly. Two roads to one name, and nothing but a measurement says
+  // they arrive.
+  string en = "enum Colour { Red, Green }\nT identity<T>(T x) { return x; }\n";
+  i32 inferred = emit((en + "export i32 f() { Colour a = identity(Colour.Red);\n" +
+                       "  Colour b = identity(Colour.Green); return 4; }").toBytes()).len();
+  i32 written  = emit((en + "export i32 f() { Colour a = identity(Colour.Red);\n" +
+                       "  Colour b = identity<Colour>(Colour.Green); return 4; }").toBytes()).len();
+  t.isTrue(inferred > 200, "the enum program emitted something — " + itoa(inferred));
+  t.eqI32(written, inferred,
+          "a variant inferred and its enum written land on one instantiation, not two");
+  return t.report();
+}

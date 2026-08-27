@@ -1,0 +1,13 @@
+// expect: answers f = 9
+// only: wacc
+// spec:  §wacc-written-type-args
+// why: the binding is the only thing a written type argument changes; everything after it is the
+//      machinery an inferred one already used, so the two must land on the same instantiation. If
+//      they did not, a program mixing the spellings would carry two copies of one function and two
+//      `T`s that are the same type — the third level of monomorphisation getting quietly wrong,
+//      which is `design/lang/0010`'s stated worry one level down. Measured as bytes: this module and
+//      the same program with both calls inferred are the same size, and swapping one to `<i64>`
+//      makes it 139 bytes larger.
+// from: design/lang/0011
+T identity<T>(T x) { return x; }
+export i32 f() { return identity(4) + identity<i32>(5); }

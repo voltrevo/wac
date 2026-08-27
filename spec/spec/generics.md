@@ -41,7 +41,38 @@ covariant arrays are a known mistake, and a mutable container cannot be covarian
 ### Angle brackets are type syntax only
 
 Type arguments appear where a **type** is written, never in an expression: `IDENT <` is ambiguous
-with less-than, and there is no way to tell them apart without unbounded lookahead.
+with less-than.
+
+`[§wacc-type-args-commit]` **wacc resolves that ambiguity by trying the type parse, and committing to
+it if it succeeds** — if `IDENT < … >` parses as a type argument list, it *is* one, whatever follows.
+Nothing is left to what comes next, and a program that wanted the comparison says so with
+parentheses:
+
+```wac
+g(a < b, c > e);           // error: type arguments, and a value cannot follow them
+g((a < b), c > e);         // two comparisons, as written
+```
+
+`[§wacc-type-args-commit]` One pair of parentheses is enough, and it goes on the *first* comparison:
+once `(a < b)` is a parenthesised expression the `c > e` after it has nothing to attach to and is
+arithmetic again.
+
+`[§wacc-type-args-commit]` The rule costs exactly the programs where both readings parse, and there
+are two shapes. The argument-list one above is the real loss, because it is a program somebody might
+mean. The bare one is not: `a < b > c` compares a `bool` with an integer, so it was already an error
+before this rule claimed it — what changed is which error it gets.
+
+What the rule buys is that a mistake *inside* the arguments is reported as a mistake: `Cell<Typoo>()`
+says **unknown type `Typoo`**, where a parser that backed out to a comparison whenever the type parse
+failed would report a type mismatch on a parse the author never intended.
+
+`[§wacc-type-args-commit]` The common comparison shapes are untouched, and not by a special case for
+them. `count < list.len() > 0` survives because `list.len()` is a *call*, so the type parse fails on
+its own terms and the `<` is arithmetic again — which is the general reason most comparisons are
+safe: their operands are rarely spelled like types.
+
+`§wacc-` because this is a wacc rule; the reference refuses these programs earlier and for other
+reasons.
 
 wac can afford the restriction because every declaration is explicitly typed, so a construction
 always has an expected type to take its arguments from:
@@ -84,6 +115,33 @@ resolved in a later pass than the two that do not.
 What has no expected type is a construction whose value goes nowhere in particular: a discarded
 expression statement, or a method call on a fresh receiver. `Vec().len()` is an error, and the fix
 is the two statements idiomatic wac already writes.
+
+### A written instantiation may qualify a variant or a static
+
+Receiver position is the case above with no fix available by rewriting, because there is no slot to
+split the expression into two statements *around*. An enum's variant and a generic struct's static
+method may therefore be qualified by an instantiation written out:
+
+```wac
+i32 a = Maybe<i32>.Just(4).orElse(0);
+i32 b = Maybe<i32>.Absent.orElse(7);
+i32 c = Cell<i32>.of(23).get();
+```
+
+`[§wacc-written-instantiation]` All three work. This is the one place a type argument list stands
+where an expression is parsed, and it is narrower than it looks: `Ty<Args>` is an expression **only**
+as the object of a `.`, so it is always followed by a member name and never stands alone. `Maybe<i32>`
+as a value, an argument or an operand is still an error, and `IDENT <` in every other expression
+position is still a comparison.
+
+The restriction is what keeps it unambiguous without lookahead. `a < b` cannot become an
+instantiation by accident because an instantiation must be followed by `.` and a name, and `a < b > .c`
+is not something anyone writes.
+
+`[§wacc-written-instantiation]` What is written here belongs to the **receiver's** type. A call's own
+type parameters are a separate rule — `[§wacc-written-type-args]` under **Generic functions** below —
+and the two arrived together but are not the same thing: `Cell<i32>.of(3)` names the type `of` is a
+static of, and `identity<i32>(4)` names what `identity`'s own `T` is.
 
 ### Across modules
 
@@ -267,12 +325,14 @@ export i32 f() {
 `[§wac-generic-fn-5hvq3mt]` This works, and so does `max` on `f64` in the same program: each
 distinct set of type arguments produces a separate concrete function, exactly as for a struct.
 
-### Type arguments are inferred, never written
+### Type arguments are inferred by default, and may be written
 
-There is no `max<i32>(x, y)`. Angle brackets are type syntax only — the same ambiguity with
-less-than — and a call is an expression, so **inference is the whole interface**. It is tractable
-because wac has no declaration type inference: every local and every parameter states its type, so
-an argument's type is available from the syntax alone.
+Inference is the ordinary interface and covers almost every call: `max(x, y)` needs nothing written.
+It is tractable because wac has no declaration type inference — every local and every parameter states
+its type, so an argument's type is available from the syntax alone.
+
+`[§wacc-written-type-args]` A call **may** name them, and `[§wacc-type-args-commit]` is what makes
+that unambiguous: `max<i32>(x, y)` is a type argument list because it parses as one.
 
 An argument's type is evident when it is a literal, a variable, a field, an array element, a cast,
 an unwrap, a struct construction, or a call to a function or method whose return type is declared:
@@ -294,18 +354,46 @@ i32 d = id(null);                   // error: argument 1's type is not evident h
 `[§wac-generic-fn-5hvq3mt]` The diagnostic says to assign the value to a declared variable first,
 which is the fix.
 
-Because inference is argument-directed, **a type parameter that no parameter's type mentions is
-unusable**:
+Inference is argument-directed, so **a type parameter that no parameter's type mentions cannot be
+inferred** — and that is the case writing them exists for:
 
 ```wac
-T zero<T>() { return 0; }           // error at every call: nothing determines T
+T zero<T>() { return 0; }
+i32 z = zero();                     // error: nothing in the call says what T is
+i32 z = zero<i32>();                // this works
 ```
 
-`[§wac-generic-fn-5hvq3mt]` Reported at the call, and terminal — a call cannot name its type
-arguments, so there is no way to supply what inference could not find. A return type alone does not
-determine `T`; that is a deliberate limit rather than an oversight, and lifting it would mean
-propagating an expected type into a call, which is the same restriction the struct case documents
-above.
+`[§wacc-written-type-args]` Until 2026-08-27 the first was terminal and the second did not parse, so
+a generic function whose letter appears only in its return type was *declarable and uncallable* — the
+declaration checked and every call was refused, which meant the person who wrote an unusable generic
+never found out and only a caller did.
+
+`[§wacc-written-type-args]` The count must match the declaration, and each argument must name a type:
+
+```wac
+zero<i32, f64>();                   // error: zero takes 1 type argument, and 2 were written
+zero<Typoo>();                      // error: unknown type 'Typoo'
+```
+
+`[§wacc-written-type-args]` **A written argument and an inferred one that agree are one
+instantiation**, not two — the binding is all that differs, and everything after it is shared. So
+`identity(4)` and `identity<i32>(5)` in one program compile one `identity<i32>`, and adding
+`identity<i64>(…)` compiles a second.
+
+`[§wacc-written-type-args]` **A generic function is a value this way too**, which is the only spelling
+there is — wac has no `&f`, so a name is the whole of the syntax:
+
+```wac
+fn[i32(i32)] g = id<i32>;           // `id<i32>` is `fn(i32) -> i32`
+```
+
+Its bare name has no type at all, and that is the reason rather than an oversight: the signature is
+written in letters, and a letter is not a type any assignment can be checked against.
+
+**A slot still does not determine a call's type parameters.** `Vec<i32> v = empty();` for
+`Vec<T> empty<T>()` is an error, and the fix is `empty<i32>()`. Lifting that would mean propagating an
+expected type *into* a call, which is the same restriction the struct case documents above and is a
+larger change than writing the argument.
 
 Two arguments must agree:
 

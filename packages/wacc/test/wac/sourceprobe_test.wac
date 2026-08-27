@@ -1,0 +1,107 @@
+// `source_probe.wac`'s two text helpers, checked directly rather than through the thing they feed.
+//
+// `chunkedLiteral` is the interesting one and it had no test of its own: its only callers are
+// `fixpointemit_test.wac` and `selfhostemit_test.wac`, which compile the whole compiler through two
+// stages and compare a checksum. A helper that is only exercised that way is one whose bugs arrive
+// as a checksum mismatch naming a *compiler source file*, which is the last place anybody looks for
+// a bug in the harness — `issues/lang/0088` spent an afternoon there.
+//
+// **Under a millisecond.** No compilation, no subprocess: these are pure functions over strings.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { chunkedLiteral, literalOf } from "./source_probe.wac";
+
+/** `n` copies of `b`, as the filler either side of a boundary. */
+string run(i32 b, i32 n) {
+  Buf out = Buf.withCapacity(n);
+  for (i32 i = 0; i < n; i++) { out.push(b); }
+  return string.fromBytes(out.take());
+}
+
+/**
+ * The first literal's length, in characters of *source* — from the opening quote to the closing one.
+ *
+ * The chunks are joined by `" +\n    "`, so the first `+` is one past the first literal's closing
+ * quote. With filler that needs no escaping, a literal is its content plus the two quotes, which is
+ * what makes a boundary's position readable as a number.
+ */
+i32 firstLiteralLen(string src) {
+  u8[] b = src.toBytes();
+  for (i32 i = 1; i < b.len(); i++) { if (b[i] == '+') { return i - 1; } }
+  return b.len();
+}
+
+/**
+ * A character straddling the 3,000-byte boundary goes wholly into the second chunk.
+ *
+ * This is the bug that made `fixpointemit_test.wac` a lottery. The boundary was a byte offset, so a
+ * chunk could end mid-character and each half was invalid UTF-8 on its own. The two compilers do not
+ * agree about those: wacc keeps the bytes, and the reference decodes through JavaScript, where a
+ * stray byte comes back as U+FFFD — three bytes becoming nine. The embedded text then differed in
+ * *length* between the stages, and the test reported that they emit different bytes for `ast.wac`,
+ * with the emitters in exact agreement.
+ *
+ * Which file it hit was decided by arithmetic no author could see: any edit shifts every later byte,
+ * so whether offset 9,000 lands inside one of the box-drawing characters in the compiler's own prose
+ * is a property of the size of an unrelated change.
+ */
+export string test_a_multibyte_character_is_never_split_across_two_chunks() {
+  T t = T.create();
+
+  // `─` is U+2500, three bytes: e2 94 80. At 2,999 bytes of filler it starts one byte before the
+  // boundary, so a byte-offset chunker takes its first byte and leaves the other two.
+  string src = chunkedLiteral(run('a', 2999) + "─" + run('a', 100));
+  t.eqI32(firstLiteralLen(src), 3001,
+          "the boundary backed off the character, leaving 2,999 bytes and two quotes — got " +
+          itoa(firstLiteralLen(src)));
+
+  // The two neighbouring positions, so a chunker that always backs up is not mistaken for a fix.
+  // At 2,997 the character occupies the last three bytes of the chunk and byte 3,000 is filler; at
+  // 3,000 the character starts one past the boundary. Neither boundary is inside a character, so
+  // neither moves, and both chunks are the full 3,000 bytes.
+  string ends = chunkedLiteral(run('a', 2997) + "─" + run('a', 100));
+  t.eqI32(firstLiteralLen(ends), 3002,
+          "a character ending just before the boundary stays whole in the first chunk — got " +
+          itoa(firstLiteralLen(ends)));
+  string after = chunkedLiteral(run('a', 3000) + "─" + run('a', 100));
+  t.eqI32(firstLiteralLen(after), 3002,
+          "a character starting after the boundary is not dragged back — got " +
+          itoa(firstLiteralLen(after)));
+
+  // A four-byte character, which needs the walk to take three steps rather than one.
+  string four = chunkedLiteral(run('a', 2998) + "😀" + run('a', 100));
+  t.eqI32(firstLiteralLen(four), 3000,
+          "a four-byte character straddling the boundary goes whole into the second chunk — got " +
+          itoa(firstLiteralLen(four)));
+
+  return t.report();
+}
+
+/** Text that fits in one chunk is one literal, and an empty text is still a literal. */
+export string test_short_text_is_one_literal_and_empty_text_is_still_one() {
+  T t = T.create();
+  t.isTrue(chunkedLiteral("hi") == "\"hi\"",
+          "a short text is a single literal" + " — got " + chunkedLiteral("hi"));
+  t.isTrue(chunkedLiteral("") == "\"\"",
+          "an empty text is an empty literal rather than nothing" + " — got " + chunkedLiteral(""));
+  return t.report();
+}
+
+/** The four escapes `literalOf` knows, and the ones it deliberately passes through. */
+export string test_the_four_escapes_are_written_and_other_bytes_pass_through() {
+  T t = T.create();
+  t.isTrue(literalOf("a\"b") == "\"a\\\"b\"",
+          "a quote is escaped" + " — got " + literalOf("a\"b"));
+  t.isTrue(literalOf("a\\b") == "\"a\\\\b\"",
+          "a backslash is escaped" + " — got " + literalOf("a\\b"));
+  t.isTrue(literalOf("a\nb") == "\"a\\nb\"",
+          "a newline becomes \\n" + " — got " + literalOf("a\nb"));
+  t.isTrue(literalOf("a\tb") == "\"a\\tb\"",
+          "a tab becomes \\t" + " — got " + literalOf("a\tb"));
+  // Multi-byte text is passed through as its bytes, which is why the chunker must not cut one.
+  t.isTrue(literalOf("─") == "\"─\"",
+          "a multi-byte character is passed through unchanged" + " — got " + literalOf("─"));
+  return t.report();
+}

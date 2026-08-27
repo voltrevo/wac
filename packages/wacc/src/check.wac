@@ -235,6 +235,16 @@ export i32 errDuplicateBinding() { return 205; }
  * a sentence about a construct the program does not contain. `issues/lang/0266c`.
  */
 export i32 errDuplicateCaseValue() { return 207; }
+
+/**
+ * A call naming the wrong **number** of type arguments — `zero<i32, f64>()` for `T zero<T>()`.
+ *
+ * Its own code rather than `errInferType`, whose message is *"cannot tell what a type parameter is
+ * here"*: with a count written the compiler can tell perfectly well, and the complaint is that the
+ * caller and the declaration disagree about how many there are. Saying the first about the second
+ * would be the kind of message `design/lang/0011` was written to stop producing.
+ */
+export i32 errTypeArgCount() { return 208; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -539,6 +549,25 @@ string templateOf(string t) {
  * parameter: that is a generic's member read without knowing what it was instantiated with, and
  * there is no answer to give.
  */
+/** How many entries a comma-joined list holds — `""` is none, `"U"` is one, `"K,V"` is two. */
+i32 commaCount(string joined) {
+  if (joined == "") { return 0; }
+  i32 n = 1;
+  u8[] b = joined.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == ',') { n = n + 1; } }
+  return n;
+}
+
+/** A method's own type parameters, comma-joined — `then<U>` gives `"U"`, and almost every one `""`. */
+string ownParamNames(C c, i32[] typeParams) {
+  string out = "";
+  for (i32 i = 0; i < typeParams.len(); i++) {
+    if (i > 0) { out = out + ","; }
+    out = out + tokenText(c, typeParams[i]);
+  }
+  return out;
+}
+
 string substituteType(C c, string owner, string written) {
   string base = genericBase(owner);
   string template = base == "" ? owner : base;
@@ -1238,17 +1267,21 @@ export struct C {
   bool expectedUnknown;
 
   /**
-   * Whether each method declares **its own** type parameters — `then<U>(…)`.
+   * Each method's **own** type parameters, comma-joined — `then<U>(…)` records `"U"`.
    *
-   * Parallel to `methodNames`, and the only thing the checker needs to know about them: the
-   * declaration is legal, a *call* is not supported yet, and saying which feature is missing beats
+   * Parallel to `methodNames`, and empty for almost every method. It was a `bool` until 2026-08-27,
+   * when *how many* there are became a question worth answering: `b.map<i64, i32>(f)` writes two
+   * arguments for one letter, and the arity is checkable without binding anything. The names
+   * themselves are what `design/lang/0010` option C binds.
+   *
+   * A `call` is still refused — the declaration is legal, and saying which feature is missing beats
    * whatever falls out downstream. What fell out was the lambda argument answering "nothing here
    * wants a function" about a lambda that is fine, because the parameter it was checked against is
    * written in a letter nobody has bound.
    *
    * **Last field**, for the reason the ones above give: `C` is built positionally.
    */
-  bool[] methodTypeParams;
+  string[] methodTypeParams;
   /**
    * Each name's funcref **arity**, taken from the type as *written*, or -1.
    *
@@ -1335,7 +1368,7 @@ export struct C {
              string[decls](), 0,
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             bool[decls](), i32[locals](fill: 0 - 1), 0,
+             string[decls](), i32[locals](fill: 0 - 1), 0,
              string[decls](), string[decls](), 0,
              string[decls](), 0);
   }
@@ -1712,7 +1745,7 @@ export struct C {
 
   /** Record one method of one struct. */
   void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
-                     string[] params, Stmt[] body, bool ownTypeParams) {
+                     string[] params, Stmt[] body, string ownTypeParams) {
     if (this.methodCount >= this.methodNames.len()) { return; }
     if (this.methodCount < this.methodTypeParams.len()) {
       this.methodTypeParams[this.methodCount] = ownTypeParams;
@@ -2537,7 +2570,7 @@ i32 firstTokenOfExpr(Expr e) {
     case Member(obj, nameTok): firstTokenOfExpr(obj),
     case Binary(op, left, right): firstTokenOfExpr(left),
     case Index(arr, index): firstTokenOfExpr(arr),
-    case Call(callee, args): firstTokenOfExpr(callee),
+    case Call(callee, args, callTargs): firstTokenOfExpr(callee),
     else: -1
   };
 }
@@ -3024,6 +3057,50 @@ string funcValueType(C c, i32 at) {
   return out + ") -> " + c.funcReturns[at];
 }
 
+/**
+ * The same, for a generic function named with its type arguments — `id<i32>` is `fn(i32) -> i32`.
+ *
+ * The comment above says why the bare name has no type: *"its signature is written in letters, and a
+ * letter is not a type any assignment can be checked against"*. Writing the arguments is what turns
+ * the letters into types, so this is that sentence with its own remedy applied.
+ */
+string funcValueTypeWritten(C c, i32 at, Ty[] typeArgs) {
+  i32 n = c.funcTypeParamCount[at];
+  if (typeArgs.len() != n) { return typeNone(); }
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  for (i32 i = 0; i < n; i++) {
+    names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
+    bound[i] = typeOfTy(c, typeArgs[i]);
+    if (bound[i] == typeNone() || bound[i] == "") { return typeNone(); }
+  }
+  string out = "fn(";
+  for (i32 i = 0; i < c.funcParamCount[at]; i++) {
+    if (i > 0) { out = out + ", "; }
+    out = out + applyBindings(c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
+  }
+  return out + ") -> " + applyBindings(c.funcReturns[at], names, bound);
+}
+
+/** The generic function a written instantiation names when it stands alone, or -1. */
+i32 genericFuncOfTypeName(C c, Ty qual) {
+  match (qual.kind) {
+    case Named(tok, targs): {
+      i32 at = c.funcAt(tokenText(c, tok));
+      return at >= 0 && c.funcGenerics[at] ? at : 0 - 1;
+    }
+    else: { return 0 - 1; }
+  }
+}
+
+/** The type arguments a written instantiation carries. */
+Ty[] typeNameArgs(Ty qual) {
+  match (qual.kind) {
+    case Named(tok, targs): { return targs; }
+    else: { return Ty[](); }
+  }
+}
+
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
@@ -3073,7 +3150,7 @@ export string typeOfExpr(C c, Expr e) {
      * Read in the receiver's world, so `Vec<i32>.at()` declared `T at(…)` is an `i32`. A funcref call
      * has no name to look up and stays unknown, as it always did.
      */
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Member(obj, nameTok): {
           // **A variant construction is a value, and had no type at all.** `E.A(1)` is an `A` — the
@@ -3331,6 +3408,15 @@ export string typeOfExpr(C c, Expr e) {
       // is the slot's business and not this function's.
       return mt == "" ? typeNone() : mt;
     }
+    // **A written instantiation standing alone is a generic function used as a value**, and its type
+    // is that function's signature with the letters bound — `id<i32>` is `fn(i32) -> i32`.
+    // `funcValueType` says why the bare name has none: the signature is written in letters, and a
+    // letter is not a type any assignment can be checked against. Anything else here is a type where
+    // a value belongs, which the checking walk refuses; this one says unknown and stays silent.
+    case TypeName(qual): {
+      i32 gat = genericFuncOfTypeName(c, qual);
+      return gat < 0 ? typeNone() : funcValueTypeWritten(c, gat, typeNameArgs(qual));
+    }
     // A construction is either a struct being made or a function being called — the parser cannot
     // tell, so neither can this, and the name decides. A struct name gives the struct; a function
     // name gives what it returns; anything else is unknown.
@@ -3338,8 +3424,18 @@ export string typeOfExpr(C c, Expr e) {
       string name = "";
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          if (typeArgs.len() > 0) { return typeOfTy(c, ctype); }
           name = tokenText(c, tok);
+          if (typeArgs.len() > 0) {
+            // **A generic function named with its type arguments is a call, not a type.**
+            // `zero<i32>()` and `Vec<i32>(…)` are the same syntax, so the name decides which — the
+            // same rule this arm already applies one line down, moved above the point where written
+            // arguments were taken as proof of a type. Without it `typeOfTy` answered
+            // `unknown type 'zero'`, which is a true sentence about a reading nobody asked for.
+            // `design/lang/0011` step 4.
+            i32 fat = c.funcAt(name);
+            if (fat >= 0 && c.funcGenerics[fat]) { return genericCallReturnWritten(c, fat, typeArgs); }
+            return typeOfTy(c, ctype);
+          }
         }
         else: { }
       }
@@ -4118,6 +4214,46 @@ void checkExpr(C c, Expr e) {
         c.report(errTypeAsValue(), e.line, e.col);
       }
     }
+    // A written instantiation standing where a value belongs, which since `design/lang/0011` widened
+    // the trigger is two very different programs arriving at one node. `id<i32>` is a generic
+    // function named with its type arguments and is step 4's job to make legal. `a < b > c` is a
+    // pair of comparisons whose `a < b` this rule claimed, and its author never asked for a type at
+    // all — so the note names the escape rather than only the complaint, because the second author
+    // is the one who cannot otherwise tell what happened. `issues/lang/0235a`.
+    //
+    // Reported here and not in `typeOfExpr`, which answers `typeNone()` for this and says nothing:
+    // one place decides, or a reader gets the contradiction of a diagnostic beside a type.
+    case TypeName(qual): {
+      string base = "";
+      match (qual.kind) {
+        case Named(tok, targs): { base = tokenText(c, tok); }
+        else: { }
+      }
+      // **A generic function named with its type arguments is a value** — `design/lang/0011`
+      // criterion 3. `fn[i32(i32)] g = id<i32>;` is how one is written, since there is no `&f`, and
+      // the letters are what stopped the bare name from having a type at all.
+      i32 gat = genericFuncOfTypeName(c, qual);
+      if (gat >= 0) {
+        Ty[] gargs = typeNameArgs(qual);
+        i32 want = c.funcTypeParamCount[gat];
+        if (gargs.len() != want) {
+          c.reportWith(errTypeArgCount(), e.line, e.col,
+                       base + " takes " + lineText(want) + " type argument" +
+                       (want == 1 ? "" : "s") + ", and " + lineText(gargs.len()) + " " +
+                       (gargs.len() == 1 ? "was" : "were") + " written");
+          return;
+        }
+        for (i32 i = 0; i < gargs.len(); i++) { typeOfTy(c, gargs[i]); }
+        return;
+      }
+      // **Which of the two it is, is a question about the name**, and the checker is the first place
+      // that can answer it. Advising parentheses to someone who wrote `id<i32>` meaning the function
+      // would be advice for a program they were not writing.
+      c.reportWith(errTypeAsValue(), e.line, e.col,
+                   c.funcAt(base) >= 0
+                     ? base + " is a function, but not a generic one, so it takes no type arguments"
+                     : base + "<…> is read as type arguments — parenthesise to compare instead");
+    }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
     // asked about. Both land on the `is`, which is this node's own position.
     case Is(left, target, other, negated): {
@@ -4409,7 +4545,15 @@ void checkExpr(C c, Expr e) {
         case Named(ctok, ctargs): {
           string cname = tokenText(c, ctok);
           for (i32 i = 0; i < args.len(); i++) {
-            c.expected = argumentSlot(c, cname, ctargs.len() > 0 ? typeOfTy(c, ctype) : cname, i);
+            // **A generic function's name is not a type.** `zero<i32>()` and `Vec<i32>(…)` are the
+            // same syntax, so asking `typeOfTy` about the first answers `unknown type 'zero'` — and
+            // this line is why `zero<i32>()` worked while `identity<i32>(4)` did not, since a call
+            // with no arguments never enters the loop. `argumentSlot` answers unknown for a generic
+            // function whatever it is handed, so the bare name is the same answer without the
+            // diagnostic. `design/lang/0011` step 4.
+            string slotSpelled = ctargs.len() > 0 && !nameIsGenericFunc(c, cname)
+                               ? typeOfTy(c, ctype) : cname;
+            c.expected = argumentSlot(c, cname, slotSpelled, i);
             // `argumentSlot` answers `typeNone()` for four different reasons, and one of them is that
             // `cname` is neither a struct nor a function *this file* contains — an imported type,
             // under a single-file check. Empty therefore means "could not tell" here as it does in
@@ -4479,7 +4623,7 @@ void checkExpr(C c, Expr e) {
     }
     // A real `Call` is a method or a funcref. A method call is `Call(Member(receiver, name), args)`
     // and is checked; a funcref call has no name to look up and is not.
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       // **A variant construction's arguments have slots, and they are the payload's.** `Wrap.W(Box(5))`
       // puts a `Box<T>` in the first one, which is what a bare `Box(5)` needs to know which instance
       // it is — without it the construction was checked against no slot at all and refused as "not
@@ -5259,7 +5403,7 @@ bool funcrefCall(C c, Expr e) {
         else: { return false; }
       }
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Ident(tok): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
         else: { return false; }
@@ -5278,6 +5422,36 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = "";
+  }
+  // **Written type arguments bind every letter, so nothing is left to infer** — `design/lang/0011`
+  // step 4. They ride on the `Construct`'s own `Ty` rather than on `Call`, because `zero<i32>()` and
+  // `Vec<i32>(…)` are the same syntax and the parser builds a `Construct` for both.
+  //
+  // The point of the feature is the letter no argument mentions: `T zero<T>()` is declarable today
+  // and every call to it is refused, so the person who writes an unusable generic never finds out —
+  // only a caller does.
+  Ty[] written = Ty[]();
+  match (call.kind) {
+    case Construct(wtype, wargs, wnamed): {
+      match (wtype.kind) {
+        case Named(wtok, wtargs): { written = wtargs; }
+        else: { }
+      }
+    }
+    else: { }
+  }
+  if (written.len() > 0) {
+    if (written.len() != n) {
+      c.reportWith(errTypeArgCount(), call.line, call.col,
+                   name + " takes " + lineText(n) + " type argument" + (n == 1 ? "" : "s") +
+                   ", and " + lineText(written.len()) + " " +
+                   (written.len() == 1 ? "was" : "were") + " written");
+      return;
+    }
+    // Resolved for its diagnostic: `typeOfTy` reports a name that is not a type, and `zero<Typoo>()`
+    // must say so rather than pass because the *count* was right.
+    for (i32 i = 0; i < n; i++) { typeOfTy(c, written[i]); }
+    return;
   }
   for (i32 i = 0; i < args.len(); i++) {
     // **A literal does say what `T` is, here.** `pick(3, 9, true)` infers `i32` from the literals and
@@ -5753,7 +5927,7 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
       }
       return false;
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       for (i32 i = 0; i < args.len(); i++) {
         if (readsUnsettledConst(c, prog, args[i], settled, settledCount)) { return true; }
       }
@@ -5796,7 +5970,7 @@ bool callsAFunction(C c, Expr e) {
       }
       return false;
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       // **A variant construction is a value, not a call.** `const E X = E.A(7);` is a constant the
       // spec writes down — `variables.md` lists a struct, an enum variant, and anything built out of
       // them — and it parses as `Call(Member(E, A), …)` like everything else with parentheses. What
@@ -5880,6 +6054,14 @@ bool freshValue(C c, Expr e) {
     }
     case Construct(ctype, args, named): {
       if (named.len() > 0) { return false; }
+      // The same question as the two sites above: a generic function's name is not a type, and
+      // asking would report one. It has no fields either, so there is nothing here to answer about.
+      match (ctype.kind) {
+        case Named(ftok, ftargs): {
+          if (ftargs.len() > 0 && nameIsGenericFunc(c, tokenText(c, ftok))) { return false; }
+        }
+        else: { }
+      }
       string t = typeOfTy(c, ctype);
       i32 n = c.constructArity(t);
       for (i32 i = 0; i < n && i < args.len(); i++) {
@@ -5973,7 +6155,7 @@ bool constExpr(C c, Expr e) {
     // inside a `const this` method is refused, and the accessor is the whole point of the case: it
     // looks like a way to launder the constness and is not one. The receiver decides, not the return
     // type — a method called on something const returns something const.
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Member(obj, nameTok): {
           if (!constExpr(c, obj)) { return false; }
@@ -6542,6 +6724,34 @@ string genericCallReturn(C c, i32 at, Expr[] args) {
 }
 
 /**
+ * A generic function's return type with its letters bound to the arguments **as written**.
+ *
+ * The written half of `genericCallReturn`, which binds them by matching declared parameter types
+ * against actual ones. Everything after the binding is the same, which is the point: a written type
+ * argument and an inferred one produce one instantiation, not two.
+ *
+ * Unknown when the count is wrong or an argument names no type — both are reported by the checking
+ * walk, and answering a type here as well would put a diagnostic beside a type that cannot exist.
+ */
+bool nameIsGenericFunc(C c, string n) {
+  i32 at = c.funcAt(n);
+  return at >= 0 && c.funcGenerics[at];
+}
+
+string genericCallReturnWritten(C c, i32 at, Ty[] typeArgs) {
+  i32 n = c.funcTypeParamCount[at];
+  if (typeArgs.len() != n) { return typeNone(); }
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  for (i32 i = 0; i < n; i++) {
+    names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
+    bound[i] = typeOfTy(c, typeArgs[i]);
+    if (bound[i] == typeNone() || bound[i] == "") { return typeNone(); }
+  }
+  return applyBindings(c.funcReturns[at], names, bound);
+}
+
+/**
  * What the `i`th argument of a call or construction is required to be, or unknown.
  *
  * A struct's `i`th field or a function's `i`th parameter — the two shapes share the syntax, so this
@@ -6575,6 +6785,17 @@ void checkReceiver(C c, Expr obj) {
         return;
       }
     }
+    // **A written instantiation is legal here and nowhere else** — `Maybe<i32>.Just(4)`. It is the
+    // same exemption the arm above makes for a bare type name, and it belongs here for the same
+    // reason: `checkExpr`'s `TypeName` arm refuses one wherever a *value* belongs, so the one
+    // position where a type is not a value has to say so. Without this the arm fires on the
+    // construct `issues/lang/0088` exists to allow, which is how `spec/cases/0235` caught it.
+    //
+    // **The instantiation is still resolved**, because exempting the position is not the same as
+    // exempting the type written in it: `typeOfTy` reports an unknown name as it goes, and without
+    // this call `Maybe<Typoo>.Just(4)` drew no diagnostic whatever — a worse answer than the false
+    // alarm it replaced, and one nothing else in the file would have caught.
+    case TypeName(qual): { typeOfTy(c, qual); return; }
     else: { }
   }
   checkExpr(c, obj);
@@ -7175,9 +7396,33 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // letter nobody has bound, so every complaint downstream is about the wrong thing. The one that
   // actually came out was *"nothing here wants a function"* at a lambda that is fine.
   i32 tpAt = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
-  if (tpAt >= 0 && tpAt < c.methodTypeParams.len() && c.methodTypeParams[tpAt]) {
-    c.reportWith(errMethodTypeParams(), callee.line, callee.col, "no " + recv + "." + name +
-                 " without its type arguments");
+  if (tpAt >= 0 && tpAt < c.methodTypeParams.len() && c.methodTypeParams[tpAt] != "") {
+    // **The note must not promise a workaround.** It read *"without its type arguments"*, which is
+    // advice — and until `design/lang/0011` step 3 writing them was a parse error, so following it
+    // answered `a type name is not a value` under the `<`, about a different program. They parse now
+    // and are still not bound, so the note says which of the two the caller did and stops there.
+    // `design/lang/0010` option C is what binds them.
+    i32 wrote = 0;
+    match (call.kind) {
+      case Call(callExpr, callArgs, writtenTargs): { wrote = writtenTargs.len(); }
+      else: { }
+    }
+    // **The arity is checkable without binding anything**, which is why the table holds the names
+    // rather than a flag. `b.map<i64, i32>(f)` is wrong for every possible binding at once, and
+    // saying so is a better answer than "not yet bound" — that one reads as "come back later", and
+    // coming back later would not have helped.
+    i32 takes = commaCount(c.methodTypeParams[tpAt]);
+    if (wrote > 0 && wrote != takes) {
+      c.reportWith(errMethodTypeParams(), callee.line, callee.col,
+                   recv + "." + name + " takes " + lineText(takes) + " type argument" +
+                   (takes == 1 ? "" : "s") + ", and " + lineText(wrote) + " " +
+                   (wrote == 1 ? "was" : "were") + " written");
+      return;
+    }
+    c.reportWith(errMethodTypeParams(), callee.line, callee.col,
+                 wrote > 0 ? "no " + recv + "." + name + " yet — written type arguments are parsed "
+                             + "and not yet bound"
+                           : "no " + recv + "." + name + " — it has a type parameter of its own");
     return;
   }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
@@ -7798,7 +8043,7 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
 bool genericVariantConstruction(C c, Expr e) {
   match (e.kind) {
     // `Maybe.Just(4)` — a variant with a payload, which is a call.
-    case Call(callee, args): { return genericEnumMember(c, callee); }
+    case Call(callee, args, callTargs): { return genericEnumMember(c, callee); }
     // `Maybe.Absent` — one without, which is not.
     case Member(obj, nameTok): { return genericEnumMember(c, e); }
     else: { return false; }
@@ -7823,7 +8068,7 @@ bool genericEnumMember(C c, Expr e) {
 
 bool isVariantConstruction(C c, Expr e) {
   match (e.kind) {
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Member(obj, nameTok): {
           match (obj.kind) {
@@ -8668,10 +8913,13 @@ bool mentionsParam(C c, Ty t, i32[] typeParams) {
 }
 
 /**
- * A line number for a diagnostic's note.
+ * A small positive number for a diagnostic's note — a line number, or a count.
  *
  * Local rather than imported: `numText` lives in the emitter, and the checker does not depend on it —
  * a diagnostic wanting to say "line 12" is not a reason to make the front end depend on the back one.
+ *
+ * `0` and below render as `?`, which is right for a line nobody recorded and is why a caller
+ * counting something should not reach here with a zero it means to print.
  */
 string lineText(i32 v) {
   if (v <= 0) { return "?"; }
@@ -8991,7 +9239,7 @@ export void declareModule(C c, Program prog, string[] only) {
                           !methods[mi].hasThis, methods[mi].thisConst,
                           gen ? writtenTy(c, methods[mi].returnType)
                               : typeOfTy(c, methods[mi].returnType), emps,
-                          methods[mi].body, methods[mi].typeParams.len() > 0);
+                          methods[mi].body, ownParamNames(c, methods[mi].typeParams));
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -9031,7 +9279,7 @@ export void declareModule(C c, Program prog, string[] only) {
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
                           typeOfTy(c, methods[i].returnType), mps,
-                          methods[i].body, methods[i].typeParams.len() > 0);
+                          methods[i].body, ownParamNames(c, methods[i].typeParams));
           c.activeParamCount = savedActive;
         }
       }

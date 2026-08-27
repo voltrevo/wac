@@ -146,10 +146,18 @@ to say why it was dropped. It admits exactly the same programs as the rule above
 with a table of tokens in the spec and one member that has to be argued for separately. A simple rule
 that needs parentheses in a shape nobody writes is worth more than a flexible one that needs a table.
 
-**This widens what wac does today**, which fires only when `>` is immediately followed by `(`. The
-gain is that a generic function becomes referable as a value at all: `fn[i32(i32)] g = id<i32>;` is
-`expected an expression` today, with no workaround but a lambda wrapper — which itself needs the
-inference this document is about.
+**This is a simplification of what wac does today, not a widening** — corrected 2026-08-26 by reading
+the parser instead of inferring from the diagnostics. `packages/wacc/src/parse.wac` already applies a
+follow set: after the type arguments it accepts `[`, `(`, `{` and `?`. So the change is to *delete*
+that test and keep what remains —
+
+    if (next == kLt()) { return afterTypeArgs(p, 1) >= 0; }
+
+— which is the rule above, and is less code than what is there now.
+
+The gain is that a generic function becomes referable as a value at all: `fn[i32(i32)] g = id<i32>;`
+is `expected an expression` today, because `;` is not in that follow set, and there is no workaround
+but a lambda wrapper — which itself needs the inference this document is about.
 
 ## Why committing in the parser is affordable
 
@@ -212,8 +220,22 @@ the rule it protects has produced a feature nobody can use.
 
 1. **`issues/lang/0088`** — a variant of a written type, `Maybe<i32>.Just(4)`. Needs none of the
    decisions above and is arguably a bug rather than a feature, since the struct form already works.
-2. **Widen the trigger** from "`>` immediately followed by `(`" to "it parses as a type list".
-   This is the piece that makes `id<i32>` a value, and it is separable from everything below it.
+
+   **Scoped 2026-08-26, and it is two changes rather than one.** `parse.wac`'s own comment says why:
+   *"`.` is deliberately not in that set … Adding it is one token of parsing and would be wrong on
+   its own, because `parseConstructionOrCall`'s `.` branch builds its base from the name token and
+   drops the type arguments — so `Cell<i32>.of(3)` would be accepted and mean `Cell.of(3)`, which is
+   a spelling whose meaning is 'ignore what you wrote'."*
+
+   So: add `kDot()` to the follow set, **and** give the `.` branch a way to carry `nameArgs`. There
+   is no expression shape for it — `Member(Expr obj, i32 nameTok)` takes an `Expr`, and `Ident(tok)`
+   cannot hold type arguments — so it wants one new `ExprKind` variant, something like `TypeName(Ty)`,
+   valid only as the object of a `Member`. Because `match` is exhaustive the compiler enumerates the
+   work: 48 sites in `check.wac`, 41 in `emit.wac`, 3 in `print.wac`, most of them a one-line "not
+   valid here".
+2. **Simplify the trigger** in `packages/wacc/src/parse.wac`: the `kLt()` branch currently accepts
+   only `[`, `(`, `{` and `?` after the type arguments, and becomes `afterTypeArgs(p, 1) >= 0`. This
+   is the piece that makes `id<i32>` a value, and it is separable from everything below it.
 3. **The postfix path**: `recv.m<T>(x)` parses as `Cell<i32>(…)` does. Closes the grammar half of
    `issues/lang/0235a` and is what makes [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md)
    option C writable at all.
@@ -295,15 +317,91 @@ rather than stylistic, so they are recorded there and repeated here:
 | step | state |
 |---|---|
 | the target, the spelling, the trigger | **accepted** with the operator, 2026-08-26 |
-| 1 — `issues/lang/0088` | open, separable, and the cheapest thing here |
-| 2 — the trigger becomes "parses as a type list" | **not started** — buys `id<i32>` as a value |
-| 3 — the postfix path | **not started** |
-| 4 — name resolution | **not started** — this is the feature |
-| 5 — the diagnostic | **not started**; `issues/lang/0235a` is open and is this |
-| 6 — the emitter | **not started**, and the only large one |
-| 7 — the spec | **not started** |
+| 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
+| 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
+| 3 — the postfix path | **done** 2026-08-27 — `ExprKind.Call` carries `Ty[] typeArgs`; `v.fold<i64>(0, f)` parses. Not yet *bound* — that is 0010 C |
+| 4 — name resolution | **done for free functions** 2026-08-27 — calls *and* values: `zero<i32>()` and `fn[i32(i32)] g = id<i32>;` both compile and run. `[§wacc-written-type-args]`, cases 0239–0242. The method half is `design/lang/0010` item 3 |
+| 5 — the diagnostic | **done** 2026-08-27 — `perrTypeArgsThenValue`; the checker's `TypeName` arm branches on whether the name is a function; and the method-type-parameter refusal stops promising a workaround. `issues/lang/0235a` is covered on both halves |
+| 6 — the emitter | **needed nothing for free functions** — the existing instance machinery registered and emitted them once the checker stopped refusing. The method half is still 0010 item 3 |
+| 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
 | the tuple constraints | recorded in `issues/lang/0074` |
 
-**Nothing is implemented.** Two things are worth watching rather than assuming: whether committing in
-the parser — rather than falling back — is tolerable for the shadowing case in daily use, and whether
-the comma-separated-arguments surprise shows up once people start writing generic calls.
+### Which acceptance criteria are met
+
+| # | criterion | state |
+|---|---|---|
+| 1 | `zero<i32>()` callable | **yes** — `spec/cases/0239`, answers 7 |
+| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. Worth a decision of its own rather than smuggling in here |
+| 3 | `fn[i32(i32)] g = id<i32>;` | **yes** — `spec/cases/0242`, answers 6. Needed `typeOfE` an answer as well as the emission: the emitter could write the value and could not say what it was, and declined the module as *untyped a type used as a value* |
+| 4 | `Option<i32>.None.orElse(7)` | **yes** |
+| 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |
+| 6 | `core/test/option_test.wac`'s workaround locals | **partly** — one of the three was single-use and is now written inline. The other two are used more than once, so inlining them would make the file *longer*; the criterion's "a real file gets shorter" held for one local rather than three, and what actually changed is that the workaround is no longer forced |
+| 7 | `Cell<i32>()`, `Cell<Cell<i32>>()`, receiver position included | **yes** |
+| 8 | `count < list.len() > 0` still a comparison | **yes** — `spec/cases/0238` |
+| 9 | `Cell<Typoo>()` says unknown type `Typoo` | **yes** |
+| 10 | `a < b > c` and `g(a < b, c > e)` stop compiling, with the rule and escape named | **yes** — `spec/cases/0236`, `0237`, and `packages/wacc/test/wac/typeargsrule_test.wac` asserts the words |
+| 11 | one instantiation per written type argument, shared with the inferred one | **yes**, and measured in emitted bytes rather than asserted — including the `issues/lang/0260c` shape, where the inferred path binds a *variant* and canonicalises to its enum while the written path spells the enum |
+
+### Step 4 splits, and the cheaper half is the one this document is named for
+
+Scoped 2026-08-27 while implementing steps 2 and 3. The two halves reuse different machinery and only
+one of them needs the thing `design/lang/0010` calls the only large piece.
+
+**A generic free function — `zero<i32>()`, criteria 1 and 2 — needs no new level of
+monomorphisation.** `zero<i32>()` already parses as a `Construct` whose `Ty` carries the arguments,
+because `zero<i32>()` and `Vec<i32>(…)` are the same syntax; and the emitter already registers,
+orders and emits one function per generic-function instance, discovering them at call sites through
+`genericCallInstance`. That function binds the letters by matching *declared parameter types against
+actual argument types* — so the written-argument case is the same registration with the binding
+handed to it instead of inferred. What blocks it today is the **checker**, which reports `unknown
+type 'zero'` from `typeOfTy` before anything else runs.
+
+**A method with its own letters — criteria in `design/lang/0010` — does need it**, because the
+instance is a *pair*: `Box<i32>.map<i64>` multiplies the owner's instantiation by the method's
+arguments, and the emission loops match instances against top-level declarations, which a method is
+not. That is 0010's item 3.
+
+So the order that gets the most for the least is: the free-function half first — it is the sentence
+this document is titled with, *"so a generic free function is usable"* — and the method half with
+0010, where its cost is already written down.
+
+### What the implementation taught, that the document did not predict
+
+- **The bare shape costs nothing.** `a < b > c` compares a `bool` with an integer, so it was already
+  an error before this rule claimed it — only the message changed. The argument-list shape
+  `g(a < b, c > e)` is the whole of the real loss, and `spec/cases/0236`/`0237` are the pair that
+  record it.
+- **Only the first comparison needs parenthesising.** `g((a < b), c > e)` compiles: once `(a < b)` is
+  a parenthesised expression the `c > e` has nothing to attach to. A reader told "use parentheses"
+  would write four, and `spec/cases/0237` exists to say two is enough.
+- **Exempting a position is not exempting what is written in it.** `checkExpr`'s new `TypeName` arm
+  refuses a written instantiation wherever a value belongs, so receiver position needed an exemption
+  in `checkReceiver` — and the first version returned without looking, which left
+  `Maybe<Typoo>.Just(4)` with *no diagnostic at all*. Worse than the false alarm it replaced, and
+  `spec/cases/0235` is what caught it.
+- **One fault, one message, needs the poison node.** Reporting in the parser and then handing on a
+  real `TypeName` drew a second complaint from the checker about the same `<`; leaving the token
+  unconsumed drew one from the statement parser about a semicolon. `perrBadPrimary`'s existing
+  idiom — fail, advance, return `NullLit` — is what makes it one.
+- **A refusal can name an escape that does not exist.** `no Box<i32>.map without its type
+  arguments` reads as an instruction, and until step 3 writing them was a parse error, so following
+  it answered `a type name is not a value` under the `<` — about a different program. Two wrong
+  messages in a row, and the second is the one the reader would have believed. The note now says
+  which of the two the caller did and stops there.
+- **The first `.` and the rest are parsed in different places.** `looksLikeConstructionOrCall` claims
+  `b.map` before `parsePostfix` sees it, so `b.map<i64>(f)` goes through `parseConstructionOrCall`
+  and `b.inner().map<i64>(f)` through `parsePostfix`. Fixing one and testing with the other spelling
+  is a way to conclude the change did not work.
+- **Widening a parser rule can strand an error code.** `perrCtorBrace` had exactly one input in the
+  whole suite — `return S<i32>;` — put there by a mutation sweep that found the code unreachable
+  otherwise. Step 2 took it: that source is a `TypeName` now. The code survives on the degenerate
+  `S<>`, where `parseTypeArgs` returns nothing, but that had to be *looked for* rather than assumed,
+  and the two parsers disagree about where it is. When a rule starts claiming inputs, ask which
+  diagnostics used to own them.
+- **A neighbouring gap, filed as `issues/lang/0272b`:** `(x < 2) > 0` type-checks and evaluates the
+  `bool` as `1`, where `b > y` on a `bool` local is correctly refused. Found writing case 0238, which
+  was rewritten not to depend on it.
+
+**Two things are still worth watching** rather than assuming: whether committing in the parser is
+tolerable for the shadowing case in daily use, and whether the comma-separated-arguments surprise
+shows up once people start writing generic calls. Nothing in the corpus exercises either yet.

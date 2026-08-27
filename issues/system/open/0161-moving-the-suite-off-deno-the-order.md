@@ -2076,3 +2076,40 @@ Deno lane and skipped the wac one. And the runner's own tests live under `tools/
 gate runs (`deno task docs` starts with `wac test tools/`) rather than the suite — the suite's lane
 roots are `packages` and `core`, in this runner exactly as in the last one. So a change to the
 orchestrator is checked by `deno task docs`, not by the suite it orchestrates.
+
+## `parse_errors` acquired its first deliberate divergence — agent-b, 2026-08-27
+
+Recorded because it bears on the decision this issue is blocked on, and because it is the first time
+the premise behind that file has been false rather than merely questioned.
+
+`design/lang/0011` step 2 made a type argument list that parses *be* one. So
+`i32 f() { return S<i32>; }` is no longer a parse error in wacc: it is a `TypeName` the **checker**
+refuses by name, because `id<i32>` is the same parse and whether it is a generic function or a
+comparison is a question about the name, which the parser cannot answer. The reference still reports
+at parse time.
+
+`parse_errors.test.ts` compares the two parsers case by case, and `agreeAll` has no exemption
+mechanism — by design, and rightly. So this went in as a test of its own, asserting both halves:
+wacc's parser says nothing there, and the reference's does (the second half so the test loses its
+subject loudly if the reference ever changes).
+
+**What it means for the decision.** The section above says the operator's principle — *the
+reference's only job is bootstrapping* — "reaches `parse_errors`, which compares diagnostics by
+position, more clearly than it reaches" the two generator files. That is now not just a principle:
+the languages have started to differ on purpose, and the file's premise is maintained by recording
+exceptions. One exception is cheap. The argument for keeping it as an oracle gets weaker with each
+one, and every deliberate divergence from here will land in this same file.
+
+**What the file is still worth**, so the decision is not made on one side of the ledger. Two of its
+claims have nothing to do with the reference and would have to survive any port or deletion:
+
+- the parse codes are the values `errorCodes.ts` records, and the two sets are the same size — which
+  is what caught `perrTypeArgsThenValue` going unrecorded, immediately;
+- every code has an input that reaches it, which is what a mutation sweep replacing each `perr*` with
+  `return 0` was able to defeat before these cases existed (wac-mono 0005). Step 2 took
+  `perrCtorBrace`'s only input away and that had to be re-established with `S<>`, so this is a live
+  check rather than a historical one.
+
+Neither needs the reference. If this file is deleted rather than ported, those two claims want a home
+first — and a port that keeps only them is exactly the "removes the reference, so it cannot entrench
+what it deletes" shape this issue already identifies as safe either way.

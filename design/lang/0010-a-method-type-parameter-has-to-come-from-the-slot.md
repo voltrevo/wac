@@ -222,6 +222,96 @@ C needs no inference work, but it is not free:
    registers its methods per instantiation, so `Pending<i64>.then<Foo>` is a longer name in the same
    table.
 
+### Progress — agent-b, 2026-08-27
+
+**The syntax exists.** `design/lang/0011` steps 1–3 landed, so `v.fold<i64>(0, f)` parses and the
+type arguments reach the checker as `ExprKind.Call`'s `typeArgs`. Before that they were a parse
+error, which made item 2's refusal message worse than it looked: *"no Box<i32>.map without its type
+arguments"* reads as an instruction, and following it answered `a type name is not a value` under the
+`<`, about a different program.
+
+**One of the three refusals now does useful work rather than only refusing.** `C.methodTypeParams`
+holds the letters rather than a flag, so the *count* is checkable without binding anything —
+`b.map<i64, i32>(f)` is wrong for every possible binding at once and is told so. The three messages
+are now distinct and each is true:
+
+    b.map(widen)              no Box<i32>.map — it has a type parameter of its own
+    b.map<i64>(widen)         no Box<i32>.map yet — written type arguments are parsed and not bound
+    b.map<i64, i32>(widen)    Box<i32>.map takes 1 type argument, and 2 were written
+
+**What is left is item 3, and it is the whole of what is left.** Binding the letters in the checker
+is small — the substitution machinery is a stack of (from, to) pairs with a push/pop count, and a
+method's letters are a second push on it. What that would produce on its own is a call the checker
+accepts and the emitter declines, which is a worse answer than today's single clear refusal. So the
+checker half should land *with* the emitter half rather than before it.
+
+Item 1 is deliberately not done: declaring `Pending<U> then<U>(…)` while no call to it can be emitted
+adds a method nobody can reach.
+
+**Where the emitter's decline is**, for whoever picks this up: one site, `emit.wac`'s
+`funcMethodGeneric[ma]` guard in the `canEmit` walk. The instance machinery it would have to join is
+`pushSubstitution`/`popSubstitution` — which already returns how many pairs it pushed, so a second
+push for the method's letters is the shape it was built for — and `collectInstances`, whose comment
+warns that discovery order and registration order have to agree because the function table's order is
+the module's numbering.
+
+#### Which acceptance criteria are met
+
+| # | criterion | state |
+|---|---|---|
+| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this — checked rather than assumed, since the point of listing it was that the declaration passes while every call is refused |
+| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — needs item 3 |
+| 3 | `v.fold<i64>(0, …)` with one | **parses** since `design/lang/0011` step 3, and is refused with *"written type arguments are parsed and not yet bound"*. Needs item 3 |
+| 4 | `p.then<Foo>(…)` | **no**, and item 1 has not been done either — `Pending<U> then<U>(…)` does not exist, and declaring it while no call can be emitted adds a method nobody can reach |
+| 5 | a three-link chain | **no** — needs 4 |
+| 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **no** — this *is* item 3 |
+
+**So what landed is the syntax and the diagnostics, and what is left is one thing.** That is a better
+position than it sounds: criterion 3's spelling could not be written at all before, so the refusal
+for criterion 2 was advice pointing at a parse error.
+
+### A design for item 3, from reading the emitter — agent-b, 2026-08-27
+
+Not implemented. Written down because the reading is most of the work and the alternative is somebody
+doing it again.
+
+**The shape to add is a fourth name.** The emitter already has three: a function `zero`, a generic
+function instance `zero<i32>`, and a generic struct's method `Box<i32>.map` — registered by
+`collectInstances` as `addFunc(inst + "." + methodName, …)` with `funcRecv = inst`, and immediately
+*declined*, because `funcMethodGeneric` is set for it. The fourth is `Box<i32>.map<i64>`, with
+`funcRecv = Box<i32>` exactly as the third has.
+
+**Register and emit in separate passes, after the struct-instance passes, rather than woven into
+them.** Registration order and emission order have to agree — the function table's order is the
+module's numbering, and the comment at the head of the emission loop records that the last attempt at
+getting it wrong "compiled the corpus into fifty-seven invalid modules". A pass of its own placed
+after the instance pass in *both* keeps the two aligned by construction, and is a much smaller edit
+than a branch inside each of the three loops that walk instances.
+
+**`popSubstitution` clears where it would need to restore.** Emitting the body wants two pushes — the
+owner's letters from `Box<i32>`, then the method's from `<i64>` — and `pushSubstitution` already
+returns how many pairs it pushed, so the stack part nests correctly. What does not is `curInst` and
+`curGeneric`: `popSubstitution` sets both to `""` rather than to what they were, so an inner pop
+silently drops the outer instance. A save-and-restore variant is the fix, and `Env.lambdaInst` is the
+thing that would notice if it were missed, since it keys a lambda by the instantiation it is inside.
+
+**Discovery is at the call site**, like `genericCallInstance`, and wants the owner instance and the
+written arguments — which `ExprKind.Call`'s `typeArgs` now carries (`design/lang/0011` step 3). The
+instance name must be built through `env.canonType`, for the reason `issues/lang/0260c` gives: a
+variant canonicalises to its enum, and two spellings of one type must not become two instances.
+
+**The checker half is small and must not land first.** `C.methodTypeParams` holds the letters, so
+binding them is `applyBindings` over the method's parameter and return types after `substituteType`
+has done the owner's. On its own it produces a call the checker accepts and the emitter declines,
+which is a worse answer than the single clear refusal there is today.
+
+**What to check it against**, since the failure mode is a module that loads and computes the wrong
+thing: `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` must be distinct instantiations (criterion 6),
+and a written argument agreeing with an inferred one must produce *one*. `design/lang/0011`'s
+`typeargsrule_test.wac` measures that for free functions in emitted bytes rather than by running the
+program, because both copies compute the same answer and only the size differs — the same instrument
+works here.
+
 ## Not recommended: leaving it refused
 
 The terminal form — `then` returning nothing — is landed and useful, and `drain` composes fine
