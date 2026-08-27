@@ -2409,6 +2409,18 @@ export struct Env {
    */
   i32 curFile;
 
+  /**
+   * For each field, the file whose token array its `Ty` indexes — parallel to `fieldTys`.
+   *
+   * **Recorded rather than derived.** The obvious derivation is a field's owning struct, whose key
+   * `declFiles` maps to a file; it is wrong for exactly the case that matters. A generic
+   * instantiation's fields are owned by a *made-up* name — `env.fieldOwners[…] = inst` — which no
+   * declaration ever produced, so the lookup answers "nowhere", the resolver falls back to the blob,
+   * and a per-file token index is read against the wrong array. Two files were enough:
+   * `struct Holder { Vec<i32> xs; }` in one and a use in the other.
+   */
+  i32[] fieldTyFiles;
+
   /** Whether the local at `i` is a promoted cell. */
   bool localIsCell(const this, i32 at) {
     return at >= 0 && at < this.localCell.len() && this.localCell[at];
@@ -2637,7 +2649,8 @@ export struct Env {
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
                false, string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
-               i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false, 0 - 1);
+               i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false, 0 - 1,
+               i32[16384]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -3397,14 +3410,17 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, str
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  u8[][] srcs = u8[][1024](fill: u8[0]());
+  Lexed?[] lexeds = Lexed?[1024]();
+  Program?[] progs = Program?[1024]();
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                          srcs, lexeds, progs);
   if (blob == "") { return bareModule(); }
   Env env = Env.create();
   env.trace = true;
   env.traceSlots = slots;
   return emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts,
-                          edges, names, filePaths, false, true, env);
+                          edges, names, filePaths, false, true, env, srcs, lexeds, progs);
 }
 
 /** `index\tline\tcol\tkind` per point, in counter order. */
@@ -3413,8 +3429,11 @@ export string covTableLinked(string[] paths, string[] sources, Res res, string e
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  u8[][] srcs = u8[][1024](fill: u8[0]());
+  Lexed?[] lexeds = Lexed?[1024]();
+  Program?[] progs = Program?[1024]();
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                          srcs, lexeds, progs);
   if (blob == "") { return ""; }
   Env env = Env.create();
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -3427,8 +3446,11 @@ export string traceTableLinked(string[] paths, string[] sources, Res res, string
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  u8[][] srcs = u8[][1024](fill: u8[0]());
+  Lexed?[] lexeds = Lexed?[1024]();
+  Program?[] progs = Program?[1024]();
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                          srcs, lexeds, progs);
   if (blob == "") { return ""; }
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, true);
@@ -3957,11 +3979,14 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bo
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  u8[][] srcs = u8[][1024](fill: u8[0]());
+  Lexed?[] lexeds = Lexed?[1024]();
+  Program?[] progs = Program?[1024]();
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                          srcs, lexeds, progs);
   if (blob == "") { return bareModule(); }
   return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                          names, filePaths, checked, covered, traced);
+                          names, filePaths, checked, covered, traced, srcs, lexeds, progs);
 }
 
 /**
@@ -3981,12 +4006,15 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  u8[][] srcs = u8[][1024](fill: u8[0]());
+  Lexed?[] lexeds = Lexed?[1024]();
+  Program?[] progs = Program?[1024]();
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                          srcs, lexeds, progs);
   if (blob == "") { return "the graph did not link"; }
   Env env = Env.create();
   emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                   names, filePaths, false, false, env);
+                   names, filePaths, false, false, env, srcs, lexeds, progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   if (env.full) { return "declined with no reason recorded"; }
   return "";
@@ -4254,7 +4282,8 @@ void emitStructFields(B types, Env env, string owner) {
 
 u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                   string[] filePaths) {
-  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false, false, false);
+  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false, false, false,
+                          u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
 }
 
 /** The point table for an instrumented build, which only emitting can produce. */
@@ -4262,15 +4291,18 @@ string covTableOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
                   string[] filePaths, bool traced) {
   Env probe = Env.create();
   probe.trace = traced;
-  emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, false, true, probe);
+  emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, false, true, probe,
+                   u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   return probe.covTable;
 }
 
 u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
-                      string[] filePaths, bool checked, bool covered, bool traced) {
+                      string[] filePaths, bool checked, bool covered, bool traced,
+                      u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
   Env env = Env.create();
   env.trace = traced;
-  return emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, checked, covered, env);
+  return emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, checked, covered, env,
+                          srcs, lexeds, progs);
 }
 
 /**
@@ -4346,17 +4378,8 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   } else {
     scanTokenTypes(env, src, lexed);
   }
-  // **Blob, and deliberately — a half-migrated emitter is worse than either whole.** The per-file
-  // driver works: each pass across every file, `env.curFile` set around each, `env.prog` set before
-  // any of them, and `.cache/probe` exercises it over `core/vec.wac`, `core/option.wac` and
-  // `packages/platform/src/frame.wac` — generics, `Pending`, cross-file parents — all emitting.
-  //
-  // What it cannot be is *only here*. `frontOf` is one of seven `linkFiles` callers; the other six,
-  // including `emitLinkedWith2`, build their own `Env` from the blob. Two `Env`s deriving name keys
-  // two ways have to agree about every one of them, and when they do not the module and the manifest
-  // describing it disagree — which is not a diagnostic, it is `wac.wac trapped`.
-  //
-  // So this goes on when all seven do, which means threading the trees through `emitModuleOfWith`.
+  // **Off, and bisected to exactly two things.** Every caller collects the trees now, so switching
+  // this on is one edit — see the commit that measured what still stops it.
   collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
@@ -4515,9 +4538,11 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
 }
 
 u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
-                      string[] filePaths, bool checked, bool covered, Env envIn) {
+                      string[] filePaths, bool checked, bool covered, Env envIn,
+                      u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
   return emitModuleOfFront(
-    frontOfRaw(src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn),
+    frontOfRawIn(src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn,
+                 srcs, lexeds, progs),
     checked, covered);
 }
 
@@ -11600,7 +11625,8 @@ export string emitBlocked(u8[] src) {
  */
 export string emitDeclineRaw(u8[] src) {
   Env env = Env.create();
-  emitModuleOfInto(src, -1, i32[1](), i32[1](), string[1](), string[1](), false, false, env);
+  emitModuleOfInto(src, -1, i32[1](), i32[1](), string[1](), string[1](), false, false, env,
+                   u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
   if (env.fullWhy != "") { return env.fullWhy; }
   if (env.full) { return "declined with no reason recorded"; }
   return "";
@@ -12311,6 +12337,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
           env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[i].type);
           env.fieldTys[env.fieldCount] = fields[i].type;
+          env.fieldTyFiles[env.fieldCount] = env.curFile;
           env.fieldNullable[env.fieldCount] = isNullableTy(fields[i].type);
           env.fieldCount = env.fieldCount + 1;
         }
@@ -12369,6 +12396,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
             // in a file walked earlier won the name, permanently and silently: `wac check` reported
             // nothing and the build declined a member access five levels away. `issues/lang/0234a`.
             env.fieldTys[env.fieldCount] = variants[v].fields[i].type;
+            env.fieldTyFiles[env.fieldCount] = env.curFile;
             env.fieldNullable[env.fieldCount] = isNullableTy(variants[v].fields[i].type);
             env.fieldCount = env.fieldCount + 1;
           }
@@ -12547,7 +12575,7 @@ void resolveStructRefs(Env env, u8[] src, Lexed lexed, u8[][] srcs, Lexed?[] lex
   // file imported resolves only once the file it came from has been walked.
   for (i32 i = 0; i < env.fieldCount; i++) {
     if (env.fieldTys[i] is null) { continue; }
-    i32 ff = fileOfKey(env, env.fieldOwners[i]);
+    i32 ff = i < env.fieldTyFiles.len() ? env.fieldTyFiles[i] : 0 - 1;
     env.curFile = ff;
     env.fieldTypes[i] = typeOfTyName(env, srcFor(srcs, src, ff), lexFor(lexeds, lexed, ff),
                                      env.fieldTys[i]!);
