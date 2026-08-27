@@ -1,4 +1,4 @@
-# 0274b — two instantiations of a method that returns an instantiation are refused
+# 0274b — a *chained* call with written method type arguments is refused
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -7,14 +7,28 @@
 - **Kind:** bug
 - **Symptom:** the emitter declines — a refusal, not a wrong answer
 
-`design/lang/0010` option C landed and one of its six criteria did not. **It is not the chain**, which
-is where this started and what the first version of this issue said — chaining is a symptom. Narrowed
-by four probes to:
+**Most of this is fixed.** What is left is the chain written as one expression.
 
-> **two or more instantiations of one method whose return type is an *instantiation* naming the
-> method's own letter.**
+The issue began as "chaining is refused", was narrowed to "two instantiations of a method whose return
+type is an instantiation", and that part is **fixed** — see the section at the end. The cause was that
+the walk which *discovers* instances is also the walk that stops at the first thing it cannot emit, so
+declining a call meant the next call in the same body was never reached, named or registered. It no
+longer declines there. `spec/cases/0247` is that shape, working.
 
-One instantiation is fine. Two are fine when the return type is a plain letter. It is the combination.
+What still fails is only this:
+
+```wac
+Cell<bool> b = c.then<i64>((i32 x) => (x * 3) as i64).then<bool>((i64 y) => y > 5);
+```
+
+    wacc: cannot emit … — a call to Cell
+
+**Naming the intermediate now works**, so the workaround is a local:
+
+```wac
+Cell<i64> mid = c.then<i64>((i32 x) => (x * 3) as i64);
+Cell<bool> b  = mid.then<bool>((i64 y) => y > 5);      // compiles, runs
+```
 
 ## Reproduction — the smallest one, with nothing chained
 
@@ -94,7 +108,20 @@ carrying the **first** instance's return type. That is a question about what
 does: the two instances differ only in the inner push, and `typeOfTyName(Box<U>)` is what turns `U`
 into a name.
 
-### Measured, with a temporary probe in that message
+### Where it stands now, measured
+
+A probe on the surviving failure says both method instances **are** registered and the construction
+inside the body resolved to `Cell<U>`:
+
+    a call to Cell [n=Cell<U> | Cell<i32>- Cell<bool>- Cell<i32>.then<i64>+ Cell<i64>- Cell<i64>.then<bool>+]
+
+So the remaining bug is not discovery and not registration: it is that **some pass walks the method's
+body with only the owner's substitution in force**, leaving the method's own letter unbound, and
+`Cell<U>` is not a struct any table knows. Finding which pass is the whole of what is left —
+`registerMethodInstances` and the emission block both push the inner substitution, so it is a third
+walk over the same bodies.
+
+### The earlier measurement, kept because it is how the first half was found
 
 Both questions above are answered, and the answer is narrower than either guess:
 

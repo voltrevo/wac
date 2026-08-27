@@ -11141,20 +11141,29 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             // function. `collectInstances` walks every body before it registers anything and
             // iterates to a fixed point, so an instance named in this walk exists by the time the
             // registration pass reads the list.
-            string mi = methodInstance(env, src, lexed, ot, mn, callTargs);
-            if (mi == "") {
-              return "a call to " + ot + "." + mn +
-                     ", a method with its own type parameters and no type arguments written";
-            }
-            i32 mia = env.funcAt(mi);
-            // Named this round and not registered yet. The rounds' verdicts are discarded — the
-            // comment at the head of `collectInstances` says so — and the entry is there by the last.
-            if (mia < 0) { return ""; }
-            if (!env.funcOk[mia]) { return declinedBecause("a method " + ot + "." + mn, env, mia); }
-            for (i32 i = 0; i < args.len(); i++) {
-              string am = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(mia, i));
-              if (am != "") { return am; }
-            }
+            methodInstance(env, src, lexed, ot, mn, callTargs);
+            // **Nothing here may decline**, and that is the whole of `issues/lang/0274b`.
+            //
+            // This walk is also the walk that *discovers* instances — `methodInstance` above is what
+            // names one — and `canEmit` stops at the first thing it cannot emit. So a decline here
+            // means the **next** call in the same body is never reached, never named, and never
+            // registered: two calls in two functions worked and the same two in one function did not,
+            // and no number of rounds recovered it, because every round stopped in the same place.
+            //
+            // A method instance is not ready in the round that names it, and its body is not
+            // emittable until the instantiations *it* names exist. Both are ordinary states of a
+            // fixed point being reached, and neither is a fact about the program.
+            //
+            // The same goes for a receiver whose type is not known *yet* — a chained
+            // `c.then<A>(f).then<B>(g)` cannot name the second call's instance until the first one's
+            // return type exists, and declining while it does not is what kept the chain from ever
+            // settling.
+            //
+            // What catches a call that genuinely cannot be emitted is `haveRequired` at the emission
+            // site, which refuses a function with no index, and the *checker*, which refuses a method
+            // with its own letters called without them. That is the right division: by emission the
+            // rounds are over and "not ready" and "not possible" are the same thing, and before them
+            // the checker has already spoken.
             return "";
           }
           if (!env.funcOk[ma]) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
