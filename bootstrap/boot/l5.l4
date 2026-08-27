@@ -540,6 +540,10 @@ i32 TY_F64 = 10;
 // distinct wasm type, so every place that asks "is this a float" has to ask which float.
 i32 TY_F32 = 11;
 i32 NUMTYPES = 12;
+// **A bare `null` has no type of its own** — it takes one from whatever it is written against,
+// and until this it claimed to be an i32, which made `x == null ? null : x` a block of i32s
+// holding references. This is the placeholder it carries until a context names a real type.
+i32 TY_NULL = 12;
 
 // Is it held in an i64? Everything else this rung has fits an i32.
 i32 ty_wide(i32 t) { return t == TY_I64 | t == TY_U64; }
@@ -1352,7 +1356,7 @@ i32 primary() {
   }
   if (isword("true")) { next(); konst(1); return TY_BOOL; }
   if (isword("false")) { next(); konst(0); return TY_BOOL; }
-  if (isword("null")) { next(); line("ref.null none"); return 0; }
+  if (isword("null")) { next(); line("ref.null none"); return TY_NULL; }
   if (isword("match")) { return match_expr(outbuf); }
   // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
   // else that begins an expression does.
@@ -1871,24 +1875,35 @@ i32 ternary() {
     // has to be written — so the first one goes to scratch and the header is written in front of
     // it, exactly as `match` does. Writing `i32` here instead was right for every arm that is a
     // number and wrong for a reference, which is what `p.isPrim() ? Ty[]() : p.args()` is.
-    i32 level = scrdepth;
-    i32 saved = scratch_begin();
+    // *Both* arms go to scratch, not just the first: a bare `null` in either one has no type,
+    // so the header cannot be written until the other has been read. Two levels deep, which the
+    // scratch stack is built for.
+    i32 levelA = scrdepth;
+    i32 savedA = scratch_begin();
     i32 t1 = expr();
-    i32 armlen = scratch_end(outbuf, saved);
-    word("if"); label(l); sp(); word("->"); slotvaltype(t1); nl();
-    scratch_copy(level, armlen);
-    line("else");
+    i32 lenA = dp;
+    i32 levelB = scrdepth;
+    i32 savedB = scratch_begin();
     want(58);
     i32 t2 = ternary();
+    i32 lenB = scratch_end(outbuf, savedB);
+    scratch_end(outbuf, savedA);
+    i32 armty = t1;
+    if (t1 == TY_NULL) { armty = t2; }
+    if (t2 == TY_NULL) { armty = t1; }
+    if (ty_isnum(armty)) {
+      if (ty_isnum(t1) & ty_isnum(t2)) {
+        if (ty_wide(t2) | ty_float(t2)) { armty = t2; }
+      }
+    }
+    word("if"); label(l); sp(); word("->"); slotvaltype(armty); nl();
+    scratch_copy(levelA, lenA);
+    line("else");
+    scratch_copy(levelB, lenB);
     line("end");
     // The two arms agree in wac, and where one is wider than the other — a plain integer
     // against an i64 — the wider one is the answer.
-    t = t1;
-    if (ty_isnum(t1) & ty_isnum(t2)) {
-      if (ty_wide(t2) | ty_float(t2)) { t = t2; }
-    } else {
-      t = t2;
-    }
+    t = armty;
   }
   return t;
 }
@@ -3224,6 +3239,9 @@ i32 compile(i32 s, i32 out) {
   // reads a 0 as the number type.
   i32 nt = 0;
   while (nt < NUMTYPES) { ty_new(T_NUM, 0, 0, 0); nt = nt + 1; }
+  // Index TY_NULL, so that reading `types[TY_NULL]` answers rather than trapping. Nothing
+  // should ever name it: if one is emitted the assembler says so, which is the loud failure.
+  ty_new(T_STRUCT, 0, 0, 0);
   locs = Local[16384]();
   slotty = i32[16384]();
   glos = Glo[8192]();
