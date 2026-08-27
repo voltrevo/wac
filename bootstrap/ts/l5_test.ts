@@ -379,6 +379,29 @@ const programs: [string, string, number][] = [
     i32 dbl(i32 n) { return n * 2; }
     fn[i32(i32)] pick() { return dbl; }
     i32 main() { fn[i32(i32)] f = pick(); return f(21); }`, 42],
+
+  // --- what real wac needed
+
+  // `i32.eq` on two references answers whether they are the same object, which for a literal built
+  // fresh at every use is always false.
+  ["strings compare by content", `
+    i32 main() { string a = "ab" + "c"; return (a == "abc" ? 1 : 0) * 10 + ("ab" != "cd" ? 1 : 0); }`, 11],
+
+  ["toBytes is the identity, because a string is a u8[]", `
+    i32 main() { u8[] b = "hi".toBytes(); return b.len() * 100 + b[0]; }`, 304],
+
+  // `h >> 33` on a u64 writes the shift amount as a plain integer, and wasm wants both operands the
+  // same width — but the value is already on the stack, so the conversion goes after it.
+  ["a narrow literal widens to its operand", `
+    i32 main() { u64 h = 1 as u64; h = h << 40; return (h >> 40) as i32; }`, 1],
+
+  // Its letters appear in its *return type*, before anything has bound them — so the whole
+  // declaration has to be recognised before that type is parsed. Not instantiated: calling one is
+  // refused rather than compiled into something plausible.
+  ["a generic free function, declared and not called", `
+    enum Option<T> { Some(T v), None }
+    Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }
+    i32 main() { Option<i32> a = Some(4); return match (a) { case Some(v): v, case None: 0 }; }`, 4],
 ];
 
 // wac compiles a whole program into one wasm module, so an import is a file to *include* rather
