@@ -618,6 +618,8 @@ global $s_quote i32 mut = 1
 global $s_if    i32 mut = 1
 global $s_fn    i32 mut = 1
 global $s_def   i32 mut = 1
+global $s_set   i32 mut = 1
+global $s_do    i32 mut = 1
 
 func $is_sym -> i32
   param i32 $v
@@ -675,6 +677,70 @@ func $lookup -> i32                ; the value of $sym in $env, then in the glob
           local.get $e
           call $car
           call $cdr
+          br $answer
+        else
+          nop
+        end
+        local.get $e
+        call $cdr
+        local.set $e
+        br $gwalk
+      end
+    end
+    i32.const 1
+  end
+end
+
+; **The binding, not the value.** `set!` has to change what a name means without adding a second
+; binding in front of it: `def` prepends, so a counter written with `def` would cons once per update
+; and make every lookup after it longer. Answers NIL when the name is unbound.
+func $lookup_pair -> i32
+  param i32 $sym
+  param i32 $env
+  local i32 $e
+  block $answer -> i32
+    local.get $env
+    local.set $e
+    block $localmiss ->
+      loop $walk ->
+        local.get $e
+        call $is_pair
+        i32.eqz
+        br_if $localmiss
+        local.get $e
+        call $car
+        call $car
+        local.get $sym
+        i32.eq
+        if $hit ->
+          local.get $e
+          call $car
+          br $answer
+        else
+          nop
+        end
+        local.get $e
+        call $cdr
+        local.set $e
+        br $walk
+      end
+    end
+    global.get $genv
+    local.set $e
+    block $globalmiss ->
+      loop $gwalk ->
+        local.get $e
+        call $is_pair
+        i32.eqz
+        br_if $globalmiss
+        local.get $e
+        call $car
+        call $car
+        local.get $sym
+        i32.eq
+        if $ghit ->
+          local.get $e
+          call $car
           br $answer
         else
           nop
@@ -995,6 +1061,135 @@ func $prim -> i32                  ; $id applied to the already-evaluated $args
     else
       nop
     end
+    ; **The three that make a compiler possible**: somewhere to put bytes, and a way to read and
+    ; write them. A host `putc` would need an import and a streaming contract; linear memory needs
+    ; neither, and the caller already has the memory exported.
+    local.get $id
+    i32.const 9
+    i32.eq
+    if $ppeek ->
+      local.get $a
+      call $unfix
+      i32.load8_u 1 0
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 10
+    i32.eq
+    if $ppoke ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.store8 1 0
+      local.get $b
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 11
+    i32.eq
+    if $palloc ->
+      local.get $a
+      call $unfix
+      call $alloc
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    ; **A symbol's text**, so a compiler can write out the name it was given. This is why sx needs no
+    ; string type: every name it will ever emit came in through the reader and is interned already.
+    local.get $id
+    i32.const 12
+    i32.eq
+    if $psymlen ->
+      local.get $a
+      call $sym_len
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 13
+    i32.eq
+    if $psymbyte ->
+      local.get $a
+      local.get $b
+      call $unfix
+      call $sym_byte
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 14
+    i32.eq
+    if $psymp ->
+      local.get $a
+      call $is_sym
+      if $yessym -> i32
+        i32.const 1
+        call $fix
+      else
+        i32.const 1
+      end
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 15
+    i32.eq
+    if $pnilp ->
+      local.get $a
+      call $is_nil
+      if $yesnil -> i32
+        i32.const 1
+        call $fix
+      else
+        i32.const 1
+      end
+      br $answer
+    else
+      nop
+    end
+    ; **Division and remainder**, which exist for one reason: writing a number in decimal. Every
+    ; other arithmetic sx needs could be built from the three it already had.
+    local.get $id
+    i32.const 16
+    i32.eq
+    if $pdiv ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.div_s
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 17
+    i32.eq
+    if $prem ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.rem_s
+      call $fix
+      br $answer
+    else
+      nop
+    end
     ; An unknown id is a bug in this file rather than in the program being run, so it traps instead
     ; of answering NIL — a wrong answer here would be blamed on the interpreted program.
     unreachable
@@ -1046,6 +1241,8 @@ func $eval -> i32
   param i32 $x
   param i32 $env
   local i32 $op
+  local i32 $b
+  local i32 $v
   block $answer -> i32
     local.get $x
     call $is_fix
@@ -1123,6 +1320,67 @@ func $eval -> i32
     else
       nop
     end
+    ; **A sequence**, which every other special form here could do without and no program can: a
+    ; function body is one expression, so without `do` nothing can both act and answer.
+    local.get $op
+    global.get $s_do
+    i32.eq
+    if $isdo ->
+      local.get $x
+      call $cdr
+      local.set $b
+      i32.const 1
+      local.set $v
+      block $dodone ->
+        loop $donext ->
+          local.get $b
+          call $is_pair
+          i32.eqz
+          br_if $dodone
+          local.get $b
+          call $car
+          local.get $env
+          call $eval
+          local.set $v
+          local.get $b
+          call $cdr
+          local.set $b
+          br $donext
+        end
+      end
+      local.get $v
+      br $answer
+    else
+      nop
+    end
+    local.get $op
+    global.get $s_set
+    i32.eq
+    if $isset ->
+      local.get $x
+      call $cadr
+      local.get $env
+      call $lookup_pair
+      local.tee $b
+      call $is_nil
+      if $unbound ->
+        unreachable
+      else
+        nop
+      end
+      local.get $b
+      local.get $x
+      call $caddr
+      local.get $env
+      call $eval
+      local.tee $v
+      call $set_cdr
+      drop
+      local.get $v
+      br $answer
+    else
+      nop
+    end
     local.get $op
     global.get $s_def
     i32.eq
@@ -1186,6 +1444,17 @@ data 540 "quote"
 data 546 "if"
 data 549 "fn"
 data 552 "def"
+data 560 "peek"
+data 565 "poke"
+data 570 "alloc"
+data 576 "sym-len"
+data 584 "sym-byte"
+data 593 "sym?"
+data 598 "nil?"
+data 604 "set!"
+data 609 "/"
+data 611 "%"
+data 613 "do"
 
 func $boot ->
   i32.const 0
@@ -1227,6 +1496,42 @@ func $boot ->
   i32.const 5
   i32.const 8
   call $defprim
+  i32.const 560
+  i32.const 4
+  i32.const 9
+  call $defprim
+  i32.const 565
+  i32.const 4
+  i32.const 10
+  call $defprim
+  i32.const 570
+  i32.const 5
+  i32.const 11
+  call $defprim
+  i32.const 576
+  i32.const 7
+  i32.const 12
+  call $defprim
+  i32.const 584
+  i32.const 8
+  i32.const 13
+  call $defprim
+  i32.const 593
+  i32.const 4
+  i32.const 14
+  call $defprim
+  i32.const 598
+  i32.const 4
+  i32.const 15
+  call $defprim
+  i32.const 609
+  i32.const 1
+  i32.const 16
+  call $defprim
+  i32.const 611
+  i32.const 1
+  i32.const 17
+  call $defprim
   i32.const 540
   i32.const 5
   call $intern
@@ -1243,6 +1548,14 @@ func $boot ->
   i32.const 3
   call $intern
   global.set $s_def
+  i32.const 604
+  i32.const 4
+  call $intern
+  global.set $s_set
+  i32.const 613
+  i32.const 2
+  call $intern
+  global.set $s_do
 end
 
 ; ---------------------------------------------------------------- what this proves

@@ -1,0 +1,14 @@
+(memory 1)
+
+(fn sum-to ((n i32)) i32
+  (do (let i 1)
+      (let total 0)
+      (while (<= i n)
+        (set total (+ total i))
+        (set i (+ i 1)))
+      total))
+
+(fn main () i32
+  (sum-to 10))
+
+(export main)

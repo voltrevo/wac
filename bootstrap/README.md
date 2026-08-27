@@ -37,10 +37,11 @@ lose by retiring its reference compiler, so it is worth practising here.
 
 ## Status
 
-The root exists and works: `boot/sx.wax` is a 1,157-instruction s-expression interpreter with a
-reader, interned symbols, closures, recursion and a growing heap, and 26 programs are run against it
-as tests. That is under the 1,500 lines the experiment set as the bar.
+**Two rungs work.** `boot/sx.wax` is a 1,457-instruction s-expression interpreter, hand-written.
+`boot/wx.sx` is a compiler for wx — functions, locals, globals, `if`, `while`, recursion, sixteen
+operators, byte and word memory — written in sx, in **167 lines**. A wx program goes all the way to
+wasm with nothing but the interpreter and the assembler in the path.
 
-**The next measurement is the rung above** — a compiler, written in sx, emitting `.wax`. The case for
-a ladder rests on that one, not on this one. `NOTES.md` has the figures, what sx still lacks, and
-the two bugs, one of which a passing earlier stage could not have caught.
+That second figure is the case for the ladder: a rung is cheap when the rung below it is a decent
+language. **The open question is L2**, wac's own syntax, written in wx. `NOTES.md` has the numbers,
+what wx would want first, and the four bugs — one of which no amount of reading would have found.

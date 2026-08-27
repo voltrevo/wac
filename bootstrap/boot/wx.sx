@@ -1,0 +1,238 @@
+; wx — the first rung, compiled by a program written in sx. See spec/wx.md.
+;
+; The output is .wax assembly *text*, built in a buffer with `poke`. sx has no string type and needs
+; none: every fixed word this emits is a quoted symbol, and `emit-sym` writes the symbol's own
+; bytes. `(quote local.get)` is one symbol, because the reader's only delimiters are whitespace and
+; parentheses — which is the whole reason the emitted vocabulary can be spelled in the source.
+
+(def out (alloc 262144))
+(def at 0)
+
+(def emit-byte (fn (b) (do (poke (+ out at) b) (set! at (+ at 1)))))
+
+(def emit-sym-from
+  (fn (s i n)
+    (if (< i n) (do (emit-byte (sym-byte s i)) (emit-sym-from s (+ i 1) n)) 0)))
+(def emit-sym (fn (s) (emit-sym-from s 0 (sym-len s))))
+
+(def sp (fn () (emit-byte 32)))
+(def nl (fn () (emit-byte 10)))
+
+; Most significant digit first, by recursing before writing — so no reversed buffer is needed.
+(def emit-digits
+  (fn (n)
+    (do (if (< 9 n) (emit-digits (/ n 10)) 0)
+        (emit-byte (+ 48 (% n 10))))))
+(def emit-num
+  (fn (n)
+    (if (< n 0) (do (emit-byte 45) (emit-digits (- 0 n))) (emit-digits n))))
+
+; A word then a space, and a word then a newline: almost every line is one of these two shapes.
+(def w  (fn (s) (do (emit-sym s) (sp))))
+(def wl (fn (s) (do (emit-sym s) (nl))))
+(def const (fn (n) (do (w (quote i32.const)) (emit-num n) (nl))))
+(def name$ (fn (s) (do (emit-byte 36) (emit-sym s))))
+
+; ---------------------------------------------------------------- lists
+
+(def cadr   (fn (l) (car (cdr l))))
+(def caddr  (fn (l) (car (cdr (cdr l)))))
+(def cddr   (fn (l) (cdr (cdr l))))
+(def cdddr  (fn (l) (cdr (cdr (cdr l)))))
+(def cddddr (fn (l) (cdr (cdr (cdr (cdr l))))))
+
+(def append (fn (a b) (if (pair? a) (cons (car a) (append (cdr a) b)) b)))
+(def member?
+  (fn (x l) (if (pair? l) (if (= x (car l)) 1 (member? x (cdr l))) ())))
+
+; ---------------------------------------------------------------- labels
+;
+; Every block-like in .wax is named, which is how the format avoids counting branch depths. A symbol
+; cannot be built from parts in sx, so a label is the fixed symbol `$b` with a number written after
+; it — the two go straight into the output and are never a value.
+
+(def labn 0)
+(def next-label (fn () (do (set! labn (+ labn 1)) labn)))
+(def label (fn (n) (do (emit-sym (quote $b)) (emit-num n))))
+
+; ---------------------------------------------------------------- expressions
+;
+; Every wx form answers a value, so every step here leaves exactly one i32 on the stack and no
+; caller has to know which shape produced it.
+
+(def binop
+  (fn (op e env)
+    (do (comp (cadr e) env) (comp (caddr e) env) (wl op))))
+
+(def comp-if
+  (fn (e env)
+    (do (comp (cadr e) env)
+        (def l (next-label))
+        (w (quote if)) (label l) (sp) (w (quote ->)) (wl (quote i32))
+        (comp (caddr e) env)
+        (wl (quote else))
+        (comp (car (cdddr e)) env)
+        (wl (quote end)))))
+
+; An outer block to break out of and an inner loop to go round again, which is the wasm shape.
+; `while` answers 0, so it pushes one after the blocks close.
+; The two labels are **parameters**, not globals. `def` in sx binds globally, so a `while` inside a
+; `while` would rebind the outer one's labels — and the outer `br` is emitted *after* the body, so it
+; would branch to the inner loop. Nothing about the generated assembly would look wrong.
+(def comp-while (fn (e env) (comp-while2 e env (next-label) (next-label))))
+(def comp-while2
+  (fn (e env lo li)
+    (do (w (quote block)) (label lo) (sp) (wl (quote ->))
+        (w (quote loop)) (label li) (sp) (wl (quote ->))
+        (comp (cadr e) env)
+        (wl (quote i32.eqz))
+        (w (quote br_if)) (label lo) (nl)
+        (comp-do (cddr e) env)
+        (wl (quote drop))
+        (w (quote br)) (label li) (nl)
+        (wl (quote end))
+        (wl (quote end))
+        (const 0))))
+
+; A sequence drops all but the last value; an empty one answers 0, which is what a `while` body and
+; an empty `fn` both want.
+(def comp-do
+  (fn (l env)
+    (if (pair? l)
+        (if (pair? (cdr l))
+            (do (comp (car l) env) (wl (quote drop)) (comp-do (cdr l) env))
+            (comp (car l) env))
+        (const 0))))
+
+(def comp-args
+  (fn (l env) (if (pair? l) (do (comp (car l) env) (comp-args (cdr l) env)) 0)))
+
+(def var (fn (op n) (do (w op) (name$ n) (nl))))
+
+(def comp-sym
+  (fn (e env)
+    (if (member? e env) (var (quote local.get) e) (var (quote global.get) e))))
+
+(def comp-set
+  (fn (e env)
+    (do (comp (caddr e) env)
+        (if (member? (cadr e) env)
+            (var (quote local.tee) (cadr e))
+            (do (var (quote global.set) (cadr e)) (const 0))))))
+
+(def comp-let
+  (fn (e env) (do (comp (caddr e) env) (var (quote local.tee) (cadr e)))))
+
+(def comp-call
+  (fn (e env)
+    (do (comp-args (cdr e) env)
+        (w (quote call)) (name$ (car e)) (nl))))
+
+(def memop (fn (op) (do (w op) (emit-num 1) (sp) (emit-num 0) (nl))))
+
+(def comp-load
+  (fn (e env op) (do (comp (cadr e) env) (memop op))))
+
+; A store leaves nothing in wasm and every wx form must answer something, so it answers 0 rather
+; than re-evaluating its argument — which would run any side effect in it twice.
+(def comp-store
+  (fn (e env op)
+    (do (comp (cadr e) env) (comp (caddr e) env) (memop op) (const 0))))
+
+(def comp
+  (fn (e env)
+    (if (sym? e) (comp-sym e env)
+    (if (pair? e) (comp-form (car e) e env)
+    (const e)))))
+
+; One chain rather than a table: sx has no `case`, and a table would be a list walked by the same
+; number of comparisons with a layer of indirection on top.
+(def comp-form
+  (fn (op e env)
+    (if (= op (quote +))  (binop (quote i32.add) e env)
+    (if (= op (quote -))  (binop (quote i32.sub) e env)
+    (if (= op (quote *))  (binop (quote i32.mul) e env)
+    (if (= op (quote /))  (binop (quote i32.div_s) e env)
+    (if (= op (quote %))  (binop (quote i32.rem_s) e env)
+    (if (= op (quote &))  (binop (quote i32.and) e env)
+    (if (= op (quote |))  (binop (quote i32.or) e env)
+    (if (= op (quote ^))  (binop (quote i32.xor) e env)
+    (if (= op (quote <<)) (binop (quote i32.shl) e env)
+    (if (= op (quote >>)) (binop (quote i32.shr_s) e env)
+    (if (= op (quote <))  (binop (quote i32.lt_s) e env)
+    (if (= op (quote >))  (binop (quote i32.gt_s) e env)
+    (if (= op (quote <=)) (binop (quote i32.le_s) e env)
+    (if (= op (quote >=)) (binop (quote i32.ge_s) e env)
+    (if (= op (quote ==)) (binop (quote i32.eq) e env)
+    (if (= op (quote !=)) (binop (quote i32.ne) e env)
+    (if (= op (quote not))    (do (comp (cadr e) env) (wl (quote i32.eqz)))
+    (if (= op (quote if))     (comp-if e env)
+    (if (= op (quote do))     (comp-do (cdr e) env)
+    (if (= op (quote while))  (comp-while e env)
+    (if (= op (quote let))    (comp-let e env)
+    (if (= op (quote set))    (comp-set e env)
+    (if (= op (quote return)) (do (comp (cadr e) env) (wl (quote return)))
+    (if (= op (quote load))   (comp-load e env (quote i32.load))
+    (if (= op (quote load8))  (comp-load e env (quote i32.load8_u))
+    (if (= op (quote store))  (comp-store e env (quote i32.store))
+    (if (= op (quote store8)) (comp-store e env (quote i32.store8))
+    (comp-call e env))))))))))))))))))))))))))))))
+
+; ---------------------------------------------------------------- declarations
+;
+; .wax wants every local declared before the first instruction, so the body is walked once for its
+; `let` names before it is walked to emit. That is why the spec asks for unique local names: one
+; pass, and no scopes to rename.
+
+(def lets-in
+  (fn (e acc)
+    (if (pair? e)
+        (if (= (car e) (quote let))
+            (lets-in (caddr e) (cons (cadr e) acc))
+            (lets-in-list e acc))
+        acc)))
+(def lets-in-list
+  (fn (l acc) (if (pair? l) (lets-in-list (cdr l) (lets-in (car l) acc)) acc)))
+
+(def param-names
+  (fn (ps) (if (pair? ps) (cons (car (car ps)) (param-names (cdr ps))) ())))
+
+(def decls
+  (fn (kind l)
+    (if (pair? l)
+        (do (w kind) (w (quote i32)) (name$ (car l)) (nl) (decls kind (cdr l)))
+        0)))
+
+(def comp-fn
+  (fn (e)
+    (do (def ps (caddr e))
+        (def body (cddddr e))
+        (def locals (lets-in-list body ()))
+        (w (quote func)) (name$ (cadr e)) (sp) (w (quote ->)) (wl (quote i32))
+        (decls (quote param) (param-names ps))
+        (decls (quote local) locals)
+        (comp-do body (append (param-names ps) locals))
+        (wl (quote end))
+        (nl))))
+
+(def comp-top
+  (fn (e)
+    (if (= (car e) (quote fn)) (comp-fn e)
+    (if (= (car e) (quote memory))
+        (do (w (quote memory)) (emit-num (cadr e)) (nl) (nl))
+    (if (= (car e) (quote global))
+        (do (w (quote global)) (name$ (cadr e)) (sp)
+            (w (quote i32)) (w (quote mut)) (w (quote =))
+            (emit-num (caddr e)) (nl) (nl))
+    (if (= (car e) (quote export))
+        (do (w (quote export)) (emit-byte 34) (emit-sym (cadr e)) (emit-byte 34) (sp)
+            (w (quote func)) (name$ (cadr e)) (nl))
+    0))))))
+
+(def comp-program
+  (fn (l) (if (pair? l) (do (comp-top (car l)) (comp-program (cdr l))) 0)))
+
+; `compile` answers the address of the text it wrote, NUL-terminated, so a caller can read it out of
+; the exported memory without being told a length.
+(def compile
+  (fn (prog) (do (comp-program prog) (emit-byte 0) out)))
