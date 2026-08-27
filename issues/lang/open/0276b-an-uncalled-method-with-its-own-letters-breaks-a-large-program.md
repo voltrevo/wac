@@ -76,6 +76,30 @@ never calls `fold`.
 it.** The comment says the answer used to be "none", so a count of them is a yes/no rather than a
 hunt.
 
+## One leak found and closed, and it is not the only one
+
+A probe listing every **registered signature** containing a bare letter, at the moment of the decline:
+
+    [fn[U(U,Mount)]]  [fn[fn[U(U,Mount)](i32)]]
+    [fn[U(U,Inode)]]  [fn[U(U,string)]]  [fn[U(U,Proc)]]  …
+
+Those are `fold`'s funcref *parameter* with `T` substituted per instantiation and `U` left, registered
+as signature types — and the wrapper shape beside each. They come from the instance-method
+registration in `collectInstances`, which resolves a method's parameter and return types and walks its
+body **fifteen lines before** it declines the method for having its own letters. `issues/lang/0173a`
+made this branch unreachable by declining such a method; the decline was in the right place and the
+naming was earlier.
+
+Resolving nothing for such a method — registering a placeholder entry and declining it at once —
+removes every one of those signatures. **And box still fails.** So a `U` reaches `writeValType` by
+some route other than a registered signature; a *local* of type `U` in the body is the obvious
+candidate, since `fold` opens with `U acc = seed;`.
+
+That change is **not** landed: it fixes a real leak and nothing observable, which is not enough to
+justify it on its own. It is written down here so the next attempt starts from it. Note also that the
+placeholder's return type cannot be `""` — something asks for it and answers *the return type of
+`Vec<Mount>.fold`, which this emitter could not work out* — so `i32` stands in.
+
 ## Where to look next
 
 The probe is the thing to extend, not the reading — three probes settled `issues/lang/0274b` and
