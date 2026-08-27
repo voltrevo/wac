@@ -40,7 +40,7 @@ import {
   kNull, kOrOr,
   kRbrace, kRbrack, kRparen, kTrue,
 } from "./kinds.wac";
-import { Vec } from "core/vec.wac";
+import { WVec } from "./wvec.wac";
 
 /** One physical line that has tokens on it. */
 export struct WLine {
@@ -194,7 +194,7 @@ export WLexed wapyLex(u8[] src) {
   Lexed lexed = lex(blanked);
   respell(src, lexed);
 
-  Vec<i32> errs = Vec.create();
+  WVec<i32> errs = WVec.create();
   for (i32 e = 0; e + 2 < lexed.errorCount * 3; e = e + 3) {
     errs.push(lexed.errors[e]); errs.push(lexed.errors[e + 1]); errs.push(lexed.errors[e + 2]);
   }
@@ -212,7 +212,7 @@ export WLexed wapyLex(u8[] src) {
     lineNo = lineNo + 1;
   }
 
-  Vec<WLine> lines = Vec.create();
+  WVec<WLine> lines = WVec.create();
   i32 t = 0;
   while (t < lexed.tokenCount) {
     i32 k = lexed.tokens[t * tokenStride()];

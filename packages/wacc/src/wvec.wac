@@ -1,0 +1,58 @@
+// A growable list, for the wapy frontend, in the package that may not import one.
+//
+// **`packages/wacc` has no dependencies, and this is what that rule is for.** The reference compiler
+// builds wacc — that is the whole of `bash tools/seed.sh --bootstrap`, the only command that works
+// in a fresh clone — so every file wacc's graph reaches has to be inside the subset the reference
+// can read. `core/vec.wac` is not: its `fold` takes an `fn[U(U, T)]`, the reference has no lambdas,
+// and it stops at the parse. So `import { Vec } from "core/vec.wac"` in one wapy file is enough to
+// make the compiler unbuildable from nothing, in a message about `core/vec.wac:185` that names
+// neither wapy nor the import that reached it.
+//
+// It is a second copy of something and it is a smaller one on purpose: `create`, `push`, `get`,
+// `set` and `len` are what the four wapy files use, out of `Vec`'s eighteen. Growth is
+// double-or-four, which is `Vec`'s rule, because the two should not differ in a way anybody has to
+// remember.
+//
+// **When the reference stops being the bootstrap, this goes.** `design/lang/0003` is that direction
+// and `core/vec.wac` is the thing to import on the day it arrives.
+
+/** A growable list of `T`. */
+export struct WVec<T> {
+  T[] data;
+  i32 n;
+
+  /** Empty, with no allocation until the first push. */
+  WVec<T> create() { return WVec(T[](), 0); }
+
+  i32 len(const this) { return this.n; }
+
+  /** Out of range is a trap, as it is in `Vec` — a read past the end is a mistake, not a value. */
+  T get(const this, i32 i) {
+    if (i < 0 || i >= this.n) { trap; }
+    return this.data[i];
+  }
+
+  void set(this, i32 i, T v) {
+    if (i < 0 || i >= this.n) { trap; }
+    this.data[i] = v;
+  }
+
+  void push(this, T v) {
+    if (this.n == this.data.len()) {
+      i32 grown = this.data.len() == 0 ? 4 : this.data.len() * 2;
+      T[] bigger = T[grown](fill: v);
+      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.data[i]; }
+      this.data = bigger;
+    }
+    this.data[this.n] = v;
+    this.n = this.n + 1;
+  }
+
+  /** Everything, as an array of exactly `len()` — a copy, so the list may still be used. */
+  T[] toArray(const this) {
+    if (this.n == 0) { return T[](); }
+    T[] out = T[this.n](fill: this.data[0]);
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.data[i]; }
+    return out;
+  }
+}

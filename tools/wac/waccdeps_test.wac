@@ -1,0 +1,137 @@
+// What `packages/wacc` imports from outside itself, which is what a fresh clone can be built from.
+//
+//     wac test tools/wac/waccdeps_test.wac --allow-read
+//
+// **The rule already existed and was a comment.** `emit.wac`'s header says a helper is *"kept local
+// rather than imported because `packages/wacc` has no dependencies"*, and `CLAUDE.md` documents
+// `bash tools/seed.sh --bootstrap` as the first command in a new checkout. Nothing checked it, so
+// the day the wapy frontend was wired into `api.wac` the compiler's graph gained
+// `core/vec.wac` through four `import { Vec }` lines, and the bootstrap stopped working.
+//
+// ## Why that is fatal rather than untidy
+//
+// The bootstrap builds wacc **with the reference compiler**, which is the only way to get a binary
+// when the seed is gitignored and there is nothing to run `wac task` with. So every file wacc's
+// graph reaches has to be inside the subset the reference can read — and the reference has no
+// lambdas, while `core/vec.wac`'s `fold` takes an `fn[U(U, T)]`. One import was enough to make the
+// compiler unbuildable from nothing.
+//
+// The failure does not look like this rule. It is nine parse errors in `core/vec.wac`, a file
+// nobody touched, from a compiler nobody was thinking about, and the import that reached it is not
+// mentioned. It also hid: `bindgenwac_test.wac` asks the reference through a cache keyed on
+// `packages/wacc/src`, so it went red only because the same change invalidated the cache.
+//
+// ## It is a list, not a prohibition
+//
+// `print.wac` imports `packages/bytes/src/buf.wac` and has for a long time, and the bootstrap works:
+// `Buf` is inside the subset. So the rule that matters is *"every file wacc reaches is one the
+// reference can parse"*, which no test here can decide — the reference is TypeScript and this is
+// wac. What a list can do is make each addition deliberate, which is the part that failed: four
+// `import { Vec }` lines arrived as a side effect of wiring a frontend, and nobody asked.
+//
+// ## What to do when this goes red
+//
+// A new entry means a file under `packages/wacc/src` imported something outside it. Either
+//
+//   - copy what you need into the package, small — `wvec.wac` is that, six methods of `Vec`; or
+//   - check that the reference can parse the whole of what you are importing — `deno run -A
+//     packages/platform/native.ts packages/wacc/src/api.wac -o /tmp/w` is the question, and
+//     `bash tools/seed.sh --bootstrap` is the answer that counts — then add it below with a reason.
+//
+// The day the reference stops being the bootstrap — `design/lang/0003` — this rule goes with it,
+// and so do the copies it forces.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { importSpecs, isBuiltinSpec, resolveFrom } from "../../packages/wacc/src/files.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** Whether `s` starts with `p`. */
+bool startsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(0, p.len()) == p;
+}
+
+/**
+ * Every file reachable from `entry` by imports, and **every builtin spec it names**, verbatim.
+ *
+ * **A builtin is not exempt, which is the correction that makes this test worth having.** The first
+ * version skipped `core/…` and `std/…` on the reasoning that the linker carries their source — and
+ * so it passed on the exact regression it was written for, because the import that broke the
+ * bootstrap was `core/vec.wac`. wacc carries core as embedded text; the *reference* resolves the
+ * same spec to a file on disk and parses it. So a builtin spec is a dependency like any other here,
+ * recorded as the spec itself rather than as a path, because nothing needs to read it.
+ */
+string[] graphOf(T t, Cli cli, string entry, i32 cap) {
+  string[] paths = string[cap](fill: "");
+  i32 n = 1;
+  paths[0] = entry;
+  for (i32 i = 0; i < n; i++) {
+    if (isBuiltinSpec(paths[i])) { continue; }
+    FileResult f = cli.readFile(paths[i]).wait();
+    if (!f.ok) {
+      t.isTrue(false, "cannot read " + paths[i] + ", reached from the compiler's own graph");
+      continue;
+    }
+    string[] specs = importSpecs(f.bytes);
+    for (i32 s = 0; s < specs.len(); s++) {
+      string r = isBuiltinSpec(specs[s]) ? specs[s] : resolveFrom(paths[i], specs[s]);
+      bool seen = false;
+      for (i32 k = 0; k < n; k++) { if (paths[k] == r) { seen = true; } }
+      if (seen) { continue; }
+      if (n >= cap) {
+        t.isTrue(false, "the graph is larger than this test's room for it — raise the cap");
+        return paths;
+      }
+      paths[n] = r;
+      n = n + 1;
+    }
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = paths[i]; }
+  return out;
+}
+
+export string test_the_compilers_graph_is_inside_its_own_package(Core core, Cli cli) {
+  T t = T.create();
+  string[] g = graphOf(t, cli, "packages/wacc/src/api.wac", 256);
+  // **Sanctioned, with the reason.** `print.wac` renders the AST and needs a byte buffer; `Buf` is
+  // inside the reference's subset, which is why the bootstrap has always worked with it here.
+  string[] allowed = string[]("packages/bytes/src/buf.wac");
+  string outside = "";
+  i32 count = 0;
+  for (i32 i = 0; i < g.len(); i++) {
+    if (startsWith(g[i], "packages/wacc/src/")) { continue; }
+    bool ok = false;
+    for (i32 a = 0; a < allowed.len(); a++) { if (g[i] == allowed[a]) { ok = true; } }
+    if (ok) { continue; }
+    outside = outside + (outside == "" ? "" : ", ") + g[i];
+    count = count + 1;
+  }
+  t.eqStr(outside, "",
+          "the compiler imports " + itoa(count) + " file(s) outside `packages/wacc/src`, so "
+          + "`bash tools/seed.sh --bootstrap` will fail in a fresh clone — see this file's header");
+  return t.report();
+}
+
+/**
+ * And the graph is the whole compiler rather than a corner of it.
+ *
+ * **Without this the check above passes on a walk that found nothing.** A resolver that answered
+ * `""` for every specifier, or an entry that had stopped importing anything, would report zero
+ * files outside the package and be read as the rule holding.
+ */
+export string test_the_walk_reaches_the_compilers_files(Core core, Cli cli) {
+  T t = T.create();
+  string[] g = graphOf(t, cli, "packages/wacc/src/api.wac", 256);
+  t.isTrue(g.len() >= 15, "the walk found " + itoa(g.len()) + " files, which is too few to be the "
+                        + "compiler — it has more than fifteen");
+  bool sawEmit = false;
+  bool sawWapy = false;
+  for (i32 i = 0; i < g.len(); i++) {
+    if (g[i] == "packages/wacc/src/emit.wac") { sawEmit = true; }
+    if (g[i] == "packages/wacc/src/wapyparse.wac") { sawWapy = true; }
+  }
+  t.isTrue(sawEmit, "the walk reached `emit.wac`");
+  t.isTrue(sawWapy, "the walk reached `wapyparse.wac` — the frontend is wired in, `issues/lang/0279a`");
+  return t.report();
+}

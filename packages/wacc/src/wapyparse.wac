@@ -47,7 +47,7 @@
 // real token's index moves. Its text lives in three bytes appended to the source for the purpose, and
 // its line and column are the loop variable's, so a diagnostic about it points at `i`.
 
-import { Vec } from "core/vec.wac";
+import { WVec } from "./wvec.wac";
 import {
   Arm, Case, Decl, DeclKind, Expr, ExprKind, Field, ImportItem, Lvalue, LvalueKind, Method, Param,
   Program, Stmt, StmtKind, Ty, Variant, tyNullable, tyPrim,
@@ -92,7 +92,7 @@ struct W {
   i32[] pool;
   /** The appended `i32`, for `range()`'s induction variable and for error recovery. */
   i32 i32Tok;
-  Vec<i32> errors;
+  WVec<i32> errors;
 }
 
 void err(W w, i32 code, i32 line, i32 col) {
@@ -289,7 +289,7 @@ Param paramIn(W w, i32 from, i32 to) {
 }
 
 /** The comma-separated parts of `(from, to)`, each as a `[lo, hi)` pair pushed onto `out`. */
-void commaParts(W w, i32 from, i32 to, Vec<i32> out) {
+void commaParts(W w, i32 from, i32 to, WVec<i32> out) {
   i32 start = from;
   i32 d = 0;
   for (i32 i = from; i < to; i++) {
@@ -304,9 +304,9 @@ void commaParts(W w, i32 from, i32 to, Vec<i32> out) {
 }
 
 Param[] paramsIn(W w, i32 from, i32 to) {
-  Vec<i32> parts = Vec.create();
+  WVec<i32> parts = WVec.create();
   commaParts(w, from, to, parts);
-  Vec<Param> out = Vec.create();
+  WVec<Param> out = WVec.create();
   for (i32 i = 0; i + 1 < parts.len(); i = i + 2) {
     out.push(paramIn(w, parts.get(i), parts.get(i + 1)));
   }
@@ -315,7 +315,7 @@ Param[] paramsIn(W w, i32 from, i32 to) {
 
 /** `[T, U]` after a declaration's name — wapy's type parameters, which wac writes `<T, U>`. */
 i32[] typeParamsIn(W w, i32 from, i32 to) {
-  Vec<i32> out = Vec.create();
+  WVec<i32> out = WVec.create();
   for (i32 i = from; i < to; i++) { if (kindOf(w, i) == kIdent()) { out.push(i); } }
   i32[] a = i32[out.len()](fill: 0);
   for (i32 i = 0; i < out.len(); i++) { a[i] = out.get(i); }
@@ -396,12 +396,12 @@ struct Built {
 }
 
 /** Append one token to the flat builder. */
-void emit(Vec<i32> a, i32 kind, i32 start, i32 len, i32 line, i32 col) {
+void emit(WVec<i32> a, i32 kind, i32 start, i32 len, i32 line, i32 col) {
   a.push(kind); a.push(start); a.push(len); a.push(line); a.push(col);
 }
 
 /** The four synthetics for one counted loop, pointing into `synthTail()`. */
-void emitPool(Vec<i32> a, i32 base, i32 line, i32 col) {
+void emitPool(WVec<i32> a, i32 base, i32 line, i32 col) {
   emit(a, kIdent(),  synthI32Off(base),    3, line, col);
   emit(a, kLt(),     synthLtOff(base),     1, line, col);
   emit(a, kInc(),    synthIncOff(base),    2, line, col);
@@ -416,8 +416,8 @@ Built buildArray(u8[] src) {
   for (i32 i = 0; i < base; i++) { src2[i] = src[i]; }
   for (i32 i = 0; i < tb.len(); i++) { src2[base + i] = tb[i]; }
 
-  Vec<i32> a = Vec.create();
-  Vec<WSeg> segs = Vec.create();
+  WVec<i32> a = WVec.create();
+  WVec<WSeg> segs = WVec.create();
   for (i32 li = 0; li < wl.lines.len(); li++) {
     WLine ln = wl.lines[li];
     Toks t = toksNew();
@@ -476,7 +476,7 @@ Stmt[] noStmts() { return Stmt[0](fill: Stmt(StmtKind.Break, 1, 1)); }
 
 /** The statements of segments `[lo, hi)`. */
 Stmt[] stmtsIn(W w, i32 lo, i32 hi) {
-  Vec<Stmt> out = Vec.create();
+  WVec<Stmt> out = WVec.create();
   i32 i = lo;
   while (i < hi) {
     Res r = stmtAt(w, i, hi);
@@ -707,7 +707,7 @@ Res takeFor(W w, i32 i, i32 hi) {
       err(w, werrBadRange(), ln, cl);
       return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
     }
-    Vec<i32> parts = Vec.create();
+    WVec<i32> parts = WVec.create();
     commaParts(w, open + 1, close, parts);
     i32 nparts = parts.len() / 2;
     if (nparts < 2 || nparts > 3) {
@@ -778,8 +778,8 @@ Res takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
   i32 end = blockEnd(w, i);
   if (end > hi) { end = hi; }
 
-  Vec<Case> cases = Vec.create();
-  Vec<Arm> arms = Vec.create();
+  WVec<Case> cases = WVec.create();
+  WVec<Arm> arms = WVec.create();
   i32 j = i + 1;
   while (j < end) {
     i32 jf = w.segs[j].first;
@@ -809,7 +809,7 @@ Res takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
     }
     // `case Variant(a, b):` — the bindings are names, not expressions.
     i32 variantTok = jf + 1 < upto ? jf + 1 : jf;
-    Vec<i32> binds = Vec.create();
+    WVec<i32> binds = WVec.create();
     if (jf + 2 < upto && kindOf(w, jf + 2) == kLparen()) {
       i32 close = mate(w, jf + 2, upto);
       if (close > 0) {
@@ -905,7 +905,7 @@ Method methodAt(W w, i32 i, i32 hi, string owner, bool isOverride, i32 overrideT
     return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0));
   }
 
-  Vec<i32> parts = Vec.create();
+  WVec<i32> parts = WVec.create();
   commaParts(w, open + 1, close, parts);
   bool hasThis = false;
   bool thisConst = false;
@@ -927,7 +927,7 @@ Method methodAt(W w, i32 i, i32 hi, string owner, bool isOverride, i32 overrideT
       }
     }
   }
-  Vec<Param> ps = Vec.create();
+  WVec<Param> ps = WVec.create();
   for (i32 k = firstParam; k + 1 < parts.len(); k = k + 2) {
     ps.push(paramIn(w, parts.get(k), parts.get(k + 1)));
   }
@@ -974,9 +974,9 @@ Decl classAt(W w, i32 i, i32 hi, bool exported, bool isConst) {
     } else { err(w, werrBadDecl(), ln, colOf(w, after)); }
   }
 
-  Vec<Field> fields = Vec.create();
-  Vec<Method> methods = Vec.create();
-  Vec<Variant> variants = Vec.create();
+  WVec<Field> fields = WVec.create();
+  WVec<Method> methods = WVec.create();
+  WVec<Variant> variants = WVec.create();
   bool mOverride = false;
   i32 mOverrideTok = -1;
   i32 j = i + 1;
@@ -1041,7 +1041,7 @@ Decl importAt(W w, i32 i) {
   i32 cl = w.segs[i].indent;
   i32 pathTok = -1;
   i32 prefixTok = -1;
-  Vec<ImportItem> items = Vec.create();
+  WVec<ImportItem> items = WVec.create();
   if (f + 1 >= e) {
     err(w, werrBadImport(), ln, cl);
     return Decl(DeclKind.Import(-1, -1, items.toArray()), ln, cl);
@@ -1054,7 +1054,7 @@ Decl importAt(W w, i32 i) {
   if (kw >= e || kindOf(w, kw) != kImport()) {
     err(w, werrBadImport(), ln, kw < e ? colOf(w, kw) : cl);
   }
-  Vec<i32> parts = Vec.create();
+  WVec<i32> parts = WVec.create();
   commaParts(w, kw + 1, e, parts);
   for (i32 k = 0; k + 1 < parts.len(); k = k + 2) {
     i32 lo = parts.get(k);
@@ -1094,7 +1094,7 @@ Decl constAt(W w, i32 i, bool exported) {
  * that is not those three, is an error rather than silence.
  */
 Decl[] topLevel(W w) {
-  Vec<Decl> out = Vec.create();
+  WVec<Decl> out = WVec.create();
   bool exported = false;
   bool isConst = false;
   i32 i = 0;
@@ -1148,7 +1148,7 @@ export struct WParsed {
  */
 export WParsed wapyParse(u8[] src) {
   Built b = buildArray(src);
-  Vec<i32> errs = Vec.create();
+  WVec<i32> errs = WVec.create();
   for (i32 i = 0; i < b.errorCount * 3; i++) { errs.push(b.errors[i]); }
   W w = W(b.src, b.toks, b.tokCount, b.segs, b.pool, b.i32Tok, errs);
   Decl[] decls = topLevel(w);

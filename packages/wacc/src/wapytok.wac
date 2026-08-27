@@ -18,14 +18,14 @@
 // keyword that generated the node.
 
 import { Lexed, tokenStride } from "./lex.wac";
-import { Vec } from "core/vec.wac";
+import { WVec } from "./wvec.wac";
 
 /** A growable list of quintuples. */
 export struct Toks {
-  Vec<i32> a;
+  WVec<i32> a;
 }
 
-export Toks toksNew() { return Toks(Vec.create()); }
+export Toks toksNew() { return Toks(WVec.create()); }
 
 /** How many tokens are in it. */
 export i32 toksLen(Toks t) { return t.a.len() / tokenStride(); }

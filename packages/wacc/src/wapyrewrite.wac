@@ -7,7 +7,7 @@
 //   `X if C else Y`   →  `C ? X : Y`        the operands swap around the condition
 //   `Point(y=4.0)`    →  `Point { y: 4.0 }`  a call becomes a construction
 //   `i32[3](fill=v)`  →  `i32[3](fill: v)`   ...except after `]`, where it stays a call
-//   `Vec[i32]`        →  `Vec<i32>`          in a type, and only there
+//   `Vec[i32]`        →  `WVec<i32>`          in a type, and only there
 //   `T | None`        →  `T?`                outermost only
 //
 // Ported from `compiler/wapyParse.ts`. The algorithms are its, including the two details that are
@@ -15,7 +15,7 @@
 // already done when the level above it is scanned, and the outer scan is split at `,` and `:` so
 // `f(a, 1 if c else b, d)` takes `1` as the arm rather than `a, 1`.
 
-import { Vec } from "core/vec.wac";
+import { WVec } from "./wvec.wac";
 import {
   kAssign, kColon, kComma, kElse, kGt, kIdent, kIf, kLbrace, kLbrack, kLparen,
   kLt, kMatch, kNull, kOr, kQuestion, kRbrace, kRbrack, kRparen,
@@ -51,8 +51,8 @@ export i32 matching(Toks t, i32 i) {
 }
 
 /** `t` cut at every depth-0 `sep`, the separators dropped. */
-export Vec<Toks> splitTop(Toks t, i32 sep) {
-  Vec<Toks> out = Vec.create();
+export WVec<Toks> splitTop(Toks t, i32 sep) {
+  WVec<Toks> out = WVec.create();
   i32 start = 0;
   for (i32 i = 0; i < toksLen(t); i++) {
     if (kindAt(t, i) != sep || depthAt(t, i) != 0) { continue; }
@@ -141,7 +141,7 @@ export Toks ternaries(Toks t) {
 }
 
 /** Whether every part is `ident = …`, which is what makes a call a construction. */
-bool allNamed(Vec<Toks> parts) {
+bool allNamed(WVec<Toks> parts) {
   if (parts.len() == 0) { return false; }
   for (i32 i = 0; i < parts.len(); i++) {
     Toks p = parts.get(i);
@@ -166,7 +166,7 @@ export Toks namedArgs(Toks t) {
     if (kindAt(cur, open) != kLparen()) { continue; }
     i32 close = matching(cur, open);
     if (close < 0 || close == open + 1) { continue; }
-    Vec<Toks> parts = splitTop(slice(cur, open + 1, close), kComma());
+    WVec<Toks> parts = splitTop(slice(cur, open + 1, close), kComma());
     if (!allNamed(parts)) { continue; }
     bool arr = open > 0 && kindAt(cur, open - 1) == kRbrack();
 
