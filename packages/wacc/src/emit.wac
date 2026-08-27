@@ -4022,8 +4022,17 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
   // caller and to anyone debugging. The name has been recorded in `ambiguousName` the whole time.
   if (env.ambiguous) {
     string which = env.ambiguousName != "" ? "`" + env.ambiguousName + "`" : "a name";
+    string wheres = "";
+    i32 seen = 0;
+    for (i32 i = 0; i < env.declCount; i++) {
+      if (env.declNames[i] != env.ambiguousName) { continue; }
+      seen = seen + 1;
+      i32 fi = env.declFiles[i];
+      string fp = fi >= 0 && fi < env.filePaths.len() ? env.filePaths[fi] : "?";
+      wheres = wheres + (wheres == "" ? "" : ", ") + fp + " as " + env.declKeys[i];
+    }
     return "the module was refused because " + which + " is declared in more than one file and a "
-         + "use of it could mean either";
+         + "use of it could mean either — " + numText(seen) + " declarations: " + wheres;
   }
   if (env.full) { return "declined with no reason recorded"; }
   return "";
@@ -4387,8 +4396,10 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   } else {
     scanTokenTypes(env, src, lexed);
   }
-  // **Off, and bisected to exactly two things.** Every caller collects the trees now, so switching
-  // this on is one edit — see the commit that measured what still stops it.
+  // **Off. Three causes found, one left.** See the commit for the two that are fixed; what remains
+  // is a cross-file token read during emission that `packages/box` and `packages/git` reach and
+  // `packages/sh` does not — it surfaces as array types registered from garbage names (`array ][]`,
+  // `array from[]`), which is a token index read against another file's source.
   collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
