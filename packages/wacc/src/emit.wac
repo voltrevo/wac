@@ -10404,7 +10404,11 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       if (g0 != "" && env.canonType(g0) != env.canonType(t) && valType(g0) == valType(t) &&
           (isArrayType(t) || env.isStructName(t)) &&
           !env.isSubtypeOf(env.canonType(g0), env.canonType(t))) {
-        return "an assignment between related reference types";
+        // **Named, both of them.** This message pointed at a shape and not at a program: two
+        // reference types that are related and not the same could be any pair in the module, and a
+        // reader had no way to tell which. It is the message `issues/lang/0274b` was found through,
+        // and naming the pair is what turned a guess into a measurement.
+        return "an assignment between related reference types: " + g0 + " into " + t;
       }
       return "";
     }

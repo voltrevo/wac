@@ -33,7 +33,12 @@ export i32 main() {
 }
 ```
 
-    wacc: cannot emit … — an assignment between related reference types
+    wacc: cannot emit … — an assignment between related reference types: Box<U> into Box<bool>
+
+`Box<U>` is the **template's** return type, with the method's letter unbound: the second call resolved
+to the template entry because its instance was never registered. That message named neither type
+until this issue was written; naming both is what turned the guess into a measurement, and it is
+landed.
 
 ## The four probes that narrowed it
 
@@ -47,6 +52,31 @@ export i32 main() {
 So it is neither the chain, nor two instantiations, nor an instantiation-shaped return type. It is the
 second instantiation *of a method whose return type is one*. The owner's own template is not special:
 `Box<U>` from a `Cell<T>` fails the same way.
+
+## The workaround, which is also the strongest clue
+
+**Put the two calls in different functions and it works.**
+
+```wac
+i32 a(Cell<i32> c) { Box<i64>  d = c.wrap<i64>(…);  return …; }
+i32 b(Cell<i32> c) { Box<bool> e = c.wrap<bool>(…); return …; }
+```
+
+That says the failure is *within one body*, and points at the discovery walk: `collectInstances`
+walks each body with `canEmit`, which **stops at the first thing it cannot emit**. In round one the
+first call names its instance (discovery happens inside `typeOfE`, through `methodSlotFor`) and then
+the statement declines, because the instance does not exist yet — so the walk stops there and the
+*second* call is never reached, never named, never registered. Two bodies means two walks, and each
+gets its first call.
+
+The rounds ought to recover it — round two should pass the first statement and reach the second — and
+empirically they do not. That is the thing to understand before writing anything: **why a second
+round does not discover what the first could not reach.**
+
+Tried and reverted: making `methodSlotFor` answer *unknown* rather than the template's entry when the
+instance is not registered yet, so the statement would not decline and the walk would carry on. It
+moves the failure rather than fixing it — `main` is then dropped from the module with no reason
+given — so something else is also reading that fallback.
 
 ## What that points at
 
