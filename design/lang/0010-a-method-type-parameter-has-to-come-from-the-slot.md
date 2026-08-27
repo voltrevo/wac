@@ -5,6 +5,10 @@
   scheduler plumbing rather than a declaration — see *What is left to build* item 1, which understated
   itself. `spec/cases/0245`–`0249` are the landed behaviour.
 
+  **One limitation, found after the criteria were ticked and worth knowing before relying on this:**
+  a method with its own letters is not found through a *project* import — `issues/lang/0275b`. Every
+  case here is a single file, so the criteria are all met in the one place the bug cannot appear.
+
   Decided 2026-08-26; the objection that had ruled C out was removed by
   [0011](0011-a-call-may-name-its-type-arguments.md). Option D moved to
   [0012](0012-synthesising-a-lambdas-return-type.md) as a separate ergonomic question
