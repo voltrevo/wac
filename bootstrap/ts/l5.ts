@@ -44,10 +44,73 @@ export async function flatten(entry: string, seen = new Set<string>()): Promise<
   const text = await Deno.readTextFile(path);
   const dir = path.slice(0, path.lastIndexOf("/"));
   let out = "";
-  for (const m of text.matchAll(/^\s*import\s*\{[^}]*\}\s*from\s*"([^"]+)"\s*;/gm)) {
-    out += await flatten(`${dir}/${m[1]}`, seen);
+  // `import { x as y }` renames a declaration for this module only, and concatenating the
+  // modules loses the rename along with the import. So the alias is undone here — every
+  // occurrence of `y` outside a string or a comment becomes `x`, which is what the importing
+  // module meant by it. Six of these exist in the corpus and all six read like renames rather
+  // than like words that could also be someone's local: `pathResolveFrom`, `coreIsBuiltinSpec`.
+  const aliases = new Map<string, string>();
+  for (const m of text.matchAll(/^\s*import\s*\{([^}]*)\}\s*from\s*"([^"]+)"\s*;/gm)) {
+    out += await flatten(`${dir}/${m[2]}`, seen);
+    for (const item of m[1].split(",")) {
+      const a = item.trim().match(/^(\w+)\s+as\s+(\w+)$/);
+      if (a) aliases.set(a[2], a[1]);
+    }
   }
-  return out + text + "\n";
+  // A module may alias an import *and* declare its own thing with the original's name — the
+  // whole point of `import { isBuiltinSpec as coreIsBuiltinSpec }` in files.wac is that it can
+  // then export a wrapper of the same name. Undoing the alias would fuse the two into one
+  // self-calling function, so this module's own declaration is renamed apart first, while the
+  // two are still spelled differently.
+  const renames = new Map<string, string>();
+  const mod = path.slice(path.lastIndexOf("/") + 1).replace(/\.wac$/, "");
+  for (const orig of aliases.values()) {
+    const declared = new RegExp(
+      `^\\s*(export\\s+)?(struct|enum)?\\s*[\\w<>\\[\\]?]*\\s*\\b${orig}\\b\\s*[({]`,
+      "m",
+    );
+    if (declared.test(text)) renames.set(orig, `${orig}_${mod}`);
+  }
+  const rewrite = new Map([...renames, ...aliases]);
+  return out + (rewrite.size === 0 ? text : unalias(text, rewrite)) + "\n";
+}
+
+// Identifiers only: a rename must not reach inside a string, a character literal or a comment.
+function unalias(text: string, aliases: Map<string, string>): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "/" && text[i + 1] === "/") {
+      const e = text.indexOf("\n", i);
+      out += text.slice(i, e < 0 ? text.length : e);
+      i = (e < 0 ? text.length : e) - 1;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      const e = text.indexOf("*/", i + 2);
+      const j = e < 0 ? text.length : e + 2;
+      out += text.slice(i, j);
+      i = j - 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++;
+      const w = text.slice(i, j);
+      out += aliases.get(w) ?? w;
+      i = j - 1;
+      continue;
+    }
+    out += c;
+  }
+  return out;
 }
 
 export async function l5RunFile(entry: string, fn = "main"): Promise<number> {

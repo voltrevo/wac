@@ -59,7 +59,13 @@
       (emit1 (+ 48 (% n 10)))))
 
 (fn emitn ((n i32)) i32
-  (if (< n 0) (do (emit1 45) (emitd (- 0 n))) (emitd n)))
+  ; The most negative i32 has no positive counterpart, so negating it overflows back to itself
+  ; and the last digit prints as `(`. Split it off first; the rest fits.
+  (if (< n 0)
+    (do (emit1 45)
+        (if (< 0 (- 0 (/ n 10))) (emitd (- 0 (/ n 10))) 0)
+        (emit1 (+ 48 (- 0 (% n 10)))))
+    (emitd n)))
 
 (fn sp () i32 (emit1 32))
 (fn nl () i32 (emit1 10))

@@ -72,7 +72,15 @@ i32 emitd(i32 n) {
 }
 
 i32 emitn(i32 n) {
-  if (n < 0) { emit1(45); emitd(0 - n); } else { emitd(n); }
+  // The most negative i32 has no positive counterpart, so negating it overflows back to itself
+  // and every digit after that is `48 + a negative remainder` — which for -2147483648 prints the
+  // last digit as `(`. Splitting the last digit off first leaves a rest that does fit.
+  if (n >= 0) { return emitd(n); }
+  emit1(45);
+  i32 hi = 0 - (n / 10);
+  i32 lo = 0 - (n % 10);
+  if (hi > 0) { emitd(hi); }
+  emit1(48 + lo);
   return 0;
 }
 
@@ -709,6 +717,8 @@ i32 usedstr = 0;
 i32 usedcat = 0;
 i32 usedslice = 0;
 i32 usedfromcp = 0;
+i32 usedindexof = 0;
+i32 usedtrim = 0;
 i32 usedeq = 0;
 
 i32 prim_type() {
@@ -1115,11 +1125,20 @@ i32 construct(i32 t) {
   // `Expr?[4]()` — the element is nullable, which is a spelling rather than a different type here.
   if (ispunct(63)) { next(); }
   if (ispunct(91)) {
-    next();
+    // `Param[][1024]()` — a thousand arrays of Param, so every `[...]` but the last names the
+    // element type of the one after it and only the last takes the arguments. A size on any
+    // but the last would have to be emitted before the level it belongs to, which one pass and
+    // no syntax tree cannot do — and no such type is written, so it is refused rather than
+    // silently mis-emitted.
+    i32 at = t;
     i32 sized = 0;
-    if (ispunct(93) == 0) { expr(); sized = 1; }
-    want(93);
-    i32 at = ty_array(t);
+    while (ispunct(91)) {
+      if (sized) { oops(); return at; }
+      next();
+      if (ispunct(93) == 0) { expr(); sized = 1; }
+      want(93);
+      at = ty_array(at);
+    }
     want(40);
     if (sized) {
       // `T[n](fill: v)` — the fill is evaluated and dropped, because `array.new_default` zeroes and
@@ -1183,6 +1202,21 @@ i32 postfix(i32 t) {
           word("array.get_u"); tyname(t); nl();
           t = TY_U8;
         } else {
+        // `s.indexOf(needle)` is a byte offset or -1, and `s.trim()` drops ASCII whitespace
+        // from both ends. Both are searches rather than shapes, so both are runtime helpers.
+        if (t == strty & texteq(p, n, "indexOf")) {
+          want(40);
+          expr();
+          want(41);
+          usedindexof = 1;
+          line("call $__indexof");
+          t = TY_I32;
+        } else {
+        if (t == strty & texteq(p, n, "trim")) {
+          want(40); want(41);
+          usedtrim = 1;
+          line("call $__trim");
+        } else {
         // `bytes.slice(a, b)` — the half-open range as a fresh array. Every use in the corpus is
         // over the byte array, which is the one array type that already has a runtime helper, so
         // this stays a single function rather than one per element type.
@@ -1218,7 +1252,7 @@ i32 postfix(i32 t) {
               t = ft;
             }
           }
-        }}}}}
+        }}}}}}}
       } else {
         next();
         expr();
@@ -1339,7 +1373,7 @@ i32 primary() {
     oops();
     return 0;
   }
-  if (pt != 0 - 1) { next(); return construct(pt); }
+  if (pt != 0 - 1) { next(); return postfix(construct(pt)); }
   // `string.fromBytes(b)` is the identity, because a `string` here *is* a `u8[]` — the same reason
   // `s.toBytes()` is. Checked before the construction path, which would read the `.` as a missing
   // `(` and refuse.
@@ -1357,7 +1391,7 @@ i32 primary() {
     oops();
     return 0;
   }
-  if (is_string_word()) { next(); return construct(string_type()); }
+  if (is_string_word()) { next(); return postfix(construct(string_type())); }
   if (kind() == K_NAME) {
     i32 p = tstart();
     i32 n = tlen();
@@ -2801,6 +2835,135 @@ i32 emit_runtime() {
     line("end");
     nl();
   }
+  // `trim` answers a range of its argument, which is what `slice` already builds.
+  if (usedtrim) { usedslice = 1; }
+  if (usedindexof) {
+    // Naive substring search: every start offset, and at each one a walk of the needle. The
+    // inner loop leaves `$j` short of the needle's length on a mismatch, so the two ways out of
+    // it are told apart by comparing `$j` afterwards rather than by a flag.
+    word("func"); line("$__indexof -> i32");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    line("local i32 $i");
+    line("local i32 $j");
+    line("local i32 $an");
+    line("local i32 $bn");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $an");
+    line("local.get $b");
+    line("array.len");
+    line("local.set $bn");
+    line("block $x1 ->");
+    line("loop $y1 ->");
+    line("local.get $i");
+    line("local.get $bn");
+    line("i32.add");
+    line("local.get $an");
+    line("i32.gt_s");
+    line("br_if $x1");
+    line("i32.const 0");
+    line("local.set $j");
+    line("block $x2 ->");
+    line("loop $y2 ->");
+    line("local.get $j");
+    line("local.get $bn");
+    line("i32.ge_s");
+    line("br_if $x2");
+    line("local.get $a");
+    line("local.get $i");
+    line("local.get $j");
+    line("i32.add");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.get $b");
+    line("local.get $j");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.ne");
+    line("br_if $x2");
+    line("local.get $j");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $j");
+    line("br $y2");
+    line("end");
+    line("end");
+    line("local.get $j");
+    line("local.get $bn");
+    line("i32.eq");
+    line("if $x3 ->");
+    line("local.get $i");
+    line("return");
+    line("end");
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $y1");
+    line("end");
+    line("end");
+    line("i32.const 0");
+    line("i32.const 1");
+    line("i32.sub");
+    line("end");
+    nl();
+  }
+  if (usedtrim) {
+    // Whitespace is everything at or below a space, which is what the corpus means by it and
+    // costs one comparison rather than a set.
+    word("func"); line("$__trim -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    line("local i32 $s");
+    line("local i32 $e");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $e");
+    line("block $t1 ->");
+    line("loop $t2 ->");
+    line("local.get $s");
+    line("local.get $e");
+    line("i32.ge_s");
+    line("br_if $t1");
+    line("local.get $a");
+    line("local.get $s");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.const 32");
+    line("i32.gt_u");
+    line("br_if $t1");
+    line("local.get $s");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $s");
+    line("br $t2");
+    line("end");
+    line("end");
+    line("block $t3 ->");
+    line("loop $t4 ->");
+    line("local.get $e");
+    line("local.get $s");
+    line("i32.le_s");
+    line("br_if $t3");
+    line("local.get $a");
+    line("local.get $e");
+    line("i32.const 1");
+    line("i32.sub");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.const 32");
+    line("i32.gt_u");
+    line("br_if $t3");
+    line("local.get $e");
+    line("i32.const 1");
+    line("i32.sub");
+    line("local.set $e");
+    line("br $t4");
+    line("end");
+    line("end");
+    line("local.get $a");
+    line("local.get $s");
+    line("local.get $e");
+    line("call $__slice");
+    line("end");
+    nl();
+  }
   if (usedslice) {
     word("func"); line("$__slice -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
     word("param"); word("refnull"); tyname(at2); sp(); line("$a");
@@ -3024,6 +3187,8 @@ i32 compile(i32 s, i32 out) {
   usedcat = 0;
   usedslice = 0;
   usedfromcp = 0;
+  usedindexof = 0;
+  usedtrim = 0;
   usedeq = 0;
   tmpls = Tmpl[4096]();
   tparams = TParam[8192]();

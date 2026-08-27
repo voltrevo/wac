@@ -91,7 +91,15 @@ i32 emitd(i32 n) {
 }
 
 i32 emitn(i32 n) {
-  if (n < 0) { emit1(45); emitd(0 - n); } else { emitd(n); }
+  // The most negative i32 has no positive counterpart, so negating it overflows back to itself
+  // and every digit after that is `48 + a negative remainder` — which for -2147483648 prints the
+  // last digit as `(`. Splitting the last digit off first leaves a rest that does fit.
+  if (n >= 0) { return emitd(n); }
+  emit1(45);
+  i32 hi = 0 - (n / 10);
+  i32 lo = 0 - (n % 10);
+  if (hi > 0) { emitd(hi); }
+  emit1(48 + lo);
   return 0;
 }
 
