@@ -73,11 +73,43 @@ compile time to `call $Point_sum` — no vtable, no receiver in the call, becaus
 subtyping to make it ambiguous. `this` is the first parameter and has the owner's type. Methods are
 not exported, because their names are not ones a caller outside the module could have written.
 
-## What is not, and what is next
+## Why there is no type checker, and why one is not missing
 
-`T?` and generics, and a type checker. The last is the interesting one: everything above is tracked
-well enough to pick an instruction and no further, so a wrong type reaches the engine and is refused
-with a message about a wasm type rather than a wac one.
+wac-1 tracks types to *pick an instruction* — which struct to read a field from, whether a local is
+`i32` or `refnull $s1`. It never checks that the types agree, and it does not need to: **wasm
+validation is the checker, and it is total.**
+
+Every wac-level type error that could be constructed is refused before the program runs, by one of
+two things:
+
+| the mistake | who refuses it |
+|---|---|
+| arithmetic on a struct | the engine — `i32.add[0] expected i32` |
+| an `i32` passed where a struct is wanted | the engine — `call[0] expected …` |
+| two structs of the same shape, swapped | the engine — they are distinct wasm types, never merged |
+| a field that does not exist | the compiler, which emits a refusal marker |
+| an `i32` indexed as an array | the compiler |
+| a `case` naming no variant | the compiler |
+| a `case` binding more fields than the variant has | the engine — invalid field index |
+
+So a wac-1 program that assembles and validates cannot have a type error in it. What a checker would
+buy is a better *message*: the engine names a wasm type and a function index, and points at
+generated assembly rather than at a line of source.
+
+That matters less here than anywhere else in this ladder. The only program that will ever be written
+in wac-1 is the next rung's compiler, and every rung below has exactly the same absence — sx traps
+with no message at all. A checker is a rung's worth of work to improve a diagnostic for one reader.
+
+**What was actually missing was smaller**: the compiler's own lookups answering `-1` and carrying on.
+A `case` naming no variant used to read `VARS - 16`, get zeros, and cast to type 0 — which is `i32`
+and emits no `type` directive, so the assembler happened to refuse it. That is the fourth thing here
+that worked by coincidence, and the first one found before it cost anything.
+
+## What is left
+
+`T?`, and generics. The second is the real question for the ladder rather than for the language: the
+rung above this one is wac itself, and either wac-1 gains generics or `packages/wacc/src` stops using
+them.
 
 Nothing here is type-*checked*. The compiler tracks types to decide which instruction to emit, and
 believes what it is told; a wrong one reaches the assembler and then the engine, which refuses it

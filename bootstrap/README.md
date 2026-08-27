@@ -76,5 +76,9 @@ lines of wac-0, emitting **wasm GC**. No allocator anywhere in the ladder:
       return 0;
     }
 
-which is the shape wac's own compiler is written in. **What is left is a type checker, `T?` and
-generics.** `NOTES.md` has the numbers and the bugs.
+which is the shape wac's own compiler is written in.
+
+**There is deliberately no type checker**, and none is missing: wasm validation is one, and it is
+total — every wac-level type error is refused before the program runs, by the engine or by the
+compiler's own refusal marker. `spec/wac1.md` has the table. What is left is `T?` and generics.
+`NOTES.md` has the numbers and the bugs.

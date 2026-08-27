@@ -618,6 +618,7 @@ i32 postfix(i32 t) {
       next();
       expr();
       want(93);
+      if (ty_kind(t) != T_ARRAY) { oops(); }
       i32 et = ty_elem(t);
       word("array.get"); tyname(t); nl();
       t = et;
@@ -826,6 +827,12 @@ i32 match_statement() {
     i32 vn = tlen(tp);
     next();
     i32 vi = var_find(vp, vn);
+    // **Loudly, not by luck.** A `case` naming no variant used to answer -1 and carry on: reading
+    // `VARS - 16` gives zeros, so the arm compared against a nonsense tag and cast to type 0 —
+    // which is `i32` and emits no `type` directive, so the assembler happened to refuse it. That is
+    // the fourth thing in this project that worked because of a coincidence, and the first one
+    // caught before it cost anything.
+    if (vi == 0 - 1) { oops(); }
     i32 skip = newlabel();
     word("block"); label(skip); sp(); line("->");
     word("local.get"); slotname(slot); nl();
