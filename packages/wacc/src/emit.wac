@@ -7398,7 +7398,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       traceIndex(fb, env, index.line, index.col);
       emitArrayGet(fb, env, at2);
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mname = tokenTextOf(src, lexed, nameTok);
@@ -7897,7 +7897,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (e == "u8" || e == "i8" || e == "u16" || e == "i16") { return "i32"; }
       return e;
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         else: {
           string ct2 = typeOfE(src, lexed, env, callee);
@@ -8701,7 +8701,7 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
     }
     // **A receiver that is itself a call**, which `core.delay(1).then(f)` is. The type of a call is
     // its callee's return type, and for a method that is the entry the method table already holds.
-    case Call(icallee, iargs): {
+    case Call(icallee, iargs, callTargs): {
       match (icallee.kind) {
         case Member(iobj, inameTok): {
           string it = walkCalleeSig(env, src, lexed, iobj);
@@ -8840,7 +8840,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // by the time this walk does, so `funcAt` can answer for a plain function, and a method or an
     // expression callee needs a receiver this pre-pass has no way to type. Those stay `""` and the
     // module declines by name rather than guessing a signature.
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       findLambdasExpr(env, src, lexed, callee, "");
       i32 fat = -1;
       string inst = "";
@@ -10398,7 +10398,7 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     // A static on a template takes its instantiation from the slot, so it can only be asked about
     // where there is one — `typeOfE` has none and would call the whole call untyped.
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Member(obj, nameTok): {
           // A **template's variant** — `Option.Some(3)` — before its statics, since both are written
@@ -10790,7 +10790,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         else: { return "a construction kind"; }
       }
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
@@ -12320,7 +12320,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
       collectArrayTypesOfExpr(env, src, lexed, left);
       if (!(other is null)) { collectArrayTypesOfExpr(env, src, lexed, other!); }
     }
-    case Call(callee, args): {
+    case Call(callee, args, callTargs): {
       collectArrayTypesOfExpr(env, src, lexed, callee);
       for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
     }
@@ -12379,7 +12379,7 @@ string kindOfExpr(Expr e) {
     case Ternary(cond, then, els): { return "ternary"; }
     case Index(arr, index): { return "index"; }
     case Member(obj, nameTok): { return "member"; }
-    case Call(callee, args): { return "call"; }
+    case Call(callee, args, callTargs): { return "call"; }
     case Construct(ctype, args, named): { return "construct"; }
     case ArrNew(elem, size, fill, elements): { return "array"; }
     case Unwrap(operand): { return "unwrap"; }

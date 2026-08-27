@@ -131,7 +131,24 @@ export enum ExprKind {
    */
   Is(Expr left, Ty? target, Expr? other, bool negated),
   Ternary(Expr cond, Expr then, Expr els),
-  Call(Expr callee, Expr[] args),
+  /**
+   * A call, with the type arguments **written at the call** if any were.
+   *
+   * `typeArgs` is empty for every call that does not write them, which is all of them outside a
+   * postfix method call — a free function's are carried by `Construct`'s `Ty` instead, because
+   * `zero<i32>()` and `Vec<i32>(…)` are the same syntax and the parser cannot tell them apart.
+   * So this field exists for `recv.m<U>(x)`, where the letters belong to the *method* rather than
+   * to its owner and there is nowhere else to put them.
+   *
+   * Widening `Call` rather than adding a variant: type arguments belong to a call, and an empty
+   * list is exactly what every existing site means. A new variant would have wanted "not valid
+   * here" in about fifty arms of the exhaustive matches to say the same nothing.
+   *
+   * `design/lang/0011` step 3, which is what makes
+   * [0010](../../../design/lang/0010-a-method-type-parameter-has-to-come-from-the-slot.md) option C
+   * writable.
+   */
+  Call(Expr callee, Expr[] args, Ty[] typeArgs),
   Index(Expr arr, Expr index),
   Member(Expr obj, i32 nameTok),
   /** `x!` — the non-null assertion. */

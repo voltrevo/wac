@@ -1103,12 +1103,22 @@ Expr parsePostfix(P p) {
       p.advance();
       i32 nameTok = -1;
       nameTok = declName(p, perrFieldName(), "field name");
+      // **A method may be called with its own type arguments** — `v.fold<i64>(0, f)`. The same rule
+      // as everywhere else: if what follows the name parses as a type argument list, it is one.
+      // Nothing else in the language can appear between a member name and its `(`, so there is no
+      // shape to be ambiguous with here — the trigger's cost is all in the *primary* position, where
+      // a comparison could stand.
+      //
+      // `issues/lang/0235a` is what this closes: the checker told a caller `no Box<i32>.map without
+      // its type arguments`, and writing them was a parse error, so the message named an escape that
+      // did not exist.
+      Ty[] callTypeArgs = p.at1(kLt()) && afterTypeArgs(p, 0) >= 0 ? parseTypeArgs(p) : Ty[]();
       if (p.at1(kLparen())) {
         p.advance();
         Expr[] args = parseArgList(p);
         p.expect(kRparen());
         Expr callee = Expr(ExprKind.Member(e, nameTok), line, col);
-        e = Expr(ExprKind.Call(callee, args), line, col);
+        e = Expr(ExprKind.Call(callee, args, callTypeArgs), line, col);
       } else {
         e = Expr(ExprKind.Member(e, nameTok), line, col);
       }
@@ -1126,7 +1136,7 @@ Expr parsePostfix(P p) {
       p.advance();
       Expr[] args = parseArgList(p);
       p.expect(kRparen());
-      e = Expr(ExprKind.Call(e, args), line, col);
+      e = Expr(ExprKind.Call(e, args, Ty[]()), line, col);
     } else if (p.at1(kInc()) || p.at1(kDec())) {
       i32 op = p.advance();
       Lvalue? lv = exprToLvalue(e);
@@ -1465,11 +1475,17 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
         ? Expr(ExprKind.Ident(nameTok), line, col)
         : Expr(ExprKind.TypeName(tyNamed(nameTok, nameArgs, line, col)), line, col);
     Expr member = Expr(ExprKind.Member(base, methodTok), line, col);
+    // **The method's own type arguments**, the same as `parsePostfix`'s `.` branch reads them. Both
+    // branches are needed and it is easy to fix only one: the *first* `.` after a name is parsed
+    // here, because `looksLikeConstructionOrCall` claims `b.map` before `parsePostfix` sees it, and
+    // every `.` after that is parsed there. So `b.map<i64>(f)` goes through this line and
+    // `b.inner().map<i64>(f)` through the other.
+    Ty[] callTypeArgs = p.at1(kLt()) && afterTypeArgs(p, 0) >= 0 ? parseTypeArgs(p) : Ty[]();
     if (p.at1(kLparen())) {
       p.advance();
       Expr[] args = parseArgList(p);
       p.expect(kRparen());
-      return Expr(ExprKind.Call(member, args), line, col);
+      return Expr(ExprKind.Call(member, args, callTypeArgs), line, col);
     }
     return member;
   }

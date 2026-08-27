@@ -319,9 +319,9 @@ rather than stylistic, so they are recorded there and repeated here:
 | the target, the spelling, the trigger | **accepted** with the operator, 2026-08-26 |
 | 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
 | 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
-| 3 — the postfix path | **not started** |
+| 3 — the postfix path | **done** 2026-08-27 — `ExprKind.Call` carries `Ty[] typeArgs`; `v.fold<i64>(0, f)` parses. Not yet *bound* — that is 0010 C |
 | 4 — name resolution | **not started** — this is the feature |
-| 5 — the diagnostic | **done for the parse half** 2026-08-27 — `perrTypeArgsThenValue`, and the checker's `TypeName` arm branches on whether the name is a function. `issues/lang/0235a`'s remaining half is the *postfix* `b.map<i32>(…)` |
+| 5 — the diagnostic | **done** 2026-08-27 — `perrTypeArgsThenValue`; the checker's `TypeName` arm branches on whether the name is a function; and the method-type-parameter refusal stops promising a workaround. `issues/lang/0235a` is covered on both halves |
 | 6 — the emitter | **not started**, and the only large one |
 | 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
 | the tuple constraints | recorded in `issues/lang/0074` |
@@ -360,6 +360,15 @@ rather than stylistic, so they are recorded there and repeated here:
   real `TypeName` drew a second complaint from the checker about the same `<`; leaving the token
   unconsumed drew one from the statement parser about a semicolon. `perrBadPrimary`'s existing
   idiom — fail, advance, return `NullLit` — is what makes it one.
+- **A refusal can name an escape that does not exist.** `no Box<i32>.map without its type
+  arguments` reads as an instruction, and until step 3 writing them was a parse error, so following
+  it answered `a type name is not a value` under the `<` — about a different program. Two wrong
+  messages in a row, and the second is the one the reader would have believed. The note now says
+  which of the two the caller did and stops there.
+- **The first `.` and the rest are parsed in different places.** `looksLikeConstructionOrCall` claims
+  `b.map` before `parsePostfix` sees it, so `b.map<i64>(f)` goes through `parseConstructionOrCall`
+  and `b.inner().map<i64>(f)` through `parsePostfix`. Fixing one and testing with the other spelling
+  is a way to conclude the change did not work.
 - **A neighbouring gap, filed as `issues/lang/0272b`:** `(x < 2) > 0` type-checks and evaluates the
   `bool` as `1`, where `b > y` on a `bool` local is correctly refused. Found writing case 0238, which
   was rewritten not to depend on it.
