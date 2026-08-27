@@ -3207,7 +3207,7 @@ i32 countLines(string s) {
 /** How many files the linker's walk can have queued — see `queue` in `linkFiles`. */
 i32 linkQueueSize() { return 1024; }
 
-string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
+bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths,
                  u8[][] outSrc, Lexed?[] outLexed, Program?[] outProg) {
   // **One file under two keys is refused here**, which is the one place both routes pass through:
@@ -3217,7 +3217,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
   // happened was worse than the two incompatible copies `design/lang/0009` D8 warns about: the
   // checker stayed clean and the **engine** rejected the module, telling the user it was a compiler
   // bug with no source line. `issues/lang/0163`.
-  if (twoKeysForOneFile(paths) != "") { return ""; }
+  if (twoKeysForOneFile(paths) != "") { return false; }
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
@@ -3243,15 +3243,13 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
   i32 qn = 1;
   i32 sn = 0;
   queue[0] = entry;
-  string out = "";
-  i32 outLines = 0;   // newlines in `out`, maintained rather than recounted
-  // **Collected, then combined in halves.** `out = out + body` copies everything accumulated so
-  // far at every step, so linking n files copies the blob about n/2 times over — 110 MB for
-  // `packages/box`'s 170, and 68% of what linking costs now the line recount is gone. Pairing
-  // repeatedly copies it log2(n) times instead, about 10 MB for the same input. One entry per
-  // file, and the walk below refuses past `seen.len()`, so this is exactly big enough.
-  string[] parts = string[1024]();
-  i32 partCount = 0;
+  // **The line each file begins on, and no concatenation.** Every walk in the emitter reads the
+  // per-file trees this function hands out, so the text nobody assembles is text nobody parses:
+  // `packages/box` used to build a 621 KB string here — collected in halves, because building it
+  // the obvious way copied about 110 MB — and then lex and parse the whole of it a second time.
+  // What survives is the arithmetic: `outLines` is where the next file starts, which is how a
+  // declaration was scoped to its file before a declaration knew.
+  i32 outLines = 0;
   for (i32 qi = 0; qi < qn; qi++) {
     string path = queue[qi];
     bool dup = false;
@@ -3264,7 +3262,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     // nothing in this file ever *wrote* `starts[0]`, so that message was unreachable and every one of
     // the five room guards below reported as *"an import of a file that was not supplied"*, which is
     // a claim about the caller's map rather than about this table. `issues/lang/0179a`.
-    if (sn >= seen.len()) { starts[0] = 1; return ""; }
+    if (sn >= seen.len()) { starts[0] = 1; return false; }
     seen[sn] = path;
     sn = sn + 1;
     string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
@@ -3280,7 +3278,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
       // only what was missing. `qi` is the queue index of this path, so they are one lookup away.
       if (filePaths.len() > 1) { filePaths[1] = queueFrom[qi]; }
       if (filePaths.len() > 2) { filePaths[2] = queueSpec[qi]; }
-      return "";
+      return false;
     }
     // A newline between files, so a file that ends mid-line cannot join itself to the next one —
     // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
@@ -3295,7 +3293,6 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     // monomorphisation needs: the reference spells `Vec<string>` from `core/vec.wac` as
     // `Vec__packages_std_src_vec$string`. `issues/lang/0089`.
     if (filePaths.len() > sn - 1) { filePaths[sn - 1] = path; }
-    if (partCount < parts.len()) { parts[partCount] = body + "\n"; partCount = partCount + 1; }
     outLines = outLines + countLines(body) + 1;
     u8[] b = body.toBytes();
     // **A `.wapy` file is read by wapy's frontend and is a wac tree from here on.** The surface is
@@ -3333,7 +3330,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           // instead, under a path no source can spell, which makes it a file to everything below.
           if (prefixTok >= 0) {
             if (tokenTextOf(b, lexed, prefixTok) != "core") { continue; }
-            if (qn >= queue.len()) { starts[0] = 2; return ""; }
+            if (qn >= queue.len()) { starts[0] = 2; return false; }
             queue[qn] = " core";
             queueSpec[qn] = "core";
             queueFrom[qn] = path;
@@ -3341,7 +3338,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
             for (i32 it = 0; it < items.len(); it++) {
               // **Refused, not skipped.** A dropped edge links: the module comes out with a name
               // resolved to nothing, which is `issues/lang/0130`'s shape and worse than a refusal.
-              if (en >= fromPath.len()) { starts[0] = 3; return ""; }
+              if (en >= fromPath.len()) { starts[0] = 3; return false; }
               fromPath[en] = path;
               toPath[en] = " core";
               edgeName[en] = tokenTextOf(b, lexed, items[it].aliasTok) + " " +
@@ -3352,7 +3349,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           }
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
-          if (qn >= queue.len()) { starts[0] = 2; return ""; }
+          if (qn >= queue.len()) { starts[0] = 2; return false; }
           // **The reader's answer where it has one.** A mapping cannot be resolved here — it needs a
           // manifest, a lockfile and a cache, and this function opens nothing — so `Res` carries
           // what `gather` worked out and this looks it up. `design/lang/0009` predicted exactly this
@@ -3379,13 +3376,13 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           // **Refused rather than gated.** This was `if (en < fromPath.len()) { … }`, which is the
           // same silent truncation as the two `en >=` guards around it and was missed when they were
           // fixed — a grep for `en >=` cannot see a write gated on `en <`. `issues/lang/0179a`.
-          if (en >= fromPath.len()) { starts[0] = 3; return ""; }
+          if (en >= fromPath.len()) { starts[0] = 3; return false; }
           fromPath[en] = path;
           toPath[en] = target;
           edgeName[en] = "";
           en = en + 1;
           for (i32 it = 0; it < items.len(); it++) {
-            if (en >= fromPath.len()) { starts[0] = 3; return ""; }
+            if (en >= fromPath.len()) { starts[0] = 3; return false; }
             fromPath[en] = path;
             toPath[en] = target;
             // The alias and the declared name travel together, separated by a space that no
@@ -3416,23 +3413,13 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     // declines the whole module. `packages/box` needs 2,236 of these and the table held 2,047, so
     // six programs emitted eight bytes and blamed a call seven levels down [issue 0106]. Failing the
     // link is loud; the quiet `continue` that used to be here is what made it take a night.
-    if (ec * 2 + 2 >= edges.len() || ec >= names.len()) { return ""; }
+    if (ec * 2 + 2 >= edges.len() || ec >= names.len()) { return false; }
     edges[ec * 2 + 1] = a;
     edges[ec * 2 + 2] = b;
     names[ec] = edgeName[e];
     edges[0] = ec + 1;
   }
-  i32 span = partCount;
-  while (span > 1) {
-    i32 w = 0;
-    for (i32 i = 0; i < span; i = i + 2) {
-      parts[w] = i + 1 < span ? parts[i] + parts[i + 1] : parts[i];
-      w = w + 1;
-    }
-    span = w;
-  }
-  out = partCount > 0 ? parts[0] : "";
-  return out;
+  return sn > 0;
 }
 
 /**
@@ -3525,13 +3512,12 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, str
   u8[][] srcs = u8[][1024](fill: u8[0]());
   Lexed?[] lexeds = Lexed?[1024]();
   Program?[] progs = Program?[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                          srcs, lexeds, progs);
-  if (blob == "") { return bareModule(); }
+  if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                 srcs, lexeds, progs)) { return bareModule(); }
   Env env = Env.create();
   env.trace = true;
   env.traceSlots = slots;
-  return emitModuleOfInto(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts,
+  return emitModuleOfInto(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts,
                           edges, names, filePaths, false, true, env, srcs, lexeds, progs);
 }
 
@@ -3544,11 +3530,10 @@ export string covTableLinked(string[] paths, string[] sources, Res res, string e
   u8[][] srcs = u8[][1024](fill: u8[0]());
   Lexed?[] lexeds = Lexed?[1024]();
   Program?[] progs = Program?[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                          srcs, lexeds, progs);
-  if (blob == "") { return ""; }
+  if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                 srcs, lexeds, progs)) { return ""; }
   Env env = Env.create();
-  return covTableOf(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, false, srcs, lexeds, progs);
 }
 
@@ -3561,10 +3546,9 @@ export string traceTableLinked(string[] paths, string[] sources, Res res, string
   u8[][] srcs = u8[][1024](fill: u8[0]());
   Lexed?[] lexeds = Lexed?[1024]();
   Program?[] progs = Program?[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                          srcs, lexeds, progs);
-  if (blob == "") { return ""; }
-  return covTableOf(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                 srcs, lexeds, progs)) { return ""; }
+  return covTableOf(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, true, srcs, lexeds, progs);
 }
 
@@ -3639,10 +3623,9 @@ Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
   u8[][] srcs = u8[][1024](fill: u8[0]());
   Lexed?[] lexeds = Lexed?[1024]();
   Program?[] progs = Program?[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                          srcs, lexeds, progs);
-  if (blob == "") { return null; }
-  return frontOfRawIn(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)),
+  if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                 srcs, lexeds, progs)) { return null; }
+  return frontOfRawIn(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)),
                       starts, edges, names, filePaths, false, false, Env.create(),
                       srcs, lexeds, progs);
 }
@@ -4116,10 +4099,9 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bo
   u8[][] srcs = u8[][1024](fill: u8[0]());
   Lexed?[] lexeds = Lexed?[1024]();
   Program?[] progs = Program?[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                          srcs, lexeds, progs);
-  if (blob == "") { return bareModule(); }
-  return emitModuleOfWith(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                 srcs, lexeds, progs)) { return bareModule(); }
+  return emitModuleOfWith(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                           names, filePaths, checked, covered, traced, srcs, lexeds, progs);
 }
 
@@ -4143,11 +4125,10 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
   u8[][] srcs = u8[][1024](fill: u8[0]());
   Lexed?[] lexeds = Lexed?[1024]();
   Program?[] progs = Program?[1024]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                          srcs, lexeds, progs);
-  if (blob == "") { return "the graph did not link"; }
+  if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
+                 srcs, lexeds, progs)) { return "the graph did not link"; }
   Env env = Env.create();
-  emitModuleOfInto(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  emitModuleOfInto(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                    names, filePaths, false, false, env, srcs, lexeds, progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   // **Ambiguity is a decline this could not say.** `emitModuleOfFront` bares out on
@@ -13311,9 +13292,7 @@ export string namesLinked(string[] paths, string[] sources, Res res, string entr
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, string[512](),
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
-  return blob == "" ? "" : emitNamesOf(blob.toBytes(), starts, edges, names);
+  return namesOfFront(frontOf(paths, sources, res, entry));
 }
 
 /** The single-file spelling, which has no file table and no imports to load. */
@@ -13332,46 +13311,28 @@ export string emitNames(u8[] src) {
  * `issues/lang/0097`.
  */
 string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
-  Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
-  Program prog = parseProgram(p);
-  Env env = Env.create();
-  for (i32 i = 0; i < starts.len(); i++) {
-    if (starts[i] == 0) { continue; }
-    env.fileFirstLine[env.fileCount] = starts[i];
-    env.fileCount = env.fileCount + 1;
-  }
-  for (i32 e = 0; e < edges[0]; e++) {
-    if (env.importCount >= env.importFrom.len()) { continue; }
-    env.importFrom[env.importCount] = edges[e * 2 + 1];
-    env.importTo[env.importCount] = edges[e * 2 + 2];
-    string pair = e < names.len() ? names[e] : "";
-    i32 sp = pair.indexOf(" ");
-    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
-    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
-    env.importCount = env.importCount + 1;
-  }
-  scanTokenTypes(env, src, lexed);
-  collectDeclarations(env, src, lexed, prog, -1);
-  assignGlobals(env, src, lexed);
-  // **The lambda walk, because `settleEmittable` asks about lambdas** — `issues/lang/0139`.
-  // `unsupportedExpr` answers by looking a lambda up in the tables this walk fills, so without it
-  // every lambda is unknown, every function containing one is declined as unsupported, and this list
-  // silently loses them. Not by a fixed offset either: the module keeps those functions and the list
-  // does not, so the two disagree from the first entry that follows one.
-  //
-  // The same trap `issues/lang/0097` records for this function — it once built its `Env` from the
-  // blob alone and `settleEmittable` declined a different set — and the same symptom, a list that
-  // sends someone holding *function #N* to the wrong name.
-  // **The same three calls as `emitModuleOfWith`, in the same order**, for the same reason the
-  // comment above gives: a lambda this list does not know about is a function the module has and the
-  // list does not, and the two disagree from the first entry after it. `issues/lang/0139` was that
-  // with the plain walk missing; the per-instantiation walk arrived with `issues/lang/0142` and was
-  // added *here* one suite run later, when three exported tests each took their neighbour's name.
-  findLambdasInProgram(env, src, lexed, prog);
-  findLambdasInInstances(env, src, lexed, prog);
-  settleEmittable(env, src, lexed, prog);
-  findLambdasInInstances(env, src, lexed, prog);
+  return namesOfFront(frontOfRaw(src, 0 - 1, starts, edges, names, string[512](), false, false,
+                                 Env.create()));
+}
+
+/**
+ * What each emitted function is called, read off a front somebody else built.
+ *
+ * **This used to be a third copy of the emitter's preamble** — `scanTokenTypes`,
+ * `collectDeclarations`, `assignGlobals`, two lambda walks and `settleEmittable`, in that order —
+ * and its own comments record three issues caused by it drifting: `issues/lang/0097` (an `Env` built
+ * from the blob alone), `issues/lang/0139` (the plain lambda walk missing) and `issues/lang/0142`
+ * (the per-instantiation one), each arriving as this list disagreeing with the module it describes
+ * from the first entry after the function it lost. A caller holding *function #N* was sent to the
+ * wrong name.
+ *
+ * There is one producer of that sequence now. Which also means this no longer reads the linked
+ * *text*: `namesLinked` asks `frontOf` for the graph, and the concatenation has no reader left in
+ * the emit path.
+ */
+string namesOfFront(Front? f) {
+  if (f is null) { return ""; }
+  Env env = f!.env;
   string out = "";
   for (i32 emitted = 0; emitted < env.funcCount; emitted++) {
     for (i32 i = 0; i < env.funcCount; i++) {
