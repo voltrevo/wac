@@ -34,8 +34,8 @@ turns readable text into bytes, and it is dual-implemented for exactly that reas
 
 ## The language
 
-Everything is an `i32`. There is one memory, byte-addressed. There are no structs, no strings and no
-types beyond the word — a struct in wx is an offset you add, the way it is in C with macros. All of
+Everything is an `i32`. There is one memory, byte-addressed. There are no structs and no types
+beyond the word — a struct in wx is an offset you add, the way it is in C with macros. All of
 that is deliberate: wx is not meant to be pleasant, it is meant to be enough.
 
 **Every form is an expression and produces a value.** A statement is an expression whose value is
@@ -62,10 +62,25 @@ difference between `if $l -> i32` and `if $l ->` and is otherwise decided by con
     (load a)      (store a v)              a word
     (load8 a)     (store8 a v)             a byte
     (name arg ...)                         a call
+    "text"                                 a literal
 
 **Local names are unique within a function**, including across nested `let`s. The compiler collects
 them in one pre-pass and declares them all at the top, because `.wax` wants locals before
 instructions — and renaming shadowed bindings is a symbol table wx does not need to have.
+
+## String literals, which need no string operators
+
+`"text"` is **the address of a length-prefixed block**: four bytes of length, then the bytes. So
+`(load s)` is its length and `(load8 (+ s (+ 4 i)))` is its i'th byte, and both of those were in the
+language already. wx has literals without having a string *type*, which is the whole trick.
+
+The compiler emits the `data` directives **after** every function, which works because `.wax` takes
+directives in any order. That is what keeps it to one pass: a literal met in the middle of a body
+takes the next offset and is written out at the end, with no earlier walk to disagree with.
+
+Literals live from byte 1024 upward and are **not** deduplicated — two identical ones get two
+blocks, which costs bytes in a program that runs once and saves a string comparison in a rung that
+has no way to do one.
 
 ## What is deliberately absent
 

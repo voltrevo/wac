@@ -68,6 +68,23 @@ const cases: [string, string, number][] = [
          (+ (* 10 (if (>= 3 3) 1 0)) (if (!= 4 4) 1 0))))
     (export main)`, 110],
 
+  // A literal is the address of a length-prefixed block, so `load` is its length and `load8` its
+  // bytes — which is why wx needed no string operators to gain strings.
+  ["string literals", `
+    (memory 1)
+    (fn strlen ((s i32)) i32 (load s))
+    (fn strbyte ((s i32) (i i32)) i32 (load8 (+ s (+ 4 i))))
+    (fn main () i32
+      (+ (* 100 (strlen "hello")) (+ (strbyte "hi" 0) (strbyte "hi" 1))))
+    (export main)`, 709],
+
+  // Two literals are two blocks, at different offsets, and neither is deduplicated away.
+  ["two literals do not collide", `
+    (memory 1)
+    (fn strlen ((s i32)) i32 (load s))
+    (fn main () i32 (+ (* 10 (strlen "abc")) (strlen "de")))
+    (export main)`, 32],
+
   ["a negative literal survives the decimal writer", `
     (fn main () i32 (- 0 (- 0 (+ -7 -3))))
     (export main)`, -10],

@@ -394,15 +394,46 @@ func $is_digit -> i32
   i32.and
 end
 
+; **Whitespace and comments**, and the second half of that was missing until 2026-08-27.
+;
+; `;` was not a delimiter and was not skipped, so a comment was *read as code*: `; the reader` was
+; three symbols, each evaluated, each answering NIL because nothing was bound to them. That is why
+; it went unnoticed — every comment in `boot/wx.sx` had been executed for as long as the file had
+; existed, and none of them had contained a parenthesis. The first one that did called `load`, which
+; is a wx operator and not an sx primitive, and the compiler trapped on its own documentation.
 func $skip_space ->
   block $done ->
     loop $again ->
       call $peek
       call $is_space
-      i32.eqz
-      br_if $done
-      call $bump
-      br $again
+      if $ws ->
+        call $bump
+        br $again
+      else
+        nop
+      end
+      call $peek
+      i32.const 59
+      i32.eq
+      if $comment ->
+        block $eol ->
+          loop $toeol ->
+            call $peek
+            i32.eqz
+            br_if $eol
+            call $peek
+            i32.const 10
+            i32.eq
+            br_if $eol
+            call $bump
+            br $toeol
+          end
+        end
+        br $again
+      else
+        nop
+      end
+      br $done
     end
   end
 end
@@ -421,6 +452,14 @@ func $is_delim -> i32
   i32.or
   local.get $c
   i32.const 41
+  i32.eq
+  i32.or
+  local.get $c
+  i32.const 34
+  i32.eq
+  i32.or
+  local.get $c
+  i32.const 59
   i32.eq
   i32.or
 end
@@ -537,6 +576,76 @@ end
 
 ; `$read` answers one datum. A `)` is reported as the value 3 — an object tag nothing else uses —
 ; because a reader that needs a sentinel and invents a global to hold it has two things to get right.
+; **Not interned, and the same shape as a symbol.** Sharing the layout means `$sym_len` and
+; `$sym_byte` work on either without asking, which is what lets a program walk a string's bytes with
+; the two primitives it already had. Interning is what makes symbol equality a pointer compare, and
+; strings do not want that — two spellings of the same text are the same string.
+func $read_string -> i32
+  local i32 $start
+  local i32 $len
+  local i32 $p
+  local i32 $i
+  call $bump
+  global.get $pos
+  local.set $start
+  block $ended ->
+    loop $scan ->
+      call $peek
+      i32.eqz
+      br_if $ended
+      call $peek
+      i32.const 34
+      i32.eq
+      br_if $ended
+      call $bump
+      br $scan
+    end
+  end
+  global.get $pos
+  local.get $start
+  i32.sub
+  local.set $len
+  call $bump
+  i32.const 12
+  local.get $len
+  i32.add
+  call $alloc
+  local.set $p
+  local.get $p
+  i32.const 5
+  i32.store 4 0
+  local.get $p
+  i32.const 1
+  i32.store 4 4
+  local.get $p
+  local.get $len
+  i32.store 4 8
+  block $copied ->
+    loop $byte ->
+      local.get $i
+      local.get $len
+      i32.ge_u
+      br_if $copied
+      local.get $p
+      local.get $i
+      i32.add
+      local.get $start
+      local.get $i
+      i32.add
+      i32.load8_u 1 0
+      i32.store8 1 12
+      local.get $i
+      i32.const 1
+      i32.add
+      local.set $i
+      br $byte
+    end
+  end
+  local.get $p
+  i32.const 1
+  i32.add
+end
+
 func $read -> i32
   local i32 $c
   call $skip_space
@@ -554,13 +663,20 @@ func $read -> i32
       i32.const 3
     else
       local.get $c
-      i32.const 40
+      i32.const 34
       i32.eq
-      if $open -> i32
-        call $bump
-        call $read_list
+      if $quoted -> i32
+        call $read_string
       else
-        call $read_atom
+        local.get $c
+        i32.const 40
+        i32.eq
+        if $open -> i32
+          call $bump
+          call $read_list
+        else
+          call $read_atom
+        end
       end
     end
   end
@@ -1161,6 +1277,23 @@ func $prim -> i32                  ; $id applied to the already-evaluated $args
     else
       nop
     end
+    local.get $id
+    i32.const 18
+    i32.eq
+    if $pstrp ->
+      local.get $a
+      i32.const 5
+      call $is_obj
+      if $yesstr -> i32
+        i32.const 1
+        call $fix
+      else
+        i32.const 1
+      end
+      br $answer
+    else
+      nop
+    end
     ; **Division and remainder**, which exist for one reason: writing a number in decimal. Every
     ; other arithmetic sx needs could be built from the three it already had.
     local.get $id
@@ -1456,6 +1589,7 @@ data 604 "set!"
 data 609 "/"
 data 611 "%"
 data 613 "do"
+data 616 "str?"
 
 func $boot ->
   i32.const 0
@@ -1524,6 +1658,10 @@ func $boot ->
   i32.const 598
   i32.const 4
   i32.const 15
+  call $defprim
+  i32.const 616
+  i32.const 4
+  i32.const 18
   call $defprim
   i32.const 609
   i32.const 1

@@ -33,6 +33,56 @@
 (def const (fn (n) (do (w (quote i32.const)) (emit-num n) (nl))))
 (def name$ (fn (s) (do (emit-byte 36) (emit-sym s))))
 
+; ---------------------------------------------------------------- string literals
+;
+; A literal compiles to the **address of a length-prefixed block**: four bytes of length, then the
+; bytes. That is why wx needs no string operators at all — `(load s)` is its length and
+; `(load8 (+ s (+ 4 i)))` is its i'th byte, both of which wx already had.
+;
+; The `data` directives are emitted **after** every function, which works because `.wax` lets
+; directives appear in any order and the assembler sorts them into sections. That is what makes this
+; one pass: a literal met in the middle of a body can take the next offset and be written out later,
+; with no pre-pass to walk the program twice and no risk of the two walks disagreeing.
+;
+; Not deduplicated. Two identical literals get two blocks, which costs bytes in a program that runs
+; once and saves a string comparison in the rung that has none.
+
+(def strs 0)                       ; (offset . text) for each literal, newest first
+(def strnext 1024)
+
+(def round4 (fn (n) (* 4 (/ (+ n 3) 4))))
+
+(def comp-str
+  (fn (s)
+    (do (const strnext)
+        (set! strs (cons (cons strnext s) strs))
+        (set! strnext (+ strnext (round4 (+ 4 (sym-len s))))))))
+
+(def hexd (fn (d) (if (< d 10) (+ 48 d) (+ 87 d))))
+(def emit-hex
+  (fn (b) (do (emit-byte 92) (emit-byte 120)
+              (emit-byte (hexd (/ b 16))) (emit-byte (hexd (% b 16))))))
+
+; Every byte as `\xHH`, including the printable ones. Escaping only what needs it would mean
+; knowing which bytes those are, and being wrong about one of them is a corrupted literal rather
+; than a compile error.
+(def emit-hex-bytes
+  (fn (s i n) (if (< i n) (do (emit-hex (sym-byte s i)) (emit-hex-bytes s (+ i 1) n)) 0)))
+
+(def emit-len
+  (fn (n) (do (emit-hex (% n 256)) (emit-hex (% (/ n 256) 256))
+              (emit-hex (% (/ n 65536) 256)) (emit-hex (/ n 16777216)))))
+
+(def emit-one-data
+  (fn (p)
+    (do (w (quote data)) (emit-num (car p)) (sp) (emit-byte 34)
+        (emit-len (sym-len (cdr p)))
+        (emit-hex-bytes (cdr p) 0 (sym-len (cdr p)))
+        (emit-byte 34) (nl))))
+
+(def emit-datas
+  (fn (l) (if (pair? l) (do (emit-one-data (car l)) (emit-datas (cdr l))) 0)))
+
 ; ---------------------------------------------------------------- lists
 
 (def cadr   (fn (l) (car (cdr l))))
@@ -141,9 +191,10 @@
 
 (def comp
   (fn (e env)
+    (if (str? e) (comp-str e)
     (if (sym? e) (comp-sym e env)
     (if (pair? e) (comp-form (car e) e env)
-    (const e)))))
+    (const e))))))
 
 ; One chain rather than a table: sx has no `case`, and a table would be a list walked by the same
 ; number of comparisons with a layer of indirection on top.
@@ -235,4 +286,8 @@
 ; `compile` answers the address of the text it wrote, NUL-terminated, so a caller can read it out of
 ; the exported memory without being told a length.
 (def compile
-  (fn (prog) (do (comp-program prog) (emit-byte 0) out)))
+  (fn (prog)
+    (do (comp-program prog)
+        (emit-datas strs)
+        (emit-byte 0)
+        out)))

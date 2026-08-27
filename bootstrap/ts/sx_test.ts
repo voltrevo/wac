@@ -81,3 +81,26 @@ for (const [program, want] of cases) {
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
+
+// Strings, added so that the rung above could write a lexer. They share the symbol layout, so the
+// same two primitives read either — and `str?`/`sym?` are how a program tells them apart.
+const strCases: [string, number][] = [
+  [`(sym-len "hello")`, 5],
+  [`(sym-byte "hi" 1)`, 105],
+  [`(if (str? "x") 1 0)`, 1],
+  [`(if (str? (quote x)) 1 0)`, 0],
+  [`(if (sym? "x") 1 0)`, 0],
+  [`(sym-len "")`, 0],
+  // A comment is a comment. It was not until 2026-08-27: `;` was neither skipped nor a delimiter,
+  // so every comment in the source was read as code and evaluated. Harmless until one of them
+  // contained a parenthesis, at which point the compiler ran its own documentation.
+  [`; this is not code\n(+ 1 2)`, 3],
+  [`(+ 1 ; nor this (load 4)\n 2)`, 3],
+];
+
+for (const [program, want] of strCases) {
+  Deno.test(`sx: ${JSON.stringify(program)} = ${want}`, async () => {
+    const got = await run(program);
+    if (got !== want) throw new Error(`got ${got}, want ${want}`);
+  });
+}

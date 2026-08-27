@@ -15,7 +15,7 @@ import { assemble } from "./assemble.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 
-const TAG_PAIR = 0, TAG_SYM = 1, TAG_NIL = 2, TAG_PRIM = 3, TAG_CLOSURE = 4;
+const TAG_PAIR = 0, TAG_SYM = 1, TAG_NIL = 2, TAG_PRIM = 3, TAG_CLOSURE = 4, TAG_STR = 5;
 
 export class Sx {
   private constructor(
@@ -68,6 +68,10 @@ export class Sx {
         return "()";
       case TAG_SYM:
         return this.symbolText(v);
+      // A string shares the symbol layout, so the same reader does both — the quotes are the only
+      // way a prompt can show which it was.
+      case TAG_STR:
+        return JSON.stringify(this.symbolText(v));
       case TAG_PRIM:
         return `#<primitive ${this.word(v - 1 + 4)}>`;
       case TAG_CLOSURE: {
