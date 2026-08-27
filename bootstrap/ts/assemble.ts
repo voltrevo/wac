@@ -102,14 +102,28 @@ function name(s: string): number[] {
   return [...uleb(bytes.length), ...bytes];
 }
 
+/**
+ * Append without spreading.
+ *
+ * `out.push(...bytes)` passes every byte as an argument, and a module the size of `coretext.wac`
+ * has more of them than a call frame holds — which arrives as *Maximum call stack size exceeded*
+ * from a function that is not recursive. Every place a whole array is appended goes through here.
+ */
+function append(out: number[], src: number[]): void {
+  for (let i = 0; i < src.length; i++) out.push(src[i]);
+}
+
 function section(id: number, payload: number[]): number[] {
   if (payload.length === 0) return [];
-  return [id, ...uleb(payload.length), ...payload];
+  const out = [id];
+  append(out, uleb(payload.length));
+  append(out, payload);
+  return out;
 }
 
 function vec(items: number[][]): number[] {
   const out = uleb(items.length);
-  for (const it of items) out.push(...it);
+  for (const it of items) append(out, it);
   return out;
 }
 
@@ -495,6 +509,7 @@ function emitBody(f: Func, ix: Index): number[] {
   };
 
   const out: number[] = [];
+  const push = (bytes: number[]) => append(out, bytes);
   for (const { n, tokens: t } of f.body) {
     const op = t[0];
     if (op in NULLARY) { out.push(NULLARY[op]); continue; }
@@ -606,6 +621,7 @@ export function assemble(source: string): Uint8Array {
   const m = read(source);
   const ix = index(m);
   const out: number[] = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+  const emit = (bytes: number[]) => append(out, bytes);
 
   // **One recursive group, or none at all.** A struct whose field refers to another struct — an AST
   // node holding an array of nodes — needs the two in the same group, because outside one a type may
@@ -627,25 +643,25 @@ export function assemble(source: string): Uint8Array {
     }
     return [0x5e, ...vtBytes(d.t.elem, ix, 0), 0x01];
   });
-  out.push(...section(
+  emit(section(
     1,
     hasGC
       ? [...uleb(1), 0x4e, ...vec(typeEntries)]
       : vec(typeEntries),
   ));
 
-  out.push(...section(2, vec(m.imports.map((im) => {
+  emit(section(2, vec(m.imports.map((im) => {
     const at = ix.types.findIndex((d) =>
       d.k === "func" && shapeKey(d.t.params, d.t.results) === shapeKey(im.params, im.results)
     );
     return [...name(im.module), ...name(im.field), 0x00, ...uleb(at)];
   }))));
 
-  out.push(...section(3, vec(ix.funcTypeIndex.map((t) => uleb(t)))));
+  emit(section(3, vec(ix.funcTypeIndex.map((t) => uleb(t)))));
 
-  if (m.memoryPages !== null) out.push(...section(5, vec([[0x00, ...uleb(m.memoryPages)]])));
+  if (m.memoryPages !== null) emit(section(5, vec([[0x00, ...uleb(m.memoryPages)]])));
 
-  out.push(...section(6, vec(m.globals.map((g) => [
+  emit(section(6, vec(m.globals.map((g) => [
     ...vtBytes(g.type, ix, 0), g.mutable ? 0x01 : 0x00,
     ...(g.type.k === "ref"
       ? [0xd0, ...heapType(g.type.to, ix, 0)]              // a reference global starts null
@@ -653,7 +669,7 @@ export function assemble(source: string): Uint8Array {
     0x0b,
   ]))));
 
-  out.push(...section(7, vec(m.exports.map((e) => {
+  emit(section(7, vec(m.exports.map((e) => {
     if (e.kind === "memory") return [...name(e.name), 0x02, 0x00];
     const at = ix.funcOf.get(e.target);
     if (at === undefined) throw new WaxError(0, `export names no function ${e.target}`);
@@ -674,16 +690,20 @@ export function assemble(source: string): Uint8Array {
     }
   }
   if (referenced.length > 0) {
-    out.push(...section(9, vec([[0x03, 0x00, ...vec(referenced.map((a) => uleb(a)))]])));
+    emit(section(9, vec([[0x03, 0x00, ...vec(referenced.map((a) => uleb(a)))]])));
   }
 
   // Sections are written in ascending id, which wasm requires: code (10) before data (11).
-  out.push(...section(10, vec(m.funcs.map((f) => {
-    const body = [...localDecls(f, ix), ...emitBody(f, ix)];
-    return [...uleb(body.length), ...body];
+  emit(section(10, vec(m.funcs.map((f) => {
+    const body: number[] = [];
+    append(body, localDecls(f, ix));
+    append(body, emitBody(f, ix));
+    const entry = uleb(body.length);
+    append(entry, body);
+    return entry;
   }))));
 
-  out.push(...section(11, vec(m.data.map((d) => [
+  emit(section(11, vec(m.data.map((d) => [
     0x00, 0x41, ...sleb(BigInt(d.offset)), 0x0b, ...uleb(d.bytes.length), ...d.bytes,
   ]))));
 

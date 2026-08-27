@@ -1252,7 +1252,10 @@ i32 compile(i32 s, i32 out) {
   tp = 0;
   dst = out;
   dp = 0;
-  line("memory 64");
+  // **512 pages, not 64.** The program compiled by this is wac-L5's compiler, which holds a whole
+  // source file, its output, and three scratch buffers — and four megabytes between them is what
+  // stopped it reading `packages/wacc/src` at all.
+  line("memory 512");
   word("export"); emit1(34); emits("memory"); emit1(34); sp(); line("memory");
   nl();
 

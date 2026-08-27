@@ -14,7 +14,7 @@ import { assemble } from "./assemble.ts";
 import { l4ToL0 } from "./l4.ts";
 
 const root = new URL("..", import.meta.url).pathname;
-const SRC = 2097152, OUT = 1572864;
+const SRC = 16777216, OUT = 4194304;
 
 let cached: WebAssembly.Module | null = null;
 

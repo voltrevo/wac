@@ -1031,10 +1031,16 @@ i32 primary() {
   // else that begins an expression does.
   i32 pt = prim_type();
   if (pt != 0 - 1) { next(); return construct(pt); }
+  if (is_string_word()) { next(); return construct(string_type()); }
   if (kind() == K_NAME) {
     i32 p = tstart();
     i32 n = tlen();
     next();
+    // **A bound letter, used as a type in an expression.** `T[0]()` inside `Vec<T>` is a
+    // construction of whatever `T` is — and only `parse_type` consulted the substitution, so the
+    // expression grammar read `T` as a name nobody had declared.
+    i32 sb = sub_find(p, n);
+    if (sb != 0 - 1 & (ispunct(40) | ispunct(91))) { return postfix(construct(sb)); }
     i32 st = ty_named(p, n);
     if (st != 0 - 1 & (ispunct(40) | ispunct(91))) { return postfix(construct(st)); }
     i32 tmc = tmpl_find(p, n);
@@ -1048,6 +1054,13 @@ i32 primary() {
         i32 vp2 = tstart();
         i32 vn2 = tlen();
         next();
+        i32 gm = meth_find(owner, vp2, vn2);
+        if (gm != 0 - 1 & ispunct(40)) {
+          next();
+          args();
+          word("call"); mangled(owner, vp2, vn2); nl();
+          return postfix(meths[gm].ret);
+        }
         i32 qv = var_owned(owner, vp2, vn2);
         if (qv == 0 - 1) { oops(); return 0; }
         return postfix(construct_variant(qv));
@@ -1055,12 +1068,21 @@ i32 primary() {
       i32 ity = instantiate(tmc);
       return postfix(construct(ity));
     }
-    // The same for a non-generic enum, whose name is an ordinary type.
+    // `Type.name(...)` — a static method or a qualified variant, told apart by which table has it.
+    // A static method is one the source never gave a `this`, so nothing special happens at the call
+    // beyond not having a receiver to push.
     if (st != 0 - 1 & ispunct(46)) {
       next();
       i32 vp3 = tstart();
       i32 vn3 = tlen();
       next();
+      i32 sm = meth_find(st, vp3, vn3);
+      if (sm != 0 - 1 & ispunct(40)) {
+        next();
+        args();
+        word("call"); mangled(st, vp3, vn3); nl();
+        return postfix(meths[sm].ret);
+      }
       i32 qv2 = var_owned(st, vp3, vn3);
       if (qv2 == 0 - 1) { oops(); return 0; }
       return postfix(construct_variant(qv2));
@@ -1711,19 +1733,21 @@ i32 statement() {
 
 // 64 pages is 4,194,304 bytes, so the last valid address is one below that — a scratch buffer
 // placed *at* the limit is out of bounds on its first byte.
-i32 BODY = 3145728;
+// With 512 pages there is room to stop crowding: a function body, the block scratch and the type
+// directives each get a megabyte, well above the source and the output the host places below.
+i32 BODY = 25165824;
 
 // **A scratch stack**, because a block's result type is written before its arms are parsed and only
 // the arms know it. Emit them here, learn the type, then write the header in front — the same trick
 // a function body already needed for its locals, one level down and nestable.
-i32 SCR = 3407872;
+i32 SCR = 26214400;
 i32 scrdepth = 0;
 i32 scrsaved = 0;
 
 i32 scratch_begin() {
   scrsaved = dp;
   scrdepth = scrdepth + 1;
-  dst = SCR + (scrdepth - 1) * 65536;
+  dst = SCR + (scrdepth - 1) * 1048576;
   dp = 0;
   return scrsaved;
 }
@@ -1732,14 +1756,14 @@ i32 scratch_begin() {
 i32 scratch_end(i32 out, i32 saved) {
   i32 n = dp;
   scrdepth = scrdepth - 1;
-  if (scrdepth > 0) { dst = SCR + (scrdepth - 1) * 65536; } else { dst = out; }
+  if (scrdepth > 0) { dst = SCR + (scrdepth - 1) * 1048576; } else { dst = out; }
   dp = saved;
   return n;
 }
 
 i32 scratch_copy(i32 level, i32 n) {
   i32 k = 0;
-  while (k < n) { emit1(load8(SCR + level * 65536 + k)); k = k + 1; }
+  while (k < n) { emit1(load8(SCR + level * 1048576 + k)); k = k + 1; }
   return 0;
 }
 
@@ -1807,7 +1831,7 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
 
 // The `type` directives, into their own buffer and appended at the end — wac-L0 takes directives in
 // any order, so an array type first named inside the last function needs no pre-pass.
-i32 TYPEBUF = 3670016;
+i32 TYPEBUF = 29360128;
 i32 typep = 0;
 
 i32 emit_typedecls() {
