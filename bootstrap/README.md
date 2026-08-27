@@ -8,8 +8,7 @@ The question is a number, and this repository exists to produce it rather than t
 
 **It works.** The ladder compiles `packages/wacc/src` — 37,873 lines of real wac — into a wasm
 module the engine accepts; that module compiles wac's own source again; and the two compilers
-produce byte-identical output for 295 of the corpus's 296 entry points, the 296th being declined by
-both. All 252 of wac's `spec/cases` come out exactly as their expectations say. There is no
+produce byte-identical output for all 296 of the corpus's entry points. All 252 of wac's `spec/cases` come out exactly as their expectations say. There is no
 historical wasm anywhere in the chain: an assembler written twice from a written format, an
 interpreter, four compilers, and then the real compiler reproducing itself.
 
@@ -149,7 +148,7 @@ Cold, the whole chain builds in under two seconds, and building wacc with it tak
         -> wac-L2 -> wac-L3 -> wac-L4 -> wac-L5
           -> wacc                          661,626 bytes, from 37,873 lines of wac
             -> wacc again                  681,417 bytes, in three quarters of a second
-              -> and the two agree byte for byte on 295 of 296 corpus entry points
+              -> and the two agree byte for byte on all 296 corpus entry points
 
 **No type checker, and none missing.** wasm validation is one, and it is total: every wac-level
 type error is refused before the program runs, by the engine or by the compiler's own refusal

@@ -34,9 +34,15 @@ async function graphOf(entry: string): Promise<{ path: string; text: string }[]>
     out.push({ path: real.slice(ROOT.length + 1), text });
     const dir = real.slice(0, real.lastIndexOf("/"));
     for (const m of text.matchAll(/^\s*import\s*\{[^}]*\}\s*from\s*"([^"]+)"\s*;/gm)) {
-      if (!m[1].startsWith(".")) continue;
+      const spec = m[1];
+      // **A sibling may be named without `./`.** `oracle.wac` imports `"host.wac"`, which is a
+      // path and not a package — skipping it because it lacked a dot made the file look like one
+      // neither compiler could take, when neither had been given what it asked for. `core/` and
+      // `std/` are the ones wacc answers out of its own text.
+      const builtin = spec.startsWith("core") || spec.startsWith("std");
+      if (!spec.startsWith(".") && (builtin || !spec.endsWith(".wac"))) continue;
       try {
-        await walk(`${dir}/${m[1]}`);
+        await walk(`${dir}/${spec}`);
       } catch { /* a specifier this harness cannot resolve; wacc will say so */ }
     }
   }
