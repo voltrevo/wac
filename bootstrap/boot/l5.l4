@@ -1223,6 +1223,63 @@ i32 postfix(i32 t) {
           word("array.get_u"); tyname(t); nl();
           t = TY_U8;
         } else {
+        // **The bulk pair**, which wasm has as instructions: `dst.copyFrom(src, srcAt, dstAt, n)`
+        // is `array.copy`, whose operands are in a different order to the method's arguments —
+        // dst, dstAt, src, srcAt, n — so the four are held in slots and replayed. `fill(v, from,
+        // to)` is `array.fill`, which wants a count rather than an end.
+        if (types[t].kind == T_ARRAY & texteq(p, n, "copyFrom")) {
+          want(40);
+          i32 hsrc = slot_new(t);
+          expr();
+          word("local.set"); slotname(hsrc); nl();
+          want(44);
+          i32 hsat = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(hsat); nl();
+          want(44);
+          i32 hdat = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(hdat); nl();
+          want(44);
+          i32 hcnt = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(hcnt); nl();
+          want(41);
+          i32 hdst = slot_new(t);
+          word("local.set"); slotname(hdst); nl();
+          word("local.get"); slotname(hdst); nl();
+          word("local.get"); slotname(hdat); nl();
+          word("local.get"); slotname(hsrc); nl();
+          word("local.get"); slotname(hsat); nl();
+          word("local.get"); slotname(hcnt); nl();
+          word("array.copy"); tyname(t); sp(); tyname(t); nl();
+          t = TY_VOID;
+        } else {
+        if (types[t].kind == T_ARRAY & texteq(p, n, "fill")) {
+          want(40);
+          i32 fval = slot_new(types[t].elem);
+          expr();
+          word("local.set"); slotname(fval); nl();
+          want(44);
+          i32 ffrom = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(ffrom); nl();
+          want(44);
+          i32 fto = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(fto); nl();
+          want(41);
+          i32 farr = slot_new(t);
+          word("local.set"); slotname(farr); nl();
+          word("local.get"); slotname(farr); nl();
+          word("local.get"); slotname(ffrom); nl();
+          word("local.get"); slotname(fval); nl();
+          word("local.get"); slotname(fto); nl();
+          word("local.get"); slotname(ffrom); nl();
+          line("i32.sub");
+          word("array.fill"); tyname(t); nl();
+          t = TY_VOID;
+        } else {
         // `s.indexOf(needle)` is a byte offset or -1, and `s.trim()` drops ASCII whitespace
         // from both ends. Both are searches rather than shapes, so both are runtime helpers.
         if (t == strty & texteq(p, n, "indexOf")) {
@@ -1273,7 +1330,7 @@ i32 postfix(i32 t) {
               t = ft;
             }
           }
-        }}}}}}}
+        }}}}}}}}}
       } else {
         next();
         expr();
@@ -1626,8 +1683,16 @@ i32 shift() {
   while (ispunct(15420) | ispunct(15934)) {
     i32 op = val();
     next();
+    // **`>>>` is `>>` followed by `>`,** because the lexer packs two of a punctuation character
+    // and no more. Taking the third here is cheaper than a third case in the lexer, and this is
+    // the only place three of them mean anything. The shift is then unsigned whatever the
+    // operand's type says, which is the whole point of writing it.
+    i32 logical = 0;
+    if (op == 15934 & ispunct(62)) { next(); logical = 1; }
     convert(t, add());
-    if (op == 15420) { binop(t, "shl"); } else { binop_signed(t, "shr"); }
+    if (op == 15420) { binop(t, "shl"); } else {
+      if (logical) { opprefix(t); emits("shr_u"); nl(); } else { binop_signed(t, "shr"); }
+    }
   }
   return t;
 }

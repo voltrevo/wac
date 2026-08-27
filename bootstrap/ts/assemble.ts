@@ -513,7 +513,14 @@ const GC1: Record<string, number> = {
   "struct.new": 0x00, "struct.new_default": 0x01,
   "array.new": 0x06, "array.new_default": 0x07,
   "array.get": 0x0b, "array.get_s": 0x0c, "array.get_u": 0x0d, "array.set": 0x0e,
+  // `array.fill $A` takes the array, an offset, the value and a count from the stack — four
+  // operands and one type, which is why it sits here beside the one-operand instructions.
+  "array.fill": 0x10,
 };
+
+// `array.copy $DST $SRC` names two types rather than a type and a number, which is the one
+// shape neither table above has: the destination and the source may be different array types.
+const GCCOPY: Record<string, number> = { "array.copy": 0x11 };
 
 /** ...and those that take a type index and a second number: a field index, or a count. */
 const GC2: Record<string, number> = {
@@ -557,6 +564,14 @@ function emitBody(f: Func, ix: Index, marks?: Mark[]): number[] {
       const at = ix.typeOf.get(t[1]);
       if (at === undefined) throw new WaxError(n, `no type ${t[1]}`);
       out.push(0xfb, ...uleb(GC1[op]), ...uleb(at));
+      continue;
+    }
+    if (op in GCCOPY) {
+      const dst = ix.typeOf.get(t[1]);
+      const src = ix.typeOf.get(t[2]);
+      if (dst === undefined) throw new WaxError(n, `no type ${t[1]}`);
+      if (src === undefined) throw new WaxError(n, `no type ${t[2]}`);
+      out.push(0xfb, ...uleb(GCCOPY[op]), ...uleb(dst), ...uleb(src));
       continue;
     }
     if (op in GC2) {

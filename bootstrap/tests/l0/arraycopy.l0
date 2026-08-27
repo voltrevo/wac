@@ -1,0 +1,43 @@
+; array.copy names two types — the destination and the source, which need not be the same —
+; and array.fill takes a count rather than an end. The answer is 24: 2 from the copied element
+; and 22 from two filled sevens plus an untouched eight.
+type $bytes array i8
+func $main -> i32
+local refnull $bytes $a
+local refnull $bytes $b
+i32.const 4
+array.new_default $bytes
+local.set $a
+local.get $a
+i32.const 1
+i32.const 2
+array.set $bytes
+i32.const 4
+array.new_default $bytes
+local.set $b
+local.get $b
+i32.const 3
+local.get $a
+i32.const 1
+i32.const 1
+array.copy $bytes $bytes
+local.get $b
+i32.const 0
+i32.const 7
+i32.const 2
+array.fill $bytes
+local.get $b
+i32.const 3
+array.get_u $bytes
+local.get $b
+i32.const 0
+array.get_u $bytes
+i32.add
+local.get $b
+i32.const 1
+array.get_u $bytes
+i32.add
+i32.const 8
+i32.add
+end
+export "main" func $main

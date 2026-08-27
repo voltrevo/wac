@@ -764,6 +764,9 @@ fn gc1(op: &str) -> Option<u8> {
         "array.get_s" => 0x0c,
         "array.get_u" => 0x0d,
         "array.set" => 0x0e,
+        // `array.fill $A` takes the array, an offset, the value and a count from the stack —
+        // four operands and one type, which is why it sits here.
+        "array.fill" => 0x10,
         _ => return None,
     })
 }
@@ -778,6 +781,15 @@ fn gc2(op: &str) -> Option<u8> {
         // `array.new_fixed $A <n>` builds an array from the top n values on the stack, which is the
         // only way to make one whose element type has no default — an array of references, say.
         "array.new_fixed" => 0x08,
+        _ => return None,
+    })
+}
+
+/// `array.copy $DST $SRC` names two types rather than a type and a number: the destination and
+/// the source may be different array types.
+fn gccopy(op: &str) -> Option<u8> {
+    Some(match op {
+        "array.copy" => 0x11,
         _ => return None,
     })
 }
@@ -802,6 +814,19 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
 
         if let Some(b) = nullary(op) {
             out.push(b);
+            continue;
+        }
+        if let Some(code) = gccopy(op) {
+            match (ix.type_of.get(&t[1]), ix.type_of.get(&t[2])) {
+                (Some(dst), Some(src)) => {
+                    out.push(0xfb);
+                    out.extend(uleb(code as u32));
+                    out.extend(uleb(*dst));
+                    out.extend(uleb(*src));
+                }
+                (None, _) => return err(n, format!("no type {}", t[1])),
+                (_, None) => return err(n, format!("no type {}", t[2])),
+            }
             continue;
         }
         if let Some(code) = gc1(op) {
