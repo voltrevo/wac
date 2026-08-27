@@ -55,6 +55,27 @@ None of these reproduce — all compile and run:
 So it is not the shape of the method, not the import spelling, and not any single instantiation. It
 needs the larger graph, and `wac app packages/box/src/box.wac` is the smallest reproduction I have.
 
+## The decline site names this exact case, and says what made it unreachable
+
+`emit.wac`'s `writeValType` — the branch that produces this message — carries a comment about
+precisely this shape:
+
+> It reached this function from the signature-table entry of a generic *method* nobody calls —
+> `Box<U> map<U>(…)` declared and never called — where `U` is the method's own letter and no
+> substitution binds it. … `issues/lang/0173a` removed the entry — the method that mentions it is
+> declined where it is registered — so nothing produces such a type any more and **this branch became
+> unreachable**.
+
+So this is not a new failure mode; it is an old one whose guard has stopped holding. 0173a's fix was
+*not to create a signature-table entry* for such a method. Something in `design/lang/0010` option C
+creates one again — the obvious suspects being the entries `registerOneMethodInstance` adds and the
+types `registerMethodInstanceTypes` registers, except that `box` instantiates none of them because it
+never calls `fold`.
+
+**That is the question to answer first: which signature entry mentioning `U` exists, and who made
+it.** The comment says the answer used to be "none", so a count of them is a yes/no rather than a
+hunt.
+
 ## Where to look next
 
 The probe is the thing to extend, not the reading — three probes settled `issues/lang/0274b` and
