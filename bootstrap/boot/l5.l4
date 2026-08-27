@@ -27,6 +27,7 @@ i32 K_INT = 1;
 i32 K_NAME = 2;
 i32 K_PUNCT = 3;
 i32 K_STR = 4;
+i32 K_FLOAT = 5;
 
 // ---------------------------------------------------------------- emitting
 
@@ -170,7 +171,28 @@ i32 lex() {
                 p = p + 1;
               }
             }
-            toks[ntok] = Tok(K_INT, s0, p - s0, v);
+            // **A float keeps its text and not its value.** A token's value is an i32 and a double
+            // does not fit in one — but wac-L0 parses the decimal itself, so copying the source
+            // through is both simpler and exact.
+            i32 isf = 0;
+            if (at(p) == 46 & isdigit(at(p + 1))) {
+              isf = 1;
+              p = p + 1;
+              while (isdigit(at(p))) { p = p + 1; }
+            }
+            if (at(p) == 101 | at(p) == 69) {
+              if (isdigit(at(p + 1)) | ((at(p + 1) == 45 | at(p + 1) == 43) & isdigit(at(p + 2)))) {
+                isf = 1;
+                p = p + 1;
+                if (at(p) == 45 | at(p) == 43) { p = p + 1; }
+                while (isdigit(at(p))) { p = p + 1; }
+              }
+            }
+            if (isf) {
+              toks[ntok] = Tok(K_FLOAT, s0, p - s0, 0);
+            } else {
+              toks[ntok] = Tok(K_INT, s0, p - s0, v);
+            }
             ntok = ntok + 1;
           } else {
             // **A character literal is a number.** `'0'` and `'\n'` are how a lexer written in wac
@@ -462,10 +484,12 @@ i32 TY_U64 = 8;
 // **`void` is a type here**, so that a function's result is one thing the whole compiler agrees on
 // rather than a flag beside it. It is the only one that emits no value type at all.
 i32 TY_VOID = 9;
-i32 NUMTYPES = 10;
+i32 TY_F64 = 10;
+i32 NUMTYPES = 11;
 
 // Is it held in an i64? Everything else this rung has fits an i32.
 i32 ty_wide(i32 t) { return t == TY_I64 | t == TY_U64; }
+i32 ty_float(i32 t) { return t == TY_F64; }
 i32 ty_signed(i32 t) { return (t == TY_U32 | t == TY_U8 | t == TY_U16 | t == TY_U64) == 0; }
 i32 ty_isnum(i32 t) { return t < NUMTYPES; }
 
@@ -517,6 +541,7 @@ i32 tyname(i32 t) {
 
 i32 valtype(i32 t) {
   if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_float(t)) { emits("f64"); return 0; }
   if (ty_wide(t)) { emits("i64"); return 0; }
   i32 pk = ty_packed(t);
   if (pk == 8) { emits("i8"); return 0; }
@@ -530,13 +555,19 @@ i32 valtype(i32 t) {
 i32 slotvaltype(i32 t) {
   if (t == TY_VOID) { return 0; }
   if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_float(t)) { emits("f64"); return 0; }
   if (ty_wide(t)) { emits("i64"); return 0; }
   emits("i32");
   return 0;
 }
 
 // `i32.` or `i64.`, which is the prefix on every arithmetic instruction.
-i32 opprefix(i32 t) { if (ty_wide(t)) { emits("i64."); } else { emits("i32."); } return 0; }
+i32 opprefix(i32 t) {
+  if (ty_float(t)) { emits("f64."); return 0; }
+  if (ty_wide(t)) { emits("i64."); return 0; }
+  emits("i32.");
+  return 0;
+}
 
 // The signed or unsigned form of an instruction that has both.
 i32 signedsuffix(i32 t) { if (ty_signed(t)) { emits("_s"); } else { emits("_u"); } return 0; }
@@ -560,6 +591,7 @@ i32 coerce(i32 t, i32 rt) {
 // hierarchies that never meet — so a funcref's null is not the one everything else uses.
 i32 zero_of(i32 t) {
   if (t == TY_VOID) { return 0; }
+  if (ty_float(t)) { word("f64.const"); emitn(0); return nl(); }
   if (ty_isnum(t)) {
     if (ty_wide(t)) { word("i64.const"); emitn(0); return nl(); }
     return konst(0);
@@ -568,7 +600,14 @@ i32 zero_of(i32 t) {
   return line("ref.null none");
 }
 
-i32 binop_signed(i32 t, i32 name) { opprefix(t); emits(name); signedsuffix(t); return nl(); }
+// **A float has one ordering**, so `f64.lt` has no signed and unsigned form — the one place the
+// integer pattern does not carry over, and the only reason this is not `binop`.
+i32 binop_signed(i32 t, i32 name) {
+  opprefix(t);
+  emits(name);
+  if (ty_float(t) == 0) { signedsuffix(t); }
+  return nl();
+}
 
 // A type, read in full. `T?` is the same wasm type as `T`: every reference this emitter writes is
 // already nullable, and a nullable *primitive* is boxed in wac and is not — which is a gap, and the
@@ -588,10 +627,12 @@ i32 string_type() {
 
 i32 usedstr = 0;
 i32 usedcat = 0;
+i32 usedslice = 0;
 i32 usedeq = 0;
 
 i32 prim_type() {
   if (isword("void")) { return TY_VOID; }
+  if (isword("f64")) { return TY_F64; }
   if (isword("i32")) { return TY_I32; }
   if (isword("bool")) { return TY_BOOL; }
   if (isword("i64")) { return TY_I64; }
@@ -1033,6 +1074,29 @@ i32 postfix(i32 t) {
         if (t == strty & texteq(p, n, "toBytes")) {
           want(40); want(41);
         } else {
+        // `bytes.byte(i)` — the element, unsigned, which for a `u8[]` is what indexing means.
+        if (t == strty & texteq(p, n, "byte")) {
+          want(40);
+          expr();
+          want(41);
+          word("array.get_u"); tyname(t); nl();
+          t = TY_U8;
+        } else {
+        // `bytes.slice(a, b)` — the half-open range as a fresh array. Every use in the corpus is
+        // over the byte array, which is the one array type that already has a runtime helper, so
+        // this stays a single function rather than one per element type.
+        if (t == strty & texteq(p, n, "slice")) {
+          want(40);
+          expr(); want(44); expr();
+          want(41);
+          usedslice = 1;
+          line("call $__slice");
+        } else {
+        if (ty_float(t) & texteq(p, n, "toBits")) {
+          want(40); want(41);
+          line("i64.reinterpret_f64");
+          t = TY_U64;
+        } else {
           i32 mi = meth_find(t, p, n);
           if (mi != 0 - 1 & ispunct(40)) {
             next();
@@ -1051,7 +1115,7 @@ i32 postfix(i32 t) {
               t = ft;
             }
           }
-        }}
+        }}}}}
       } else {
         next();
         expr();
@@ -1090,6 +1154,13 @@ i32 primary() {
     return postfix(string_type());
   }
   if (kind() == K_INT) { konst(val()); next(); return TY_I32; }
+  if (kind() == K_FLOAT) {
+    word("f64.const");
+    emitname(tstart(), tlen());
+    nl();
+    next();
+    return TY_F64;
+  }
   if (ispunct(40)) { next(); i32 t0 = expr(); want(41); return postfix(t0); }
   if (ispunct(45)) {
     // Negation, at whatever width its operand turns out to be — so the zero has to be emitted
@@ -1098,6 +1169,12 @@ i32 primary() {
     i32 nt2 = primary();
     i32 held = slot_new(nt2);
     word("local.set"); slotname(held); nl();
+    if (ty_float(nt2)) {
+      // `f64.neg` exists, so a float does not need the zero at all.
+      word("local.get"); slotname(held); nl();
+      line("f64.neg");
+      return nt2;
+    }
     if (ty_wide(nt2)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
     word("local.get"); slotname(held); nl();
     binop(nt2, "sub");
@@ -1118,6 +1195,23 @@ i32 primary() {
   // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
   // else that begins an expression does.
   i32 pt = prim_type();
+  // `f64.fromBits(x)` — a static on a builtin type, which the construction path would read as a
+  // missing `(` and refuse. The bits stay and only what reads them differs.
+  if (pt != 0 - 1 & aheadIs(1, 46)) {
+    next(); next();
+    i32 bp = tstart();
+    i32 bn = tlen();
+    next();
+    if (pt == TY_F64 & texteq(bp, bn, "fromBits")) {
+      want(40);
+      expr();
+      want(41);
+      line("f64.reinterpret_i64");
+      return postfix(TY_F64);
+    }
+    oops();
+    return 0;
+  }
   if (pt != 0 - 1) { next(); return construct(pt); }
   // `string.fromBytes(b)` is the identity, because a `string` here *is* a `u8[]` — the same reason
   // `s.toBytes()` is. Checked before the construction path, which would read the `.` as a missing
@@ -1268,6 +1362,19 @@ i32 cast() {
     eat(64);
     i32 to = parse_type();
     if (ty_isnum(t) & ty_isnum(to)) {
+      // To and from a float, which is four instructions and no reinterpretation: an integer and a
+      // double share no bits worth keeping.
+      if (ty_float(to) & ty_float(t) == 0) {
+        if (ty_wide(t)) { emits("f64.convert_i64"); } else { emits("f64.convert_i32"); }
+        if (ty_signed(t)) { emits("_s"); } else { emits("_u"); }
+        nl();
+      }
+      if (ty_float(t) & ty_float(to) == 0) {
+        if (ty_wide(to)) { emits("i64.trunc_f64"); } else { emits("i32.trunc_f64"); }
+        if (ty_signed(to)) { emits("_s"); } else { emits("_u"); }
+        nl();
+      }
+      if (ty_float(to) | ty_float(t)) { t = to; } else {
       if (ty_wide(to) & ty_wide(t) == 0) {
         // `word` puts a space after what it writes, and an instruction's suffix is part of its
         // name — so this is `emits` and not `word`, which is a one-character mistake that reads as
@@ -1279,6 +1386,7 @@ i32 cast() {
       if (ty_wide(to) == 0 & ty_wide(t)) { line("i32.wrap_i64"); }
       // Everything else is a reinterpretation: `i32` and `u32` are one wasm type, and narrowing to
       // `u8` is what the store does.
+      }
     }
     t = to;
   }
@@ -2433,6 +2541,45 @@ i32 emit_runtime() {
     line("end");
     nl();
   }
+  if (usedslice) {
+    word("func"); line("$__slice -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    line("param i32 $s");
+    line("param i32 $e");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$r");
+    line("local i32 $i");
+    line("local.get $e");
+    line("local.get $s");
+    line("i32.sub");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $r");
+    line("block $d1 ->");
+    line("loop $l1 ->");
+    line("local.get $s");
+    line("local.get $i");
+    line("i32.add");
+    line("local.get $e");
+    line("i32.ge_s");
+    line("br_if $d1");
+    line("local.get $r");
+    line("local.get $i");
+    line("local.get $a");
+    line("local.get $s");
+    line("local.get $i");
+    line("i32.add");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l1");
+    line("end");
+    line("end");
+    line("local.get $r");
+    line("end");
+    nl();
+  }
   if (usedcat) {
     word("func"); line("$__concat -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
     word("param"); word("refnull"); tyname(at2); sp(); line("$a");
@@ -2613,6 +2760,7 @@ i32 compile(i32 s, i32 out) {
   strty = 0 - 1;
   usedstr = 0;
   usedcat = 0;
+  usedslice = 0;
   usedeq = 0;
   tmpls = Tmpl[4096]();
   tparams = TParam[8192]();

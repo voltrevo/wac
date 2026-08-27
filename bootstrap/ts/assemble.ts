@@ -17,6 +17,7 @@ type PlainType = { k: "num" | "abs"; byte: number; name: string };
 const NUM: Record<string, PlainType> = {
   i32: { k: "num", byte: 0x7f, name: "i32" },
   i64: { k: "num", byte: 0x7e, name: "i64" },
+  f64: { k: "num", byte: 0x7c, name: "f64" },
   // **Packed, and only valid where a field or an element goes.** wasm has no i8 value, so a local
   // or a parameter of this type is refused by the engine — which is the same place every other type
   // mistake in this format is caught, so the assembler does not duplicate the rule.
@@ -432,6 +433,24 @@ const NULLARY: Record<string, number> = {
   // Between the two, in both directions. Widening is signed or unsigned and narrowing is neither,
   // which is the asymmetry: bits are dropped without asking what they meant.
   "i32.wrap_i64": 0xa7, "i64.extend_i32_s": 0xac, "i64.extend_i32_u": 0xad,
+
+  // f64. Its comparisons have no signed and unsigned form, which is the one place the integer
+  // pattern does not carry over — there is only one ordering on a float.
+  "f64.eq": 0x61, "f64.ne": 0x62,
+  "f64.lt": 0x63, "f64.gt": 0x64, "f64.le": 0x65, "f64.ge": 0x66,
+  "f64.abs": 0x99, "f64.neg": 0x9a, "f64.ceil": 0x9b, "f64.floor": 0x9c,
+  "f64.trunc": 0x9d, "f64.nearest": 0x9e, "f64.sqrt": 0x9f,
+  "f64.add": 0xa0, "f64.sub": 0xa1, "f64.mul": 0xa2, "f64.div": 0xa3,
+  "f64.min": 0xa4, "f64.max": 0xa5, "f64.copysign": 0xa6,
+  "i32.trunc_f64_s": 0xaa, "i32.trunc_f64_u": 0xab,
+  "i64.trunc_f64_s": 0xb0, "i64.trunc_f64_u": 0xb1,
+  "f64.convert_i32_s": 0xb7, "f64.convert_i32_u": 0xb8,
+  "f64.convert_i64_s": 0xb9, "f64.convert_i64_u": 0xba,
+  // Reinterpretation, which is the one conversion that changes nothing: the bits stay and only
+  // what reads them differs. A rounding routine that assembles a float from its exponent and
+  // mantissa has no other way to hand the result back.
+  "i32.reinterpret_f32": 0xbc, "i64.reinterpret_f64": 0xbd,
+  "f32.reinterpret_i32": 0xbe, "f64.reinterpret_i64": 0xbf,
 };
 
 const MEMOP: Record<string, number> = {
@@ -537,6 +556,15 @@ function emitBody(f: Func, ix: Index): number[] {
     switch (op) {
       case "i32.const": out.push(0x41, ...sleb(BigInt(t[1]))); break;
       case "i64.const": out.push(0x42, ...sleb(BigInt(t[1]))); break;
+      // **Eight raw bytes, not a LEB.** A float is stored as itself, so this is the one immediate
+      // in the format that is not a variable-length integer.
+      case "f64.const": {
+        const buf = new DataView(new ArrayBuffer(8));
+        buf.setFloat64(0, Number(t[1]), true);
+        out.push(0x44);
+        for (let i = 0; i < 8; i++) out.push(buf.getUint8(i));
+        break;
+      }
       case "local.get": out.push(0x20, ...uleb(localOf(t[1], n))); break;
       case "local.set": out.push(0x21, ...uleb(localOf(t[1], n))); break;
       case "local.tee": out.push(0x22, ...uleb(localOf(t[1], n))); break;
@@ -665,6 +693,10 @@ export function assemble(source: string): Uint8Array {
     ...vtBytes(g.type, ix, 0), g.mutable ? 0x01 : 0x00,
     ...(g.type.k === "ref"
       ? [0xd0, ...heapType(g.type.to, ix, 0)]              // a reference global starts null
+      : g.type.byte === 0x7c
+      ? [0x44, ...(() => { const b = new DataView(new ArrayBuffer(8));
+                           b.setFloat64(0, Number(g.value), true);
+                           return [...new Uint8Array(b.buffer)]; })()]
       : [g.type.byte === 0x7f ? 0x41 : 0x42, ...sleb(g.value)]),
     0x0b,
   ]))));

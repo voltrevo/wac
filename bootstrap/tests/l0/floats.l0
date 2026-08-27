@@ -1,0 +1,24 @@
+; f64: an eight-byte immediate, one ordering, and the four conversions.
+func $main -> i32
+  local f64 $x
+  f64.const 2.5
+  f64.const 4.0
+  f64.mul
+  local.tee $x
+  f64.const 10.0
+  f64.eq
+  if $ten -> i32
+    local.get $x
+    i32.trunc_f64_s
+    i32.const 7
+    f64.convert_i32_s
+    f64.const 0.5
+    f64.add
+    i32.trunc_f64_s
+    i32.add
+  else
+    i32.const 0
+  end
+end
+
+export "main" func $main
