@@ -811,6 +811,91 @@ void popSubstitution(Env env, i32 n) {
 }
 
 /**
+ * The same, **nested inside another push** — a method's own letters on top of its owner's.
+ *
+ * `design/lang/0010` option C needs two substitutions at once: `Box<i32>.map<i64>` binds `T` from the
+ * owner and `U` from the method. The stack part nests correctly, since the push returns how many
+ * pairs it made and the caller pops exactly that many. What does not nest is `curInst` and
+ * `curGeneric`: the outer push set them and `popSubstitution` **clears** rather than restores, so an
+ * inner pop would silently drop the instance the emitter thinks it is inside — and `Env.lambdaInst`
+ * keys a lambda by exactly that. So the inner pair leaves them alone; a method instance belongs to
+ * its owner's instantiation, which is what the outer push already said.
+ */
+i32 pushSubstitutionInner(Env env, u8[] src, Lexed lexed, i32[] typeParams, string inst) {
+  for (i32 i = 0; i < typeParams.len(); i++) {
+    if (env.subCount >= env.subFrom.len()) { return i; }
+    env.subFrom[env.subCount] = tokenTextOf(src, lexed, typeParams[i]);
+    env.subTo[env.subCount] = typeArgAt(inst, i);
+    env.subCount = env.subCount + 1;
+  }
+  return typeParams.len();
+}
+
+void popSubstitutionInner(Env env, i32 n) { env.subCount = env.subCount - n; }
+
+/**
+ * The instance a method call names when its own type arguments are **written** — `Box<i32>.map<i64>`.
+ *
+ * `design/lang/0010` option C: the third level of monomorphisation, the owner's instantiation times
+ * the method's arguments. The name carries both because a method is already `Owner<Args>.name` in the
+ * function table.
+ *
+ * **`of` is `Box<i32>.map`**, which is deliberately not any declaration's name — the loops that walk
+ * instances match `instOf` against top-level declarations, so this shape falls through every one of
+ * them and is handled only where it is meant to be.
+ *
+ * Through `canonType` for the reason `genericCallInstance` gives: a variant canonicalises to its
+ * enum, and two spellings of one type must not become two instances.
+ */
+string methodInstance(Env env, u8[] src, Lexed lexed, string ownerInst, string mname, Ty[] targs) {
+  if (targs.len() == 0 || ownerInst == "") { return ""; }
+  string of = ownerInst + "." + mname;
+  string inst = of + "<";
+  for (i32 i = 0; i < targs.len(); i++) {
+    string a = env.canonType(typeOfTyName(env, src, lexed, targs[i]));
+    if (a == "") { return ""; }
+    if (i > 0) { inst = inst + ","; }
+    inst = inst + a;
+  }
+  inst = inst + ">";
+  env.instantiate(inst, of);
+  return inst;
+}
+
+/**
+ * The `name<args>` half of a method instance, which is what a substitution push needs.
+ *
+ * `typeArgAt` reads the argument list of a `Name<…>`, and handed the whole `Box<i32>.map<i64>` it
+ * would read the **owner's** `i32`. The method's own list is the tail, and it is a slice rather than
+ * a parse because `of` is exactly the prefix.
+ */
+string methodInstTail(string inst, string of, string mname) {
+  if (inst.len() <= of.len()) { return ""; }
+  return mname + inst.slice(of.len(), inst.len());
+}
+
+/**
+ * The function slot a method call resolves to — the **written** instantiation's, if it wrote one.
+ *
+ * `design/lang/0010` option C. Every site that asked `methodOn` for a method's slot has to ask this
+ * instead, or a call with type arguments written reaches the template's declined entry and the module
+ * loses the function it was calling.
+ */
+i32 methodSlotFor(Env env, u8[] src, Lexed lexed, string ot, string mn, Ty[] targs) {
+  if (targs.len() > 0) {
+    string mi = methodInstance(env, src, lexed, ot, mn, targs);
+    if (mi != "") {
+      i32 at = env.funcAt(mi);
+      if (at >= 0) { return at; }
+    }
+  }
+  return methodOn(env, ot, mn);
+}
+
+/** Whether an instance name is a method instantiation rather than a struct or function one. */
+bool isMethodInstance(Env env, i32 i) { return env.instOf[i].indexOf(".") > 0; }
+
+/**
  * Whether a type as *written* admits null — which its name cannot say.
  *
  * `T?` and `T` are one wasm type here, deliberately: every reference this emitter writes is
@@ -4483,6 +4568,17 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     }
   }
 
+  // **And the method instantiations, counted where they were registered** — after every instance and
+  // before the helpers. `design/lang/0010` option C. This is the third of four walks that have to
+  // agree about them; missing it does not decline the module, it emits one the engine refuses,
+  // because the function section's vector then declares fewer entries than the code section carries.
+  for (i32 cmi = 0; cmi < env.instCount; cmi++) {
+    if (!isMethodInstance(env, cmi)) { continue; }
+    if (env.funcAt(env.instName[cmi]) < 0) { continue; }
+    if (env.funcIndex[countAt] >= 0) { count = count + 1; }
+    countAt = countAt + 1;
+  }
+
   // `+ 1` for `$bind$mem_ensure`, which every module carries: the boundary needs it whenever an
   // exported signature moves bytes, and deciding that here would mean asking what a host will bind.
   // **Where each block of functions begins, said once.** The order is fixed — the user's, then the
@@ -4641,6 +4737,41 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
                                    methods[m].hasThis ? env.instName[ii] : "");
           }
           popSubstitution(env, pushed);
+        }
+        else: { }
+      }
+    }
+  }
+
+  // **And the method instantiations** — `design/lang/0010` option C. The two loops above skip a
+  // method with its own letters, because its signature names a letter nothing declares; an instance
+  // has them bound, so it has a signature and the type section has to be sized for it. Missing this
+  // is not a wrong answer but a refusal: *"a type was registered while a body was being emitted,
+  // after the type section had been sized"*, naming the three signatures it wanted.
+  for (i32 tmi = 0; tmi < env.instCount; tmi++) {
+    if (!isMethodInstance(env, tmi)) { continue; }
+    if (env.funcAt(env.instName[tmi]) < 0) { continue; }
+    string tmof = env.instOf[tmi];
+    i32 tmdot = tmof.indexOf(".");
+    string tmowner = tmof.slice(0, tmdot);
+    string tmnm = tmof.slice(tmdot + 1, tmof.len());
+    string tmtmpl = templateOf(tmowner);
+    for (i32 tmd = 0; tmd < prog.decls.len(); tmd++) {
+      match (prog.decls[tmd].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != tmtmpl) { continue; }
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (tokenTextOf(src, lexed, methods[m].nameTok) != tmnm) { continue; }
+            if (methods[m].typeParams.len() == 0) { continue; }
+            i32 topush = pushSubstitution(env, src, lexed, typeParams, tmowner, tmtmpl);
+            i32 tmpush = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
+                                               methodInstTail(env.instName[tmi], tmof, tmnm));
+            registerFuncTypes(env, src, lexed, methods[m].returnType, methods[m].params,
+                              methods[m].hasThis ? tmowner : "");
+            popSubstitutionInner(env, tmpush);
+            popSubstitution(env, topush);
+          }
         }
         else: { }
       }
@@ -4996,6 +5127,46 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
             index = index + 1;
           }
           popSubstitution(env, pushed);
+        }
+        else: { }
+      }
+    }
+  }
+
+  // **The method instantiations, after every instance and before the helpers** — which is exactly
+  // where `registerMethodInstances` appended them, and the two have to walk the same list in the
+  // same order or `emitAt` slides against `funcIndex`. `design/lang/0010` option C.
+  for (i32 mi = 0; mi < env.instCount; mi++) {
+    if (!isMethodInstance(env, mi)) { continue; }
+    if (env.funcAt(env.instName[mi]) < 0) { continue; }
+    if (env.funcIndex[emitAt] < 0) {
+      emitAt = emitAt + 1;
+      continue;
+    }
+    emitAt = emitAt + 1;
+    string mof = env.instOf[mi];
+    i32 mdot = mof.indexOf(".");
+    string mowner = mof.slice(0, mdot);
+    string mnm = mof.slice(mdot + 1, mof.len());
+    string mtmpl = templateOf(mowner);
+    for (i32 md = 0; md < prog.decls.len(); md++) {
+      match (prog.decls[md].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != mtmpl) { continue; }
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (tokenTextOf(src, lexed, methods[m].nameTok) != mnm) { continue; }
+            if (methods[m].typeParams.len() == 0) { continue; }
+            i32 opush = pushSubstitution(env, src, lexed, typeParams, mowner, mtmpl);
+            i32 mpush = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
+                                              methodInstTail(env.instName[mi], mof, mnm));
+            emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                         "", methods[m].returnType, methods[m].params, methods[m].body,
+                         methods[m].hasThis ? mowner : "", index, declTypes, methods[m].nameTok);
+            index = index + 1;
+            popSubstitutionInner(env, mpush);
+            popSubstitution(env, opush);
+          }
         }
         else: { }
       }
@@ -7618,7 +7789,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
           // first parameter, which is the whole of what a method is here.
-          i32 at = methodOn(env, ot, mname);
+          i32 at = methodSlotFor(env, src, lexed, ot, mname, callTargs);
           if (!haveRequired(env, at, ot + "." + mname)) { return; }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
@@ -7987,7 +8158,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
-          i32 mi = methodOn(env, ot, mn);
+          i32 mi = methodSlotFor(env, src, lexed, ot, mn, callTargs);
           return mi < 0 ? "" : env.funcReturns[mi];
         }
       }
@@ -8766,7 +8937,7 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
         case Member(iobj, inameTok): {
           string it = walkCalleeSig(env, src, lexed, iobj);
           if (it == "") { return ""; }
-          i32 ma = methodOn(env, it, tokenTextOf(src, lexed, inameTok));
+          i32 ma = methodSlotFor(env, src, lexed, it, tokenTextOf(src, lexed, inameTok), callTargs);
           if (ma >= 0) { return env.funcReturns[ma]; }
           // **...or a funcref *field*, which is what every capability call is.** `core.delay(1)` is a
           // method and was found above; `core.randomBytes(8)` reads a field and calls it, and asking
@@ -8946,9 +9117,17 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
           // Looked up on the *instantiation* where there is one: a generic's methods are registered
           // per instantiation (`Slot<i32>.of`), not under the bare template, and the instantiated
           // entry already carries its parameters in the caller's world.
-          if (inst != "") { fat = methodOn(env, inst, tokenTextOf(src, lexed, mnameTok)); }
+          // **The written instantiation's entry when the call names one** — `design/lang/0010`
+          // option C. This is the walk that gives a lambda argument its target, so reading the
+          // template's entry here hands it a parameter written in the method's own letter and the
+          // emitter declines with *"a value of a type this emitter cannot write: U"*.
+          if (inst != "") {
+            fat = methodSlotFor(env, src, lexed, inst, tokenTextOf(src, lexed, mnameTok), callTargs);
+          }
           if (fat >= 0) { inst = ""; }
-          if (fat < 0 && recv != "") { fat = methodOn(env, recv, tokenTextOf(src, lexed, mnameTok)); }
+          if (fat < 0 && recv != "") {
+            fat = methodSlotFor(env, src, lexed, recv, tokenTextOf(src, lexed, mnameTok), callTargs);
+          }
         }
         else: { }
       }
@@ -10953,8 +11132,26 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // which feature is missing: without this the reader got whichever mismatch fell out first —
           // *"an assignment between related reference types"*, which names the symptom two steps away.
           if (ma < env.funcMethodGeneric.len() && env.funcMethodGeneric[ma]) {
-            return "a call to " + ot + "." + mn +
-                   ", a method with its own type parameters, whose type arguments are not inferred yet";
+            // **Written type arguments name an instance, and naming it here is what creates it** —
+            // `design/lang/0010` option C, the same shape `genericCallInstance` has for a free
+            // function. `collectInstances` walks every body before it registers anything and
+            // iterates to a fixed point, so an instance named in this walk exists by the time the
+            // registration pass reads the list.
+            string mi = methodInstance(env, src, lexed, ot, mn, callTargs);
+            if (mi == "") {
+              return "a call to " + ot + "." + mn +
+                     ", a method with its own type parameters and no type arguments written";
+            }
+            i32 mia = env.funcAt(mi);
+            // Named this round and not registered yet. The rounds' verdicts are discarded — the
+            // comment at the head of `collectInstances` says so — and the entry is there by the last.
+            if (mia < 0) { return ""; }
+            if (!env.funcOk[mia]) { return declinedBecause("a method " + ot + "." + mn, env, mia); }
+            for (i32 i = 0; i < args.len(); i++) {
+              string am = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(mia, i));
+              if (am != "") { return am; }
+            }
+            return "";
           }
           if (!env.funcOk[ma]) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
           for (i32 i = 0; i < args.len(); i++) {
@@ -11324,6 +11521,87 @@ string blockedOf(Front f) {
  * **The order it registers in is the order every other loop must walk**, since a function's index is
  * its position in this table and nothing else.
  */
+/**
+ * One function-table entry per method instantiation a call named — `design/lang/0010` option C.
+ *
+ * **Appended, never interleaved**, and that is the whole design. A first attempt registered these
+ * beside the owner's other methods, which meant every walk that steps an index over that sequence had
+ * to count them too: `emit.wac` has 43 `for (i32 m = 0; m < methods.len(); m++)` loops over it and
+ * six are the bare `{ at = at + 1; }` shape whose only job is to stay in step. A miss in any one
+ * slides the function index for everything after it, which is the failure the emission loop's own
+ * header records as fifty-seven invalid modules. Appending leaves all 43 counting exactly what they
+ * counted before.
+ *
+ * The declined entry the registration loop makes for such a method stays where it is, so a method
+ * nobody calls with type arguments is registered and numbered exactly as it always was.
+ *
+ * Idempotent, because this runs once per round: an instance already registered is skipped, and the
+ * rounds exist so that a body walked before its instance existed gets walked again.
+ */
+void registerMethodInstances(Env env, u8[] src, Lexed lexed, Program prog) {
+  for (i32 i = 0; i < env.instCount; i++) {
+    if (!isMethodInstance(env, i)) { continue; }
+    string of = env.instOf[i];
+    i32 dot = of.indexOf(".");
+    if (dot <= 0) { continue; }
+    string ownerInst = of.slice(0, dot);
+    string mname = of.slice(dot + 1, of.len());
+    string tmpl = templateOf(ownerInst);
+    if (tmpl == "") { continue; }
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
+            if (methods[m].typeParams.len() == 0) { continue; }
+            // **Both substitutions**: the owner's letters from `Box<i32>`, then the method's from the
+            // `map<i64>` tail. The inner pair leaves `curInst` alone, which is right — this function
+            // belongs to the owner's instantiation.
+            i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
+            i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
+                                                methodInstTail(env.instName[i], of, mname));
+            string[] ipts = string[methods[m].params.len()]();
+            for (i32 a = 0; a < methods[m].params.len(); a++) {
+              ipts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
+            }
+            collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+            i32 slot = env.funcAt(env.instName[i]);
+            if (slot < 0) {
+              env.addFunc(env.instName[i],
+                          typeOfTyName(env, src, lexed, methods[m].returnType), ipts);
+              slot = env.funcCount - 1;
+              env.funcRecv[slot] = methods[m].hasThis ? ownerInst : "";
+              env.instBuilt = true;
+            }
+            // **The verdict is taken every round, and may go back to yes.** A method instance whose
+            // body constructs another instantiation — `Cell<U> then<U>(…)` returning `Cell<U>` — is
+            // walked before that instantiation exists, so the first answer is no. The pass that does
+            // this for ordinary functions is monotone, true→false only, and can be: everything it
+            // walks is registered before it starts. These are registered *by* this loop, so an early
+            // no has to be revisable or a chain of them never resolves — which is what
+            // `c.then<i64>(…).then<bool>(…)` is.
+            string savedI = env.blocked;
+            bool okNow = canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                                 methods[m].hasThis ? ownerInst : "",
+                                 typeOfTyName(env, src, lexed, methods[m].returnType));
+            env.blocked = savedI;
+            if (slot < env.funcOk.len()) {
+              if (env.funcOk[slot] != okNow) { env.instBuilt = true; }
+              env.funcOk[slot] = okNow;
+              if (!okNow && slot < env.funcWhy.len()) { env.funcWhy[slot] = env.lastWhy; }
+            }
+            popSubstitutionInner(env, mpushed);
+            popSubstitution(env, opushed);
+          }
+        }
+        else: { }
+      }
+    }
+  }
+}
+
 void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 round = 0; round < 8; round++) {
     env.instDirty = false;
@@ -11563,6 +11841,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
     // stops at the first thing it cannot resolve, so the call further down it — the only place a
     // generic *function*'s instance is ever named — is not reached until the round after. Leaving on
     // "no new instance was named" therefore left on the round that could not have named one.
+    registerMethodInstances(env, src, lexed, prog);
     if (!env.instDirty && !env.instBuilt) { return; }
     env.instBuilt = false;
   }

@@ -395,6 +395,38 @@ written in letters, and a letter is not a type any assignment can be checked aga
 expected type *into* a call, which is the same restriction the struct case documents above and is a
 larger change than writing the argument.
 
+### A method may take type parameters of its own
+
+A method may declare letters the owner does not have, and a call supplies them the same way:
+
+```wac
+struct Vec<T> {
+  T[] items;
+  i32 n;
+  U fold<U>(const this, U seed, fn[U(U, T)] f) { /* … */ }
+}
+
+i32 total = v.fold<i32>(0, (i32 acc, i32 x) => acc + x);
+i64 wide  = v.fold<i64>(0 as i64, (i64 a, i32 x) => a + (x as i64));
+```
+
+`[§wacc-method-type-args]` Both work, and the **lambda is inline** — which is the point rather than a
+detail. The slot the lambda is checked against is written `fn[U(U, T)]`, so it reaches the argument
+only if `T` is bound from the receiver's instantiation *and* `U` from what the call wrote; with either
+missing, a lambda that is perfectly correct is told *nothing here wants a function*.
+
+`[§wacc-method-type-args]` **Monomorphisation is per owner instantiation × method arguments.**
+`Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` are two functions, and a program using both carries
+both. This is a third level beside the two a generic struct and a generic function already have.
+
+`[§wacc-method-type-args]` **They are not inferred.** `v.fold(0, …)` is an error even where the seed
+would say what `U` is — nothing binds a method's own letters but the call writing them. That is a gap
+rather than a rule, and it is the difference between this and a generic *function*, whose letters are
+argument-directed.
+
+`[§wacc-method-type-args]` **Chaining does not work yet**: `c.then<A>(f).then<B>(g)`, where each link
+produces an instantiation no type in the program names, is refused by the emitter. `issues/lang/0274b`.
+
 Two arguments must agree:
 
 ```wac

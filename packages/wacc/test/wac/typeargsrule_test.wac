@@ -147,19 +147,17 @@ export string test_the_receiver_exemption_still_resolves_what_is_written() {
 }
 
 /**
- * A method's own type arguments **parse**, and the refusal stops promising a workaround.
+ * A method may be called with **its own** type arguments, and the arguments are bound.
  *
- * `design/lang/0011` step 3. Before it, `b.map<i64>(f)` was a parse error and the checker's advice
- * for `b.map(f)` was *"no Box<i32>.map without its type arguments"* — which reads as an instruction,
- * and following it answered `a type name is not a value` under the `<`, about a different program.
- * That is `issues/lang/0235a`'s postfix half.
+ * `design/lang/0010` option C, and the inversion of what this test asserted an hour before it
+ * landed — it checked that the refusal was *honest* and recorded that the second spelling would
+ * compile when C did.
  *
- * They parse now and are still not bound — `design/lang/0010` option C is what binds them — so both
- * spellings are refused, and the note says which of the two the caller did rather than pointing at
- * an escape that is not there. **The refusal is the subject here**: when option C lands the second
- * of these compiles and this test changes with it.
+ * The three states are worth keeping side by side, because the middle one used to be advice nobody
+ * could take: `no Box<i32>.map without its type arguments` read as an instruction, and writing them
+ * was a parse error that answered `a type name is not a value` under the `<`.
  */
-export string test_a_methods_own_type_arguments_parse_and_the_refusal_is_honest() {
+export string test_a_method_may_be_called_with_its_own_type_arguments() {
   T t = T.create();
   string decl = "struct Box<T> {\n" +
                 "  T v;\n" +
@@ -167,29 +165,58 @@ export string test_a_methods_own_type_arguments_parse_and_the_refusal_is_honest(
                 "}\n" +
                 "i64 widen(i32 x) { return 7; }\n";
 
-  string without = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3); i64 r = b.map(widen); return 0; }");
+  string with = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
+                     "  i64 r = b.map<i64>(widen); return 0; }");
+  t.isTrue(!contains(with, "error"), "writing them compiles — got " + with);
+
+  string without = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
+                        "  i64 r = b.map(widen); return 0; }");
   t.isTrue(contains(without, "it has a type parameter of its own"),
-           "not writing them names the blocker — got " + without);
-  t.isTrue(!contains(without, "without its type arguments"),
-           "and no longer reads as advice to write them — got " + without);
+           "not writing them is still refused — nothing infers a method's letters — got " + without);
 
-  string with = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3); i64 r = b.map<i64>(widen); return 0; }");
-  t.isTrue(contains(with, "parsed and not yet bound"),
-           "writing them parses, and is told they are not bound yet — got " + with);
-  // The parse error this replaces, as a negative: `<` used to end the expression and `i64` was read
-  // as a type name in value position.
-  t.isTrue(!contains(with, "a type name is not a value"),
-           "and is not the unrelated diagnostic the `<` used to produce — got " + with);
-
-  // **The arity is answerable without binding anything**, which is why the checker records the
-  // letters rather than a flag. Two arguments for one letter is wrong for every possible binding at
-  // once, and "not yet bound" would have read as "come back later" when coming back would not help.
   string tooMany = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
                         "  i64 r = b.map<i64, i32>(widen); return 0; }");
   t.isTrue(contains(tooMany, "takes 1 type argument, and 2 were written"),
-           "a wrong count is reported as a wrong count — got " + tooMany);
-  t.isTrue(!contains(tooMany, "not yet bound"),
-           "and not as something that might work later — got " + tooMany);
+           "and a wrong count is a wrong count — got " + tooMany);
+  return t.report();
+}
+
+/**
+ * **An inline lambda**, which is the constraint the whole of `design/lang/0010` was decided on.
+ *
+ * `fold` is the example that document leads with, and it is the one that exercises every piece: the
+ * letter is the *seed's* type and the accumulator's and the callback's return, so a slot written
+ * `fn[U(U, T)]` has to arrive at the lambda with both letters bound — the owner's `T` from the
+ * receiver and the method's `U` from what the call wrote.
+ *
+ * Four things had to be true at once for this line to compile, and each failed differently on the
+ * way: the parameter's type had to be recorded *as written* (`typeOfTy` answers unknown for a letter
+ * that is active, so `fn[U(U, T)]` was recorded as nothing); `writtenTy` had to know how to spell a
+ * funcref (it had no arm and returned `""`, which reads as "no slot"); `applyBindings` had to reach
+ * *inside* one (it bound `T` and left `U`, so the lambda was told `expected fn(U, i32) -> U, found
+ * fn(i32, i32) -> U` — two spellings of one type); and the emitter's lambda-target walk had to read
+ * the instantiated entry rather than the template's, or the module declined with *"a value of a type
+ * this emitter cannot write: U"*.
+ */
+export string test_a_written_method_type_argument_gives_an_inline_lambda_its_target() {
+  T t = T.create();
+  string src = "struct Vec<T> {\n" +
+               "  T[] items;\n" +
+               "  i32 n;\n" +
+               "  U fold<U>(const this, U seed, fn[U(U, T)] f) {\n" +
+               "    U acc = seed;\n" +
+               "    for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.items[i]); }\n" +
+               "    return acc;\n" +
+               "  }\n" +
+               "}\n" +
+               "export i32 f() {\n" +
+               "  i32[] xs = i32[3](fill: 4);\n" +
+               "  Vec<i32> v = Vec<i32>(xs, 3);\n" +
+               "  return v.fold<i32>(0, (i32 acc, i32 x) => acc + x);\n" +
+               "}";
+  string said1 = said(src);
+  t.isTrue(!contains(said1, "error"), "fold with an inline lambda compiles — got " + said1);
+  t.isTrue(emit(src.toBytes()).len() > 200, "and emits a module");
   return t.report();
 }
 

@@ -259,16 +259,32 @@ the module's numbering.
 
 | # | criterion | state |
 |---|---|---|
-| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this — checked rather than assumed, since the point of listing it was that the declaration passes while every call is refused |
-| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — needs item 3 |
-| 3 | `v.fold<i64>(0, …)` with one | **parses** since `design/lang/0011` step 3, and is refused with *"written type arguments are parsed and not yet bound"*. Needs item 3 |
-| 4 | `p.then<Foo>(…)` | **no**, and item 1 has not been done either — `Pending<U> then<U>(…)` does not exist, and declaring it while no call can be emitted adds a method nobody can reach |
-| 5 | a three-link chain | **no** — needs 4 |
-| 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **no** — this *is* item 3 |
+| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this |
+| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — nothing infers a method's own letters. A separate feature from item 3, and the one that would make C invisible at most call sites |
+| 3 | `v.fold<i64>(0, …)` with one | **yes** — `spec/cases/0245`, answers 12, with an **inline lambda** |
+| 4 | `p.then<Foo>(…)` | **not tried** — `Pending<U> then<U>(…)` still does not exist. The compiler can now carry it; whether `Pending` should grow it is a capability-surface decision, and it wants criterion 5 first since chaining is the reason to |
+| 5 | a three-link chain | **no** — `issues/lang/0274b`. A single link compiles and runs; chaining is declined, and it has **two** causes, the first hiding the second |
+| 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **yes** — `spec/cases/0246`, measured in emitted bytes: 3,287 against 2,897 for the one-instantiation program |
 
-**So what landed is the syntax and the diagnostics, and what is left is one thing.** That is a better
-position than it sounds: criterion 3's spelling could not be written at all before, so the refusal
-for criterion 2 was advice pointing at a parse error.
+**Item 3 landed on 2026-08-27** and took six layers, each failing differently — recorded because the
+list is what the next person needs and none of it was predicted:
+
+1. the type section was not sized for the new functions;
+2. the function *count* pass did not know them, which is a module the engine refuses rather than a
+   decline;
+3. the parameter's type was recorded as **unknown**, because `typeOfTy` answers that for a letter
+   that is active and `fn[U(U, T)]` has one — so it had to be recorded *as written*;
+4. `writtenTy` had no funcref arm at all and returned `""`, which reads as "no slot";
+5. `applyBindings` bound the owner's `T` and left the method's `U`, so a correct lambda was told
+   *expected fn(U, i32) -> U, found fn(i32, i32) -> U* — two spellings of one type. It had the arm
+   for an instantiation and not for a funcref, which is the same gap `substituteType` had fixed for
+   itself years of commits earlier;
+6. the emitter's lambda-target walk read the template's entry rather than the instance's, and
+   declined with *a value of a type this emitter cannot write: U*.
+
+Four of the six are the same mistake wearing different clothes: **a letter that nothing bound, and a
+diagnostic about a type nobody wrote.** That is worth knowing in advance, because each one looks like
+a bug in the program rather than in the compiler.
 
 ### A design for item 3, from reading the emitter — agent-b, 2026-08-27
 
