@@ -62,7 +62,7 @@ implement, what is wacc-only, and what the reference keeps solely to build the s
 **4. Everything that compiles through the reference has a deadline.** `harness/wacBind.ts`,
 `tools/coverage.ts`, `site/src/snippets.ts` and the rest call `wacCompile`, and
 none of them can compile a file using a wacc-only feature. `WAC_BIND_FROM=wacc` binds every package with wacc's
-own metadata and generator (34 of 34, 1,663 tests) and **`deno task app:build` compiles
+own metadata and generator (34 of 34, 1,663 tests) and **`wac task app:build` compiles
 applications with wacc by default** — all 55 programs here emit through it, box's `wc`, `grep`,
 `sha256sum` and `cp` match the reference-built output byte for byte, and `boxsh` runs the website's
 own transcript. `WAC_APP_FROM=reference` and `WAC_BIND_FROM=reference` are the ways back and they
@@ -95,7 +95,7 @@ no such build. This is why the name section comes first.
 | the name section | **done** — imports, the module's own functions and every bind helper, `issues/lang/0101` |
 | wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
 | toolchain off the reference | **binding and application builds are wacc by default** — 55 of 55 programs emit, four of box's applets match the reference-built output byte for byte, and `boxsh` runs the website's transcript; the direct `wacCompile` callers are what is left, two of them deliberate — `issues/lang/0105` |
-| unified binary (V8) | **retired 2026-08-20**: `deno task app:binary` wrote one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path — and its test with it. Packaging a program no longer means packaging an engine: `wac app` writes the module behind a `/bin/sh` preamble that calls out to the `wac` on the machine, a few hundred KB. `spec/cli/wac.md` |
+| unified binary (V8) | **retired 2026-08-20**: `wac task app:binary` wrote one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path — and its test with it. Packaging a program no longer means packaging an engine: `wac app` writes the module behind a `/bin/sh` preamble that calls out to the `wac` on the machine, a few hundred KB. `spec/cli/wac.md` |
 | a Rust host on V8 | **the primary platform**, decided 2026-08-12 with the operator on the spike below — and it is a host in full: `Core`, the whole of `Cli` including the read and write sides, sockets, children on their own isolates, and the ticket table `Pending<T>` needs. box's shell runs on it, pipelines and all, byte-identical to the Deno-built shell. `native/v8/README.md` has the table |
 | **the unified binary on the primary platform** | **one file compiles wac** — `native/v8/build.rs` embeds `seed/wacc.wasm` and the same binary becomes a command: `wacv8 compile packages/wacc/src/api.wac` writes the compiler's own sources in 67 MB and about 1.2s, byte-identical to every other path, with no Deno and no JavaScript in it. Held by `tools/seed.sh`, which builds the compiler with itself and refuses a seed that is not a fixed point; the opt-in test that used to assert it again afterwards was deleted on 2026-08-19. It **writes its own glue** — `wacc bindgen`, `packages/wacc/src/bindgen.wac`, byte-identical to `waccBindgen.ts` including on the compiler's own 431 KB — and **runs this repository's own wac tests** — `wacv8 test file.wac`, the `harness/wacTestRun.ts` convention with nothing underneath it: 353 tests in 53 files, the rest being probes and oracle tests that want a host function. **And it rebuilds the file it carries**: `wacc build` writes the manifest too — `packages/wacc/src/manifest.wac`, byte-identical to `packages/platform/native.ts` on three programs including wacc's own — so the bundler is in the loop only for producing the *first* seed |
 | unified binary (wasmtime, shelved) | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wac/src/wac.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. **and the binary exists**: `native/` embeds a seed and dispatches to it, so one file compiles wacc's own sources byte-identically with no JavaScript, in 3.2s. It cannot yet rebuild the seed it carries — `packages/platform/native.ts` writes the manifest with the reference, and a wacc-built module numbers its callbacks differently (`issues/lang/0105`) |
@@ -151,8 +151,8 @@ Decided with the operator, on `native/spike-v8`: V8 driven from Rust is **exactl
 every workload in `issues/system/0138`'s benchmark, in a 63 MB binary against `deno compile`'s 105 MB.
 So the lean host layer and V8's speed are not a trade, and the platform is a Rust host on V8.
 
-`deno task app:binary` was the way to build a toolchain until the Rust host could do it. It can:
-`deno task seed` builds the compiler into `native/v8`, and `app:binary` went on 2026-08-20.
+`wac task app:binary` was the way to build a toolchain until the Rust host could do it. It can:
+`wac task seed` builds the compiler into `native/v8`, and `app:binary` went on 2026-08-20.
 
 ### What the port is
 

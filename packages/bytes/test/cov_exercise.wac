@@ -1,7 +1,7 @@
 // Branch coverage for bytes: the exercises, and nothing else.
 //
-//   deno task coverage:bytes
-//   deno task coverage:bytes --verbose
+//   wac task coverage:bytes
+//   wac task coverage:bytes --verbose
 //
 // Driven from the package's own wac tests, which are the thing that exercises `Buf` directly.
 // `tools/coverage.ts` also reports on `buf.wac`, but only the branches gzip happens to reach — which

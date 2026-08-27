@@ -1,6 +1,6 @@
 // An interactive page: draw something, then answer what the user does.
 //
-//   deno task app:build packages/platform/example/counter.wac --target browser -o page/index.html
+//   wac task app:build packages/platform/example/counter.wac --target browser -o page/index.html
 //   box httpd -8080 page -x
 //
 // The entry point is `page`, not `main`, and that is the whole of how a program says it is

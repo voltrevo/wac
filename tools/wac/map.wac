@@ -393,7 +393,7 @@ string render(Cli cli, Package[] pkgs, Program[] programs) {
   return "# The map\n" +
     "\n" +
     "Every package, what it is, and every program you can build. **Generated — do not edit.**\n" +
-    "Run `deno task map` after adding a package or an entry point; `deno task map -- --check`\n" +
+    "Run `wac task map` after adding a package or an entry point; `wac task map -- --check`\n" +
     "runs in the suite, so a stale map is a failing test rather than a document nobody trusts.\n" +
     "\n" +
     itoa(pkgs.len()) + " packages, " + commas(wac) + " lines of wac, " + itoa(tests) + " tests,\n" +
@@ -412,7 +412,7 @@ string render(Cli cli, Package[] pkgs, Program[] programs) {
     "Every `export i32 main` in the tree. Build one with:\n" +
     "\n" +
     "```sh\n" +
-    "deno task app:build <path> --allow-read -o name && ./name\n" +
+    "wac task app:build <path> --allow-read -o name && ./name\n" +
     "```\n" +
     "\n" +
     "Grants are chosen at build time and the shebang of the result states exactly what it may\n" +
@@ -428,7 +428,7 @@ string render(Cli cli, Package[] pkgs, Program[] programs) {
     "and served with the two cross-origin isolation headers that `SharedArrayBuffer` needs.\n" +
     "\n" +
     "```sh\n" +
-    "deno task app:build <path> --target browser -o page/index.html\n" +
+    "wac task app:build <path> --target browser -o page/index.html\n" +
     "box httpd -8080 page -x\n" +
     "```\n" +
     "\n" +
@@ -486,7 +486,7 @@ export i32 main(Core core, Cli cli) {
 
   if (check) {
     if (structure(read(cli, "MAP.md")) != structure(text)) {
-      core.warn("MAP.md is out of date — run `deno task map`");
+      core.warn("MAP.md is out of date — run `wac task map`");
       return 1;
     }
     core.log("MAP.md is current");

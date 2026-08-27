@@ -4,7 +4,7 @@
 //
 //     // test-lane: exclusive — a real OpenSSH server per case, on a real port
 //
-// and both entry points — `deno task test` and `deno task test:changed` — run it in a pass of its own,
+// and both entry points — `wac task test` and `wac task test:changed` — run it in a pass of its own,
 // sequentially, after the parallel one.
 //
 // **Why a lane rather than another workaround.** Three ssh files each start a real sshd on a real port,

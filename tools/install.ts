@@ -1,10 +1,10 @@
 // Install `wac`, or build one without installing — `design/lang/0009` D1.
 //
-//     deno task wac:install                 # into $WAC_HOME, default $HOME/.wac
-//     deno task wac:install --target deno   # ...hosted by Deno instead: no cargo, no Rust
-//     deno task wac:install --target node   # ...or by Node, run by its shebang either way
-//     deno task wac:install --no-profile    # ...and leave every shell profile alone
-//     deno task wac:build -o ./wac          # an uninstalled binary, nothing else touched
+//     wac task wac:install                 # into $WAC_HOME, default $HOME/.wac
+//     wac task wac:install --target deno   # ...hosted by Deno instead: no cargo, no Rust
+//     wac task wac:install --target node   # ...or by Node, run by its shebang either way
+//     wac task wac:install --no-profile    # ...and leave every shell profile alone
+//     wac task wac:build -o ./wac          # an uninstalled binary, nothing else touched
 //
 // **`--no-profile` is for a caller who manages PATH itself**, and for one that cannot write a
 // profile at all. Installing and editing an interactive shell's configuration are separate
@@ -232,7 +232,7 @@ export async function install(
   // copy of the same directory every time a shell starts.
   await Deno.writeTextFile(
     `${home}/env`,
-    `# Written by \`deno task wac:install\`. Sourced from a shell profile.\n` +
+    `# Written by \`wac task wac:install\`. Sourced from a shell profile.\n` +
       `case ":\${PATH}:" in\n` +
       `  *":${home}/bin:"*) ;;\n` +
       `  *) PATH="${home}/bin:\${PATH}" ; export PATH ;;\n` +
@@ -246,7 +246,7 @@ export async function install(
   await Deno.writeTextFile(
     `${home}/install.json5`,
     `{\n` +
-      `  // Written by \`deno task wac:install\`.\n` +
+      `  // Written by \`wac task wac:install\`.\n` +
       `  home: ${JSON.stringify(home)},\n` +
       `  from: ${JSON.stringify(ROOT)},\n` +
       `  commit: ${JSON.stringify(await headCommit())},\n` +

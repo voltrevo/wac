@@ -253,7 +253,7 @@ export struct Measured {
 export Measured measure(Core core, Cli cli, string entry, string[] grants, string[] exports) {
   Measured none = Measured(Point[1](fill: Point(0, "", 0, 0, "")), 0, i32[1]());
 
-  // **A directory per exercise, because `deno task coverage:all` runs four of these at once.**
+  // **A directory per exercise, because `wac task coverage:all` runs four of these at once.**
   //
   // This was `.cache/covreport` for everyone, wiped on the way in. That was invisible while codec was
   // the only caller and became a failure the moment there was a second: one run deletes the directory
@@ -507,7 +507,7 @@ export struct Merged {
  * both.
  *
  * **Bucketed by line, which is not a premature optimisation.** The first version scanned the whole
- * merged list per point, and `deno task coverage:all` went from 44s to 75s on 21 packages — a cost paid
+ * merged list per point, and `wac task coverage:all` went from 44s to 75s on 21 packages — a cost paid
  * on every push. Two points can only merge if they are on the same line, so a chain per line turns the
  * scan into a walk over the handful of distinct positions on that one line. No hash and nothing to get
  * wrong: the bucket key *is* the line number.

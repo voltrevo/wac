@@ -1,7 +1,7 @@
 // platform's coverage.
 //
-//   deno task coverage:platform
-//   deno task coverage:platform --verbose
+//   wac task coverage:platform
+//   wac task coverage:platform --verbose
 //
 // **29 of 75 — 38.7%**, and the shape of this package is why. `src/` holds two files: `frame.wac`
 // (379 lines) and `stream.wac` (374). Everything else the package offers is a *declaration* — the

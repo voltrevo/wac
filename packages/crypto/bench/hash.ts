@@ -1,6 +1,6 @@
 // Throughput for the four hashes, in MB/s, against `node:crypto` where it has the same function.
 //
-//     deno task bench:hash
+//     wac task bench:hash
 //
 // A number with no baseline says nothing, so SHA-256 and SHA-512 are reported beside Node's — which is
 // OpenSSL, i.e. hand-written assembly with SHA extensions where the CPU has them. The useful reading is

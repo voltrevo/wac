@@ -1,6 +1,6 @@
 // Every TypeScript file in the repo type-checks, not only the ones a test imports.
 //
-// wac-mono 0011, which is about a type error reaching the primary branch and failing `deno task test`
+// wac-mono 0011, which is about a type error reaching the primary branch and failing `wac task test`
 // for everyone before a single test runs. The remedies it listed were "run the suite before pushing"
 // — `tools/push.sh` does that now — and "a `deno check` as its own task, so the type failure is one
 // fast command rather than a whole suite".

@@ -1,8 +1,8 @@
 // Exported wac functions that nothing calls.
 //
-//   deno task dead            # report them, exit 0
-//   deno task dead --strict  # exit 1 if there are any
-//   deno task dead --quiet   # exit code only
+//   wac task dead            # report them, exit 0
+//   wac task dead --strict  # exit 1 if there are any
+//   wac task dead --quiet   # exit code only
 //
 // This exists because the same mistake has now been made five times in this repo, in
 // asn1.wac, x509.wac, mlkem.wac, hybrid.wac and handshake.wac: a named constant is
@@ -23,7 +23,7 @@
 //   - probe files under `test/wac/`, whose whole purpose is to be called from TypeScript
 //     through `wacBind`, so they are skipped entirely
 //   - compile-only entry points — `packages/*/size/` and `client_entry.wac` — which exist to
-//     be fed to the compiler by `deno task size` and are never called by anything. Skipped
+//     be fed to the compiler by `wac task size` and are never called by anything. Skipped
 //     for the same reason as probes: their exports are the measurement
 //   - a package's public API, if the only consumers are outside this repo — which is not
 //     the case here, since every package is exercised by a probe

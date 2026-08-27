@@ -1,7 +1,7 @@
 // Branch coverage for tls: the package's own tests, and nothing else.
 //
-//   deno task coverage:tls
-//   deno task coverage:tls --verbose
+//   wac task coverage:tls
+//   wac task coverage:tls --verbose
 //
 // The seventh of the packages `issues/system/0205` records as unmeasured, and the largest so far at
 // 4,195 lines of source against 185 tests. It is also the one with the strongest oracle in the

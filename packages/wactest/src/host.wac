@@ -14,7 +14,7 @@
 import { Change, Core, Cli, Exec } from "std/platform.wac";
 import { nativeHost, nativeHostWhyNot } from "./built.wac";
 
-/** Where `deno task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
+/** Where `wac task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
 export string binaryPath(Cli cli) {
   return cli.cwd().wait() + "/native/v8/target/release/wac";
 }
@@ -61,7 +61,7 @@ export string scratch(Cli cli, string name) {
  * silence. The warning is the version that is kept. `issues/system/0161`.
  */
 export string nativeBinaryPath(Core core, Cli cli, string who) {
-  // **Asks; does not build.** The build is `deno task seed`'s, and `deno task seed:native` does this
+  // **Asks; does not build.** The build is `wac task seed`'s, and `wac task seed:native` does this
   // crate alone — `issues/system/0208`, where five files each ran their own cargo with five skip
   // messages and two freshness checks.
   //

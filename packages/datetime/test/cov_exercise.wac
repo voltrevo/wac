@@ -1,7 +1,7 @@
 // Branch coverage for datetime: the exercises, and nothing else.
 //
-//   deno task coverage:datetime
-//   deno task coverage:datetime --verbose
+//   wac task coverage:datetime
+//   wac task coverage:datetime --verbose
 //
 // The same exercises the tests run: four centuries of days, the far-out years, the malformed
 // timestamps — which are the only things that reach the rejection paths — and a spread of instants

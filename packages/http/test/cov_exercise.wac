@@ -1,7 +1,7 @@
 // Branch coverage for http: the exercises, and nothing else.
 //
-//   deno task coverage:http
-//   deno task coverage:http --verbose
+//   wac task coverage:http
+//   wac task coverage:http --verbose
 //
 // The same corpus the tests use — well-formed messages, every prefix of one, the framing ambiguities,
 // and the mutation generator — because the rejection paths are most of this parser and only malformed

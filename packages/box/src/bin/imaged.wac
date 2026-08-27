@@ -1,6 +1,6 @@
 // A shell whose filesystem is a file, **with the applets**: the session ends, the filesystem does not.
 //
-//   deno task app:build packages/box/src/bin/imaged.wac -o imaged --allow-read --allow-write
+//   wac task app:build packages/box/src/bin/imaged.wac -o imaged --allow-read --allow-write
 //   ./imaged home.wacimg -c 'mkdir /data; seq 1 5 > /data/n; sort -nr /data/n | head -1'
 //   ./imaged home.wacimg -c 'cat /data/n'
 //

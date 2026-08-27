@@ -310,7 +310,7 @@ there is one path, and the dev loop exercises it — which is why `wac run` abov
 `app:build` here are the same machinery.
 
 ```sh
-deno task app:build packages/platform/example/wc.wac --allow-read -o wc
+wac task app:build packages/platform/example/wc.wac --allow-read -o wc
 ./wc README.md
 ```
 
@@ -322,7 +322,7 @@ Deno exists.
 executable goes 274 KB to 219 KB and `box`'s shell 927 KB to 636 KB, for a second and nineteen
 seconds respectively. It is a flag rather than the default (wac-mono 0094) because without it a built
 artifact is *exactly* what the compiler emitted, and this repository debugs by comparing modules:
-rung 4's canonical form, `deno task size`, `deadexports` and the coverage instrumentation all have to
+rung 4's canonical form, `wac task size`, `deadexports` and the coverage instrumentation all have to
 say which side of an optimiser they are on. A coverage build refuses the flag outright — counters are
 branch-indexed and an optimiser may renumber the branches they count.
 
@@ -356,7 +356,7 @@ wasm, and the launcher carries it as a string.
 ## Node
 
 ```sh
-deno task app:build packages/platform/example/wc.wac --allow-read --target node -o wc
+wac task app:build packages/platform/example/wc.wac --allow-read --target node -o wc
 ./wc README.md
 ```
 
@@ -652,7 +652,7 @@ handles that happen to have different origins.
 `spawn` takes JavaScript — a worker bundle, which `--worker` emits:
 
 ```sh
-deno task app:build packages/platform/example/wc.wac --worker -o wc.worker.js
+wac task app:build packages/platform/example/wc.wac --worker -o wc.worker.js
 ```
 
 Running a *program* is therefore two steps, read it and spawn it, which is why there is no
@@ -797,7 +797,7 @@ output. Serving `packages/sh`'s shell this way gives a remote shell whose every 
 with grants the *server* chose:
 
 ```sh
-deno task app:build packages/sh/src/sh.wac --worker -o sh.worker.js
+wac task app:build packages/sh/src/sh.wac --worker -o sh.worker.js
 inetd 9000 sh.worker.js
 ```
 ```
@@ -835,7 +835,7 @@ neither could enforce it even in principle. The language is the boundary on all 
 ## The browser
 
 ```sh
-deno task app:build packages/platform/example/wc.wac --target browser -o wc.html
+wac task app:build packages/platform/example/wc.wac --target browser -o wc.html
 box httpd -8080 . -x        # -x sends the two headers a page needs
 ```
 

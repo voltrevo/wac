@@ -58,7 +58,7 @@ one of them back to the input, across a corpus and a fuzzer. It finds matches gr
 literals uncompressed, and codes every sequence with the format's predefined FSE tables, so it
 never transmits a table of its own.
 
-Where that lands on real data — `deno task bench:zstd`, over source in three languages, prose,
+Where that lands on real data — `wac task bench:zstd`, over source in three languages, prose,
 config, a wasm module, a native executable, Tor directory data, and something already compressed:
 
 | sample | raw | ours | gzip -6 | zstd -3 | zstd -19 |
@@ -95,7 +95,7 @@ columns within one row are.
 
 ### Speed
 
-`deno task bench:zstd-speed`. Each side times itself, so neither figure includes the cost of
+`wac task bench:zstd-speed`. Each side times itself, so neither figure includes the cost of
 getting the data to the other process — but ours does include copying across the wasm boundary,
 which a caller genuinely pays.
 
@@ -378,7 +378,7 @@ encoder stops choosing one, the test says so instead of quietly testing less.
 | `test/wac/stream_test.wac` | every cut of every frame, against the buffered decoder |
 | `test/writer.ts` | the description writer, for round-tripping — not an oracle |
 | `test/frames.ts`, `test/reference.ts` | the same two, for `cov.ts`, which still binds through Deno |
-| `cov.ts` | `deno task coverage:zstd` — **96.8%**, and the number is in the tool rather than here |
+| `cov.ts` | `wac task coverage:zstd` — **96.8%**, and the number is in the tool rather than here |
 
 
 **`test/oracle.ts` runs under Node and not Deno.** Deno's `node:zlib` shim accepts zstd's

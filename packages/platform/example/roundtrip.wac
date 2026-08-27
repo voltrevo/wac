@@ -7,7 +7,7 @@
 // Origin Private File System, which is the same nine capabilities behind a very different
 // implementation, and this is what says so out loud:
 //
-//   deno task app:build packages/platform/example/roundtrip.wac --target browser -o page/index.html
+//   wac task app:build packages/platform/example/roundtrip.wac --target browser -o page/index.html
 //   box httpd -8080 page -x
 //   http://127.0.0.1:8080/?a=hello
 //

@@ -6,7 +6,7 @@
 // port 0, which is the default, the kernel picks a free port and the first line of output says which
 // — so a caller can drive this without agreeing a number in advance.
 //
-//   deno task app:build packages/platform/example/echod.wac -o echod.js
+//   wac task app:build packages/platform/example/echod.wac -o echod.js
 //   deno run -A --unstable-net echod.js
 //
 // **This is the program a stream socket cannot be.** Every other network example here is `connect` or

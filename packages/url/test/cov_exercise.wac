@@ -1,7 +1,7 @@
 // Branch coverage for url: the exercises, and nothing else.
 //
-//   deno task coverage:url
-//   deno task coverage:url --verbose
+//   wac task coverage:url
+//   wac task coverage:url --verbose
 //
 // The exercises are the ones the tests run — the hand-written cases and the same assembled-fragment
 // generator — because coverage measured against a different workload describes that workload.

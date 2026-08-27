@@ -1,6 +1,6 @@
 // The whole shell corpus, through **both ways a shell can run an applet**.
 //
-//   deno task corpus:routes [--from N] [--count N]
+//   wac task corpus:routes [--from N] [--count N]
 //
 // `packages/sh`'s shell runs an external program one of two ways: **called** in process through
 // `sh.external` — `boxRun`, which pushes a frame with `pushChild` and takes the output back with

@@ -1,6 +1,6 @@
 // What an account holds, proved rather than asked.
 //
-//     deno task app:build packages/ethrpc/example/ethbalance.wac --allow-net -o ethbalance
+//     wac task app:build packages/ethrpc/example/ethbalance.wac --allow-net -o ethbalance
 //     ./ethbalance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 127.0.0.1 8545
 //
 // `eth_getBalance` is one call and one number to believe. This asks for a *proof* instead: the state trie

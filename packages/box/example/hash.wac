@@ -1,6 +1,6 @@
 // A page that hashes and compresses what you type, as you type it.
 //
-//   deno task app:build packages/box/example/hash.wac --target browser -o page/index.html
+//   wac task app:build packages/box/example/hash.wac --target browser -o page/index.html
 //   box httpd -8080 page -x
 //
 // Here rather than in `packages/platform/example/` because of which way the imports point:

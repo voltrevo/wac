@@ -1,7 +1,7 @@
 // For every applet flag the real tool documents: does box implement it, refuse it, or **ignore** it?
 //
-//   deno task app:build packages/box/src/box.wac --allow-read --allow-write --allow-net -o /tmp/box
-//   deno task flags:ignored /tmp/box
+//   wac task app:build packages/box/src/box.wac --allow-read --allow-write --allow-net -o /tmp/box
+//   wac task flags:ignored /tmp/box
 //
 // Ignoring is the bug, and this repo has its own ranking of the three — `packages/sh/test/gaps.test.ts`
 // states it: doing something plausible is worst, refusing is better, saying *which side is incomplete*
@@ -18,8 +18,8 @@ const BOX = Deno.args[0];
 const enc = new TextEncoder(), dec = new TextDecoder();
 
 if (BOX === undefined) {
-  console.error("usage: deno task flags:ignored <box-binary>");
-  console.error("  deno task app:build packages/box/src/box.wac --allow-read --allow-write -o /tmp/box");
+  console.error("usage: wac task flags:ignored <box-binary>");
+  console.error("  wac task app:build packages/box/src/box.wac --allow-read --allow-write -o /tmp/box");
   Deno.exit(2);
 }
 
@@ -41,7 +41,7 @@ async function proveItAnswers(): Promise<void> {
   if (r.out.trim() !== "canary") {
     console.error(`${BOX} did not answer \`box echo canary\` — it said ${JSON.stringify(r.out)}`);
     console.error("  Every flag would be reported as refused, which is what an unmeasured sweep looks");
-    console.error("  like. Build one: deno task app:build packages/box/src/box.wac -o /tmp/box");
+    console.error("  like. Build one: wac task app:build packages/box/src/box.wac -o /tmp/box");
     Deno.exit(2);
   }
 }

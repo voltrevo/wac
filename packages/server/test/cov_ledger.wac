@@ -1,7 +1,7 @@
 // server's coverage, and the argument for the three points left.
 //
-//   deno task coverage:server
-//   deno task coverage:server --verbose
+//   wac task coverage:server
+//   wac task coverage:server --verbose
 //
 // **123 of 126**, from 117. Two-way ratchet over `tools/wac/covledger.wac`. `issues/system/0205`.
 //

@@ -1,7 +1,7 @@
 // webrtc's coverage, and the fourth kind of elsewhere.
 //
-//   deno task coverage:webrtc
-//   deno task coverage:webrtc --verbose
+//   wac task coverage:webrtc
+//   wac task coverage:webrtc --verbose
 //
 // **743 of 976 — 76.1%**, from 701 of 973 (72.0%) on the first run, which was the lowest any package
 // in `issues/system/0205`'s sweep had produced, and for the fourth distinct reason in three packages.

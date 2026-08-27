@@ -1,7 +1,7 @@
 // Branch coverage for mpt: the package's own tests, and nothing else.
 //
-//   deno task coverage:mpt
-//   deno task coverage:mpt --verbose
+//   wac task coverage:mpt
+//   wac task coverage:mpt --verbose
 //
 // The second of the packages `issues/system/0205` records as having no coverage driver, after
 // `packages/ssz`. Picked for the contrast as much as the value: it is the same business — proofs that

@@ -26,7 +26,7 @@ implementations of the same thing means one of them is slower and nobody notices
 ## Shape
 
 Three details are load-bearing rather than stylistic, and changing them will show
-up in `deno task bench`:
+up in `wac task bench`:
 
 - **`len` is a public field, not a method.** It is read once per pushed byte in
   gzip's inner loops.
@@ -93,7 +93,7 @@ at and most pasted from.
 
 ## Coverage
 
-`deno task coverage:bytes` reports branch coverage, driven by `cov.ts` in this
+`wac task coverage:bytes` reports branch coverage, driven by `cov.ts` in this
 package. `buf.wac` is at 97.7%.
 
 **`slice.wac` reads 0.0%, and that is a gap in the measurement rather than in the testing.**

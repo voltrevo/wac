@@ -1,6 +1,6 @@
 // What the mutation runner decides to run, and the case it used to get wrong.
 //
-// Selection is the part of `deno task mutate` that can be *silently* wrong: over-selection costs time,
+// Selection is the part of `wac task mutate` that can be *silently* wrong: over-selection costs time,
 // under-selection changes verdicts. Three separate under-selections turned up on 2026-08-06 — a test path
 // that was never instrumented (0090), a corpus quietly missing its richest file, and a line whose counter
 // cannot move because the compiler folded the function away. The third is the one this pins, because unlike

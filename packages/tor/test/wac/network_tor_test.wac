@@ -1,6 +1,6 @@
 // test-lane: exclusive — three relays and an authority, deriving RSA identities on real ports
 //
-// Design 0002's done condition: *`deno task test` stands up a Tor network with no C in it, publishes
+// Design 0002's done condition: *`wac task test` stands up a Tor network with no C in it, publishes
 // an onion service on it, fetches a page from that service through a three-hop circuit, and tears it
 // down.* Three relays, an authority, a service and two clients — every layer of it wac, from the TLS
 // record up. The first test here is the network and a document fetched over a circuit; the second is

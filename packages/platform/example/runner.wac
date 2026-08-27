@@ -8,7 +8,7 @@
 //
 // Build a child with `--worker`:
 //
-//   deno task app:build packages/platform/example/wc.wac --worker -o wc.worker.js
+//   wac task app:build packages/platform/example/wc.wac --worker -o wc.worker.js
 //   runner wc.worker.js "one two three"     ->  1 3 14
 //   runner probe.worker.js "" read          ->  the child may read, if this program may
 

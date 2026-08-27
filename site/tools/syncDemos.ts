@@ -5,7 +5,7 @@
 //
 // These are whole applications, not snippets: a wac program on a worker, talking to a capability
 // world on the page's own thread over a `SharedArrayBuffer`. Nothing about them is specific to
-// this site — each file is exactly what `deno task app:build --target browser --optimize` produces, copied
+// this site — each file is exactly what `wac task app:build --target browser --optimize` produces, copied
 // unmodified, which is the point. What you can open on the website is the artifact you would
 // build yourself.
 //

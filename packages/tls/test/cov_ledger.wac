@@ -1,7 +1,7 @@
 // tls's coverage, and the package where the number was a fact about the harness.
 //
-//   deno task coverage:tls
-//   deno task coverage:tls --verbose
+//   wac task coverage:tls
+//   wac task coverage:tls --verbose
 //
 // **1063 of 1279**, from 924 on the first run. `issues/system/0205`.
 //
@@ -166,7 +166,7 @@ Rule[] rules() {
          "turned up: `server.wac` was tested in another **process**, the RSA path in another process " +
          "too, and this in another **package**. A ledger's prefix is a directory, so a shared helper " +
          "reads as dead from the side that exports it. Named rather than pinned because the fix is " +
-         "not a test here — it is knowing which consumer to run, and `deno task coverage:quic` does " +
+         "not a test here — it is knowing which consumer to run, and `wac task coverage:quic` does " +
          "not exist yet."),
     Rule("packages/tls/src/handshake.wac", "parseClientHello", "decl", false,
          "The HelloRetryRequest comparison, whose constant is pinned at `:105` — see there."),

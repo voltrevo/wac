@@ -1,7 +1,7 @@
 // ssh's coverage, and the argument for the points nothing reaches.
 //
-//   deno task coverage:ssh
-//   deno task coverage:ssh --verbose
+//   wac task coverage:ssh
+//   wac task coverage:ssh --verbose
 //
 // **This package had no ledger at all.** Its driver measured 561 of 672 points and printed the 111 it
 // missed, and nothing failed — so an uncovered branch arriving was indistinguishable from the hundred

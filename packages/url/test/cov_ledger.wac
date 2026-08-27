@@ -1,7 +1,7 @@
 // url's coverage, and a rule that was written twice so neither copy was reached.
 //
-//   deno task coverage:url
-//   deno task coverage:url --verbose
+//   wac task coverage:url
+//   wac task coverage:url --verbose
 //
 // **721 of 726**, from 716 of 727. Two-way ratchet over `tools/wac/covledger.wac`: anything not listed
 // must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.

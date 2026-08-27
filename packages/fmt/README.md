@@ -75,11 +75,11 @@ than reasoned about up front:
 ## Verification
 
 `String(x)` is the oracle, which is the whole reason for matching JavaScript rather
-than choosing a house style. `deno task test` compares 20 000 random bit patterns
+than choosing a house style. `wac task test` compares 20 000 random bit patterns
 and 8 000 random decimals, plus the notation boundaries and the classic hard cases,
 and separately asserts every output reads back as the original double.
 
-`deno task verify:fmt` runs the same comparison over 500 000 doubles in both
+`wac task verify:fmt` runs the same comparison over 500 000 doubles in both
 directions when a change wants more than the suite gives — about nine seconds,
 currently zero mismatches. **Run it after touching anything in this package**: the
 committed suite samples 28 000 values, which is enough to catch a broken change and
@@ -179,7 +179,7 @@ another implementation.
 
 ## Coverage
 
-`deno task coverage:fmt` reports branch coverage, driven by `cov.ts` in this
+`wac task coverage:fmt` reports branch coverage, driven by `cov.ts` in this
 package. Currently 94.5% ftoa, 96.5% bigint, 90.7% atof — the remainder is defensive guards and unreachable range checks.
 
 How coverage works here, and the two ways `cov.ts` can be wrong about it, are in

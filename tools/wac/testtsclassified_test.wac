@@ -87,7 +87,7 @@ export string test_every_package_with_typescript_tests_is_named_in_0161(Core cor
   T t = T.create();
 
   // Paths only — no file is read to find them, which is what keeps this cheap enough to sit in
-  // `deno task docs`. `duplicatedline_test.wac`'s header is the warning: 2,009 reads is two seconds.
+  // `wac task docs`. `duplicatedline_test.wac`'s header is the warning: 2,009 reads is two seconds.
   string[] files = sourceFiles(core, cli, string[](".ts"), string[0](fill: ""));
 
   string[] found = string[64](fill: "");

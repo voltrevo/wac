@@ -3,7 +3,7 @@
 An HTTP server written in wac. It runs, and you can curl it.
 
 ```sh
-deno task serve 8080
+wac task serve 8080
 curl -i http://127.0.0.1:8080/
 curl -X POST -d '{"b":1,"a":[1,2]}' http://127.0.0.1:8080/json
 ```
@@ -75,7 +75,7 @@ refusals closing the connection, and that the server's own responses are well-fo
 The socket cases are why the file exists. Keep-alive and pipelining are properties of a
 *connection*, and no amount of testing a function from bytes to bytes can demonstrate them.
 
-`deno task coverage:server` reports 92%.
+`wac task coverage:server` reports 92%.
 
 ## Limits
 

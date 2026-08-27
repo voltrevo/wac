@@ -942,7 +942,7 @@ Deno.test("the applets that read several files read all of them", async () => {
     }
     // No cleanup needed: the only `split` here is one that refuses, so it writes nothing.
 
-    // **What `packages/sh`'s corpus found**, measured by `deno task corpus:through` (wac-mono 0103).
+    // **What `packages/sh`'s corpus found**, measured by `wac task corpus:through` (wac-mono 0103).
     // Each of these was a flag accepted and ignored, or an operand read as a filename that never is —
     // the shape where the caller asks for something, gets no error, and reads output that is wrong in
     // exactly the way they asked it not to be.

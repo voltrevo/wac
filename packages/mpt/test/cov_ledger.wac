@@ -1,7 +1,7 @@
 // mpt's coverage, and the second of the packages that had no driver.
 //
-//   deno task coverage:mpt
-//   deno task coverage:mpt --verbose
+//   wac task coverage:mpt
+//   wac task coverage:mpt --verbose
 //
 // **124 of 125**, from 114 on the first run. `issues/system/0205`.
 //

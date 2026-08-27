@@ -1,0 +1,440 @@
+// Every wac name a README quotes exists, and every signature it prints is the real one.
+//
+//     wac test --allow-read --allow-write --allow-run tools/
+//
+// **This was tools/docSignatures.test.ts** — unbackticked because it no longer exists. It moved to wac on 2026-08-27, when `wac task` replaced
+// `deno task` and this was the last thing keeping a JavaScript host in the docs lane.
+//
+// ## Why
+//
+// A README is the only description of a package most readers get, and nothing checked that its claims
+// about the code were still true. Two were not. `packages/gzip` printed
+//
+//     export i32 gunzipStream(fn[u8[]()] read, fn[bool(u8[])] write)
+//
+// which stopped being the signature the day `Read` replaced `u8[]` — and that replacement is the
+// whole point of `Read`, since an empty `u8[]` cannot say whether the input finished or failed. The
+// same README then named a `gzipBytes` that has never existed. Both were found by eye.
+//
+// ## The two checks, and why not a third
+//
+// **Signatures** in ```wac fences: an `export` line must match a declaration, parameter types
+// included. **Call-shaped references** in prose: `` `name(…)` `` claims something callable exists,
+// which is precise once the declaration set includes struct *fields*, because a capability is a
+// funcref field rather than a function and `outputError()` is a real thing spelled that way.
+//
+// A third was measured and rejected: bare backticked identifiers. 249 of them resolve to nothing and
+// nearly all are prose — `stored`, `mainnet`, `root`. A guard that cries wolf gets ignored and then
+// deleted.
+//
+// ## How the port differs, and it is more faithful
+//
+// The TypeScript rendered each declaration back into source form and compared strings. This slices
+// **the source's own text** between the `export` token and the closing parenthesis, which is the text
+// the README is quoting in the first place — so there is no second opinion about how a type is
+// spelled, and no `Env` needed to render one.
+//
+// The lexer is what makes that safe. `harness/wacFiles.ts`'s reason applies here too: a signature
+// inside a comment or a string is not a declaration, and a regex cannot tell. Parsing gives the
+// declaration structure; the tokens give the exact text.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Vec } from "core/vec.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { linesOf } from "../../packages/wacc/src/text.wac";
+import { tracked } from "../../packages/wactest/src/repo.wac";
+import { Lexed, lex, tokenStride } from "../../packages/wacc/src/lex.wac";
+import { kIdent } from "../../packages/wacc/src/kinds.wac";
+import { Program, Decl, DeclKind, Field, Method, Variant, Param } from "../../packages/wacc/src/ast.wac";
+import { P, parseProgram } from "../../packages/wacc/src/parse.wac";
+import { tokenTextOf } from "../../packages/wacc/src/emit.wac";
+import { coreSource, coreFile, coreFiles, stdFile, stdFiles } from "../../packages/wacc/src/coretext.wac";
+
+/** Read a file, or "". */
+string readAll(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** `packages/fmt/README.md` -> `fmt`. */
+string pkgOf(string path) {
+  string rest = path.len() > 9 ? path.slice(9, path.len()) : "";
+  i32 slash = rest.indexOf("/");
+  return slash < 0 ? "" : rest.slice(0, slash);
+}
+
+/** Whitespace runs collapsed to one space, ends trimmed — both sides of every comparison get this. */
+string norm(string s) {
+  u8[] b = s.toBytes();
+  string out = "";
+  bool space = false;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c == 32 || c == 9 || c == 10 || c == 13) { space = true; continue; }
+    if (space && out.len() > 0) { out = out + " "; }
+    space = false;
+    out = out + s.slice(i, i + 1);
+  }
+  return out;
+}
+
+/**
+ * Everything the tree declares, and the signature text of everything it exports.
+ *
+ * **`Vec` rather than a sized array**, and the reason is a bug this port had: the first version used
+ * `string[4096]` and dropped every name past it in silence. The packages alone fill that, so
+ * `std/platform.wac` — collected last, and where every capability is declared — contributed nothing,
+ * and thirteen real names like `outputError()` were reported as inventions. The floor that was
+ * supposed to catch a broken walk asked `nameCount > 500`, which a *full* table satisfies. A bound
+ * that can be reached is a bound that has to be checked; not having one is simpler.
+ */
+struct Decls {
+  Vec<string> names;
+  Vec<string> sigNames;
+  Vec<string> sigText;
+}
+
+Decls emptyDecls() { return Decls(Vec.create(), Vec.create(), Vec.create()); }
+
+void addName(Decls d, string n) {
+  if (n == "") { return; }
+  for (i32 i = 0; i < d.names.len(); i++) { if (d.names.get(i) == n) { return; } }
+  d.names.push(n);
+}
+
+bool knows(Decls d, string n) {
+  for (i32 i = 0; i < d.names.len(); i++) { if (d.names.get(i) == n) { return true; } }
+  return false;
+}
+
+/** The signature recorded for `n`, or "". */
+string sigFor(Decls d, string n) {
+  for (i32 i = 0; i < d.sigNames.len(); i++) {
+    if (d.sigNames.get(i) == n) { return d.sigText.get(i); }
+  }
+  return "";
+}
+
+/**
+ * The source text of the declaration whose `export` keyword is at or before `nameTok`, up to its
+ * closing parenthesis.
+ *
+ * Walks back from the name for the `export`, then forward for the balanced `)`. Returns "" when the
+ * declaration has no parameter list, which is what a `const` or a plain struct has.
+ */
+string headerText(u8[] src, Lexed lexed, i32 nameTok) {
+  i32 open = -1;
+  for (i32 t = nameTok; t < lexed.tokenCount && t < nameTok + 4; t++) {
+    if (tokenTextOf(src, lexed, t) == "(") { open = t; break; }
+  }
+  if (open < 0) { return ""; }
+  i32 depth = 0;
+  i32 close = -1;
+  for (i32 t = open; t < lexed.tokenCount; t++) {
+    string tx = tokenTextOf(src, lexed, t);
+    if (tx == "(") { depth = depth + 1; }
+    else if (tx == ")") {
+      depth = depth - 1;
+      if (depth == 0) { close = t; break; }
+    }
+  }
+  if (close < 0) { return ""; }
+  i32 back = nameTok;
+  for (i32 t = nameTok; t >= 0 && t > nameTok - 12; t--) {
+    if (tokenTextOf(src, lexed, t) == "export") { back = t; break; }
+  }
+  if (tokenTextOf(src, lexed, back) != "export") { return ""; }
+  i32 from = lexed.tokens[back * tokenStride() + 1];
+  i32 to = lexed.tokens[close * tokenStride() + 1] + lexed.tokens[close * tokenStride() + 2];
+  u8[] out = u8[to - from]();
+  for (i32 i = 0; i < to - from; i++) { out[i] = src[from + i]; }
+  return norm(string.fromBytes(out));
+}
+
+/** Collect one source's declarations into `d`. */
+void collect(Decls d, u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  for (i32 i = 0; i < prog.decls.len(); i++) {
+    match (prog.decls[i].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        string name = tokenTextOf(src, lexed, nameTok);
+        addName(d, name);
+        if (exported) {
+          string h = headerText(src, lexed, nameTok);
+          if (h != "") { d.sigNames.push(name); d.sigText.push(h); }
+        }
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        addName(d, tokenTextOf(src, lexed, nameTok));
+        // **Fields as well as methods**, because a capability is a funcref field: `outputError()` in
+        // a README is a real thing spelled that way, and dropping fields would report it as missing.
+        for (i32 k = 0; k < fields.len(); k++) { addName(d, tokenTextOf(src, lexed, fields[k].nameTok)); }
+        for (i32 k = 0; k < methods.len(); k++) { addName(d, tokenTextOf(src, lexed, methods[k].nameTok)); }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        addName(d, tokenTextOf(src, lexed, nameTok));
+        for (i32 k = 0; k < variants.len(); k++) {
+          addName(d, tokenTextOf(src, lexed, variants[k].nameTok));
+          for (i32 j = 0; j < variants[k].fields.len(); j++) {
+            addName(d, tokenTextOf(src, lexed, variants[k].fields[j].nameTok));
+          }
+        }
+        for (i32 k = 0; k < methods.len(); k++) { addName(d, tokenTextOf(src, lexed, methods[k].nameTok)); }
+      }
+      case ConstDecl(nameTok, type, init, exported): {
+        addName(d, tokenTextOf(src, lexed, nameTok));
+      }
+      else: { }
+    }
+  }
+}
+
+/**
+ * Every declaration in every package's `src/`, plus the trees the compiler embeds.
+ *
+ * `src/` only: an example or a test may name something it declares itself, and a README quoting one
+ * of those is quoting the example rather than the package. `core` is not under `packages/` — it ships
+ * inside the compiler — but `Read`, `Data`, `End` and `Failed` are named by READMEs all over this
+ * repository and are the most real names here.
+ */
+Decls declarations(Core core, Cli cli) {
+  Decls d = emptyDecls();
+  string[] all = tracked(core, cli);
+  for (i32 i = 0; i < all.len(); i++) {
+    string p = all[i];
+    if (p.len() < 13 || p.slice(0, 9) != "packages/") { continue; }
+    if (!contains(p, "/src/")) { continue; }
+    if (p.slice(p.len() - 4, p.len()) != ".wac") { continue; }
+    collect(d, readAll(cli, p).toBytes());
+  }
+  // **The embedded trees, which are not under `packages/`.** `core` ships inside the compiler, and
+  // `std/platform.wac` is where `Core` and `Cli` declare every capability — so `outputError()`,
+  // `sleepMillis(ms)` and `Data(bytes)` are named by READMEs all over this repository and are the most
+  // real names here. Collecting only `coreSource()` left thirteen of them looking like inventions,
+  // which is how this port found out it was reading a narrower tree than the file it replaces.
+  collect(d, coreSource().toBytes());
+  string[] cf = coreFiles();
+  for (i32 i = 0; i < cf.len(); i++) { collect(d, coreFile(cf[i]).toBytes()); }
+  string[] sf = stdFiles();
+  for (i32 i = 0; i < sf.len(); i++) { collect(d, stdFile(sf[i]).toBytes()); }
+  return d;
+}
+
+/** Every package's `README.md` that git tracks. */
+string[] readmes(Core core, Cli cli) {
+  string[] all = tracked(core, cli);
+  string[] hit = string[256](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    string p = all[i];
+    if (p.len() < 20 || p.slice(0, 9) != "packages/") { continue; }
+    if (p.slice(p.len() - 10, p.len()) != "/README.md") { continue; }
+    if (pkgOf(p) == "" || contains(p.slice(9, p.len() - 10), "/")) { continue; }
+    if (n < hit.len()) { hit[n] = p; n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
+  return out;
+}
+
+/**
+ * Names a package's README may use that are not wac declarations, by package.
+ *
+ * A judgement call, made where the judgement belongs — the operator's ruling on 2026-08-27, when this
+ * was a `globalThis` lookup asking a JavaScript runtime whether `Number` was its own. When the check
+ * says *`fmt` has no `String`*, the answer is "that is JavaScript's oracle, note it", and the note
+ * belongs beside the package that made the claim.
+ *
+ * Scoped per package on purpose: `Number` being an oracle for `fmt` and for `json` is two facts, and a
+ * global list lets a third package name it and be believed for free.
+ */
+bool foreign(string pkg, string name) {
+  // JavaScript, named because it is the oracle these packages are checked against.
+  if (pkg == "fmt") { return name == "String" || name == "Number" || name == "parseFloat"; }
+  if (pkg == "datetime") { return name == "Date.UTC" || name == "Date"; }
+  if (pkg == "codec") { return name == "Buffer.from"; }
+  if (pkg == "json") { return name == "Number" || name == "JSON.stringify" || name == "JSON.parse"; }
+  // Ours, but written in TypeScript, which this check does not parse — harnesses and oracles.
+  if (pkg == "gzip") { return name == "wacCompile"; }
+  if (pkg == "zstd") { return name == "refCompress"; }
+  if (pkg == "wactest") { return name == "test_crc32_of_hello_world"; }
+  // A real browser is the oracle: `getStats` is `RTCPeerConnection.getStats`, whose candidate-pair
+  // statistics closed `issues/system/0152`.
+  if (pkg == "webrtc") { return name == "getStats"; }
+  // Ethereum's consensus and execution specs, written the way the specs write them.
+  if (pkg == "ssz") {
+    return name == "hash_tree_root" || name == "is_valid_merkle_branch"
+        || name == "is_valid_normalized_merkle_branch" || name == "get_subtree_index";
+  }
+  if (pkg == "lightclient") { return name == "hash_tree_root"; }
+  if (pkg == "ens") { return name == "addr"; }
+  // Mathematics and cryptography, written the way the papers write it.
+  if (pkg == "crypto") { return name == "E" || name == "sqrt" || name == "transfer"; }
+  if (pkg == "stream") { return name == "O" || name == "transform"; }
+  // tor's own source and specification.
+  if (pkg == "tor") {
+    return name == "EXP" || name == "MAC" || name == "MAX" || name == "get_time_period_length"
+        || name == "chooser" || name == "torFetch";
+  }
+  // Placeholders in prose, and the compiler's own examples. `Box` is the spec's example generic —
+  // `struct Box<T>` appears in generics.md and nowhere in the tree.
+  if (pkg == "wacc") {
+    return name == "Box" || name == "XList" || name == "f64.toBits" || name == "String"
+        || name == "parseFloat" || name == "generate";
+  }
+  if (pkg == "platform") { return name == "page" || name == "inputError"; }
+  if (pkg == "ssh") { return name == "cliFeed"; }
+  return false;
+}
+
+/**
+ * Whether `name` is one of the language's reserved words, asked of the compiler's own lexer.
+ *
+ * A keyword in prose is the language being discussed rather than a call: `packages/wacc`'s README
+ * says **`null()` is not callable** beside the same point about `7()`, and both are examples of
+ * invalid code. Asked rather than listed, because the reserved words are a fact the lexer already
+ * holds and a second copy would be the kind of list this file has been shedding.
+ */
+bool isKeyword(string name) {
+  Lexed l = lex(name.toBytes());
+  if (l.tokenCount < 1) { return false; }
+  return l.tokens[0] != kIdent();
+}
+
+/** Every ```wac fence body in `text`. */
+string[] wacFences(string text) {
+  string[] out = string[64](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  while (at < text.len() && n < out.len()) {
+    i32 rel = text.slice(at, text.len()).indexOf("```wac\n");
+    if (rel < 0) { break; }
+    i32 open = at + rel + 7;
+    i32 rel2 = open < text.len() ? text.slice(open, text.len()).indexOf("```") : -1;
+    if (rel2 < 0) { break; }
+    out[n] = text.slice(open, open + rel2);
+    n = n + 1;
+    at = open + rel2 + 3;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** The name in `export <type> <name>(`, or "" when the line is not a function signature. */
+string exportedName(string line) {
+  string t = norm(line);
+  if (t.len() < 8 || t.slice(0, 7) != "export ") { return ""; }
+  i32 paren = t.indexOf("(");
+  if (paren < 0) { return ""; }
+  string head = t.slice(0, paren);
+  i32 lastSpace = -1;
+  for (i32 i = 0; i < head.len(); i++) { if (head.slice(i, i + 1) == " ") { lastSpace = i; } }
+  if (lastSpace < 0) { return ""; }
+  return head.slice(lastSpace + 1, head.len());
+}
+
+export string test_an_export_signature_in_a_readme_is_the_signature_in_the_source(Core core, Cli cli) {
+  T t = T.create();
+  Decls d = declarations(core, cli);
+  t.isTrue(d.names.len() > 500,
+           "only " + itoa(d.names.len()) + " declarations found — the walk or the parser has moved");
+  t.isTrue(d.sigNames.len() > 100, "only " + itoa(d.sigNames.len()) + " exported signatures found");
+
+  string[] docs = readmes(core, cli);
+  t.isTrue(docs.len() >= 15, "only " + itoa(docs.len()) + " package READMEs found");
+
+  string wrong = "";
+  for (i32 i = 0; i < docs.len(); i++) {
+    string pkg = pkgOf(docs[i]);
+    string[] fences = wacFences(readAll(cli, docs[i]));
+    for (i32 f = 0; f < fences.len(); f++) {
+      string[] lines = linesOf(fences[f]);
+      for (i32 l = 0; l < lines.len(); l++) {
+        string name = exportedName(lines[l]);
+        if (name == "" || foreign(pkg, name)) { continue; }
+        // **Only a line that *ends* at the signature.** `export i32 main(Core core, Cli cli) { … }`
+        // is a fragment showing shape, not a claim about a declaration, and the TypeScript's regex
+        // skipped it by anchoring to end-of-line after an optional `{` or `;`. Stripping the trailing
+        // characters instead — which this did first — turns those fragments into false failures.
+        string written = norm(lines[l]);
+        i32 lastClose = -1;
+        for (i32 c = 0; c < written.len(); c++) {
+          if (written.slice(c, c + 1) == ")") { lastClose = c; }
+        }
+        if (lastClose < 0) { continue; }
+        string tail = norm(written.slice(lastClose + 1, written.len()));
+        if (tail != "" && tail != "{" && tail != ";") { continue; }
+        written = written.slice(0, lastClose + 1);
+        string real = sigFor(d, name);
+        if (real == "") {
+          if (!knows(d, name)) { wrong = wrong + "\n  " + docs[i] + ": names `" + name
+                                       + "`, which no package exports"; }
+          continue;
+        }
+        if (real != written) {
+          wrong = wrong + "\n  " + docs[i] + ": `" + name + "`\n      README: " + written
+                + "\n      source: " + real;
+        }
+      }
+    }
+  }
+  t.eqStr(wrong, "", "a README's signature is not the source's");
+  return t.report();
+}
+
+export string test_a_call_shaped_reference_in_a_readme_names_something_real(Core core, Cli cli) {
+  T t = T.create();
+  Decls d = declarations(core, cli);
+  t.isTrue(d.names.len() > 500, "only " + itoa(d.names.len()) + " declarations found");
+  string[] docs = readmes(core, cli);
+  string missing = "";
+  i32 checked = 0;
+  for (i32 i = 0; i < docs.len(); i++) {
+    string pkg = pkgOf(docs[i]);
+    string text = readAll(cli, docs[i]);
+    i32 at = 0;
+    while (at < text.len()) {
+      i32 rel = text.slice(at, text.len()).indexOf("`");
+      if (rel < 0) { break; }
+      i32 open = at + rel + 1;
+      i32 rel2 = open < text.len() ? text.slice(open, text.len()).indexOf("`") : -1;
+      if (rel2 < 0) { break; }
+      string inner = text.slice(open, open + rel2);
+      at = open + rel2 + 1;
+      i32 paren = inner.indexOf("(");
+      if (paren <= 0 || inner.len() == 0) { continue; }
+      if (inner.slice(inner.len() - 1, inner.len()) != ")") { continue; }
+      string name = inner.slice(0, paren);
+      bool wordy = name.len() > 0;
+      for (i32 k = 0; k < name.len(); k++) {
+        i32 c = name.toBytes()[k];
+        bool ok = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57)
+               || c == 95 || c == 46;
+        if (!ok) { wordy = false; }
+      }
+      if (!wordy) { continue; }
+      // **The last dotted segment is the name.** `Fs.inMemory()` is a static on a declared struct and
+      // `a.add(b)` is a method call on a variable — what is being claimed to exist in both is the
+      // final segment. Looking up the whole dotted string reports every one of them as missing, which
+      // is what this port did before it was measured against the file it replaced.
+      string leaf = name;
+      i32 dot = -1;
+      for (i32 c = 0; c < name.len(); c++) { if (name.slice(c, c + 1) == ".") { dot = c; } }
+      if (dot >= 0) { leaf = name.slice(dot + 1, name.len()); }
+      if (isKeyword(leaf) || isKeyword(name)) { continue; }
+      checked = checked + 1;
+      if (knows(d, leaf) || foreign(pkg, leaf) || foreign(pkg, name)) { continue; }
+      missing = missing + "\n  " + docs[i] + ": `" + inner + "` — no declaration, and not foreign";
+    }
+  }
+  t.isTrue(checked > 200, "only " + itoa(checked) + " call-shaped references seen — the scan has moved");
+  t.eqStr(missing, "",
+          "reference(s) to something that does not exist. If the name belongs to another system — "
+        + "JavaScript, a spec, another implementation — add it to that package's arm of `foreign`");
+  return t.report();
+}

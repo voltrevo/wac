@@ -1,6 +1,6 @@
 // A sealed shell **with the applets**: an in-memory world, and sixty commands over it.
 //
-//   deno task app:build packages/box/src/bin/sealedsh.wac -o sealedsh
+//   wac task app:build packages/box/src/bin/sealedsh.wac -o sealedsh
 //   ./sealedsh -c 'seq 1 20 > n; sort -nr n | head -3; ls'
 //
 // `packages/sh`'s `sealed.wac` is this shell on `Fs.inMemory()` with only its own builtins; this is the

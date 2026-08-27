@@ -35,8 +35,8 @@ This is the same mechanism as `core/jsx.wac`, which the reference also does not 
 gets which file is expressed by which list it is in, in `tools/genCore.ts`, and both embeddings are
 generated from this directory. Do not edit the embeddings by hand:
 
-    deno task gen:core            # write both
-    deno task gen:core --check    # fail if either is out of step
+    wac task gen:core            # write both
+    wac task gen:core --check    # fail if either is out of step
 
 ## What it costs
 

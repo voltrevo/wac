@@ -14,8 +14,8 @@
 // shape from the other side: the same bug "is found where it is loud and survives where it is
 // quiet". So warning is the default and not the only mode —
 //
-//     deno task test          doc problems are printed, the suite stays green
-//     deno task docs          the same checks, failing, for when you want them to
+//     wac task test          doc problems are printed, the suite stays green
+//     wac task docs          the same checks, failing, for when you want them to
 //
 // — and `tools/runTests.wac` prints how many warnings a run produced, so they land in the footer
 // instead of eight hundred lines up.
@@ -27,7 +27,7 @@
 // wording, which is most of what makes a doc check useful. Catching at the test boundary keeps every
 // message exactly as it was.
 
-/** Set by `deno task docs`; anything else warns. */
+/** Set by `wac task docs`; anything else warns. */
 export function strict(): boolean {
   return Deno.env.get("WAC_DOCS_STRICT") === "1";
 }
@@ -44,7 +44,7 @@ const TALLY = "/tmp/wac-doc-warnings";
  * A test whose subject is a document.
  *
  * Identical to `Deno.test` except that a failure is printed and the test passes — unless
- * `WAC_DOCS_STRICT=1`, which is what makes `deno task docs` a real gate.
+ * `WAC_DOCS_STRICT=1`, which is what makes `wac task docs` a real gate.
  */
 export function docTest(name: string, fn: () => void | Promise<void>): void {
   Deno.test(name, async () => {
@@ -56,7 +56,7 @@ export function docTest(name: string, fn: () => void | Promise<void>): void {
       console.warn(
         `\n  DOC WARNING — ${name}\n` +
           why.split("\n").map((l) => `    ${l}`).join("\n") +
-          `\n    (docs do not fail the suite; \`deno task docs\` makes them)\n`,
+          `\n    (docs do not fail the suite; \`wac task docs\` makes them)\n`,
       );
       try {
         // Best-effort: a tally that cannot be written is not worth failing a run over, which would

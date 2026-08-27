@@ -1,7 +1,7 @@
 // fmt's coverage, and the seed sensitivity that turned out to be a missing test.
 //
-//   deno task coverage:fmt
-//   deno task coverage:fmt --verbose
+//   wac task coverage:fmt
+//   wac task coverage:fmt --verbose
 //
 // **418 of 429**, from 383 of 429. Two-way ratchet over `tools/wac/covledger.wac`: anything not listed
 // must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.

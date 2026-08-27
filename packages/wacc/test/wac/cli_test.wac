@@ -55,10 +55,10 @@ bool namesCommand(string usage, string cmd) {
  * Every command the binary dispatches is named in its usage.
  *
  * **`sh` is no longer conditional.** It was, because `native/v8/seed/sh.wasm` is gitignored and no task
- * produced it, so the test was green or red per checkout — `issues/system/0190`. `deno task seed` builds
+ * produced it, so the test was green or red per checkout — `issues/system/0190`. `wac task seed` builds
  * all three payloads since 2026-08-20 (`issues/system/0216a`), so every build dispatches `sh` and
  * `update`, and a build that does not is one whose seed is stale. The message says so, because "run
- * `deno task seed`" is the whole remedy and a reader should not have to find that out.
+ * `wac task seed`" is the whole remedy and a reader should not have to find that out.
  *
  * Matched **as words**: see `namesCommand`. As substrings these assertions were close to vacuous.
  */
@@ -69,7 +69,7 @@ export string test_the_usage_names_every_command(Core core, Cli cli) {
   for (i32 i = 0; i < always.len(); i++) {
     t.isTrue(namesCommand(out, always[i]),
              "the usage does not name `" + always[i] + "` — if this build has a stale seed, " +
-             "`deno task seed` writes all three payloads");
+             "`wac task seed` writes all three payloads");
   }
   // **Two canaries, because the matcher can fail in both directions.** A matcher that says yes to
   // everything satisfies every line above; one that says yes only to whole words is the point of it.

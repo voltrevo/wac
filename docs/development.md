@@ -3,10 +3,10 @@
 Everything except the website is Deno and Rust; the website is the one npm subtree.
 
 ```sh
-deno task test                    # the suite — four to eleven minutes, see below
-deno task test packages/json      # one subtree, same concurrency cap
-deno task test:heavy              # the ten files a whole-suite run skips, see below
-deno task map --check             # MAP.md is generated; staleness is a failure
+wac task test                    # the suite — four to eleven minutes, see below
+wac task test packages/json      # one subtree, same concurrency cap
+wac task test:heavy              # the ten files a whole-suite run skips, see below
+wac task map --check             # MAP.md is generated; staleness is a failure
 ```
 
 **How long it takes depends on what else is running**, which matters here because several agents
@@ -28,7 +28,7 @@ item and `packages/wacc` alone was 56s of it. Splitting costs one build per chun
 large ones are split. Files declaring `// test-lane: exclusive` are held out of the queue and run alone
 after it drains, which the serial lane did for free.
 
-A target narrows the lane, which it did not before: `deno task test packages/tty/` used to run every wac
+A target narrows the lane, which it did not before: `wac task test packages/tty/` used to run every wac
 test in the repository.
 
 **`WAC_KEEP_AGGREGATE=1` keeps the generated aggregate**, as `.cache/wac-aggregate-<pid>-<nanos>_test.wac`,
@@ -56,7 +56,7 @@ workers turned "sshd never accepted" from a rare flake into a reliable one, whic
 found.
 
 **A third declaration takes a file out of the whole-suite run entirely.** Ten files declare
-`// test-lane: heavy`, and `deno task test` skips them — about 9 minutes of work on their own, most of it
+`// test-lane: heavy`, and `wac task test` skips them — about 9 minutes of work on their own, most of it
 in three `packages/wacc` files that put the whole repository through the emitter, and the rest holding
 around a gigabyte each against a suite that already peaks at 7.5 GB on a machine with 11.9. The run
 prints how many it skipped and when the lane last passed, because a saving nobody is told about is
@@ -67,8 +67,8 @@ Two declarations came out on 2026-08-18 after being measured: `packages/box/test
 the criterion here is residency — so between them they were excluding two areas from every push for eight
 seconds of work, while holding two of the twelve slots the lane is capped at.
 
-They still run in three cases: `deno task test:heavy`, `deno task test <path>` naming one (so
-`test:changed` covers a heavy file whenever its package changed), and `WAC_HEAVY=1 deno task test`
+They still run in three cases: `wac task test:heavy`, `wac task test <path>` naming one (so
+`test:changed` covers a heavy file whenever its package changed), and `WAC_HEAVY=1 wac task test`
 for one command that runs everything.
 
 **Heavy means resident, not slow.** The two look alike in a log and come apart under measurement:
@@ -103,7 +103,7 @@ because a silent skip reads as coverage.
 
 - The live browser tests need Chromium:
   `mkdir -p ~/pw && cd ~/pw && npm install playwright && ./node_modules/.bin/playwright install chromium`.
-  They also need `deno test -A` specifically — `deno task test` withholds `--allow-sys`, so under the
+  They also need `deno test -A` specifically — `wac task test` withholds `--allow-sys`, so under the
   gate they are the one ignored file.
 - The differential suites need the real tools they compare against: `bash`, GNU coreutils, `grep`,
   OpenSSH, and a C `tor` for the two-way Tor tests.
@@ -129,7 +129,7 @@ because a silent skip reads as coverage.
 
 **The suite refuses to start on a busy machine, or twice in twenty minutes.** Three agents share
 five cores, 11.9 GB and 4 GB of swap; a suite peaks over 3 GB, so two at once is tight and three get
-killed at about 70% having reported no failure at all. `deno task test` checks first and says what to
+killed at about 70% having reported no failure at all. `wac task test` checks first and says what to
 run instead — `tools/suiteGate.ts` holds the thresholds and the reasoning:
 
     another agent is running one     a lock in /tmp, released when their pid dies
@@ -167,7 +167,7 @@ over them — links, README figures, design-document counts, `MAP.md`, README si
 page's transcript — **warn and do not fail**. A broken link stopping everybody's push costs far more
 than the link does, and the suite is four to eleven minutes on a machine three agents share.
 
-    deno task docs      the same checks, strict, when you want them to fail
+    wac task docs      the same checks, strict, when you want them to fail
 
 A run prints how many doc warnings it produced in its footer, so they are not lost eight hundred
 lines above where you are looking when it finishes. The risk in this trade is real and worth naming:

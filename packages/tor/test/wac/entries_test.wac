@@ -2,7 +2,7 @@
 //
 // Not a test of behaviour — a test that the suite can see these files at all. Nothing in the suite
 // used to reach `size/` or `client_entry.wac`, so when a signature moved under them they broke and
-// stayed broken: `deno task size` printed "did not compile" three times and exited 0, and the
+// stayed broken: `wac task size` printed "did not compile" three times and exited 0, and the
 // mutation runner turned the same error into "117 invalid mutants". Three separate things could see
 // it and none of them said so (`issues/system/0022`).
 //

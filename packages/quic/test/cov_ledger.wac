@@ -1,7 +1,7 @@
 // quic's coverage, and an audit of a neighbour's ledger.
 //
-//   deno task coverage:quic
-//   deno task coverage:quic --verbose
+//   wac task coverage:quic
+//   wac task coverage:quic --verbose
 //
 // **726 of 868**, from 696 on the first run. `issues/system/0205`.
 //

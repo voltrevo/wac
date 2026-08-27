@@ -2,16 +2,16 @@
 // starts.
 //
 // **This replaced `tools/runTests.ts` on 2026-08-21, which is deleted.** Everything the suite does
-// is here or in `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`; `deno task test` runs
-// this and `deno task test:heavy` runs its other mode.
+// is here or in `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`; `wac task test` runs
+// this and `wac task test:heavy` runs its other mode.
 //
-//   deno task test                       everything, gated
-//   deno task test packages/json         a subset, same cap, and heavy files are not excluded
-//   deno task test -- --dry              discovery and chunking, nothing run, no slot taken
-//   deno task test -- --deno-only        one lane; `--wac-only` is the other
-//   deno task test:heavy                 the files that declared a cost, at two workers
-//   DENO_JOBS=5 deno task test           the width, honoured as given
-//   WAC_SUITE_ANYWAY=1 deno task test    past the gate, and recorded in the lock
+//   wac task test                       everything, gated
+//   wac task test packages/json         a subset, same cap, and heavy files are not excluded
+//   wac task test -- --dry              discovery and chunking, nothing run, no slot taken
+//   wac task test -- --deno-only        one lane; `--wac-only` is the other
+//   wac task test:heavy                 the files that declared a cost, at two workers
+//   DENO_JOBS=5 wac task test           the width, honoured as given
+//   WAC_SUITE_ANYWAY=1 wac task test    past the gate, and recorded in the lock
 //
 // What runs, in order:
 //
@@ -57,8 +57,8 @@
 // and `tools/wac/suitegate_test.wac` pins the byte format on this side because of it.
 //
 // **A fresh clone cannot run this at all**, where the TypeScript would run its Deno lane and skip the
-// wac one: the runner *is* a wac program, so `deno task seed:bootstrap` has to come first. That is a
-// real ordering constraint rather than a detail, and the reason `deno task test` should keep working
+// wac one: the runner *is* a wac program, so `wac task seed:bootstrap` has to come first. That is a
+// real ordering constraint rather than a detail, and the reason `wac task test` should keep working
 // until the bootstrap path is documented for it.
 //
 // What the adoption moved, for anyone reading the diff: `deno.json`'s two tasks, `tools/push.sh`'s
@@ -69,8 +69,8 @@
 // whole — `SUITE_ENV` and `refuseIfNested` have four callers that are still TypeScript.
 //
 // Where the tests live: this runner's own are `tools/wac/suitegate_test.wac`, which the *docs* gate
-// runs — `deno task docs` starts with `wac test tools/`, and the suite's lane roots are `packages`
-// and `core` in both runners. So a change here is checked by `deno task docs`, not by the suite it
+// runs — `wac task docs` starts with `wac test tools/`, and the suite's lane roots are `packages`
+// and `core` in both runners. So a change here is checked by `wac task docs`, not by the suite it
 // orchestrates, which is worth knowing before trusting a green suite about it.
 
 import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std/platform.wac";
@@ -108,9 +108,9 @@ i32 chunkSize() { return 12; }
  * `packages/ssz/test/wac/merkle_test.wac` — failing with a bare "Uncaught error" and passing on its
  * own: a worker killed for memory, reported as though the test were wrong.
  *
- *   deno task test                      # everything, capped
- *   deno task test packages/json        # a subset, same cap
- *   DENO_JOBS=5 deno task test          # override, honoured as given
+ *   wac task test                      # everything, capped
+ *   wac task test packages/json        # a subset, same cap
+ *   DENO_JOBS=5 wac task test          # override, honoured as given
  *
  * **The cap is 4, and it is measured.** `tools/jobsSweep.sh` on a quiet machine (load 0.6, 11.9 GB
  * total, 5 cores), sampling `/sys/fs/cgroup/memory.current` and `memory.stat`'s `anon` through each
@@ -776,7 +776,7 @@ Found discover(Cli cli, Opts o) {
   Declared[] tsDeclared = declarations(cli, tsFiles.all());
   // **Narrowed by the target, which is what `harness/testLane.ts`'s `laneSplit` is for.** Called
   // with no targets it means "all of them"; called with one it means the declared files *under* it.
-  // The TypeScript had this wrong once and `deno task test packages/tty/` ran two `packages/tor`
+  // The TypeScript had this wrong once and `wac task test packages/tty/` ran two `packages/tor`
   // live tests — 29s of relays and an authority on real ports — for a package with no Deno tests.
   string[] tsAlone = underTargets(o.targets, filesDeclaring(tsDeclared, "exclusive"));
   string[] tsHeavyAll = underTargets(o.targets, filesDeclaring(tsDeclared, "heavy"));
@@ -1259,7 +1259,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
   i32 warnings = warningsSoFar(cli);
   if (warnings > 0) {
     core.log("\n" + itoa(warnings) + " doc warning(s) — the suite does not fail for these. " +
-             "`deno task docs` runs the same checks and does.");
+             "`wac task docs` runs the same checks and does.");
   }
   return code;
 }

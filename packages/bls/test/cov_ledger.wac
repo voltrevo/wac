@@ -1,7 +1,7 @@
 // bls's coverage, and the first package measured whose subject is a verifier.
 //
-//   deno task coverage:bls
-//   deno task coverage:bls --verbose
+//   wac task coverage:bls
+//   wac task coverage:bls --verbose
 //
 // **661 of 718**, from 633 on the first run. `issues/system/0205`.
 //

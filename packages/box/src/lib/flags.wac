@@ -37,7 +37,7 @@ export bool refuseFlags(Core core, Args a) {
   // it has no `Core` to complain through; this is the first place that does.
   //
   // Through `needsValue`, which is where that sentence lives. It was written there and copied here, so
-  // there were two of them and only this one ran — `deno task dead` found the other by noticing that
+  // there were two of them and only this one ran — `wac task dead` found the other by noticing that
   // nothing called it, which is what an unused name usually means when a duplicate is nearby.
   if (a.missingValue != "") {
     needsValue(core, a.name, a.missingValue);

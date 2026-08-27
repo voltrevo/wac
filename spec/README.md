@@ -64,7 +64,7 @@ places that are easy to miss because neither is in this directory:
 - **The site states how many tagged claims there are, and the number is checked.**
   `site/src/next/Checked.tsx` says it in a sentence and `site/tools/site.test.ts` counts the tags in
   `spec/` and compares. So adding a clause is a two-file change. That test runs in the push gate and
-  **not** in `deno task test` or `deno task docs`, which is thirteen minutes between writing the
+  **not** in `wac task test` or `wac task docs`, which is thirteen minutes between writing the
   clause and finding out — so it is worth changing the number while the clause is in front of you.
 
 ## Verification

@@ -1,7 +1,7 @@
 // rlp's coverage, and the package where both patterns showed up at once.
 //
-//   deno task coverage:rlp
-//   deno task coverage:rlp --verbose
+//   wac task coverage:rlp
+//   wac task coverage:rlp --verbose
 //
 // **89 of 91**, from 77 on the first run. `issues/system/0205`.
 //

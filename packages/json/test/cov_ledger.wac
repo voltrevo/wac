@@ -1,7 +1,7 @@
 // json's coverage, and the second UTF-8 validator nobody had refused anything with.
 //
-//   deno task coverage:json
-//   deno task coverage:json --verbose
+//   wac task coverage:json
+//   wac task coverage:json --verbose
 //
 // **602 of 602**, from 590 of 602, and both lists below are empty: every branch point is expected to
 // be covered and the first one that is not fails by name. `issues/system/0205`.

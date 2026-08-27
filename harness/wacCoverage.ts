@@ -24,7 +24,7 @@
 //
 // **Twelve packages no longer have one** — `issues/system/0161`. Their exercises are wac now, a
 // program whose `main` runs the shapes, with `tools/wac/covreport.wac` as the shared half instead of
-// this file: `deno task coverage:json` is a `wac run`. The eight that remain are the ones with a
+// this file: `wac task coverage:json` is a `wac run`. The eight that remain are the ones with a
 // ledger of reasoned exemptions to move (`crypto`, `zstd`, `gzip`, `ssh`), one that belongs to
 // another package's owner (`sh`), and `fs`, `bignum` and `stream`.
 
@@ -53,14 +53,14 @@ export type Instrumented = {
  * **wacc, with `WAC_COV_FROM=reference` to go back.** This was the last place the reference was the
  * default, and it stopped being defensible the day a package used a wacc-only feature: `packages/zstd`
  * computes `highBit` with `issues/lang/0069`'s methods, so the reference cannot compile it and
- * `deno task coverage:zstd` could not run at all. The reference is for the bootstrap
+ * `wac task coverage:zstd` could not run at all. The reference is for the bootstrap
  * (`design/lang/0003`), and coverage is not the bootstrap.
  *
  * What is not ready is the *instrument*, and this paragraph used to say it was the ledgers. A
  * package's `cov.ts` carries a `NOT_COVERED` list naming the branches its tests deliberately do not
  * drive, and those lists are calibrated against one compiler's branch points. wacc instruments six
  * that the reference does not in `packages/fs` alone — real branches, at real lines — so switching
- * turns `deno task coverage:fs` red until somebody who knows why those branches are unreached
+ * turns `wac task coverage:fs` red until somebody who knows why those branches are unreached
  * writes the reasons. That is a package's call, not this file's [issue 0105].
  *
  * **That is the smaller half of the difference and it is the one that shows.** wacc emits no `case`

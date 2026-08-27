@@ -2,7 +2,7 @@
 //
 // ## Why this exists
 //
-// `deno task dead` (issue 0009) reported `parseTag` as the one exported wac function in the tree
+// `wac task dead` (issue 0009) reported `parseTag` as the one exported wac function in the tree
 // that nothing calls. It was worse than the constants that check was written for: a sixty-line
 // parser for bytes **somebody else wrote**, with no consumer and no test, in a package whose README
 // says `src/commit.wac` handles "commits and annotated tags". A parser nothing drives cannot be

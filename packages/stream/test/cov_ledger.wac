@@ -1,7 +1,7 @@
 // stream's coverage, and an empty argument — nothing here is unreachable.
 //
-//   deno task coverage:stream
-//   deno task coverage:stream --verbose
+//   wac task coverage:stream
+//   wac task coverage:stream --verbose
 //
 // **32 of 32**, and both lists below are empty: every branch point is expected to be covered and the
 // first one that is not fails by name. `issues/system/0205`.

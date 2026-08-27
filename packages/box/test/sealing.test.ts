@@ -252,7 +252,7 @@ Deno.test("a spawned stage *writes* through the channel, which nothing checked",
   // The reason is that the writes above are the *shell's*: `>` is a redirection through `sh.fs`, and
   // `mkdir`, `rm`, `chmod` and `chown` are builtins. So the stages read and the shell writes, and the
   // whole `Change` half of the protocol — `writeFile`, `mkdir`, `remove`, `chmod`, `chown`, `openOut`,
-  // `closeOut` — was exercised in the gate by nothing at all. `deno task corpus:backings` covers it
+  // `closeOut` — was exercised in the gate by nothing at all. `wac task corpus:backings` covers it
   // and is not the gate.
   //
   // `cp`, `tee` and `touch` are applets rather than builtins, so each is a real child asking this

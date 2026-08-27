@@ -52,7 +52,7 @@ export const REGISTRARS: readonly Registrar[] = [
   { call: "testBounded(", countsHere: true },
   // `Deno.test` whose subject is a document: it warns instead of failing, so the suite stays green
   // for a stale figure or a moved link. Still a test, and still counted here — `tools/docCheck.ts`
-  // has the argument, and `deno task docs` is the same checks with teeth.
+  // has the argument, and `wac task docs` is the same checks with teeth.
   { call: "docTest(", countsHere: true },
   // Delegates: one `Deno.test` per `export string test*` in a wac file, counted from the wac.
   { call: "wacTestRun(", countsHere: false },

@@ -7,7 +7,7 @@
 //
 // Both growable cases still hold hand-written storage, and that is a measured decision rather
 // than a leftover. `std`'s `Vec<JsonMember>` was tried here and cost **16-20% of throughput
-// on object- and container-heavy documents** (`deno task bench:json`, best of nine runs):
+// on object- and container-heavy documents** (`wac task bench:json`, best of nine runs):
 // a reusable container has to be its own object, so every JSON object paid one extra
 // allocation and every member access one extra hop, where the array used to sit directly in
 // the struct. An inline array measured within 2% of baseline on every shape.
@@ -119,7 +119,7 @@ export struct JsonObject {
   /**
    * Both conditions for building an index, and both are measurements.
    *
-   * `deno task bench:json-lookup` reports what a scan costs, what an indexed lookup costs, and
+   * `wac task bench:json-lookup` reports what a scan costs, what an indexed lookup costs, and
    * what the index costs to build. The last one is the reason this is not simply "index if the
    * object is big": an index is O(n) hashes before it answers anything, so on a 256-member
    * object it takes **15 lookups to repay itself**, and 15-35 across every size where it wins

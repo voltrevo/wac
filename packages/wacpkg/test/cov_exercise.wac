@@ -1,7 +1,7 @@
 // Branch coverage for wacpkg: the exercises, and nothing else.
 //
-//   deno task coverage:wacpkg
-//   deno task coverage:wacpkg --verbose
+//   wac task coverage:wacpkg
+//   wac task coverage:wacpkg --verbose
 //
 // Two workloads over the same code, which is the point of having one that is not the tests: the
 // package's own `test/wac/*_test.wac`, and a hand-written set below that goes at the manifest reader,

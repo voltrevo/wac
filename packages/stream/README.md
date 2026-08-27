@@ -106,4 +106,4 @@ source
 | `host/layout.ts` | the shared-memory layout, in one place so both threads agree |
 | `host/worker.ts` | where the transform runs and where blocking is allowed |
 | `host/bridge.ts` | `wacTransformStream`, and `runWhole` for the non-worker case |
-| `cov.ts` | `deno task coverage:stream` — **84.0%** of the wac branches as of 2026-08-11 (21 of `transform.wac`'s 25) |
+| `cov.ts` | `wac task coverage:stream` — **84.0%** of the wac branches as of 2026-08-11 (21 of `transform.wac`'s 25) |

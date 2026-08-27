@@ -2,7 +2,7 @@
 
 `wac` is the one a person types: a single executable with V8 inside it, the compiler carried as a
 prebuilt module, and no JavaScript host in the path. It is built from `native/v8/`;
-`native/README.md` and `native/v8/README.md` describe how, `deno task wac:install` is the supported
+`native/README.md` and `native/v8/README.md` describe how, `wac task wac:install` is the supported
 way to have it, and this section is what it promises.
 
 **There is one command.** This page used to describe two more — `wacx`, the reference toolchain run
@@ -211,7 +211,7 @@ under packages/", which would send you looking for a naming mistake that is not 
 
 The suite uses it for the heavy lane. A test file declares `// test-lane: heavy — <cost>` when it is
 too expensive for a run that discovers everything, and `tools/runTests.wac` builds this flag from
-those declarations so a push does not pay for them; `deno task test:heavy` runs them. **Naming a
+those declarations so a push does not pay for them; `wac task test:heavy` runs them. **Naming a
 path still runs it** — the exclusion is for the run that discovers, not a way to turn a file off.
 
 ### test: what a run prints

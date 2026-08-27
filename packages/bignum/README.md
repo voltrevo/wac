@@ -73,7 +73,7 @@ break rather than spread evenly:
 | `test/u64.test.ts` | that wac's `u64` is unsigned at all — division above 2^63, `>>` not sign-extending, `as@ u32` truncating |
 | `test/wac/big_test.wac` | that the package is usable from wac, including `toStr`, which returns a `string` and so cannot be called from the host |
 
-`deno task coverage:bignum` reports **98.1%** as of 2026-08-11 — `big.wac` at 96.7%, and the four
+`wac task coverage:bignum` reports **98.1%** as of 2026-08-11 — `big.wac` at 96.7%, and the four
 points it does not reach are recorded in `cov.ts` with their reasons. It said 100% here for as long
 as that was true, which a *green* ratchet does not defend: the check fails on a point that is
 neither driven nor recorded, so code can arrive with its exemptions written down and the number

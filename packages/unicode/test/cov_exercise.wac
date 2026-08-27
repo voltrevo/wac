@@ -1,7 +1,7 @@
 // Branch coverage for unicode: the exercises, and nothing else.
 //
-//   deno task coverage:unicode
-//   deno task coverage:unicode --verbose
+//   wac task coverage:unicode
+//   wac task coverage:unicode --verbose
 //
 // Every code point, which is also what the tests do — there is no smaller workload that reaches both
 // ends of a binary search over 1,482 entries, and no reason to use one.

@@ -1,6 +1,6 @@
 // The shell in a terminal drawn on pixels — `design/system/0004` step 4's own criterion.
 //
-//   deno task app:build packages/box/example/rasterterm.wac --target browser \
+//   wac task app:build packages/box/example/rasterterm.wac --target browser \
 //     --allow-read --allow-write -o page/index.html
 //
 // `packages/box/example/term.wac` is the same shell in a `<pre>` and an `<input>`, where the browser

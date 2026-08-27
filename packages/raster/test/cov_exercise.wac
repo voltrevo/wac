@@ -1,7 +1,7 @@
 // Branch coverage for raster: the exercises, and nothing else.
 //
-//   deno task coverage:raster
-//   deno task coverage:raster --verbose
+//   wac task coverage:raster
+//   wac task coverage:raster --verbose
 //
 // The same exercises the tests run, plus the ones a test asserts about but does not vary: every
 // clipping edge, both glyph widths, a glyph the font does not have, and a damage rectangle that is

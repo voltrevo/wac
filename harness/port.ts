@@ -8,7 +8,7 @@
 //     return n;
 //
 // — and each with the same hole. Between the `close()` and the child's `bind()`, anything on the machine
-// can take that port. `deno task test` runs test *files* in parallel, so several of these open the window
+// can take that port. `wac task test` runs test *files* in parallel, so several of these open the window
 // at once and the race is real rather than theoretical: a full suite at five workers failed with
 // `AddrInUse: Address already in use (os error 98)` from `packages/box`, which is what ended up capping
 // the worker count in 0075. The ceiling on parallelism here was this bug.

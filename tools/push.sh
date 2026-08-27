@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the suite, then push only if it passed. Merge and retry if someone got there first.
 #
-# This exists because `deno task test 2>&1 | grep ... && git push` pushes on *grep's* exit
+# This exists because `wac task test 2>&1 | grep ... && git push` pushes on *grep's* exit
 # code, not the test run's. It looks like it guards the push and does not. I made that
 # mistake twice in one session, and both times the tree happened to be fine — the failures
 # were my own stale compiler — which is exactly the kind of luck that teaches nothing.
@@ -28,6 +28,10 @@ fi
 # and whose disk was at 99%. Three days is longer than anyone reads back. `issues/system/0136`.
 find /tmp -maxdepth 1 -name 'push-suite-*.log' -mtime +3 -delete 2>/dev/null || true
 
+# **The checkout's binary, not whatever is on PATH.** `wac task` dispatches from `tasks.json5`, and
+# an installed `wac` would be a different build than the one this gate is testing — the seed fixpoint
+# is about *this* tree. Named once so no call site has to remember.
+WAC="./native/v8/target/release/wac"
 log="$(mktemp -t push-suite-XXXXXX.log)"
 
 # Space, before blaming the change. This gate has failed twice on `No space left on device` for reasons
@@ -107,10 +111,10 @@ fi
 # the question, so this cannot drift from the definition because it *is* the definition.
 if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
   echo "== the seed is older than the tree — rebuilding before the suite =="
-  if ! deno task seed >/dev/null 2>&1; then
+  if ! "$WAC" task seed >/dev/null 2>&1; then
     echo "== the seed will not rebuild: not running the suite ==" >&2
-    echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it." >&2
-    echo "   \`deno task seed:bootstrap\` is the way out if a wacc change has made wacc unable to" >&2
+    echo "   Run \`wac task seed\` by hand to see why; every later failure would be downstream of it." >&2
+    echo "   \`wac task seed:bootstrap\` is the way out if a wacc change has made wacc unable to" >&2
     echo "   build itself." >&2
     exit 1
   fi
@@ -160,7 +164,7 @@ for attempt in 1 2 3; do
   #
   # This is a pipeline guarding a consequential action, which is the mistake the whole file
   # exists to prevent. It is safe *only* because `pipefail` is set above, so the pipeline
-  # takes the exit code of `deno task test` rather than of `tee`. Remove `pipefail` and this
+  # takes the exit code of `wac task test` rather than of `tee`. Remove `pipefail` and this
   # line silently starts pushing red trees. Do not drop the `set -uo pipefail`.
   # `timeout` is a backstop against a *hang*, not a performance gate.
   #
@@ -179,7 +183,7 @@ for attempt in 1 2 3; do
   # switched off.
   # **A retry is not a second suite in the cooldown's sense.** `tools/wac/suitegate.wac` refuses a run
   # when the same agent ran one under twenty minutes ago, which is right for an agent reaching for
-  # `deno task test` by reflex and wrong for the loop here: attempt 1 passing and losing the push
+  # `wac task test` by reflex and wrong for the loop here: attempt 1 passing and losing the push
   # race is exactly when attempt 2 has to run, and it lands six minutes later by construction.
   # Without this, losing a race became `tests failed after 1s (exit 3): not pushing` — measured on
   # 2026-08-12, an hour after that gate landed.
@@ -212,9 +216,9 @@ for attempt in 1 2 3; do
   }
   oomBefore=$(oomCount)
   if [ "$attempt" -gt 1 ]; then
-    WAC_SUITE_RETRY=1 timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
+    WAC_SUITE_RETRY=1 timeout --kill-after=30s 45m "$WAC" task test 2>&1 | tee "$log"
   else
-    timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
+    timeout --kill-after=30s 45m "$WAC" task test 2>&1 | tee "$log"
   fi
   status=${PIPESTATUS[0]}
   oomAfter=$(oomCount)
@@ -373,7 +377,7 @@ for attempt in 1 2 3; do
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi
 
-  # **The doc checks, which the suite does not run.** `deno task docs` is `wac test tools/` followed by
+  # **The doc checks, which the suite does not run.** `wac task docs` is `wac test tools/` followed by
   # two Deno files, and the wac half is ten test files nothing else reaches: the lane in `runTests.ts`
   # walks `packages/` only. So `tools/wac/links_test.wac`, `map_test.wac`, `programs_test.wac`,
   # `testIgnore_test.wac` and six more — every one of them a guard on this repository's own tooling —
@@ -382,14 +386,14 @@ for attempt in 1 2 3; do
   #
   # Here rather than in the suite, because two of them read `git ls-files`: in a working tree with a new
   # file not yet added, a link to it does not resolve and the check is right to say so — which is a
-  # sensible thing to fail a *push* on and a poor thing to fail a mid-edit `deno task test` on. The tree
+  # sensible thing to fail a *push* on and a poor thing to fail a mid-edit `wac task test` on. The tree
   # is clean by the time this runs; the script refuses a dirty one.
   #
   # 8s, measured, and it blocks: these are deterministic checks over files in the repository, so a red
   # one is a red one for everybody rather than a machine having a bad day.
-  if ! deno task docs > "$log.docs" 2>&1; then
+  if ! "$WAC" task docs > "$log.docs" 2>&1; then
     echo "== the doc checks are red — not pushing =="
-    echo "   \`deno task docs\` runs them. The failures:"
+    echo "   \`wac task docs\` runs them. The failures:"
     grep -E "FAIL|error:|failed" "$log.docs" | head -20
     echo "-- full output: $log.docs --"
     exit 1
@@ -445,14 +449,18 @@ for attempt in 1 2 3; do
   # reads it. There are now 21 packages rather than 19 and all 21 have been green on every gate run
   # since. If this blocks you for something you did not do, the fair answer is the same as it was:
   # say so here and turn it back into a report, rather than pushing past it silently.
-  if ! deno task coverage:all; then
+  if ! "$WAC" task coverage:all; then
     echo "== the coverage ratchets are red — not pushing =="
     echo "   A package above is below its recorded coverage, or an exemption in its cov.ts no longer"
     echo "   matches the line it names, or it will not build. Run:"
-    echo "       deno task coverage:<pkg> --verbose"
+    echo "       wac task coverage:<pkg> --verbose"
     echo "   A branch you cannot reach is not a failure — record it in that package's cov.ts with the"
     echo "   argument for why, which is what every entry there already carries."
-    echo "   If this is a gap you did not open and cannot close, `tools/push.sh` says how this check"
+  # **Escaped, because bash runs backticks inside double quotes.** Printing this message spawned a
+  # whole second gate — a full suite, inside the failure handler of the first — and the only
+  # reason nobody met it is that the coverage ratchets are almost never red. Found on 2026-08-27
+  # when they were, and the gate took forty minutes to report a failure it had already decided.
+  echo '   If this is a gap you did not open and cannot close, tools/push.sh says how this check'
     echo "   went from blocking to reporting once before, and on what argument."
     exit 1
   fi
@@ -504,12 +512,12 @@ for attempt in 1 2 3; do
   # cannot drift from the definition because it *is* the definition.
   if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
     echo "   the merge aged the seed or a host — rebuilding"
-    if ! deno task seed >/dev/null 2>&1; then
+    if ! "$WAC" task seed >/dev/null 2>&1; then
       echo "== the seed would not rebuild after the merge: not retrying =="
-      echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it."
+      echo "   Run \`wac task seed\` by hand to see why; every later failure would be downstream of it."
       exit 1
     fi
-    # **And the wasmtime host, which `deno task seed` does not build.** It builds `native/v8` only, so
+    # **And the wasmtime host, which `wac task seed` does not build.** It builds `native/v8` only, so
     # a merge touching `native/src/` left `native/target/release/wacland` behind — and the retry then
     # failed with `Cli.execWith is not implemented in the native runtime yet`, from a host that
     # predated the merge that added it. `issues/system/0208` is that it has no owner; this is the gate

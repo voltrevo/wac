@@ -56,7 +56,7 @@ const u32[] K = u32[](
  * the 64-byte remainder, so the one-shot form is the incremental one with the pieces arriving all at once
  * — which is what it always was underneath (wac-mono 0034).
  *
- * `deno task bench:hash --quick`, 4 MB: **27.1 ms before, 23.1 ms after** — 153 MB/s to 174 MB/s, best of
+ * `wac task bench:hash --quick`, 4 MB: **27.1 ms before, 23.1 ms after** — 153 MB/s to 174 MB/s, best of
  * three, twice. The padded duplicate existed only to be read once, in order, and thrown away.
  */
 export u8[] sha256(u8[] msg) {

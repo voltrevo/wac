@@ -1,7 +1,7 @@
 // datetime's coverage, and an empty argument — there is nothing this package does not reach.
 //
-//   deno task coverage:datetime
-//   deno task coverage:datetime --verbose
+//   wac task coverage:datetime
+//   wac task coverage:datetime --verbose
 //
 // **123 of 123.** Both lists below are empty, and that is the point rather than an omission: a ledger
 // with no entries is the strongest form of this ratchet, because *every* branch point is expected to

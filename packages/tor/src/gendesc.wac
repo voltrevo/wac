@@ -5,7 +5,7 @@
 // needs a built tor tree present turns the shared suite red for whoever does not have one — the
 // mistake `test/wac/ntor_test.wac` documents having made once already.
 //
-//     deno task app:build packages/tor/src/gendesc.wac -o /tmp/gendesc.ts --allow-write
+//     wac task app:build packages/tor/src/gendesc.wac -o /tmp/gendesc.ts --allow-write
 //     deno run --allow-write /tmp/gendesc.ts /tmp/desc.txt
 //     <parsedesc-probe built against libtor.a> < /tmp/desc.txt
 //

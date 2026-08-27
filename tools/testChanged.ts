@@ -1,6 +1,6 @@
 // The tests that could plausibly have broken, for the loop where you are still editing.
 //
-//   deno task test:changed
+//   wac task test:changed
 //
 // **This is not the gate.** `tools/push.sh` runs the whole suite and that is what decides whether a
 // commit may be pushed, because "which tests could this have broken" is a guess and a full run is
@@ -20,7 +20,7 @@
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { exclusiveTests, laneSplit } from "../harness/testLane.ts";
 
-refuseIfNested("deno task test:changed");
+refuseIfNested("wac task test:changed");
 
 
 const SHARED = ["harness/", "tools/", "deno.json", "import_map.json"];
@@ -60,7 +60,7 @@ if (shared.length === 0) {
   if (targets.length === 0) {
     console.log(
       `${changed.size} changed file(s), none of them under packages/ or shared — nothing to run.\n` +
-        "  If that is wrong, the honest move is `deno task test`.",
+        "  If that is wrong, the honest move is `wac task test`.",
     );
     Deno.exit(0);
   }

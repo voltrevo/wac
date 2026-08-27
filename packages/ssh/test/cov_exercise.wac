@@ -1,6 +1,6 @@
 // Branch coverage for ssh: the probe's shapes, plus the tests that do not need a real port.
 //
-//   deno task coverage:ssh
+//   wac task coverage:ssh
 //
 // This was ssh's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger is
 // `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.

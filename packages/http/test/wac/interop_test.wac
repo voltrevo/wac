@@ -21,7 +21,7 @@
 // **`packages/server`'s socket loop is TypeScript**, and that is the package's design rather than
 // something this port left behind: `host/serve.ts` accepts the connection and calls into
 // `src/serve.wac` to route and answer. So the wac server here is started as a program, the way
-// `deno task serve` starts it, and what is under test is the routing and the response writer.
+// `wac task serve` starts it, and what is under test is the routing and the response writer.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
@@ -78,7 +78,7 @@ Peer startNode(Core core, Cli cli, string dir) {
   return Peer(d, port, port > 0 ? "" : "no port in " + logOf(cli, d));
 }
 
-/** Our server, started the way `deno task serve` starts it, on a port it chooses. */
+/** Our server, started the way `wac task serve` starts it, on a port it chooses. */
 Peer startWac(Core core, Cli cli, string dir) {
   Daemon d = start(cli, "deno run -A packages/server/host/serve.ts 0", dir + "/wac.log");
   if (!d.ok()) { return Peer(d, -1, "the wac server did not start — " + d.error); }

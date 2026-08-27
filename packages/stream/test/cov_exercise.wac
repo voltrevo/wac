@@ -1,7 +1,7 @@
 // Branch coverage for stream: the exercises, and nothing else.
 //
-//   deno task coverage:stream
-//   deno task coverage:stream --verbose
+//   wac task coverage:stream
+//   wac task coverage:stream --verbose
 //
 // No worker here. The wac side does not know whether its `read` blocks, so the branches are all
 // reachable by driving the same exports with synchronous callbacks — which is also `runWhole`. What

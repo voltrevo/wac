@@ -87,7 +87,7 @@ export string test_f32_output_round_trips_and_is_shortest(Core core, Cli cli) {
  * The string spelling and the bytes spelling agree.
  *
  * `ftoa32` and `ftoa32Bytes` differ only in `Buf.toStr()` against `Buf.bytes()`, and until this test
- * nothing had ever called the first — `deno task dead` found it, and `packages/fmt/README.md` lists
+ * nothing had ever called the first — `wac task dead` found it, and `packages/fmt/README.md` lists
  * it as the package's f32 API. Both now go through `writeF32`, so this is what would notice if one
  * of them stopped.
  */

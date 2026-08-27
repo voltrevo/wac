@@ -1,7 +1,7 @@
 // unicode's coverage, and two points an earlier check already refused.
 //
-//   deno task coverage:unicode
-//   deno task coverage:unicode --verbose
+//   wac task coverage:unicode
+//   wac task coverage:unicode --verbose
 //
 // **106 of 108**, and the two below are both subsumed by a check that fires first.
 // `issues/system/0205`.

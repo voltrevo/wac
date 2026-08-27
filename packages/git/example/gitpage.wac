@@ -1,6 +1,6 @@
 // A page that opens a real packfile — the object database, with no network anywhere near it.
 //
-//   deno task app:build packages/git/example/gitpage.wac --target browser -o page/index.html
+//   wac task app:build packages/git/example/gitpage.wac --target browser -o page/index.html
 //
 // Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. Nothing is fetched and
 // nothing is uploaded: the bytes go from the file input into wasm and the answers come back out.

@@ -4,7 +4,7 @@ Where a wac project says its dependencies come from: `wac.json5`, read and check
 
 ```sh
 wac test packages/wacpkg/test/wac/     # the tests, all of them wac
-deno task coverage:wacpkg              # branch coverage
+wac task coverage:wacpkg              # branch coverage
 ```
 
 A project is a directory with a `wac.json5` in it. An empty one is valid — a project that imports
@@ -79,7 +79,7 @@ has grown enough for the prefix to stop being unique.
 `example/plan.wac` reads a project's two files and says what an ordinary build would have to fetch:
 
 ```sh
-deno task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
+wac task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
 ./wacplan .
 ```
 
@@ -160,7 +160,7 @@ migration or orphaning everything already downloaded.
 `wacpkg` decides *what* to fetch and where it goes, `packages/git` and `packages/tls` do it.
 
 ```sh
-deno task app:build packages/wacpkg/src/fetch.wac \
+wac task app:build packages/wacpkg/src/fetch.wac \
   --allow-read --allow-write --allow-net --allow-env -o wacfetch
 ./wacfetch . ~/.wac
 ```
@@ -295,7 +295,7 @@ Migrating also deleted two hand-copied tables of the `M_*` and action codes and 
 compared them against the source for drift, which is not a tidier way to catch drift but the same
 guarantee with nothing to maintain.
 
-**Fault detection is measured, not remembered.** `deno task mutate --package wacpkg --operators`
+**Fault detection is measured, not remembered.** `wac task mutate --package wacpkg --operators`
 plants every `guard` and `extreme` mutant in the package — a removed validity check and a gutted
 function, the two operators worth reading when they survive.
 

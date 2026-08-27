@@ -90,13 +90,13 @@ Built, it is **490.1 KiB** as a self-contained executable — 259.5 KiB of wasm,
 which the proxy costs **19.5 KiB** over the fetch-and-exit program. Measured 2026-08-11:
 
 ```sh
-deno task app:build packages/tor/src/app.wac   --allow-net --allow-read --allow-write -o tor
-deno task app:build packages/tor/src/socks.wac --allow-net --allow-read --allow-write -o torsocks
+wac task app:build packages/tor/src/app.wac   --allow-net --allow-read --allow-write -o tor
+wac task app:build packages/tor/src/socks.wac --allow-net --allow-read --allow-write -o torsocks
 wac build packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o torn
 ```
 
 Dated, because it is a snapshot and the last one sat here saying 386.7 KiB until this file was read
-with a build beside it. `deno task size` reports the layers separately — 133.5 KiB of wasm for the
+with a build beside it. `wac task size` reports the layers separately — 133.5 KiB of wasm for the
 whole client without the program around it, against 86.2 for the TLS 1.3 client alone — and those
 four rows are what `size/` exists to keep re-measurable.
 
@@ -689,8 +689,8 @@ listening, and the work to run once they are all up:
     node relay1    | listening on 127.0.0.1:5555 | relayd.worker.js relay.seed -p 5555 …
     run  fetch     |                             | torapp.worker.js seed.txt auth.txt /tor/…
 
-    deno task app:build packages/tor/src/network.wac --allow-read --allow-write --allow-net -o network
-    deno task app:build packages/tor/src/relayd.wac --worker -o relayd.worker.js   # and dird, app
+    wac task app:build packages/tor/src/network.wac --allow-read --allow-write --allow-net -o network
+    wac task app:build packages/tor/src/relayd.wac --worker -o relayd.worker.js   # and dird, app
     ./network net.txt > document.txt
 
 A node is **waited for**, not slept on, and a node that never announces itself fails the run by name

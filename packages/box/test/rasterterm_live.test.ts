@@ -25,7 +25,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 /**
  * Why this cannot run, or the empty string.
  *
- * The `sys` permission first: `playwright-core` needs it at import time and `deno task test` does
+ * The `sys` permission first: `playwright-core` needs it at import time and `wac task test` does
  * not grant it, so a test that only checked for a browser would pass under `deno test -A` and fail
  * inside the suite with `NotCapable` from somewhere in an npm bundle.
  */

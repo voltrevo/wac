@@ -9,7 +9,7 @@ fn main() {
     // `wac` command possible rather than `wacland something.json`. Absent, the binary is exactly what
     // it was and says so when asked to act as one. Produced by:
     //
-    //     deno task app:native packages/wac/src/wac.wac --allow-read --allow-write -o native/seed/wacc
+    //     wac task app:native packages/wac/src/wac.wac --allow-read --allow-write -o native/seed/wacc
     //
     // Whether that artifact is committed is design/lang/0003's open question; the build works either
     // way, which is the point of not deciding it here.

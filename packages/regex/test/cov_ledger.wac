@@ -1,7 +1,7 @@
 // regex's coverage, and the two bugs reading its gaps found.
 //
-//   deno task coverage:regex
-//   deno task coverage:regex --verbose
+//   wac task coverage:regex
+//   wac task coverage:regex --verbose
 //
 // **639 of 652**, from 573 of 649. Two-way ratchet over `tools/wac/covledger.wac`: anything not listed
 // must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.

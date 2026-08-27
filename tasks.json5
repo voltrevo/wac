@@ -1,0 +1,110 @@
+// The named commands this repository has, and what each one runs.
+//
+//     wac task            # list them
+//     wac task test       # run one
+//
+// **This was `deno.json`'s `tasks` until 2026-08-27.** `deno task` was the task *runner* and almost
+// nothing here is a Deno program: 41 of these 78 invoke the `wac` binary, three are shell, and the
+// rest run a `.ts` tool. `CLAUDE.md` had said as much for months — *"`deno task` is only the task
+// runner here; nothing in that command needs a JavaScript host"* — so the registry was a JavaScript
+// dependency for the sake of a lookup table.
+//
+// **A fresh clone cannot use this.** The seed is gitignored, so there is no binary to run `wac task`
+// with, and the first step is `bash tools/seed.sh --bootstrap`. That is unchanged and is why it stays
+// a shell script rather than becoming a task.
+//
+// **Grants.** `wac task` runs this repository's own tooling and holds one set of them, stated where
+// the command is dispatched. Declaring them per task was considered and rejected: nearly every entry
+// below compiles, spawns and writes, so seventy-eight near-identical grant lines would claim to be a
+// boundary while granting everything. A task that genuinely needs less says so in `only`.
+{
+  // The everyday loop — the suite, the doc checks, the generated map.
+  "test": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/runTests.wac --",
+  "test:changed": "deno run -A tools/testChanged.ts",
+  "test:heavy": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/runTests.wac -- --heavy",
+  "docs": "./native/v8/target/release/wac test --allow-read --allow-write --allow-run tools/",
+  "map": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/map.wac",
+  "site:map": "deno run --allow-read --allow-write site/tools/syncMap.ts",
+
+  // Building `wac` and putting it somewhere. `seed:bootstrap` is the one that needs no binary.
+  "seed": "bash tools/seed.sh",
+  "seed:bootstrap": "bash tools/seed.sh --bootstrap",
+  "seed:native": "bash tools/seed.sh --native-only",
+  "wac:install": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts install",
+  "wac:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts build",
+
+  // The coverage ratchets, one per package plus the runner over all of them.
+  "coverage": "deno run -A tools/coverage.ts",
+  "coverage:all": "deno run -A tools/coverageAll.ts",
+  "coverage:bls": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/bls/test/cov_ledger.wac",
+  "coverage:abi": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/abi/test/cov_ledger.wac",
+  "coverage:bignum": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bignum/test/cov_ledger.wac",
+  "coverage:bytes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bytes/test/cov_ledger.wac",
+  "coverage:codec": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/codec/test/cov_ledger.wac",
+  "coverage:core": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run core/test/cov_ledger.wac",
+  "coverage:crypto": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/crypto/test/cov_ledger.wac",
+  "coverage:datetime": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/datetime/test/cov_ledger.wac",
+  "coverage:ens": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/ens/test/cov_ledger.wac",
+  "coverage:ethrpc": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/ethrpc/test/cov_ledger.wac",
+  "coverage:fmt": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/fmt/test/cov_ledger.wac",
+  "coverage:fs": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/fs/test/cov_ledger.wac",
+  "coverage:gzip": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/gzip/test/cov_ledger.wac",
+  "coverage:git": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/git/test/cov_ledger.wac",
+  "coverage:http": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/http/test/cov_ledger.wac",
+  "coverage:json": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/json/test/cov_ledger.wac",
+  "coverage:platform": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/platform/test/cov_ledger.wac",
+  "coverage:quic": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/quic/test/cov_ledger.wac",
+  "coverage:regex": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/regex/test/cov_ledger.wac",
+  "coverage:lightclient": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/lightclient/test/cov_ledger.wac",
+  "coverage:mpt": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/mpt/test/cov_ledger.wac",
+  "coverage:raster": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/raster/test/cov_ledger.wac",
+  "coverage:rlp": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/rlp/test/cov_ledger.wac",
+  "coverage:server": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/server/test/cov_ledger.wac",
+  "coverage:ssz": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/ssz/test/cov_ledger.wac",
+  "coverage:stream": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/stream/test/cov_ledger.wac",
+  "coverage:webrtc": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/webrtc/test/cov_ledger.wac",
+  "coverage:zstd": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/zstd/test/cov_ledger.wac",
+  "coverage:ssh": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/ssh/test/cov_ledger.wac",
+  "coverage:sh": "deno run -A packages/sh/cov.ts",
+  "coverage:tor": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/tor/test/cov_ledger.wac",
+  "coverage:tty": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/tty/test/cov_ledger.wac",
+  "coverage:tls": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/tls/test/cov_ledger.wac",
+  "coverage:unicode": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/unicode/test/cov_ledger.wac",
+  "coverage:url": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/url/test/cov_ledger.wac",
+  "coverage:wactest": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/wactest/test/cov_ledger.wac",
+  "coverage:wacpkg": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/wacpkg/test/cov_ledger.wac",
+
+  // Benchmarks. None of these gate anything; they print numbers.
+  "bench": "deno run -A tools/bench.ts",
+  "bench:hash": "deno run -A packages/crypto/bench/hash.ts",
+  "bench:compile": "deno run -A tools/benchCompile.ts",
+  "bench:zstd": "deno run -A packages/zstd/bench/ratio.ts",
+  "bench:zstd-speed": "deno run -A packages/zstd/bench/speed.ts",
+  "bench:json": "deno run -A packages/json/bench/throughput.ts",
+  "bench:json-lookup": "deno run -A packages/json/bench/lookup.ts",
+
+  // The shell corpus, measured different ways.
+  "corpus:through": "deno run -A tools/corpusThrough.ts",
+  "corpus:hosts": "deno run -A tools/corpusHosts.ts",
+  "corpus:backings": "deno run -A tools/corpusBackings.ts",
+  "corpus:routes": "deno run -A tools/corpusRoutes.ts",
+  "corpus:stderr": "deno run -A tools/corpusStderr.ts",
+
+  // Everything else.
+  "bindgen": "deno run -A tools/emitgen.ts",
+  "flags:ignored": "deno run -A tools/ignoredFlags.ts",
+  "size": "deno run -A tools/size.ts",
+  "gen:core": "deno run -A tools/genCore.ts",
+  "gen:unicode": "deno run -A packages/unicode/tools/gentables.ts",
+  "gen:bls-fpkernel": "python3 packages/bls/tools/genfpkernel.py",
+  "dead": "deno run -A tools/deadexports.ts",
+  "mutate": "deno run -A tools/mutate.ts",
+  "mutate:diff": "deno run -A tools/mutate.ts --diff --operators",
+  "mutate:operators": "deno run -A tools/mutate.ts --operators",
+  "serve": "deno run -A packages/server/host/serve.ts",
+  "app:build": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/build.ts",
+  "check": "deno run -A tools/checkTypes.ts",
+  "validate": "deno run -A tools/validate.ts",
+  "verify:fmt": "deno run -A packages/fmt/tools/sweep.ts",
+  "shell:fuzz": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac",
+}

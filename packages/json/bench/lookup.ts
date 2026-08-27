@@ -5,7 +5,7 @@
 // that compares length first is very fast at the sizes real documents contain, and hashing a
 // key is not free.
 //
-//   deno task bench:json-lookup
+//   wac task bench:json-lookup
 
 import { wacBind } from "../../../harness/wacBind.ts";
 

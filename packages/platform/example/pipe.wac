@@ -6,7 +6,7 @@
 // the second child's output goes to standard output. What a shell's `|` does, except that
 // the plumbing is a wac program and both stages run inside this process as workers.
 //
-//   deno task app:build packages/box/src/box.wac --worker -o box.worker.js
+//   wac task app:build packages/box/src/box.wac --worker -o box.worker.js
 //   printf 'b\na\nb\n' | pipe box.worker.js sort uniq      ->  a  b
 //
 // Three handles are live at once — standard input, and one per child — and the loop waits on

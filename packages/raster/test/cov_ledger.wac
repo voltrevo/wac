@@ -1,7 +1,7 @@
 // raster's coverage, and the crash the last three points were hiding.
 //
-//   deno task coverage:raster
-//   deno task coverage:raster --verbose
+//   wac task coverage:raster
+//   wac task coverage:raster --verbose
 //
 // **299 of 299**, from 230 of 298, and both lists below are empty: every branch point is expected to
 // be covered and the first one that is not fails by name. `issues/system/0205`.

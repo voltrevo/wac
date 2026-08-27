@@ -468,7 +468,7 @@ are cases rather than a paragraph in a commit message.
 ## The toolchain
 
 **wacc is the `wac` command's compiler.** For a while it was reached through a second toolchain
-instead — `deno task waccx`, the same commands as the reference CLI but over `wacc` — which shared
+instead — `wac task waccx`, the same commands as the reference CLI but over `wacc` — which shared
 that CLI's `readGraph` and `wacDiag` so that the only difference between the two was the compiler in
 the middle. Both CLIs are retired; the binary is what people type, and the comparison they existed
 for is `test/wac/diagnosticgap_test.wac`, which puts `wacCompile` beside `diagnoseFiles` and renders both
@@ -1775,7 +1775,7 @@ plausible number. Three fields, two levels, a widening, an override, a test that
 three deep, a parent written after its child.
 
 **Two of the twenty-three do not compare, because the reference cannot compile them** — and finding
-that out is what the canary is for. `deno task test` counts a program the reference refuses as *not
+that out is what the canary is for. `wac task test` counts a program the reference refuses as *not
 valid wac* and a module it cannot instantiate as a *trap*; both are silent, and silence reads as
 agreement. Filed as `issues/lang/0083` and `0084`:
 

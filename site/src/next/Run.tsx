@@ -130,7 +130,7 @@ export default function Run() {
           These are not snippets and not a sandbox pretending to be one. Each is a complete wac
           program, compiled to wasm, running on a worker, talking to a capability world on the
           page&rsquo;s own thread. <Lead>Each file is exactly what{" "}
-          {m({ children: "deno task app:build --target browser" })} produces, copied
+          {m({ children: "wac task app:build --target browser" })} produces, copied
           unmodified</Lead> — what you open here is the artifact you would build yourself.
         </P>
         <div style={{ display: "grid", gap: 14, marginBottom: space.block }}>

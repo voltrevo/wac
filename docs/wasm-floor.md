@@ -13,7 +13,7 @@ still does not use the feature.
 That is the floor, and it is deliberate: nothing is emitted from a proposal that is not broadly
 supported.
 
-**An optimised build is held to the same floor, by construction.** `deno task app:build --optimize`
+**An optimised build is held to the same floor, by construction.** `wac task app:build --optimize`
 runs the module through `wasm-opt`, and an optimiser is entitled to emit anything its feature set
 allows — so `packages/platform/build.ts` hands it exactly the features above and no others. It
 briefly handed over three more (bulk memory, tail calls, stringref), which the emitter did not use

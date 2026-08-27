@@ -14,7 +14,7 @@
 //
 // Try it with `box` as the handler, which needs no grants for a text applet:
 //
-//   deno task app:build packages/box/src/box.wac --worker -o box.worker.js
+//   wac task app:build packages/box/src/box.wac --worker -o box.worker.js
 //   inetd 9000 box.worker.js rev
 //   printf 'hello\n' | nc 127.0.0.1 9000     ->  olleh
 //

@@ -78,7 +78,7 @@ running index, so a `clientError` arriving after the next connection opened was 
 the wrong case, and valid requests were reported as errors. Correlating by the client's port fixed
 it. An oracle is a program and needs the same suspicion as the thing it judges.
 
-`deno task coverage:http` reports 89% across both halves.
+`wac task coverage:http` reports 89% across both halves.
 
 ## Responses are the harder half
 

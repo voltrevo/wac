@@ -1,7 +1,7 @@
 // Branch coverage for codec: the exercises, and nothing else.
 //
-//   deno task coverage:codec
-//   deno task coverage:codec --verbose
+//   wac task coverage:codec
+//   wac task coverage:codec --verbose
 //
 // The same exercises the tests run: the RFC vectors' shapes, a round trip at every length up to 300 —
 // which is what reaches each short-group case — and the strictness inputs, which are the only things

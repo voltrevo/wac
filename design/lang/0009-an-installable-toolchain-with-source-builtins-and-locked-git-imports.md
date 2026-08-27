@@ -18,10 +18,10 @@ this is the version that binds, because GitHub is not the source of truth for th
 
 ## The decisions
 
-**D1 — `wac` is installed, not found.** `deno task wac:install` builds the native V8 command and
+**D1 — `wac` is installed, not found.** `wac task wac:install` builds the native V8 command and
 installs it under `$WAC_HOME` (default `$HOME/.wac`) as `bin/wac`, `cache/git/`, `env` and
 `install.json5`, adding one recognisable idempotent line to supported shell profiles. Deno bootstraps
-the build and is not needed to run the result. `deno task wac:build -o ./wac` produces an uninstalled
+the build and is not needed to run the result. `wac task wac:build -o ./wac` produces an uninstalled
 binary. `wac uninstall [--keep-cache]` removes the binary, the cache, the profile line and the
 metadata, and never a manifest, a lockfile, a source file or a build product.
 
@@ -188,7 +188,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 ## Order of work
 
 1. **The fixpoint in the command** (D2). Small, and the machinery exists: `selfHostEmit` and
-   `fixpointEmit` already do the comparison and `deno task seed` already builds B. Doing it first
+   `fixpointEmit` already do the comparison and `wac task seed` already builds B. Doing it first
    means everything after it is published under the check rather than beside it.
 2. **De-duplicate `core`** (D3, first half). Both compilers stop carrying it as a string. Nothing
    below is safe until an addition to `core` is one edit.
@@ -208,7 +208,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | step | state |
 | --- | --- |
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
-| 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
+| 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `wac task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | **done** (2026-08-19). `core/` holds `read.wac`, `jsx.wac` and the five collections; `std/` holds `platform.wac`, embedded in wacc and refused by name in the reference, which has no lambdas. The sweep was 515 edges across 512 files. **+107,419 bytes of seed for 105,318 of source — 1.02x, against the 384 KB this was costed at** before `issues/lang/0162` made a string literal a data segment. `frame.wac` and `stream.wac` stay packages: both import `packages/bytes`, and a built-in cannot import a package. |
 | 4. quoted specifiers (D5) | **done** (2026-08-19). Every specifier is a quoted path, `core` included: both compilers accept `"core"` and `"core/option.wac"`, the 54 files using the bare form were swept, and the bare form is now an error — `core` gets its own message telling you to quote it, anything else is `unknown module`. `§wac-core-unquoted-3nqk7vd` states the removal and `§wac-core-one-key-5jm2qhx` keeps the property the old clause was really about: however the root is reached it is one module, which nominal types make load-bearing. `spec/spec/grammar.md`'s `source` is `STRING` now. wapy is untouched — a Python-shaped `from X import` names its module bare whatever X is, so the two surfaces still agree about the module and differ only in syntax each already had. |
 | 5. `wac.json5` and `@/` (D6, D7) | **`@/` works, in both compilers** (2026-08-19), with `§wac-import-project-4hq7mnv` and a differential that compiles every fixture with each of them. The upward search for `wac.json5` lives with whichever caller already reads files — `harness/wacFiles.ts` and `gather` — and finds a manifest without reading one, so the JSON parser stays out of the compiler's graph. What is left of D6 is the manifest's *contents*: mappings are D9-D11. The shape was decided first — see *How `@/` gets its root* below. The consolidation this step was waiting on is done: two resolver bodies, one per language, and the change was additive rather than a 22-signature sweep because the hundred-plus call sites have no root to give. **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |

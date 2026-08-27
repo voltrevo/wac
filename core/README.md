@@ -36,7 +36,7 @@ declaration is in is how that is said**:
 | `jsx.wac` | no — no JSX frontend | yes |
 
 `tools/genCore.ts` holds those two lists and writes both embeddings: `compiler/wacCore.ts` and
-`packages/wacc/src/coretext.wac`. Neither is edited by hand, and `deno task gen:core --check` fails
+`packages/wacc/src/coretext.wac`. Neither is edited by hand, and `wac task gen:core --check` fails
 when either is out of step. `compiler/README.md` carries the same omission as a row, which is where
 it was recorded before this directory existed.
 

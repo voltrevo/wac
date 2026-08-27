@@ -1,7 +1,7 @@
 // Branch coverage for webrtc: the package's own tests, and nothing else.
 //
-//   deno task coverage:webrtc
-//   deno task coverage:webrtc --verbose
+//   wac task coverage:webrtc
+//   wac task coverage:webrtc --verbose
 //
 // The ninth of the packages `issues/system/0205` records as unmeasured, and the third and last
 // consumer of `packages/tls/src/handshake.wac` — after `packages/tls` itself and `packages/quic`.

@@ -1,7 +1,7 @@
 // bytes' coverage, and the one point that needs two gigabytes to reach.
 //
-//   deno task coverage:bytes
-//   deno task coverage:bytes --verbose
+//   wac task coverage:bytes
+//   wac task coverage:bytes --verbose
 //
 // **79 of 80.** Two-way ratchet over `tools/wac/covledger.wac`: anything not listed must be covered,
 // and anything listed that *is* covered fails too. `issues/system/0205`.

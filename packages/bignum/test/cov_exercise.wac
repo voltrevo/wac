@@ -1,7 +1,7 @@
 // Branch coverage for bignum: the exercises, and nothing else.
 //
-//   deno task coverage:bignum
-//   deno task coverage:bignum --verbose
+//   wac task coverage:bignum
+//   wac task coverage:bignum --verbose
 //
 // ## wac decides the operands; JavaScript computes them — `issues/system/0161`
 //

@@ -9,8 +9,8 @@
 // reach: bash and this agree on what *works*, and disagree by construction on what this declines
 // to do.
 //
-//   deno task coverage:sh
-//   deno task coverage:sh --verbose
+//   wac task coverage:sh
+//   wac task coverage:sh --verbose
 
 import { instrument, report } from "../../harness/wacCoverage.ts";
 

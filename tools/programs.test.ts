@@ -2,7 +2,7 @@
 //
 // wac-mono 0079: the suite compiled only the programs a test drives — `packages/box` and `packages/sh`
 // build theirs per case — and none of the other thirty. So a program could stop compiling and
-// `deno task test` stayed green, with the breakage surfacing whenever somebody next tried to run it and
+// `wac task test` stayed green, with the breakage surfacing whenever somebody next tried to run it and
 // no indication of which change had done it. It was found by consolidating a function out of
 // `packages/tor/src/relayd.wac`: the tor package's 169 tests passed, and the only reason the program was
 // known to still build is that somebody built it by hand afterwards.

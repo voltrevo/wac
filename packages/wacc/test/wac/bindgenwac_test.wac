@@ -75,7 +75,7 @@ string firstDifference(string a, string b) {
  * again in a different cache.
  *
  * `std/` itself is deliberately *not* in the key: the compiler reads the embedded copy, so an edit
- * there changes nothing until `deno task gen:core` writes it into `coretext.wac`, and that file is
+ * there changes nothing until `wac task gen:core` writes it into `coretext.wac`, and that file is
  * under the tree already named.
  *
  * **Only the reference is remembered.** `bindgenFiles` and `bindgenWire` — ours — run on every pass

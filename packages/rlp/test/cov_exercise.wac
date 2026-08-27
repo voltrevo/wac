@@ -1,7 +1,7 @@
 // Branch coverage for rlp: the package's own tests, and nothing else.
 //
-//   deno task coverage:rlp
-//   deno task coverage:rlp --verbose
+//   wac task coverage:rlp
+//   wac task coverage:rlp --verbose
 //
 // The fourth of the packages `issues/system/0205` records as unmeasured, and the one `packages/mpt` and
 // `packages/ssz` both stand on: every trie node and every account is RLP before it is anything else.

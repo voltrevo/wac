@@ -60,7 +60,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
  * presence of `-print` in the second suppresses find's implicit one — so **a changed `.rs` file
  * printed nothing and the rebuild never triggered**. Only `Cargo.toml` was ever watched.
  *
- * `deno task seed` owns this build now, `seed:native` does just this crate, and
+ * `wac task seed` owns this build now, `seed:native` does just this crate, and
  * `tools/seedFresh.test.ts` fails when the binary is older than its sources — over the whole crate,
  * recursively. `issues/system/0208`.
  */

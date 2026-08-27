@@ -1,6 +1,6 @@
 // A ripple tank: the wave equation on a grid, and a pointer that drops stones in it.
 //
-//   deno task app:build packages/platform/example/ripple.wac --target browser -o page/index.html
+//   wac task app:build packages/platform/example/ripple.wac --target browser -o page/index.html
 //
 // Click and a wave leaves your finger, reflects off the walls, and interferes with itself. That is
 // not a particle effect faking it — it is the discretised wave equation, three lines in `step`, run

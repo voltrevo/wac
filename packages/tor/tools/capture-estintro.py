@@ -12,7 +12,7 @@ MAC verifies, and its signature is refused.
 
 Needs a *built* tor source tree (`libtor.a` at its root) and a cell from `src/genintro.wac`.
 
-    deno task app:build packages/tor/src/genintro.wac --allow-write -o /tmp/genintro.ts
+    wac task app:build packages/tor/src/genintro.wac --allow-write -o /tmp/genintro.ts
     deno run --allow-write /tmp/genintro.ts /tmp/cell.bin /tmp/base.json
     python3 packages/tor/tools/capture-estintro.py /tmp/cell.bin /tmp/base.json > \
         packages/tor/test/data/estintro_vectors.json

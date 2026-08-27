@@ -1,11 +1,11 @@
 // The compiler compiles itself, and doing it again changes nothing.
 //
-// `deno task seed` is `wac build packages/wac/src/wac.wac` followed by `cargo build`: the
+// `wac task seed` is `wac build packages/wac/src/wac.wac` followed by `cargo build`: the
 // binary compiling its own compiler, with no JavaScript host in the loop. That is only true while
 // wacc can build wacc, and only *useful* while the result is stable — a compiler that produced a
 // different compiler each time would still work and would make every artefact unreproducible.
 //
-// **3.0s, two builds of the compiler.** Measured 2026-08-18. `deno task seed` does the same thing and
+// **3.0s, two builds of the compiler.** Measured 2026-08-18. `wac task seed` does the same thing and
 // checks the same property; this is the version that runs in the suite, so a fixed point that stops
 // holding fails a push rather than waiting for somebody to reseed.
 //
@@ -13,7 +13,7 @@
 // again with the same binary, and require the two to be byte-identical.
 //
 // **Not a round trip.** Both builds use the *embedded* seed, so this does not prove the new compiler
-// can build itself — that is what actually running `deno task seed` and then this test again shows,
+// can build itself — that is what actually running `wac task seed` and then this test again shows,
 // and the sequence is: seed, run the suite, seed again. What it does catch is the failure that would
 // otherwise be found by a stale artefact months later: a wacc whose output depends on something
 // other than its input.
@@ -50,7 +50,7 @@ string workDir(Cli cli) {
   return "/tmp/wac-selfhost" + (who == "" ? "" : "-" + who);
 }
 
-/** The binary running this test — the same one that would run `deno task seed`. */
+/** The binary running this test — the same one that would run `wac task seed`. */
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 /**
@@ -131,7 +131,7 @@ u8[] read(Cli cli, string path) {
 export string test_the_compiler_builds_itself_to_a_fixed_point(Core core, Cli cli) {
   T t = T.create();
   Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary under test is where `deno task seed` writes it: " + binary(cli));
+  t.isTrue(bin.exists, "the binary under test is where `wac task seed` writes it: " + binary(cli));
   if (!bin.exists) { return t.report(); }
 
   string work = workDir(cli);

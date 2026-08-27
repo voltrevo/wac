@@ -1,6 +1,6 @@
 // The whole shell corpus, through **three filesystem backings**, as three spawned binaries.
 //
-//   deno task corpus:backings [--from N] [--count N]
+//   wac task corpus:backings [--from N] [--count N]
 //
 // **The gate runs this comparison now**, over the same 946 scripts, in
 // `packages/box/test/wac/backings_test.wac` — three `Fs` values inside one process, about a second and a

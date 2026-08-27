@@ -21,7 +21,7 @@
 //
 // **A number that low is a claim about the tests, and here it was a fact about the harness.** Writing
 // two hundred pins saying "the server is untested" would have been false, and writing none would have
-// left `deno task coverage:tls` unable to notice the server actually going untested later.
+// left `wac task coverage:tls` unable to notice the server actually going untested later.
 //
 // ## Why this can exist at all
 //

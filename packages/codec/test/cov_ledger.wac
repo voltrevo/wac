@@ -1,7 +1,7 @@
 // codec's coverage, and the argument for the one point nothing reaches.
 //
-//   deno task coverage:codec
-//   deno task coverage:codec --verbose
+//   wac task coverage:codec
+//   wac task coverage:codec --verbose
 //
 // **189 of 190**, and the one below is a total function's unused arm rather than a gap. Two-way
 // ratchet over `tools/wac/covledger.wac`: anything not listed here must be covered, and anything

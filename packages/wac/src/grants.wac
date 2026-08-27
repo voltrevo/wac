@@ -121,6 +121,13 @@ export Asked forCommand(string cmd) {
   // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
   // handed what its parent does not hold, so narrowing here would cap what a built program declared.
   if (cmd == "app-run") { return Asked(true, true, true, true, true); }
+  // **`task` keeps everything, for the same reason `run` and `test` do**: it starts a command line
+  // out of `tasks.json5`, and a child cannot be handed what its parent does not hold — so narrowing
+  // here would decide, on behalf of every task, what tasks are allowed to be. A repository's tasks
+  // compile, spawn, write and fetch; the ones here do all four. `packages/wac/src/tasks.wac` sets out
+  // why the grants are one set rather than one per task, and the narrowing that is real is the
+  // caller's: `wac task` intersects with what this process already holds and cannot widen it.
+  if (cmd == "task") { return Asked(true, true, true, true, true); }
   // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
   // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
   // though the two now live in one program.

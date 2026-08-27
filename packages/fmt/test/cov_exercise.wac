@@ -1,7 +1,7 @@
 // Branch coverage for fmt: the exercises, and nothing else.
 //
-//   deno task coverage:fmt
-//   deno task coverage:fmt --verbose
+//   wac task coverage:fmt
+//   wac task coverage:fmt --verbose
 //
 // Formatting and parsing are driven from one entry point and the bignum only through them. The
 // exercises are chosen to hit the paths the committed tests hit — random bit patterns across the whole

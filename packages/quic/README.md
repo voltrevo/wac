@@ -5,7 +5,7 @@ QUIC server**, over a socket of its own, with a key it generated. Two datagrams 
 carrying a ClientHello we wrote, and a Handshake carrying our Finished. Deno's `accept()` yields a
 connection. design/system 0007 step 4, done 2026-08-13.
 
-    deno task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
+    wac task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
     deno run -A --unstable-net handshake.js 127.0.0.1 4433 localhost
 
 `src/client.wac` is the client — through the handshake and into the application epoch, where

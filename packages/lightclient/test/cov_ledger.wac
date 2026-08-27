@@ -1,7 +1,7 @@
 // lightclient's coverage.
 //
-//   deno task coverage:lightclient
-//   deno task coverage:lightclient --verbose
+//   wac task coverage:lightclient
+//   wac task coverage:lightclient --verbose
 //
 // **169 of 219 — 77.2%** on the first run. `issues/system/0205`.
 //

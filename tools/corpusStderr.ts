@@ -1,6 +1,6 @@
 // Our standard error against bash's, for the whole shell corpus.
 //
-//   deno task corpus:stderr [--from N] [--count N]
+//   wac task corpus:stderr [--from N] [--count N]
 //
 // **Nothing compared standard error until this existed.** `packages/sh/test/differential.test.ts`
 // runs every corpus script through bash and through this shell and asserts stdout and the exit

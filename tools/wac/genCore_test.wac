@@ -1,11 +1,11 @@
 // `core`'s two embeddings are the ones `core/` generates.
 //
-// `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac` are written by `deno task gen:core`
+// `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac` are written by `wac task gen:core`
 // from `core/read.wac` and `core/jsx.wac` — the reference gets the first, wacc gets both, and which
 // compiler gets a declaration is said by which file it is in. `core/README.md` is the argument.
 //
-// **This is here because nothing else runs the check.** `deno task gen:core --check` answers it,
-// and `deno task docs` is not the gate — `tools/push.sh` runs the suite. A generated file whose
+// **This is here because nothing else runs the check.** `wac task gen:core --check` answers it,
+// and `wac task docs` is not the gate — `tools/push.sh` runs the suite. A generated file whose
 // generator nobody runs is two files drifting apart with a comment claiming they cannot, which is
 // the state this replaced: two hand-maintained embeddings of the same declarations.
 //
@@ -13,18 +13,19 @@
 // second implementation of the generator and the two could then disagree about what "in step"
 // means.
 
+import { binaryPath } from "../../packages/wactest/src/host.wac";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 
 export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.exec("deno", string[]("task", "gen:core", "--check"), u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), string[]("task", "gen:core", "--check"), u8[0]()).wait();
   t.isTrue(r.ran(), "deno ran — " + r.error);
   if (!r.ran()) { return t.report(); }
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.eqI32(r.status, 0,
-          "`deno task gen:core --check` — run `deno task gen:core`:\n" + said);
+          "`wac task gen:core --check` — run `wac task gen:core`:\n" + said);
   // The message on success, so a check that started answering nothing at all is not read as a pass.
   if (r.status == 0) {
     t.isTrue(contains(said, "in step"), "and it says so — got \"" + said + "\"");

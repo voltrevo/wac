@@ -1,7 +1,7 @@
 // wactest's coverage, and the inverse of everything else in this sweep.
 //
-//   deno task coverage:wactest
-//   deno task coverage:wactest --verbose
+//   wac task coverage:wactest
+//   wac task coverage:wactest --verbose
 //
 // **134 of 473 — 28.3%**, the lowest number `issues/system/0205` has produced, over the package every
 // other package's tests are built on.

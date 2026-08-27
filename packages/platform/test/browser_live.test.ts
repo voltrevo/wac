@@ -15,7 +15,7 @@
 //
 // The browser lands in `~/.cache/ms-playwright`, which is what the guard looks for. Deno pulls
 // the JavaScript half itself on first run. Then run it with **`deno test -A`** — nothing narrower
-// works: `deno task test` withholds `--allow-sys`, and granting only that is not enough either,
+// works: `wac task test` withholds `--allow-sys`, and granting only that is not enough either,
 // because `playwright-core` reads `/proc/sys/fs/binfmt_misc/WSLInterop` through `node:fs` and Deno
 // gates that on blanket access. The guard skips rather than fails, and **says why on standard error**,
 // because a silent skip reads as coverage. Chromium 151 on arm64 works — issue 0016 warned the
@@ -45,11 +45,11 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
  * Whether this run can drive a browser at all: one has to be installed, and Playwright needs
  * a permission the shared suite does not grant.
  *
- * `deno task test` runs with read, write, run, net and env — not `--allow-sys`, which
+ * `wac task test` runs with read, write, run, net and env — not `--allow-sys`, which
  * `playwright-core` needs at *import* time to work out where Chrome keeps its profile. Rather
  * than widen the permissions of every test in the repo for one that is usually skipped, this
  * asks, and the answer decides. So the live test runs under `deno test -A` and is ignored by
- * `deno task test`, which is the right way round: the shared suite should not be the thing
+ * `wac task test`, which is the right way round: the shared suite should not be the thing
  * that needs a browser.
  */
 function canDriveBrowser(): string {
@@ -78,7 +78,7 @@ function canDriveBrowser(): string {
  * The check is a *string* rather than a bool for the same reason. It also has to answer more than
  * "is Chromium there": granting `--allow-sys` alone is not enough, because `playwright-core` reads
  * `/proc/sys/fs/binfmt_misc/WSLInterop` through `node:fs`, which Deno gates on blanket access — so
- * adding `--allow-sys` to `deno task test` turns this from a clean skip into a red suite, which is
+ * adding `--allow-sys` to `wac task test` turns this from a clean skip into a red suite, which is
  * exactly what happened when I tried it. `deno test -A` is the way to run it, and saying so here is
  * worth more than a comment in the header nobody reads at the moment they need it.
  */

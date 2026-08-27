@@ -12,7 +12,7 @@
 //
 // ## What this file is, and what the task is
 //
-// `deno task corpus:stderr` is the whole 821 and takes minutes; it fails on a difference that is not
+// `wac task corpus:stderr` is the whole 821 and takes minutes; it fails on a difference that is not
 // pinned *and* on a pin that has gone stale. This is the fast half: the 27 that still differ, checked
 // to still differ **in the recorded way**.
 //
