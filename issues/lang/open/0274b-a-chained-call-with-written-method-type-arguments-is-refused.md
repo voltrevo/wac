@@ -163,6 +163,16 @@ for method instances rather than assuming they are a suffix of the table.
 
 The second is smaller and does not disturb the rounds. It is what I would try first.
 
+**The first was tried and it produced a compiler that traps.** Naming every round and adding the
+entries once at the end is the obvious reading of "make them a suffix", and it builds to a fixed
+point and then traps on its first use — the function table is self-consistent enough for the compiler
+to compile itself and wrong for everything else. `deno task seed` reports success for that, which is
+`issues/system/0273b`; the way out is `deno task seed:bootstrap`.
+
+So the naming and the adding cannot simply be separated: something in the rounds depends on the entry
+existing, not merely on the instantiation being named. Whatever that is, it has to be found before
+this shape can work — which is another argument for the separate cursor instead.
+
 ### The earlier measurement, kept because it is how the first half was found
 
 Both questions above are answered, and the answer is narrower than either guess:
