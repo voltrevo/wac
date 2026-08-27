@@ -2421,6 +2421,28 @@ export struct Env {
    */
   i32[] fieldTyFiles;
 
+  /**
+   * For each constant, the file whose token array its initialiser expression indexes.
+   *
+   * `constInits` is written once, by the pass that declares constants, and read in six places while
+   * the module is emitted — all of which have only the blob's `src`/`lexed` in scope. That is fine
+   * while there is one array and wrong the moment there are many: `packages/box` declined with array
+   * types named `array "./applets/uniq.wac"[]`, which is an initialiser read at another file's
+   * offsets.
+   */
+  i32[] constInitFiles;
+
+  /**
+   * The per-file sources and lexes, so a *later* phase can resolve something an earlier one recorded.
+   *
+   * This is the general form of the two tables above, and the shape "analysis from `map<path, ast>`"
+   * actually takes: anything stored as tokens now and resolved later has to carry the file it came
+   * from, and the resolver has to have somewhere to look that file up. Empty while the emitter walks
+   * a concatenated source, in which case every lookup falls back to the blob and nothing changes.
+   */
+  u8[][] fileSrcs;
+  Lexed?[] fileLexeds;
+
   /** Whether the local at `i` is a promoted cell. */
   bool localIsCell(const this, i32 at) {
     return at >= 0 && at < this.localCell.len() && this.localCell[at];
@@ -2650,7 +2672,7 @@ export struct Env {
                false, string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
                i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false, 0 - 1,
-               i32[16384]());
+               i32[16384](), i32[4096](), u8[][0](fill: u8[0]()), Lexed?[0]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -4396,11 +4418,34 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   } else {
     scanTokenTypes(env, src, lexed);
   }
-  // **Off. Three causes found, one left.** See the commit for the two that are fixed; what remains
-  // is a cross-file token read during emission that `packages/box` and `packages/git` reach and
-  // `packages/sh` does not — it surfaces as array types registered from garbage names (`array ][]`,
-  // `array from[]`), which is a token index read against another file's source.
-  collectDeclarations(env, src, lexed, prog, -1);
+  if (fileCountOf(progs) > 0) {
+    env.prog = prog;
+    // So a later phase can resolve what an earlier one recorded — see `Env.fileSrcs`.
+    env.fileSrcs = srcs;
+    env.fileLexeds = lexeds;
+    for (i32 i = 0; i < progs.len(); i++) {
+      if (progs[i] is null) { continue; }
+      env.curFile = i;
+      declareStructs(env, srcs[i], lexeds[i]!, progs[i]!, i);
+    }
+    env.curFile = 0 - 1;
+    resolveStructRefs(env, src, lexed, srcs, lexeds);
+    for (i32 i = 0; i < progs.len(); i++) {
+      if (progs[i] is null) { continue; }
+      env.curFile = i;
+      declareConsts(env, srcs[i], lexeds[i]!, progs[i]!, i);
+    }
+    for (i32 i = 0; i < progs.len(); i++) {
+      if (progs[i] is null) { continue; }
+      env.curFile = i;
+      declareFuncs(env, srcs[i], lexeds[i]!, progs[i]!, i);
+    }
+    env.curFile = 0 - 1;
+    declareBodyTypes(env, src, lexed, prog, 0 - 1);
+    collectInstances(env, src, lexed, prog);
+  } else {
+    collectDeclarations(env, src, lexed, prog, -1);
+  }
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
   // it is an ordinary call and the renumbering counts it. Named with a space, which no wac identifier
@@ -5495,14 +5540,14 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     for (i32 i = 0; i < env.constCount; i++) {
       if (env.constGlobal[i] != g) { continue; }
       writeValType(globals, env, env.constTypes[i]);
-      bool here = !(env.constInits[i] is null) && isConstExpr(src, lexed, env, env.constInits[i]!);
+      bool here = !(env.constInits[i] is null) && isConstExpr(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!);
       // Immutable is what a `const` is, and what it can be only when its value can be written here.
       // The rest are mutable and null until the start function has run, which is the one moment
       // anything is allowed to write them.
       globals.byte(here ? 0 : 1);
       if (here) {
         env.inConstExpr = true;
-        emitExprAt(globals, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
+        emitExprAt(globals, cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!, env.constTypes[i]);
         env.inConstExpr = false;
       }
       if (!here) { emitDefault(globals, env, env.constTypes[i]); }
@@ -7468,7 +7513,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       if (env.constInits[ci] is null) { return; }
-      emitExprAt(fb, src, lexed, env, env.constInits[ci]!, env.constTypes[ci]);
+      emitExprAt(fb, cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!, env.constTypes[ci]);
     }
     case Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
@@ -11201,7 +11246,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         return env.constGlobal[ci] >= 0 ? "" : "a constant whose value is not a constant expression";
       }
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
-      return unsupportedValue(src, lexed, env, env.constInits[ci]!);
+      return unsupportedValue(cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!);
     }
     case Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     case Binary(op, left, right): {
@@ -12444,6 +12489,7 @@ void declareConsts(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         env.constGlobal[env.constCount] = -1;
         env.constTypes[env.constCount] = typeOfTyName(env, src, lexed, type);
         env.constInits[env.constCount] = init;
+        env.constInitFiles[env.constCount] = env.curFile;
         env.constCount = env.constCount + 1;
       }
       else: { }
@@ -12553,6 +12599,18 @@ i32 fileOfKey(Env env, string key) {
     if (env.declKeys[i] == key) { return env.declFiles[i]; }
   }
   return 0 - 1;
+}
+
+/** The source a constant's initialiser was written in, or the blob. */
+u8[] cSrc(Env env, u8[] blob, i32 ci) {
+  i32 fi = ci < env.constInitFiles.len() ? env.constInitFiles[ci] : 0 - 1;
+  return srcFor(env.fileSrcs, blob, fi);
+}
+
+/** Its lex, likewise. */
+Lexed cLex(Env env, Lexed blob, i32 ci) {
+  i32 fi = ci < env.constInitFiles.len() ? env.constInitFiles[ci] : 0 - 1;
+  return lexFor(env.fileLexeds, blob, fi);
 }
 
 /** That file's source, or the blob when there is no per-file set. */
@@ -13078,7 +13136,7 @@ bool needsStartFunction(Env env, u8[] src, Lexed lexed) {
   for (i32 i = 0; i < env.constCount; i++) {
     if (env.constGlobal[i] < 0) { continue; }
     if (env.constInits[i] is null) { continue; }
-    if (!isConstExpr(src, lexed, env, env.constInits[i]!)) { return true; }
+    if (!isConstExpr(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!)) { return true; }
   }
   return false;
 }
@@ -13096,8 +13154,8 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
   for (i32 i = 0; i < env.constCount; i++) {
     if (env.constGlobal[i] < 0) { continue; }
     if (env.constInits[i] is null) { continue; }
-    if (isConstExpr(src, lexed, env, env.constInits[i]!)) { continue; }
-    emitExprAt(insns, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
+    if (isConstExpr(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!)) { continue; }
+    emitExprAt(insns, cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!, env.constTypes[i]);
     insns.byte(36);   // global.set
     insns.u32leb(env.constGlobal[i]);
   }
@@ -13130,7 +13188,8 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
     // arithmetic, no call, no concatenation — and a constant it cannot express is not a constant it
     // cannot *have*: the global is declared mutable and assigned at instantiation instead. What
     // still has to hold is that the initialiser is an expression this emitter can emit at all.
-    if (unsupportedValueAt(src, lexed, env, env.constInits[i]!, env.constTypes[i]) != "") { continue; }
+    if (unsupportedValueAt(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!,
+                           env.constTypes[i]) != "") { continue; }
     env.constGlobal[i] = next;
     next = next + 1;
   }
