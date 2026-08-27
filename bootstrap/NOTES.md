@@ -423,3 +423,26 @@ job in 641 ms, which is *faster* than the reference doing the same job.
 
 The 410 ms that builds the ladder is paid once per process and buys the thing the reference
 charges 19,499 lines of trusted code for.
+
+## What the corpus numbers do and do not say
+
+Two numbers in this repository look alike and mean different things, and I conflated them for a
+while.
+
+**296 of 296** is the *corpus differential*: `ts/corpus_differential.ts` compiles every entry point
+with the wacc wac-L5 built and with the wacc that one built, and the two agree byte for byte. Both
+sides of that comparison are wacc. It is a strong statement — it is the fixed-point argument, and
+it is what caught the `i64.const -1` literal bug — but it is a statement about the *compiler
+wac-L5 produced*, not about wac-L5.
+
+**81 of 296** is what wac-L5 itself compiles and validates. That is the number to quote when the
+question is how much of wac this rung covers.
+
+The gap is mostly one feature. Of the 213 entry points wac-L5 refuses, 44 stop at a `[` and 40 at
+an `=` — both the shape of a module-level `const`, which is not consumed at the top level and so
+shifts the declaration by a token. There are **251 such declarations in the corpus and none in
+wacc or `core`**, which is the whole reason it survived: the ladder was built to compile one
+program, and that program does not use it.
+
+Left as it is, deliberately. wac-L5 is the minimum that compiles wacc, and a feature added here has
+to be paid for in the rung below as well.

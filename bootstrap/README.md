@@ -9,8 +9,10 @@ The question is a number, and this repository exists to produce it rather than t
 **It works, and it lands where wac's own bootstrap lands.** The ladder compiles
 `packages/wacc/src` — 37,873 lines of real wac — into a wasm module the engine accepts, and that
 module compiles wac's own source again. All 252 of wac's `spec/cases` come out exactly as their
-expectations say, and the two compilers produce byte-identical output for all 296 of the corpus's
-entry points. There is no historical wasm anywhere in the chain: an assembler written twice from a
+expectations say, and the two *wacc builds* produce byte-identical output for all 296 of the
+corpus's entry points — which is a statement about the compiler wac-L5 built, not about wac-L5.
+What wac-L5 itself compiles is `packages/wacc/src` and `core`, and that is on purpose: see
+**What wac-L5 is not** below. There is no historical wasm anywhere in the chain: an assembler written twice from a
 written format, an interpreter, four compilers, and then the real compiler reproducing itself.
 
 **And it is the same wacc wac's own TypeScript bootstrap reaches, byte for byte.** The first rungs
@@ -26,6 +28,32 @@ Three commands say so, and each is a test rather than a claim:
     deno run -A ts/spec_cases.ts              # 252 of wac's spec cases, through the built wacc
     deno run -A ts/corpus_differential.ts     # the whole corpus, two compilers, compared
     deno run -A ts/same_fixed_point.ts        # and the same fixed point as wac's own bootstrap
+
+## What wac-L5 is not
+
+**It is the minimum that compiles wacc, and not a wac compiler.** That is the whole design: the
+ladder exists to reach `packages/wacc/src`, and every feature beyond what those 37,873 lines use is
+a feature the rung below has to pay for too. Pointed at the wider corpus, 81 of 296 entry points
+compile and validate.
+
+The shortcuts, so nobody has to discover them:
+
+- **`import` is ignored.** The driver flattens the module graph and wac-L5 skips the line, because
+  resolving a path is a file read and no wac-L4 program can do one — wacc does it in `files.wac`.
+  So there is no module system here, and the flattener does the linking, including renaming the
+  private declarations of two modules that chose the same name.
+- **`export` is honoured for functions and nothing else.** Structs, enums and globals ignore it,
+  since there are no modules for a name to be private to. `main` is exported whatever it says.
+- **A module-level `const` is refused**, and refused badly: `const` is not consumed at the top
+  level, so `const u32[] K = …` is read as a global named `u32` and `K` is lost, which surfaces as
+  an unresolved name wherever it is used. 251 declarations in the corpus are written this way and
+  **none in wacc or `core`**, which is exactly why it went unnoticed. Doing it properly needs a
+  `start` section and a function per initialiser, because wac's initialiser is an expression and
+  wasm's global takes a constant.
+- **`const` everywhere else is read and dropped** — `const this`, const locals, const parameters.
+  Harmless: `const` is a permission, and violating one is an error this rung does not diagnose.
+- **`?` is dropped** except where it decides a sized array's default element.
+- **There is no type checker**, which is the one omission that is not a shortcut — see below.
 
 ## The answer to the question
 
@@ -76,7 +104,7 @@ Its compiler is the last program in the chain, and compiling `packages/wacc/src`
 `wacc.wasm` — after which wac is self-hosting, as it already is today.
 
 **Every stage exists.** Real wac syntax, its type system, generics by monomorphisation,
-and enough of the surface that the corpus compiles. Structs with `const this` methods,
+and enough of the surface that **wacc** compiles. Structs with `const this` methods,
 enums with comma-separated variants, `match` as both a statement and an expression, arrays, `u8[]`,
 reference globals — compiled through six languages and two interpreters.
 
@@ -121,7 +149,7 @@ which `design/lang/0003` calls the instrument behind most of this year's defects
 The instruments are worth naming, because each was built for a failure the one before it could not
 see:
 
-    ts/against_real_wac.ts     every corpus entry point through wac-L5: refused, or assembled, or
+    ts/against_real_wac.ts     an entry point through wac-L5 itself: refused, or assembled, or
                                validated — with the function count beside the byte count, because a
                                file of nothing but generic declarations emits nothing and validates
     ts/first_refusal.ts        what wac-L5 would not read, which function it is in, and how many
@@ -157,7 +185,7 @@ Cold, the whole chain builds in under two seconds, and building wacc with it tak
         -> wac-L2 -> wac-L3 -> wac-L4 -> wac-L5
           -> wacc                          661,626 bytes, from 37,873 lines of wac
             -> wacc again                  681,417 bytes, in three quarters of a second
-              -> and the two agree byte for byte on all 296 corpus entry points
+              -> and those two agree byte for byte on all 296 corpus entry points
 
 **No type checker, and none missing.** wasm validation is one, and it is total: every wac-level
 type error is refused before the program runs, by the engine or by the compiler's own refusal
