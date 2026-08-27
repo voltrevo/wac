@@ -96,6 +96,57 @@ Enough of a Lisp to write programs in, and it is tested by running 26 of them (`
 
 `(def fib (fn (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 15)` answers 610.
 
+## Does L1 earn its place?
+
+The whole ladder from cold, nothing cached:
+
+    assemble + compile L1 (hand-written)           9 ms
+    L1 runs the L2 compiler on L3's compiler     314 ms
+    assemble + compile L3's compiler               6 ms
+    L3 compiles L4's compiler                      3 ms
+    assemble + compile L4's compiler               8 ms
+    L4 compiles a program                          1 ms
+                                                 341 ms
+
+**Interpretation is about a hundred times slower and it does not matter**: 314 ms for 452 lines
+interpreted, against 3 ms for 1,003 lines compiled. One stage, a third of a second, once per cold
+checkout. (An earlier reading of mine said interpreted and compiled were the same speed. That
+measurement included building the whole chain, so it was mostly measuring the chain.)
+
+And L1's 1,630 instructions divide like this:
+
+    the reader                 353
+    symbols                    138
+    objects                     78
+    allocation + fixnums        59      -- 628 of substrate
+    the evaluator              785
+    starting up                145      -- 930 of interpreter
+    the demonstration           68
+
+**628 of those you would write anyway.** Any s-expression program written by hand in L0 — including a
+hand-written L2 compiler — needs the same reader, the same heap and the same interned symbols. The
+interpreter proper is the other ~930, and what it buys is that L2's compiler is **200 lines of Lisp**
+rather than assembly.
+
+Written directly in L0, L2's compiler would be those same 628 instructions plus 200 lines of dense
+Lisp expanded into assembly — one to two thousand more. So the hand-written budget is break-even at
+best, for a single-purpose program instead of a general-purpose interpreter.
+
+**The real reason L1 is there is the reader.** 353 instructions, and they are the last parser anyone
+has to write by hand: every rung above receives a tree.
+
+## Which makes L2 the rung worth questioning, not L1
+
+L2 buys a *compiled* language to write L3's compiler in. At these sizes that is worth 3 ms against
+700 ms, which is nothing — so its real justification is that writing a C-family lexer and a
+recursive-descent parser in a Lisp with no arrays, no structs and no local mutation is unpleasant.
+Tokens would be a list walked by a global cursor.
+
+That is a fair reason and a soft one. L2 is 200 lines and a spec, and it could be dropped by writing
+L3's compiler in L1 directly. It is not being dropped, because it exists and works and each rung is
+one more place a mistake is caught early — but it should be described as a convenience rung rather
+than a necessary one, and now it is.
+
 ## What the second rung proved, and what it cost
 
 `ts/l2_test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
