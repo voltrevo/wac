@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>wacboot — the ladder, in a page</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, monospace; margin: 2rem auto; max-width: 46rem; }
+  textarea { width: 100%; height: 11rem; font: inherit; }
+  #out { white-space: pre-wrap; margin-top: 1rem; }
+  .why { color: #555; }
+</style>
+
+<h1>wacboot</h1>
+<p class="why">
+  wac-L0's assembler builds wac-L1's interpreter, which runs wac-L2's compiler, which builds
+  wac-L3's, which builds wac-L4's, which builds wac-L5's — and wac-L5 compiles the program below.
+  Nothing here was compiled ahead of time: the rungs are fetched as source and built in the page.
+</p>
+
+<textarea id="src">
+struct Point { i32 x; i32 y; }
+
+enum Shape { Dot(Point p), Line(Point a, Point b) }
+
+i32 span(Shape s) {
+  match (s) {
+    case Dot(p): { return p.x + p.y; }
+    case Line(a, b): { return (b.x - a.x) + (b.y - a.y); }
+  }
+  return 0;
+}
+
+i32 main() {
+  string label = "hello" + " " + "world";
+  i32[] ns = i32[4](fill: 3);
+  return span(Shape.Line(Point(1, 2), Point(11, 22))) + label.len() + ns[3];
+}
+</textarea>
+
+<p><button id="go">compile and run</button></p>
+<div id="out" data-status="idle"></div>
+
+<script type="module">
+  import { compileAndRun } from "../hosts/browser.js";
+
+  const out = document.getElementById("out");
+
+  async function go() {
+    out.textContent = "building the ladder…";
+    const started = performance.now();
+    try {
+      // The base has to be absolute — `new URL(p, "../")` is not a thing — and `import.meta.url`
+      // is the one absolute URL a module always has, whatever it was served from.
+      const base = new URL("../", import.meta.url);
+      const r = await compileAndRun(base, document.getElementById("src").value);
+      const ms = Math.round(performance.now() - started);
+      out.textContent =
+        `main() = ${r.answer}\n\n` +
+        `${r.l0.split("\n").length} lines of wac-L0, ${r.wasm.length} bytes of wasm, ${ms} ms\n`;
+      out.dataset.status = "ok";
+    } catch (e) {
+      out.textContent = String(e);
+      out.dataset.status = "failed";
+    }
+  }
+
+  document.getElementById("go").onclick = go;
+
+  // **Runs itself when asked to.** `?auto=1` is how a headless browser drives this without a
+  // click, which is what makes the browser a test rather than a demonstration — see
+  // `ts/browser_test.ts`. Without the parameter the page waits, so a person can edit first.
+  if (new URLSearchParams(location.search).has("auto")) go();
+</script>

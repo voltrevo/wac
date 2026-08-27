@@ -83,7 +83,7 @@ and its host.
 
 ---
 
-## The browser — **open**
+## The browser — **done**
 
 Mostly follows from the port. What has to be true:
 
@@ -93,9 +93,18 @@ Mostly follows from the port. What has to be true:
 - **Memory.** wac-L5 asks for 512 pages, 32 MiB. Unremarkable.
 - **No `Deno.*`, no `node:*`.** Which is the port's whole point.
 
-**Deliverable:** a page that compiles a wac program and runs it, and — if a headless browser is
-available here — a test that does the same. Otherwise the Node host is the proxy, since the two
-differ only in where the bytes come from.
+**Done.** `hosts/browser.js` is `fetch` and nothing else; `web/index.html` fetches the five rung
+sources, builds every rung in the page and runs the program. `ts/browser_test.ts` drives it under
+Playwright's Chromium with `--dump-dom` and checks the answer — 819 ms, and it skips when that
+browser is not on the machine.
+
+Two things worth keeping from doing it:
+
+- **`canonical` being optional earned its keep.** A browser has no notion of a real path, so it
+  supplies only `read`, and a diamond is visited twice rather than once. That costs a little work
+  and changes no answer.
+- The browser found a bug in the page within one run: `new URL(p, "../")` is not a thing, a base
+  has to be absolute. `import.meta.url` is the one absolute URL a module always has.
 
 ---
 
@@ -311,6 +320,8 @@ never declared with `tyname` silently remapping it; `overflowed` stops the parse
 - Two benchmarks, one per host, including the assemble step.
 - The three unexercised features pinned, which found one defect.
 - Node 22 verified to run wasm GC, so the Node host is feasible.
+- **Acceptance criterion 3 is met.** The ladder builds and runs a wac program inside Chromium,
+  with no filesystem and no host API, and it is a test.
 - The assembler, the ladder and the flattener are portable JavaScript. `js/` touches no file;
   `flatten` takes the host as two methods rather than a filesystem.
 - **Acceptance criterion 2 is met.** `hosts/deno.js`, `hosts/node.js` and `rust-ladder/` each
