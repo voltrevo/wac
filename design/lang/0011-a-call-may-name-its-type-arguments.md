@@ -369,6 +369,12 @@ rather than stylistic, so they are recorded there and repeated here:
   `b.map` before `parsePostfix` sees it, so `b.map<i64>(f)` goes through `parseConstructionOrCall`
   and `b.inner().map<i64>(f)` through `parsePostfix`. Fixing one and testing with the other spelling
   is a way to conclude the change did not work.
+- **Widening a parser rule can strand an error code.** `perrCtorBrace` had exactly one input in the
+  whole suite — `return S<i32>;` — put there by a mutation sweep that found the code unreachable
+  otherwise. Step 2 took it: that source is a `TypeName` now. The code survives on the degenerate
+  `S<>`, where `parseTypeArgs` returns nothing, but that had to be *looked for* rather than assumed,
+  and the two parsers disagree about where it is. When a rule starts claiming inputs, ask which
+  diagnostics used to own them.
 - **A neighbouring gap, filed as `issues/lang/0272b`:** `(x < 2) > 0` type-checks and evaluates the
   `bool` as `1`, where `b > y` on a `bool` local is correctly refused. Found writing case 0238, which
   was rewritten not to depend on it.
