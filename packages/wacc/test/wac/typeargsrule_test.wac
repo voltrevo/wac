@@ -16,7 +16,10 @@
 // affordable and is recorded in the design document rather than here, because it is a fact about
 // today's corpus and this is a fact about the language.
 //
-// **Under a second.** Six short sources through the checker, no emit, no subprocess.
+// **2.8s**, measured 2026-08-27, and most of it is the last test. Sixteen short sources through the
+// checker cost almost nothing; five of them are also *emitted*, because whether a written type
+// argument and an inferred one land on one instantiation shows in the module's size and nowhere in
+// what the program answers. No subprocess either way.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { contains } from "../../../wactest/src/strings.wac";
