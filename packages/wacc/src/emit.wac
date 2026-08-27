@@ -3445,6 +3445,22 @@ struct Front {
   u8[] src;
   Lexed lexed;
   Program prog;
+  /**
+   * **The same program, per file** — `srcs[i]`, `lexeds[i]` and `progs[i]` are the file
+   * `filePathsOf[i]` names, in link order.
+   *
+   * `src`/`lexed`/`prog` above are the concatenation of all of them, which is what the emitter has
+   * always walked. Both are here while the walks move across one at a time; the invariant that makes
+   * that safe is that the blob's declarations **are** each file's declarations in link order, so a
+   * nested loop visits the same declarations in the same sequence. What checks it is the output:
+   * every step of this migration is verified by `packages/json` and `packages/box` hashing the
+   * same with the cache off, and by the seed reaching a fixed point.
+   */
+  u8[][] srcs;
+  Lexed?[] lexeds;
+  Program?[] progs;
+  string[] filePathsOf;
+  i32 fileCount;
   /** The linker's tables, which the blocked walk still reads after the `Env` is built. */
   i32[] starts;
   i32[] edges;
@@ -3461,11 +3477,15 @@ Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  u8[][] srcs = u8[][1024](fill: u8[0]());
+  Lexed?[] lexeds = Lexed?[1024]();
+  Program?[] progs = Program?[1024]();
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                          srcs, lexeds, progs);
   if (blob == "") { return null; }
-  return frontOfRaw(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)),
-                    starts, edges, names, filePaths, false, false, Env.create());
+  return frontOfRawIn(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)),
+                      starts, edges, names, filePaths, false, false, Env.create(),
+                      srcs, lexeds, progs);
 }
 
 export string bindTypesLinked(string[] paths, string[] sources, Res res, string entry) {
@@ -4251,8 +4271,16 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
  * answer differently for a full table — `blockedOf` reports `env.fullWhy` — and the emitter's own
  * `ambiguous || full` check after settling still catches it.
  */
+/** `frontOfRawIn` with no per-file trees — for the callers that have only a source. */
 Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                  string[] filePaths, bool checked, bool covered, Env envIn) {
+  return frontOfRawIn(src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn,
+                      u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+}
+
+Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
+                   string[] filePaths, bool checked, bool covered, Env envIn,
+                   u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
@@ -4282,7 +4310,16 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
     env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
-  collectDeclarations(env, src, lexed, prog);
+  // **Still the blob, and the next step is not a loop around this call.** `collectDeclarations` is
+  // three *ordered* passes over every declaration — structs, then a fixpoint that resolves parents,
+  // then constants, then functions — and the comments inside say so: "Structs first of all",
+  // "Function names first, over the whole file". Calling it once per file interleaves them into
+  // file0-structs, file0-consts, file0-funcs, file1-structs, and the compiler that comes out traps.
+  // Measured on 2026-08-27, which is how the passes came to be written down here.
+  //
+  // Going per-file means inverting the loops — files *inside* each pass — so the phase has to be
+  // decomposed into its passes first. That is the next step.
+  collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
   // it is an ordinary call and the renumbering counts it. Named with a space, which no wac identifier
@@ -4434,7 +4471,9 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
     }
   }
 
-  return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
+  i32 fileCount = fileCountOf(progs);
+  return Front(env, src, lexed, prog, srcs, lexeds, progs, filePaths, fileCount,
+               starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
 
 u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
@@ -12135,7 +12174,27 @@ void collectArrayTypesIn(Env env, u8[] src, Lexed lexed, Param[] params, Stmt[] 
   env.localCount = saved;
 }
 
-void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
+/** How many per-file trees a caller supplied; 0 means it has only the blob. */
+i32 fileCountOf(Program?[] progs) {
+  i32 n = 0;
+  for (i32 i = 0; i < progs.len(); i++) { if (progs[i] is not null) { n = n + 1; } }
+  return n;
+}
+
+/** The file a token belongs to: the caller's, or the blob's line arithmetic when there is none. */
+i32 fileFor(Env env, Lexed lexed, i32 tok, i32 file) {
+  return file >= 0 ? file : env.fileOf(tokenLine(lexed, tok));
+}
+
+/**
+ * Register every top-level name.
+ *
+ * `file` is the index of the file `prog` came from, or **-1 for the concatenated blob**, where a
+ * declaration's file is still recovered from its line. The two cannot be mixed: with a per-file
+ * `lexed`, `tokenLine` answers the file's own line, and `fileOf` would map line 5 of the third file
+ * onto whatever file line 5 of the *blob* fell in.
+ */
+void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // Kept, so a call to a generic function can read the declaration it names from wherever it is seen.
   env.prog = prog;
   // **A string literal names the `i8[]` type**, and nothing else in the file need mention it: a bare
@@ -12164,7 +12223,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string sname = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
+        string sname = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
         if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
         if (env.structCount < env.structNames.len()) {
@@ -12198,7 +12257,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       // another variant's payload, without either being reachable by accident.
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string ename = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
+        string ename = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
         if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
         if (env.structCount < env.structNames.len()) {
@@ -12219,7 +12278,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         for (i32 v = 0; v < variants.len(); v++) {
           // A variant is reachable exactly when its enum is.
           string vname = env.declare(tokenTextOf(src, lexed, variants[v].nameTok),
-                                     env.fileOf(tokenLine(lexed, variants[v].nameTok)), exported);
+                                     fileFor(env, lexed, variants[v].nameTok, file), exported);
           if (env.variantCount >= env.variantNames.len()) { env.ranOut("enum variants"); }
           if (env.variantCount < env.variantNames.len()) {
             env.variantNames[env.variantCount] = vname;
@@ -12302,7 +12361,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.ranOut("constants");
           continue;
         }
-        string cname = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
+        string cname = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
         env.constNames[env.constCount] = cname;
         env.constGlobal[env.constCount] = -1;
@@ -12322,7 +12381,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         if (typeParams.len() > 0) { continue; }
         string[] pts = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(env, src, lexed, params[i].type); }
-        string fname = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
+        string fname = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
         env.addFunc(fname, typeOfTyName(env, src, lexed, returnType), pts);
       }
@@ -12743,7 +12802,7 @@ string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
     env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
-  collectDeclarations(env, src, lexed, prog);
+  collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **The lambda walk, because `settleEmittable` asks about lambdas** — `issues/lang/0139`.
   // `unsupportedExpr` answers by looking a lambda up in the tables this walk fills, so without it
