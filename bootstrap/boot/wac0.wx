@@ -385,7 +385,19 @@
             0))
       0))
 
-(fn expr () i32 (cmp))
+// Below comparison, so `a == b & c == d` groups as two comparisons rather than as `b & c`. C puts
+// them the other way round and has regretted it for fifty years.
+(fn band () i32
+  (do (cmp)
+      (while (is-punct 38) (do (next) (cmp) (line "i32.and") 0))
+      0))
+
+(fn bor () i32
+  (do (band)
+      (while (is-punct 124) (do (next) (band) (line "i32.or") 0))
+      0))
+
+(fn expr () i32 (bor))
 
 // ---------------------------------------------------------------- statements
 

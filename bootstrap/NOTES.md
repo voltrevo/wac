@@ -2,11 +2,22 @@
 
 ## The numbers
 
-Three rungs exist and all three work.
+Four rungs exist and all four work.
 
     boot/sx.wax          1,630 instructions   the root, hand-written
     boot/wx.sx             200 lines          a compiler for wx, written in sx
-    boot/wac0.wx           345 lines          a compiler for wac-0, written in wx
+    boot/wac0.wx           452 lines          a compiler for wac-0, written in wx
+    boot/wac1.wac0         754 lines          a compiler for wac-1, written in wac-0
+
+**wac-1 is the first rung with a type system**, and the first that emits **wasm GC** — structs and
+arrays are engine types, so there is no allocator, no layout arithmetic and no `free` anywhere in
+the ladder. `struct Node { i32 value; Node[] kids; }` walks its own tree through five languages and
+two interpreters.
+
+754 lines is the largest rung so far and the first that is not obviously cheap. The type system is
+most of it: every expression answers a type index, because `p.x` has to know which struct to read
+from and a local of struct type has to be declared `refnull $s1` rather than `i32`. wac-0's compiler
+never had to know what an expression *was*.
 
 **wac-0 is where the ladder starts looking like wac** — C-family syntax, functions with typed
 parameters, `i32` declarations with real shadowing, `return`/`if`/`else`/`while`, precedence
@@ -36,6 +47,7 @@ The original stage-one figure, for comparison:
 
     boot/sx.wax          1,157 instructions   before wx needed anything of it
     boot/sx.wax          1,457 instructions   before wac-0 needed strings and `//`
+    boot/wac0.wx           345 lines          before wac-1 needed `&` and `|`
 
 For comparison, the thing a ladder would replace:
 
@@ -88,6 +100,20 @@ amount of reading would have.
 expression that followed the file, so the program ran and answered a plausible number. That is the
 real cost of s-expression syntax at a rung with no diagnostics: unbalanced input is not an error,
 it is a different program.
+
+## Two that only a typed rung could have
+
+**Type index 0 is `i32`, and the slot has to be *taken* rather than assumed.** Nothing reserved it,
+so the first struct registered became index 0 — and `valtype(0)` reads a 0 as the number type, so
+every local of that struct was declared `i32`. The module was refused for a type mismatch the
+compiler believed could not happen, and the generated assembly looked entirely correct until the
+`local.set` line.
+
+**A slot's type has to outlive its name.** A block pops the name table on the way out, and the
+function header is written *afterwards*, because wasm wants locals declared before the body. So by
+the time the header needed the types, scope had thrown them away. Slots are never popped; names are.
+The fix is a second table indexed by slot, which is four lines and the sort of thing that reads as
+redundancy until you know why.
 
 ## The bug that keeps happening
 

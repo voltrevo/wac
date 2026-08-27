@@ -37,7 +37,7 @@ lose by retiring its reference compiler, so it is worth practising here.
 
 ## Status
 
-**Three rungs work.** `boot/sx.wax` is a 1,457-instruction s-expression interpreter, hand-written.
+**Four rungs work.** `boot/sx.wax` is a 1,457-instruction s-expression interpreter, hand-written.
 `boot/wx.sx` is a compiler for wx — functions, locals, globals, `if`, `while`, recursion, sixteen
 operators, byte and word memory — written in sx, in **167 lines**. A wx program goes all the way to
 wasm with nothing but the interpreter and the assembler in the path.
@@ -51,6 +51,18 @@ answers 6765 through four languages and two interpreters.
       return fib(n - 1) + fib(n - 2);
     }
 
-A rung is cheap when the rung below it is a decent language. **Next is wac-1**: `struct`, arrays,
-`enum` with payloads and `match`, methods, `T?`, on wasm GC — written in wac-0, and the last
-intermediate before wac itself. `NOTES.md` has the numbers and the bugs.
+`boot/wac1.wac0` is a compiler for **wac-1** — structs, arrays, `null`, and a type system — in 754
+lines of wac-0, emitting **wasm GC**. No allocator anywhere in the ladder:
+
+    struct Node { i32 value; Node[] kids; }
+
+    i32 total(Node n) {
+      i32 sum = n.value;
+      i32 i = 0;
+      while (i < n.kids.len()) { sum = sum + total(n.kids[i]); i = i + 1; }
+      return sum;
+    }
+
+**Next is `enum` with payloads and `match`** — the feature that changes what writing a compiler
+feels like, and the cheapest one wasm GC gives away: a struct per variant, and `ref.test` for the
+match. `NOTES.md` has the numbers and the bugs.

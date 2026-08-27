@@ -1,0 +1,8 @@
+struct Point { i32 x; i32 y; }
+
+i32 sum(Point p) { return p.x + p.y; }
+
+i32 main() {
+  Point p = Point(3, 4);
+  return sum(p);
+}
