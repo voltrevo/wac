@@ -427,15 +427,48 @@ i32 emithex(i32 b) {
   emit1(92); emit1(120); emit1(hexd(b / 16)); return emit1(hexd(b % 16));
 }
 
+// **An escape is one byte, and it is never rescanned.** `"a\\b"` is three bytes and `"\\\\"` is
+// two, so the resolved character never becomes the start of another escape. Anything after the
+// backslash that is not one of the six stands for itself, which is what `\\"` and `\\\\` need
+// and is also what wac's lexer would already have refused.
+i32 escbyte(i32 c) {
+  if (c == 110) { return 10; }
+  if (c == 116) { return 9; }
+  if (c == 114) { return 13; }
+  if (c == 48) { return 0; }
+  return c;
+}
+
+// How long the literal is once its escapes are resolved. The length goes into the data segment
+// *before* the bytes do, so it cannot be counted while they are written.
+i32 str_declen(i32 p, i32 n) {
+  i32 i = 0;
+  i32 c = 0;
+  while (i < n) {
+    if (at(p + i) == 92 & i + 1 < n) { i = i + 2; } else { i = i + 1; }
+    c = c + 1;
+  }
+  return c;
+}
+
 i32 emit_strdata() {
   i32 i = 0;
   while (i < nstr) {
     i32 p = strs[i].ptr;
-    i32 n = strs[i].len;
+    i32 n = str_declen(strs[i].ptr, strs[i].len);
     word("data"); emitn(strs[i].off); sp(); emit1(34);
     emithex(n % 256); emithex(n / 256 % 256); emithex(n / 65536 % 256); emithex(n / 16777216);
     i32 j = 0;
-    while (j < n) { emithex(at(p + j)); j = j + 1; }
+    i32 raw = strs[i].len;
+    while (j < raw) {
+      if (at(p + j) == 92 & j + 1 < raw) {
+        emithex(escbyte(at(p + j + 1)));
+        j = j + 2;
+      } else {
+        emithex(at(p + j));
+        j = j + 1;
+      }
+    }
     emit1(34); nl();
     i = i + 1;
   }

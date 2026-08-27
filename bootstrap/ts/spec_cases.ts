@@ -28,22 +28,73 @@ const inst = (await WebAssembly.instantiate(
 const e = inst.exports as Record<string, CallableFunction>;
 console.log(`wacc is built: ${Object.keys(e).length} exports\n`);
 
-const feed = (src: string) => {
-  const bytes = new TextEncoder().encode(src);
-  e.alloc(bytes.length);
-  for (let i = 0; i < bytes.length; i++) e.setByte(i, bytes[i]);
+// A case is one file unless it says otherwise: `// ---- name.wac ----` starts another, and the
+// entry is `main.wac` when there is more than one.
+function split(src: string): { path: string; text: string }[] {
+  const marks = [...src.matchAll(/^\/\/ ----\s*(\S+)\s*----\s*$/gm)];
+  if (marks.length === 0) return [{ path: "main.wac", text: src }];
+  const out: { path: string; text: string }[] = [];
+  for (let i = 0; i < marks.length; i++) {
+    const from = marks[i].index! + marks[i][0].length;
+    const to = i + 1 < marks.length ? marks[i + 1].index! : src.length;
+    out.push({ path: marks[i][1], text: src.slice(from, to) });
+  }
+  return out;
+}
+
+// Everything under core/, because a case that imports `core/jsx.wac` needs it and the case itself
+// only lists its own files. Passing more than the entry needs is explicitly fine.
+const core: { path: string; text: string }[] = [];
+try {
+  for (const f of Deno.readDirSync(`${HERE}../../wac/core`)) {
+    if (f.isFile && f.name.endsWith(".wac")) {
+      core.push({
+        path: `core/${f.name}`,
+        text: await Deno.readTextFile(`${HERE}../../wac/core/${f.name}`),
+      });
+    }
+  }
+} catch { /* no core beside us; single-file cases still work */ }
+
+const bytesOf = (s: string) => new TextEncoder().encode(s);
+
+const feedName = (name: string) => {
+  const b = bytesOf(name);
+  e.drv_allocName(b.length);
+  for (let i = 0; i < b.length; i++) e.drv_setNameByte(i, b[i]);
 };
-const emitted = (): Uint8Array | null => {
-  const n = e.build() as number;
+
+const emittedFrom = (files: { path: string; text: string }[], entry: string): Uint8Array | null => {
+  e.drv_files(files.length);
+  for (const f of files) {
+    feed(f.text);
+    feedName(f.path);
+    e.drv_pushFile();
+  }
+  feedName(entry);
+  const n = e.drv_buildFiles() as number;
   if (n <= 0) return null;
   const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) out[i] = e.byteAt(i) as number;
+  for (let i = 0; i < n; i++) out[i] = e.drv_byteAt(i) as number;
+  return out;
+};
+
+const feed = (src: string) => {
+  const bytes = new TextEncoder().encode(src);
+  e.drv_alloc(bytes.length);
+  for (let i = 0; i < bytes.length; i++) e.drv_setByte(i, bytes[i]);
+};
+const emitted = (): Uint8Array | null => {
+  const n = e.drv_build() as number;
+  if (n <= 0) return null;
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) out[i] = e.drv_byteAt(i) as number;
   return out;
 };
 const declineText = (): string => {
-  const n = e.decline() as number;
+  const n = e.drv_decline() as number;
   const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) out[i] = e.declineByte(i) as number;
+  for (let i = 0; i < n; i++) out[i] = e.drv_declineByte(i) as number;
   return new TextDecoder().decode(out);
 };
 
@@ -83,15 +134,23 @@ for (const name of files) {
   let outcome: Outcome = "ok";
   let detail = "";
   try {
-    feed(src);
+    const parts = split(src);
+    const entry = parts.length > 1 ? "main.wac" : parts[0].path;
+    // core/ only when the case asks for it. Handing every case the whole of core is legal —
+    // "passing more files than the entry needs is fine" — but it makes one broken core module
+    // into a hundred broken cases, and hides which is which.
+    const wantsCore = /from\s*"core\//.test(src);
+    const fileSet = wantsCore ? [...core, ...parts] : parts;
+    // The rejecting phases take a single source, so they are asked about the entry.
+    feed(parts.find((p) => p.path === entry)?.text ?? src);
     if (kind === "refused") {
       // Refusing is a different question from emitting: `emit` neither parses for errors nor
       // type-checks, so a program wac rejects still comes out of it as a module. The phases that
       // do the rejecting are the ones to ask — and they are asked *first*, because emitting a
       // program that was going to be refused is how `a const that refers to itself` becomes an
       // endless recursion rather than an answer.
-      const parse = e.parseErrors() as number;
-      const typed = e.typeErrors() as number;
+      const parse = e.drv_parseErrors() as number;
+      const typed = e.drv_typeErrors() as number;
       if (parse > 0 || typed > 0) {
         outcome = "ok";
       } else {
@@ -104,7 +163,9 @@ for (const name of files) {
       if (outcome !== "ok") wrong.push(`${name.padEnd(58)} ${outcome}  ${detail}`);
       continue;
     }
-    const mod = emitted();
+    // One file goes through `emit`, which is the path that works; more than one has to go
+    // through `emitFiles`, which is the only one that can see an import.
+    const mod = fileSet.length === 1 ? emitted() : emittedFrom(fileSet, entry);
     if (mod === null) {
       outcome = "no module";
       detail = declineText().slice(0, 60);
@@ -113,7 +174,11 @@ for (const name of files) {
       const f = (i2.exports as Record<string, CallableFunction>)[answers[1]];
       if (typeof f !== "function") {
         outcome = "wrong";
-        detail = `no export ${answers[1]}`;
+        // wacc declines features one at a time rather than failing the module, so a missing
+        // export usually has a stated reason — printing it turns twenty-two identical rows into
+        // however many distinct causes there really are.
+        const why = declineText();
+        detail = `no export ${answers[1]}` + (why === "" ? "" : `: ${why.slice(0, 60)}`);
       } else {
         // An i64 answer arrives as a BigInt, which is never `===` a number however equal it is.
         const got = f();

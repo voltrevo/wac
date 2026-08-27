@@ -4,6 +4,10 @@
 // ladder closes and no use at all for asking the same question 254 times: every source would mean
 // another whole rebuild. So this one takes the source in a byte at a time.
 //
+// Every export here is `drv_`-prefixed because this file is concatenated with wacc rather than
+// imported by it: `buildFiles` is a name wacc already exports, and the collision reaches you as a
+// duplicate export from the engine rather than as anything about the driver.
+//
 // A byte at a time in both directions, because a wasm GC array cannot cross into JavaScript and a
 // wac program has no way to reach linear memory. Everything on this boundary is an i32, which is
 // the whole of what wasm hands back without a binding layer — and the binding layer is what wacc
@@ -13,33 +17,33 @@ u8[] inbuf;
 u8[] built;
 u8[] declined;
 
-export i32 alloc(i32 n) {
+export i32 drv_alloc(i32 n) {
   inbuf = u8[n]();
   return n;
 }
 
-export i32 setByte(i32 i, i32 b) {
+export i32 drv_setByte(i32 i, i32 b) {
   inbuf[i] = b;
   return 0;
 }
 
 /** Compile what was fed in. Answers the length of the module, or 0 if nothing was emitted. */
-export i32 build() {
+export i32 drv_build() {
   built = emit(inbuf);
   return built.len();
 }
 
-export i32 byteAt(i32 i) {
+export i32 drv_byteAt(i32 i) {
   return built[i];
 }
 
 /** Why the module was not emitted in full, as text — `""` when nothing stopped it. */
-export i32 decline() {
+export i32 drv_decline() {
   declined = blocked(inbuf).toBytes();
   return declined.len();
 }
 
-export i32 declineByte(i32 i) {
+export i32 drv_declineByte(i32 i) {
   return declined[i];
 }
 
@@ -49,14 +53,145 @@ export i32 declineByte(i32 i) {
 // two phases that do the rejecting, and a case marked `refused` has to be refused by one of them.
 i32[] errs;
 
-export i32 parseErrors() {
+export i32 drv_parseErrors() {
   errs = dumpErrors(inbuf);
   return errs.len();
 }
 
-export i32 typeErrors() {
+export i32 drv_typeErrors() {
   errs = dumpTypeErrors(inbuf);
   return errs.len();
+}
+
+// **A case may be more than one file**, and anything about imports has to be: the format writes
+// `// ---- lib.wac ----` between them and names `main.wac` as the entry. `emit` takes one source
+// and cannot see an import at all, so a multi-file case fed to it is a program with a comment
+// where its library should be. This is the same compiler asked the question it can answer.
+//
+// The paths go in through the same byte-at-a-time boundary as the sources, because a wasm GC
+// string cannot cross either.
+
+string[] paths;
+string[] sources;
+i32 nfile = 0;
+u8[] namebuf;
+
+export i32 drv_files(i32 n) {
+  paths = string[n]();
+  sources = string[n]();
+  nfile = 0;
+  return 0;
+}
+
+export i32 drv_allocName(i32 n) {
+  namebuf = u8[n]();
+  return n;
+}
+
+export i32 drv_setNameByte(i32 i, i32 b) {
+  namebuf[i] = b;
+  return 0;
+}
+
+/** One file: its path from `namebuf` and its source from `inbuf`. */
+export i32 drv_pushFile() {
+  paths[nfile] = string.fromBytes(namebuf);
+  sources[nfile] = string.fromBytes(inbuf);
+  nfile = nfile + 1;
+  return 0;
+}
+
+/** Compile the file set, entry named by whatever is in `namebuf` now. */
+export i32 drv_buildFiles() {
+  built = emitFiles(paths, sources, string.fromBytes(namebuf));
+  return built.len();
+}
+
+// Which half of the link failed: whether the entry's source was found at all, and whether two
+// paths were taken for one file. Both answer "" when they are happy, so a length is enough.
+export i32 drv_entryLen() {
+  return sourceOf(paths, sources, string.fromBytes(namebuf)).len();
+}
+
+export i32 drv_twoKeys() {
+  return twoKeysForOneFile(paths).len();
+}
+
+export i32 drv_pathLen(i32 i) {
+  return paths[i].len();
+}
+
+// `linkFiles` sets `starts[0]` to a small number on its way out — which of its several ways of
+// giving up it took. Calling it here rather than through `emitFiles` is the only way to see it,
+// because `emitLinkedWith2` turns the empty answer into a bare module and drops the code.
+i32[] lstarts;
+string[] lpaths;
+
+export i32 drv_link() {
+  lstarts = i32[1024]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  lpaths = string[1024]();
+  Res res = Res.empty();
+  string blob = linkFiles(paths, sources, res, string.fromBytes(namebuf), lstarts, edges, names, lpaths);
+  return blob.len();
+}
+
+export i32 drv_linkCode() {
+  return lstarts[0];
+}
+
+export i32 drv_linkPathLen(i32 i) {
+  return lpaths[i].len();
+}
+
+// `emitLinkedWith2`'s body, opened up: link, then emit, with each argument reachable one at a
+// time. `emit` works and `emitFiles` answers a bare module, and the two differ only in what they
+// pass here — the declaration count that scopes names to files, and the arrays that carry it.
+export i32 drv_declCount() {
+  return declCountOf(sourceOf(paths, sources, string.fromBytes(namebuf)));
+}
+
+/** The blob through `emitModule`'s own tiny arrays: is it the blob or the arrays? */
+export i32 drv_blobOnly() {
+  i32[] starts = i32[1024]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] fp = string[1024]();
+  Res res = Res.empty();
+  string blob = linkFiles(paths, sources, res, string.fromBytes(namebuf), starts, edges, names, fp);
+  if (blob.len() == 0) { return 0 - 1; }
+  built = emitModule(blob.toBytes());
+  return built.len();
+}
+
+u8[] blobBytes;
+
+export i32 drv_blob() {
+  i32[] starts = i32[1024]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] fp = string[1024]();
+  Res res = Res.empty();
+  blobBytes = linkFiles(paths, sources, res, string.fromBytes(namebuf), starts, edges, names, fp).toBytes();
+  return blobBytes.len();
+}
+
+export i32 drv_blobByte(i32 i) {
+  return blobBytes[i];
+}
+
+export i32 drv_linkEmit(i32 entryDecls) {
+  i32[] starts = i32[1024]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] fp = string[1024]();
+  Res res = Res.empty();
+  string entry = string.fromBytes(namebuf);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, fp);
+  if (blob.len() == 0) { return 0 - 1; }
+  built = emitModuleOf(blob.toBytes(), entryDecls, starts, edges, names, fp);
+  return built.len();
 }
 
 i32 main() {
