@@ -970,10 +970,12 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
 /**
  * Whether some file *other* than `selfIndex` also declares a type called `name`.
  *
- * **`selfIndex` rather than `self`**, which is what it was called: a wac parameter named `self` has
+ * **`selfIndex` rather than `self`**, which is what it was called. A wac parameter named `self` had
  * no wapy rendering, so `compiler/wapyRoundTrip.test.ts` refused this file — *"a parameter is written
- * `name: Type`"* — and the whole suite was red on it. `issues/lang/0077` is the underlying gap; this
- * is the two-line way around it, and the name is no worse for it.
+ * `name: Type`"* — and the whole suite was red on it. That was `issues/lang/0077`, fixed on
+ * 2026-08-27 by wapy spelling the receiver `this`: `self` is an ordinary identifier on both surfaces
+ * now and this rename is no longer load-bearing. It stays because the name is no worse for it, and
+ * because a parameter called `self` in a function that is not a method reads like a receiver.
  *
  * The question `issues/lang/0128`'s fix turns on. Renaming every type that reaches a file only
  * through a signature is wrong: `packages/tor` declares `Link` in `link.wac`, `bootstrap.wac` puts it

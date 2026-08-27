@@ -1,7 +1,9 @@
 # 0077 — a wac local named `self` has no wapy rendering
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-a
+- **Closed:** 2026-08-27
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
 - **Kind:** bug
@@ -106,3 +108,32 @@ which is the point.
 Not written here, because it belongs with whoever takes the decision: pinning a rendering that is
 deliberately wrong is only worth it if the wrongness is going to persist, and that is precisely what is
 undecided.
+
+## Closed 2026-08-27 — wapy spells the receiver `this`, and the collision is gone
+
+The operator's ruling, and it is the one option this page did not list: **wapy uses `this`, like wac.**
+`self` stops being a wapy keyword and becomes an ordinary identifier on both surfaces, so a wac local
+named `self` renders as itself and reads back as itself. `spec/spec/wapy.md`, `wapyLex.ts`'s
+`SPELLINGS`, `wapyParse.ts` and `wapyPrint.ts`.
+
+**Why this rather than any of the workarounds above.** `self` was the only one of the six respellings
+that could collide, and the reason is structural: `and`, `or`, `not`, `None`, `True` and `False`
+correspond to *punctuation and literals* in wac, so no wac identifier can be one of them. `self`
+corresponded to a wac **keyword**, and both spellings are legal wac identifiers — so reserving it on
+one surface became a rule about identifiers on the other. The cost was real and was being paid in wac:
+`packages/wacc/src/check.wac` carried a local it could not name `self` and a comment saying why, and
+`packages/wacc/src/api.wac` renamed a parameter to `selfIndex` for the same reason. Both comments now
+record the fix instead.
+
+Looking Pythonic is not worth a constraint on the canonical surface, which is what this had become.
+
+**Found while fixing it:** the correspondence table said wac's receiver is `P self`. There is no such
+form — wac declares a receiver `this` or `const this` (`spec/tour.wac:425`), and a first parameter
+written `P self` is an ordinary parameter, so `p.get()` on it is *no such method*. The row had been
+giving the wapy spelling in both columns. `compiler/wapySpec.test.ts` carried the same mistake in a
+fixture named *"a method with a receiver"* whose wac input had none — which is why nothing caught it.
+Both fixed here.
+
+**Canary.** `compiler/wapyRoundTrip.test.ts` held a test asserting this bug, ending *"if 0077 is
+fixed, delete this test"*. It is inverted rather than deleted: the same program now has to round-trip,
+so reserving `self` again on either surface goes red on the exact case that used to fail.

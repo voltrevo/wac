@@ -107,9 +107,11 @@ function whereInWapy(wapy: string, line: number, col: number): string {
   const text = lines[line - 1];
   if (text === undefined) return "";
   const caret = " ".repeat(Math.max(0, col - 1)) + "^";
-  // wapy's own keywords that wac lets a program use as a name. `self` is the one this has happened
-  // for; the rest are here so the next one is named rather than discovered the same slow way.
-  const reserved = ["self", "None", "True", "False", "def", "class", "lambda", "pass", "elif"];
+  // wapy's own keywords that wac lets a program use as a name. `self` was the one this had happened
+  // for, twice, and it came off the list on 2026-08-27 when wapy started spelling the receiver
+  // `this` — see `SPELLINGS` in wapyLex.ts. The rest are here so the next one is named rather than
+  // discovered the same slow way, which is the part worth keeping.
+  const reserved = ["None", "True", "False", "def", "class", "lambda", "pass", "elif"];
   const found = reserved.filter((w) => new RegExp(`\\b${w}\\b`).test(text));
   const hint = found.length === 0 ? "" :
     `\n  ${found.join(", ")} on this line ${found.length === 1 ? "is" : "are"} reserved in wapy and ` +
@@ -382,27 +384,17 @@ Deno.test("round trip: every package", async () => {
   console.error(`  ${files.length} files round-tripped identically`);
 });
 
-Deno.test("a wapy parse failure names the line and the word to blame", () => {
-  // **The message is the whole point of this test.** `issues/lang/0077` was placed twice by hand,
-  // because the failure gave a position in *generated* text — `unexpected ':' after the expression at
-  // 434:9` — followed by the entire rendering, and a reader had to count 434 lines into it. Both
-  // times the cause was one word.
+Deno.test("a wac local named `self` round-trips — issues/lang/0077, fixed 2026-08-27", () => {
+  // **This test used to assert the bug.** It said *"a wac local named `self` round-tripped — if 0077
+  // is fixed, delete this test"*, and 0077 is fixed: wapy spells the receiver `this` now, so `self`
+  // is an ordinary identifier on both surfaces and there is nothing left to collide.
   //
-  // `self` is an ordinary identifier in wac and wapy's receiver keyword, so a wac program using it
-  // renders to something that is not a wapy program. That is `0077`, still open because it is a
-  // language decision; until it is made, the failure should at least say so.
+  // Kept rather than deleted, inverted. The program below is the exact one the old test used to prove
+  // the failure, and a regression would land on it first — `self` reserved again on either surface
+  // makes this red immediately, where the old arrangement would have gone quietly green.
   const src = `export i32 f(i32[] xs) {\n  i32 self = xs.len() - 1;\n  return self;\n}\n`;
   const r = roundTrip(src, "/probe.wac");
-  if (r.ok) {
-    throw new Error("a wac local named `self` round-tripped — if 0077 is fixed, delete this test");
-  }
-  const head = r.why.split("--- wapy ---")[0];
-  // The line itself, so nobody counts into the rendering again.
-  if (!head.includes("self: i32 = xs.len() - 1")) {
-    throw new Error(`the offending line is not shown:\n${head}`);
-  }
-  // And the cause, by name. Without this the message is merely better-formatted, not more useful.
-  if (!head.includes("self") || !head.includes("0077")) {
-    throw new Error(`the cause is not named:\n${head}`);
+  if (!r.ok) {
+    throw new Error(`a wac local named \`self\` no longer round-trips — 0077 is back:\n${r.why}`);
   }
 });

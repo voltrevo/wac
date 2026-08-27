@@ -35,8 +35,11 @@ prints("a const struct", "const struct P { f64 x; }", "@const\nclass P:\n    x: 
 prints("a subtype", "struct B { i32 a; }\nstruct C : B { i32 b; }",
        "class B:\n    a: i32\n\nclass C(B):\n    b: i32");
 prints("an enum", "enum E { A, B(i32 v) }", "class E(enum):\n    A\n    B(v: i32)");
-prints("a method with a receiver", "struct P { f64 x; f64 get(P self) { return self.x; } }",
-       "class P:\n    x: f64\n\n    def get(self: P) -> f64:\n        return self.x");
+// **The wac input had no receiver in it until 2026-08-27.** It was `f64 get(P self)`, which is an
+// ordinary first parameter — `p.get()` on it is *no such method* — so a test named for the receiver
+// was pinning the printer's handling of a parameter that happened to be called `self`.
+prints("a method with a receiver", "struct P { f64 x; f64 get(const this) { return this.x; } }",
+       "class P:\n    x: f64\n\n    def get(const this) -> f64:\n        return this.x");
 prints("an override", "struct B { i32 f() { return 1; } }\nstruct D : B { override i32 f() { return 2; } }",
        "class B:\n    def f() -> i32:\n        return 1\n\nclass D(B):\n    @override\n    def f() -> i32:\n        return 2");
 prints("a declaration", "void f() { i32 x = 1; }", "def f() -> void:\n    x: i32 = 1");
@@ -145,8 +148,8 @@ Deno.test("[§wac-wapy-nolines-4gt7wxb] a multi-line match expression is writabl
     "    Circle(r: f64)",
     "    Rect(w: f64, h: f64)",
     "",
-    "    def area(const self) -> f64:",
-    "        return match self {",
+    "    def area(const this) -> f64:",
+    "        return match this {",
     "          case Circle(r): 3.14159 * r * r,",
     "          case Rect(w, h): w * h",
     "        }",

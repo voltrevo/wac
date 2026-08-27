@@ -304,9 +304,10 @@ function expr(e: Expr): string {
     case "string": return JSON.stringify(e.value);
     case "bool":   return e.value ? "True" : "False";
     case "null":   return "None";
-    // `this` is a wac keyword and reaches here as an identifier. The receiver is called
-    // `self` in the signature, so every use of it has to agree.
-    case "ident":  return e.name === "this" ? "self" : e.name;
+    // `this` is a wac keyword and reaches here as an identifier, and wapy spells the receiver
+    // `this` too since 2026-08-27 — so this is the identity it looks like, and a local named
+    // `self` prints as itself. See `SPELLINGS` in wapyLex.ts for what that respelling cost.
+    case "ident":  return e.name;
 
     case "unary": {
       // `!x` is Python's `not x`; the arithmetic and bitwise unaries keep their spelling.
@@ -396,7 +397,7 @@ function isType(x: unknown): boolean {
 
 function lval(l: Lvalue): string {
   switch (l.kind) {
-    case "lv-ident":  return l.name === "this" ? "self" : l.name;
+    case "lv-ident":  return l.name;
     case "lv-field":  return `${lval(l.base)}.${l.field}`;
     case "lv-index":  return `${lval(l.base)}[${expr(l.idx)}]`;
     case "lv-unwrap": return `${lval(l.base)}!`;
@@ -549,7 +550,7 @@ function params(ps: Param[]): string[] {
 }
 
 function method(m: MethodDecl, d: number): string[] {
-  const recv = m.hasThis ? [m.thisConst ? "const self" : "self"] : [];
+  const recv = m.hasThis ? [m.thisConst ? "const this" : "this"] : [];
   const sig = `def ${m.name}(${[...recv, ...params(m.params)].join(", ")}) -> ${tyTop(m.returnType)}:`;
   return [
     ...(m.isOverride ? [`${IND.repeat(d)}@override`] : []),

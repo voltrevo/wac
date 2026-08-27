@@ -76,7 +76,7 @@ Deno.test("a loop that is not counted keeps its three clauses", () => {
   assertStringIncludes(out, "for i: i32 = n; i > 0; i--:");
 });
 
-Deno.test("receiver forms map onto self", () => {
+Deno.test("receiver forms keep wac's `this`", () => {
   const out = wapy(`
     export struct P {
       f64 x;
@@ -86,11 +86,15 @@ Deno.test("receiver forms map onto self", () => {
     }
   `);
   assertStringIncludes(out, "def create(x: f64) -> P:");   // static: no receiver
-  assertStringIncludes(out, "def get(const self) -> f64:");
-  assertStringIncludes(out, "def set(self, v: f64) -> void:");
+  assertStringIncludes(out, "def get(const this) -> f64:");
+  assertStringIncludes(out, "def set(this, v: f64) -> void:");
   // Uses of `this` in the body have to agree with the signature.
-  assertStringIncludes(out, "return self.x");
-  assertEquals(out.includes("this"), false);
+  assertStringIncludes(out, "return this.x");
+  // **Inverted on 2026-08-27.** This asked that `this` never reach the output, because wapy spelled
+  // the receiver `self` and any `this` was a respelling the printer had missed. `this` is now the
+  // spelling on both surfaces, so the leak to watch for is the other one: nothing in this program is
+  // named `self`, and a `self` in the output would mean the old mapping had come back.
+  assertEquals(out.includes("self"), false);
 });
 
 Deno.test("nullable, unwrap and is-null", () => {
@@ -123,7 +127,7 @@ Deno.test("generics, subtyping and enums", () => {
   assertStringIncludes(out, "Some(v: T)");
   // match stays an expression — folding it into Python's statement form would make the
   // reverse direction guess at intent.
-  assertStringIncludes(out, "return match self { case Some(_): True, case Nil: False }");
+  assertStringIncludes(out, "return match this { case Some(_): True, case Nil: False }");
 });
 
 Deno.test("operators that have Python spellings take them", () => {

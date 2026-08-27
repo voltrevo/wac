@@ -225,11 +225,26 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
   // `packages/wac/test/wac/runcli_test.wac` (`issues/system/0161`), so that walk had nothing left to find. The
   // reach assertion in the check below is what noticed — this list has none, so it would have kept
   // walking an empty directory indefinitely.
-  string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "tools/wac",
-                           "tools/mutate");
-  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", ".test.ts");
+  //
+  // **`packages/wac/test/wac` joined on 2026-08-27, and its absence is the failure this list keeps
+  // having.** Fourteen CLI tests moved there from `tools/wac/` that day, and the eight `§wac-cli-*`
+  // clauses they hold — `validate`, three `covdump`, `check`, `compile`, `bindgen`, `usage` — went
+  // out of this walk with them. The guard read them as held only by the reference and went red, which
+  // is the right answer to the wrong question: the tests exist and run, this list did not know where.
+  //
+  // That is the second time. The comment above records `tools/*.test.ts` coming off when its last tag
+  // moved to `packages/wac/test/wac/runcli_test.wac` — *into the directory that was still not here*.
+  // A hard-coded list of places tags may live cannot survive files moving, so the assertion below is
+  // no longer "could this be read at all" but "did this contribute anything", which is what actually
+  // goes wrong.
+  string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "packages/wac/test/wac",
+                           "tools/wac", "tools/mutate");
+  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", "_test.wac", ".test.ts");
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] tests = filesIn(cli, dirs[d], suffixes[d]);
+    t.isTrue(tests.len() > 0,
+             dirs[d] + "/*" + suffixes[d] + " matched no files — the directory moved or emptied, and a"
+             + " walk over nothing is how this list goes stale without going red");
     i32 before = ours.len();
     for (i32 i = 0; i < tests.len(); i++) {
       // **This file does not count as coverage of the tags it discusses.** The comment above names
@@ -242,8 +257,10 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
       FileResult f = cli.readFile(tests[i]).wait();
       if (f.ok) { mentionedIn(f.bytes, ours); }
     }
-    t.isTrue(ours.len() >= before,
-             dirs[d] + "/*" + suffixes[d] + " could not be read at all");
+    // **Contributed, not merely readable.** `>=` is satisfied by a walk that finds nothing, which is
+    // exactly the state this list was in for `packages/wac/test/wac`.
+    t.isTrue(ours.len() > before,
+             dirs[d] + "/*" + suffixes[d] + " named no spec tag at all — it holds none, or it moved");
   }
 
   string missing = "";

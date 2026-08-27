@@ -6,7 +6,7 @@ indentation instead of by braces.
 
 It is **not Python**, does not accept Python, and copying Python code into a
 `.wapy` file is an explicit anti-goal. It borrows Python's *shapes* — `def`,
-`class`, `:` and indentation, `and`/`or`/`not`, `None`, `self` — because they
+`class`, `:` and indentation, `and`/`or`/`not`, `None` — because they
 are familiar, and stops there. Nothing about Python's object model, dynamic
 typing, comprehensions or standard library comes with them.
 
@@ -25,7 +25,7 @@ wapy from wac and the round-trip test runs in that direction.
 | `const struct P { … }` | `@const` above `class P:` |
 | `struct C : P { … }` | `class C(P):` |
 | `enum E { … }` | `class E(enum):` |
-| `P self` as first parameter | `self: P`, or bare `self` |
+| `this` or `const this` as first parameter | bare `this`, or `this: P` |
 | `override` on a method | `@override` |
 | `i32 x = 1;` | `x: i32 = 1` |
 | `Point p = Point { x: 1.0 };` | `p: Point = Point(x=1.0)` |
@@ -34,7 +34,7 @@ wapy from wac and the round-trip test runs in that direction.
 | `Vec<i32>(0)` in an expression | `Vec<i32>(0)` |
 | `T?` | `T \| None` outermost, `T?` nested |
 | `a && b`, `a \|\| b`, `!a` | `a and b`, `a or b`, `not a` |
-| `true`, `false`, `null`, `this` | `True`, `False`, `None`, `self` |
+| `true`, `false`, `null` | `True`, `False`, `None` |
 | `c ? a : b` | `a if c else b` |
 | `for (i32 i = 0; i < n; i++)` | `for i in range(0, n):` |
 | `for (i32 i = 0; i < n; i += 2)` | `for i in range(0, n, 2):` |
@@ -91,17 +91,39 @@ surfaces share a vocabulary and a word that cannot be a name in one cannot be a
 name in the other. On top of that it reserves the words it respells:
 
 ```
-and  or  not  None  True  False  self
+and  or  not  None  True  False
 ```
 
 Each of those is an ordinary wac identifier, so where the grammar wants a name
 — after a `.`, or after `case` — that is what it is. `Option.None` and
 `case None:` mean the variant, not the null literal.
 
-Going the other way, wac's spellings of those five are reserved in wapy but not
-valid: `true`, `false`, `null` and `this` are each a spelling mistake with a
-spelling mistake's diagnostic, rather than an unresolved identifier reported
-three phases later.
+Going the other way, wac's spellings of those three are reserved in wapy but not
+valid: `true`, `false` and `null` are each a spelling mistake with a spelling
+mistake's diagnostic, rather than an unresolved identifier reported three phases
+later.
+
+**`self` was the sixth respelling until 2026-08-27, and `this` was a spelling
+mistake.** Both surfaces spell the receiver `this` now. The respelling was the
+only one that cost anything, because it was the only one where *both* spellings
+are legal wac identifiers: `and`, `or`, `not`, `None`, `True` and `False`
+correspond to punctuation and literals in wac, so no wac program can collide
+with them — but a wac local named `self` had no wapy rendering at all
+([issues/lang/0077](../../issues/lang/0077-a-wac-local-named-self-has-no-wapy-rendering.md)),
+and the printer round-trips every file in this repository on every suite run. So
+a reserved word on this surface became a rule about identifiers on the other:
+`packages/wacc/src/check.wac` carried a local it could not name `self`, with a
+comment saying why. Looking Pythonic is not worth a constraint on wac.
+
+`self` is now an ordinary identifier in wapy, reserved by neither surface.
+
+**The wac column of the receiver row said `P self` until 2026-08-27, and no such form exists.** wac
+declares a receiver `this` or `const this` — `spec/tour.wac:425` — and a first parameter written
+`P self` is an ordinary parameter, so `p.get()` on a method declared that way is *no such method*.
+The row had been describing the wapy spelling twice. `compiler/wapySpec.test.ts` carried the same
+mistake in a fixture named *"a method with a receiver"* whose wac input had none, which is why
+nothing caught it: the test asserted the printer's output for a program that did not exercise the
+feature the test was named for.
 
 wapy's own structural words — `def`, `class`, `elif`, `pass`, `from`, `in`,
 `range`, `scope` — are **not** reserved. They mean something only in the
@@ -133,7 +155,7 @@ field          = [ "const" ] , IDENT , ":" , type , NEWLINE ;
 variant        = IDENT , [ "(" , param_list , ")" ] , NEWLINE ;
 method         = "def" , IDENT , "(" , [ receiver , [ "," , param_list ] ] , ")" ,
                  "->" , type , ":" , block ;
-receiver       = [ "const" ] , "self" , [ ":" , IDENT ] ;
+receiver       = [ "const" ] , "this" , [ ":" , IDENT ] ;
 ```
 
 `block` is `INDENT , { statement } , DEDENT`, where INDENT and DEDENT are

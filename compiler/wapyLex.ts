@@ -54,8 +54,22 @@ const PUNCT = [
 export const SPELLINGS = new Map<string, TokenKind>([
   ["and", "&&"], ["or", "||"], ["not", "!"],
   ["None", "null"], ["True", "true"], ["False", "false"],
-  ["self", "this"],
 ]);
+
+/**
+ * **`self` was here until 2026-08-27, mapped to `this`.** wapy spells the receiver `this` now, the
+ * same as wac, and `self` is an ordinary identifier again.
+ *
+ * It was the one respelling that cost something. A wac local named `self` had *no wapy rendering* —
+ * `issues/lang/0077` — so `packages/wacc/src/check.wac` could not name a local `self`, and a comment
+ * beside that local said why. The printer round-trips every file in the repository on each suite
+ * run, which made a reserved word in one surface into a rule about identifiers in the other.
+ *
+ * `and`/`or`/`not`/`None`/`True`/`False` do not have that problem: each is a wapy *keyword* whose wac
+ * form is punctuation or a literal, so no wac identifier collides with one. `self` was different
+ * because both surfaces were spelling the same *keyword* two ways for the sake of looking Pythonic,
+ * and the cost landed on wac.
+ */
 
 /**
  * Words wac reserves that wapy spells differently.
@@ -64,7 +78,7 @@ export const SPELLINGS = new Map<string, TokenKind>([
  * diagnostic rather than an unresolved identifier reported three phases later.
  */
 const MISSPELLED = new Map<string, string>([
-  ["true", "True"], ["false", "False"], ["null", "None"], ["this", "self"],
+  ["true", "True"], ["false", "False"], ["null", "None"],
 ]);
 
 /**

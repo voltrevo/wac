@@ -72,8 +72,8 @@ reports("a variable with no initialiser", "def f() -> i32:\n    y: i32\n    retu
 reports("a const with no type", "const N = 10", "1:7 a constant is written `const NAME: Type = value`");
 reports("a const with a body", "const N: i32 = 10\n    x: i32 = 1",
         "1:1 a constant takes no indented body");
-reports("a receiver annotated with another type", "class P:\n    x: f64\n    def get(self: Q) -> f64:\n        return self.x",
-        "3:19 `self` in P is a P, not 'Q'");
+reports("a receiver annotated with another type", "class P:\n    x: f64\n    def get(this: Q) -> f64:\n        return this.x",
+        "3:19 `this` in P is a P, not 'Q'");
 // A bare word after `from` used to be "expected a quoted path", which was right when every import
 // was a path. `core` is not, so the message names what the word failed to be.
 reports("an import from a module that is not core", "from lib import f",
@@ -91,8 +91,10 @@ reports("junk after an expression", "def f() -> i32:\n    return 1 2", "2:14 une
 reports("an initialiser with nothing after the `=`", "def f() -> i32:\n    x: i32 = \n    return x",
         "2:12 expected an expression");
 reports("a wac spelling", "def f() -> bool:\n    return true", "2:12 wapy spells this `True`");
-reports("a wac receiver spelling", "class P:\n    x: f64\n    def get(this: P) -> f64:\n        return this.x",
-        "3:13 wapy spells this `self`");
+// **`this` is the receiver on both surfaces since 2026-08-27**, so this accepts where it used to
+// report *"wapy spells this `self`"*. `self` is an ordinary identifier again — a parameter named
+// `self` is a parameter, not a receiver — which is what `issues/lang/0077` cost until it was fixed.
+accepts("a wac receiver spelling, which is now the only one", "class P:\n    x: f64\n    def get(this: P) -> f64:\n        return this.x\n");
 // An open bracket continues the statement, so an unclosed one is not a syntax error on that
 // line — it swallows the rest of the file and is reported at the end. The position is the last
 // token written, which is as close to the mistake as this can get.
@@ -101,8 +103,8 @@ reports("an unclosed bracket", "def f() -> i32:\n    return (1 + 2", "2:17 a bra
 // ── Accepted, so the cases above are failing for the reason claimed ─────────
 
 accepts("a function", "@export\ndef f(x: i32) -> i32:\n    return x + 1\n");
-accepts("a class with a method", "class P:\n    x: f64\n    def get(self: P) -> f64:\n        return self.x\n");
-accepts("a bare receiver", "class P:\n    x: f64\n    def get(const self) -> f64:\n        return self.x\n");
+accepts("a class with a method", "class P:\n    x: f64\n    def get(this: P) -> f64:\n        return this.x\n");
+accepts("a bare receiver", "class P:\n    x: f64\n    def get(const this) -> f64:\n        return this.x\n");
 accepts("an if chain", "def f(x: i32) -> i32:\n    if x > 1:\n        return 1\n    elif x > 2:\n        return 2\n    else:\n        return 3\n");
 accepts("a do-while", "def f() -> void:\n    do:\n        break\n    while False\n");
 accepts("a conditional, bare and parenthesised", `def f(c: bool) -> i32:\n    return 0 if c else 1\n`);

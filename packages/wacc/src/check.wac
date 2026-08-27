@@ -9008,8 +9008,10 @@ void checkDeclarationRules(C c, Program prog) {
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
-        // Not named `self`: a wac local by that name has no wapy rendering — `issues/lang/0077` —
-        // and this file round-trips through wapy on every suite run, which is where that showed up.
+        // **This said "not named `self`" until 2026-08-27**, because a wac local by that name had no
+        // wapy rendering — `issues/lang/0077` — and this file round-trips through wapy on every suite
+        // run. wapy spells the receiver `this` now, so `self` is an ordinary identifier on both
+        // surfaces and the constraint is gone. `owner` stays because it is the better name.
         string owner = tokenText(c, nameTok);
         for (i32 f = 0; f < fields.len(); f++) {
           if (!growsItself(c, fields[f].type, owner, typeParams)) { continue; }

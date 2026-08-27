@@ -362,11 +362,11 @@ class P {
   private receiver(recv: Token[] | null, owner: string): void {
     if (!recv) return;
     const rest = word(recv[0]) === "const" ? recv.slice(1) : recv;
-    if (rest.length === 1) return;                   // bare `self`, which cannot be wrong
+    if (rest.length === 1) return;                   // bare `this`, which cannot be wrong
     if (word(rest[1]) !== ":") {
-      this.err(rest[1] ?? rest[0], "`self` takes either no annotation or `: " + owner + "`");
+      this.err(rest[1] ?? rest[0], "`this` takes either no annotation or `: " + owner + "`");
     } else if (rest.length !== 3 || rest[2].text !== owner) {
-      this.err(rest[2] ?? rest[1], `\`self\` in ${owner} is a ${owner}, not ` +
+      this.err(rest[2] ?? rest[1], `\`this\` in ${owner} is a ${owner}, not ` +
                `'${rest.slice(2).map((x) => x.text).join(" ")}'`);
     }
   }
@@ -412,7 +412,7 @@ class P {
   private funcDecl(b: Block, mods: Set<string>): FuncDecl | null {
     const sig = this.signature(b);
     if (!sig) return null;
-    if (sig.recv) this.err(sig.recv[0], "`self` is only a parameter of a method");
+    if (sig.recv) this.err(sig.recv[0], "`this` is only a parameter of a method");
     this.needBody(b, "a def");
     const t = b.head.tokens;
     return {
@@ -783,7 +783,7 @@ function eof(toks: Token[]): Token {
 }
 
 /**
- * A method's first parameter, `self: Point` or `const self: Point`.
+ * A method's first parameter, `this: Point` or `const this: Point`.
  *
  * The annotation is redundant — a method's receiver can only be the enclosing type — but wapy
  * annotates every parameter, and one that silently permitted a different type there would be
