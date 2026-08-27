@@ -10,7 +10,8 @@
 //   `Vec[i32]`        →  `WVec<i32>`          in a type, and only there
 //   `T | None`        →  `T?`                outermost only
 //
-// Ported from `compiler/wapyParse.ts`. The algorithms are its, including the two details that are
+// Ported from compiler/wapyParse.ts, which was deleted on 2026-08-27 once this file replaced it.
+// The algorithms are its, including the two details that are
 // easy to get wrong and were: conditionals are rewritten **innermost-first** so a bracket group is
 // already done when the level above it is scanned, and the outer scan is split at `,` and `:` so
 // `f(a, 1 if c else b, d)` takes `1` as the arm rather than `a, 1`.

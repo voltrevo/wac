@@ -1,23 +1,27 @@
-// The frontends: source text in, `Program` out.
+// The frontend: source text in, `Program` out.
 //
-// wac has two surfaces — `.wac` and `.wapy` — and the language has no opinion about which one a
-// file is written in. They share a parser for expressions and types, an AST, a resolver, a
-// checker and an emitter; they differ only in how a file is laid out, which is over by the time
-// anything here returns.
+// **One entry, since 2026-08-27.** wac has two surfaces — `.wac` and `.wapy` — and this table had
+// both, because the reference was the only thing that could read the second. `packages/wacc` reads
+// it now (`issues/lang/0279a`), the playground and `site/tools/site.test.ts` ask wacc about every
+// example, and `design/lang/0003`'s standing exception — *"the bootstrap and wapy"* — is discharged.
+// So compiler/wapyParse.ts went, and the reference is the bootstrap compiler and nothing else.
 //
-// This is the whole of that difference, in one table. Everything downstream takes a `Program`
-// and cannot tell which frontend produced it, which is the property that makes a `.wac` file
-// importing a `.wapy` file unremarkable rather than a feature.
+// The table stays a table rather than collapsing into a call. It is the shape of the rule below,
+// and a second surface arriving is a row rather than a rewrite.
 //
 // ## The extension is not decoration
 //
 // It selects the frontend, so a file whose extension is not in the table is an error rather
 // than an assumption. wac used to accept any extension and treat it as wac; that was harmless
 // while there was one frontend and is not harmless now.
+//
+// **A `.wapy` file reaches that error**, and that is the intended answer rather than an oversight:
+// the reference cannot read wapy, and the thing to do about it is to use `wac`. Falling back to the
+// wac frontend would report a cascade of parse errors starting at the `@` of `@export`, which is
+// how a reader learns the wrong thing.
 
 import { wacLex } from "./wacLex.ts";
 import { type Import, type ParseError, type Program, wacParse } from "./wacParse.ts";
-import { wapyParse } from "./wapyParse.ts";
 
 /** A parse error, tagged with the phase that raised it. */
 export type FrontendError = ParseError & { phase: "lex" | "parse" };
@@ -40,14 +44,8 @@ const wac: Frontend = (src, file) => {
   };
 };
 
-const wapy: Frontend = (src, file) => {
-  const { program, errors } = wapyParse(src, file);
-  return { program, errors: errors.map((e) => ({ ...e, phase: "parse" as const })) };
-};
-
 export const FRONTENDS = new Map<string, Frontend>([
   [".wac", wac],
-  [".wapy", wapy],
 ]);
 
 /** The extensions a wac program may be written in, for diagnostics that have to list them. */

@@ -120,7 +120,7 @@ comment saying why. Looking Pythonic is not worth a constraint on wac.
 **The wac column of the receiver row said `P self` until 2026-08-27, and no such form exists.** wac
 declares a receiver `this` or `const this` — `spec/tour.wac:425` — and a first parameter written
 `P self` is an ordinary parameter, so `p.get()` on a method declared that way is *no such method*.
-The row had been describing the wapy spelling twice. `compiler/wapySpec.test.ts` carried the same
+The row had been describing the wapy spelling twice. compiler/wapySpec.test.ts — deleted 2026-08-27 with the reference's wapy reader — carried the same
 mistake in a fixture named *"a method with a receiver"* whose wac input had none, which is why
 nothing caught it: the test asserted the printer's output for a program that did not exercise the
 feature the test was named for.

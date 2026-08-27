@@ -4,8 +4,9 @@
 //
 // ## Why this one is not circular and the one it replaces was
 //
-// `compiler/wapyRoundTrip.test.ts` renders with `compiler/wapyPrint.ts` and reads back with
-// `compiler/wapyParse.ts`, and `compiler/wapyParse.ts`'s own header says what is wrong with that:
+// The test this replaces — compiler/wapyRoundTrip.test.ts, deleted 2026-08-27 — rendered with
+// `compiler/wapyPrint.ts` and read back with compiler/wapyParse.ts, and that reader's own header
+// said what is wrong with it:
 // *"a round-trip test cannot notice, because it only ever feeds the reader output from the printer —
 // which is valid by construction."* A printer that emitted a spelling no reader outside this pair
 // accepts, and a reader that accepted it, agree with each other perfectly.
@@ -113,7 +114,7 @@ Deno.test("wapy round trip: the printer's output is what wacc reads back", async
       continue;
     }
     // A file the *printer* cannot render is not this test's subject: it says so and moves on, the
-    // way `compiler/wapyRoundTrip.test.ts` does. What is being tested is the pair, over what the
+    // way the reference's round trip did. What is being tested is the pair, over what the
     // printer claims to handle.
     let wapy: string;
     try {

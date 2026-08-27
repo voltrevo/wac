@@ -142,7 +142,7 @@ export string test_the_counted_loop_is_wacs_three_clauses(Core core) {
        "def s(n: i32) -> i32:\n    t: i32 = 0\n    for i in range(0, n, 2):\n        t += i\n    return t\n",
        "i32 s(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i += 2) { t += i; } return t; }");
   // **An annotated induction variable**, which the spec's EBNF did not have until 2026-08-27 —
-  // `wapyPrint.ts` emits it whenever the variable is not an `i32` and `wapyParse.ts` accepts it, so a
+  // `wapyPrint.ts` emits it whenever the variable is not an `i32`, and the reference read it back, so a
   // frontend written from the grammar alone refuses ordinary `packages/sh` code.
   same(t, "range with an annotated variable",
        "def s(n: i64) -> i64:\n    t: i64 = 0\n    for k: i64 in range(0, n):\n        t += k\n    return t\n",
@@ -176,7 +176,7 @@ export string test_the_respellings_and_where_they_are_names(Core core) {
   //
   // **`None` after `is not` is the null literal, not the variant.** `Option.None` is the variant and
   // is a name because it follows a `.`; this one follows `not`, which the spec's list does not cover,
-  // and both frontends read it as `null` — checked against `compiler/wapyParse.ts` on this exact
+  // and both frontends read it as `null` — checked against the reference's reader on this exact
   // program, which answers `rhs: "null"`. So the wac side below says `null`.
   same(t, "`is not` keeps wac's keyword, and None after it is the literal",
        "from \"core/option.wac\" import Option\n\ndef f(o: Option[i32]) -> bool:\n    return o is not None\n",
@@ -260,7 +260,7 @@ export string test_a_bracket_continues_a_line_and_a_comment_is_not_one(Core core
 
 export string test_a_wapy_program_that_is_wrong_says_so(Core core) {
   T t = T.create();
-  // **The half a round-trip test cannot reach.** `compiler/wapyParse.ts`'s header is about exactly
+  // **The half a round-trip test cannot reach.** compiler/wapyParse.ts's header was about exactly
   // this: a frontend that does not parse cannot diagnose, and a round-trip only ever feeds the reader
   // output from the printer, which is valid by construction. So these are malformed on purpose.
   t.isTrue(readWapy("def f(x i32) -> i32:\n    return x\n").errors > 0,

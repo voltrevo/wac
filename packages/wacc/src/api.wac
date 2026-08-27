@@ -987,7 +987,8 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
  * Whether some file *other* than `selfIndex` also declares a type called `name`.
  *
  * **`selfIndex` rather than `self`**, which is what it was called. A wac parameter named `self` had
- * no wapy rendering, so `compiler/wapyRoundTrip.test.ts` refused this file — *"a parameter is written
+ * no wapy rendering, so the reference's round trip (compiler/wapyRoundTrip.test.ts, deleted
+ * 2026-08-27) refused this file — *"a parameter is written
  * `name: Type`"* — and the whole suite was red on it. That was `issues/lang/0077`, fixed on
  * 2026-08-27 by wapy spelling the receiver `this`: `self` is an ordinary identifier on both surfaces
  * now and this rename is no longer load-bearing. It stays because the name is no worse for it, and

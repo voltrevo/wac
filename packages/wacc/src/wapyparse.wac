@@ -5,7 +5,8 @@
 // all below that, so this parses the structure itself and calls `parse.wac`'s shared expression, type
 // and statement grammar for the rest.
 //
-// That split is `compiler/wapyParse.ts`'s, and its header records why the obvious alternative fails:
+// That split is compiler/wapyParse.ts's — the reference's reader, deleted on 2026-08-27 once this
+// file replaced it — and its header recorded why the obvious alternative fails:
 //
 // > The first attempt rewrote wapy tokens into wac's shape and let `wacParse` sort it out. It
 // > round-tripped 155 of 155 files, which made it look finished, and it was not:
@@ -354,7 +355,8 @@ i32 synthPlusEqOff(i32 base){ return base + 9; }
  *
  * **The annotation is real and is not in the spec's EBNF.** `for_stmt` there reads `"for", IDENT,
  * "in", "range", …`, but `compiler/wapyPrint.ts` emits `for k: i64 in range(0, n):` whenever the
- * induction variable is not an `i32`, and `compiler/wapyParse.ts` accepts it — checked on both forms.
+ * induction variable is not an `i32`, and the reference's reader accepted it — checked on both forms
+ * while it existed.
  * `spec/spec/wapy.md` is corrected alongside this.
  */
 i32 rangeIn(u8[] src, i32[] toks, i32 from, i32 to) {

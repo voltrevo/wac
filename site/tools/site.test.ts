@@ -155,15 +155,17 @@ Deno.test("site: the two surface snippets emit byte-identical wasm, as the page 
   // The page prints this as its central claim about wapy. If the pair ever drifts — someone
   // edits one side, or the printer changes — the sentence becomes false and this goes red.
   //
-  // **Both sides through the reference, deliberately, and not through `compile` above.** That helper
-  // sends `.wac` to wacc and `.wapy` to the reference, which is right where the question is *what
-  // does the playground do* — and wrong here, where the question is *are these two surfaces the same
-  // program*. Compiled by two different compilers the byte comparison measures the compilers instead,
-  // and it did: 1137 bytes from wac against 2493 from wapy, a red test about a true sentence
-  // (`issues/lang/0121`). wacc has no wapy front end (`design/lang/0003`), so the only compiler that
-  // can answer this one is the one with both front ends.
-  const a = wacCompile(new Map([["a.wac", await snippet("EX_SURFACE_WAC")]]), "a.wac");
-  const b = wacCompile(new Map([["a.wapy", await snippet("EX_SURFACE_WAPY")]]), "a.wapy");
+  // **Both sides through one compiler**, which is the whole content of the question: *are these two
+  // surfaces the same program*. Compiled by two different compilers the byte comparison measures the
+  // compilers instead, and it did — 1137 bytes from wac against 2493 from wapy, a red test about a
+  // true sentence (`issues/lang/0121`).
+  //
+  // That compiler used to have to be the reference, because it was the only one with both front
+  // ends. Since 2026-08-27 it is **wacc**, which is better: the page's claim is about the language,
+  // and wacc is the compiler the page uses for everything else — so this now compares what a reader
+  // of the page would get rather than what a third party would.
+  const a = compile({ "a.wac": await snippet("EX_SURFACE_WAC") }, "a.wac");
+  const b = compile({ "a.wapy": await snippet("EX_SURFACE_WAPY") }, "a.wapy");
   if (!a.ok || !b.ok) throw new Error("a snippet did not compile; see the test above");
 
   const x = a.compiled.wasm, y = b.compiled.wasm;
@@ -327,13 +329,33 @@ Deno.test("site: the compiler size the site claims is the size it is", async () 
 // string or taking an array failed at run time with "not a function", including the landing
 // page's hello world. Nothing noticed, because nothing here had ever called one.
 
-import { createRunner, runFunction, runnable } from "../src/editor/wac-compile.ts";
+import { createRunner, runnable } from "../src/editor/wac-compile.ts";
 
-/** The panel's own path: text in, text out. */
+/**
+ * The panel's own path: text in, text out.
+ *
+ * **Compiled by the same `compile` the rest of this file uses**, rather than by `runFunction`.
+ * `runFunction` compiles with whatever `wac-compile.ts` has loaded, and what it has loaded under
+ * Deno is nothing: the module fetches `wacc-api.js` from a deploy-root URL that only exists in a
+ * browser, so its `wacc` stays null and it falls back to the reference. Every panel test here has
+ * therefore been running the *reference's* output while claiming to be the panel's path.
+ *
+ * Invisible until 2026-08-27, when the reference stopped reading `.wapy` and the wapy demo answered
+ * `unknown extension` — a test that had never exercised what it named.
+ */
 async function run(src: string, file: string, fn: string, args: string[]): Promise<string> {
-  const r = await runFunction({ [file]: src }, file, fn, args);
-  if (!r.success) throw new Error(`${fn}: ${r.output}`);
-  return r.output;
+  const checked = compile({ [file]: src }, file);
+  if (!checked.ok) {
+    throw new Error(`${fn}: ${checked.diagnostics.map((d) => d.message).join("; ")}`);
+  }
+  const runner = createRunner();
+  try {
+    const r = await runner.run({ compiled: checked.compiled, funcName: fn, argStrings: args });
+    if (!r.success) throw new Error(`${fn}: ${r.output}`);
+    return r.output;
+  } finally {
+    runner.dispose();
+  }
 }
 
 Deno.test("site: the panel runs an export that returns a string", async () => {
