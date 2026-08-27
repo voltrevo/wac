@@ -9,7 +9,7 @@
 // belongs to wacc's source, not to whatever compiled it first.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 import { wacCompile } from "../../wac/compiler/wacCompile.ts";
 
 const HERE = new URL(".", import.meta.url).pathname;

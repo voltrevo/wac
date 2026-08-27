@@ -9,7 +9,7 @@
 // rebuilding it per case would turn two seconds into eight minutes.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 export type Tally = { total: number; ok: number; wrong: string[] };
 

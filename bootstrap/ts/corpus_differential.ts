@@ -15,7 +15,7 @@
 
 import { bodies } from "/tmp/claude-1001/-home-claude/d05345b6-fd57-448d-8b8a-2d3c942d2d62/scratchpad/whichfn.ts";
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const WAC = `${HERE}../../wac`;

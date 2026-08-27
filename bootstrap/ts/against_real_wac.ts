@@ -18,7 +18,7 @@
 // 254 lines and two functions, because a template with no instantiation has no code in it.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const files: string[] = [];
 for (const dir of Deno.args) {

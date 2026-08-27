@@ -4,7 +4,7 @@
 // Running the module is the whole point. A byte comparison against a recorded blob would pass for an
 // assembler that is consistently wrong, and the engine is the only thing here that knows wasm.
 
-import { assemble, sleb, uleb } from "./assemble.ts";
+import { assemble, sleb, uleb } from "../js/assemble.js";
 /** No dependencies, deliberately: a bootstrap repository that needs a package registry to run its
  * own tests has missed the point. */
 function assertEquals<T>(got: T, want: T) {

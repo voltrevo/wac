@@ -15,7 +15,7 @@
 // sibling directory is missing teaches nobody anything.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const API = `${HERE}../../wac/packages/wacc/src/api.wac`;

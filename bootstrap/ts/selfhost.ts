@@ -9,7 +9,7 @@
 // itself still builds *something*, and the copy is where the damage shows.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const WAC = `${HERE}../../wac`;

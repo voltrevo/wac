@@ -10,7 +10,7 @@
 // Five languages and two interpreters. The compiler chain is built once and reused, because that
 // part is seconds and the programs are milliseconds.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 import { l3ToL0 } from "./l3.ts";
 
 const root = new URL("..", import.meta.url).pathname;

@@ -9,7 +9,7 @@
 // Nothing here compiles anything. Every step is either the hand-written interpreter or the
 // dual-implemented assembler, which is the property the ladder is for.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const root = new URL("..", import.meta.url).pathname;
 

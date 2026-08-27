@@ -1,3 +1,24 @@
+// The shapes this file works in. They were TypeScript type aliases and are JSDoc typedefs
+// now, for the reason the whole port exists: a bootstrap should not need a build step to
+// run, and only Deno reads TypeScript from source.
+//
+/** @typedef {| { k: "num"; byte: number; name: string } | { k: "abs"; byte: number; name: string } | { k: "ref"; nullable: boolean; to: string }} ValType */
+/** @typedef {{ k: "num" | "abs"; byte: number; name: string }} PlainType */
+/** @typedef {{ name: string; params: ValType[]; results: ValType[] }} FuncType */
+/** @typedef {{ name: string; fields: ValType[] }} StructType */
+/** @typedef {{ name: string; elem: ValType }} ArrayType */
+/** @typedef {| { k: "func"; t: FuncType } | { k: "struct"; t: StructType } | { k: "array"; t: ArrayType }} DeclType */
+/** @typedef {{ module: string; field: string; name: string; params: ValType[]; results: ValType[] }} Import */
+/** @typedef {{ name: string; type: ValType; mutable: boolean; value: bigint }} Global */
+/** @typedef {{ offset: number; bytes: number[] }} DataSeg */
+/** @typedef {{ name: string; kind: "func" | "memory"; target: string }} Export */
+/** @typedef {{ name: string; type: ValType }} Local */
+/** @typedef {{ name: string; params: Local[]; locals: Local[]; results: ValType[]; body: Line[]; }} Func */
+/** @typedef {{ n: number; tokens: string[] }} Line */
+/** @typedef {{ types: DeclType[]; imports: Import[]; memoryPages: number | null; globals: Global[]; data: DataSeg[]; exports: Export[]; funcs: Func[]; }} Module */
+/** @typedef {{ types: DeclType[]; typeOf: Map<string, number>; funcOf: Map<string, number>; globalOf: Map<string, number>; funcTypeIndex: number[]; }} Index */
+/** @typedef {{ at: number; line: number }} Mark */
+
 // The `.l0` assembler, in TypeScript. See `spec/l0.md`.
 //
 // Structured so that the Rust implementation can be a line-for-line translation: the same three
@@ -7,14 +28,12 @@
 // A value type is a number type, an abstract reference, or a reference to a declared type. The last
 // is two bytes — a nullability byte and the type's index — which is why this is a shape rather than
 // a byte, and why every place that emits one asks for a list.
-export type ValType =
-  | { k: "num"; byte: number; name: string }
-  | { k: "abs"; byte: number; name: string }
-  | { k: "ref"; nullable: boolean; to: string };
 
-type PlainType = { k: "num" | "abs"; byte: number; name: string };
 
-const NUM: Record<string, PlainType> = {
+/** @type {Record<string, PlainType>} */
+
+
+const NUM = {
   i32: { k: "num", byte: 0x7f, name: "i32" },
   i64: { k: "num", byte: 0x7e, name: "i64" },
   f32: { k: "num", byte: 0x7d, name: "f32" },
@@ -28,7 +47,8 @@ const NUM: Record<string, PlainType> = {
 
 // The abstract heap types, spelled as value types. Their bytes are the same in both positions,
 // which is a property of the encoding rather than a coincidence worth relying on elsewhere.
-const ABS: Record<string, PlainType> = {
+/** @type {Record<string, PlainType>} */
+const ABS = {
   anyref: { k: "abs", byte: 0x6e, name: "anyref" },
   eqref: { k: "abs", byte: 0x6d, name: "eqref" },
   i31ref: { k: "abs", byte: 0x6c, name: "i31ref" },
@@ -37,44 +57,45 @@ const ABS: Record<string, PlainType> = {
   nullref: { k: "abs", byte: 0x71, name: "nullref" },
 };
 
-function vtName(v: ValType): string {
+/**
+
+ * @param {ValType} v
+
+ * @returns {string}
+
+ */
+
+function vtName(v) {
   return v.k === "ref" ? `${v.nullable ? "refnull" : "ref"} ${v.to}` : v.name;
 }
 
-type FuncType = { name: string; params: ValType[]; results: ValType[] };
-type StructType = { name: string; fields: ValType[] };
-type ArrayType = { name: string; elem: ValType };
-type DeclType =
-  | { k: "func"; t: FuncType }
-  | { k: "struct"; t: StructType }
-  | { k: "array"; t: ArrayType };
-type Import = { module: string; field: string; name: string; params: ValType[]; results: ValType[] };
-type Global = { name: string; type: ValType; mutable: boolean; value: bigint };
-type DataSeg = { offset: number; bytes: number[] };
-type Export = { name: string; kind: "func" | "memory"; target: string };
 
-type Local = { name: string; type: ValType };
-type Func = {
-  name: string;
-  params: Local[];
-  locals: Local[];
-  results: ValType[];
-  body: Line[];
-};
 
-type Line = { n: number; tokens: string[] };
 
 export class WaxError extends Error {
-  constructor(line: number, message: string) {
+  /**
+   * @param {number} line
+   * @param {string} message
+   */
+  constructor(line, message) {
     super(`line ${line}: ${message}`);
   }
 }
 
 // ---------------------------------------------------------------- LEB128
 
-export function uleb(n: number): number[] {
+/**
+
+ * @param {number} n
+
+ * @returns {number[]}
+
+ */
+
+export function uleb(n) {
   if (n < 0) throw new Error(`uleb of a negative: ${n}`);
-  const out: number[] = [];
+  /** @type {number[]} */
+  const out = [];
   do {
     let b = n & 0x7f;
     n >>>= 7;
@@ -84,8 +105,17 @@ export function uleb(n: number): number[] {
   return out;
 }
 
-export function sleb(v: bigint): number[] {
-  const out: number[] = [];
+/**
+
+ * @param {bigint} v
+
+ * @returns {number[]}
+
+ */
+
+export function sleb(v) {
+  /** @type {number[]} */
+  const out = [];
   let more = true;
   while (more) {
     let b = Number(v & 0x7fn);
@@ -99,7 +129,15 @@ export function sleb(v: bigint): number[] {
   return out;
 }
 
-function name(s: string): number[] {
+/**
+
+ * @param {string} s
+
+ * @returns {number[]}
+
+ */
+
+function name(s) {
   const bytes = new TextEncoder().encode(s);
   return [...uleb(bytes.length), ...bytes];
 }
@@ -111,11 +149,26 @@ function name(s: string): number[] {
  * has more of them than a call frame holds — which arrives as *Maximum call stack size exceeded*
  * from a function that is not recursive. Every place a whole array is appended goes through here.
  */
-function append(out: number[], src: number[]): void {
+/**
+ * @param {number[]} out
+ * @param {number[]} src
+ * @returns {void}
+ */
+function append(out, src) {
   for (let i = 0; i < src.length; i++) out.push(src[i]);
 }
 
-function section(id: number, payload: number[]): number[] {
+/**
+
+ * @param {number} id
+
+ * @param {number[]} payload
+
+ * @returns {number[]}
+
+ */
+
+function section(id, payload) {
   if (payload.length === 0) return [];
   const out = [id];
   append(out, uleb(payload.length));
@@ -123,7 +176,15 @@ function section(id: number, payload: number[]): number[] {
   return out;
 }
 
-function vec(items: number[][]): number[] {
+/**
+
+ * @param {number[][]} items
+
+ * @returns {number[]}
+
+ */
+
+function vec(items) {
   const out = uleb(items.length);
   for (const it of items) append(out, it);
   return out;
@@ -131,11 +192,22 @@ function vec(items: number[][]): number[] {
 
 // ---------------------------------------------------------------- pass 1: read
 
-function unquote(tok: string, lineNo: number): number[] {
+/**
+
+ * @param {string} tok
+
+ * @param {number} lineNo
+
+ * @returns {number[]}
+
+ */
+
+function unquote(tok, lineNo) {
   if (tok.length < 2 || !tok.startsWith('"') || !tok.endsWith('"')) {
     throw new WaxError(lineNo, `expected a double-quoted string, got ${tok}`);
   }
-  const out: number[] = [];
+  /** @type {number[]} */
+  const out = [];
   const s = tok.slice(1, -1);
   for (let i = 0; i < s.length; i++) {
     if (s[i] !== "\\") {
@@ -159,8 +231,13 @@ function unquote(tok: string, lineNo: number): number[] {
 }
 
 /** Split a line into tokens, keeping a double-quoted string as one token. */
-function tokenize(src: string): string[] {
-  const out: string[] = [];
+/**
+ * @param {string} src
+ * @returns {string[]}
+ */
+function tokenize(src) {
+  /** @type {string[]} */
+  const out = [];
   let i = 0;
   while (i < src.length) {
     const c = src[i];
@@ -188,8 +265,14 @@ function tokenize(src: string): string[] {
  * A run of value types. `ref` and `refnull` take the following token, which is why this consumes a
  * list rather than mapping over one — a reference is two tokens and a number is one.
  */
-function valtypes(toks: string[], lineNo: number): ValType[] {
-  const out: ValType[] = [];
+/**
+ * @param {string[]} toks
+ * @param {number} lineNo
+ * @returns {ValType[]}
+ */
+function valtypes(toks, lineNo) {
+  /** @type {ValType[]} */
+  const out = [];
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i];
     if (t === "ref" || t === "refnull") {
@@ -203,35 +286,56 @@ function valtypes(toks: string[], lineNo: number): ValType[] {
   return out;
 }
 
-function valtype(tok: string, lineNo: number): ValType {
+/**
+
+ * @param {string} tok
+
+ * @param {number} lineNo
+
+ * @returns {ValType}
+
+ */
+
+function valtype(tok, lineNo) {
   const v = valtypes([tok], lineNo);
   if (v.length !== 1) throw new WaxError(lineNo, `not a single value type: ${tok}`);
   return v[0];
 }
 
 /** Everything after `->` on a directive line. */
-function resultsAfterArrow(tokens: string[], from: number, lineNo: number): ValType[] {
+/**
+ * @param {string[]} tokens
+ * @param {number} from
+ * @param {number} lineNo
+ * @returns {ValType[]}
+ */
+function resultsAfterArrow(tokens, from, lineNo) {
   const at = tokens.indexOf("->", from);
   if (at < 0) throw new WaxError(lineNo, "expected `->`");
   return valtypes(tokens.slice(at + 1), lineNo);
 }
 
-type Module = {
-  types: DeclType[];
-  imports: Import[];
-  memoryPages: number | null;
-  globals: Global[];
-  data: DataSeg[];
-  exports: Export[];
-  funcs: Func[];
-};
 
-function read(source: string): Module {
-  const m: Module = {
+/**
+
+
+ * @param {string} source
+
+
+ * @returns {Module}
+
+
+ */
+
+
+function read(source) {
+  /** @type {Module} */
+  const m = {
     types: [], imports: [], memoryPages: null, globals: [], data: [], exports: [], funcs: [],
   };
   const lines = source.split("\n");
-  let cur: Func | null = null;
+  /** @type {Func | null} */
+  let cur = null;
 
   for (let i = 0; i < lines.length; i++) {
     const n = i + 1;
@@ -341,7 +445,11 @@ function read(source: string): Module {
 }
 
 /** How many block-likes are open inside a partially-read body — so `end` can close the function. */
-function depthOf(body: Line[]): number {
+/**
+ * @param {Line[]} body
+ * @returns {number}
+ */
+function depthOf(body) {
   let d = 0;
   for (const l of body) {
     const k = l.tokens[0];
@@ -353,33 +461,55 @@ function depthOf(body: Line[]): number {
 
 // ---------------------------------------------------------------- pass 2: index
 
-type Index = {
-  types: DeclType[];
-  typeOf: Map<string, number>;
-  funcOf: Map<string, number>;
-  globalOf: Map<string, number>;
-  /** The type index each local function uses. */
-  funcTypeIndex: number[];
-};
 
-function shapeKey(params: ValType[], results: ValType[]): string {
+/**
+
+
+ * @param {ValType[]} params
+
+
+ * @param {ValType[]} results
+
+
+ * @returns {string}
+
+
+ */
+
+
+function shapeKey(params, results) {
   return `${params.map(vtName).join(",")}->${results.map(vtName).join(",")}`;
 }
 
-function index(m: Module): Index {
+/**
+
+ * @param {Module} m
+
+ * @returns {Index}
+
+ */
+
+function index(m) {
   const types = [...m.types];
-  const typeOf = new Map<string, number>();
+  /** @type {Map<string, number>} */
+  const typeOf = new Map();
   types.forEach((d, i) => typeOf.set(d.t.name, i));
 
   // A shape may already be declared, in which case a function reuses it; an undeclared shape is
   // appended. Declared types are never merged with each other — see the spec.
-  const byShape = new Map<string, number>();
+  /** @type {Map<string, number>} */
+  const byShape = new Map();
   types.forEach((d, i) => {
     if (d.k !== "func") return;
     const k = shapeKey(d.t.params, d.t.results);
     if (!byShape.has(k)) byShape.set(k, i);
   });
-  const need = (params: ValType[], results: ValType[]): number => {
+  /**
+   * @param {ValType[]} params
+   * @param {ValType[]} results
+   * @returns {number}
+   */
+  const need = (params, results) => {
     const k = shapeKey(params, results);
     const at = byShape.get(k);
     if (at !== undefined) return at;
@@ -388,18 +518,23 @@ function index(m: Module): Index {
     return types.length - 1;
   };
 
-  const funcOf = new Map<string, number>();
+  /** @type {Map<string, number>} */
+
+  const funcOf = new Map();
   m.imports.forEach((im, i) => {
     need(im.params, im.results);
     funcOf.set(im.name, i);
   });
-  const funcTypeIndex: number[] = [];
+  /** @type {number[]} */
+  const funcTypeIndex = [];
   m.funcs.forEach((f, i) => {
     funcOf.set(f.name, m.imports.length + i);
     funcTypeIndex.push(need(f.params.map((p) => p.type), f.results));
   });
 
-  const globalOf = new Map<string, number>();
+  /** @type {Map<string, number>} */
+
+  const globalOf = new Map();
   m.globals.forEach((g, i) => globalOf.set(g.name, i));
 
   // Rebuilt after `need` has appended: an auto type is still a name something could refer to.
@@ -410,7 +545,9 @@ function index(m: Module): Index {
 
 // ---------------------------------------------------------------- pass 3: emit
 
-const NULLARY: Record<string, number> = {
+/** @type {Record<string, number>} */
+
+const NULLARY = {
   "return": 0x0f, "drop": 0x1a, "select": 0x1b, "unreachable": 0x00, "nop": 0x01,
   "i32.eqz": 0x45, "i32.eq": 0x46, "i32.ne": 0x47,
   "i32.lt_s": 0x48, "i32.lt_u": 0x49, "i32.gt_s": 0x4a, "i32.gt_u": 0x4b,
@@ -467,7 +604,9 @@ const NULLARY: Record<string, number> = {
   "f32.reinterpret_i32": 0xbe, "f64.reinterpret_i64": 0xbf,
 };
 
-const MEMOP: Record<string, number> = {
+/** @type {Record<string, number>} */
+
+const MEMOP = {
   "i32.load": 0x28, "i32.load8_s": 0x2c, "i32.load8_u": 0x2d,
   "i32.store": 0x36, "i32.store8": 0x3a,
 };
@@ -477,7 +616,13 @@ const MEMOP: Record<string, number> = {
  * the same slot holds the negative abbreviations for the abstract types, which is why it cannot be
  * the unsigned encoding used everywhere else for an index.
  */
-function vtBytes(v: ValType, ix: Index, lineNo: number): number[] {
+/**
+ * @param {ValType} v
+ * @param {Index} ix
+ * @param {number} lineNo
+ * @returns {number[]}
+ */
+function vtBytes(v, ix, lineNo) {
   if (v.k !== "ref") return [v.byte];
   const at = ix.typeOf.get(v.to);
   if (at === undefined) throw new WaxError(lineNo, `no type ${v.to}`);
@@ -485,7 +630,13 @@ function vtBytes(v: ValType, ix: Index, lineNo: number): number[] {
 }
 
 /** A heap type, for `ref.null`, `ref.test` and `ref.cast`. */
-function heapType(tok: string, ix: Index, lineNo: number): number[] {
+/**
+ * @param {string} tok
+ * @param {Index} ix
+ * @param {number} lineNo
+ * @returns {number[]}
+ */
+function heapType(tok, ix, lineNo) {
   if (tok in ABS) return [ABS[tok].byte];
   if (tok === "none") return [0x71];
   if (tok === "any") return [0x6e];
@@ -502,14 +653,21 @@ function heapType(tok: string, ix: Index, lineNo: number): number[] {
 }
 
 /** The block type of a block-like: empty, or a single value type. */
-function blockType(results: ValType[], ix: Index, lineNo: number): number[] {
+/**
+ * @param {ValType[]} results
+ * @param {Index} ix
+ * @param {number} lineNo
+ * @returns {number[]}
+ */
+function blockType(results, ix, lineNo) {
   if (results.length === 0) return [0x40];
   if (results.length === 1) return vtBytes(results[0], ix, lineNo);
   throw new WaxError(lineNo, "a block with more than one result needs a type index, unsupported");
 }
 
 /** The GC instructions that take one type index, by their second opcode byte. */
-const GC1: Record<string, number> = {
+/** @type {Record<string, number>} */
+const GC1 = {
   "struct.new": 0x00, "struct.new_default": 0x01,
   "array.new": 0x06, "array.new_default": 0x07,
   "array.get": 0x0b, "array.get_s": 0x0c, "array.get_u": 0x0d, "array.set": 0x0e,
@@ -520,10 +678,12 @@ const GC1: Record<string, number> = {
 
 // `array.copy $DST $SRC` names two types rather than a type and a number, which is the one
 // shape neither table above has: the destination and the source may be different array types.
-const GCCOPY: Record<string, number> = { "array.copy": 0x11 };
+/** @type {Record<string, number>} */
+const GCCOPY = { "array.copy": 0x11 };
 
 /** ...and those that take a type index and a second number: a field index, or a count. */
-const GC2: Record<string, number> = {
+/** @type {Record<string, number>} */
+const GC2 = {
   "struct.get": 0x02, "struct.get_s": 0x03, "struct.get_u": 0x04, "struct.set": 0x05,
   // `array.new_fixed $A <n>` builds an array from the top n values on the stack, which is the only
   // way to make one whose element type has no default — an array of references, say.
@@ -534,28 +694,61 @@ const GC2: Record<string, number> = {
 // engine reports a validation failure as a byte offset into the module and nothing else, which
 // is a number rather than a place — this is what turns it back into a line. Only
 // `assembleMapped` asks for them; `assemble` passes nothing and pays nothing.
-export type Mark = { at: number; line: number };
 
-function emitBody(f: Func, ix: Index, marks?: Mark[]): number[] {
-  const slot = new Map<string, number>();
+/**
+
+ * @param {Func} f
+
+ * @param {Index} ix
+
+ * @param {Mark[]} [marks]
+
+ * @returns {number[]}
+
+ */
+
+function emitBody(f, ix, marks) {
+  /** @type {Map<string, number>} */
+  const slot = new Map();
   f.params.forEach((p, i) => slot.set(p.name, i));
   f.locals.forEach((l, i) => slot.set(l.name, f.params.length + i));
 
-  const localOf = (n: string, lineNo: number): number => {
+  /**
+
+   * @param {string} n
+
+   * @param {number} lineNo
+
+   * @returns {number}
+
+   */
+
+  const localOf = (n, lineNo) => {
     const at = slot.get(n);
     if (at === undefined) throw new WaxError(lineNo, `no local or parameter ${n}`);
     return at;
   };
 
   // Open labels, innermost last. `br $l` is the distance from the top of this stack.
-  const labels: string[] = [];
-  const depth = (l: string, lineNo: number): number => {
+  /** @type {string[]} */
+  const labels = [];
+  /**
+   * @param {string} l
+   * @param {number} lineNo
+   * @returns {number}
+   */
+  const depth = (l, lineNo) => {
     for (let i = labels.length - 1; i >= 0; i--) if (labels[i] === l) return labels.length - 1 - i;
     throw new WaxError(lineNo, `no label ${l} is open here`);
   };
 
-  const out: number[] = [];
-  const push = (bytes: number[]) => append(out, bytes);
+  /** @type {number[]} */
+
+  const out = [];
+  /**
+   * @param {number[]} bytes
+   */
+  const push = (bytes) => append(out, bytes);
   for (const { n, tokens: t } of f.body) {
     if (marks !== undefined) marks.push({ at: out.length, line: n });
     const op = t[0];
@@ -686,8 +879,14 @@ function emitBody(f: Func, ix: Index, marks?: Mark[]): number[] {
 }
 
 /** Consecutive locals of one type are one entry, which is what wasm's format asks for. */
-function localDecls(f: Func, ix: Index): number[] {
-  const runs: [ValType, number][] = [];
+/**
+ * @param {Func} f
+ * @param {Index} ix
+ * @returns {number[]}
+ */
+function localDecls(f, ix) {
+  /** @type {[ValType, number][]} */
+  const runs = [];
   for (const l of f.locals) {
     const last = runs[runs.length - 1];
     if (last !== undefined && vtName(last[0]) === vtName(l.type)) last[1]++;
@@ -698,21 +897,48 @@ function localDecls(f: Func, ix: Index): number[] {
 
 // The module, and optionally a map from byte offset back to wac-L0 line. `assemble` is the
 // same function with the map left out.
-export function assembleMapped(source: string): { bytes: Uint8Array; map: Mark[] } {
-  const map: Mark[] = [];
+/**
+ * @param {string} source
+ * @returns {{ bytes: Uint8Array, map: Mark[] }}
+ */
+export function assembleMapped(source) {
+  /** @type {Mark[]} */
+  const map = [];
   const bytes = build(source, map);
   return { bytes, map };
 }
 
-export function assemble(source: string): Uint8Array {
+/**
+
+ * @param {string} source
+
+ * @returns {Uint8Array}
+
+ */
+
+export function assemble(source) {
   return build(source);
 }
 
-function build(source: string, map?: Mark[]): Uint8Array {
+/**
+
+ * @param {string} source
+
+ * @param {Mark[]} [map]
+
+ * @returns {Uint8Array}
+
+ */
+
+function build(source, map) {
   const m = read(source);
   const ix = index(m);
-  const out: number[] = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-  const emit = (bytes: number[]) => append(out, bytes);
+  /** @type {number[]} */
+  const out = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+  /**
+   * @param {number[]} bytes
+   */
+  const emit = (bytes) => append(out, bytes);
 
   // **One recursive group, or none at all.** A struct whose field refers to another struct — an AST
   // node holding an array of nodes — needs the two in the same group, because outside one a type may
@@ -775,7 +1001,8 @@ function build(source: string, map?: Mark[]): Uint8Array {
   // no element segment mentions — the rule exists so an engine knows which functions can escape —
   // and the way to say "these, and they are not a table" is a *declarative* segment. So the bodies
   // are scanned for `ref.func` before any of them is emitted, and every name found goes in one.
-  const referenced: number[] = [];
+  /** @type {number[]} */
+  const referenced = [];
   for (const f of m.funcs) {
     for (const l of f.body) {
       if (l.tokens[0] !== "ref.func") continue;
@@ -793,14 +1020,20 @@ function build(source: string, map?: Mark[]): Uint8Array {
   // The entries are built before the section is emitted so that each body's absolute position is
   // known: a mark recorded inside a body is relative to that body, and the caller asking for a
   // map wants an offset into the finished module.
-  const entries: number[][] = [];
-  const declsLen: number[] = [];
-  const prefixLen: number[] = [];
-  const bodyMarks: Mark[][] = [];
+  /** @type {number[][]} */
+  const entries = [];
+  /** @type {number[]} */
+  const declsLen = [];
+  /** @type {number[]} */
+  const prefixLen = [];
+  /** @type {Mark[][]} */
+  const bodyMarks = [];
   for (const f of m.funcs) {
     const decls = localDecls(f, ix);
-    const fnMarks: Mark[] = [];
-    const body: number[] = [];
+    /** @type {Mark[]} */
+    const fnMarks = [];
+    /** @type {number[]} */
+    const body = [];
     append(body, decls);
     append(body, emitBody(f, ix, map === undefined ? undefined : fnMarks));
     const entry = uleb(body.length);

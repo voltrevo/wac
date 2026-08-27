@@ -3,7 +3,7 @@
 // The short loop while writing .wax by hand. `ts/assemble_test.ts` is the one that has to pass;
 // this is the one that tells you why it does not.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 if (Deno.args.length < 1) {
   console.error("usage: run.ts <file.l0>");

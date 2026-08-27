@@ -4,7 +4,7 @@
 // ever goes up — a shared instance would make every test depend on the ones before it, and the
 // first failure would be blamed on the wrong program.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const source = await Deno.readTextFile(`${root}boot/l1.l0`);

@@ -11,7 +11,7 @@
 // keeping — a printer inside sx would be a hundred instructions in the rung that is hardest to
 // write, spent on something the outside can do by reading.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const root = new URL("..", import.meta.url).pathname;
 

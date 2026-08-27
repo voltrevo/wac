@@ -10,7 +10,7 @@
 // what it wants to compile as a string literal and answers a number.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assembleMapped } from "./assemble.ts";
+import { assembleMapped } from "../js/assemble.js";
 
 if (Deno.args.length < 2) {
   console.error("usage: run_real_wac.ts <entry.wac> <driver.wac>");

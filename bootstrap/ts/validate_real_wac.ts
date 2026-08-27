@@ -9,7 +9,7 @@
 // not read, this says what it read and emitted wrongly. Neither judges — they report.
 
 import { l5ToL0 } from "./l5.ts";
-import { assembleMapped } from "./assemble.ts";
+import { assembleMapped } from "../js/assemble.js";
 
 if (Deno.args.length < 1) {
   console.error("usage: validate_real_wac.ts <file.wac>");

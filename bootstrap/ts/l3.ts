@@ -9,7 +9,7 @@
 // Four languages and two interpreters between the source and the answer, and nothing in the path
 // that was not built here.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 import { l2ToL0 } from "./l2.ts";
 
 const root = new URL("..", import.meta.url).pathname;

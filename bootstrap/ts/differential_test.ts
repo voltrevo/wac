@@ -7,7 +7,7 @@
 // Skipped, loudly, when the Rust binary has not been built — a differential that silently becomes a
 // single-sided test is worse than one that is not run.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const rustBin = `${root}rust/target/release/wax`;

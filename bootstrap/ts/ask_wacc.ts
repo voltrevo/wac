@@ -7,7 +7,7 @@
 // wacc is built once and every file goes through the same instance.
 
 import { flatten, l5ToL0 } from "./l5.ts";
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const l0 = await l5ToL0(

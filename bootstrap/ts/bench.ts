@@ -8,7 +8,7 @@
 // One cold run per process, and no averaging. The ladder is built from the interpreter on the
 // first call and cached after, so a second run in the same process would measure the cache.
 
-import { assemble } from "./assemble.ts";
+import { assemble } from "../js/assemble.js";
 import { l5Compiler } from "./l5.ts";
 
 const SRC = 16777216, OUT = 4194304;
