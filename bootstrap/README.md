@@ -37,11 +37,20 @@ lose by retiring its reference compiler, so it is worth practising here.
 
 ## Status
 
-**Two rungs work.** `boot/sx.wax` is a 1,457-instruction s-expression interpreter, hand-written.
+**Three rungs work.** `boot/sx.wax` is a 1,457-instruction s-expression interpreter, hand-written.
 `boot/wx.sx` is a compiler for wx — functions, locals, globals, `if`, `while`, recursion, sixteen
 operators, byte and word memory — written in sx, in **167 lines**. A wx program goes all the way to
 wasm with nothing but the interpreter and the assembler in the path.
 
-That second figure is the case for the ladder: a rung is cheap when the rung below it is a decent
-language. **The open question is L2**, wac's own syntax, written in wx. `NOTES.md` has the numbers,
-what wx would want first, and the four bugs — one of which no amount of reading would have found.
+`boot/wac0.wx` is a compiler for **wac-0** — C-family syntax, typed parameters, declarations with
+shadowing, `return`/`if`/`else`/`while`, precedence climbing — in **345 lines** of wx. `fib(20)`
+answers 6765 through four languages and two interpreters.
+
+    i32 fib(i32 n) {
+      if (n < 2) { return n; }
+      return fib(n - 1) + fib(n - 2);
+    }
+
+A rung is cheap when the rung below it is a decent language. **Next is wac-1**: `struct`, arrays,
+`enum` with payloads and `match`, methods, `T?`, on wasm GC — written in wac-0, and the last
+intermediate before wac itself. `NOTES.md` has the numbers and the bugs.

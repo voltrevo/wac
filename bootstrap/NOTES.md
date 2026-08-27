@@ -2,10 +2,26 @@
 
 ## The numbers
 
-Two rungs exist and both work.
+Three rungs exist and all three work.
 
-    boot/sx.wax          1,457 instructions   the root, hand-written
-    boot/wx.sx             167 lines          a compiler for wx, written in sx
+    boot/sx.wax          1,630 instructions   the root, hand-written
+    boot/wx.sx             200 lines          a compiler for wx, written in sx
+    boot/wac0.wx           345 lines          a compiler for wac-0, written in wx
+
+**wac-0 is where the ladder starts looking like wac** — C-family syntax, functions with typed
+parameters, `i32` declarations with real shadowing, `return`/`if`/`else`/`while`, precedence
+climbing, `//` comments. `fib(20)` answers 6765 through four languages and two interpreters, with
+nothing in the path that was not built here.
+
+**345 lines**, and it is that small for two reasons. It emits `.wax` text, so the assembler that is
+already written twice does the encoding. And it has **no syntax tree**: a recursive-descent parser
+emits as it reads, which suits wasm exactly, because precedence climbing puts operands before
+operators and that is the order a stack machine wants. An AST would have been a tree to allocate and
+a set of node kinds to encode by hand, in a language with no structs.
+
+The one thing a single pass cannot give is wasm's demand that locals be declared before the body,
+and they are only known once the body has been read. So a body is emitted into a scratch buffer and
+the header is written in front of it afterwards — nine lines, against a whole second walk.
 
 **The second number is the interesting one.** A compiler that handles functions, calls, locals,
 globals, `if`, `while`, assignment, recursion, sixteen operators and byte and word memory access is
@@ -19,6 +35,7 @@ The root grew by 300 instructions to support it — `do`, `set!`, `/`, `%`, `pee
 The original stage-one figure, for comparison:
 
     boot/sx.wax          1,157 instructions   before wx needed anything of it
+    boot/sx.wax          1,457 instructions   before wac-0 needed strings and `//`
 
 For comparison, the thing a ladder would replace:
 
@@ -71,6 +88,23 @@ amount of reading would have.
 expression that followed the file, so the program ran and answered a plausible number. That is the
 real cost of s-expression syntax at a rung with no diagnostics: unbalanced input is not an error,
 it is a different program.
+
+## The bug that keeps happening
+
+Three times now something has worked **by luck rather than by rule**, and each was invisible until
+an unrelated change removed the coincidence:
+
+1. the allocator kept the heap word-aligned because every allocation happened to be twelve bytes,
+   until a symbol of odd length arrived;
+2. `;` comments were read as code and evaluated, harmlessly, until one of them contained a
+   parenthesis;
+3. `//` comments were not comments at all, so every comment line in `boot/wac0.wx` became a symbol
+   in the program list and `comp-top` called `car` on it.
+
+The third is the one worth the note. wac-0's *own* syntax uses `//`, so writing its compiler in wx
+meant writing `//` out of habit — and sx, two rungs down, had never heard of it. **The rungs look
+alike and are not alike**, and that is the tax the ladder charges: the same 33 lines that made me
+write `==` where sx wanted `=` made me write `//` where it wanted `;`. sx takes both now.
 
 ## What sx still is not
 

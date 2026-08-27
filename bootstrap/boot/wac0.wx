@@ -1,0 +1,445 @@
+// wac-0, compiled by a program written in wx. See spec/wac0.md.
+//
+// One pass, no syntax tree: the parser emits .wax as it reads. Precedence climbing puts operands
+// before operators, which is what a stack machine wants, so the natural order of the parse is
+// already the order of the output.
+//
+// Memory, all of it fixed because wx has no allocator:
+//
+//   1024      wx's own string literals, this file's fixed text
+//   262144    the token array, 16 bytes each
+//   786432    the local-name table, 12 bytes each
+//   1048576   the scratch buffer a function body is emitted into
+//   caller     the source and the output, whose addresses `compile` is handed
+
+(memory 64)
+
+(global TOK 262144)
+(global LOC 786432)
+(global BODY 1048576)
+
+(global dst 0)          // where emitting goes
+(global dp 0)           // and how far it has got
+(global ntok 0)         // tokens lexed
+(global tp 0)           // the parser's cursor into them
+(global nloc 0)         // names currently in scope
+(global nslot 0)        // wasm local slots used, which only ever grows
+(global labn 0)
+(global src 0)
+
+// Token kinds. wx has no constants, so these are globals nothing assigns to.
+(global K_EOF 0)
+(global K_INT 1)
+(global K_NAME 2)
+(global K_PUNCT 3)
+
+// ---------------------------------------------------------------- emitting
+
+(fn emit1 ((b i32)) i32
+  (do (store8 (+ dst dp) b)
+      (set dp (+ dp 1))))
+
+// A wx string literal is a length then its bytes, so writing one out is a loop over both.
+(fn emits ((s i32)) i32
+  (do (let n (load s))
+      (let i 0)
+      (while (< i n)
+        (emit1 (load8 (+ s (+ 4 i))))
+        (set i (+ i 1)))
+      0))
+
+(fn emitd ((n i32)) i32
+  (do (if (< 9 n) (emitd (/ n 10)) 0)
+      (emit1 (+ 48 (% n 10)))))
+
+(fn emitn ((n i32)) i32
+  (if (< n 0) (do (emit1 45) (emitd (- 0 n))) (emitd n)))
+
+(fn sp () i32 (emit1 32))
+(fn nl () i32 (emit1 10))
+(fn word ((s i32)) i32 (do (emits s) (sp)))
+(fn line ((s i32)) i32 (do (emits s) (nl)))
+(fn konst ((n i32)) i32 (do (word "i32.const") (emitn n) (nl)))
+(fn label ((n i32)) i32 (do (emits "$b") (emitn n)))
+(fn newlabel () i32 (do (set labn (+ labn 1)) labn))
+
+// ---------------------------------------------------------------- source text
+
+(fn at ((i i32)) i32 (load8 (+ src i)))
+
+(fn is-space ((c i32)) i32 (if (== c 32) 1 (if (== c 10) 1 (if (== c 13) 1 (== c 9)))))
+(fn is-digit ((c i32)) i32 (& (>= c 48) (<= c 57)))
+(fn is-alpha ((c i32)) i32
+  (| (== c 95) (| (& (>= c 97) (<= c 122)) (& (>= c 65) (<= c 90)))))
+(fn is-alnum ((c i32)) i32 (| (is-alpha c) (is-digit c)))
+
+// Does the source run at `p` for `n` bytes spell the literal `s`?
+(fn texteq ((p i32) (n i32) (s i32)) i32
+  (do (let r 1)
+      (if (!= n (load s))
+          (set r 0)
+          (do (let i 0)
+              (while (< i n)
+                (if (!= (at (+ p i)) (load8 (+ s (+ 4 i)))) (set r 0) 0)
+                (set i (+ i 1)))
+              0))
+      r))
+
+// ---------------------------------------------------------------- the lexer
+//
+// Punctuation is stored as its own bytes packed into one word — `<` is 60 and `<=` is 60 + 61*256 —
+// so a comparison against a two-byte operator is one integer compare and there is no table.
+
+(fn tset ((i i32) (kind i32) (start i32) (n i32) (v i32)) i32
+  (do (let base (+ TOK (* i 16)))
+      (store base kind)
+      (store (+ base 4) start)
+      (store (+ base 8) n)
+      (store (+ base 12) v)
+      0))
+
+(fn tkind ((i i32)) i32 (load (+ TOK (* i 16))))
+(fn tstart ((i i32)) i32 (load (+ TOK (+ (* i 16) 4))))
+(fn tlen ((i i32)) i32 (load (+ TOK (+ (* i 16) 8))))
+(fn tval ((i i32)) i32 (load (+ TOK (+ (* i 16) 12))))
+
+(fn two ((a i32) (b i32)) i32 (+ a (* b 256)))
+
+(fn lex () i32
+  (do (let p 0)
+      (set ntok 0)
+      (while (!= (at p) 0)
+        (do (let c (at p))
+            (if (is-space c)
+                (set p (+ p 1))
+                (if (& (== c 47) (== (at (+ p 1)) 47))
+                    // a `//` comment runs to the end of the line
+                    (do (while (& (!= (at p) 0) (!= (at p) 10)) (set p (+ p 1)))
+                        0)
+                    (if (is-digit c)
+                        (do (let v 0)
+                            (let s0 p)
+                            (while (is-digit (at p))
+                              (set v (+ (* v 10) (- (at p) 48)))
+                              (set p (+ p 1)))
+                            (tset ntok K_INT s0 (- p s0) v)
+                            (set ntok (+ ntok 1))
+                            0)
+                        (if (is-alpha c)
+                            (do (let s1 p)
+                                (while (is-alnum (at p)) (set p (+ p 1)))
+                                (tset ntok K_NAME s1 (- p s1) 0)
+                                (set ntok (+ ntok 1))
+                                0)
+                            (do (let d (at (+ p 1)))
+                                (let pack c)
+                                (let w 1)
+                                // the four two-byte operators, and nothing else pairs
+                                (if (& (== d 61)
+                                       (| (| (== c 61) (== c 33)) (| (== c 60) (== c 62))))
+                                    (do (set pack (two c d)) (set w 2))
+                                    0)
+                                (tset ntok K_PUNCT p w pack)
+                                (set ntok (+ ntok 1))
+                                (set p (+ p w))
+                                0)))))))
+      (tset ntok K_EOF p 0 0)
+      0))
+
+// ---------------------------------------------------------------- the parser's cursor
+
+(fn kind () i32 (tkind tp))
+(fn val () i32 (tval tp))
+(fn next () i32 (do (set tp (+ tp 1)) 0))
+
+(fn is-punct ((v i32)) i32 (& (== (kind) K_PUNCT) (== (val) v)))
+(fn is-word ((s i32)) i32
+  (& (== (kind) K_NAME) (texteq (tstart tp) (tlen tp) s)))
+
+(fn eat ((v i32)) i32 (if (is-punct v) (do (next) 1) 0))
+(fn want ((v i32)) i32 (if (eat v) 0 (unexpected)))
+
+// wac-0 has no diagnostics. A refusal is a `data` line in the output that the assembler will not
+// accept, which at least names the compiler rather than pretending the program was fine.
+(fn unexpected () i32
+  (do (nl) (line "!! wac-0: unexpected token at index") 0))
+
+// ---------------------------------------------------------------- locals
+//
+// A declaration always takes a fresh slot; only the *name* is popped when a block ends. So two
+// `i32 x` in sibling blocks are two slots, which is what gives wac-0 shadowing in a language whose
+// own locals have none.
+
+(fn loc-add ((p i32) (n i32)) i32
+  (do (let base (+ LOC (* nloc 12)))
+      (store base p)
+      (store (+ base 4) n)
+      (store (+ base 8) nslot)
+      (set nloc (+ nloc 1))
+      (set nslot (+ nslot 1))
+      (- nslot 1)))
+
+// The most recent binding of a name wins, so the search runs backwards.
+(fn loc-find ((p i32) (n i32)) i32
+  (do (let i nloc)
+      (let found (- 0 1))
+      (while (> i 0)
+        (set i (- i 1))
+        (if (== found (- 0 1))
+            (do (let base (+ LOC (* i 12)))
+                (if (& (== n (load (+ base 4))) (samebytes p n (load base)))
+                    (set found (load (+ base 8)))
+                    0)
+                0)
+            0))
+      found))
+
+(fn samebytes ((a i32) (n i32) (b i32)) i32
+  (do (let r 1)
+      (let i 0)
+      (while (< i n)
+        (if (!= (at (+ a i)) (at (+ b i))) (set r 0) 0)
+        (set i (+ i 1)))
+      r))
+
+(fn slotname ((slot i32)) i32 (do (emits "$v") (emitn slot)))
+
+// ---------------------------------------------------------------- expressions
+//
+// Precedence climbing. Each level parses the one below it and then loops on its own operators, so
+// the emitted order is operands first — which is the order wasm wants and the reason there is no
+// tree here.
+
+(fn primary () i32
+  (do (if (== (kind) K_INT)
+          (do (konst (val)) (next) 0)
+          (if (is-punct 40)
+              (do (next) (expr) (want 41) 0)
+              (if (is-punct 45)
+                  (do (next) (konst 0) (unary) (line "i32.sub") 0)
+                  (if (is-punct 33)
+                      (do (next) (unary) (line "i32.eqz") 0)
+                      (if (== (kind) K_NAME)
+                          (name-or-call)
+                          (unexpected))))))
+      0))
+
+(fn unary () i32 (primary))
+
+(fn name-or-call () i32
+  (do (let p (tstart tp))
+      (let n (tlen tp))
+      (next)
+      (if (is-punct 40)
+          (do (next)
+              (let nargs 0)
+              (while (if (is-punct 41) 0 1)
+                (expr)
+                (set nargs (+ nargs 1))
+                (if (is-punct 44) (do (next) 0) 0))
+              (want 41)
+              (word "call")
+              (emit1 36)
+              (emitname p n)
+              (nl)
+              0)
+          (do (let slot (loc-find p n))
+              (if (== slot (- 0 1))
+                  (unexpected)
+                  (do (word "local.get") (slotname slot) (nl) 0))
+              0))
+      0))
+
+(fn emitname ((p i32) (n i32)) i32
+  (do (let i 0)
+      (while (< i n) (emit1 (at (+ p i))) (set i (+ i 1)))
+      0))
+
+(fn mul () i32
+  (do (unary)
+      (while (| (is-punct 42) (| (is-punct 47) (is-punct 37)))
+        (do (let op (val))
+            (next)
+            (unary)
+            (if (== op 42) (line "i32.mul")
+                (if (== op 47) (line "i32.div_s") (line "i32.rem_s")))
+            0))
+      0))
+
+(fn add () i32
+  (do (mul)
+      (while (| (is-punct 43) (is-punct 45))
+        (do (let op (val))
+            (next)
+            (mul)
+            (if (== op 43) (line "i32.add") (line "i32.sub"))
+            0))
+      0))
+
+(fn cmp () i32
+  (do (add)
+      (while (| (| (is-punct 60) (is-punct 62))
+                (| (| (is-punct 15676) (is-punct 15678))
+                   (| (is-punct 15677) (is-punct 15649))))
+        (do (let op (val))
+            (next)
+            (add)
+            (if (== op 60) (line "i32.lt_s")
+                (if (== op 62) (line "i32.gt_s")
+                    (if (== op 15676) (line "i32.le_s")
+                        (if (== op 15678) (line "i32.ge_s")
+                            (if (== op 15677) (line "i32.eq") (line "i32.ne"))))))
+            0))
+      0))
+
+(fn expr () i32 (cmp))
+
+// ---------------------------------------------------------------- statements
+
+(fn block () i32
+  (do (want 123)
+      (let mark nloc)
+      (while (if (is-punct 125) 0 1) (statement))
+      (want 125)
+      // Only the names go; the slots stay taken, which is what makes shadowing free.
+      (set nloc mark)
+      0))
+
+(fn statement () i32
+  (do (if (is-word "return")
+          (do (next) (expr) (want 59) (line "return") 0)
+          (if (is-word "if")
+              (if-statement)
+              (if (is-word "while")
+                  (while-statement)
+                  (if (is-word "i32")
+                      (declaration)
+                      (if (is-punct 123)
+                          (block)
+                          (expression-statement))))))
+      0))
+
+(fn declaration () i32
+  (do (next)
+      (let p (tstart tp))
+      (let n (tlen tp))
+      (next)
+      (want 61)
+      (expr)
+      (want 59)
+      (word "local.set")
+      (slotname (loc-add p n))
+      (nl)
+      0))
+
+// An assignment is a statement rather than an expression, which removes the one place a C parser
+// has to guess and then back up.
+(fn expression-statement () i32
+  (do (let p (tstart tp))
+      (let n (tlen tp))
+      (if (& (== (kind) K_NAME) (== (tkind (+ tp 1)) K_PUNCT))
+          (if (== (tval (+ tp 1)) 61)
+              (do (next) (next) (expr) (want 59)
+                  (word "local.set")
+                  (slotname (loc-find p n))
+                  (nl)
+                  0)
+              (do (expr) (want 59) (line "drop") 0))
+          (do (expr) (want 59) (line "drop") 0))
+      0))
+
+(fn if-statement () i32
+  (do (next)
+      (want 40)
+      (expr)
+      (want 41)
+      (let l (newlabel))
+      (word "if") (label l) (sp) (line "->")
+      (block)
+      (if (is-word "else")
+          (do (next) (line "else") (if (is-punct 123) (block) (statement)) 0)
+          0)
+      (line "end")
+      0))
+
+(fn while-statement () i32
+  (do (next)
+      (let lo (newlabel))
+      (let li (newlabel))
+      (word "block") (label lo) (sp) (line "->")
+      (word "loop") (label li) (sp) (line "->")
+      (want 40)
+      (expr)
+      (want 41)
+      (line "i32.eqz")
+      (word "br_if") (label lo) (nl)
+      (block)
+      (word "br") (label li) (nl)
+      (line "end")
+      (line "end")
+      0))
+
+// ---------------------------------------------------------------- functions
+
+(fn function ((out i32)) i32
+  (do (next)                                    // the return type, always i32
+      (let np (tstart tp))
+      (let nn (tlen tp))
+      (next)
+      (want 40)
+      (set nloc 0)
+      (set nslot 0)
+      (while (if (is-punct 41) 0 1)
+        (do (next)                              // the parameter's type
+            (loc-add (tstart tp) (tlen tp))
+            (next)
+            (if (is-punct 44) (do (next) 0) 0)
+            0))
+      (want 41)
+      (let nparams nslot)
+
+      // The body first, into scratch, because the locals it declares are not known until it has
+      // been read and wasm wants them named before it. `dp` is the cursor into whichever buffer
+      // `dst` names, so the output position has to be put back by hand.
+      (let outp dp)
+      (set dst BODY)
+      (set dp 0)
+      (block)
+      (let blen dp)
+
+      (set dst out)
+      (set dp outp)
+      (word "func") (emit1 36) (emitname np nn) (sp) (word "->") (line "i32")
+      (let i 0)
+      (while (< i nparams)
+        (word "param") (word "i32") (slotname i) (nl)
+        (set i (+ i 1)))
+      (let j nparams)
+      (while (< j nslot)
+        (word "local") (word "i32") (slotname j) (nl)
+        (set j (+ j 1)))
+      (let k 0)
+      (while (< k blen)
+        (emit1 (load8 (+ BODY k)))
+        (set k (+ k 1)))
+      // Every wac-0 function returns i32, and a body that ends without `return` still has to leave
+      // one — so an unreachable trailing zero is cheaper than deciding whether the last statement
+      // was a return.
+      (konst 0)
+      (line "end")
+      (word "export") (emit1 34) (emitname np nn) (emit1 34) (sp)
+      (word "func") (emit1 36) (emitname np nn) (nl)
+      (nl)
+      0))
+
+(export compile)
+
+(fn compile ((s i32) (out i32)) i32
+  (do (set src s)
+      (set labn 0)
+      (lex)
+      (set tp 0)
+      (set dst out)
+      (set dp 0)
+      (while (!= (kind) K_EOF) (function out))
+      dp))

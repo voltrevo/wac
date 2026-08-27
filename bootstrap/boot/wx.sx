@@ -270,7 +270,12 @@
   (fn (e)
     (if (= (car e) (quote fn)) (comp-fn e)
     (if (= (car e) (quote memory))
-        (do (w (quote memory)) (emit-num (cadr e)) (nl) (nl))
+        ; **The memory is exported with it.** A wx program that declares one has a host, and a host
+        ; that cannot read the memory cannot get anything out of the program but one i32.
+        (do (w (quote memory)) (emit-num (cadr e)) (nl)
+            (w (quote export)) (emit-byte 34) (emit-sym (quote memory)) (emit-byte 34) (sp)
+            (wl (quote memory))
+            (nl))
     (if (= (car e) (quote global))
         (do (w (quote global)) (name$ (cadr e)) (sp)
             (w (quote i32)) (w (quote mut)) (w (quote =))

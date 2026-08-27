@@ -365,6 +365,11 @@ func $peek -> i32
   i32.load8_u 1 0
 end
 
+func $peek2 -> i32
+  global.get $pos
+  i32.load8_u 1 1
+end
+
 func $bump ->
   global.get $pos
   i32.const 1
@@ -412,9 +417,21 @@ func $skip_space ->
       else
         nop
       end
+      ; **`;` or `//`**, and the second is not a convenience. The ladder above this is C-family, so
+      ; `boot/wac0.wx` is written with `//` — and until this was here, every one of its comment lines
+      ; was read as data, landed in the program list, and `comp-top` called `car` on a symbol. The
+      ; read went out of bounds, which is a better failure than most of the ones this file has had.
       call $peek
       i32.const 59
       i32.eq
+      call $peek
+      i32.const 47
+      i32.eq
+      call $peek2
+      i32.const 47
+      i32.eq
+      i32.and
+      i32.or
       if $comment ->
         block $eol ->
           loop $toeol ->
