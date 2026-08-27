@@ -87,13 +87,28 @@ carrying the **first** instance's return type. That is a question about what
 does: the two instances differ only in the inner push, and `typeOfTyName(Box<U>)` is what turns `U`
 into a name.
 
-Worth checking first, in this order, because each is a one-line print:
+### Measured, with a temporary probe in that message
 
-1. what `funcReturns` holds for each of the two entries after registration;
-2. whether `env.instantiate` was called for **both** `Box<i64>` and `Box<bool>`;
-3. whether the emission block's `emitAt` is on the entry it thinks it is, since the count and
-   emission passes both filter `env.instName` and a disagreement there moves a body under a
-   signature.
+Both questions above are answered, and the answer is narrower than either guess:
+
+    [minst: Cell<i32>.wrap<i64>=>Box<i64>   Cell<i32>.wrap<bool>=NO]
+
+- the **first** instance is registered and its `funcReturns` is `Box<i64>` — correct, both
+  substitutions applied;
+- the **second** is in `env.instName` (so `methodInstance` named it and `env.instantiate` recorded
+  it) and has **no function-table entry at all**.
+
+So this is not a substitution bug and not an ordering bug in the emission passes. It is that
+`registerMethodInstances` never registered the second instance, although it is in the list it walks
+and the first one beside it went through the same code.
+
+The next question is therefore *when* it entered the list. The rounds ought to make this work: round
+one discovers `wrap<i64>` and registers it, round two then passes the first statement and reaches the
+second call, and round three registers what it named. Either the second call is being named only
+*after* the last round — in which case the discovery that matters is happening in the final emit walk
+rather than in `collectInstances` — or the first statement is still declining in round two for a
+reason the probe above rules out. **A round counter in that message would separate the two**, and it
+is the cheapest thing left to try.
 
 ## Where to look
 
