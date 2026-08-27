@@ -4346,10 +4346,17 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   } else {
     scanTokenTypes(env, src, lexed);
   }
-  // **Still the blob here.** The per-file driver — each pass across every file, `env.curFile` set
-  // around each — is written and does not yet work: it reaches `frontOf`'s consumers and they report
-  // declines (`a call to \`ready\` … not in the program`). The pieces it needs are all in place and
-  // verified; what is missing is a way to see *why* at less than a seed rebuild per attempt.
+  // **Blob, and deliberately — a half-migrated emitter is worse than either whole.** The per-file
+  // driver works: each pass across every file, `env.curFile` set around each, `env.prog` set before
+  // any of them, and `.cache/probe` exercises it over `core/vec.wac`, `core/option.wac` and
+  // `packages/platform/src/frame.wac` — generics, `Pending`, cross-file parents — all emitting.
+  //
+  // What it cannot be is *only here*. `frontOf` is one of seven `linkFiles` callers; the other six,
+  // including `emitLinkedWith2`, build their own `Env` from the blob. Two `Env`s deriving name keys
+  // two ways have to agree about every one of them, and when they do not the module and the manifest
+  // describing it disagree — which is not a diagnostic, it is `wac.wac trapped`.
+  //
+  // So this goes on when all seven do, which means threading the trees through `emitModuleOfWith`.
   collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
