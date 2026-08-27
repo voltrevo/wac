@@ -7,7 +7,7 @@
 import { assemble } from "./assemble.ts";
 
 const root = new URL("..", import.meta.url).pathname;
-const source = await Deno.readTextFile(`${root}boot/sx.wax`);
+const source = await Deno.readTextFile(`${root}boot/l1.l0`);
 const bytes = assemble(source);
 const compiled = await WebAssembly.compile(bytes.buffer as ArrayBuffer);
 

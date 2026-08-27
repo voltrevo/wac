@@ -1,4 +1,4 @@
-// The `.wax` assembler, in TypeScript. See `spec/wax.md`.
+// The `.l0` assembler, in TypeScript. See `spec/l0.md`.
 //
 // Structured so that the Rust implementation can be a line-for-line translation: the same three
 // passes, the same names, the same emission order. Where a choice existed it is written down in the

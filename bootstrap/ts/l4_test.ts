@@ -1,8 +1,8 @@
-// wac-1's tests, each run through every rung below it: sx interprets the wx compiler, which
-// compiles the wac-0 compiler, which compiles the wac-1 compiler, which compiles the program.
+// wac-L4's tests, each run through every rung below it: wac-L1 interprets the wac-L2 compiler, which
+// compiles the wac-L3 compiler, which compiles the wac-L4 compiler, which compiles the program.
 // Five languages, two interpreters, and a wasm GC module at the end of it.
 
-import { wac1Run } from "./wac1.ts";
+import { l4Run } from "./l4.ts";
 
 const cases: [string, string, number][] = [
   ["wac-0's programs still compile", `
@@ -200,8 +200,8 @@ const cases: [string, string, number][] = [
 ];
 
 for (const [name, source, want] of cases) {
-  Deno.test(`wac-1: ${name} = ${want}`, async () => {
-    const got = await wac1Run(source);
+  Deno.test(`wac-L4: ${name} = ${want}`, async () => {
+    const got = await l4Run(source);
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }

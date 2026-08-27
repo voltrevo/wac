@@ -1,4 +1,4 @@
-// `deno run -A ts/run.ts <file.wax>` — assemble and call `main`, printing what it answers.
+// `deno run -A ts/run.ts <file.l0>` — assemble and call `main`, printing what it answers.
 //
 // The short loop while writing .wax by hand. `ts/assemble_test.ts` is the one that has to pass;
 // this is the one that tells you why it does not.
@@ -6,7 +6,7 @@
 import { assemble } from "./assemble.ts";
 
 if (Deno.args.length < 1) {
-  console.error("usage: run.ts <file.wax>");
+  console.error("usage: run.ts <file.l0>");
   Deno.exit(2);
 }
 

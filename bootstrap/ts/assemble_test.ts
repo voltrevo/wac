@@ -1,4 +1,4 @@
-// The assembler's tests: assemble each module in `tests/wax/`, instantiate it, call `main`, and
+// The assembler's tests: assemble each module in `tests/l0/`, instantiate it, call `main`, and
 // check the answer against `tests/expect.json`.
 //
 // Running the module is the whole point. A byte comparison against a recorded blob would pass for an

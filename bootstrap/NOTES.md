@@ -4,12 +4,12 @@
 
 Four rungs exist and all four work.
 
-    boot/sx.wax          1,630 instructions   the root, hand-written
-    boot/wx.sx             200 lines          a compiler for wx, written in sx
-    boot/wac0.wx           452 lines          a compiler for wac-0, written in wx
-    boot/wac1.wac0         993 lines          a compiler for wac-1, written in wac-0
+    boot/l1.l0          1,630 instructions   the root, hand-written
+    boot/l2.l1             200 lines          a compiler for L2, written in wac-L1
+    boot/l3.l2           452 lines          a compiler for wac-L3, written in wac-L2
+    boot/l4.l3         993 lines          a compiler for wac-L4, written in wac-L3
 
-**wac-1 is the first rung with a type system**, and the first that emits **wasm GC** — structs and
+**wac-L4 is the first rung with a type system**, and the first that emits **wasm GC** — structs and
 arrays are engine types, so there is no allocator, no layout arithmetic and no `free` anywhere in
 the ladder. `struct Node { i32 value; Node[] kids; }` walks its own tree through five languages and
 two interpreters.
@@ -29,21 +29,21 @@ It has `enum` with payloads, `match`, and methods:
 
 993 lines is the largest rung by far and the first that is not obviously cheap. The type system is
 most of it: every expression answers a type index, because `p.x` has to know which struct to read
-from and a local of struct type has to be declared `refnull $s1` rather than `i32`. wac-0's compiler
+from and a local of struct type has to be declared `refnull $s1` rather than `i32`. wac-L3's compiler
 never had to know what an expression *was*.
 
 **Enums cost almost nothing on top of that**, which is the argument for GC made concrete. An enum is
 `struct { i32 tag; anyref payload }` with a nameless struct per variant, so it needs no subtyping —
-which `.wax` does not have — and a `match` is an integer compare and a `ref.cast`, both of which the
+which `.l0` does not have — and a `match` is an integer compare and a `ref.cast`, both of which the
 engine does. A method is a function whose name is its owner's and its own, joined; `p.sum()`
 resolves at compile time to `call $Point_sum`, because there is no subtyping to make it ambiguous.
 
-**wac-0 is where the ladder starts looking like wac** — C-family syntax, functions with typed
+**wac-L3 is where the ladder starts looking like wac** — C-family syntax, functions with typed
 parameters, `i32` declarations with real shadowing, `return`/`if`/`else`/`while`, precedence
 climbing, `//` comments. `fib(20)` answers 6765 through four languages and two interpreters, with
 nothing in the path that was not built here.
 
-**345 lines**, and it is that small for two reasons. It emits `.wax` text, so the assembler that is
+**345 lines**, and it is that small for two reasons. It emits `.l0` text, so the assembler that is
 already written twice does the encoding. And it has **no syntax tree**: a recursive-descent parser
 emits as it reads, which suits wasm exactly, because precedence climbing puts operands before
 operators and that is the order a stack machine wants. An AST would have been a tree to allocate and
@@ -55,7 +55,7 @@ the header is written in front of it afterwards — nine lines, against a whole 
 
 **The second number is the interesting one.** A compiler that handles functions, calls, locals,
 globals, `if`, `while`, assignment, recursion, sixteen operators and byte and word memory access is
-**167 lines**, because it emits `.wax` text rather than wasm bytes and because sx's reader is its
+**167 lines**, because it emits `.l0` text rather than wasm bytes and because L1's reader is its
 parser. That is the case for the ladder in one figure: each rung is cheap when the rung below it is
 a decent language.
 
@@ -64,9 +64,9 @@ The root grew by 300 instructions to support it — `do`, `set!`, `/`, `%`, `pee
 
 The original stage-one figure, for comparison:
 
-    boot/sx.wax          1,157 instructions   before wx needed anything of it
-    boot/sx.wax          1,457 instructions   before wac-0 needed strings and `//`
-    boot/wac0.wx           345 lines          before wac-1 needed `&` and `|`
+    boot/l1.l0          1,157 instructions   before L2 needed anything of it
+    boot/l1.l0          1,457 instructions   before wac-L3 needed strings and `//`
+    boot/l3.l2           345 lines          before wac-L4 needed `&` and `|`
 
 For comparison, the thing a ladder would replace:
 
@@ -74,18 +74,18 @@ For comparison, the thing a ladder would replace:
 
 and the tooling this experiment needed to get there:
 
-    spec/wax.md          156 lines      the format
+    spec/l0.md          156 lines      the format
     ts/assemble.ts       463 lines      the assembler
     rust/src/lib.rs      770 lines      the assembler again, so the two can disagree
 
 **The root came in under the 1,500 lines I guessed it had to stay below**, and finished at 1,457
-with everything the second rung asked of it. A line of `.wax` is one wasm instruction, so that is
+with everything the second rung asked of it. A line of `.l0` is one wasm instruction, so that is
 about what a 400-line C program would be; the expansion factor for writing in assembly is roughly
 three.
 
-## What sx actually is
+## What L1 actually is
 
-Enough of a Lisp to write programs in, and it is tested by running 26 of them (`ts/sx_test.ts`):
+Enough of a Lisp to write programs in, and it is tested by running 26 of them (`ts/l1_test.ts`):
 
 - fixnums, symbols interned into one list, pairs, and a one-bit tag telling immediates from objects;
 - a reader for atoms, negative numbers and nested lists;
@@ -98,19 +98,19 @@ Enough of a Lisp to write programs in, and it is tested by running 26 of them (`
 
 ## What the second rung proved, and what it cost
 
-`ts/wx_test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
+`ts/l2_test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
 `(fib 20)` answers 6765; a `while` inside a `while` counts to 12; `store8`/`load8` move bytes.
 
 Four bugs, and three of them say something.
 
 **sx had no `do`.** A function body is a single expression, so until this there was no way for a
-function to both act and answer. It was invisible while sx only evaluated arithmetic.
+function to both act and answer. It was invisible while L1 only evaluated arithmetic.
 
 **I wrote 33 of the compiler's equality tests as `==`.** That is wx's spelling; sx spells it `=`.
 The two languages are both s-expressions and look alike, and the compiler is written in one and
 about the other, so every line has to be read twice. This will get worse at L2, not better.
 
-**`comp-while` kept its two labels in globals**, and `def` in sx binds globally — so a `while`
+**`comp-while` kept its two labels in globals**, and `def` in wac-L1 binds globally — so a `while`
 inside a `while` rebound the outer one's labels, and the outer `br`, emitted *after* the body,
 branched into the inner loop. The generated assembly looks entirely reasonable. A test found it; no
 amount of reading would have.
@@ -143,15 +143,15 @@ an unrelated change removed the coincidence:
    until a symbol of odd length arrived;
 2. `;` comments were read as code and evaluated, harmlessly, until one of them contained a
    parenthesis;
-3. `//` comments were not comments at all, so every comment line in `boot/wac0.wx` became a symbol
+3. `//` comments were not comments at all, so every comment line in `boot/l3.l2` became a symbol
    in the program list and `comp-top` called `car` on it.
 
-The third is the one worth the note. wac-0's *own* syntax uses `//`, so writing its compiler in wx
+The third is the one worth the note. wac-L3's *own* syntax uses `//`, so writing its compiler in wac-L2
 meant writing `//` out of habit — and sx, two rungs down, had never heard of it. **The rungs look
 alike and are not alike**, and that is the tax the ladder charges: the same 33 lines that made me
 write `==` where sx wanted `=` made me write `//` where it wanted `;`. sx takes both now.
 
-## What sx still is not
+## What L1 still is not
 
 Everything the second rung needed has been added. What is left is what a *third* rung would want:
 
@@ -165,7 +165,7 @@ Everything the second rung needed has been added. What is left is what a *third*
 
 ## The bugs, because they say what writing this is like
 
-**An `if` given a result type whose else-arm produces nothing.** Made twice, in `.wax`. wasm reports
+**An `if` given a result type whose else-arm produces nothing.** Made twice, in `.l0`. wasm reports
 it as *expected 1 element on the stack for fallthru* against a function **index**, so finding it
 means counting `func` lines. A map from byte offsets back to source lines is the obvious next tool.
 
@@ -184,7 +184,7 @@ else.
 The line counts above answer a question about cost, and cost is not the reason to do this. Here is
 the reason.
 
-**An interpreter is a prompt, and a compiler can never be one.** `ts/repl.ts` is a working sx REPL:
+**An interpreter is a prompt, and a compiler can never be one.** `ts/repl.ts` is a working wac-L1 REPL:
 definitions survive between lines, `(fact 10)` answers 3628800, a list prints as `(1 2 3 4)` and an
 improper one as `(1 . 2)`. That came free — `$eval_at` is `$run_at` without the reset, nine lines —
 because the rung underneath it interprets rather than compiles.
@@ -198,23 +198,23 @@ And the whole chain has no imports and no host. Every rung is a pure wasm module
 entire bootstrap — 1,457 readable instructions at the bottom, a live wac prompt at the top — fits in
 a browser tab, offline. The 19,499-line TypeScript path cannot do that at any size.
 
-**The printer lives outside.** sx has none and needs none: the object layout is four words, written
-at the top of `boot/sx.wax`, so the host walks the heap and renders. A hundred instructions saved in
+**The printer lives outside.** L1 has none and needs none: the object layout is four words, written
+at the top of `boot/l1.l0`, so the host walks the heap and renders. A hundred instructions saved in
 the rung that is hardest to write, spent on nothing.
 
 ## What this does not settle
 
 L1 exists and cost 167 lines. **The open question is now L2: a compiler for wac's C-family syntax,
-written in wx.** That one has to lex and parse real text, keep a symbol table, and emit for structs
+written in wac-L2.** That one has to lex and parse real text, keep a symbol table, and emit for structs
 and generics — and it is the rung that has to compile `packages/wacc/src`.
 
-Two things wx would want first, and both are cheap:
+Two things L2 would want first, and both are cheap:
 
-- **string literals**, in wx and in sx's reader. A lexer needs keyword tables, and building them a
+- **string literals**, in wac-L2 and in wac-L1's reader. A lexer needs keyword tables, and building them a
   byte at a time from arithmetic is the kind of code that hides a typo for a week.
 - **a `data` directive**, so those tables are in the module rather than constructed at startup.
 
-wx deliberately has no scopes — local names are unique per function — and that is fine for 167 lines
+L2 deliberately has no scopes — local names are unique per function — and that is fine for 167 lines
 and questionable for three thousand. It is the first thing I would expect to have to add.
 
 Two other things stay unanswered and should not be forgotten:

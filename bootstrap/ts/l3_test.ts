@@ -1,11 +1,11 @@
-// wac-0's tests, each run through every rung below it: sx (hand-written .wax) interprets the wx
-// compiler, which compiles the wac-0 compiler, which compiles the program, which the assembler turns
+// wac-L3's tests, each run through every rung below it: wac-L1 (hand-written wac-L0) interprets the wx
+// compiler, which compiles the wac-L3 compiler, which compiles the program, which the assembler turns
 // into wasm. Four languages, two interpreters, and nothing in the path that was not built here.
 //
 // The compiler module is built once and reused — that step is seconds, and the programs are
 // milliseconds.
 
-import { wac0Run } from "./wac0.ts";
+import { l3Run } from "./l3.ts";
 
 const expr: [string, number][] = [
   ["1", 1],
@@ -27,8 +27,8 @@ const expr: [string, number][] = [
 ];
 
 for (const [source, want] of expr) {
-  Deno.test(`wac-0: ${source} = ${want}`, async () => {
-    const got = await wac0Run(`i32 main() { return ${source}; }`);
+  Deno.test(`wac-L3: ${source} = ${want}`, async () => {
+    const got = await l3Run(`i32 main() { return ${source}; }`);
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
@@ -110,8 +110,8 @@ const programs: [string, string, number][] = [
 ];
 
 for (const [name, source, want] of programs) {
-  Deno.test(`wac-0: ${name} = ${want}`, async () => {
-    const got = await wac0Run(source);
+  Deno.test(`wac-L3: ${name} = ${want}`, async () => {
+    const got = await l3Run(source);
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
@@ -151,14 +151,14 @@ const forCompilers: [string, string, number][] = [
 ];
 
 for (const [name, source, want] of forCompilers) {
-  Deno.test(`wac-0: ${name} = ${want}`, async () => {
-    const got = await wac0Run(source);
+  Deno.test(`wac-L3: ${name} = ${want}`, async () => {
+    const got = await l3Run(source);
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
 
-Deno.test("wac-0: every function is exported, not only main", async () => {
-  const got = await wac0Run(
+Deno.test("wac-L3: every function is exported, not only main", async () => {
+  const got = await l3Run(
     `i32 twice(i32 n) { return n * 2; }\ni32 main() { return 0; }`,
     "twice",
   );

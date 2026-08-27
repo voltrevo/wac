@@ -1,6 +1,6 @@
-// The two assemblers, on every module in `tests/wax/`, compared byte for byte.
+// The two assemblers, on every module in `tests/l0/`, compared byte for byte.
 //
-// This is the check the format exists for. `spec/wax.md` claims every choice was removed from the
+// This is the check the format exists for. `spec/l0.md` claims every choice was removed from the
 // implementation; a byte that differs is a choice that was left in, and the fix belongs in the spec
 // rather than in whichever assembler is behind.
 //
@@ -31,12 +31,12 @@ function firstDifference(a: Uint8Array, b: Uint8Array): number {
   return a.length === b.length ? -1 : n;
 }
 
-// Every `.wax` in the repository, so a new module is covered by being written rather than by being
+// Every `.l0` in the repository, so a new module is covered by being written rather than by being
 // remembered.
 const cases: string[] = [];
-for (const dir of ["tests/wax", "boot"]) {
+for (const dir of ["tests/l0", "boot"]) {
   for (const e of Deno.readDirSync(`${root}${dir}`)) {
-    if (e.isFile && e.name.endsWith(".wax")) cases.push(`${dir}/${e.name}`);
+    if (e.isFile && e.name.endsWith(".l0")) cases.push(`${dir}/${e.name}`);
   }
 }
 cases.sort();
@@ -74,7 +74,7 @@ for (const file of cases) {
 }
 
 Deno.test("the corpus is not empty, and the rust half was actually run", () => {
-  if (cases.length === 0) throw new Error("no .wax files found");
+  if (cases.length === 0) throw new Error("no wac-L0 files found");
   if (!haveRust()) {
     throw new Error(
       `the rust assembler is not built, so every comparison above was skipped — ` +

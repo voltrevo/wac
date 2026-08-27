@@ -1,11 +1,11 @@
 // wx's tests: each runs the whole ladder.
 //
-//   the program -> sx (hand-written .wax) -> the wx compiler (sx source) -> .wax -> assembler -> wasm
+//   the program -> wac-L1 (hand-written wac-L0) -> the wac-L2 compiler (wac-L1 source) -> .wax -> assembler -> wasm
 //
 // Nothing is stubbed and no step is skipped, which is the point: a passing test here is evidence
 // that every rung below it works, and a failure needs bisecting downwards rather than reading.
 
-import { wxRun, wxToWax } from "./wx.ts";
+import { l2Run, l2ToL0 } from "./l2.ts";
 
 const cases: [string, string, number][] = [
   ["a call and arithmetic", `
@@ -92,14 +92,14 @@ const cases: [string, string, number][] = [
 
 for (const [name, program, want] of cases) {
   Deno.test(`wx: ${name} = ${want}`, async () => {
-    const got = await wxRun(program);
+    const got = await l2Run(program);
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
 
 Deno.test("wx: the compiler is deterministic", async () => {
   const p = `(fn main () i32 (+ 1 2))\n(export main)`;
-  const a = await wxToWax(p);
-  const b = await wxToWax(p);
+  const a = await l2ToL0(p);
+  const b = await l2ToL0(p);
   if (a !== b) throw new Error("two runs of the compiler disagreed");
 });

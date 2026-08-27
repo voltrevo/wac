@@ -1,8 +1,8 @@
 // The second rung, driven end to end.
 //
-//   a wx program (s-expressions)
-//     -> sx, interpreting boot/wx.sx, which is itself sx source
-//       -> .wax assembly text, read back out of sx's linear memory
+//   a wac-L2 program (s-expressions)
+//     -> sx, interpreting boot/l2.l1, which is itself wac-L1 source
+//       -> wac-L0 assembly text, read back out of wac-L1's linear memory
 //         -> the assembler
 //           -> wasm
 //
@@ -17,14 +17,14 @@ let sxModule: WebAssembly.Module | null = null;
 
 async function sx(): Promise<WebAssembly.Module> {
   if (sxModule === null) {
-    const src = await Deno.readTextFile(`${root}boot/sx.wax`);
+    const src = await Deno.readTextFile(`${root}boot/l1.l0`);
     sxModule = await WebAssembly.compile(assemble(src).buffer as ArrayBuffer);
   }
   return sxModule;
 }
 
-/** Run sx source, and read back the NUL-terminated text at the address it answers. */
-export async function sxText(source: string): Promise<string> {
+/** Run wac-L1 source, and read back the NUL-terminated text at the address it answers. */
+export async function l1Text(source: string): Promise<string> {
   const inst = await WebAssembly.instantiate(await sx(), {});
   const memory = inst.exports.memory as WebAssembly.Memory;
   const AT = 8192;
@@ -42,15 +42,15 @@ export async function sxText(source: string): Promise<string> {
   return new TextDecoder().decode(out.subarray(answer, end));
 }
 
-/** Compile a wx program to .wax by running the wx compiler under sx. */
-export async function wxToWax(program: string): Promise<string> {
-  const compiler = await Deno.readTextFile(`${root}boot/wx.sx`);
-  return await sxText(`${compiler}\n(compile (quote (${program})))\n`);
+/** Compile a wac-L2 program to .wax by running the wac-L2 compiler under wac-L1. */
+export async function l2ToL0(program: string): Promise<string> {
+  const compiler = await Deno.readTextFile(`${root}boot/l2.l1`);
+  return await l1Text(`${compiler}\n(compile (quote (${program})))\n`);
 }
 
 /** ...and all the way to an answer. */
-export async function wxRun(program: string): Promise<number> {
-  const wax = await wxToWax(program);
+export async function l2Run(program: string): Promise<number> {
+  const wax = await l2ToL0(program);
   const mod = await WebAssembly.compile(assemble(wax).buffer as ArrayBuffer);
   const inst = await WebAssembly.instantiate(mod, {});
   return (inst.exports.main as () => number)();
@@ -58,11 +58,11 @@ export async function wxRun(program: string): Promise<number> {
 
 if (import.meta.main) {
   if (Deno.args.length < 1) {
-    console.error("usage: wx.ts <file.wx> [--wax]");
+    console.error("usage: l2.ts <file.l2> [--wax]");
     Deno.exit(2);
   }
   const program = await Deno.readTextFile(Deno.args[0]);
-  const wax = await wxToWax(program);
+  const wax = await l2ToL0(program);
   if (Deno.args.includes("--wax")) {
     console.log(wax);
   } else {

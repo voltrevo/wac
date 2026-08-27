@@ -6,7 +6,7 @@
 // expression does is to build a module and run it.
 //
 // **The host prints, sx computes.** sx has no printer and does not need one: the object layout is
-// four words and written down at the top of `boot/sx.wax`, so the reader on this side can walk the
+// four words and written down at the top of `boot/l1.l0`, so the reader on this side can walk the
 // heap and render a pair as `(1 2 3)` rather than as the number 66347. That division is worth
 // keeping — a printer inside sx would be a hundred instructions in the rung that is hardest to
 // write, spent on something the outside can do by reading.
@@ -24,7 +24,7 @@ export class Sx {
   ) {}
 
   static async create(): Promise<Sx> {
-    const src = await Deno.readTextFile(`${root}boot/sx.wax`);
+    const src = await Deno.readTextFile(`${root}boot/l1.l0`);
     const mod = await WebAssembly.compile(assemble(src).buffer as ArrayBuffer);
     const inst = await WebAssembly.instantiate(mod, {});
     return new Sx(inst, inst.exports.memory as WebAssembly.Memory);
