@@ -1,0 +1,828 @@
+// wac-L5 — a compiler for wac itself, written in wac-L4. See spec/l5.md.
+//
+// This is the rung that is *handed* its language: it has to accept whatever `packages/wacc/src`
+// happens to be written in, rather than whatever we chose. Stage 1 is the shape of real wac — its
+// declarations, its statements, its full precedence chain — over the i32 subset, so that the parts
+// that are only breadth (integer widths, casts, strings) and the one part that is depth (generics)
+// can each be added to something that already parses the language.
+//
+// It is written in wac-L4, so it has structs, arrays, `enum`/`match`, methods and GC. The tables
+// below are GC arrays rather than fixed addresses, which is the first thing on this ladder that has
+// been true of a compiler here.
+
+struct Tok { i32 kind; i32 start; i32 len; i32 val; }
+
+Tok[] toks;
+i32 ntok = 0;
+i32 tp = 0;
+i32 src = 0;
+i32 dst = 0;
+i32 dp = 0;
+i32 labn = 0;
+
+// Token kinds.
+i32 K_EOF = 0;
+i32 K_INT = 1;
+i32 K_NAME = 2;
+i32 K_PUNCT = 3;
+i32 K_STR = 4;
+
+// ---------------------------------------------------------------- emitting
+
+i32 emit1(i32 b) { store8(dst + dp, b); dp = dp + 1; return 0; }
+
+i32 emits(i32 s) {
+  i32 n = load(s);
+  i32 i = 0;
+  while (i < n) { emit1(load8(s + 4 + i)); i = i + 1; }
+  return 0;
+}
+
+i32 emitd(i32 n) {
+  if (n > 9) { emitd(n / 10); }
+  emit1(48 + n % 10);
+  return 0;
+}
+
+i32 emitn(i32 n) {
+  if (n < 0) { emit1(45); emitd(0 - n); } else { emitd(n); }
+  return 0;
+}
+
+i32 sp() { return emit1(32); }
+i32 nl() { return emit1(10); }
+i32 word(i32 s) { emits(s); return sp(); }
+i32 line(i32 s) { emits(s); return nl(); }
+i32 konst(i32 n) { word("i32.const"); emitn(n); return nl(); }
+i32 label(i32 n) { emits("$b"); return emitn(n); }
+i32 newlabel() { labn = labn + 1; return labn; }
+
+i32 emitname(i32 p, i32 n) {
+  i32 i = 0;
+  while (i < n) { emit1(load8(src + p + i)); i = i + 1; }
+  return 0;
+}
+
+// ---------------------------------------------------------------- source
+
+i32 at(i32 i) { return load8(src + i); }
+i32 isspace(i32 c) { return c == 32 | c == 10 | c == 13 | c == 9; }
+i32 isdigit(i32 c) { return c >= 48 & c <= 57; }
+i32 isalpha(i32 c) { return c == 95 | (c >= 97 & c <= 122) | (c >= 65 & c <= 90); }
+i32 isalnum(i32 c) { return isalpha(c) | isdigit(c); }
+
+i32 texteq(i32 p, i32 n, i32 s) {
+  i32 r = 1;
+  if (n != load(s)) { r = 0; } else {
+    i32 i = 0;
+    while (i < n) {
+      if (at(p + i) != load8(s + 4 + i)) { r = 0; }
+      i = i + 1;
+    }
+  }
+  return r;
+}
+
+i32 samebytes(i32 a, i32 n, i32 b) {
+  i32 r = 1;
+  i32 i = 0;
+  while (i < n) {
+    if (at(a + i) != at(b + i)) { r = 0; }
+    i = i + 1;
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------- the lexer
+//
+// Punctuation packs its bytes into one word, so `<=` is 60 + 61*256 and a two-byte operator is one
+// integer compare. wac's three-byte operators are `<<=` and `>>=`, which nothing in `wacc/src`
+// uses, so they are not here yet — and the lexer says so rather than mis-reading them.
+
+i32 srclen = 0;
+
+i32 pack2(i32 a, i32 b) { return a + b * 256; }
+
+i32 lex() {
+  toks = Tok[srclen + 4]();
+  ntok = 0;
+  i32 p = 0;
+  while (at(p) != 0) {
+    i32 c = at(p);
+    if (isspace(c)) { p = p + 1; } else {
+      if (c == 47 & at(p + 1) == 47) {
+        while (at(p) != 0 & at(p) != 10) { p = p + 1; }
+      } else {
+        // A `/* … */` comment, which wac uses for every doc comment in the tree.
+        if (c == 47 & at(p + 1) == 42) {
+          p = p + 2;
+          while (at(p) != 0 & (at(p) != 42 | at(p + 1) != 47)) { p = p + 1; }
+          if (at(p) != 0) { p = p + 2; }
+        } else {
+          if (isdigit(c)) {
+            i32 v = 0;
+            i32 s0 = p;
+            while (isdigit(at(p))) { v = v * 10 + at(p) - 48; p = p + 1; }
+            toks[ntok] = Tok(K_INT, s0, p - s0, v);
+            ntok = ntok + 1;
+          } else {
+            if (c == 34) {
+              p = p + 1;
+              i32 s1 = p;
+              while (at(p) != 0 & at(p) != 34) {
+                if (at(p) == 92) { p = p + 1; }
+                p = p + 1;
+              }
+              toks[ntok] = Tok(K_STR, s1, p - s1, 0);
+              ntok = ntok + 1;
+              p = p + 1;
+            } else {
+              if (isalpha(c)) {
+                i32 s2 = p;
+                while (isalnum(at(p))) { p = p + 1; }
+                toks[ntok] = Tok(K_NAME, s2, p - s2, 0);
+                ntok = ntok + 1;
+              } else {
+                i32 d = at(p + 1);
+                i32 v2 = c;
+                i32 w = 1;
+                // The two-byte operators wac has: comparison, the logicals, the increments, and
+                // compound assignment.
+                if (d == 61 & (c == 61 | c == 33 | c == 60 | c == 62
+                             | c == 43 | c == 45 | c == 42 | c == 47 | c == 37)) {
+                  v2 = pack2(c, d);
+                  w = 2;
+                }
+                if (c == 38 & d == 38) { v2 = pack2(c, d); w = 2; }
+                if (c == 124 & d == 124) { v2 = pack2(c, d); w = 2; }
+                if (c == 43 & d == 43) { v2 = pack2(c, d); w = 2; }
+                if (c == 45 & d == 45) { v2 = pack2(c, d); w = 2; }
+                if (c == 60 & d == 60) { v2 = pack2(c, d); w = 2; }
+                if (c == 62 & d == 62) { v2 = pack2(c, d); w = 2; }
+                toks[ntok] = Tok(K_PUNCT, p, w, v2);
+                ntok = ntok + 1;
+                p = p + w;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  toks[ntok] = Tok(K_EOF, p, 0, 0);
+  return 0;
+}
+
+// ---------------------------------------------------------------- the cursor
+
+i32 kind() { return toks[tp].kind; }
+i32 val() { return toks[tp].val; }
+i32 tstart() { return toks[tp].start; }
+i32 tlen() { return toks[tp].len; }
+i32 next() { tp = tp + 1; return 0; }
+i32 ispunct(i32 v) { return (toks[tp].kind == K_PUNCT) & (toks[tp].val == v); }
+i32 aheadIs(i32 k, i32 v) { return (toks[tp + k].kind == K_PUNCT) & (toks[tp + k].val == v); }
+i32 isword(i32 s) { return (toks[tp].kind == K_NAME) & texteq(toks[tp].start, toks[tp].len, s); }
+i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
+i32 oops() { nl(); line("!! wac-L5: unexpected token"); return 0; }
+i32 want(i32 v) { if (eat(v)) { return 0; } return oops(); }
+i32 eatword(i32 s) { if (isword(s)) { next(); return 1; } return 0; }
+
+// ---------------------------------------------------------------- locals
+//
+// As in wac-L4: a declaration always takes a fresh slot and only the *name* is popped when a block
+// ends, so shadowing costs a slot and no renaming.
+
+struct Local { i32 nameptr; i32 namelen; i32 slot; }
+Local[] locs;
+i32 nloc = 0;
+i32 nslot = 0;
+i32[] slotty;
+
+i32 loc_add(i32 p, i32 n) {
+  locs[nloc] = Local(p, n, nslot);
+  slotty[nslot] = 0;
+  nloc = nloc + 1;
+  nslot = nslot + 1;
+  return nslot - 1;
+}
+
+i32 loc_find(i32 p, i32 n) {
+  i32 i = nloc;
+  i32 found = 0 - 1;
+  while (i > 0) {
+    i = i - 1;
+    if (found == 0 - 1) {
+      if (locs[i].namelen == n & samebytes(p, n, locs[i].nameptr)) { found = locs[i].slot; }
+    }
+  }
+  return found;
+}
+
+i32 slotname(i32 s) { emits("$v"); return emitn(s); }
+
+// ---------------------------------------------------------------- globals
+
+struct Glo { i32 nameptr; i32 namelen; }
+Glo[] glos;
+i32 nglo = 0;
+
+i32 glo_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nglo) {
+    if (glos[i].namelen == n & samebytes(p, n, glos[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 gloname(i32 i) { emits("$g"); return emitn(i); }
+
+// ---------------------------------------------------------------- string literals
+
+struct Str { i32 off; i32 ptr; i32 len; }
+Str[] strs;
+i32 nstr = 0;
+i32 strnext = 1024;
+
+// wac's escapes, as bytes. Only the ones `wacc/src` uses; an unknown one is left as written, which
+// is wrong in a way the assembler will not catch and is therefore listed in the spec as a gap.
+i32 unescape(i32 c) {
+  if (c == 110) { return 10; }
+  if (c == 116) { return 9; }
+  if (c == 114) { return 13; }
+  if (c == 48) { return 0; }
+  return c;
+}
+
+i32 str_add(i32 p, i32 n) {
+  strs[nstr] = Str(strnext, p, n);
+  nstr = nstr + 1;
+  strnext = strnext + 4 * ((4 + n + 3) / 4);
+  return strs[nstr - 1].off;
+}
+
+i32 hexd(i32 d) { if (d < 10) { return 48 + d; } return 87 + d; }
+i32 emithex(i32 b) {
+  emit1(92); emit1(120); emit1(hexd(b / 16)); return emit1(hexd(b % 16));
+}
+
+i32 emit_strdata() {
+  i32 i = 0;
+  while (i < nstr) {
+    i32 p = strs[i].ptr;
+    i32 n = strs[i].len;
+    word("data"); emitn(strs[i].off); sp(); emit1(34);
+    emithex(n % 256); emithex(n / 256 % 256); emithex(n / 65536 % 256); emithex(n / 16777216);
+    i32 j = 0;
+    while (j < n) { emithex(at(p + j)); j = j + 1; }
+    emit1(34); nl();
+    i = i + 1;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------- functions
+
+struct Fn { i32 nameptr; i32 namelen; }
+Fn[] fns;
+i32 nfn = 0;
+
+i32 fn_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nfn) {
+    if (fns[i].namelen == n & samebytes(p, n, fns[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------- types
+//
+// Stage 1 is i32 and `bool`, which are one wasm type. A type is *read* in full — including `T[]`
+// and `T?` — so the parser is already the shape it needs to be, and only the emission is narrow.
+
+i32 parse_type() {
+  next();
+  while (ispunct(91)) { next(); want(93); }
+  if (ispunct(63)) { next(); }
+  return 0;
+}
+
+// A type followed by a name, which is how a declaration begins and nothing else does.
+i32 looks_like_decl() {
+  i32 i = tp;
+  if (toks[i].kind != K_NAME) { return 0; }
+  i = i + 1;
+  while (toks[i].kind == K_PUNCT & toks[i].val == 91) { i = i + 2; }
+  if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; }
+  return toks[i].kind == K_NAME;
+}
+
+// ---------------------------------------------------------------- expressions
+//
+// wac's precedence, loosest first: ternary, `||`, `&&`, `|`, `^`, `&`, equality, comparison,
+// shifts, additive, multiplicative, unary, postfix. Each level parses the one below and loops.
+
+i32 args() {
+  i32 n = 0;
+  while (ispunct(41) == 0) {
+    expr();
+    n = n + 1;
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  return n;
+}
+
+i32 primary() {
+  if (kind() == K_STR) { konst(str_add(tstart(), tlen())); next(); return 0; }
+  if (kind() == K_INT) { konst(val()); next(); return 0; }
+  if (ispunct(40)) { next(); expr(); want(41); return 0; }
+  if (ispunct(45)) { next(); konst(0); primary(); line("i32.sub"); return 0; }
+  if (ispunct(33)) { next(); primary(); line("i32.eqz"); return 0; }
+  if (ispunct(126)) { next(); primary(); konst(0 - 1); line("i32.xor"); return 0; }
+  if (isword("true")) { next(); konst(1); return 0; }
+  if (isword("false")) { next(); konst(0); return 0; }
+  if (kind() == K_NAME) {
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    if (ispunct(40)) {
+      next();
+      args();
+      word("call"); emit1(36); emitname(p, n); nl();
+      return 0;
+    }
+    i32 li = loc_find(p, n);
+    if (li != 0 - 1) { word("local.get"); slotname(li); nl(); return 0; }
+    i32 gi = glo_find(p, n);
+    if (gi != 0 - 1) { word("global.get"); gloname(gi); nl(); return 0; }
+    oops();
+    return 0;
+  }
+  oops();
+  return 0;
+}
+
+i32 mul() {
+  primary();
+  while (ispunct(42) | ispunct(47) | ispunct(37)) {
+    i32 op = val();
+    next();
+    primary();
+    if (op == 42) { line("i32.mul"); } else {
+      if (op == 47) { line("i32.div_s"); } else { line("i32.rem_s"); }
+    }
+  }
+  return 0;
+}
+
+i32 add() {
+  mul();
+  while (ispunct(43) | ispunct(45)) {
+    i32 op = val();
+    next();
+    mul();
+    if (op == 43) { line("i32.add"); } else { line("i32.sub"); }
+  }
+  return 0;
+}
+
+i32 shift() {
+  add();
+  while (ispunct(15420) | ispunct(15934)) {
+    i32 op = val();
+    next();
+    add();
+    if (op == 15420) { line("i32.shl"); } else { line("i32.shr_s"); }
+  }
+  return 0;
+}
+
+i32 rel() {
+  shift();
+  while (ispunct(60) | ispunct(62) | ispunct(15676) | ispunct(15678)) {
+    i32 op = val();
+    next();
+    shift();
+    if (op == 60) { line("i32.lt_s"); } else {
+      if (op == 62) { line("i32.gt_s"); } else {
+        if (op == 15676) { line("i32.le_s"); } else { line("i32.ge_s"); }
+      }
+    }
+  }
+  return 0;
+}
+
+i32 equality() {
+  rel();
+  while (ispunct(15677) | ispunct(15649)) {
+    i32 op = val();
+    next();
+    rel();
+    if (op == 15677) { line("i32.eq"); } else { line("i32.ne"); }
+  }
+  return 0;
+}
+
+i32 bitand() {
+  equality();
+  while (ispunct(38)) { next(); equality(); line("i32.and"); }
+  return 0;
+}
+
+i32 bitxor() {
+  bitand();
+  while (ispunct(94)) { next(); bitand(); line("i32.xor"); }
+  return 0;
+}
+
+i32 bitor() {
+  bitxor();
+  while (ispunct(124)) { next(); bitxor(); line("i32.or"); }
+  return 0;
+}
+
+// **Short-circuit, so an `if` and not an `and`.** `a && b` must not evaluate `b` when `a` is false,
+// and wac programs rely on it — a guard followed by a dereference is the usual shape.
+i32 logand() {
+  bitor();
+  while (ispunct(9766)) {
+    next();
+    i32 l = newlabel();
+    word("if"); label(l); sp(); word("->"); line("i32");
+    bitor();
+    line("i32.eqz");
+    line("i32.eqz");
+    line("else");
+    konst(0);
+    line("end");
+  }
+  return 0;
+}
+
+i32 logor() {
+  logand();
+  while (ispunct(31868)) {
+    next();
+    i32 l = newlabel();
+    word("if"); label(l); sp(); word("->"); line("i32");
+    konst(1);
+    line("else");
+    logand();
+    line("i32.eqz");
+    line("i32.eqz");
+    line("end");
+  }
+  return 0;
+}
+
+i32 ternary() {
+  logor();
+  if (ispunct(63)) {
+    next();
+    i32 l = newlabel();
+    word("if"); label(l); sp(); word("->"); line("i32");
+    expr();
+    line("else");
+    want(58);
+    ternary();
+    line("end");
+  }
+  return 0;
+}
+
+i32 expr() { return ternary(); }
+
+// ---------------------------------------------------------------- statements
+
+i32 block() {
+  want(123);
+  i32 mark = nloc;
+  while (ispunct(125) == 0) { statement(); }
+  want(125);
+  nloc = mark;
+  return 0;
+}
+
+i32 declaration() {
+  parse_type();
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  if (ispunct(61)) { next(); expr(); } else { konst(0); }
+  want(59);
+  word("local.set"); slotname(loc_add(p, n)); nl();
+  return 0;
+}
+
+// `x = e`, `x += e`, `x++`. The compound forms read the target first, which is why they are here
+// rather than in the expression grammar: wac has no assignment expression.
+i32 assign_or_expr() {
+  i32 p = tstart();
+  i32 n = tlen();
+  if (kind() == K_NAME) {
+    i32 compound = 0;
+    if (aheadIs(1, 15659)) { compound = 43; }
+    if (aheadIs(1, 15661)) { compound = 45; }
+    if (aheadIs(1, 15658)) { compound = 42; }
+    if (aheadIs(1, 15663)) { compound = 47; }
+    i32 incr = 0;
+    if (aheadIs(1, 11051)) { incr = 43; }
+    if (aheadIs(1, 11565)) { incr = 45; }
+
+    if (aheadIs(1, 61) | compound != 0 | incr != 0) {
+      i32 li = loc_find(p, n);
+      i32 gi = glo_find(p, n);
+      next();
+      next();
+      if (incr != 0) {
+        if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+          word("global.get"); gloname(gi); nl();
+        }
+        konst(1);
+        if (incr == 43) { line("i32.add"); } else { line("i32.sub"); }
+      } else {
+        if (compound != 0) {
+          if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+            word("global.get"); gloname(gi); nl();
+          }
+          expr();
+          if (compound == 43) { line("i32.add"); } else {
+            if (compound == 45) { line("i32.sub"); } else {
+              if (compound == 42) { line("i32.mul"); } else { line("i32.div_s"); }
+            }
+          }
+        } else {
+          expr();
+        }
+      }
+      want(59);
+      if (li != 0 - 1) { word("local.set"); slotname(li); nl(); } else {
+        if (gi != 0 - 1) { word("global.set"); gloname(gi); nl(); } else { oops(); }
+      }
+      return 0;
+    }
+  }
+  expr();
+  want(59);
+  line("drop");
+  return 0;
+}
+
+i32 if_statement() {
+  next();
+  want(40);
+  expr();
+  want(41);
+  i32 l = newlabel();
+  word("if"); label(l); sp(); line("->");
+  if (ispunct(123)) { block(); } else { statement(); }
+  if (isword("else")) {
+    next();
+    line("else");
+    if (ispunct(123)) { block(); } else { statement(); }
+  }
+  line("end");
+  return 0;
+}
+
+i32 while_statement() {
+  next();
+  i32 lo = newlabel();
+  i32 li = newlabel();
+  word("block"); label(lo); sp(); line("->");
+  word("loop"); label(li); sp(); line("->");
+  want(40);
+  expr();
+  want(41);
+  line("i32.eqz");
+  word("br_if"); label(lo); nl();
+  if (ispunct(123)) { block(); } else { statement(); }
+  word("br"); label(li); nl();
+  line("end");
+  line("end");
+  return 0;
+}
+
+// `for (init; cond; step) body` is a block holding a `while`, which is what it means. The init's
+// declaration is scoped to the loop, so the name table is marked and restored around the whole
+// thing rather than around the body.
+i32 for_statement() {
+  next();
+  want(40);
+  i32 mark = nloc;
+  if (ispunct(59)) { next(); } else {
+    if (looks_like_decl()) { declaration(); } else { assign_or_expr(); }
+  }
+  i32 lo = newlabel();
+  i32 li = newlabel();
+  word("block"); label(lo); sp(); line("->");
+  word("loop"); label(li); sp(); line("->");
+  if (ispunct(59)) { konst(1); } else { expr(); }
+  want(59);
+  line("i32.eqz");
+  word("br_if"); label(lo); nl();
+
+  // The step is read before the body and emitted after it, so the token cursor has to go back —
+  // which is free here, because the parser's whole state is one integer into the token array.
+  i32 stepAt = tp;
+  while (ispunct(41) == 0) { next(); }
+  want(41);
+  if (ispunct(123)) { block(); } else { statement(); }
+  i32 afterBody = tp;
+  tp = stepAt;
+  if (ispunct(41) == 0) { assign_or_expr_nosemi(); }
+  tp = afterBody;
+
+  word("br"); label(li); nl();
+  line("end");
+  line("end");
+  nloc = mark;
+  return 0;
+}
+
+// The step of a `for`, which is an assignment without its semicolon.
+i32 assign_or_expr_nosemi() {
+  i32 p = tstart();
+  i32 n = tlen();
+  i32 li = loc_find(p, n);
+  i32 gi = glo_find(p, n);
+  if (aheadIs(1, 11051) | aheadIs(1, 11565)) {
+    i32 up = 43;
+    if (aheadIs(1, 11565)) { up = 45; }
+    next(); next();
+    if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+      word("global.get"); gloname(gi); nl();
+    }
+    konst(1);
+    if (up == 43) { line("i32.add"); } else { line("i32.sub"); }
+  } else {
+    i32 compound = 0;
+    if (aheadIs(1, 15659)) { compound = 43; }
+    if (aheadIs(1, 15661)) { compound = 45; }
+    next(); next();
+    if (compound != 0) {
+      if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+        word("global.get"); gloname(gi); nl();
+      }
+      expr();
+      if (compound == 43) { line("i32.add"); } else { line("i32.sub"); }
+    } else {
+      expr();
+    }
+  }
+  if (li != 0 - 1) { word("local.set"); slotname(li); nl(); } else {
+    word("global.set"); gloname(gi); nl();
+  }
+  return 0;
+}
+
+i32 statement() {
+  if (isword("return")) {
+    next();
+    if (ispunct(59)) { konst(0); } else { expr(); }
+    want(59);
+    line("return");
+    return 0;
+  }
+  if (isword("trap")) { next(); want(59); line("unreachable"); return 0; }
+  if (isword("if")) { return if_statement(); }
+  if (isword("while")) { return while_statement(); }
+  if (isword("for")) { return for_statement(); }
+  if (ispunct(123)) { return block(); }
+  if (looks_like_decl()) { return declaration(); }
+  return assign_or_expr();
+}
+
+// ---------------------------------------------------------------- declarations
+
+// 64 pages is 4,194,304 bytes, so the last valid address is one below that — a scratch buffer
+// placed *at* the limit is out of bounds on its first byte.
+i32 BODY = 3145728;
+
+i32 function(i32 out, i32 np, i32 nn) {
+  want(40);
+  nloc = 0;
+  nslot = 0;
+  while (ispunct(41) == 0) {
+    eatword("const");
+    if (isword("this")) { loc_add(tstart(), tlen()); next(); } else {
+      parse_type();
+      loc_add(tstart(), tlen());
+      next();
+    }
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  i32 nparams = nslot;
+
+  i32 outp = dp;
+  dst = BODY;
+  dp = 0;
+  block();
+  i32 blen = dp;
+
+  dst = out;
+  dp = outp;
+  word("func"); emit1(36); emitname(np, nn); sp(); word("->"); line("i32");
+  i32 i = 0;
+  while (i < nparams) { word("param"); word("i32"); slotname(i); nl(); i = i + 1; }
+  i32 j = nparams;
+  while (j < nslot) { word("local"); word("i32"); slotname(j); nl(); j = j + 1; }
+  i32 k = 0;
+  while (k < blen) { emit1(load8(BODY + k)); k = k + 1; }
+  konst(0);
+  line("end");
+  word("export"); emit1(34); emitname(np, nn); emit1(34); sp();
+  word("func"); emit1(36); emitname(np, nn); nl();
+  nl();
+  return 0;
+}
+
+// One scan for every top-level name, so a call to something declared later resolves.
+i32 collect() {
+  tp = 0;
+  while (kind() != K_EOF) {
+    eatword("export");
+    parse_type();
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    if (ispunct(40)) {
+      fns[nfn] = Fn(p, n);
+      nfn = nfn + 1;
+      while (ispunct(123) == 0) { next(); }
+      i32 depth = 1;
+      next();
+      while (depth > 0) {
+        if (ispunct(123)) { depth = depth + 1; }
+        if (ispunct(125)) { depth = depth - 1; }
+        next();
+      }
+    } else {
+      glos[nglo] = Glo(p, n);
+      nglo = nglo + 1;
+      while (ispunct(59) == 0) { next(); }
+      next();
+    }
+  }
+  return 0;
+}
+
+i32 compile(i32 s, i32 out) {
+  src = s;
+  srclen = 0;
+  while (load8(src + srclen) != 0) { srclen = srclen + 1; }
+
+  locs = Local[4096]();
+  slotty = i32[4096]();
+  glos = Glo[1024]();
+  strs = Str[4096]();
+  fns = Fn[4096]();
+  nloc = 0;
+  nslot = 0;
+  nglo = 0;
+  nstr = 0;
+  nfn = 0;
+  strnext = 1024;
+  labn = 0;
+
+  lex();
+  collect();
+
+  tp = 0;
+  dst = out;
+  dp = 0;
+  line("memory 64");
+  word("export"); emit1(34); emits("memory"); emit1(34); sp(); line("memory");
+  nl();
+
+  i32 gi = 0;
+  while (gi < nglo) {
+    word("global"); gloname(gi); sp(); word("i32"); word("mut"); word("="); emitn(0); nl();
+    gi = gi + 1;
+  }
+  nl();
+
+  while (kind() != K_EOF) {
+    eatword("export");
+    parse_type();
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    if (ispunct(40)) {
+      function(out, p, n);
+    } else {
+      // A global's initialiser runs nowhere yet: wac-L5 stage 1 emits zero and the program is
+      // expected to set it. That is a gap and the spec says so.
+      while (ispunct(59) == 0) { next(); }
+      next();
+    }
+  }
+  emit_strdata();
+  return dp;
+}

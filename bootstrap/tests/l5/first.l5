@@ -1,0 +1,14 @@
+// Real wac: `export`, a doc comment, `for`, a ternary, `&&`, `++`.
+/** The nth Fibonacci number, the slow way. */
+i32 fib(i32 n) {
+  if (n < 2) { return n; }
+  return fib(n - 1) + fib(n - 2);
+}
+
+export i32 main() {
+  i32 total = 0;
+  for (i32 i = 0; i < 10; i++) {
+    total += i;
+  }
+  return total > 40 && total < 50 ? fib(10) : 0;
+}

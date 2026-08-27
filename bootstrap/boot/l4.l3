@@ -19,6 +19,7 @@
 //   1179648  the type of each wasm slot, 4 bytes each
 //   1245184  enum variants, 16 bytes each
 //   1441792  methods, 16 bytes each
+//   1507328  globals, 16 bytes each
 //   1310720  the scratch a function body is emitted into
 //   1835008  the scratch every `type` directive is emitted into
 
@@ -31,6 +32,7 @@ i32 STRS = 1114112;
 i32 SLOTTY = 1179648;
 i32 VARS = 1245184;
 i32 METH = 1441792;
+i32 GLO = 1507328;
 i32 BODY = 1310720;
 i32 TYPEBUF = 1835008;
 
@@ -51,6 +53,7 @@ i32 typep = 0;
 i32 nvar = 0;
 i32 nmeth = 0;
 i32 mowner = 0;
+i32 nglo = 0;
 
 // Token kinds.
 i32 K_EOF = 0;
@@ -207,7 +210,10 @@ i32 next() { tp = tp + 1; return 0; }
 i32 ispunct(i32 v) { return (kind() == K_PUNCT) & (val() == v); }
 i32 isword(i32 s) { return (kind() == K_NAME) & texteq(tstart(tp), tlen(tp), s); }
 i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
-i32 oops() { nl(); line("!! wac-1: unexpected token"); return 0; }
+// **And it advances.** A refusal that leaves the cursor where it was turns a syntax error into a
+// loop, and the loop is what the caller sees — an out-of-bounds read a long way from the mistake,
+// rather than a marker line naming it. That is how this was found.
+i32 oops() { nl(); line("!! wac-1: unexpected token"); next(); return 0; }
 i32 want(i32 v) { if (eat(v)) { return 0; } return oops(); }
 
 // ---------------------------------------------------------------- types
@@ -402,6 +408,33 @@ i32 meth_find(i32 owner, i32 p, i32 n) {
 
 i32 meth_ret(i32 i) { return load(METH + i * 16 + 12); }
 
+// **Module state.** A compiler needs somewhere to keep a cursor and a table, and wac-L4 is going to
+// be written in — so it needs globals as much as wac-L3 did. A reference global starts null: wasm
+// has no other value it could hold before the first instruction runs.
+i32 glo_add(i32 p, i32 n, i32 t) {
+  i32 base = GLO + nglo * 16;
+  store(base, p);
+  store(base + 4, n);
+  store(base + 8, nglo);
+  store(base + 12, t);
+  nglo = nglo + 1;
+  return nglo - 1;
+}
+
+i32 glo_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nglo) {
+    i32 base = GLO + i * 16;
+    if (load(base + 4) == n & samebytes(p, n, load(base))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 glo_type(i32 i) { return load(GLO + i * 16 + 12); }
+i32 gloname(i32 i) { emits("$g"); return emitn(i); }
+
 // `Point_sum`, written from the two source names rather than built as a string, because wac-1's
 // compiler has no way to make one.
 i32 mangled(i32 owner, i32 p, i32 n) {
@@ -589,9 +622,17 @@ i32 name_expr() {
     return t;
   }
   i32 li = loc_find(p, n);
-  if (li == 0 - 1) { oops(); return 0; }
-  word("local.get"); slotname(loc_slot(li)); nl();
-  return loc_type(li);
+  if (li != 0 - 1) {
+    word("local.get"); slotname(loc_slot(li)); nl();
+    return loc_type(li);
+  }
+  i32 gi = glo_find(p, n);
+  if (gi != 0 - 1) {
+    word("global.get"); gloname(gi); nl();
+    return glo_type(gi);
+  }
+  oops();
+  return 0;
 }
 
 // `.x` on a struct, `.len()` on an array, and `[i]` on an array — everything that follows a value.
@@ -699,7 +740,22 @@ i32 cmp() {
   return t;
 }
 
-i32 expr() { return cmp(); }
+// Below comparison, so `a == b & c == d` groups as two comparisons. wac-L3 has had these since it
+// had to compile this file; wac-L4 did not, and the first thing written in it needed them on its
+// third line.
+i32 bitand() {
+  i32 t = cmp();
+  while (ispunct(38)) { next(); cmp(); line("i32.and"); t = 0; }
+  return t;
+}
+
+i32 bitor() {
+  i32 t = bitand();
+  while (ispunct(124)) { next(); bitand(); line("i32.or"); t = 0; }
+  return t;
+}
+
+i32 expr() { return bitor(); }
 
 // ---------------------------------------------------------------- statements
 
@@ -735,8 +791,11 @@ i32 assign_or_expr() {
     next(); next();
     expr();
     want(59);
-    if (li == 0 - 1) { oops(); } else {
+    if (li != 0 - 1) {
       word("local.set"); slotname(loc_slot(li)); nl();
+    } else {
+      i32 gi = glo_find(p, n);
+      if (gi == 0 - 1) { oops(); } else { word("global.set"); gloname(gi); nl(); }
     }
     return 0;
   }
@@ -1157,6 +1216,7 @@ i32 collect() {
           next();
         }
       } else {
+        glo_add(p, n, ret);
         while (ispunct(59) == 0) { next(); }
         next();
       }
@@ -1171,6 +1231,7 @@ i32 compile(i32 s, i32 out) {
   ntype = 0;
   nvar = 0;
   nmeth = 0;
+  nglo = 0;
   mowner = 0 - 1;
   // **Index 0 is `i32`, and it has to be taken rather than assumed.** Without this the first struct
   // registered is index 0, every local of that type is declared `i32` because `valtype` reads a 0
@@ -1208,8 +1269,30 @@ i32 compile(i32 s, i32 out) {
       i32 p = tstart(tp);
       i32 n = tlen(tp);
       next();
-      mowner = 0 - 1;
-      function(out, ret, p, n);
+      if (ispunct(40)) {
+        mowner = 0 - 1;
+        function(out, ret, p, n);
+      } else {
+        i32 gi = glo_find(p, n);
+        word("global"); gloname(gi); sp(); valtype(ret); sp(); word("mut"); word("=");
+        // A reference global has no literal to read: wac-L0 answers null for one, and the `= 0` is
+        // there because the directive's shape asks for something and nothing else fits.
+        if (ty_kind(ret) == T_I32) {
+          if (ispunct(61)) {
+            next();
+            i32 neg = 0;
+            if (ispunct(45)) { next(); neg = 1; }
+            i32 v = val();
+            next();
+            if (neg) { emitn(0 - v); } else { emitn(v); }
+          } else { emitn(0); }
+        } else {
+          while (ispunct(59) == 0) { next(); }
+          emitn(0);
+        }
+        nl(); nl();
+        want(59);
+      }
     }}
   }
   emit_strdata();

@@ -20,7 +20,7 @@ everything above it is trusted by derivation.
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 200 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 452 lines |
 | **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,005 lines |
-| **wac-L5** | generics, nullables, the wac ABI — *not built* | wac-L4 | — |
+| **wac-L5** | wac itself — *stage 1 of 4: the syntax, over i32* | wac-L4 | 690 lines so far |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names
@@ -32,6 +32,10 @@ Files say the same thing: `boot/l4.l3` is **the L4 compiler, written in L3**.
 written in: full wac minus the nine omissions `compiler/README.md` documents, and *with* generics.
 Its compiler is the last program in the chain, and compiling `packages/wacc/src` with it produces
 `wacc.wasm` — after which wac is self-hosting, as it already is today.
+
+**Stage 1 exists.** Real wac syntax over the i32 subset — `export`, doc comments, `for`, ternary,
+short-circuit `&&`/`||`, compound assignment, `else if`, `trap` — compiled through six languages and
+two interpreters. `spec/l5.md` has the four stages and what each is measured to cost.
 
 **Generics belong to L5's compiler, not to L4's language.** They are the most expensive feature to
 implement and the cheapest to live without, so putting them in L4 would mean implementing
