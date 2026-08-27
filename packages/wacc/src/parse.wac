@@ -67,6 +67,20 @@ export i32 perrEnumOverride() { return 31; }
  */
 export i32 perrEnumMethodThis() { return 32; }
 
+/**
+ * `a < b > c` — a type argument list this rule claimed, with a value sitting after it.
+ *
+ * Its own code for the reason `perrKeywordName` gives: *"a generic 'unexpected token' is that same
+ * error with the useful half removed"*. Since `design/lang/0011` widened the trigger, `a < b` parses
+ * as an instantiation of `a` wherever `b` parses as a type, and the author of a double comparison is
+ * told about a semicolon they did not omit, a hundred columns from the `<` that decided it.
+ *
+ * Only raised where what follows **cannot** continue an expression — a name or a literal. `id<i32>;`
+ * and `f(id<i32>)` are the same parse and are somebody naming a generic function, so they are handed
+ * to the checker, which knows whether `id` is one. `issues/lang/0235a`, `design/lang/0011`.
+ */
+export i32 perrTypeArgsThenValue() { return 33; }
+
 export struct P {
   u8[] src;
   i32[] toks;      // flat quintuples from lex
@@ -1366,13 +1380,21 @@ bool looksLikeConstructionOrCall(P p) {
   // spelling whose meaning is 'ignore what you wrote'."* That branch now builds an
   // `ExprKind.TypeName` when arguments were written, so the two changes landed together.
   // `issues/lang/0088`, `design/lang/0011`.
-  if (next == kLt()) {
-    i32 after = afterTypeArgs(p, 1);
-    if (after < 0) { return false; }
-    i32 following = p.kindAt(after);
-    return following == kLbrack() || following == kLparen() || following == kLbrace()
-        || following == kQuestion() || following == kDot();
-  }
+  // **What follows no longer matters** — `design/lang/0011`. The set above was `[ ( { ? .`, and each
+  // entry was a place a construction could continue; the rule now is the one the operator asked for,
+  // which is that if it parses as a type argument list then it is one, and a program that wanted the
+  // comparison says so with parentheses.
+  //
+  // The set was not smaller than this by accident, it was smaller because dropping it makes
+  // `a < b > c` an instantiation of `a` followed by `c`. That is a real break and it is intended:
+  // neither `a < b > c` nor `g(a < b, c > e)` occurs in the 135,000 lines here, and the simple rule
+  // is worth more than the shapes it costs. `parseConstructionOrCall` refuses the result by naming
+  // the rule and the escape rather than reporting a mismatch on a parse nobody intended.
+  //
+  // What keeps this from swallowing ordinary comparisons is `afterTypeArgs` itself: `count <
+  // list.len() > 0` does not parse as a type list — a call is not a type — so the `<` stays
+  // less-than with no special case for it here.
+  if (next == kLt()) { return afterTypeArgs(p, 1) >= 0; }
 
   if (next == kLbrack() || next == kQuestion()) {
     i32 j = 1;                        // relative offset of the `[` or `?`
@@ -1498,6 +1520,30 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
     Ty t = prim ? tyPrim(nameTok, line, col) : tyNamed(nameTok, nameArgs, line, col);
     NamedArg[] empty = NamedArg[]();
     return Expr(ExprKind.Construct(t, args, empty), line, col);
+  }
+
+  // A written instantiation with nothing after it: `id<i32>` as a value, and equally the `a < b`
+  // half of a comparison this rule has claimed. The parser cannot tell those apart and does not try
+  // — it hands both on as a `TypeName` and the name resolver decides, which is where the knowledge
+  // of whether `id` is a generic function lives.
+  if (nameArgs.len() > 0) {
+    // **A value cannot follow a type argument list**, so `a < b > c` is caught here rather than
+    // reported as a missing semicolon under the `c`. Everything that *can* follow an expression —
+    // `;`, `)`, `,`, an operator, a ternary — is left alone and handed to the checker, because
+    // `id<i32>` in those positions is somebody naming a generic function and only the checker knows
+    // whether `id` is one. `design/lang/0011` criterion 10.
+    i32 next = p.kindAt(0);
+    if (next == kIdent() || next == kInt() || next == kFloat() || next == kString()
+        || next == kTrue() || next == kFalse()) {
+      // Reported, the offending token eaten, and a poison node returned — the idiom `perrBadPrimary`
+      // uses a few lines below, and for the same reason. Leaving the `TypeName` standing would draw
+      // a *second* complaint from the checker about the same `<`, and letting the token stand draws
+      // one from the statement parser about a semicolon; one fault is entitled to one message.
+      p.fail(perrTypeArgsThenValue());
+      p.advance();
+      return Expr(ExprKind.NullLit, line, col);
+    }
+    return Expr(ExprKind.TypeName(tyNamed(nameTok, nameArgs, line, col)), line, col);
   }
 
   p.fail(perrCtorBrace());

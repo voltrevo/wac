@@ -1,0 +1,15 @@
+// expect: answers f = 1
+// only: wacc
+// spec:  §wacc-type-args-commit
+// why: `0236`'s shape exactly, with one operand changed from a name to a **call** — and that is the
+//      whole difference between refused and accepted. `list.len()` is not a type, so the type parse
+//      fails on its own terms and the `<` is arithmetic; no rule anywhere mentions comparisons. It is
+//      the general reason most comparisons are safe, since their operands are rarely spelled like
+//      types, and this pair of cases is where that is measured rather than asserted.
+// from: design/lang/0011
+i32 g(bool x, bool y) { return x && y ? 1 : 0; }
+export i32 f() {
+  i32[] list = i32[3]();
+  i32 count = 1;
+  return g(count < list.len(), count > 0);
+}

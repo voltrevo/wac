@@ -4118,6 +4118,29 @@ void checkExpr(C c, Expr e) {
         c.report(errTypeAsValue(), e.line, e.col);
       }
     }
+    // A written instantiation standing where a value belongs, which since `design/lang/0011` widened
+    // the trigger is two very different programs arriving at one node. `id<i32>` is a generic
+    // function named with its type arguments and is step 4's job to make legal. `a < b > c` is a
+    // pair of comparisons whose `a < b` this rule claimed, and its author never asked for a type at
+    // all — so the note names the escape rather than only the complaint, because the second author
+    // is the one who cannot otherwise tell what happened. `issues/lang/0235a`.
+    //
+    // Reported here and not in `typeOfExpr`, which answers `typeNone()` for this and says nothing:
+    // one place decides, or a reader gets the contradiction of a diagnostic beside a type.
+    case TypeName(qual): {
+      string base = "";
+      match (qual.kind) {
+        case Named(tok, targs): { base = tokenText(c, tok); }
+        else: { }
+      }
+      // **Which of the two it is, is a question about the name**, and the checker is the first place
+      // that can answer it. Advising parentheses to someone who wrote `id<i32>` meaning the function
+      // would be advice for a program they were not writing.
+      c.reportWith(errTypeAsValue(), e.line, e.col,
+                   c.funcAt(base) >= 0
+                     ? base + " is a function, and a call cannot name its type arguments"
+                     : base + "<…> is read as type arguments — parenthesise to compare instead");
+    }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
     // asked about. Both land on the `is`, which is this node's own position.
     case Is(left, target, other, negated): {
@@ -6575,6 +6598,17 @@ void checkReceiver(C c, Expr obj) {
         return;
       }
     }
+    // **A written instantiation is legal here and nowhere else** — `Maybe<i32>.Just(4)`. It is the
+    // same exemption the arm above makes for a bare type name, and it belongs here for the same
+    // reason: `checkExpr`'s `TypeName` arm refuses one wherever a *value* belongs, so the one
+    // position where a type is not a value has to say so. Without this the arm fires on the
+    // construct `issues/lang/0088` exists to allow, which is how `spec/cases/0235` caught it.
+    //
+    // **The instantiation is still resolved**, because exempting the position is not the same as
+    // exempting the type written in it: `typeOfTy` reports an unknown name as it goes, and without
+    // this call `Maybe<Typoo>.Just(4)` drew no diagnostic whatever — a worse answer than the false
+    // alarm it replaced, and one nothing else in the file would have caught.
+    case TypeName(qual): { typeOfTy(c, qual); return; }
     else: { }
   }
   checkExpr(c, obj);

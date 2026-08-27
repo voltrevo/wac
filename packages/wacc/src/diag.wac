@@ -47,6 +47,7 @@ export string parseMessage(i32 code) {
   if (code == 30) { return "a keyword cannot be used as a name"; }
   if (code == 31) { return "'override' is not allowed on an enum method"; }
   if (code == 32) { return "an enum method must take 'this'"; }
+  if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
   return "the parser refused this";
 }
 

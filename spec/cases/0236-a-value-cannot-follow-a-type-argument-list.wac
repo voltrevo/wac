@@ -1,0 +1,11 @@
+// expect: refused
+// only: wacc
+// spec:  §wacc-type-args-commit
+// why: `g(a < b, c > e)` parses as `g` applied to an instantiation `a<b, c>` followed by `e`, and the
+//      rule is that a type argument list that parses is one. The cost is stated rather than hidden:
+//      this program was legal and is not, and `0237` is the same program written with parentheses.
+//      Refused in the *parser*, which is why the message names the rule and the escape rather than
+//      reporting a missing semicolon under the `e`.
+// from: design/lang/0011
+i32 g(bool x, bool y) { return x && y ? 1 : 0; }
+export i32 main() { i32 a = 1; i32 b = 2; i32 c = 3; i32 e = 4; return g(a < b, c > e); }

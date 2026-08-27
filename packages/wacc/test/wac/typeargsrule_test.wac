@@ -1,0 +1,127 @@
+// `design/lang/0011`'s rule, and the two programs it costs.
+//
+// The rule is one sentence — **if it parses as a type argument list, it is one** — and it replaced a
+// follow set of `[ ( { ? .` that had grown an entry at a time. What makes it worth a test of its own
+// is not the constructs it allows but the ones it takes away: `a < b > c` and `g(a < b, c > e)` were
+// legal and are not, and the operator's decision was that a simple rule is worth that, with
+// parentheses as the escape.
+//
+// **A refusal is only half of what is being checked here.** Anyone can make those two programs stop
+// compiling; the reason this file exists is the *message*. `a < b > c` fails at the `c`, which is a
+// hundred columns from the `<` that decided it, and the parser's own account of that was `expected
+// ';', found 'c'` — an error about a semicolon nobody omitted, in the house style `perrKeywordName`
+// was given its own code to avoid. So every case here asserts the words, not the count.
+//
+// Neither shape occurs in the 135,000 lines of wac in this repository, which is what made the trade
+// affordable and is recorded in the design document rather than here, because it is a fact about
+// today's corpus and this is a fact about the language.
+//
+// **Under a second.** Six short sources through the checker, no emit, no subprocess.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { diagnoseFilesRendered } from "../../src/api.wac";
+
+/** One source through the checker, rendered the way a user sees it. */
+string said(string src) {
+  return diagnoseFilesRendered(string[]("m.wac"), string[](src), "m.wac");
+}
+
+/**
+ * The rule takes two comparison shapes, and says so in words the author can act on.
+ *
+ * Both were legal before `design/lang/0011`. `a < b > c` is the bare shape; `g(a < b, c > e)` is the
+ * one that hides inside an argument list, where the `,` reads as an argument separator to a human
+ * and as a type-argument separator to the parser. They are listed separately because a rule that
+ * caught only the first would look fixed.
+ */
+export string test_a_double_comparison_is_refused_and_the_message_names_the_escape() {
+  T t = T.create();
+
+  string bare = said("export i32 main() { i32 a = 1; i32 b = 2; i32 c = 3; return a < b > c ? 1 : 0; }");
+  t.isTrue(contains(bare, "type arguments"),
+           "the bare shape is refused for being a type argument list — got " + bare);
+  t.isTrue(contains(bare, "parenthesise"),
+           "and the message names the escape rather than only the complaint — got " + bare);
+
+  string inArgs = said("i32 g(i32 x, bool y) { return 1; }\n" +
+                       "export i32 main() { i32 a = 1; i32 b = 2; i32 c = 3; i32 e = 4;\n" +
+                       "  return g(a < b, c > e); }");
+  t.isTrue(contains(inArgs, "type arguments"),
+           "the shape inside an argument list is refused too — got " + inArgs);
+  t.isTrue(contains(inArgs, "parenthesise"),
+           "and names the same escape — got " + inArgs);
+
+  // **Not a semicolon.** The failure this replaces, kept as a negative so a regression to the old
+  // wording is a red test rather than a quieter one.
+  t.isTrue(!contains(bare, "expected ';'"),
+           "and does not report a semicolon nobody omitted — got " + bare);
+
+  return t.report();
+}
+
+/**
+ * An ordinary double comparison on a **call** still compiles, and needs no parentheses.
+ *
+ * This is the case that decides whether the rule is usable, because it is the shape people actually
+ * write. It survives for a reason with nothing to do with `<`: `list.len()` is a call, a call is not
+ * a type, so the type parse fails and the `<` is arithmetic again. There is no special case for it
+ * anywhere — which is the point, and is why a test says so.
+ */
+export string test_a_comparison_against_a_call_is_still_a_comparison() {
+  T t = T.create();
+  string clean = said("export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
+                      "  return count < list.len() > 0 ? 1 : 0; }");
+  t.isTrue(!contains(clean, "error"),
+           "a comparison whose operand is a call is untouched by the rule — got " + clean);
+  return t.report();
+}
+
+/**
+ * A generic function named with its type arguments is refused, and told which of the two it is.
+ *
+ * `id<i32>` and `a<b>` are the same parse, and the parser hands both on rather than guessing —
+ * only the checker knows whether `id` is a function. Advising parentheses to somebody who meant the
+ * function would be advice about a program they were not writing, so the note branches on the name.
+ *
+ * **This is `design/lang/0011` criterion 3, and it is the criterion that is not met yet.** When step
+ * 4 lands this becomes a compiling program and this test inverts. That is deliberate: until then the
+ * refusal is what the language does, and it should be a refusal that explains itself rather than a
+ * silence. `spec/spec/generics.md` still says a call cannot name its type arguments, and this agrees
+ * with the spec.
+ */
+export string test_a_generic_function_named_with_its_arguments_says_which_it_is() {
+  T t = T.create();
+  string got = said("i32 id<T>(T x) { return 1; }\n" +
+                   "export i32 main() { fn[i32(i32)] g = id<i32>; return g(7); }");
+  t.isTrue(contains(got, "a call cannot name its type arguments"),
+           "a function is told it is a function, not offered parentheses — got " + got);
+  t.isTrue(!contains(got, "parenthesise"),
+           "and is not given the comparison advice — got " + got);
+  return t.report();
+}
+
+/**
+ * Receiver position is the exception, and exempting it does not exempt what is written in it.
+ *
+ * `Maybe<i32>.Just(4)` is the construct `issues/lang/0088` added, and it is the one place a written
+ * instantiation stands where an expression is parsed. The checker's `TypeName` arm refuses one
+ * anywhere else, so this position needs an exemption — and the first version of that exemption
+ * returned without looking, which left `Maybe<Typoo>.Just(4)` with **no diagnostic at all**. That is
+ * a worse answer than the false alarm it replaced and nothing else in the compiler would have caught
+ * it, so both halves are asserted here.
+ */
+export string test_the_receiver_exemption_still_resolves_what_is_written() {
+  T t = T.create();
+  string decl = "enum Maybe<T> { Just(T v), Absent\n" +
+                "  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; } }\n";
+
+  string good = said(decl + "export i32 main() { return Maybe<i32>.Just(4).orElse(0); }");
+  t.isTrue(!contains(good, "error"),
+           "a written instantiation in receiver position is legal — got " + good);
+
+  string bad = said(decl + "export i32 main() { return Maybe<Typoo>.Just(4).orElse(0); }");
+  t.isTrue(contains(bad, "unknown type 'Typoo'"),
+           "and an unknown name inside one is still reported — got " + bad);
+  return t.report();
+}

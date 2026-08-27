@@ -317,15 +317,53 @@ rather than stylistic, so they are recorded there and repeated here:
 | step | state |
 |---|---|
 | the target, the spelling, the trigger | **accepted** with the operator, 2026-08-26 |
-| 1 — `issues/lang/0088` | open, separable, and the cheapest thing here |
-| 2 — the trigger becomes "parses as a type list" | **not started** — deletes a follow set in `parse.wac`; buys `id<i32>` as a value |
+| 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
+| 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
 | 3 — the postfix path | **not started** |
 | 4 — name resolution | **not started** — this is the feature |
-| 5 — the diagnostic | **not started**; `issues/lang/0235a` is open and is this |
+| 5 — the diagnostic | **done for the parse half** 2026-08-27 — `perrTypeArgsThenValue`, and the checker's `TypeName` arm branches on whether the name is a function. `issues/lang/0235a`'s remaining half is the *postfix* `b.map<i32>(…)` |
 | 6 — the emitter | **not started**, and the only large one |
-| 7 — the spec | **not started** |
+| 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
 | the tuple constraints | recorded in `issues/lang/0074` |
 
-**Nothing is implemented.** Two things are worth watching rather than assuming: whether committing in
-the parser — rather than falling back — is tolerable for the shadowing case in daily use, and whether
-the comma-separated-arguments surprise shows up once people start writing generic calls.
+### Which acceptance criteria are met
+
+| # | criterion | state |
+|---|---|---|
+| 1 | `zero<i32>()` callable | **no** — needs step 4 |
+| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **no** — needs step 4 |
+| 3 | `fn[i32(i32)] g = id<i32>;` | **no**, and it now fails with a message that says which of the two readings it is, rather than `expected an expression` |
+| 4 | `Option<i32>.None.orElse(7)` | **yes** |
+| 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |
+| 6 | `core/test/option_test.wac`'s workaround locals | **partly** — one of the three was single-use and is now written inline. The other two are used more than once, so inlining them would make the file *longer*; the criterion's "a real file gets shorter" held for one local rather than three, and what actually changed is that the workaround is no longer forced |
+| 7 | `Cell<i32>()`, `Cell<Cell<i32>>()`, receiver position included | **yes** |
+| 8 | `count < list.len() > 0` still a comparison | **yes** — `spec/cases/0238` |
+| 9 | `Cell<Typoo>()` says unknown type `Typoo` | **yes** |
+| 10 | `a < b > c` and `g(a < b, c > e)` stop compiling, with the rule and escape named | **yes** — `spec/cases/0236`, `0237`, and `packages/wacc/test/wac/typeargsrule_test.wac` asserts the words |
+| 11 | one instantiation per written type argument, shared with the inferred one | **no** — needs step 6 |
+
+### What the implementation taught, that the document did not predict
+
+- **The bare shape costs nothing.** `a < b > c` compares a `bool` with an integer, so it was already
+  an error before this rule claimed it — only the message changed. The argument-list shape
+  `g(a < b, c > e)` is the whole of the real loss, and `spec/cases/0236`/`0237` are the pair that
+  record it.
+- **Only the first comparison needs parenthesising.** `g((a < b), c > e)` compiles: once `(a < b)` is
+  a parenthesised expression the `c > e` has nothing to attach to. A reader told "use parentheses"
+  would write four, and `spec/cases/0237` exists to say two is enough.
+- **Exempting a position is not exempting what is written in it.** `checkExpr`'s new `TypeName` arm
+  refuses a written instantiation wherever a value belongs, so receiver position needed an exemption
+  in `checkReceiver` — and the first version returned without looking, which left
+  `Maybe<Typoo>.Just(4)` with *no diagnostic at all*. Worse than the false alarm it replaced, and
+  `spec/cases/0235` is what caught it.
+- **One fault, one message, needs the poison node.** Reporting in the parser and then handing on a
+  real `TypeName` drew a second complaint from the checker about the same `<`; leaving the token
+  unconsumed drew one from the statement parser about a semicolon. `perrBadPrimary`'s existing
+  idiom — fail, advance, return `NullLit` — is what makes it one.
+- **A neighbouring gap, filed as `issues/lang/0272b`:** `(x < 2) > 0` type-checks and evaluates the
+  `bool` as `1`, where `b > y` on a `bool` local is correctly refused. Found writing case 0238, which
+  was rewritten not to depend on it.
+
+**Two things are still worth watching** rather than assuming: whether committing in the parser is
+tolerable for the shadowing case in daily use, and whether the comma-separated-arguments surprise
+shows up once people start writing generic calls. Nothing in the corpus exercises either yet.

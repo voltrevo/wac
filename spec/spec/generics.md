@@ -41,7 +41,38 @@ covariant arrays are a known mistake, and a mutable container cannot be covarian
 ### Angle brackets are type syntax only
 
 Type arguments appear where a **type** is written, never in an expression: `IDENT <` is ambiguous
-with less-than, and there is no way to tell them apart without unbounded lookahead.
+with less-than.
+
+`[§wacc-type-args-commit]` **wacc resolves that ambiguity by trying the type parse, and committing to
+it if it succeeds** — if `IDENT < … >` parses as a type argument list, it *is* one, whatever follows.
+Nothing is left to what comes next, and a program that wanted the comparison says so with
+parentheses:
+
+```wac
+g(a < b, c > e);           // error: type arguments, and a value cannot follow them
+g((a < b), c > e);         // two comparisons, as written
+```
+
+`[§wacc-type-args-commit]` One pair of parentheses is enough, and it goes on the *first* comparison:
+once `(a < b)` is a parenthesised expression the `c > e` after it has nothing to attach to and is
+arithmetic again.
+
+`[§wacc-type-args-commit]` The rule costs exactly the programs where both readings parse, and there
+are two shapes. The argument-list one above is the real loss, because it is a program somebody might
+mean. The bare one is not: `a < b > c` compares a `bool` with an integer, so it was already an error
+before this rule claimed it — what changed is which error it gets.
+
+What the rule buys is that a mistake *inside* the arguments is reported as a mistake: `Cell<Typoo>()`
+says **unknown type `Typoo`**, where a parser that backed out to a comparison whenever the type parse
+failed would report a type mismatch on a parse the author never intended.
+
+`[§wacc-type-args-commit]` The common comparison shapes are untouched, and not by a special case for
+them. `count < list.len() > 0` survives because `list.len()` is a *call*, so the type parse fails on
+its own terms and the `<` is arithmetic again — which is the general reason most comparisons are
+safe: their operands are rarely spelled like types.
+
+`§wacc-` because this is a wacc rule; the reference refuses these programs earlier and for other
+reasons.
 
 wac can afford the restriction because every declaration is explicitly typed, so a construction
 always has an expected type to take its arguments from:
