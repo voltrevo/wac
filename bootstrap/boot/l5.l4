@@ -740,6 +740,7 @@ i32 usedindexof = 0;
 i32 usedtrim = 0;
 i32 usedcharat = 0;
 i32 usedeq = 0;
+i32 usedcmp = 0;
 
 i32 prim_type() {
   if (isword("void")) { return TY_VOID; }
@@ -1753,7 +1754,19 @@ i32 rel() {
   while (ispunct(60) | ispunct(62) | ispunct(15676) | ispunct(15678)) {
     i32 op = val();
     next();
-    i32 m_shift = dp; t = balance(m_shift, t, shift());
+    i32 m_shift = dp;
+    i32 rt = shift();
+    // **Strings order lexicographically**, which `ch >= "A"` in the corpus relies on. One
+    // helper answers the sign of the difference and the four operators are that sign against
+    // zero — the same shape the integer comparisons already have.
+    if (t == strty & rt == strty) {
+      usedcmp = 1;
+      line("call $__strcmp");
+      konst(0);
+      t = TY_I32;
+    } else {
+      t = balance(m_shift, t, rt);
+    }
     if (op == 60) { binop_signed(t, "lt"); } else {
       if (op == 62) { binop_signed(t, "gt"); } else {
         if (op == 15676) { binop_signed(t, "le"); } else { binop_signed(t, "ge"); }
@@ -3018,6 +3031,66 @@ i32 emit_runtime() {
   }
   // `trim` answers a range of its argument, which is what `slice` already builds.
   if (usedtrim) { usedslice = 1; }
+  if (usedcmp) {
+    // The sign of a - b, comparing bytes and then lengths: the first difference decides, and
+    // when one is a prefix of the other the shorter one is the smaller.
+    word("func"); line("$__strcmp -> i32");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    line("local i32 $i");
+    line("local i32 $n");
+    line("local i32 $x");
+    line("local i32 $y");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $n");
+    line("local.get $b");
+    line("array.len");
+    line("local.get $n");
+    line("i32.lt_s");
+    line("if $c1 ->");
+    line("local.get $b");
+    line("array.len");
+    line("local.set $n");
+    line("end");
+    line("block $c2 ->");
+    line("loop $c3 ->");
+    line("local.get $i");
+    line("local.get $n");
+    line("i32.ge_s");
+    line("br_if $c2");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.set $x");
+    line("local.get $b");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.set $y");
+    line("local.get $x");
+    line("local.get $y");
+    line("i32.ne");
+    line("if $c4 ->");
+    line("local.get $x");
+    line("local.get $y");
+    line("i32.sub");
+    line("return");
+    line("end");
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $c3");
+    line("end");
+    line("end");
+    line("local.get $a");
+    line("array.len");
+    line("local.get $b");
+    line("array.len");
+    line("i32.sub");
+    line("end");
+    nl();
+  }
   if (usedcharat) {
     // One byte, as a string. `array.new_fixed` with a count of one is the whole of it: the
     // element is read before the array exists, which is the order the instruction wants.
@@ -3388,6 +3461,7 @@ i32 compile(i32 s, i32 out) {
   usedtrim = 0;
   usedcharat = 0;
   usedeq = 0;
+  usedcmp = 0;
   tmpls = Tmpl[4096]();
   tparams = TParam[8192]();
   insts = Inst[16384]();
