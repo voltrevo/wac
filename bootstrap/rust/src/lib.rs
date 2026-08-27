@@ -33,6 +33,7 @@ fn plain(tok: &str) -> Option<ValType> {
     Some(match tok {
         "i32" => ValType::Plain(0x7f, "i32"),
         "i64" => ValType::Plain(0x7e, "i64"),
+        "f32" => ValType::Plain(0x7d, "f32"),
         "f64" => ValType::Plain(0x7c, "f64"),
         // Packed, and only valid where a field or an element goes. wasm has no i8 value, so a local
         // of this type is refused by the engine — the same place every other type mistake here is
@@ -653,6 +654,37 @@ fn nullary(op: &str) -> Option<u8> {
         "f64.convert_i64_u" => 0xba,
         // Reinterpretation, which is the one conversion that changes nothing: the bits stay and
         // only what reads them differs.
+        // f32, which the ladder itself never uses: it is here because wac has the type.
+        "f32.eq" => 0x5b,
+        "f32.ne" => 0x5c,
+        "f32.lt" => 0x5d,
+        "f32.gt" => 0x5e,
+        "f32.le" => 0x5f,
+        "f32.ge" => 0x60,
+        "f32.abs" => 0x8b,
+        "f32.neg" => 0x8c,
+        "f32.ceil" => 0x8d,
+        "f32.floor" => 0x8e,
+        "f32.trunc" => 0x8f,
+        "f32.nearest" => 0x90,
+        "f32.sqrt" => 0x91,
+        "f32.add" => 0x92,
+        "f32.sub" => 0x93,
+        "f32.mul" => 0x94,
+        "f32.div" => 0x95,
+        "f32.min" => 0x96,
+        "f32.max" => 0x97,
+        "f32.copysign" => 0x98,
+        "i32.trunc_f32_s" => 0xa8,
+        "i32.trunc_f32_u" => 0xa9,
+        "i64.trunc_f32_s" => 0xae,
+        "i64.trunc_f32_u" => 0xaf,
+        "f32.convert_i32_s" => 0xb2,
+        "f32.convert_i32_u" => 0xb3,
+        "f32.convert_i64_s" => 0xb4,
+        "f32.convert_i64_u" => 0xb5,
+        "f32.demote_f64" => 0xb6,
+        "f64.promote_f32" => 0xbb,
         "i32.reinterpret_f32" => 0xbc,
         "i64.reinterpret_f64" => 0xbd,
         "f32.reinterpret_i32" => 0xbe,
@@ -827,6 +859,11 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
             }
             // **Eight raw bytes, not a LEB.** A float is stored as itself, so this is the one
             // immediate in the format that is not a variable-length integer.
+            "f32.const" => {
+                let v: f32 = t[1].parse().map_err(|_| WaxError(format!("line {}: float", n)))?;
+                out.push(0x43);
+                out.extend_from_slice(&v.to_le_bytes());
+            }
             "f64.const" => {
                 let v: f64 = t[1].parse().map_err(|_| WaxError(format!("line {}: float", n)))?;
                 out.push(0x44);

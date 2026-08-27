@@ -491,11 +491,15 @@ i32 TY_U64 = 8;
 // rather than a flag beside it. It is the only one that emits no value type at all.
 i32 TY_VOID = 9;
 i32 TY_F64 = 10;
-i32 NUMTYPES = 11;
+// f32 is here for the corpus rather than for the ladder, which never produces one. It is a
+// distinct wasm type, so every place that asks "is this a float" has to ask which float.
+i32 TY_F32 = 11;
+i32 NUMTYPES = 12;
 
 // Is it held in an i64? Everything else this rung has fits an i32.
 i32 ty_wide(i32 t) { return t == TY_I64 | t == TY_U64; }
-i32 ty_float(i32 t) { return t == TY_F64; }
+i32 ty_float(i32 t) { return t == TY_F64 | t == TY_F32; }
+i32 ty_narrowfloat(i32 t) { return t == TY_F32; }
 i32 ty_signed(i32 t) { return (t == TY_U32 | t == TY_U8 | t == TY_U16 | t == TY_U64) == 0; }
 i32 ty_isnum(i32 t) { return t < NUMTYPES; }
 
@@ -547,6 +551,7 @@ i32 tyname(i32 t) {
 
 i32 valtype(i32 t) {
   if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_narrowfloat(t)) { emits("f32"); return 0; }
   if (ty_float(t)) { emits("f64"); return 0; }
   if (ty_wide(t)) { emits("i64"); return 0; }
   i32 pk = ty_packed(t);
@@ -561,6 +566,7 @@ i32 valtype(i32 t) {
 i32 slotvaltype(i32 t) {
   if (t == TY_VOID) { return 0; }
   if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_narrowfloat(t)) { emits("f32"); return 0; }
   if (ty_float(t)) { emits("f64"); return 0; }
   if (ty_wide(t)) { emits("i64"); return 0; }
   emits("i32");
@@ -569,6 +575,7 @@ i32 slotvaltype(i32 t) {
 
 // `i32.` or `i64.`, which is the prefix on every arithmetic instruction.
 i32 opprefix(i32 t) {
+  if (ty_narrowfloat(t)) { emits("f32."); return 0; }
   if (ty_float(t)) { emits("f64."); return 0; }
   if (ty_wide(t)) { emits("i64."); return 0; }
   emits("i32.");
@@ -580,7 +587,9 @@ i32 signedsuffix(i32 t) { if (ty_signed(t)) { emits("_s"); } else { emits("_u");
 
 i32 binop(i32 t, i32 name) { opprefix(t); emits(name); return nl(); }
 
-// **The right operand, widened to the left's width.** `h >> 33` on a `u64` writes the shift amount
+// **The right operand, widened to the left's width.** `convert` is the whole of this and the
+// one callers use; this is its integer half.
+// `h >> 33` on a `u64` writes the shift amount
 // as a plain integer, and wasm wants both operands the same width — but the value is already on the
 // stack, so the conversion goes after it and applies to the top. wac's own rule is that a literal
 // takes the type of what it is used with, and this is that rule where it lands.
@@ -596,6 +605,7 @@ i32 coerce(i32 t, i32 rt) {
 // A `1` of the same width as what it will be added to. `++` on a sixty-four bit counter is the
 // case; wasm has no mixed-width add.
 i32 one_of(i32 t) {
+  if (ty_narrowfloat(t)) { word("f32.const"); emitn(1); return nl(); }
   if (ty_float(t)) { word("f64.const"); emitn(1); return nl(); }
   if (ty_wide(t)) { word("i64.const"); emitn(1); return nl(); }
   return konst(1);
@@ -607,10 +617,15 @@ i32 one_of(i32 t) {
 // a conversion.
 i32 convert(i32 t, i32 rt) {
   if (ty_float(t) & ty_isnum(rt) & ty_float(rt) == 0) {
-    if (ty_wide(rt)) { emits("f64.convert_i64"); } else { emits("f64.convert_i32"); }
+    opprefix(t); emits("convert");
+    if (ty_wide(rt)) { emits("_i64"); } else { emits("_i32"); }
     if (ty_signed(rt)) { emits("_s"); } else { emits("_u"); }
     return nl();
   }
+  // One float width asked for where the other was written. Every literal in the language is an
+  // f64, so a program that uses f32 at all reaches this on its first assignment.
+  if (ty_narrowfloat(t) & rt == TY_F64) { return line("f32.demote_f64"); }
+  if (t == TY_F64 & ty_narrowfloat(rt)) { return line("f64.promote_f32"); }
   return coerce(t, rt);
 }
 
@@ -618,6 +633,7 @@ i32 convert(i32 t, i32 rt) {
 // hierarchies that never meet — so a funcref's null is not the one everything else uses.
 i32 zero_of(i32 t) {
   if (t == TY_VOID) { return 0; }
+  if (ty_narrowfloat(t)) { word("f32.const"); emitn(0); return nl(); }
   if (ty_float(t)) { word("f64.const"); emitn(0); return nl(); }
   if (ty_isnum(t)) {
     if (ty_wide(t)) { word("i64.const"); emitn(0); return nl(); }
@@ -660,6 +676,7 @@ i32 usedeq = 0;
 i32 prim_type() {
   if (isword("void")) { return TY_VOID; }
   if (isword("f64")) { return TY_F64; }
+  if (isword("f32")) { return TY_F32; }
   if (isword("i32")) { return TY_I32; }
   if (isword("bool")) { return TY_BOOL; }
   if (isword("i64")) { return TY_I64; }
@@ -1140,8 +1157,10 @@ i32 postfix(i32 t) {
         } else {
         if (ty_float(t) & texteq(p, n, "toBits")) {
           want(40); want(41);
-          line("i64.reinterpret_f64");
-          t = TY_U64;
+          if (ty_narrowfloat(t)) { line("i32.reinterpret_f32"); t = TY_U32; } else {
+            line("i64.reinterpret_f64");
+            t = TY_U64;
+          }
         } else {
           i32 mi = meth_find(t, p, n);
           if (mi != 0 - 1 & ispunct(40)) {
@@ -1248,12 +1267,19 @@ i32 primary() {
     i32 bp = tstart();
     i32 bn = tlen();
     next();
-    if (pt == TY_F64 & texteq(bp, bn, "fromBits")) {
+    if (ty_float(pt) & (texteq(bp, bn, "fromBits") | texteq(bp, bn, "toBits"))) {
       want(40);
       expr();
       want(41);
-      line("f64.reinterpret_i64");
-      return postfix(TY_F64);
+      i32 narrow = ty_narrowfloat(pt);
+      if (texteq(bp, bn, "fromBits")) {
+        if (narrow) { line("f32.reinterpret_i32"); return postfix(TY_F32); }
+        line("f64.reinterpret_i64");
+        return postfix(TY_F64);
+      }
+      if (narrow) { line("i32.reinterpret_f32"); return postfix(TY_U32); }
+      line("i64.reinterpret_f64");
+      return postfix(TY_U64);
     }
     oops();
     return 0;
@@ -1415,14 +1441,20 @@ i32 cast() {
       // To and from a float, which is four instructions and no reinterpretation: an integer and a
       // double share no bits worth keeping.
       if (ty_float(to) & ty_float(t) == 0) {
-        if (ty_wide(t)) { emits("f64.convert_i64"); } else { emits("f64.convert_i32"); }
+        opprefix(to); emits("convert");
+        if (ty_wide(t)) { emits("_i64"); } else { emits("_i32"); }
         if (ty_signed(t)) { emits("_s"); } else { emits("_u"); }
         nl();
       }
       if (ty_float(t) & ty_float(to) == 0) {
-        if (ty_wide(to)) { emits("i64.trunc_f64"); } else { emits("i32.trunc_f64"); }
+        if (ty_wide(to)) { emits("i64.trunc"); } else { emits("i32.trunc"); }
+        if (ty_narrowfloat(t)) { emits("_f32"); } else { emits("_f64"); }
         if (ty_signed(to)) { emits("_s"); } else { emits("_u"); }
         nl();
+      }
+      // One float to the other, which is a real instruction rather than a reinterpretation.
+      if (ty_float(t) & ty_float(to) & ty_narrowfloat(t) != ty_narrowfloat(to)) {
+        if (ty_narrowfloat(to)) { line("f32.demote_f64"); } else { line("f64.promote_f32"); }
       }
       if (ty_float(to) | ty_float(t)) { t = to; } else {
       if (ty_wide(to) & ty_wide(t) == 0) {
@@ -1448,7 +1480,7 @@ i32 mul() {
   while (ispunct(42) | ispunct(47) | ispunct(37)) {
     i32 op = val();
     next();
-    coerce(t, cast());
+    convert(t, cast());
     if (op == 42) { binop(t, "mul"); } else {
       if (op == 47) { binop_signed(t, "div"); } else { binop_signed(t, "rem"); }
     }
@@ -1461,7 +1493,7 @@ i32 add() {
   while (ispunct(43) | ispunct(45)) {
     i32 op = val();
     next();
-    coerce(t, mul());
+    convert(t, mul());
     if (op == 43) {
       if (t == strty & strty != 0 - 1) { usedcat = 1; line("call $__concat"); } else {
         binop(t, "add");
@@ -1476,7 +1508,7 @@ i32 shift() {
   while (ispunct(15420) | ispunct(15934)) {
     i32 op = val();
     next();
-    coerce(t, add());
+    convert(t, add());
     if (op == 15420) { binop(t, "shl"); } else { binop_signed(t, "shr"); }
   }
   return t;
@@ -1487,7 +1519,7 @@ i32 rel() {
   while (ispunct(60) | ispunct(62) | ispunct(15676) | ispunct(15678)) {
     i32 op = val();
     next();
-    coerce(t, shift());
+    convert(t, shift());
     if (op == 60) { binop_signed(t, "lt"); } else {
       if (op == 62) { binop_signed(t, "gt"); } else {
         if (op == 15676) { binop_signed(t, "le"); } else { binop_signed(t, "ge"); }
@@ -1527,7 +1559,7 @@ i32 equality() {
       if (op == 15649) { line("i32.eqz"); }
       t = TY_BOOL;
     } else {
-    coerce(t, rel());
+    convert(t, rel());
     if (t == strty & strty != 0 - 1) {
       // **Two strings compare by content.** `i32.eq` on two references answers whether they are the
       // same object, which for a literal built fresh at every use is always false.
@@ -1545,19 +1577,19 @@ i32 equality() {
 
 i32 bitand() {
   i32 t = equality();
-  while (ispunct(38)) { next(); coerce(t, equality()); binop(t, "and"); }
+  while (ispunct(38)) { next(); convert(t, equality()); binop(t, "and"); }
   return t;
 }
 
 i32 bitxor() {
   i32 t = bitand();
-  while (ispunct(94)) { next(); coerce(t, bitand()); binop(t, "xor"); }
+  while (ispunct(94)) { next(); convert(t, bitand()); binop(t, "xor"); }
   return t;
 }
 
 i32 bitor() {
   i32 t = bitxor();
-  while (ispunct(124)) { next(); coerce(t, bitxor()); binop(t, "or"); }
+  while (ispunct(124)) { next(); convert(t, bitxor()); binop(t, "or"); }
   return t;
 }
 

@@ -17,6 +17,7 @@ type PlainType = { k: "num" | "abs"; byte: number; name: string };
 const NUM: Record<string, PlainType> = {
   i32: { k: "num", byte: 0x7f, name: "i32" },
   i64: { k: "num", byte: 0x7e, name: "i64" },
+  f32: { k: "num", byte: 0x7d, name: "f32" },
   f64: { k: "num", byte: 0x7c, name: "f64" },
   // **Packed, and only valid where a field or an element goes.** wasm has no i8 value, so a local
   // or a parameter of this type is refused by the engine — which is the same place every other type
@@ -449,6 +450,19 @@ const NULLARY: Record<string, number> = {
   // Reinterpretation, which is the one conversion that changes nothing: the bits stay and only
   // what reads them differs. A rounding routine that assembles a float from its exponent and
   // mantissa has no other way to hand the result back.
+  // f32, which the ladder itself never uses: it is here because wac has the type and a
+  // compiler that cannot name it cannot compile a program that mentions one.
+  "f32.eq": 0x5b, "f32.ne": 0x5c,
+  "f32.lt": 0x5d, "f32.gt": 0x5e, "f32.le": 0x5f, "f32.ge": 0x60,
+  "f32.abs": 0x8b, "f32.neg": 0x8c, "f32.ceil": 0x8d, "f32.floor": 0x8e,
+  "f32.trunc": 0x8f, "f32.nearest": 0x90, "f32.sqrt": 0x91,
+  "f32.add": 0x92, "f32.sub": 0x93, "f32.mul": 0x94, "f32.div": 0x95,
+  "f32.min": 0x96, "f32.max": 0x97, "f32.copysign": 0x98,
+  "i32.trunc_f32_s": 0xa8, "i32.trunc_f32_u": 0xa9,
+  "i64.trunc_f32_s": 0xae, "i64.trunc_f32_u": 0xaf,
+  "f32.convert_i32_s": 0xb2, "f32.convert_i32_u": 0xb3,
+  "f32.convert_i64_s": 0xb4, "f32.convert_i64_u": 0xb5,
+  "f32.demote_f64": 0xb6, "f64.promote_f32": 0xbb,
   "i32.reinterpret_f32": 0xbc, "i64.reinterpret_f64": 0xbd,
   "f32.reinterpret_i32": 0xbe, "f64.reinterpret_i64": 0xbf,
 };
@@ -558,6 +572,13 @@ function emitBody(f: Func, ix: Index): number[] {
       case "i64.const": out.push(0x42, ...sleb(BigInt(t[1]))); break;
       // **Eight raw bytes, not a LEB.** A float is stored as itself, so this is the one immediate
       // in the format that is not a variable-length integer.
+      case "f32.const": {
+        const buf = new DataView(new ArrayBuffer(4));
+        buf.setFloat32(0, Number(t[1]), true);
+        out.push(0x43);
+        for (let i = 0; i < 4; i++) out.push(buf.getUint8(i));
+        break;
+      }
       case "f64.const": {
         const buf = new DataView(new ArrayBuffer(8));
         buf.setFloat64(0, Number(t[1]), true);

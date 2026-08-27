@@ -1,0 +1,20 @@
+; f32 arithmetic, and the two instructions that move between the float widths. The answer is
+; 17: 2.5 * 4 = 10 truncated, plus 7 from a double demoted to a single and back.
+func $main -> i32
+local f32 $a
+local f64 $b
+f32.const 2.5
+f32.const 4.0
+f32.mul
+local.set $a
+local.get $a
+i32.trunc_f32_s
+f64.const 7.5
+f32.demote_f64
+f64.promote_f32
+local.set $b
+local.get $b
+i32.trunc_f64_s
+i32.add
+end
+export "main" func $main
