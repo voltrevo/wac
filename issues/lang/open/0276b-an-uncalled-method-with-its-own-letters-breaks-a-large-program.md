@@ -100,6 +100,25 @@ justify it on its own. It is written down here so the next attempt starts from i
 placeholder's return type cannot be `""` — something asks for it and answers *the return type of
 `Vec<Mount>.fold`, which this emitter could not work out* — so `i32` stands in.
 
+## And the sigs survive that fix, which narrows it again
+
+With the placeholder change in — the instance-method registration resolving nothing for an own-letter
+method — the same signatures are still registered:
+
+    sig[fn[U(U,Mount)]]  sig[fn[U(i32,U,Mount)]]  sig[fn[fn[U(U,Mount)](i32)]]  …
+
+Three shapes per instantiation: the type itself, a receiver-prefixed form, and `fn[…](i32)` — which is
+the **env/pair** shape. That triple is what `registerFuncTypes` produces, and every one of its seven
+callers guards on `methods[m].typeParams.len()`, checked mechanically.
+
+So `fn[U(U,Mount)]` is being registered **as a function type in its own right**, not as part of
+`fold`'s signature — `fold`'s own would be `fn[U(Vec<Mount>,U,fn[U(U,Mount)])]` and that is not in the
+list. The candidate is `env.pairType(…)`, which registers the pair struct for a funcref *type*
+wherever one is named as a slot.
+
+**So: who names `fn[U(U,Mount)]` as a slot type, for a method nobody calls?** That is the question,
+and it is now a single grep for `pairType` rather than a hunt.
+
 ## Where to look next
 
 The probe is the thing to extend, not the reading — three probes settled `issues/lang/0274b` and
