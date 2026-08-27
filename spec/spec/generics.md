@@ -424,8 +424,11 @@ would say what `U` is — nothing binds a method's own letters but the call writ
 rather than a rule, and it is the difference between this and a generic *function*, whose letters are
 argument-directed.
 
-`[§wacc-method-type-args]` **Chaining does not work yet**: `c.then<A>(f).then<B>(g)`, where each link
-produces an instantiation no type in the program names, is refused by the emitter. `issues/lang/0274b`.
+`[§wacc-method-type-args]` **A method that returns an instantiation may be called with one set of type
+arguments, not two.** `Box<U> wrap<U>(…)` works for `wrap<i64>` and stops working the moment
+`wrap<bool>` is written beside it; a method returning a plain `U` has no such limit. Refused by the
+emitter rather than miscompiled. `issues/lang/0274b`, which is also why a chain of them does not work
+— every link is another instantiation.
 
 Two arguments must agree:
 
