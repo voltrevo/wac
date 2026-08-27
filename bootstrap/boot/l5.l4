@@ -1842,13 +1842,28 @@ i32 ternary() {
   if (ispunct(63)) {
     next();
     i32 l = newlabel();
-    word("if"); label(l); sp(); word("->"); line("i32");
-    expr();
+    // The block's result type is the arms' type, and neither arm has been read when the header
+    // has to be written — so the first one goes to scratch and the header is written in front of
+    // it, exactly as `match` does. Writing `i32` here instead was right for every arm that is a
+    // number and wrong for a reference, which is what `p.isPrim() ? Ty[]() : p.args()` is.
+    i32 level = scrdepth;
+    i32 saved = scratch_begin();
+    i32 t1 = expr();
+    i32 armlen = scratch_end(outbuf, saved);
+    word("if"); label(l); sp(); word("->"); slotvaltype(t1); nl();
+    scratch_copy(level, armlen);
     line("else");
     want(58);
     i32 t2 = ternary();
     line("end");
-    t = t2;
+    // The two arms agree in wac, and where one is wider than the other — a plain integer
+    // against an i64 — the wider one is the answer.
+    t = t1;
+    if (ty_isnum(t1) & ty_isnum(t2)) {
+      if (ty_wide(t2) | ty_float(t2)) { t = t2; }
+    } else {
+      t = t2;
+    }
   }
   return t;
 }

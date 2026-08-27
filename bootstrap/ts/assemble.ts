@@ -523,7 +523,13 @@ const GC2: Record<string, number> = {
   "array.new_fixed": 0x08,
 };
 
-function emitBody(f: Func, ix: Index): number[] {
+// A mark is "the instruction from wac-L0 line `line` starts at byte `at` of this body". The
+// engine reports a validation failure as a byte offset into the module and nothing else, which
+// is a number rather than a place — this is what turns it back into a line. Only
+// `assembleMapped` asks for them; `assemble` passes nothing and pays nothing.
+export type Mark = { at: number; line: number };
+
+function emitBody(f: Func, ix: Index, marks?: Mark[]): number[] {
   const slot = new Map<string, number>();
   f.params.forEach((p, i) => slot.set(p.name, i));
   f.locals.forEach((l, i) => slot.set(l.name, f.params.length + i));
@@ -544,6 +550,7 @@ function emitBody(f: Func, ix: Index): number[] {
   const out: number[] = [];
   const push = (bytes: number[]) => append(out, bytes);
   for (const { n, tokens: t } of f.body) {
+    if (marks !== undefined) marks.push({ at: out.length, line: n });
     const op = t[0];
     if (op in NULLARY) { out.push(NULLARY[op]); continue; }
     if (op in GC1) {
@@ -666,7 +673,19 @@ function localDecls(f: Func, ix: Index): number[] {
   return vec(runs.map(([ty, count]) => [...uleb(count), ...vtBytes(ty, ix, 0)]));
 }
 
+// The module, and optionally a map from byte offset back to wac-L0 line. `assemble` is the
+// same function with the map left out.
+export function assembleMapped(source: string): { bytes: Uint8Array; map: Mark[] } {
+  const map: Mark[] = [];
+  const bytes = build(source, map);
+  return { bytes, map };
+}
+
 export function assemble(source: string): Uint8Array {
+  return build(source);
+}
+
+function build(source: string, map?: Mark[]): Uint8Array {
   const m = read(source);
   const ix = index(m);
   const out: number[] = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
@@ -747,14 +766,40 @@ export function assemble(source: string): Uint8Array {
   }
 
   // Sections are written in ascending id, which wasm requires: code (10) before data (11).
-  emit(section(10, vec(m.funcs.map((f) => {
+  //
+  // The entries are built before the section is emitted so that each body's absolute position is
+  // known: a mark recorded inside a body is relative to that body, and the caller asking for a
+  // map wants an offset into the finished module.
+  const entries: number[][] = [];
+  const declsLen: number[] = [];
+  const prefixLen: number[] = [];
+  const bodyMarks: Mark[][] = [];
+  for (const f of m.funcs) {
+    const decls = localDecls(f, ix);
+    const fnMarks: Mark[] = [];
     const body: number[] = [];
-    append(body, localDecls(f, ix));
-    append(body, emitBody(f, ix));
+    append(body, decls);
+    append(body, emitBody(f, ix, map === undefined ? undefined : fnMarks));
     const entry = uleb(body.length);
+    prefixLen.push(entry.length);
     append(entry, body);
-    return entry;
-  }))));
+    entries.push(entry);
+    declsLen.push(decls.length);
+    bodyMarks.push(fnMarks);
+  }
+  const payload = vec(entries);
+  if (map !== undefined) {
+    // section 10 is `[id] uleb(payload.length) payload`, and the payload is
+    // `uleb(count) entry...`, and an entry is `uleb(bodyLength) locals code`. Walking it the way
+    // the section lays it out keeps the running total the same one the engine is counting.
+    let cursor = out.length + 1 + uleb(payload.length).length + uleb(entries.length).length;
+    for (let i = 0; i < entries.length; i++) {
+      const codeAt = cursor + prefixLen[i] + declsLen[i];
+      for (const k of bodyMarks[i]) map.push({ at: codeAt + k.at, line: k.line });
+      cursor += entries[i].length;
+    }
+  }
+  emit(section(10, payload));
 
   emit(section(11, vec(m.data.map((d) => [
     0x00, 0x41, ...sleb(BigInt(d.offset)), 0x0b, ...uleb(d.bytes.length), ...d.bytes,
