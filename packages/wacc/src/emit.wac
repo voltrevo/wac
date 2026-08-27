@@ -2330,17 +2330,21 @@ export struct Env {
 
   i32[] paramCellLine;
   i32[] paramCellCol;
+  /** And the file — see `Env.promotedFile`. */
+  i32[] paramCellFile;
   string[] paramCellName;
   i32 paramCellCount;
 
   void noteParamCell(this, i32 line, i32 col, string name) {
     for (i32 i = 0; i < this.paramCellCount; i++) {
       if (this.paramCellLine[i] == line && this.paramCellCol[i] == col
+          && this.paramCellFile[i] == this.curFile
           && this.paramCellName[i] == name) { return; }
     }
     if (this.paramCellCount >= this.paramCellName.len()) { return; }
     this.paramCellLine[this.paramCellCount] = line;
     this.paramCellCol[this.paramCellCount] = col;
+    this.paramCellFile[this.paramCellCount] = this.curFile;
     this.paramCellName[this.paramCellCount] = name;
     this.paramCellCount = this.paramCellCount + 1;
   }
@@ -2348,6 +2352,7 @@ export struct Env {
   bool paramNeedsCell(const this, i32 line, i32 col, string name) {
     for (i32 i = 0; i < this.paramCellCount; i++) {
       if (this.paramCellLine[i] == line && this.paramCellCol[i] == col
+          && this.paramCellFile[i] == this.curFile
           && this.paramCellName[i] == name) { return true; }
     }
     return false;
@@ -2366,6 +2371,17 @@ export struct Env {
    */
   i32[] promotedLine;
   i32[] promotedCol;
+  /**
+   * And which file, because a line and a column do not name one declaration in a graph.
+   *
+   * `packages/crypto/test/wac/aead_test.wac` declares `Rng rng` where another file in its graph
+   * declares a local a lambda captures, at the same line and column. Without this the emitter
+   * promoted `rng` to a cell nobody had registered a type for and declined the module with
+   * *a value of a type this emitter cannot write: `$cell$Rng`* — a message about a struct that only
+   * exists because of the collision. See `Env.lambdaFile`, which is the same defect in the table
+   * next door.
+   */
+  i32[] promotedFile;
   i32 promotedCount;
   /**
    * Which local slots hold a **cell** rather than a value — `design/lang/0002` tier two.
@@ -2500,18 +2516,21 @@ export struct Env {
   /** Record that the declaration at this position is captured, so it becomes a cell. */
   void notePromoted(this, i32 line, i32 col) {
     for (i32 i = 0; i < this.promotedCount; i++) {
-      if (this.promotedLine[i] == line && this.promotedCol[i] == col) { return; }
+      if (this.promotedLine[i] == line && this.promotedCol[i] == col
+          && this.promotedFile[i] == this.curFile) { return; }
     }
     if (this.promotedCount >= this.promotedLine.len()) { return; }
     this.promotedLine[this.promotedCount] = line;
     this.promotedCol[this.promotedCount] = col;
+    this.promotedFile[this.promotedCount] = this.curFile;
     this.promotedCount = this.promotedCount + 1;
   }
 
   /** Whether the declaration at this position is captured by some lambda. */
   bool isPromoted(const this, i32 line, i32 col) {
     for (i32 i = 0; i < this.promotedCount; i++) {
-      if (this.promotedLine[i] == line && this.promotedCol[i] == col) { return true; }
+      if (this.promotedLine[i] == line && this.promotedCol[i] == col
+          && this.promotedFile[i] == this.curFile) { return true; }
     }
     return false;
   }
@@ -2721,8 +2740,9 @@ export struct Env {
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
                false, string[1024](fill: ""), string[1024](fill: ""), 0,
-               i32[4096](), i32[4096](), string[4096](fill: ""), 0,
-               i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false, 0 - 1,
+               i32[4096](), i32[4096](), i32[4096](), string[4096](fill: ""), 0,
+               i32[4096](), i32[4096](), i32[4096](), 0,
+               bool[4096](), 0 - 1, B.create(), false, false, 0 - 1,
                i32[16384](), i32[4096](), u8[][0](fill: u8[0]()), Lexed?[0](),
                Decl[](), i32[0]());
   }
@@ -3707,8 +3727,13 @@ string bindTypesOf(Front f) {
     // substitution has to be pushed for the signatures to come out as `Setting` rather than as `T`.
     // The owner is the instance key either way, which is what the module registered them under.
     string tpl = isInstance(name) ? templateOf(name) : "";
-    for (i32 d = 0; d < prog.decls.len(); d++) {
-      match (prog.decls[d].kind) {
+    Decl[] b1d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+    u8[] b1s = src; Lexed b1l = lexed; i32 b1f = env.curFile;
+    for (i32 d = 0; d < b1d.len(); d++) {
+      env.curFile = env.declFile(d);
+      src = srcFor(env.fileSrcs, b1s, env.curFile);
+      lexed = lexFor(env.fileLexeds, b1l, env.curFile);
+      match (b1d[d].kind) {
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) {
             if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
@@ -3734,6 +3759,7 @@ string bindTypesOf(Front f) {
         else: { }
       }
     }
+    env.curFile = b1f; src = b1s; lexed = b1l;
   }
   return out;
 }
@@ -4008,8 +4034,13 @@ string exportSigsOf(Front f) {
 
   string out = "";
   i32 at = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] b2d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] b2s = src; Lexed b2l = lexed; i32 b2f = env.curFile;
+  for (i32 d = 0; d < b2d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, b2s, env.curFile);
+    lexed = lexFor(env.fileLexeds, b2l, env.curFile);
+    match (b2d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         bool ok = env.funcIndex[at] >= 0;
@@ -4035,6 +4066,7 @@ string exportSigsOf(Front f) {
       else: { }
     }
   }
+  env.curFile = b2f; src = b2s; lexed = b2l;
   return out;
 }
 
@@ -4430,9 +4462,17 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
 Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                    string[] filePaths, bool checked, bool covered, Env envIn,
                    u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
-  Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
-  Program prog = parseProgram(p);
+  // **The concatenation is lexed and parsed only when there are no per-file trees.** Nothing walks
+  // its declarations any more — every walk reads `Env.mergedDecls` — so for a caller that supplied
+  // the graph, this would be a second full lex and parse of the whole program for a list nobody
+  // reads. `src` and `lexed` still travel as the fallback for a `curFile` of -1.
+  bool haveTrees = fileCountOf(progs) > 0;
+  Lexed lexed = haveTrees ? Lexed(i32[0](), 0, i32[0](), 0) : lex(src);
+  Program prog = Program(Decl[]());
+  if (!haveTrees) {
+    P p = P.create(src, lexed.tokens, lexed.tokenCount);
+    prog = parseProgram(p);
+  }
 
   Env env = envIn;
   env.checked = checked;
@@ -11966,8 +12006,13 @@ string blockedOf(Front f) {
   string declined = declinedExport(env, src, lexed, prog);
   if (declined != "") { return declined; }
 
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
+  Decl[] b3d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] b3s = src; Lexed b3l = lexed; i32 b3f = env.curFile;
+  for (i32 d = 0; d < b3d.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, b3s, env.curFile);
+    lexed = lexFor(env.fileLexeds, b3l, env.curFile);
+    match (b3d[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         // A generic function is a **template**, and a template emits nothing: `mapOption<T, U>` is
         // not a function until its arguments say which one. Declining the declaration declined every
@@ -12002,11 +12047,13 @@ string blockedOf(Front f) {
       // already in the pool — except a capability import, which names no file and would be a wasm
       // import of something this emitter has no way to supply.
       case Import(pathTok, prefixTok, items): {
-        if (entryDecls < 0) { return "an import"; }
+        if (entryDecls < 0) { env.curFile = b3f; return "an import"; }
         // `core` is carried by the linker; anything else with a bare specifier is a module this
         // compiler has never heard of, which is worth saying by name.
         if (prefixTok >= 0 && tokenTextOf(src, lexed, prefixTok) != "core") {
-          return "an import from " + tokenTextOf(src, lexed, prefixTok);
+          string from = "an import from " + tokenTextOf(src, lexed, prefixTok);
+          env.curFile = b3f;
+          return from;
         }
       }
       case ConstDecl(nameTok, type, init, exported): {
@@ -12021,6 +12068,7 @@ string blockedOf(Front f) {
     }
     if (env.blocked != "") { return env.blocked; }
   }
+  env.curFile = b3f; src = b3s; lexed = b3l;
   // Asked last, because it is discovered by the walk above rather than before it: a name only turns
   // out to be a guess when something reaches for it.
   if (env.ambiguous) {
