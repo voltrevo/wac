@@ -175,3 +175,29 @@ used on a struct anything else depends on**, which is most of the reason to want
 Nine shapes tried; `box` is still the smallest reproduction. Everything in this issue is measurement,
 and no guess has been left standing as if it were one.
 
+## Where it registers, and four families eliminated
+
+The trap now reports the emitter's state, and it is **late** — everything is registered by then:
+
+    t=fn[U(U,Mount)]  funcs=1991  insts=41  structs=247  sigs=2870  subs=0  curInst=
+
+**Those counts are identical across every fix attempted**, which is the useful part: it means none of
+them is on the path. Eliminated, each by building it and seeing the same numbers:
+
+1. the instance-method registration resolving an own-letter method's parameter and return types
+   (replaced by a placeholder entry that resolves nothing);
+2. the three type-collection loops that call `registerNamed` on a method's return and parameter types;
+3. all **six** `collectArrayTypesIn(… methods[m] …)` body walks, guarded individually;
+4. `registerFuncTypes` — all seven callers already guard on `methods[m].typeParams.len()`, and
+   trapping on `fold`'s *own* signature never fires, so it is not registered at all.
+
+So the type is registered by something that reads neither the method's table entry nor its body
+through those walks. `registerNamed` reaches `sigType` for any funcref type (`emit.wac:454`), and its
+remaining unguarded callers are a `ConstDecl` arm and the expression walk — neither of which should
+see `fold`.
+
+**What I would do next**, having run out of grep: bisect by disabling. `sigType` has 99 callers;
+`trap`ping there gives the type but not the caller, and the Deno host does not keep internal frames.
+Threading a one-word marker through `sigType` — set by each candidate before it calls — is ugly and
+answers it in one run, and can come straight back out.
+
