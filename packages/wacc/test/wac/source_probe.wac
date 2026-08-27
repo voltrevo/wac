@@ -135,15 +135,33 @@ export string literalOf(string text) {
 /**
  * `text` as one or more wac string literals, joined by `+`.
  *
- * Chunked at 3,000 characters because a literal is one `array.new_fixed` and an engine caps how many
+ * Chunked at 3,000 bytes because a literal is one `array.new_fixed` and an engine caps how many
  * elements that may have, while concatenation has no such limit.
+ *
+ * **The boundary backs off a continuation byte**, so a multi-byte character is never split between
+ * two literals. Without that, a chunk could end mid-character and the two halves are each invalid
+ * UTF-8 — which the two compilers do not agree about. wacc keeps the bytes; the reference decodes
+ * through JavaScript and each stray byte comes back as U+FFFD, so three bytes become nine and the
+ * embedded text grows by six. `fixpointemit_test.wac` then reports that the stages *emit* different
+ * bytes, naming a compiler source file, when the emitters agree exactly and it is this line that
+ * differs.
+ *
+ * That made the test a lottery rather than a check. Any edit anywhere in `ast.wac` or `kinds.wac`
+ * shifts every later byte, so whether a boundary lands inside one of the box-drawing and em-dash
+ * characters in their prose is decided by the size of an unrelated change. It came up on
+ * `issues/lang/0088`, where adding one enum variant moved the 9,000 boundary one byte into a `─` and
+ * cost an afternoon aimed at the variant.
  */
 export string chunkedLiteral(string text) {
+  u8[] raw = text.toBytes();
   Buf out = Buf.create();
   i32 at = 0;
   bool first = true;
-  while (at < text.len()) {
-    i32 to = at + 3000 < text.len() ? at + 3000 : text.len();
+  while (at < raw.len()) {
+    i32 to = at + 3000 < raw.len() ? at + 3000 : raw.len();
+    // A continuation byte is 10xxxxxx, so walk back to the lead byte and let the whole character
+    // start the next chunk. At most three steps, and `to > at` keeps the loop advancing.
+    while (to < raw.len() && to > at && (raw[to] & 192) == 128) { to = to - 1; }
     if (!first) { out.pushAll(" +\n    ".toBytes()); }
     out.pushAll(literalOf(text.slice(at, to)).toBytes());
     first = false;
