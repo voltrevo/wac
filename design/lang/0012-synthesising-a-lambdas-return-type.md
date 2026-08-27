@@ -163,7 +163,27 @@ lambdas, so this is wacc alone.
 | synthesis-only-without-a-target (§3) | settled by argument; needs writing into the spec |
 | capture, recursion | checked, and not problems |
 
-**Nothing should start here until [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md)
-option C and [0011](0011-a-call-may-name-its-type-arguments.md) have landed**, because both change
-what this is worth: C makes every program writable without it, and 0011's own work is the prerequisite
-for C.
+**Both preconditions are met as of 2026-08-27**: [0011](0011-a-call-may-name-its-type-arguments.md)
+is implemented and [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md) option C with it.
+So this document is startable — and *worth less than it was*, which is the honest reading and the
+reason the precondition was written.
+
+Two of its three open questions are answered by what landed, and not in this document's favour:
+
+- **§1's ordering rule is no longer hypothetical, and it already works the way this document says it
+  must.** Method type arguments are inferred from the arguments now, and the rule is exactly *infer
+  from every argument that has a type; an argument with none says nothing, which is not a failure*.
+  `v.fold(0, (i32 acc, i32 x) => acc + x)` compiles today with nothing written, because the **seed**
+  binds `U` and the lambda beside it is skipped rather than refused. That is §1's acceptance criterion
+  1, met without synthesising anything.
+- **So the case this document is left with is narrower than it looked.** What it would still buy is a
+  letter that *only* a lambda's return could supply — `p.then((i64 at) => Foo.create())` where nothing
+  else in the call mentions `U`. `core/vec.wac`'s `fold` is not that shape and neither is anything
+  else in the tree.
+
+§2's join rule and §3 are untouched by any of it.
+
+**What would decide this is a written program**, and now one can be written: `core/vec.wac` has a
+`fold` with a type parameter of its own, so somebody can use it for a while and report whether writing
+`<i64>` in the one case the seed cannot answer is ever annoying. Before today there was nothing to
+try.
