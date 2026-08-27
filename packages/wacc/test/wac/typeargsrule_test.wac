@@ -169,10 +169,22 @@ export string test_a_method_may_be_called_with_its_own_type_arguments() {
                      "  i64 r = b.map<i64>(widen); return 0; }");
   t.isTrue(!contains(with, "error"), "writing them compiles — got " + with);
 
+  // **And they are inferred when the arguments say what they are** — `design/lang/0010` criterion 2,
+  // which landed after this test first asserted the opposite. `widen` is a `fn[i64(i32)]` and the
+  // parameter is `fn[U(T)]`, so `U` is `i64` and nothing needs writing. The letter lives inside a
+  // *funcref* here, which is where a method's own letter usually lives and which the binder could
+  // not see into until this criterion.
   string without = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
                         "  i64 r = b.map(widen); return 0; }");
-  t.isTrue(contains(without, "it has a type parameter of its own"),
-           "not writing them is still refused — nothing infers a method's letters — got " + without);
+  t.isTrue(!contains(without, "error"),
+           "not writing them infers them from the arguments — got " + without);
+
+  // What is still refused is a letter no argument mentions, which is the same rule a generic
+  // *function* has and the reason writing them exists at all.
+  string blind = said("struct Cell<T> { T v; U make<U>(const this) { return 0; } }\n" +
+                      "export i32 f() { Cell<i32> c = Cell<i32>(1); i32 z = c.make(); return z; }");
+  t.isTrue(contains(blind, "nothing here says what U is"),
+           "a letter no argument mentions is still refused, and says which letter — got " + blind);
 
   string tooMany = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
                         "  i64 r = b.map<i64, i32>(widen); return 0; }");

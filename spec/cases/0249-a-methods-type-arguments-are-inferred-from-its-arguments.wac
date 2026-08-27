@@ -1,0 +1,25 @@
+// expect: answers f = 12
+// only: wacc
+// spec:  §wacc-method-type-args
+// why: `design/lang/0010` criterion 2, and the one that makes option C invisible at most call sites:
+//      `0245` is this program with `<i32>` written and this is it without. A method's own letters are
+//      argument-directed exactly as a generic function's are — the seed says `U` is `i32`, and the
+//      lambda beside it says nothing, which is not a refusal.
+//
+//      The letter usually lives inside a **funcref** — `fn[U(U, T)]` is what a continuation looks
+//      like — and the binder could not see into one until this landed, which is the same arm
+//      `applyBindings` and `substituteType` already had.
+// from: design/lang/0010
+struct Vec<T> {
+  T[] items;
+  i32 n;
+  U fold<U>(const this, U seed, fn[U(U, T)] f) {
+    U acc = seed;
+    for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.items[i]); }
+    return acc;
+  }
+}
+export i32 f() {
+  Vec<i32> v = Vec<i32>(i32[3](fill: 4), 3);
+  return v.fold(0, (i32 acc, i32 x) => acc + x);
+}

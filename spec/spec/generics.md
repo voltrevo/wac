@@ -419,10 +419,21 @@ missing, a lambda that is perfectly correct is told *nothing here wants a functi
 `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` are two functions, and a program using both carries
 both. This is a third level beside the two a generic struct and a generic function already have.
 
-`[§wacc-method-type-args]` **They are not inferred.** `v.fold(0, …)` is an error even where the seed
-would say what `U` is — nothing binds a method's own letters but the call writing them. That is a gap
-rather than a rule, and it is the difference between this and a generic *function*, whose letters are
-argument-directed.
+`[§wacc-method-type-args]` **They are inferred when the arguments say what they are**, exactly as a
+generic function's are, so most calls write nothing:
+
+```wac
+i32 total = v.fold(0, (i32 acc, i32 x) => acc + x);   // `U` is `i32`, from the seed
+```
+
+An argument with no type of its own — a lambda — says nothing, and saying nothing is not a refusal;
+the seed beside it is enough. What is still refused is a letter **no** argument mentions, which is the
+same rule a generic function has and the reason writing them exists:
+
+```wac
+U make<U>(const this) { … }
+i32 z = c.make();       // error: nothing here says what U is, so write it: make<…>(…)
+```
 
 `[§wacc-method-type-args]` **They chain**, and each link may change the type:
 

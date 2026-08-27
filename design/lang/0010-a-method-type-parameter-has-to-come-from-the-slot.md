@@ -270,7 +270,7 @@ the module's numbering.
 | # | criterion | state |
 |---|---|---|
 | 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this |
-| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — nothing infers a method's own letters. A separate feature from item 3, and the one that would make C invisible at most call sites |
+| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **yes** — `spec/cases/0249`, answers 12. The letter lives inside a funcref, which the checker's binder could not see into; `applyBindings` and `substituteType` both already had that arm |
 | 3 | `v.fold<i64>(0, …)` with one | **yes** — `spec/cases/0245`, answers 12, with an **inline lambda** |
 | 4 | `p.then<Foo>(…)` | **the compiler is ready; the platform is not.** See below — this is more than the declaration item 1 calls it |
 | 5 | a three-link chain | **yes** — `spec/cases/0248`, answers 9, three inline lambdas each changing the type. `issues/lang/0274b` closed |

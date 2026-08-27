@@ -863,6 +863,71 @@ string methodInstance(Env env, u8[] src, Lexed lexed, string ownerInst, string m
 }
 
 /**
+ * The instance a method call names when its type arguments are **inferred from its arguments**.
+ *
+ * `design/lang/0010` criterion 2. The written case is `methodInstance`; this is the same name built
+ * from `bindTypeParams` instead, which is exactly what `genericCallInstance` does for a free
+ * function — a method's own letters are argument-directed in the same way, and the only reason they
+ * were not is that no call to such a method could be emitted at all.
+ *
+ * The owner's letters are already bound by the receiver's instantiation, so the declared parameter
+ * types are matched under that substitution: `fn[U(U, T)]` against `fn[i64(i64, i32)]` binds `U`
+ * from a slot `T` has already left.
+ */
+string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, string mname,
+                              Expr[] args) {
+  if (env.prog is null) { return ""; }
+  if (ownerInst == "") { return ""; }
+  string tmpl = templateOf(ownerInst);
+  if (tmpl == "") { return ""; }
+  Program pg = env.prog!;
+  for (i32 d = 0; d < pg.decls.len(); d++) {
+    match (pg.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
+          if (methods[m].typeParams.len() == 0) { continue; }
+          if (methods[m].params.len() != args.len()) { return ""; }
+          i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
+          string[] bound = string[methods[m].typeParams.len()]();
+          bool ok = true;
+          for (i32 i = 0; i < args.len(); i++) {
+            string at = typeOfE(src, lexed, env, args[i]);
+            if (at == "") { at = naturalLiteralType(args[i]); }
+            // **An argument with no type of its own says nothing, and saying nothing is not a
+            // failure.** A lambda is the case: `v.fold(0, (i32 acc, i32 x) => acc + x)` has `U` from
+            // the seed and a second argument whose type is the very thing being worked out. Treating
+            // that as a refusal is how the letter went unbound and the module was declined with *a
+            // value of a type this emitter cannot write: U*.
+            if (at == "") { continue; }
+            bindTypeParams(env, src, lexed, methods[m].params[i].type, at,
+                           methods[m].typeParams, bound);
+          }
+          string of = ownerInst + "." + mname;
+          string inst = of + "<";
+          for (i32 i = 0; i < bound.len(); i++) {
+            if (bound[i] == "") { ok = false; }
+            if (!ok) { break; }
+            bound[i] = env.canonType(bound[i]);
+            if (i > 0) { inst = inst + ","; }
+            inst = inst + bound[i];
+          }
+          popSubstitution(env, opushed);
+          if (!ok) { return ""; }
+          inst = inst + ">";
+          env.instantiate(inst, of);
+          return inst;
+        }
+      }
+      else: { }
+    }
+  }
+  return "";
+}
+
+/**
  * The `name<args>` half of a method instance, which is what a substitution push needs.
  *
  * `typeArgAt` reads the argument list of a `Name<…>`, and handed the whole `Box<i32>.map<i64>` it
@@ -882,12 +947,22 @@ string methodInstTail(string inst, string of, string mname) {
  * loses the function it was calling.
  */
 i32 methodSlotFor(Env env, u8[] src, Lexed lexed, string ot, string mn, Ty[] targs) {
-  if (targs.len() > 0) {
-    string mi = methodInstance(env, src, lexed, ot, mn, targs);
-    if (mi != "") {
-      i32 at = env.funcAt(mi);
-      if (at >= 0) { return at; }
-    }
+  string mi = targs.len() > 0 ? methodInstance(env, src, lexed, ot, mn, targs) : "";
+  if (mi != "") {
+    i32 at = env.funcAt(mi);
+    if (at >= 0) { return at; }
+  }
+  return methodOn(env, ot, mn);
+}
+
+/** The same, and falling back to inference when the call wrote nothing — `design/lang/0010` #2. */
+i32 methodSlotForArgs(Env env, u8[] src, Lexed lexed, string ot, string mn, Ty[] targs,
+                      Expr[] args) {
+  string mi = targs.len() > 0 ? methodInstance(env, src, lexed, ot, mn, targs)
+                              : methodInstanceInferred(env, src, lexed, ot, mn, args);
+  if (mi != "") {
+    i32 at = env.funcAt(mi);
+    if (at >= 0) { return at; }
   }
   return methodOn(env, ot, mn);
 }
@@ -7754,7 +7829,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
           // first parameter, which is the whole of what a method is here.
-          i32 at = methodSlotFor(env, src, lexed, ot, mname, callTargs);
+          i32 at = methodSlotForArgs(env, src, lexed, ot, mname, callTargs, args);
           if (!haveRequired(env, at, ot + "." + mname)) { return; }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
@@ -8123,7 +8198,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
-          i32 mi = methodSlotFor(env, src, lexed, ot, mn, callTargs);
+          i32 mi = methodSlotForArgs(env, src, lexed, ot, mn, callTargs, args);
           return mi < 0 ? "" : env.funcReturns[mi];
         }
       }
@@ -9087,11 +9162,13 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
           // template's entry here hands it a parameter written in the method's own letter and the
           // emitter declines with *"a value of a type this emitter cannot write: U"*.
           if (inst != "") {
-            fat = methodSlotFor(env, src, lexed, inst, tokenTextOf(src, lexed, mnameTok), callTargs);
+            fat = methodSlotForArgs(env, src, lexed, inst, tokenTextOf(src, lexed, mnameTok),
+                                    callTargs, args);
           }
           if (fat >= 0) { inst = ""; }
           if (fat < 0 && recv != "") {
-            fat = methodSlotFor(env, src, lexed, recv, tokenTextOf(src, lexed, mnameTok), callTargs);
+            fat = methodSlotForArgs(env, src, lexed, recv, tokenTextOf(src, lexed, mnameTok),
+                                    callTargs, args);
           }
         }
         else: { }
@@ -11106,7 +11183,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             // function. `collectInstances` walks every body before it registers anything and
             // iterates to a fixed point, so an instance named in this walk exists by the time the
             // registration pass reads the list.
-            methodInstance(env, src, lexed, ot, mn, callTargs);
+            if (callTargs.len() > 0) { methodInstance(env, src, lexed, ot, mn, callTargs); }
+            else { methodInstanceInferred(env, src, lexed, ot, mn, args); }
             // **Nothing here may decline**, and that is the whole of `issues/lang/0274b`.
             //
             // This walk is also the walk that *discovers* instances — `methodInstance` above is what

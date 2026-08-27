@@ -587,6 +587,35 @@ string bindMethodLetters(C c, i32 methodIx, Ty[] targs, string t) {
   return applyBindings(t, names, bound);
 }
 
+/**
+ * A method's own letters bound **however the call supplies them** — written, or inferred from the
+ * arguments — applied to a written type.
+ *
+ * `design/lang/0010`. The two roads have to arrive at the same place, because everything downstream
+ * of the binding is shared: the call's type, the argument slots, and the instance the emitter names.
+ */
+string bindMethodLettersAuto(C c, i32 methodIx, string recv, Ty[] targs, Expr[] args, string t) {
+  if (targs.len() > 0) { return bindMethodLetters(c, methodIx, targs, t); }
+  if (methodIx < 0 || methodIx >= c.methodTypeParams.len()) { return t; }
+  string joined = c.methodTypeParams[methodIx];
+  if (joined == "") { return t; }
+  i32 n = commaCount(joined);
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  bool[] clash = bool[n]();
+  for (i32 i = 0; i < n; i++) { names[i] = commaAt(joined, i); }
+  for (i32 i = 0; i < args.len() && i < c.methodParamCount[methodIx]; i++) {
+    string decl = substituteType(c, recv, c.methodParamTypes[c.methodParamAt[methodIx] + i]);
+    string got = foundType(c, args[i]);
+    if (got == typeNone() || got == "") { continue; }
+    bindTypeParams(c, decl, got, names, bound, clash);
+  }
+  for (i32 i = 0; i < n; i++) {
+    if (bound[i] == "" || clash[i]) { return t; }
+  }
+  return applyBindings(t, names, bound);
+}
+
 /** How many entries a comma-joined list holds — `""` is none, `"U"` is one, `"K,V"` is two. */
 i32 commaCount(string joined) {
   if (joined == "") { return 0; }
@@ -3254,8 +3283,8 @@ export string typeOfExpr(C c, Expr e) {
           // return type *is* its own letter answers `U` without the second step, and `i32 total =
           // v.fold<i32>(…)` is then *expected i32, found U*: a complaint about a type nobody wrote,
           // which is the shape this whole area keeps producing when a letter goes unbound.
-          return bindMethodLetters(c, mi, callTargs,
-                                   substituteType(c, recvT, c.methodReturns[mi]));
+          return bindMethodLettersAuto(c, mi, recvT, callTargs, args,
+                                       substituteType(c, recvT, c.methodReturns[mi]));
         }
         else: { return typeNone(); }
       }
@@ -4758,7 +4787,7 @@ void checkExpr(C c, Expr e) {
           string mslot = c.methodParamTypes[c.methodParamAt[methodIx] + i];
           string osub = methodInst == "" ? mslot : substituteType(c, methodInst, mslot);
           // **And the method's own letters**, which nothing bound before `design/lang/0010` option C.
-          c.expected = bindMethodLetters(c, methodIx, callTargs, osub);
+          c.expected = bindMethodLettersAuto(c, methodIx, methodInst, callTargs, args, osub);
           slotted = true;
         }
         c.expectedUnknown = !slotted;
@@ -6725,6 +6754,23 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
     bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound, clashed);
     return;
   }
+  // **And through a funcref**, which holds a letter as readily as `Option<V>` does — and is where a
+  // method's own letter usually lives, since `fn[U(T)]` is what a continuation looks like. Without
+  // this arm `U map<U>(const this, fn[U(T)] f)` could not be inferred from `widen`: the parameter
+  // matched, nothing was bound, and the call came back `U`. `applyBindings` and `substituteType` both
+  // have this arm; the binder was the one that did not. `design/lang/0010` criterion 2.
+  if (startsWithFn(written) && startsWithFn(actual)) {
+    string wr = funcrefReturn(written);
+    string ar = funcrefReturn(actual);
+    if (wr != "" && ar != "" && funcrefParamCount(written) == funcrefParamCount(actual)) {
+      for (i32 i = 0; i < funcrefParamCount(written); i++) {
+        bindTypeParams(c, funcrefParamAt(written, i), funcrefParamAt(actual, i), names, bound,
+                       clashed);
+      }
+      bindTypeParams(c, wr, ar, names, bound, clashed);
+    }
+    return;
+  }
   string wb = genericBase(written);
   if (wb == "" || wb != genericBase(actual)) { return; }
   string[] wargs = genericArgs(written);
@@ -7519,8 +7565,31 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     // here, and the types are the emitter's — stated rather than silent, and the reason a wrong
     // argument to such a call is reported one phase later than to an ordinary one.
     if (wrote > 0) { return; }
+    // **Or inferred from the arguments** — `design/lang/0010` criterion 2. A method's own letters are
+    // argument-directed in the same way a generic function's are, and the only reason they were not
+    // is that no call to such a method could be emitted at all. `substituteType` puts the declared
+    // parameter in the receiver's world first, so `fn[U(U, T)]` is matched as `fn[U(U, i32)]` and
+    // only `U` is left to find.
+    i32 want = commaCount(c.methodTypeParams[tpAt]);
+    string[] inames = string[want]();
+    string[] ibound = string[want]();
+    bool[] iclash = bool[want]();
+    for (i32 i = 0; i < want; i++) { inames[i] = commaAt(c.methodTypeParams[tpAt], i); }
+    for (i32 i = 0; i < args.len() && i < c.methodParamCount[tpAt]; i++) {
+      string decl = substituteType(c, recv, c.methodParamTypes[c.methodParamAt[tpAt] + i]);
+      string got = foundType(c, args[i]);
+      if (got == typeNone() || got == "") { continue; }
+      bindTypeParams(c, decl, got, inames, ibound, iclash);
+    }
+    bool allBound = args.len() == c.methodParamCount[tpAt];
+    for (i32 i = 0; i < want; i++) {
+      if (ibound[i] == "" || iclash[i]) { allBound = false; }
+    }
+    if (allBound) { return; }
     c.reportWith(errMethodTypeParams(), callee.line, callee.col,
-                 "no " + recv + "." + name + " — it has a type parameter of its own");
+                 "no " + recv + "." + name + " — nothing here says what " +
+                 (want == 1 ? inames[0] : c.methodTypeParams[tpAt]) + " is, so write it: " +
+                 name + "<…>(…)");
     return;
   }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
