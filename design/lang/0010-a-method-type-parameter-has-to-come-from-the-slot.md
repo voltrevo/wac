@@ -255,6 +255,21 @@ push for the method's letters is the shape it was built for — and `collectInst
 warns that discovery order and registration order have to agree because the function table's order is
 the module's numbering.
 
+#### Which acceptance criteria are met
+
+| # | criterion | state |
+|---|---|---|
+| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this — checked rather than assumed, since the point of listing it was that the declaration passes while every call is refused |
+| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — needs item 3 |
+| 3 | `v.fold<i64>(0, …)` with one | **parses** since `design/lang/0011` step 3, and is refused with *"written type arguments are parsed and not yet bound"*. Needs item 3 |
+| 4 | `p.then<Foo>(…)` | **no**, and item 1 has not been done either — `Pending<U> then<U>(…)` does not exist, and declaring it while no call can be emitted adds a method nobody can reach |
+| 5 | a three-link chain | **no** — needs 4 |
+| 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **no** — this *is* item 3 |
+
+**So what landed is the syntax and the diagnostics, and what is left is one thing.** That is a better
+position than it sounds: criterion 3's spelling could not be written at all before, so the refusal
+for criterion 2 was advice pointing at a parse error.
+
 ### A design for item 3, from reading the emitter — agent-b, 2026-08-27
 
 Not implemented. Written down because the reading is most of the work and the alternative is somebody
