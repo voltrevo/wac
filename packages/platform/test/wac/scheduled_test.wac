@@ -215,3 +215,29 @@ export string test_waitany_answers_the_first_ready_ticket_in_the_callers_list(Co
   second.wait();
   return t.report();
 }
+
+// `map` is the value-returning continuation `design/lang/0010` criterion 4 asks for, and it is
+// tested in-process rather than through an example because it schedules nothing: it composes `f`
+// onto the ticket's own resolver and hands back a ticket of the new type. The claim is that the
+// chained one is the *same slot* — same id, same `settled`, same world — and differs only in what
+// its answer has been through.
+export string test_map_chains_a_ticket_to_another_type(Core core, Cli cli) {
+  T t = T.create();
+  Pending<i64> d = core.delay(1);
+  Pending<i32> mapped = d.map<i32>((i64 ms) => ms >= 0 as i64 ? 1 : 0);
+
+  t.eqI32(mapped.id, d.id, "the same host slot, not a second one");
+  t.eqBool(mapped.isDone(), d.isDone(), "and the same settled predicate");
+
+  // The answer, once. Taking it through the chained ticket is taking it through the original —
+  // `wait` is `resolve(id)` either way — so the upstream must not be waited on as well.
+  t.eqI32(mapped.wait(), 1, "f applied to the delay's answer");
+
+  // A second link, to show the composition is not one deep. Nothing has run yet: `g` is applied
+  // when this ticket is resolved and not before.
+  Pending<i64> again = core.delay(1);
+  Pending<string> twice = again.map<i32>((i64 ms) => ms >= 0 as i64 ? 2 : 0)
+                              .map<string>((i32 n) => n == 2 ? "two" : "no");
+  t.eqStr(twice.wait(), "two", "two links, each changing the type");
+  return t.report();
+}

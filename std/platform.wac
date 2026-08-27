@@ -270,6 +270,32 @@ export struct Pending<T> {
   }
 
   /**
+   * The same ticket with `f` applied to its answer — a **chained** ticket of a different type.
+   *
+   * `design/lang/0010` criterion 4, and it is smaller than that document predicted. It expected a
+   * derived ticket resolved when the first resolves, which is scheduler plumbing; what it needs is
+   * function composition and no scheduler change at all. A ticket is an id plus three functions of
+   * that id, so the chained one keeps the **same host id** — the same slot, the same `settled`, the
+   * same `drop`, the same world — and differs only in `resolve`, which gains `f` on top. `waitAny`
+   * takes ids across differing `Pending<T>` for exactly this reason.
+   *
+   * Nothing runs here. `f` is applied when the answer arrives and the ticket is resolved, so a
+   * chained ticket nobody consumes costs a closure and never calls `f`:
+   *
+   *     cli.readFile(p).linkedTo(core).map<i32>((string s) => s.len()).then((i32 n) => …)
+   *
+   * **Not named `then`, and that is not a preference.** wac has no overloading, `then` has five real
+   * callers all passing a void lambda, and a void-bodied lambda cannot satisfy `fn[U(T)]`. So the
+   * consumer keeps the name it has and the transform takes the one it would have in any case.
+   *
+   * **Two chains from one ticket resolve one host slot twice**, which is the pre-existing property of
+   * `resolve` rather than something this adds — a ticket answers once, and `map` does not copy it.
+   */
+  Pending<U> map<U>(const this, fn[U(T)] f) {
+    return Pending<U>(this.id, (i32 id) => f(this.resolve(id)), this.settled, this.drop, this.sched);
+  }
+
+  /**
    * Run `f` with the answer once it is here, and return **now**.
    *
    * The scheduler holding the continuation never learns `T`: what is registered is a `fn[void(i32)]`,
