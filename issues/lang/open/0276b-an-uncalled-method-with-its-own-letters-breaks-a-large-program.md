@@ -157,3 +157,21 @@ the feature has no user. `design/lang/0010`'s criterion 1 says so.
 
 That is the honest state and it is worth saying plainly: **option C is implemented and cannot yet be
 used on a struct anything else depends on**, which is most of the reason to want it.
+
+## Two last measurements, and the one-registration theory is dead
+
+- Trapping only on `fold`'s **own** signature — a bare letter *and* a `Vec<` in the same type —
+  **does not fire**. So `fn[U(Vec<Mount>,U,fn[U(U,Mount)])]` is never registered, and the nested
+  `fn[U(U,Mount)]` is registered **on its own**, as a slot type rather than as part of a signature.
+  That kills the theory that one registration of the method's signature produces all three shapes.
+- With the placeholder fix in — the instance registration resolving nothing for an own-letter method
+  — **the trap still fires**. So that site is one source and not the only one, and whatever remains
+  names the funcref type directly.
+
+**The Deno host does not help here.** The trap's stack shows only the boundary, `_wacTrap` →
+`buildFilesIn`, with no internal wac frames — so the next instrument has to be a marker threaded into
+`sigType` by its callers, or a bisect that disables one caller at a time.
+
+Nine shapes tried; `box` is still the smallest reproduction. Everything in this issue is measurement,
+and no guess has been left standing as if it were one.
+
