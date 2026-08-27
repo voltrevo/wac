@@ -539,6 +539,25 @@ string templateOf(string t) {
  * parameter: that is a generic's member read without knowing what it was instantiated with, and
  * there is no answer to give.
  */
+/** How many entries a comma-joined list holds — `""` is none, `"U"` is one, `"K,V"` is two. */
+i32 commaCount(string joined) {
+  if (joined == "") { return 0; }
+  i32 n = 1;
+  u8[] b = joined.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == ',') { n = n + 1; } }
+  return n;
+}
+
+/** A method's own type parameters, comma-joined — `then<U>` gives `"U"`, and almost every one `""`. */
+string ownParamNames(C c, i32[] typeParams) {
+  string out = "";
+  for (i32 i = 0; i < typeParams.len(); i++) {
+    if (i > 0) { out = out + ","; }
+    out = out + tokenText(c, typeParams[i]);
+  }
+  return out;
+}
+
 string substituteType(C c, string owner, string written) {
   string base = genericBase(owner);
   string template = base == "" ? owner : base;
@@ -1238,17 +1257,21 @@ export struct C {
   bool expectedUnknown;
 
   /**
-   * Whether each method declares **its own** type parameters — `then<U>(…)`.
+   * Each method's **own** type parameters, comma-joined — `then<U>(…)` records `"U"`.
    *
-   * Parallel to `methodNames`, and the only thing the checker needs to know about them: the
-   * declaration is legal, a *call* is not supported yet, and saying which feature is missing beats
+   * Parallel to `methodNames`, and empty for almost every method. It was a `bool` until 2026-08-27,
+   * when *how many* there are became a question worth answering: `b.map<i64, i32>(f)` writes two
+   * arguments for one letter, and the arity is checkable without binding anything. The names
+   * themselves are what `design/lang/0010` option C binds.
+   *
+   * A `call` is still refused — the declaration is legal, and saying which feature is missing beats
    * whatever falls out downstream. What fell out was the lambda argument answering "nothing here
    * wants a function" about a lambda that is fine, because the parameter it was checked against is
    * written in a letter nobody has bound.
    *
    * **Last field**, for the reason the ones above give: `C` is built positionally.
    */
-  bool[] methodTypeParams;
+  string[] methodTypeParams;
   /**
    * Each name's funcref **arity**, taken from the type as *written*, or -1.
    *
@@ -1335,7 +1358,7 @@ export struct C {
              string[decls](), 0,
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             bool[decls](), i32[locals](fill: 0 - 1), 0,
+             string[decls](), i32[locals](fill: 0 - 1), 0,
              string[decls](), string[decls](), 0,
              string[decls](), 0);
   }
@@ -1712,7 +1735,7 @@ export struct C {
 
   /** Record one method of one struct. */
   void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
-                     string[] params, Stmt[] body, bool ownTypeParams) {
+                     string[] params, Stmt[] body, string ownTypeParams) {
     if (this.methodCount >= this.methodNames.len()) { return; }
     if (this.methodCount < this.methodTypeParams.len()) {
       this.methodTypeParams[this.methodCount] = ownTypeParams;
@@ -7209,21 +7232,33 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // letter nobody has bound, so every complaint downstream is about the wrong thing. The one that
   // actually came out was *"nothing here wants a function"* at a lambda that is fine.
   i32 tpAt = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
-  if (tpAt >= 0 && tpAt < c.methodTypeParams.len() && c.methodTypeParams[tpAt]) {
+  if (tpAt >= 0 && tpAt < c.methodTypeParams.len() && c.methodTypeParams[tpAt] != "") {
     // **The note must not promise a workaround.** It read *"without its type arguments"*, which is
     // advice — and until `design/lang/0011` step 3 writing them was a parse error, so following it
     // answered `a type name is not a value` under the `<`, about a different program. They parse now
     // and are still not bound, so the note says which of the two the caller did and stops there.
     // `design/lang/0010` option C is what binds them.
-    bool wrote = false;
+    i32 wrote = 0;
     match (call.kind) {
-      case Call(callExpr, callArgs, writtenTargs): { wrote = writtenTargs.len() > 0; }
+      case Call(callExpr, callArgs, writtenTargs): { wrote = writtenTargs.len(); }
       else: { }
     }
+    // **The arity is checkable without binding anything**, which is why the table holds the names
+    // rather than a flag. `b.map<i64, i32>(f)` is wrong for every possible binding at once, and
+    // saying so is a better answer than "not yet bound" — that one reads as "come back later", and
+    // coming back later would not have helped.
+    i32 takes = commaCount(c.methodTypeParams[tpAt]);
+    if (wrote > 0 && wrote != takes) {
+      c.reportWith(errMethodTypeParams(), callee.line, callee.col,
+                   recv + "." + name + " takes " + lineText(takes) + " type argument" +
+                   (takes == 1 ? "" : "s") + ", and " + lineText(wrote) + " " +
+                   (wrote == 1 ? "was" : "were") + " written");
+      return;
+    }
     c.reportWith(errMethodTypeParams(), callee.line, callee.col,
-                 wrote ? "no " + recv + "." + name + " yet — written type arguments are parsed and "
-                         + "not yet bound"
-                       : "no " + recv + "." + name + " — it has a type parameter of its own");
+                 wrote > 0 ? "no " + recv + "." + name + " yet — written type arguments are parsed "
+                             + "and not yet bound"
+                           : "no " + recv + "." + name + " — it has a type parameter of its own");
     return;
   }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
@@ -8714,10 +8749,13 @@ bool mentionsParam(C c, Ty t, i32[] typeParams) {
 }
 
 /**
- * A line number for a diagnostic's note.
+ * A small positive number for a diagnostic's note — a line number, or a count.
  *
  * Local rather than imported: `numText` lives in the emitter, and the checker does not depend on it —
  * a diagnostic wanting to say "line 12" is not a reason to make the front end depend on the back one.
+ *
+ * `0` and below render as `?`, which is right for a line nobody recorded and is why a caller
+ * counting something should not reach here with a zero it means to print.
  */
 string lineText(i32 v) {
   if (v <= 0) { return "?"; }
@@ -9037,7 +9075,7 @@ export void declareModule(C c, Program prog, string[] only) {
                           !methods[mi].hasThis, methods[mi].thisConst,
                           gen ? writtenTy(c, methods[mi].returnType)
                               : typeOfTy(c, methods[mi].returnType), emps,
-                          methods[mi].body, methods[mi].typeParams.len() > 0);
+                          methods[mi].body, ownParamNames(c, methods[mi].typeParams));
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -9077,7 +9115,7 @@ export void declareModule(C c, Program prog, string[] only) {
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
                           typeOfTy(c, methods[i].returnType), mps,
-                          methods[i].body, methods[i].typeParams.len() > 0);
+                          methods[i].body, ownParamNames(c, methods[i].typeParams));
           c.activeParamCount = savedActive;
         }
       }

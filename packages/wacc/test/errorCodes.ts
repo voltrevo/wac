@@ -98,6 +98,7 @@ export const PARSE_CODE_VALUES: ReadonlyMap<number, string> = new Map([
   [30, "perrKeywordName"],
   [31, "perrEnumOverride"],
   [32, "perrEnumMethodThis"],
+  [33, "perrTypeArgsThenValue"],
 ]);
 
 /** A reference message with its interpolated parts blanked, so shapes can be compared. */

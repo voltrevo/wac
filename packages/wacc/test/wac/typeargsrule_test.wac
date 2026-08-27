@@ -160,5 +160,15 @@ export string test_a_methods_own_type_arguments_parse_and_the_refusal_is_honest(
   // as a type name in value position.
   t.isTrue(!contains(with, "a type name is not a value"),
            "and is not the unrelated diagnostic the `<` used to produce — got " + with);
+
+  // **The arity is answerable without binding anything**, which is why the checker records the
+  // letters rather than a flag. Two arguments for one letter is wrong for every possible binding at
+  // once, and "not yet bound" would have read as "come back later" when coming back would not help.
+  string tooMany = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
+                        "  i64 r = b.map<i64, i32>(widen); return 0; }");
+  t.isTrue(contains(tooMany, "takes 1 type argument, and 2 were written"),
+           "a wrong count is reported as a wrong count — got " + tooMany);
+  t.isTrue(!contains(tooMany, "not yet bound"),
+           "and not as something that might work later — got " + tooMany);
   return t.report();
 }

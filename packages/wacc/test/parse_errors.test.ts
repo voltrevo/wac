@@ -202,8 +202,52 @@ Deno.test("parse errors: malformation inside an otherwise well-formed declaratio
     "i32 f() { ++g(); }",
     "i32 f() { return fn[i32(i32)]; }",
     "i32 f() { return fn[i32(i32)][]; }",
-    "i32 f() { return S<i32>; }",
+    // **`perrCtorBrace`'s input moved out of this list on 2026-08-27** — to the test below, which
+    // asserts the code without asserting a position. See there for why.
   ]);
+});
+
+Deno.test("parse errors: the construction-brace code still has an input", () => {
+  // `design/lang/0011` took this code's only case away. A type argument list that parses *is* one,
+  // so `i32 f() { return S<i32>; }` — which used to fall through to `perrCtorBrace` — is a
+  // `TypeName` now and the checker refuses it by name. What still falls through is the degenerate
+  // empty list, `S<>`, where `parseTypeArgs` returns nothing and none of the construction branches
+  // match.
+  //
+  // **Here rather than in `agreeAll`, because the two parsers do not agree on where it is**: wacc
+  // reports at the `;`, having consumed the `<>`, and the reference at the `>`. That is worth
+  // knowing and is not worth blocking on — the case earns its place by *reaching the code*, which
+  // is what the list it came from was protecting. A code no input reaches is a number nobody has
+  // ever compared, and a mutation sweep replacing it with `return 0` would go unnoticed
+  // (wac-mono 0005).
+  const parsed = mine("i32 f() { return S<>; }");
+  const ctorBrace = 27;
+  if (!parsed.some((d) => d.code === ctorBrace)) {
+    throw new Error(`nothing reaches perrCtorBrace any more; got ${JSON.stringify(parsed)}`);
+  }
+  if (PARSE_CODE_VALUES.get(ctorBrace) !== "perrCtorBrace") {
+    throw new Error(`code ${ctorBrace} is recorded as ${PARSE_CODE_VALUES.get(ctorBrace)}`);
+  }
+});
+
+Deno.test("parse errors: a written instantiation is the checker's to refuse, not the parser's", () => {
+  // **A deliberate divergence**, and the only one in this file. `design/lang/0011` made `S<i32>` in
+  // expression position parse — as a `TypeName` — because `id<i32>` is the same parse and whether it
+  // is a generic function or a comparison is a question about the *name*, which the parser cannot
+  // answer and the checker can. So wacc's parser is silent here where the reference's is not.
+  //
+  // The program is still refused, with a better message than either had before: the reference says
+  // `expected an expression`, and wacc names which of the two readings it took and what to do about
+  // it. What must not happen is the parser going silent and nothing else speaking, so that is what
+  // is asserted.
+  const source = "i32 f() { return S<i32>; }";
+  const parsed = mine(source);
+  if (parsed.length !== 0) {
+    throw new Error(`the parser should leave this to the checker; it reported ${show(parsed)}`);
+  }
+  if (reference(source).length === 0) {
+    throw new Error("the reference used to report here — if it no longer does, this test has no subject");
+  }
 });
 
 Deno.test("parse errors: positions are on the offending token, across lines", () => {
