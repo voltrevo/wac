@@ -31,6 +31,15 @@ async function have(path: string): Promise<boolean> {
   }
 }
 
+/** Run a host and take the wasm it wrote. */
+async function wasmFrom(cmd: string, args: string[], out: string): Promise<Uint8Array> {
+  const ran = await new Deno.Command(cmd, { args: [...args, "-o", out] }).output();
+  if (!ran.success) {
+    throw new Error(`${cmd} failed: ${new TextDecoder().decode(ran.stderr).slice(0, 300)}`);
+  }
+  return await Deno.readFile(out);
+}
+
 /** Run a host binary on a file and take its wac-L0 from stdout. */
 async function l0From(cmd: string, args: string[]): Promise<string> {
   const ran = await new Deno.Command(cmd, { args }).output();
@@ -84,6 +93,25 @@ Deno.test({
             `  ${names[0]}: ${a[at]}\n  ${name}: ${b[at]}`,
         );
       }
+
+      // **And the bytes, not only the text.** Identical wac-L0 through two *different* assemblers
+      // — one JavaScript, one Rust — is not identical wasm unless they agree, and this is a much
+      // bigger sample of that than `tests/l0/` holds: a couple of hundred lines of real compiler
+      // output rather than a fixture written to make a point.
+      const wasm: Record<string, Uint8Array> = {
+        rust: await wasmFrom(BIN, [tmp], `${tmp}.rust.wasm`),
+        deno: await wasmFrom("deno", ["run", "-A", `${HERE}../hosts/deno.js`, tmp], `${tmp}.deno.wasm`),
+      };
+      if (await have(NODE_HOST)) {
+        wasm.node = await wasmFrom("node", [NODE_HOST, tmp], `${tmp}.node.wasm`);
+      }
+      for (const [name, bytes] of Object.entries(wasm)) {
+        if (name === "rust") continue;
+        const a = wasm.rust;
+        if (a.length === bytes.length && a.every((v, i) => v === bytes[i])) continue;
+        throw new Error(`rust and ${name} produced different wasm: ${a.length} vs ${bytes.length}`);
+      }
+      for (const k of Object.keys(wasm)) await Deno.remove(`${tmp}.${k}.wasm`).catch(() => {});
     } finally {
       await Deno.remove(tmp);
     }

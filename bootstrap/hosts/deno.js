@@ -39,30 +39,38 @@ export async function boot() {
 /** @param {string} entry @returns {Promise<string>} */
 export const flattenFrom = (entry) => flatten(entry, files);
 
+/** A refusal is the compiler saying it could not, and it should stop the build rather than
+ * produce a module with a marker in it. @param {string} l0 */
+function refuseIfRefused(l0) {
+  const bad = l0.split("\n").filter((x) => x.startsWith("!!"));
+  if (bad.length === 0) return;
+  console.error(`wac-L5 refused ${bad.length} things`);
+  for (const line of bad.slice(0, 5)) console.error(`  ${line}`);
+  Deno.exit(1);
+}
+
 if (import.meta.main) {
   const args = Deno.args;
   if (args.length < 1) {
-    console.error("usage: deno run -A hosts/deno.js <file.wac> [--l0]");
+    console.error("usage: deno run -A hosts/deno.js <file.wac> [--l0 | -o <out.wasm>]");
     console.error("  default   compile and run `main`");
     console.error("  --l0      print the wac-L0 instead");
+    console.error("  -o FILE   write the wasm module");
     Deno.exit(2);
   }
   const l = await boot();
   const source = await flattenFrom(args[0]);
   const l0 = await l.l5ToL0(source);
-  if (args.includes("--l0")) {
+  const dashO = args.indexOf("-o");
+  if (dashO >= 0) {
+    refuseIfRefused(l0);
+    await Deno.writeFile(args[dashO + 1], assemble(l0));
+  } else if (args.includes("--l0")) {
     // Written rather than logged, so the bytes on stdout are the bytes — `console.log` appends a
     // newline and the other hosts do not, which is a difference between hosts that is not one.
     await Deno.stdout.write(new TextEncoder().encode(l0));
   } else {
-    const refusals = (l0.match(/^!!/gm) ?? []).length;
-    if (refusals > 0) {
-      console.error(`wac-L5 refused ${refusals} things`);
-      for (const line of l0.split("\n").filter((x) => x.startsWith("!!")).slice(0, 5)) {
-        console.error(`  ${line}`);
-      }
-      Deno.exit(1);
-    }
+    refuseIfRefused(l0);
     const inst = await WebAssembly.instantiate(await WebAssembly.compile(assemble(l0).buffer), {});
     console.log(inst.exports.main());
   }

@@ -208,14 +208,16 @@ fn start_v8() {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("usage: ladder <file.wac> [--l0 | --bench]");
+        eprintln!("usage: ladder <file.wac> [--l0 | --bench | -o <out.wasm>]");
         eprintln!("  default   compile and run `main`");
         eprintln!("  --l0      print the wac-L0 instead");
         eprintln!("  --bench   time the three phases, one cold run");
+        eprintln!("  -o FILE   write the wasm module");
         std::process::exit(2);
     }
     let want_l0 = args.iter().any(|a| a == "--l0");
     let want_bench = args.iter().any(|a| a == "--bench");
+    let out_path = args.iter().position(|a| a == "-o").and_then(|i| args.get(i + 1)).cloned();
 
     start_v8();
     let isolate = &mut v8::Isolate::new(Default::default());
@@ -235,6 +237,12 @@ fn main() {
     if want_l0 {
         print!("{l0}");
         return;
+    }
+    if refusals == 0 {
+        if let Some(path) = out_path {
+            std::fs::write(&path, assemble(&l0)).expect("cannot write the module");
+            return;
+        }
     }
     if refusals > 0 {
         eprintln!("wac-L5 refused {refusals} things");

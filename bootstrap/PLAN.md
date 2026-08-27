@@ -51,7 +51,7 @@ bootstrap reaches.
 
 ---
 
-## The port: TypeScript to JavaScript — **open**
+## The port: TypeScript to JavaScript — **doing**
 
 **Why.** TypeScript needs a TypeScript-aware runtime or a build step. Deno has one; Node does not
 without a loader, and a browser does not at all. Plain JavaScript runs in all three, and the Rust
@@ -311,3 +311,10 @@ never declared with `tyname` silently remapping it; `overflowed` stops the parse
 - Two benchmarks, one per host, including the assemble step.
 - The three unexercised features pinned, which found one defect.
 - Node 22 verified to run wasm GC, so the Node host is feasible.
+- The assembler, the ladder and the flattener are portable JavaScript. `js/` touches no file;
+  `flatten` takes the host as two methods rather than a filesystem.
+- **Acceptance criterion 2 is met.** `hosts/deno.js`, `hosts/node.js` and `rust-ladder/` each
+  build wacc by themselves, and the three modules are byte for byte identical — 659,236 bytes,
+  `sha256 532902cd…`. Checked by `ts/hosts_agree_test.ts`, which compares the wac-L0 *and* the
+  wasm, so the two assemblers are now differentialled against real compiler output rather than
+  only against the fixtures in `tests/l0/`.
