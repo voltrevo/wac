@@ -307,10 +307,17 @@ helpers, so nothing sits after the slid entries to notice.
 That count is the argument, and it is why the *first* instinct here was right after all: **append,
 do not interleave.** A pass that registers method instances after every instance has been registered
 adds entries at the end of the function table, where no existing walk's indices move — so the 43
-loops keep counting exactly what they counted before and none of them needs to know. The matching
-emission has to be a pass in the same position, and the thing to establish before writing either is
-which passes are decl-walk-driven and which iterate the table by index, because only the second kind
-sees an appended entry for free.
+loops keep counting exactly what they counted before and none of them needs to know. The matching emission has to be a pass in the same position, and that question is now answered rather
+than open: **emission is decl-walk-driven**. There are six `emitFunction(types, funcs, exports, code,
+…)` call sites and every one of them sits inside a walk over declarations, so an appended table entry
+with no walk to match it gets a function-section slot and no body — a short code section, which is an
+invalid module rather than a wrong answer.
+
+So the append design is one new registration pass **and** one new emission block, and the block has to
+come last, because `funcIndex` is assigned in table order (three loops over `env.funcCount` do the
+renumbering) and the code section has to be in index order. Both sections are filled by the same
+`emitFunction` call, so a final block walking the method instances in registration order keeps them
+in step by construction — which is the property the interleaved design could not get.
 
 **So the honest state is: the syntax and the diagnostics landed, this piece did not, and the reason
 is measured rather than guessed.** The reverted attempt cost one reseed and is worth exactly the
