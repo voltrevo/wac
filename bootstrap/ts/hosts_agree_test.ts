@@ -50,11 +50,15 @@ async function l0From(cmd: string, args: string[]): Promise<string> {
 }
 
 // Chosen to reach what a rung below cannot express: wasm GC, an enum with payloads, `match`,
-// concatenation, a filled array, a generic.
+// concatenation, a filled array, and a generic declaration.
+//
+// **It must compile cleanly, not merely identically.** It called the generic at first, which
+// wac-L5 refuses by name — so all three hosts agreed, on the same refusal, and the comparison
+// said nothing. Comparing the *wasm* is what found it, because a refusal has no wasm.
 const PROGRAM = `
 struct Point { i32 x; i32 y; }
 enum Shape { Dot(Point p), Line(Point a, Point b) }
-T id<T>(T v) { return v; }
+T id<T>(T v) { return v; }        // declared and skipped; calling one is refused by name
 i32 span(Shape s) {
   match (s) {
     case Dot(p): { return p.x + p.y; }
@@ -65,7 +69,7 @@ i32 span(Shape s) {
 i32 main() {
   string label = "hello" + " " + "world";
   i32[] ns = i32[4](fill: 3);
-  return span(Shape.Line(Point(1, 2), Point(11, 22))) + label.len() + ns[3] + id(0);
+  return span(Shape.Line(Point(1, 2), Point(11, 22))) + label.len() + ns[3];
 }
 `;
 
