@@ -515,3 +515,36 @@ the body with the letters bound" — and the parser's entire state is one intege
 array, so rewinding is free. The expensive part of generics in a normal compiler is having
 somewhere to put a partially-instantiated type; there is nowhere to put anything here, so there is
 nothing to put.
+
+## The ladder under a second host
+
+`rust-ladder/` runs every rung through V8 embedded in Rust, against `ts/` running the same rungs
+through Deno. They produce identical wac-L0 — on a small program, and on the 37,873 lines of wacc,
+where all 183,861 lines of output match.
+
+    compiling wacc, the whole ladder cold
+      Rust on V8       722 ms
+      Deno             753 ms
+
+Close enough to be the same measurement, which is the expected answer: both are V8 running the same
+five compiled modules, and the host only moves bytes in and out.
+
+**The one line of JavaScript is `new WebAssembly.Instance`.** V8's C++ embedding API exposes no
+equivalent — instantiation is a JS constructor — so the Rust host evaluates that one expression and
+does everything else itself: the bytes go in through the module's own linear memory, and the answer
+comes back out of it.
+
+Three seams, and they are not the same shape:
+
+    wac-L1   source at 8192, `run_at(at)` answers an *address*, text runs to a NUL
+    wac-L3   source at SRC, `compile(src, out)` answers a *length*
+    wac-L4   the same, same addresses
+    wac-L5   the same, different addresses — its buffers are much larger
+
+wac-L2 has no seam of its own: it is a wac-L1 program, so it is driven by wrapping the compiler and
+the program together in one s-expression and handing that to the interpreter.
+
+**The memory pointer has to be taken after every call, not before.** Growing a wasm memory detaches
+the `ArrayBuffer` a caller was holding, and `$alloc` in the interpreter grows it — so a pointer
+read before the call is dangling by the time there is anything to read through it. Both hosts have
+a comment about this; the TypeScript one was written after being caught by it.

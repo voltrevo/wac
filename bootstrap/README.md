@@ -144,6 +144,14 @@ section framing — work with a known answer and a new place to be wrong.
 compiler is the previous compiler plus features, ported upward rather than rewritten, which is what
 makes the ladder converge on wac instead of wandering.
 
+**And the ladder runs under two hosts.** `ts/` drives every rung through Deno; `rust-ladder/`
+drives the same rungs through V8 embedded in Rust, and `ts/hosts_agree_test.ts` checks the wac-L0
+they produce is identical. That is a different claim from the two assemblers agreeing: that
+differential covers *reading* a format, this one covers *running* five compilers, where the
+differences an engine can introduce are the interesting ones. The one line of JavaScript in the
+Rust host is `new WebAssembly.Instance`, because that is a JS constructor and V8's C++ embedding
+API exposes no equivalent.
+
 **And L0 is written twice on purpose.** The differential is the only check a bootstrap root can
 have, and it is also the thing wac's own ladder would lose by retiring its reference compiler —
 which `design/lang/0003` calls the instrument behind most of this year's defects. Worth practising.
@@ -152,7 +160,8 @@ which `design/lang/0003` calls the instrument behind most of this year's defects
 
     spec/l0.md      the assembly format: line-oriented, one instruction per line, no folding
     ts/             the L0 assembler in TypeScript, the drivers, and the instruments
-    rust/           the L0 assembler in Rust
+    rust/           the L0 assembler in Rust — no dependencies, deliberately
+    rust-ladder/    the same ladder driven from Rust, on V8
     boot/           every rung's compiler, each written in the rung below
     drivers/        wac programs that give a host a way to ask a built compiler something
     tests/l0/       modules in .l0, and what they should answer
