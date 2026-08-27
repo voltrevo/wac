@@ -151,6 +151,17 @@ i32 srclen = 0;
 
 i32 pack2(i32 a, i32 b) { return a + b * 256; }
 
+// Is the first hex digit in [p0, p1) greater than `top`? Eight hex digits fit an i32 only when the
+// first is 7 or less — `0x7fffffff` does and `0x80000000` does not.
+i32 hexdigit_over(i32 p0, i32 p1, i32 top) {
+  i32 i = p0;
+  while (i < p1) {
+    if (at(i) != 95) { return at(i) > top; }
+    i = i + 1;
+  }
+  return 0;
+}
+
 // Is the decimal literal in [p0, p1) greater than `limit`, which has the same number of digits?
 // Separators are skipped, so `4_294_967_296` compares as `4294967296`.
 i32 digits_over(i32 p0, i32 p1, i32 limit) {
@@ -231,15 +242,18 @@ i32 lex() {
                 while (isdigit(at(p))) { p = p + 1; }
               }
             }
-            // **Thirty-two bits, not an i32's range.** `4294967295` is how a u32 mask of all
-            // ones is written and it belongs in an i32, where it is the same bits; `4503599627370496`
-            // does not fit in thirty-two and has to keep its text. The count of digits decides it,
-            // with the boundary case compared against the largest that fits.
+            // **An i32's range, not thirty-two bits.** `4294967295` is both the all-ones u32
+            // mask and a perfectly ordinary i64, and the two want different constants — wacc
+            // writes it against an i64 and got -1, which is the same bits and the wrong number.
+            // So a literal past an i32 keeps its text, and a narrow slot narrows it back: that
+            // way the mask still works and the number is still the number. The count of digits
+            // decides it, with the boundary case compared against the largest that fits.
             if (c == 48 & (at(s0 + 1) == 120 | at(s0 + 1) == 88)) {
               if (ndig > 8) { big = 1; }
+              if (ndig == 8 & hexdigit_over(s0 + 2, p, 55)) { big = 1; }
             } else {
               if (ndig > 10) { big = 1; }
-              if (ndig == 10 & digits_over(s0, p, "4294967295")) { big = 1; }
+              if (ndig == 10 & digits_over(s0, p, "2147483647")) { big = 1; }
             }
             if (isf) {
               toks[ntok] = Tok(K_FLOAT, s0, p - s0, 0);
@@ -755,6 +769,13 @@ i32 convert(i32 t, i32 rt) {
     if (ty_wide(rt)) { emits("_i64"); } else { emits("_i32"); }
     if (ty_signed(rt)) { emits("_s"); } else { emits("_u"); }
     return nl();
+  }
+  // **A narrow slot takes a wide value's low bits.** This exists for the literal above: a mask
+  // written as a number past an i32 arrives as an i64 and has to become the i32 it means. wac
+  // would reject a genuine i64 narrowing silently like this, and this rung does not check types
+  // at all — so what it costs is a diagnostic that was never going to be given.
+  if (ty_isnum(rt) & ty_wide(rt) & ty_isnum(t) & ty_wide(t) == 0 & ty_float(t) == 0) {
+    return line("i32.wrap_i64");
   }
   // One float width asked for where the other was written. Every literal in the language is an
   // f64, so a program that uses f32 at all reaches this on its first assignment.

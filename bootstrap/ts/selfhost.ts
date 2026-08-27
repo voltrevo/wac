@@ -185,5 +185,12 @@ console.log(
     : `and they differ: round 1 says ${got}, round 0 says ${want}`,
 );
 
+// Which binding helpers it emitted, since they are named from the element type each array holds
+// and a host that guesses the spelling gets a silent undefined.
+console.log(
+  "binding helpers: " +
+    Object.keys(inst1.exports).filter((k) => k.startsWith("$bind$")).join(", "),
+);
+
 export const agreed = got === want;
 export const sizes = { round0: round0.length, round1: round1.length, probe: byRound0.length };
