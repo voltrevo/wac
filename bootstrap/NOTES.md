@@ -548,3 +548,35 @@ the program together in one s-expression and handing that to the interpreter.
 the `ArrayBuffer` a caller was holding, and `$alloc` in the interpreter grows it — so a pointer
 read before the call is dangling by the time there is anything to read through it. Both hosts have
 a comment about this; the TypeScript one was written after being caught by it.
+
+## Two benchmarks, and what they say about where the time goes
+
+`ts/bench.ts` and `ladder --bench` print the same table for the same input, so the two hosts can be
+read side by side. Compiling wacc — 37,873 lines in, 183,861 lines of wac-L0 out, 659,236 bytes of
+wasm — three cold runs each:
+
+                            rust, v8 embedded        deno
+    build the ladder            324–329 ms        370–371 ms
+    compile to wac-L0           358–369 ms        353–416 ms
+    assemble to wasm             85–98  ms        258–287 ms
+                              -----------       -----------
+    total                       771–795 ms       991–1073 ms
+
+**The compile step is the same on both, and that is the result.** It is the only phase that is
+entirely wasm — the same five modules, running under the same engine, with the host doing nothing
+but moving bytes in and out. If the two columns had differed there, something would have been
+wrong with a host rather than with a rung.
+
+**The whole difference is the assembler**, which is the one part of the pipeline written in the
+host's own language: 85 ms of Rust against 259 ms of TypeScript for the identical 659,236 bytes,
+about three to one. `build the ladder` inherits a smaller version of the same gap because it
+assembles five modules on the way up.
+
+So the benchmark measures what it should: a ladder whose rungs are wasm costs the same wherever it
+runs, and the only place the host shows up is the one file the host wrote. That is the same
+property the two-assembler differential is for, arriving from the other direction — the assembler
+is the piece that had to be implemented twice *because* it is the piece that is not derived.
+
+**Assembling is a third of the work and was invisible until now.** The earlier figures in these
+notes stopped at wac-L0 text, which flattered the total by a quarter under Rust and by a third
+under Deno: 183,861 lines of text still have to become 659,236 bytes, and somebody has to do it.

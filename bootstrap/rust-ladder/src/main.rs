@@ -147,9 +147,50 @@ fn l4_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
     compile_with(scope, &c, &SMALL, program)
 }
 
+/// The wac-L5 compiler as wac-L0 text — every rung below it, run.
+fn l5_compiler_l0(scope: &mut v8::PinScope) -> String {
+    l4_to_l0(scope, &read("boot/l5.l4"))
+}
+
 fn l5_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
-    let c = l4_to_l0(scope, &read("boot/l5.l4"));
+    let c = l5_compiler_l0(scope);
     compile_with(scope, &c, &L5, program)
+}
+
+/// **The three phases, timed apart.** Building the ladder is paid once per process; compiling and
+/// assembling are paid per program, and the assemble is not free — it is a third of the work on a
+/// program the size of wacc, because it is the step that turns 183,861 lines of text into bytes.
+///
+/// One cold run per process, and no averaging. The ladder is built from the interpreter every
+/// time, so a second run in the same process would measure a warm V8 rather than the thing.
+fn bench(scope: &mut v8::PinScope, path: &str) {
+    let program = std::fs::read_to_string(path).expect("cannot read the program");
+    let t0 = std::time::Instant::now();
+
+    let compiler_l0 = l5_compiler_l0(scope);
+    let compiler = Module::new(scope, assemble(&compiler_l0));
+    let built = t0.elapsed();
+
+    let t1 = std::time::Instant::now();
+    compiler.write(scope, L5.src, program.as_bytes());
+    let len = compiler.call(scope, "compile", &[L5.src as i32, L5.out as i32]);
+    let l0 = compiler.read_len(scope, L5.out, len as usize);
+    let compiled = t1.elapsed();
+
+    let t2 = std::time::Instant::now();
+    let wasm = assemble(&l0);
+    let assembled = t2.elapsed();
+
+    let lines = program.lines().count();
+    println!("host                    rust, v8 embedded");
+    println!("input                   {path}");
+    println!("                        {lines} lines of wac");
+    println!();
+    println!("build the ladder        {:>6} ms   l1.l0 -> L2 -> L3 -> L4 -> L5, assembled and instantiated", built.as_millis());
+    println!("compile to wac-L0       {:>6} ms   {} lines out", compiled.as_millis(), l0.lines().count());
+    println!("assemble to wasm        {:>6} ms   {} bytes", assembled.as_millis(), wasm.len());
+    println!("                        ---------");
+    println!("total                   {:>6} ms", (built + compiled + assembled).as_millis());
 }
 
 /// V8's platform is process-wide and may be initialised once. A test binary runs its tests on
@@ -167,11 +208,14 @@ fn start_v8() {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("usage: ladder <file.wac> [--l0]   # compile and run `main`, or print the wac-L0");
+        eprintln!("usage: ladder <file.wac> [--l0 | --bench]");
+        eprintln!("  default   compile and run `main`");
+        eprintln!("  --l0      print the wac-L0 instead");
+        eprintln!("  --bench   time the three phases, one cold run");
         std::process::exit(2);
     }
-    let program = std::fs::read_to_string(&args[0]).expect("cannot read the program");
     let want_l0 = args.iter().any(|a| a == "--l0");
+    let want_bench = args.iter().any(|a| a == "--bench");
 
     start_v8();
     let isolate = &mut v8::Isolate::new(Default::default());
@@ -179,6 +223,11 @@ fn main() {
     let context = v8::Context::new(handle_scope, Default::default());
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
+    if want_bench {
+        bench(scope, &args[0]);
+        return;
+    }
+    let program = std::fs::read_to_string(&args[0]).expect("cannot read the program");
     let started = std::time::Instant::now();
     let l0 = l5_to_l0(scope, &program);
     let refusals = l0.lines().filter(|l| l.starts_with("!!")).count();

@@ -29,6 +29,11 @@ Three commands say so, and each is a test rather than a claim:
     deno run -A ts/corpus_differential.ts     # the whole corpus, two compilers, compared
     deno run -A ts/same_fixed_point.ts        # and the same fixed point as wac's own bootstrap
 
+and two benchmarks, one per host, printing the same table:
+
+    deno run -A ts/bench.ts <file.wac>
+    rust-ladder/target/release/ladder <file.wac> --bench
+
 ## What wac-L5 is not
 
 **It is the minimum that compiles wacc, and not a wac compiler.** That is the whole design: the
