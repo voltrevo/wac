@@ -27,7 +27,7 @@
 //
 // **A bounded slice, and the bound is stated rather than silent.** Every case costs two subprocesses,
 // so the whole corpus is minutes; this takes the first `SAMPLE` and says so. The full sweep is a
-// `deno task`, not a gate.
+// `wac task`, not a gate.
 // **Not heavy**, for the reason `native_hostfs_test.wac` gives at greater length: a heavy file does
 // not run on a push, and a two-host comparison that is not in the gate is not doing its job. **9s
 // warm** (27s cold, 6.6 MB) against 66s and 989 MB host-side, because the six builds are made once

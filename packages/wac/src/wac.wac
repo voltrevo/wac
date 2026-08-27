@@ -936,7 +936,7 @@ string[] positionals(Cli cli, i32 argc) {
 /**
  * The grants a `build` was asked for, as the bitmask `platform.wac` uses.
  *
- * The same four flags `wac task app:native` takes, and they mean the same thing: whoever packages
+ * The same four flags `deno task app:native` takes, and they mean the same thing: whoever packages
  * the program chooses what it may do, and the person running it cannot quietly widen that. A flag
  * this does not recognise is not silently ignored — see `unknownFlag`.
  *
@@ -1824,7 +1824,7 @@ export i32 main(Core core, Cli cli) {
 
   // **`build` is `compile` plus the boundary.** A native host cannot run a module without knowing
   // which `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a
-  // module *and* a manifest — `wac task app:native` in one command, which is what lets this binary
+  // module *and* a manifest — `deno task app:native` in one command, which is what lets this binary
   // produce the artefact it is itself made of.
   // **`test` — one file, and it runs where `load` runs.** `issues/system/0230a` step 5.
   //

@@ -16,7 +16,7 @@ Packages have de facto owners, so the rule is about who is likely to be mid-chan
 - **A package someone else is working in:** file it. A change that reaches into
   another agent's package while they have uncommitted work costs both of you more
   than the fix is worth.
-- **Anything that makes `deno task test` red for everyone:** file it *and* say so in
+- **Anything that makes `wac task test` red for everyone:** file it *and* say so in
   the summary, because the next person to pull cannot tell whose failure it is.
 - **Work that is blocked on something else:** file it, with what it is waiting for.
   That is the difference between "nobody has done this" and "this cannot be done yet".

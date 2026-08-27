@@ -245,7 +245,7 @@ Deleting `.cache` is always safe and is the whole of the invalidation story.
 There is no pin now. `deno.json` maps `wac/` to `./compiler/`, so the compiler is whatever
 is in the tree at the commit you have, and the three files that held the pin — a version json, a
 tool that wrote it and a harness check that read it — went with the merge ([MERGE.md](../MERGE.md),
-which names them). `wac task wac:pin`
+which names them). `deno task wac:pin`
 does not exist; a document that still names it is describing the repository as it was
 before 2026-08-09.
 

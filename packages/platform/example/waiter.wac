@@ -5,7 +5,8 @@
 // Prints one line, then sleeps until somebody stops it — a minute at a time, so that a stopped one
 // is a stopped one and not a program that quietly gave up while nobody was looking.
 //
-// It exists to be *killed*. `wac task app` builds an application and spawns it, and until wac-mono
+// It exists to be *killed*. `deno task app` built an application and spawned it in one step, and
+// until wac-mono
 // issue 0017 nothing forwarded signals: killing the launcher left the application running with no
 // handle left to stop it, which is invisible for a program that ends on its own and permanent for one
 // that does not. `platform/test/wac/app_test.wac` starts this through the launcher, kills the launcher, and

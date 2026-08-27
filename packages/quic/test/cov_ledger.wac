@@ -8,7 +8,7 @@
 // ## Why this package, and what it settled
 //
 // `packages/tls`'s ledger pins `handshake.wac`'s `parseServerHello`, `clientHello` and `serverHello`
-// as *exercised in another package* — this one — and says in as many words that `deno task
+// as *exercised in another package* — this one — and says in as many words that `wac task
 // coverage:quic` does not exist to check the claim. A ledger entry saying "somebody else covers it"
 // is the weakest kind there is: nothing verifies it, and it reads exactly like an entry saying nobody
 // does.

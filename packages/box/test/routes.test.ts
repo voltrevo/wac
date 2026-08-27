@@ -14,7 +14,7 @@
 // turned off, `site/tools/site.test.ts` runs the front page's commands through it, and it is the fallback
 // for any world that cannot spawn.
 //
-// **A bounded slice, and the bound is stated.** Each case costs two subprocesses; `deno task
+// **A bounded slice, and the bound is stated.** Each case costs two subprocesses; `wac task
 // corpus:routes` is the whole 821 and takes minutes.
 
 import { type AppRunner, appRunner, runBounded } from "../../../harness/appRun.ts";

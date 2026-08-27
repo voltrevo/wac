@@ -704,7 +704,7 @@ it.
 reported as a function unrelated to lambdas failing to validate, which is what a wrong index always
 looks like.
 
-Verified where it was found rather than only where it is convenient: `wac task app:native` on a
+Verified where it was found rather than only where it is convenient: `deno task app:native` on a
 capturing program builds, and the binary prints `6` under wasmtime — the first closure to run outside
 V8. `lambda.test.ts` carries the regression, canaried, and it imports something real, because every
 other test in that file compiles one small file and that is precisely why none of them caught it.
@@ -832,7 +832,7 @@ should be checked rather than assumed, and this document is the place to record 
 
 A program that builds a bound reference, passes it to a function and calls it twice:
 
-    $ wac task app:native bref.wac -o bref     # c.inc bound, applied, and applied again
+    $ deno task app:native bref.wac -o bref     # c.inc bound, applied, and applied again
     bref.wasm: 0 imports
     none.wasm: 0 imports                        # packages/platform/size/none.wac, for comparison
 

@@ -1,4 +1,4 @@
-# 0273b — `deno task seed` reports success for a compiler that traps on its first use
+# 0273b — `wac task seed` reports success for a compiler that traps on its first use
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -15,7 +15,9 @@ the compiler it kept **works**.
 An emitter change of mine produced a compiler that compiles itself to a fixed point and then traps
 the moment it is asked to compile anything:
 
-    $ deno task seed
+    $ deno task seed        # `wac task seed` since 2026-08-27 — the same `bash tools/seed.sh`,
+                            # dispatched from a different registry. The transcript is left as it
+                            # was run; re-run it with the current name.
     seed: 1720664 bytes, and it is a fixed point after 1 round(s)     # green
 
     $ wac run hello.wac

@@ -100,7 +100,7 @@ It earned that on the first run, three times:
 fourth: `wac task corpus:backings` runs the whole shell corpus through *three* filesystem backings —
 memory (`sealedsh`), an image (`imaged`) and the host (`sh`) — and compares them, with bash's answer
 next door as the reference. That is design/0001 D7's question, "the same scripts against a host mount
-and against an image, and any divergence is a VFS bug". It is a `deno task` rather than a suite test
+and against an image, and any divergence is a VFS bug". It is a `wac task` rather than a suite test
 because it builds three programs and runs hundreds of scripts through each, so it is not in the gate
 and nothing runs it unless somebody does.
 
