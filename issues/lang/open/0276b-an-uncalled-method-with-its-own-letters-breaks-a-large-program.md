@@ -116,8 +116,18 @@ So `fn[U(U,Mount)]` is being registered **as a function type in its own right**,
 list. The candidate is `env.pairType(…)`, which registers the pair struct for a funcref *type*
 wherever one is named as a slot.
 
-**So: who names `fn[U(U,Mount)]` as a slot type, for a method nobody calls?** That is the question,
-and it is now a single grep for `pairType` rather than a hunt.
+**And the last two links are mechanical.** `Env.sigType` **recurses into its own parameter types** —
+registering `fn[U(Vec<Mount>,U,fn[U(U,Mount)])]` registers the nested `fn[U(U,Mount)]` by itself — and
+`pairEverySignature` then pairs every registered funcref signature, which is the third shape.
+
+So one registration of `fold`'s **own** signature produces all three, and the question collapses to:
+
+> who registers the signature of a method that has its own type parameters?
+
+`registerFuncTypes`'s seven callers all guard against it, and the placeholder change stops the
+instance registration resolving its types — and it still happens, so the caller is neither. It is
+worth finding by printing the signature at `sigType`'s entry and stopping on the first one containing
+a bare letter: that names the caller in one run, where four probes of reading did not.
 
 ## Where to look next
 
