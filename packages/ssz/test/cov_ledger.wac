@@ -1,7 +1,7 @@
 // ssz's coverage, and the first of the eighteen packages that had no driver at all.
 //
-//   deno task coverage:ssz
-//   deno task coverage:ssz --verbose
+//   wac task coverage:ssz
+//   wac task coverage:ssz --verbose
 //
 // **273 of 274**, from 248 on the first run. `issues/system/0205`.
 //

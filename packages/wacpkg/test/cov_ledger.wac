@@ -1,7 +1,7 @@
 // wacpkg's coverage, and three branches whose own comments explained why nothing ran them.
 //
-//   deno task coverage:wacpkg
-//   deno task coverage:wacpkg --verbose
+//   wac task coverage:wacpkg
+//   wac task coverage:wacpkg --verbose
 //
 // **426 of 426**, from 401 of 426, and both lists below are empty: every branch point is expected to
 // be covered and the first one that is not fails by name. `issues/system/0205`.

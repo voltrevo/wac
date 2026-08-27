@@ -1,6 +1,6 @@
 // A shell, in a browser tab.
 //
-//   deno task app:build packages/box/example/term.wac --target browser --allow-read --allow-write -o page/index.html
+//   wac task app:build packages/box/example/term.wac --target browser --allow-read --allow-write -o page/index.html
 //   box httpd -8080 page -x
 //
 // `packages/sh` unchanged: quoting, parameter expansion, command substitution, arithmetic,

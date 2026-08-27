@@ -1,4 +1,4 @@
 target/
 # The seed: a compiler inside the binary, 479K rebuilt from packages/wacc/src by
-# `deno task app:native ... -o native/v8/seed/wacc` — see build.rs.
+# `wac task app:native ... -o native/v8/seed/wacc` — see build.rs.
 seed/

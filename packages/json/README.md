@@ -3,7 +3,7 @@
 JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.
 
 ```sh
-deno task test                                            # from the repo root
+wac task test                                            # from the repo root
 deno run --allow-read tools/check.ts packages/json/src/json.wac
 ```
 
@@ -55,7 +55,7 @@ converting per member would have turned a scan into an allocation per member.
 
 `get` scans the member list, and switches to a hash index once an object has served
 16 lookups and has at least 16 members. Both numbers come from
-`deno task bench:json-lookup`, which measures three things: what a scan costs per
+`wac task bench:json-lookup`, which measures three things: what a scan costs per
 lookup, what an indexed lookup costs, and what the index costs to build.
 
 That third column is the one that decides the design:
@@ -210,7 +210,7 @@ contents and container growth where they live.
 
 ## Speed
 
-`deno task bench:json` measures by document shape rather than as one
+`wac task bench:json` measures by document shape rather than as one
 number, because an aggregate hides everything: a parser can be fast on structure
 and slow on numbers and still look reasonable.
 
@@ -236,7 +236,7 @@ move at all: exponent-form numbers were 9 in every run, because that one is genu
 The ranking is the durable measurement and the reason for splitting by shape in the first place.
 
 These figures replace a table that had gone stale by roughly half: it was measured before
-`canonicalize` began handing back a `Canonical` struct, after which `deno task bench:json` threw on
+`canonicalize` began handing back a `Canonical` struct, after which `wac task bench:json` threw on
 its first shape and could not regenerate them — [issue 0007](../../issues/system/closed/0007-json-throughput-bench-half-migrated-to-the-canonical-struct.md),
 which warned that the numbers beside a broken bench keep being cited. They were, for two days.
 
@@ -341,7 +341,7 @@ Four compiler defects came out of writing this, all since fixed upstream:
 
 ## Coverage
 
-`deno task coverage:json` reports branch coverage, driven by `cov.ts` in this
+`wac task coverage:json` reports branch coverage, driven by `cov.ts` in this
 package. Currently 100% — all four source files.
 
 How coverage works here, and the two ways `cov.ts` can be wrong about it, are in

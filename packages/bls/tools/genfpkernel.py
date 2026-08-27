@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate `packages/bls/src/fpkernel.wac` — the unrolled Fp arithmetic kernel.
 
-    deno task gen:bls-fpkernel      # or: python3 packages/bls/tools/genfpkernel.py
+    wac task gen:bls-fpkernel      # or: python3 packages/bls/tools/genfpkernel.py
 
 `test/wac/fpkernel_generated_test.wac` fails if the checked-in file is not what this script produces, so
 the generated code cannot drift from the generator.
@@ -74,7 +74,7 @@ INV = 0xfffcfffd          # -p^-1 mod 2^32, the CIOS multiplier
 
 HEADER = """// GENERATED FILE — do not edit. Produced by `packages/bls/tools/genfpkernel.py`.
 //
-//     deno task gen:bls-fpkernel
+//     wac task gen:bls-fpkernel
 //
 // The Fp arithmetic kernel: multiplication, addition, subtraction and the reduction helpers, all
 // unrolled with p as immediates. Split out of `fp.wac` because it is a thousand lines of

@@ -41,7 +41,7 @@ deno run -A packages/tls/host/connect.ts wac.test 8500 packages/tls/test/data/ca
 
 Three clients complete the handshake today: OpenSSL 3.0, rustls (through Deno's TLS
 client, which also verifies the certificate chain) and curl. The first two run in
-`test/handshake_interop.test.ts` on every `deno task test`, and one of those checks that
+`test/handshake_interop.test.ts` on every `wac task test`, and one of those checks that
 the shutdown is seen as a `close_notify` rather than as a truncation.
 
 `openssl s_client -quiet` still prints "unexpected eof while reading" at the end. That is

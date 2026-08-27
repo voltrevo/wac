@@ -159,7 +159,7 @@ string firstDifference(u8[] a, u8[] b) {
 export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core core, Cli cli) {
   T t = T.create();
   string wacBin = cli.cwd().wait() + "/native/v8/target/release/wac";
-  t.isTrue(present(cli, wacBin), "there is a wac binary at " + wacBin + " — `deno task seed`");
+  t.isTrue(present(cli, wacBin), "there is a wac binary at " + wacBin + " — `wac task seed`");
   if (!present(cli, wacBin)) { return t.report(); }
 
   Recipe[] all = recipes(cli);

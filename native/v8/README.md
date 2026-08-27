@@ -12,7 +12,7 @@ deno run -A packages/platform/native.ts packages/platform/example/wc.wac -o /tmp
 
 That is a program from this repository, compiled by wacc, running with no JavaScript layer and no
 runtime installed — and its output is **byte-identical** to the same program built by
-`deno task app:build`, which is the check that matters: two hosts, one program, one answer.
+`wac task app:build`, which is the check that matters: two hosts, one program, one answer.
 
 ## Why this and not `native/`
 
@@ -63,7 +63,7 @@ b1c0b10dca90f4432e2dbc96f7bcb257451948438940992a6d2cd810f559c6f7  README.md
 ```
 
 — the same three lines the website's transcript is checked against, and identical to the shell built
-by `deno task app:build`. And for four smaller programs, none of them written for this host:
+by `wac task app:build`. And for four smaller programs, none of them written for this host:
 
 ```
 $ ./wac /tmp/wc README.md            →  194 1474 9335 README.md
@@ -187,7 +187,7 @@ turned into a wasm value only when the guest asks, on the thread that owns the i
 belongs to one thread, so a table holding `v8::Global`s could not have crossed to a worker at all.
 
 `example/inflight.wac` is the check — two reads outstanding at once, `waitAny` over both — and its
-output is identical to the same program built by `deno task app:build`.
+output is identical to the same program built by `wac task app:build`.
 
 `accept` is the capability that proves the point rather than merely using it: a server sits in it
 until somebody dials, which may be never. `example/echo.wac` listens on a port the kernel chooses,
@@ -220,7 +220,7 @@ Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` p
 time, `build.rs` embeds it and the same binary is a **command**. In one step:
 
 ```
-deno task seed
+wac task seed
 ./native/v8/target/release/wac compile main.wac main.wasm
 ```
 
@@ -261,7 +261,7 @@ see below.
 
 That is the compiler compiling **its own sources**, in one 67 MB file, with no Deno, no wasm beside
 it and no JavaScript anywhere in the path — and the module is byte-identical to the one
-`deno task app:build` produces from the same input, which is the check that matters.
+`wac task app:build` produces from the same input, which is the check that matters.
 `tools/seed.sh` holds that — it builds the compiler with itself and refuses a seed that is not a fixed point. An opt-in test used to assert it a second time afterwards and was deleted on 2026-08-19, because each run
 rebuilds the crate. It takes **about 1.2s** (best of three: 1.37, 1.18, 1.20), against 1.28–2.05s
 through Deno on a machine several agents are sharing. The two are the same to within that noise,

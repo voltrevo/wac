@@ -6,7 +6,7 @@
 // Finished. If the server accepts it, the connection is established — and the server says so by moving
 // to the application epoch, whose packets have short headers.
 //
-//   deno task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
+//   wac task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
 //   deno run -A --unstable-net handshake.js 127.0.0.1 4433 localhost
 //
 // **Everything here already worked, and none of it had ever run in one process.** `test/wac/complete_test.wac`

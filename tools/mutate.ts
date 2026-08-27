@@ -5,19 +5,19 @@
 // names a behaviour nothing checks — which is the failure coverage structurally cannot
 // see, because a test can execute a line thoroughly and assert nothing about it.
 //
-//   deno task mutate                     # curated mutations only, as before
-//   deno task mutate --operators         # ...plus guard and extreme mutants
-//   deno task mutate --operators=all     # ...plus relational and literal too (slow)
-//   deno task mutate --diff              # only files changed against origin/master
-//   deno task mutate crc                 # only mutants whose name matches
-//   deno task mutate --package gzip      # only mutants in one package
-//   deno task mutate --jobs=2            # how many to test at once (default: cores - 1, max 4)
-//   deno task mutate --no-select         # skip per-test selection, run every test in scope
-//   deno task mutate --no-sample         # mutate every integer literal, not one per repeated shape
-//   deno task mutate --no-nice           # do not yield to other work (only on a machine you own)
-//   deno task mutate --sample=150        # run a random 150 of the selected mutants (see --seed)
-//   deno task mutate --seed=12345        # reproduce a particular --sample draw
-//   deno task mutate --operators --dry-run   # what would run, without running it
+//   wac task mutate                     # curated mutations only, as before
+//   wac task mutate --operators         # ...plus guard and extreme mutants
+//   wac task mutate --operators=all     # ...plus relational and literal too (slow)
+//   wac task mutate --diff              # only files changed against origin/master
+//   wac task mutate crc                 # only mutants whose name matches
+//   wac task mutate --package gzip      # only mutants in one package
+//   wac task mutate --jobs=2            # how many to test at once (default: cores - 1, max 4)
+//   wac task mutate --no-select         # skip per-test selection, run every test in scope
+//   wac task mutate --no-sample         # mutate every integer literal, not one per repeated shape
+//   wac task mutate --no-nice           # do not yield to other work (only on a machine you own)
+//   wac task mutate --sample=150        # run a random 150 of the selected mutants (see --seed)
+//   wac task mutate --seed=12345        # reproduce a particular --sample draw
+//   wac task mutate --operators --dry-run   # what would run, without running it
 //
 // **A run that is cut short says so.** A sweep of a whole package is minutes to hours, so it is usually
 // launched under a `timeout` or in the background — and its output is one line per mutant followed by a
@@ -96,7 +96,7 @@ import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } fro
 import { classify, WAC_BIN } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
-refuseIfNested("deno task mutate");
+refuseIfNested("wac task mutate");
 
 
 const args = Deno.args;
@@ -154,7 +154,7 @@ const filter = args.find((a) => !a.startsWith("--") && a !== pkgArg);
  * `nice`, so a sweep yields to whatever somebody is waiting on.
  *
  * A mutation sweep is background work by definition: nobody is watching an individual mutant. An
- * ordinary `deno task test` next door is the opposite. On five shared cores, a sweep at four
+ * ordinary `wac task test` next door is the opposite. On five shared cores, a sweep at four
  * concurrent scopes — each a whole `deno test`, and `box.test.ts` alone spawns about three hundred
  * built binaries — took another agent's fifty-second suite to over half an hour, at load average
  * 10.55. They killed it at thirty minutes believing it had deadlocked and spent an hour proving it

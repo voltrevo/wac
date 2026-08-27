@@ -1,6 +1,6 @@
 // The shell, with every applet in this package as a command.
 //
-//   deno task app:build packages/box/src/bin/sh.wac --allow-read --allow-write --allow-env -o wacsh
+//   wac task app:build packages/box/src/bin/sh.wac --allow-read --allow-write --allow-env -o wacsh
 //   ./wacsh -c 'seq 1 20 | shuf | sort -n | head -3'
 //   ./wacsh script.sh
 //

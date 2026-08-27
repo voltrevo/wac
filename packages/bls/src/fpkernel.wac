@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit. Produced by `packages/bls/tools/genfpkernel.py`.
 //
-//     deno task gen:bls-fpkernel
+//     wac task gen:bls-fpkernel
 //
 // The Fp arithmetic kernel: multiplication, addition, subtraction and the reduction helpers, all
 // unrolled with p as immediates. Split out of `fp.wac` because it is a thousand lines of

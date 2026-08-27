@@ -1,7 +1,7 @@
 // abi's coverage, and the last of the four Ethereum's decode stack rests on.
 //
-//   deno task coverage:abi
-//   deno task coverage:abi --verbose
+//   wac task coverage:abi
+//   wac task coverage:abi --verbose
 //
 // **219 of 233**, from 204 on the first run. `issues/system/0205`.
 //

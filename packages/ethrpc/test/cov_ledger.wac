@@ -1,7 +1,7 @@
 // ethrpc's coverage, and a package whose library was invisible.
 //
-//   deno task coverage:ethrpc
-//   deno task coverage:ethrpc --verbose
+//   wac task coverage:ethrpc
+//   wac task coverage:ethrpc --verbose
 //
 // **66 of 75 — 88.0%**, from **14 of 38 — 36.8%** on the first run. `issues/system/0205`.
 //

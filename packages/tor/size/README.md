@@ -1,7 +1,7 @@
 # size fixtures
 
 Entry points that exist to be *compiled*, not called. Each re-exports one layer of the
-client so `deno task size` can compile it alone and report what that layer costs.
+client so `wac task size` can compile it alone and report what that layer costs.
 
 They are here rather than in `src/` because nothing imports them and nothing should; they
 are inputs to a measurement. `../src/client_entry.wac` is the real one — the whole client as

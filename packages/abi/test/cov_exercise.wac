@@ -1,7 +1,7 @@
 // Branch coverage for abi: the package's own tests, and nothing else.
 //
-//   deno task coverage:abi
-//   deno task coverage:abi --verbose
+//   wac task coverage:abi
+//   wac task coverage:abi --verbose
 //
 // The fifth of the packages `issues/system/0205` records as unmeasured, and the last of the four that
 // Ethereum's decode stack rests on — `rlp`, `mpt`, `ssz` and this. All three before it had their

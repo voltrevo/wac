@@ -60,7 +60,7 @@ Deno.test("the seed inside `wac` is there, and not older than anything it is bui
         "  compiler in them. It is gitignored — one per agent — so a fresh container has none, and\n" +
         "  the tests that drive the binary fail downstream of this with messages about the files it\n" +
         "  did not write. Build it:\n" +
-        "    deno task seed",
+        "    wac task seed",
     );
   }
   const seedAt = seed.mtime?.getTime() ?? 0;
@@ -81,7 +81,7 @@ Deno.test("the seed inside `wac` is there, and not older than anything it is bui
     `native/v8/seed/wacc.wasm is ${behind} older than ${newest.what.replace(`${ROOT}/`, "")}.\n` +
       `  Every \`wac build\`, \`wac run\` and \`wac test\` is compiling with that older compiler,\n` +
       `  and will report plausible numbers from it. Rebuild:\n` +
-      `    deno task seed`,
+      `    wac task seed`,
   );
 });
 

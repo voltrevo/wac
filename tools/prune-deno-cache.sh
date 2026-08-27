@@ -14,7 +14,7 @@
 # **`tools/runTests.wac` does this at the start of every full run**, so the usual reason to reach for
 # this script — somebody noticing the disk — is gone. `deno run … tools/runTests.wac sweep` does it
 # without running a suite, which is the case this script was kept for: a machine already too full to
-# start one, where `deno task test` refuses before it would have swept.
+# start one, where `wac task test` refuses before it would have swept.
 #
 # **That claim was false from 2026-08-12 to 2026-08-15 and this comment asserted it anyway.** The
 # version in `runTests.wac` walked `gen/file/tmp` only — the two-level mistake described below, which

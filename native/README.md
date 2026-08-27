@@ -107,7 +107,7 @@ filesystem is in memory and which is granted nothing — boots, and the first 25
 differential corpus answer byte-for-byte what the Deno host answers:
 
 ```
-deno task corpus:hosts          # all 817, both hosts, compared
+wac task corpus:hosts          # all 817, both hosts, compared
 ```
 
 That took `cwd`, `readStdin`, `readChunk` with the `Read` enum, `env`, `pushChild`/`popChild`, and
@@ -119,7 +119,7 @@ which is not a refusal but the honest answer to "what does this world's environm
 host is the same system here and back again, and a session that changes nothing writes a byte-identical
 image on either host, with 65 applets run over it in between. The shell's corpus is a separate
 claim and a separate test: `native_shell_test.wac` runs the first 25 scripts through both hosts on
-every suite run and says so in the file, and `deno task corpus:hosts` sweeps the whole corpus by
+every suite run and says so in the file, and `wac task corpus:hosts` sweeps the whole corpus by
 hand — whose size is stated in [`packages/sh`'s README](../packages/sh/README.md#the-oracle-is-bash)
 and, deliberately, nowhere else. That took the filesystem —
 `readFile`, `writeFile`, `stat`, `linkStat`, `readDir`, `mkdir`, `remove`, `rename` — each `std::fs`

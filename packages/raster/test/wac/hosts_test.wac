@@ -107,7 +107,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // `cd native && cargo build --release --quiet`, which costs 2.6s even with nothing to do, and it
   // carried a private copy of the freshness walk that differed from `wactest`'s in one line: whether
   // it descended into `target/`, where the binary being compared against lives. Four other files did
-  // the same thing four other ways. `deno task seed` owns the build now — `seed:native` for this crate
+  // the same thing four other ways. `wac task seed` owns the build now — `seed:native` for this crate
   // alone — and this asks whether the result is there. `issues/system/0208`.
   string wacland = nativeHost(cli);
   string whyNot = nativeHostWhyNot(cli);

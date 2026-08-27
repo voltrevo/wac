@@ -70,7 +70,7 @@ stop being able to say that a browser really sent an INIT and echoed a cookie.
 **There is a program.** `example/answer.wac` reads a peer's SDP offer on standard input, makes
 its own P-256 identity, prints the answer, and runs the data channel — every message echoed back:
 
-    deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
+    wac task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
     deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
 
 `test/wac/example_test.wac` runs it: aiortc parses what it prints as an `application` section over

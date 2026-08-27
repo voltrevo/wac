@@ -1,7 +1,7 @@
 // git's coverage, and a suite that tests the command rather than the library.
 //
-//   deno task coverage:git
-//   deno task coverage:git --verbose
+//   wac task coverage:git
+//   wac task coverage:git --verbose
 //
 // **844 of 1419 — 59.5%**, the lowest of any package `issues/system/0205` has measured, and one file
 // is most of it:

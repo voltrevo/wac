@@ -1,7 +1,7 @@
 // core's coverage, which was already complete and could not fail.
 //
-//   deno task coverage:core
-//   deno task coverage:core --verbose
+//   wac task coverage:core
+//   wac task coverage:core --verbose
 //
 // **159 of 159**, and both lists below are empty: every branch point is expected to be covered and the
 // first one that is not fails by name. `issues/system/0205`.

@@ -31,7 +31,7 @@
 //   machine reaches rarely, and the same seed makes the same choices given the same choice set.
 //
 // **The default for suite runs is `seeded` with a fixed seed** — set in `tools/suiteGuard.ts`, so both
-// `deno task test` and `deno task test:changed` carry it, and mutation runs inherit it too. Production is
+// `wac task test` and `wac task test:changed` carry it, and mutation runs inherit it too. Production is
 // unscheduled, and so is anything driven through `packages/platform/test/worker.ts`, which is where the
 // concurrent mode is tested on purpose. `WAC_SCHED=off|fifo|seed=N` overrides.
 //

@@ -1,7 +1,7 @@
 // crypto's coverage, and the argument for every point nothing reaches.
 //
-//   deno task coverage:crypto
-//   deno task coverage:crypto --verbose
+//   wac task coverage:crypto
+//   wac task coverage:crypto --verbose
 //
 // **Named rather than tolerated as a percentage below 100.** A report that sits at 97.3% for ever
 // teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one

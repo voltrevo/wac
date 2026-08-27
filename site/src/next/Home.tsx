@@ -35,7 +35,7 @@ import { ASSETS, c, font, space } from "./tokens";
  * **The two figures are typed here and go stale**, which they had: they said 11 sources and 266,818
  * bytes into 2026-08-20, when the compiler was 16 sources and the artefact 968 KB. The size is rounded
  * on purpose — it moved three times on the day this was written, 960,310 bytes to 965,855 to 968,370,
- * because it moves with every change to the compiler. `deno task seed` prints it to the byte on every
+ * because it moves with every change to the compiler. `wac task seed` prints it to the byte on every
  * rebuild, and it is a fixed point, checked rather than asserted; `packages/wacc/src` is the source
  * count. What the block is really claiming is the word at the end of the line.
  */

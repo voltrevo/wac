@@ -1,6 +1,6 @@
 // Write an ESTABLISH_INTRO cell to a file, so tor's own parser can judge it.
 //
-//   deno task app:build packages/tor/src/genintro.wac --allow-write -o /tmp/genintro.ts
+//   wac task app:build packages/tor/src/genintro.wac --allow-write -o /tmp/genintro.ts
 //   deno run --allow-write /tmp/genintro.ts /tmp/cell.bin /tmp/vector.json
 //   <estintro-probe built against libtor.a> /tmp/cell.bin <the KH from the vector>
 //

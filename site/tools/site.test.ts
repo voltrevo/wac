@@ -539,13 +539,13 @@ Deno.test("site: the bootstrap block's source count and size are the tree's", as
     throw new Error(`the site says ${saidSources} wacc sources; packages/wacc/src has ${sources}`);
   }
 
-  // The seed is gitignored and one per agent, so a checkout that has never run `deno task seed` has
+  // The seed is gitignored and one per agent, so a checkout that has never run `wac task seed` has
   // nothing to compare against. Absent is not a failure — it is a checkout that cannot answer.
   let bytes: number;
   try {
     bytes = (await Deno.stat(`${root}native/v8/seed/wacc.wasm`)).size;
   } catch {
-    console.error("  (no native/v8/seed/wacc.wasm — run `deno task seed` to check the size too)");
+    console.error("  (no native/v8/seed/wacc.wasm — run `wac task seed` to check the size too)");
     return;
   }
   const kb = Math.round(bytes / 1000);

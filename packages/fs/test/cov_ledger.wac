@@ -1,7 +1,7 @@
 // fs's coverage, and the argument for every point nothing reaches.
 //
-//   deno task coverage:fs
-//   deno task coverage:fs --verbose
+//   wac task coverage:fs
+//   wac task coverage:fs --verbose
 //
 // **Named rather than tolerated as a percentage below 100.** A report that sits at 84.2% for ever
 // teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one

@@ -1,11 +1,11 @@
 // The coverage probe still compiles — and the file saying so is now one of the probe's own callers.
 //
-// `cov.ts` is not part of `deno task test` — it is slow and it is a measurement, not a check — so nothing
+// `cov.ts` is not part of `wac task test` — it is slow and it is a measurement, not a check — so nothing
 // in the suite touches `test/wac/probe.wac`. That was fine until the probe started building a whole fake
 // capability world, and now every change to `Cli` or `Core` in `packages/platform` breaks it silently. It
 // has broken twice: once when capabilities began returning `Pending<T>`, and once when `waitAny` moved
 // from `Cli` to `Core` and `spawn` gained an argument. Both times the suite stayed green and
-// `deno task coverage:sh` was simply dead until someone happened to run it.
+// `wac task coverage:sh` was simply dead until someone happened to run it.
 //
 // **This was `test/probe.test.ts` — one `wacBind` and a process.** In wac the compile check is the
 // `import` below: a probe that stopped compiling against `packages/platform` cannot be imported, and the

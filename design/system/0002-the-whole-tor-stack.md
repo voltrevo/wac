@@ -18,7 +18,7 @@ stand up ourselves in which every process is ours —
 - **a launcher** that wires N relays, M authorities, a client and a service into one network and takes
   it up and down for a test — our own chutney.
 
-Done means: `deno task test` stands up a Tor network with no C in it, publishes an onion service on
+Done means: `wac task test` stands up a Tor network with no C in it, publishes an onion service on
 it, fetches a page from that service through a three-hop circuit, and tears it down — and separately,
 each of our components works inside a chutney network of real tors.
 
@@ -2119,7 +2119,7 @@ the fix was upstream of everything anyone was looking at.
 
 ### The done condition, met
 
-*"`deno task test` stands up a Tor network with no C in it, publishes an onion service on it, fetches
+*"`wac task test` stands up a Tor network with no C in it, publishes an onion service on it, fetches
 a page from that service through a three-hop circuit, and tears it down."* On 2026-08-07, in
 `packages/tor/test/wac/network_tor_test.wac`, in thirteen seconds:
 

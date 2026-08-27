@@ -1,6 +1,6 @@
 // The whole shell corpus, through **two hosts**: one JavaScript and one that is not.
 //
-//   deno task corpus:hosts [--from N] [--count N]
+//   wac task corpus:hosts [--from N] [--count N]
 //
 // design/0001's arrival test asks for the same system in two substantially different hosts. The gate
 // runs a bounded slice of this in `packages/platform/test/wac/native_shell_test.wac`, because every case
@@ -32,13 +32,13 @@ const flag = (name: string, fallback: number): number => {
 const from = flag("from", 0);
 const count = flag("count", CORPUS.length);
 
-// **Asks for the binary; does not build it.** `deno task seed` owns that build and
-// `deno task seed:native` does this crate alone — `issues/system/0208`, where six callers each ran
+// **Asks for the binary; does not build it.** `wac task seed` owns that build and
+// `wac task seed:native` does this crate alone — `issues/system/0208`, where six callers each ran
 // their own cargo. This one is a tool rather than a test, so it *fails* instead of skipping: a corpus
 // comparison with one host missing has nothing to compare.
 const native = `${Deno.cwd()}/native/target/release/wacland`;
 if (!await Deno.stat(native).then((s) => s.isFile).catch(() => false)) {
-  console.error(`${native} is not built — run \`deno task seed:native\` and try again.`);
+  console.error(`${native} is not built — run \`wac task seed:native\` and try again.`);
   Deno.exit(2);
 }
 

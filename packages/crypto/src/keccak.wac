@@ -83,7 +83,7 @@ u64 rotl(u64 x, u64 n) { return n == 0 ? x : ((x << n) | (x >> (64 - n))); }
  * and `shake256` are all checked against published vectors and against `node:crypto`, which no wrong
  * offset survives.
  *
- * Measured on 4 MB with `deno task bench:hash --quick`, on an idle machine, twice each way:
+ * Measured on 4 MB with `wac task bench:hash --quick`, on an idle machine, twice each way:
  * **104.5 ms before, 15.4 ms after** — 38 MB/s to 260 MB/s, **6.8x**. That takes keccak256 from 7.1x
  * slower than OpenSSL's SHA3-256 to **1.1x**, and it is the same edit as ChaCha20's: the state stopped
  * being an array.

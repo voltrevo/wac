@@ -5,7 +5,7 @@
 // its answers are wac, and data that two languages hold twice is data that drifts.
 //
 // So this file parses `vectors.txt` — written by `tools/wac/shvectors.wac` from the wac corpus — and
-// exports what the remaining consumers need: `tools/designClaims.test.ts`, which checks the counts the
+// exports what the remaining consumers need: `tools/wac/designclaims_test.wac`, which checks the counts the
 // READMEs state, and `tools/corpusStderr.ts`, which compares standard error against the oracle's.
 //
 // The scripts and the split come out of the same file the replays read, so there is one source and one

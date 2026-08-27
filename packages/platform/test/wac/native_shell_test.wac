@@ -43,7 +43,7 @@ import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, DEFAULT_SEC
 
 const string SEALED = "packages/box/src/bin/sealedsh.wac";
 const string OPEN = "packages/box/src/bin/sh.wac";
-/** How many corpus scripts the gate runs. The rest is `deno task corpus:hosts`, which runs all 800-odd. */
+/** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs all 800-odd. */
 const i32 SAMPLE = 25;
 const string BUILT = ".cache/hostshell";
 

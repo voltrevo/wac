@@ -4,7 +4,7 @@
  *
  * `native/v8/seed/` is gitignored — it holds a compiler rebuilt from source, not a checked-in
  * artefact — so the very invocation `native/v8/build.rs` documents,
- * `deno task app:native … -o native/v8/seed/wacc`, failed on a fresh checkout with a missing
+ * `wac task app:native … -o native/v8/seed/wacc`, failed on a fresh checkout with a missing
  * directory nobody had been told to create. A tool that is given an output path should make the
  * place it was told to write. `issues/system/0148` recorded it.
  */
@@ -432,7 +432,7 @@ if (import.meta.main) {
   const at = args.indexOf("-o");
   const out = at >= 0 && at + 1 < args.length ? args[at + 1] : null;
   if (entry === undefined || out === null) {
-    // **`deno task app:native` is not a task**, and this line told the reader to run it. It was one
+    // **`wac task app:native` is not a task**, and this line told the reader to run it. It was one
     // once; `deno.json` has `app:build` and nothing else in that family. So the first thing somebody
     // gets wrong here was answered with a command that does not exist — and GitHub issue 22 is a case
     // study of exactly that reader, who reached for this path because the documented one needed Cargo.

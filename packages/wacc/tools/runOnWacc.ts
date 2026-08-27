@@ -35,7 +35,7 @@ for (const pkg of packages) {
     // **`--unstable-net` or three of `platform`'s tests fail with `Deno.listenDatagram is not a
     // function`** — a missing API rather than a missing flag, which is what makes it cost a day. This
     // sweep reported `platform` as *a wrong answer or a trap* on 105 tests that pass; with the flag
-    // it is 105 of 105. `deno task test` passes it for exactly this reason, and
+    // it is 105 of 105. `wac task test` passes it for exactly this reason, and
     // `issues/system/0005` is the same omission in `tools/mutate.ts`, where it quietly stopped
     // measuring whole packages. It costs nothing on a package that does not need it.
     args: ["test", "-A", "--no-check", "--unstable-net", `packages/${pkg}/test`],

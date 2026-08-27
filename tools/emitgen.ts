@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run -A
 // Write bindgen's TypeScript for a wac entry, so it can be type-checked.
 //
-//   deno task bindgen packages/json/src/json.wac /tmp/json.gen.ts
+//   wac task bindgen packages/json/src/json.wac /tmp/json.gen.ts
 //   deno check /tmp/json.gen.ts
 //
 // `tools/bindcheck.ts` summarises what bindgen produced — which classes, which functions, what it
@@ -11,7 +11,7 @@
 // It exists because four open bugs on the wac repo (#4, #5, #6, #7) are all invalid generated
 // TypeScript — a struct field named `ref`, an export named `_exports`, a parameter named `_w_x`, a
 // struct named `Box_i32` beside a `Box<i32>` — and none of them can be seen from a built
-// application. `deno bundle` strips types without checking them, so `deno task app:build` is happy
+// application. `deno bundle` strips types without checking them, so `wac task app:build` is happy
 // and the artifact runs; the collision only surfaces when somebody imports the bindings into a
 // TypeScript project, which is what bindgen is *for*.
 
@@ -19,7 +19,7 @@ import { wacBindgen } from "wac/wacBindgen.ts";
 import { compileEntry } from "../harness/referenceCompile.ts";
 
 if (Deno.args.length !== 2) {
-  console.error("usage: deno task bindgen <entry.wac> <out.gen.ts>");
+  console.error("usage: wac task bindgen <entry.wac> <out.gen.ts>");
   Deno.exit(2);
 }
 const [entry, out] = Deno.args;

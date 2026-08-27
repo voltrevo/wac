@@ -23,7 +23,7 @@ import { CORPUS } from "../../sh/test/corpus.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
-/** How many corpus scripts the gate runs. The rest is `deno task corpus:routes`. */
+/** How many corpus scripts the gate runs. The rest is `wac task corpus:routes`. */
 const SAMPLE = 40;
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {

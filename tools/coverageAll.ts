@@ -1,7 +1,7 @@
 // Every package's coverage task, in one run, with the failures named.
 //
-//   deno task coverage:all
-//   deno task coverage:all --verbose    # each failing task's output, in full
+//   wac task coverage:all
+//   wac task coverage:all --verbose    # each failing task's output, in full
 //
 // ## Why this exists
 //

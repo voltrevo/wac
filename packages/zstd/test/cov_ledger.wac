@@ -1,7 +1,7 @@
 // zstd's coverage, and the argument for each point nothing reaches.
 //
-//   deno task coverage:zstd
-//   deno task coverage:zstd --verbose
+//   wac task coverage:zstd
+//   wac task coverage:zstd --verbose
 //
 // **Named rather than tolerated as a percentage below 100.** A report that sits at 97.5% for ever
 // teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one

@@ -413,7 +413,7 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
   // been added to `platform.wac` without it — `Core.askInterrupt`, `Cli.spawnSelf` and `Page.setStyle`
   // — each by a different piece of work, none of which was looking at a README.
   //
-  // `tools/docSignatures.test.ts` checks that every name a README *quotes* exists. This is the other
+  // `tools/wac/docsignatures_test.wac` checks that every name a README *quotes* exists. This is the other
   // direction, which nothing had: that every name that exists is quoted. A reader cannot tell a
   // capability that is missing from the table from one that does not exist.
   T t = T.create();

@@ -8,7 +8,7 @@ example could, and to be honest about what that world cannot yet do. Where an ap
 falls short of the real tool, it says so in its own file.
 
 ```sh
-deno task app:build packages/box/src/box.wac --allow-read --allow-write -o box
+wac task app:build packages/box/src/box.wac --allow-read --allow-write -o box
 ./box grep -i wac README.md
 cat README.md | ./box sort -u | ./box wc -l
 ./box du packages
@@ -342,7 +342,7 @@ wrong than a different prefix. They say GNU's sentence for the failure they actu
 create regular file 'f/g'` and `cannot move 'f' to 'f/g'`. The reason matches; the frame does not, and
 the test asserts that rather than choosing kinder cases.
 
-**Every flag the real tool documents is now asked whether it does anything.** `deno task flags:ignored`
+**Every flag the real tool documents is now asked whether it does anything.** `wac task flags:ignored`
 runs each applet with each flag and compares against the counterpart — judging only the flags the real
 tool actually acts on for that input, since "changed nothing" proves nothing when GNU changes nothing
 either. The first answer was **64 accepted and ignored against 5 refused**. A flag accepted and ignored is

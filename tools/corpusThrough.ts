@@ -1,6 +1,6 @@
 // `packages/sh`'s differential corpus, run through some *other* shell.
 //
-//   deno task corpus:through <shell-binary>
+//   wac task corpus:through <shell-binary>
 //
 // `packages/sh/README.md` says the sensible end state is to delete its twelve built-in programs and let
 // `packages/box`'s sixty applets serve, "once something checks that `box`'s pass the same differential
@@ -12,7 +12,7 @@
 //
 //   deno run -A packages/platform/build.ts packages/box/src/bin/sh.wac \
 //     --allow-read --allow-write --allow-net --allow-env -o /tmp/boxsh
-//   deno task corpus:through /tmp/boxsh
+//   wac task corpus:through /tmp/boxsh
 //
 // The corpus is `packages/sh/test/corpus.ts`, imported rather than copied, so it cannot go stale: a
 // script added there is measured here the next time this runs.
@@ -26,7 +26,7 @@ globalThis.addEventListener("unload", () => doneHeavy());
 
 const shell = Deno.args[0];
 if (shell === undefined) {
-  console.error("usage: deno task corpus:through <shell-binary>");
+  console.error("usage: wac task corpus:through <shell-binary>");
   Deno.exit(2);
 }
 

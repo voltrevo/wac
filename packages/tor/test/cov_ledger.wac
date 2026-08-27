@@ -1,7 +1,7 @@
 // tor's coverage, and the package that is a third programs.
 //
-//   deno task coverage:tor
-//   deno task coverage:tor --verbose
+//   wac task coverage:tor
+//   wac task coverage:tor --verbose
 //
 // **2269 of 3281 — 69.2%**, over the largest package in the repository: 15,913 lines of source and
 // 313 tests across 47 files. `issues/system/0205`.

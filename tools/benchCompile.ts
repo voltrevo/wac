@@ -10,9 +10,9 @@
 // share climbs toward 100% someone has finished 0129; if the total climbs while the share holds, the
 // compiler got slower at everything at once.
 //
-//   deno task bench:compile          # four programs, small to large
-//   deno task bench:compile --mem    # peak memory per phase, one process each
-//   deno task bench:compile --all    # every program in the repo — about two minutes, and the
+//   wac task bench:compile          # four programs, small to large
+//   wac task bench:compile --mem    # peak memory per phase, one process each
+//   wac task bench:compile --all    # every program in the repo — about two minutes, and the
 //                                    # number `issues/lang/0129` quotes
 //
 // Timings are wall-clock on a shared box. The *shares* are what to quote: they are ratios taken

@@ -1,7 +1,7 @@
 // Branch coverage for bls: the package's own tests, and nothing else.
 //
-//   deno task coverage:bls
-//   deno task coverage:bls --verbose
+//   wac task coverage:bls
+//   wac task coverage:bls --verbose
 //
 // The sixth of the packages `issues/system/0205` records as unmeasured, and the first whose subject is
 // a *verifier* rather than a decoder. The five before it were about what an encoding is allowed to

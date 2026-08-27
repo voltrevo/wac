@@ -1,6 +1,6 @@
 // `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock.
 //
-//     deno task app:build packages/wacpkg/src/fetch.wac \
+//     wac task app:build packages/wacpkg/src/fetch.wac \
 //       --allow-read --allow-write --allow-net --allow-env -o wacfetch
 //     ./wacfetch .
 //

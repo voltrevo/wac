@@ -1,7 +1,7 @@
 // Branch coverage for json: the exercises, and nothing else.
 //
-//   deno task coverage:json
-//   deno task coverage:json --verbose
+//   wac task coverage:json
+//   wac task coverage:json --verbose
 //
 // The exercises are deliberately the same ones the test suite runs — the vendored JSONTestSuite
 // corpus, the mutation seeds, the number corpora — because coverage measured against a *different*

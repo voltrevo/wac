@@ -11,7 +11,7 @@
 // ## This used to spawn, and it used to run forty scripts
 //
 // `backingsprocess_test.wac` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes at
-// 130 ms, 30 s of the box suite. `deno task corpus:backings` ran the other 906, outside the gate, and
+// 130 ms, 30 s of the box suite. `wac task corpus:backings` ran the other 906, outside the gate, and
 // nothing in a gate run said the gate was covering 4% of the differential.
 //
 // In this process a script costs about a millisecond, so **the whole corpus runs here** — 946 scripts on

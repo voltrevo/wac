@@ -1,6 +1,6 @@
 // The raster desktop on a canvas, which is the first thing that puts every piece on a screen.
 //
-//   deno task app:build packages/raster/example/rasterdesk.wac --target browser -o page/index.html
+//   wac task app:build packages/raster/example/rasterdesk.wac --target browser -o page/index.html
 //
 // `design/system/0004` steps 1 to 4, wired: `Desk` holds the windows and their terminals, `Surface`
 // is the pixels, `drawPixels` establishes the canvas and `drawPixelsIn` updates part of it.

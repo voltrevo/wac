@@ -1,7 +1,7 @@
 // Branch coverage for regex: the exercises, and nothing else.
 //
-//   deno task coverage:regex
-//   deno task coverage:regex --verbose
+//   wac task coverage:regex
+//   wac task coverage:regex --verbose
 //
 // The same patterns the tests use, plus the generator, because the compiler's interesting branches are
 // the quantifier shapes and the machine's are the opcodes — and only a wide pattern set reaches both.

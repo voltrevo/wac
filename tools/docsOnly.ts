@@ -9,7 +9,7 @@
 //
 // **A `.md` file can hold a program.** `spec/spec/*.md` is prose with code in it, and three separate
 // consumers execute those fences: `packages/wacc/test/wac/specfences_test.wac` compiles every one that checks
-// clean, `tools/docSignatures.test.ts` matches their `export` lines against real declarations, and
+// clean, `tools/wac/docsignatures_test.wac` matches their `export` lines against real declarations, and
 // `compiler/wacSpec.test.ts` runs them against the reference. Editing a fence is editing a program,
 // so the file's extension is not the question — its ```wac blocks are.
 //
@@ -35,7 +35,7 @@
 // **It may not skip the suite.** A pure prose edit routinely breaks it, by design: `compiler/wacSpec.test.ts`
 // asserts `N issues, M closed.` against the files in `issues/*/`, and the website's `Checked.tsx`
 // carries a count of tagged claims that `spec/` has to agree with. Both are markdown reading markdown,
-// both live in the suite rather than in `deno task docs`, and both go red on an edit this predicate
+// both live in the suite rather than in `wac task docs`, and both go red on an edit this predicate
 // calls documentation. That is correct of them and a hard limit on this.
 //
 // What it may skip is work that reads *code* — the coverage ratchets measure branch coverage of each

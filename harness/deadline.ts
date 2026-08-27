@@ -16,7 +16,7 @@
 //
 // It handles the server *exiting* and not the server *living without printing* — a child that starts,
 // fails to bind, and sits there produces no output and no `done`, so `read()` never settles. Ports
-// come from bind-then-release, and `deno task test` passes `--parallel`, so another test taking the
+// come from bind-then-release, and `wac task test` passes `--parallel`, so another test taking the
 // port between the release and the child's bind is a real window rather than a theoretical one.
 //
 // ## The point is a message, not a limit

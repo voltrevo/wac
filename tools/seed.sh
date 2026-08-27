@@ -119,7 +119,7 @@ fi
 if [ "$bootstrap" -eq 0 ] && [ ! -x "$BIN" ]; then
   echo "no \`wac\` binary at $BIN, so there is nothing to build the compiler with." >&2
   echo "  A fresh clone has none — the seed is gitignored. Use the Deno path once:" >&2
-  echo "    deno task seed:bootstrap" >&2
+  echo "    wac task seed:bootstrap" >&2
   exit 1
 fi
 
@@ -196,7 +196,7 @@ MAX_ROUNDS=4
 # Round 1's output is *installed* before round 2 runs — that is what makes the loop a fixpoint over
 # artefacts the binary produced. So a compiler that builds once and then cannot build its own successor
 # leaves itself installed, and `set -e` aborted here without undoing it: every later `wac build`,
-# `run` and `test` in the checkout compiles with the broken compiler, and `deno task seed` cannot
+# `run` and `test` in the checkout compiles with the broken compiler, and `wac task seed` cannot
 # recover because it needs the seed to build the seed. The way out is `seed:bootstrap`, from the
 # reference, which is minutes.
 #
@@ -241,7 +241,7 @@ buildRound() {   # $1 output dir
     echo "   Putting the previous seed back. Fix the failure above and run this again." >&2
     install_seed "$tmp/prev"
   else
-    echo "   There was no previous seed to restore, so \`deno task seed:bootstrap\` is the way out:" >&2
+    echo "   There was no previous seed to restore, so \`wac task seed:bootstrap\` is the way out:" >&2
     echo "   it builds wacc with the reference, which takes the broken one out of the loop." >&2
   fi
   exit 1
@@ -273,13 +273,13 @@ if [ "$converged" -ne 0 ]; then
   # `packages/wacc` edit, for three agents. Paying that on every seed to keep a binary fresh that this
   # checkout may never run is the same waste `issues/system/0208` was filed about, one level up.
   #
-  # So: refresh what exists, and let `deno task seed:native` be how it comes to exist. A checkout with
+  # So: refresh what exists, and let `wac task seed:native` be how it comes to exist. A checkout with
   # no `wacland` is not silently short of coverage — the six callers warn with the reason and name the
   # task, and `tools/seedFresh.test.ts` fails if the binary is present and stale.
   if [ -f native/target/release/wacland ]; then
     buildNativeHost
   else
-    stage "no wasmtime host to refresh (\`deno task seed:native\` builds one)"
+    stage "no wasmtime host to refresh (\`wac task seed:native\` builds one)"
   fi
   exit 0
 fi

@@ -1,7 +1,7 @@
 // Branch coverage for ethrpc: the package's own tests, and nothing else.
 //
-//   deno task coverage:ethrpc
-//   deno task coverage:ethrpc --verbose
+//   wac task coverage:ethrpc
+//   wac task coverage:ethrpc --verbose
 //
 // One of the packages `issues/system/0205` records as unmeasured.
 

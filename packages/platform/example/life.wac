@@ -1,6 +1,6 @@
 // Life, seeded from a file you drop — so the pattern is yours rather than one we chose.
 //
-//   deno task app:build packages/platform/example/life.wac --target browser -o page/index.html
+//   wac task app:build packages/platform/example/life.wac --target browser -o page/index.html
 //
 // Conway's rule is four lines. What makes this worth a page is the seed: drop any file and its bytes
 // become the starting grid, one bit per cell. A photograph, a wasm module, this page's own source —

@@ -94,7 +94,7 @@ Deno.test("the heavy lane cannot quietly become the suite", async () => {
 });
 
 Deno.test("no targets means everything, which is where this was wrong the first time", () => {
-  // `deno task test` passes no targets and lets discovery find the files; `test:changed` does the same
+  // `wac task test` passes no targets and lets discovery find the files; `test:changed` does the same
   // when a shared file changed. Reading that as "nothing matches" left the gate's lane working and the
   // other entry point silently running the same files four-at-a-time — the exact inconsistency the lane
   // exists to remove.

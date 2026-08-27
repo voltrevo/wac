@@ -1,6 +1,6 @@
 // Type-check every TypeScript file in the repository.
 //
-//   deno task check
+//   wac task check
 //
 // wac-mono 0011. `deno test` type-checks the modules it imports, which leaves out every driver and tool
 // nothing imports — `cov.ts`, `size.ts`, `validate.ts` — and `deno run` has not type-checked by default

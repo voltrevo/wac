@@ -1,6 +1,6 @@
 // How well the compressor does, on data that resembles what compressors are used on.
 //
-//   deno task bench:zstd
+//   wac task bench:zstd
 //
 // Against gzip -6 and zstd at three levels, because the interesting questions are "is this worth
 // using instead of gzip" and "how far is it from the thing it is imitating" — neither of which a

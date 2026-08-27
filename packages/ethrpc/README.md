@@ -9,7 +9,7 @@ if (a.ok) { core.log(string.fromBytes(stringOf(a.result))); }
 
 `example/blocknumber.wac` is that, as a program. Build and run it against a local node:
 
-    deno task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
+    wac task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
     ./blocknumber 127.0.0.1 8545
 
 ## What a node is trusted for

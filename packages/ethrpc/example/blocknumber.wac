@@ -3,7 +3,7 @@
 // Its job is to be the first program in this repo that talks to a chain at all — everything above it
 // verifies what a node says, and until this existed nothing could ask. Run it against a local anvil:
 //
-//     deno task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
+//     wac task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
 //     ./blocknumber 127.0.0.1 8545
 import { Cli, Core } from "std/platform.wac";
 import { call, stringOf, Answer } from "../src/rpc.wac";

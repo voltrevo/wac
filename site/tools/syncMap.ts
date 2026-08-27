@@ -221,7 +221,7 @@ const structure = (t: string) => t.replace(/\d[\d,]*/g, "#");
 if (Deno.args.includes("--check")) {
   const have = await Deno.readTextFile(builtPath).catch(() => "");
   if (structure(have) !== structure(out)) {
-    console.error("site/src/data/built.ts is out of date — run `deno task site:map`");
+    console.error("site/src/data/built.ts is out of date — run `wac task site:map`");
     Deno.exit(1);
   }
   console.log("site/src/data/built.ts is current");

@@ -20,7 +20,7 @@
 // the one thing 0035 worried about, and it is not the unreadable case it feared: the RFC presents the
 // double round exactly this way, and the ten iterations stay a loop. Nothing here is generated.
 //
-// Measured with `deno task bench:hash --quick`, 4 MB, and the two changes separated because 0035 is
+// Measured with `wac task bench:hash --quick`, 4 MB, and the two changes separated because 0035 is
 // specifically about which one is the lever:
 //
 //     arrays, state rebuilt per block (as it was)   55.1 ms    73 MB/s

@@ -1,6 +1,6 @@
 // Who owns this ENS name — asked of a node, and believed only because a proof says so.
 //
-//     deno task app:build packages/ethrpc/example/ensowner.wac --allow-net -o ensowner
+//     wac task app:build packages/ethrpc/example/ensowner.wac --allow-net -o ensowner
 //     ./ensowner wac.eth 127.0.0.1 8545
 //
 // This is the whole stack in one program, and the first here that goes out to a chain for the answer:

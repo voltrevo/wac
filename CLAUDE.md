@@ -52,19 +52,19 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
 
 ## Running things
 
-    deno task test                                    the suite
-    deno task docs                                    the doc checks — a wac phase, then Deno's
-    deno task map --check                             MAP.md is generated; staleness is a failure
-    deno task seed                                    rebuild the compiler inside the `wac` binary
-    deno task seed:bootstrap                          ...from a clone with no binary yet
-    deno task seed:native                             just `wacland`, the wasmtime host
-    deno task wac:install                             build it and put it on PATH — $WAC_HOME
-    deno task wac:build -o ./wac                      ...or just build one, installing nothing
+    wac task test                                    the suite
+    wac task docs                                    the doc checks — a wac phase, then Deno's
+    wac task map --check                             MAP.md is generated; staleness is a failure
+    wac task seed                                    rebuild the compiler inside the `wac` binary
+    wac task seed:bootstrap                          ...from a clone with no binary yet
+    wac task seed:native                             just `wacland`, the wasmtime host
+    wac task wac:install                             build it and put it on PATH — $WAC_HOME
+    wac task wac:build -o ./wac                      ...or just build one, installing nothing
     wac uninstall [--keep-cache]                      and take it away again — the command, not a task
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
 
-**`deno task wac:install` is the supported way to *have* the command** — `design/lang/0009` D1. It
+**`wac task wac:install` is the supported way to *have* the command** — `design/lang/0009` D1. It
 builds the seed (fixpoint-checked), installs `bin/wac`, `cache/git/`, `env` and `install.json5`
 under `$WAC_HOME` (default `$HOME/.wac`), and adds one marked line to whichever of `.bashrc`,
 `.zshrc` and `.profile` already exist. Running it again is how you upgrade: the line is replaced
@@ -78,23 +78,32 @@ wac#26.
 
 **Taking it away is `wac uninstall`, a subcommand rather than a task**, and it removes exactly those
 things and never a manifest, a lockfile, a source file or a build product. There was a
-`deno task wac:uninstall` too until 2026-08-26; it went because it was the copy nobody who had
+`wac task wac:uninstall` too until 2026-08-26; it went because it was the copy nobody who had
 installed the command could reach — a Deno program under `tools/` needs this checkout, and they have
 a `$WAC_HOME` and no checkout.
 
-**`deno task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
+**`wac task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
 
-**It no longer uses Deno.** `deno task seed` is now `wac build` — the binary compiling its own
+**It no longer uses Deno.** `wac task seed` is now `wac build` — the binary compiling its own
 compiler — followed by `cargo build`. It is a fixed point: the compiler the binary produces, used to
 build the compiler again, is byte-identical — and since 2026-08-17 the command **checks** that
 rather than asserting it, and puts the previous seed back rather than keep one that is not
-(`tools/seed.sh`, `design/lang/0009` D2). `deno task` is only the task runner here; nothing in
-that command needs a JavaScript host.
+(`tools/seed.sh`, `design/lang/0009` D2). Nothing in that command needs a JavaScript host — which
+was true of the task runner generally, and is why the registry moved.
+
+**`wac task` replaced `deno task` on 2026-08-27.** The names are unchanged; `tasks.json5` holds
+them and `wac task` with no argument lists them. 41 of the 78 invoke the `wac` binary and three
+are shell, so the registry had been a JavaScript dependency for the sake of a lookup table.
+`deno.json` keeps `imports` and `exclude`, which the TypeScript that remains still needs.
+
+**A fresh clone cannot run `wac task` at all**, because the seed is gitignored and there is no
+binary to dispatch with. The first command in a new checkout is `bash tools/seed.sh --bootstrap`,
+and that is why it stays a shell script rather than becoming a task.
 
 **And since 2026-08-21 it refreshes `wacland`**, the wasmtime host in `native/` — a separate crate that
 had no owner, so six test files each ran their own `cd native && cargo build --release` with their own
-skip message and their own freshness check. They ask now rather than build. `deno task seed:native` is
-how the binary first comes to exist; `deno task seed` rebuilds it **only if it is already there**,
+skip message and their own freshness check. They ask now rather than build. `wac task seed:native` is
+how the binary first comes to exist; `wac task seed` rebuilds it **only if it is already there**,
 because cargo costs 7s of CPU and about 10s of wall in that crate with nothing to do, and paying it on
 every seed for a binary this checkout may never run is the waste `issues/system/0208` is about. A
 checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
@@ -124,12 +133,12 @@ you ever suspect the cache of serving something stale.
 **And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from
 another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is
 old" — it is an ordinary file failing to emit with a message about lambdas or about a construct that
-was fine yesterday. `deno task seed` cannot recover from that, because it needs the seed to rebuild
+was fine yesterday. `wac task seed` cannot recover from that, because it needs the seed to rebuild
 the seed. `seed:bootstrap` can, because it starts from the reference compiler.
 
-The Deno path is `deno task seed:bootstrap`, and it is still the one that works from **nothing**: the
+The Deno path is `wac task seed:bootstrap`, and it is still the one that works from **nothing**: the
 seed is gitignored, so a fresh clone has no binary to build with and `cargo build` cannot start
-without one. Run it once, then `deno task seed` from then on.
+without one. Run it once, then `wac task seed` from then on.
 
 **Plain `seed:bootstrap` is the escape hatch when a wacc change has made wacc unable to build
 itself**, because it builds wacc with the *reference* and the app with wacc — so the binary that
@@ -157,7 +166,7 @@ about the file's mtime rather than about your own edits — `git pull` before a 
 fails on the seed, which is exactly what happened twice in one day. Rebuild after a merge that touches
 that directory, and before running anything that goes through the `wac` binary.
 
-**`--unstable-net` when you run tests by hand.** `deno task test` passes it for you, so it is easy to
+**`--unstable-net` when you run tests by hand.** `wac task test` passes it for you, so it is easy to
 not know about until a package fails with `Deno.listenDatagram is not a function` or
 `Deno.QuicEndpoint is not a constructor` — messages about a missing API rather than about a flag.
 `packages/quic` and `packages/platform`'s datagram tests need it; nothing else notices it, so it costs

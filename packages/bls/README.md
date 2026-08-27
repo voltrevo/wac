@@ -211,5 +211,5 @@ nothing secret is ever inverted: a verifier handles public keys, signatures and 
 **signing** implementation must not reuse it as it stands. It says so at the function too.
 
 `src/fpkernel.wac` is generated and must not be edited. `test/wac/fpkernel_generated_test.wac` fails if
-it is not what `packages/bls/tools/genfpkernel.py` produces; run `deno task gen:bls-fpkernel` after changing the
+it is not what `packages/bls/tools/genfpkernel.py` produces; run `wac task gen:bls-fpkernel` after changing the
 generator. It also makes the package's mutation sweep large — see wac-mono issue 0027.

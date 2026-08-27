@@ -115,7 +115,7 @@ must decline, and asks that the refusal name a language construct.
 Every number in this section is printed by the rung that produces it, and read on 2026-08-25:
 `wac test packages/wacc/test/wac/corpusemit_test.wac` for the corpus and the emitter — it is in the
 heavy lane, thirty-three minutes when it was last run on a machine three agents share, because it
-compiles the tree — and `deno task seed` for the size, which is printed to the byte and rounded here.
+compiles the tree — and `wac task seed` for the size, which is printed to the byte and rounded here.
 It is **1,675,320** bytes; the day the figure above was first written it moved three times, 960,310,
 then 965,855, then 968,370, which is the reason it is rounded rather than quoted.
 Three days earlier they were 414 files, 411 whole, three partial and 431,705 bytes; six days before
@@ -175,7 +175,7 @@ against the TypeScript one. Where a differential found a disagreement and *we* w
 side got an issue rather than us getting a workaround.
 
 ```sh
-deno task test        # three to four minutes, depending on the machine
+wac task test        # three to four minutes, depending on the machine
 ```
 
 ## Where things are

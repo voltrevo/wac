@@ -65,7 +65,7 @@ Deno.test("docsOnly: nothing else in the tree consumes a ```wac fence", async ()
   // and nothing else.
   const known = new Map([
     ["packages/wacc/test/wac/specfences_test.wac", "compiles every fence in spec/spec that checks clean"],
-    ["tools/docSignatures.test.ts", "matches export lines in packages/*/README.md"],
+    ["tools/wac/docsignatures_test.wac", "matches export lines in packages/*/README.md"],
     ["compiler/wacSpec.test.ts", "runs spec/**'s fences against the reference"],
     ["tools/docsOnly.ts", "defines wacFences, the extractor this predicate is built on"],
     ["tools/docsOnly.test.ts", "this file, which contains the search pattern itself"],

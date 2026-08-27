@@ -1,7 +1,7 @@
 // Branch coverage for tor: the package's own tests, and nothing else.
 //
-//   deno task coverage:tor
-//   deno task coverage:tor --verbose
+//   wac task coverage:tor
+//   wac task coverage:tor --verbose
 //
 // The tenth of the packages `issues/system/0205` records as unmeasured, and by a wide margin the
 // largest: 15,913 lines of source and 313 tests across 47 files.

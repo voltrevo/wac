@@ -1,7 +1,7 @@
 // Branch coverage for ens: the package's own tests, and nothing else.
 //
-//   deno task coverage:ens
-//   deno task coverage:ens --verbose
+//   wac task coverage:ens
+//   wac task coverage:ens --verbose
 //
 // One of the packages `issues/system/0205` records as unmeasured.
 

@@ -30,7 +30,7 @@ export string test_map_md_is_current(Core core, Cli cli) {
   t.isTrue(r.ran(), "the generator starts: " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0,
-          "MAP.md is out of date — run `deno task map`. The generator said: " +
+          "MAP.md is out of date — run `wac task map`. The generator said: " +
           string.fromBytes(r.stderr));
   return t.report();
 }
@@ -51,7 +51,7 @@ export string test_the_sites_generated_copy_is_current(Core core, Cli cli) {
   t.isTrue(r.ran(), "deno runs the site's generator: " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0,
-          "site/src/data/built.ts is out of date — run `deno task site:map`. It said: " +
+          "site/src/data/built.ts is out of date — run `wac task site:map`. It said: " +
           string.fromBytes(r.stderr));
   return t.report();
 }

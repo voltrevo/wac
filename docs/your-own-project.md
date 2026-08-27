@@ -11,22 +11,22 @@ follow unless you have a reason not to:
 ```sh
 git clone <this repo> wac && cd wac
 bash tools/seed.sh --bootstrap    # once, from a fresh clone: builds the compiler the binary carries
-deno task --no-lock wac:install   # builds `wac` and puts it on PATH
+wac task wac:install   # builds `wac` and puts it on PATH
 ```
 
-**There is a second way as of 2026-08-26** — `deno task wac:install --target deno` — which needs
+**There is a second way as of 2026-08-26** — `wac task wac:install --target deno` — which needs
 neither Cargo nor Rust and installs the same command to the same place. It is second rather than
 equal for one reason, stated where it is documented below: building it shells out to `deno bundle`,
 which fetches from npm the first time, so the route with no network requirement is this one. Nothing
 about the *result* is lesser; see "Without Cargo" below.
 
-**Why `bash` and `--no-lock` rather than `deno task seed:bootstrap`.** Both forms work; these two do
+**Why `bash` and `--no-lock` rather than `wac task seed:bootstrap`.** Both forms work; these two do
 not touch the network. `deno task` restores this repository's `deno.lock` before running anything, and
 that lockfile carries every npm package the whole tree uses — **twelve of them**, including Playwright,
 ethers, two versions of Binaryen and `ws` — so a fresh clone downloaded all of it before compiling a
 line. Neither of these two steps needs a single one: `tools/install.ts` has no npm in its import graph
 at all. On a slow or unreliable connection the download was what stopped the bootstrap. GitHub issue
-21; `deno task seed:bootstrap` and `deno task wac:install` are still there and still correct if you
+21; `wac task seed:bootstrap` and `wac task wac:install` are still there and still correct if you
 have the packages already.
 
 Cargo because the seed is a wasm module the `wac` binary *carries*, so building it means building the
@@ -58,7 +58,7 @@ deno run --allow-read --allow-write --allow-env --allow-run \
 That writes `out.wasm`, the same artefact `wac build` writes, and honours `@/` and a `wac.json5` the
 same way. It is slower — it is the reference front end plus wacc running as wasm under Deno rather than
 a binary — and it is a developer fallback rather than the supported route, which is
-`deno task wac:install`.
+`wac task wac:install`.
 
 **And a Deno- or Node-hosted `wac` command is a thing you can build**, which is not the same as the
 line above: that one compiles, and this one is the command.
@@ -81,7 +81,7 @@ could not reach it.
 command and a file you made:
 
 ```sh
-cd <wac> && deno task wac:install --target deno    # or --target node
+cd <wac> && wac task wac:install --target deno    # or --target node
 wac check src/main.wac                             # …and it is on PATH like any other
 ```
 
@@ -116,7 +116,7 @@ what it had found. Both compilers refused, in different words:
     wacc         wacc cannot compile main.wac yet — an import of a file that was not supplied
     reference    `@/src/lib.wac` needs a project: no `wac.json5` above main.wac
 
-from any entry position, and `deno task bindgen` refused the same import for the same reason. GitHub
+from any entry position, and `wac task bindgen` refused the same import for the same reason. GitHub
 issue 22 reported it; `issues/system/0229a` has the measurement and the fix, and
 `packages/platform/test/project.test.ts` is what now holds this sentence to being true.
 
@@ -144,7 +144,7 @@ compiler needs an API and not only a CLI. `native.ts` builds, `tools/check.ts` c
 *reference* compiler, `harness/referenceRun.ts` runs. They take different flags, answer different exit
 codes, and resolve a project differently — reaching for one of those is what GitHub issue 22 was
 originally about. Reach for the built command unless you are working on the compiler itself. And note
-that **`deno task check` is this repository's own TypeScript check**, not `wac check`.
+that **`wac task check` is this repository's own TypeScript check**, not `wac check`.
 
 **One thing to know before you build it**: the hosted build shells out to `deno bundle`, which fetches
 `@esbuild/<your platform>` from npm the first time. The binary has no such step, so an offline
@@ -162,7 +162,7 @@ wac: still bundling (worker) — the first bundle on a machine downloads npm:@es
 
 `deno cache npm:@esbuild/<your platform>` is the one-time step if you would rather do it deliberately;
 nothing requires it. **And it is only the bundler.** Compiling and installing reach no npm at all —
-`bash tools/seed.sh --bootstrap` and `deno task --no-lock wac:install` are the offline route to the
+`bash tools/seed.sh --bootstrap` and `wac task wac:install` are the offline route to the
 whole command, which is why the failure message names them.
 
 **One thing here does need the network, once.** Compiling does not: the two commands above complete

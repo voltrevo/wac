@@ -1,7 +1,7 @@
 // gzip's coverage, and the argument for the three points nothing reaches.
 //
-//   deno task coverage:gzip
-//   deno task coverage:gzip --verbose
+//   wac task coverage:gzip
+//   wac task coverage:gzip --verbose
 //
 // **Named rather than tolerated as a percentage below 100.** A report that sits at 99.3% for ever
 // teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one

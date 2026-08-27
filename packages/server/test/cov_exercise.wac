@@ -1,7 +1,7 @@
 // Branch coverage for server: the exercises, and nothing else.
 //
-//   deno task coverage:server
-//   deno task coverage:server --verbose
+//   wac task coverage:server
+//   wac task coverage:server --verbose
 //
 // Drives `serve` directly with the same requests the tests use. The routes are most of the branch
 // points and the error paths are the rest, so the corpus is the union of "every route" and "every way

@@ -13,7 +13,7 @@
 //
 // **The lock file's format is a compatibility surface, not an internal detail.** Every agent shares
 // `/tmp`, and until the TypeScript runner is deleted the two will be alive at the same time in
-// different workspaces: `agent-a` running `deno task test` has to see a lock this writes, and this
+// different workspaces: `agent-a` running `wac task test` has to see a lock this writes, and this
 // has to see theirs. So the bytes are exactly `JSON.stringify({who, pid, since, forced})` — same
 // path, same keys, same types — and the same is true of `/tmp/wac-suite-last-<agent>` (a decimal
 // millisecond stamp) and `/tmp/wac-heavy-<pid>`. A format that only this runner understood would
@@ -126,7 +126,7 @@ export string marker() { return "WAC_SUITE_RUNNING"; }
  * nullable either way. The consequence is worth stating rather than hiding: a build without
  * `--allow-env` cannot honour `WAC_SUITE_ANYWAY`, `WAC_SUITE_RETRY`, `WAC_HEAVY`, `DENO_JOBS` or
  * `WAC_SCHED`, and will quietly behave as though none of them was set. The runner is always started
- * with the grant, and `deno task docs` runs the `tools/` tests *without* it — which is why nothing
+ * with the grant, and `wac task docs` runs the `tools/` tests *without* it — which is why nothing
  * here is tested by reading a variable that happens to be in the environment.
  */
 export string envOf(Cli cli, string name) {
@@ -311,14 +311,14 @@ string advice() {
     "     wac test packages/<name>/test/wac        the package\n" +
     "     wac test path/to/one_test.wac            one file\n" +
     "     deno test -A packages/<name>/test/       its TypeScript half\n" +
-    "     deno task docs                           the doc checks, strictly\n" +
-    // **The ratchets, because they run nowhere else.** `deno task coverage:all` is inside
+    "     wac task docs                           the doc checks, strictly\n" +
+    // **The ratchets, because they run nowhere else.** `wac task coverage:all` is inside
     // `tools/push.sh` and nothing else calls it, so a day of refusals is a day of nobody
     // measuring coverage — thirteen of the twenty-one were red for most of 2026-08-25 and the
     // first thing to notice was a gate run that finally got through, about sixty commits later.
     // A minute, no cooldown, and it is the check most likely to be stale when this message
     // prints. `issues/system/0266c`.
-    "     deno task coverage:all                   the ratchets, which run nowhere else\n" +
+    "     wac task coverage:all                   the ratchets, which run nowhere else\n" +
     "\n" +
     "   The suite is about four minutes and three agents share five cores and 11.9 GB.\n" +
     "   Two at once is tight; three get killed at about 70% with no failure reported.\n" +

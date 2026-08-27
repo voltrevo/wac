@@ -95,10 +95,10 @@ file was mine — that was an assumption rather than a check, and `git log --fol
 Verified against a green baseline taken on both repositories first, so anything red afterwards was
 attributable to the merge rather than pre-existing:
 
-- `deno task test` — **2,924 passed, 0 failed**, plus 57 in the exclusive lane. That is the
+- `wac task test` — **2,924 passed, 0 failed**, plus 57 in the exclusive lane. That is the
   compiler's 1,278 and the packages' 1,646, exactly.
 - `deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts` — 19 passed.
-- `deno task map --check` — current.
+- `wac task map --check` — current.
 - `packages/wacc`'s bootstrap fixpoint still reaches the same bytes.
 
 Thirteen tests failed during the merge and every one was a path that had reached across the old

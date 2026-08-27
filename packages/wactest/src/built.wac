@@ -196,7 +196,7 @@ export i64 newestOf(Cli cli, string path) {
   return newestUnder(cli, path);
 }
 
-/** The wasmtime host — `wacland`, the other crate. `deno task seed:native` is what builds it. */
+/** The wasmtime host — `wacland`, the other crate. `wac task seed:native` is what builds it. */
 export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/release/wacland"; }
 
 /**
@@ -205,7 +205,7 @@ export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/re
  * **A test asks; it does not build.** Five test files each ran their own `cd native && cargo build
  * --release`, in two languages, with five skip messages and two freshness checks that differed in
  * whether they walked `target/` — so the same 2.6s cargo no-op was paid per file, and one of the
- * checks rebuilt every run. `deno task seed`, and `deno task seed:native` for just this crate, own the
+ * checks rebuilt every run. `wac task seed`, and `wac task seed:native` for just this crate, own the
  * build now; `tools/seedFresh.test.ts` fails when the binary is older than its sources.
  * `issues/system/0208`.
  *
@@ -216,10 +216,10 @@ export string nativeHostWhyNot(Cli cli) {
   string root = cli.cwd().wait();
   Stat host = cli.stat(nativeHost(cli)).wait();
   if (!host.exists) {
-    return "native/target/release/wacland is not built — `deno task seed:native` builds it";
+    return "native/target/release/wacland is not built — `wac task seed:native` builds it";
   }
   // **The crate's own inputs, named — not a walk of `native/`.** A blanket walk answered "stale"
-  // forever: `native/v8/seed/*.wasm` is the *seed's output*, written by every `deno task seed`, and it
+  // forever: `native/v8/seed/*.wasm` is the *seed's output*, written by every `wac task seed`, and it
   // lives under `native/` without being inside a `target/`. So every seed made `wacland` look older
   // than its sources, six callers skipped their native halves, and the two that *assert* the native
   // half ran failed in the gate. The list is `tools/seedFresh.test.ts`'s, which had it right, and it
@@ -229,7 +229,7 @@ export string nativeHostWhyNot(Cli cli) {
   for (i32 i = 0; i < inputs.len(); i++) {
     if (host.modifiedMillis < newestOf(cli, root + "/" + inputs[i])) {
       return "native/target/release/wacland is older than " + inputs[i]
-          + " — `deno task seed:native` rebuilds it";
+          + " — `wac task seed:native` rebuilds it";
     }
   }
   return "";

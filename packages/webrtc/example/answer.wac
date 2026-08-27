@@ -5,7 +5,7 @@
 // Reads a peer's SDP offer on standard input, prints the answer, then runs the data channel:
 // connectivity checks, the DTLS handshake, the SCTP association, and every message echoed back.
 //
-//   deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
+//   wac task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
 //   deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
 //
 // **The point of writing it is that everything here already worked and none of it had ever run in

@@ -1,6 +1,6 @@
 // Branch coverage for fs: the probe's thirteen transcripts, run natively.
 //
-//   deno task coverage:fs
+//   wac task coverage:fs
 //
 // This was fs's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger is
 // `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.

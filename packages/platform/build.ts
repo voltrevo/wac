@@ -1,6 +1,6 @@
 // Build a wac application into one executable JavaScript file.
 //
-//   deno task app:build packages/platform/example/wc.wac -o wc
+//   wac task app:build packages/platform/example/wc.wac -o wc
 //   ./wc --allow-read -- README.md
 //
 // The result is self-contained: the wasm is base64 inside it, the bindgen wrappers are
@@ -103,7 +103,7 @@ export function bundleFailure(said: string, pkg: string = esbuildPackage()): str
     `wac: this looks like the one-time npm fetch \`deno bundle\` needs — it downloads ${pkg} for\n` +
     `     this platform. With a network: \`deno cache npm:${pkg}\`.\n` +
     `     Without one, nothing here needs a bundler: the binary carries the compiler, and\n` +
-    `     \`bash tools/seed.sh --bootstrap\` then \`deno task --no-lock wac:install\` reaches it\n` +
+    `     \`bash tools/seed.sh --bootstrap\` then \`wac task wac:install\` reaches it\n` +
     `     without npm at all.\n`;
 }
 
@@ -530,7 +530,7 @@ async function place(text: string, out: string, executable: boolean): Promise<vo
  *
  * **A flag rather than the default**, decided 2026-08-11: what a built artifact contains stays exactly
  * what the compiler produced unless somebody says otherwise, because this repository debugs by
- * comparing modules — rung 4's canonical form, `deno task size`, `deadexports`, the coverage
+ * comparing modules — rung 4's canonical form, `wac task size`, `deadexports`, the coverage
  * instrumentation — and an optimiser in between means every one of those has to say which side of it
  * it is on.
  *
@@ -921,7 +921,7 @@ if (import.meta.main) {
   const entry = argv.find((a, i) => !a.startsWith("-") && i !== oi + 1);
   if (entry === undefined) {
     console.error(
-      "usage: deno task app:build <entry.wac> [-o output] " +
+      "usage: wac task app:build <entry.wac> [-o output] " +
         "[--allow-read] [--allow-write] [--allow-env] [--allow-net] [--allow-run]\n" +
       "                        [--target deno|node|browser] [--worker] [--optimize]\n\n" +
         "--optimize runs wasm-opt over the module: 36-41% smaller, a second or so per megabyte,\n" +

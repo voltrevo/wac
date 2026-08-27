@@ -18,7 +18,7 @@ install`, and no toolchain for wac beyond what is in `../..`.
 ```sh
 git clone https://github.com/voltrevo/wac-mono
 cd wac-mono
-deno task app:build packages/box/example/hash.wac --target browser -o page/index.html
+wac task app:build packages/box/example/hash.wac --target browser -o page/index.html
 ```
 
 That writes a single self-contained HTML file: the wasm is embedded, and it fetches nothing. You
@@ -31,7 +31,7 @@ calls, so it needs a `SharedArrayBuffer`, and a browser only supplies one to a
 page — two response headers. `box`'s own web server sends them with `-x`:
 
 ```sh
-deno task app:build packages/box/src/box.wac --allow-read --allow-net -o box
+wac task app:build packages/box/src/box.wac --allow-read --allow-net -o box
 ./box httpd -8080 page -x        # -x adds COOP and COEP
 ```
 
@@ -48,7 +48,7 @@ page, and it reports the byte count, the code-point count when they differ, the 
 compressed size as a percentage, and how long both took.
 
 ```sh
-deno task app:build packages/box/example/hash.wac --target browser -o page/index.html
+wac task app:build packages/box/example/hash.wac --target browser -o page/index.html
 ```
 
 No grants: it reads no files and opens no sockets, so the built page has no capability to do
@@ -81,7 +81,7 @@ does not. The website prints the same three lines where the frame cannot load, a
 either of them claims.
 
 ```sh
-deno task app:build packages/box/example/term.wac --target browser \
+wac task app:build packages/box/example/term.wac --target browser \
   --allow-read --allow-write -o page/index.html
 ```
 

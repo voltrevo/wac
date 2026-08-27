@@ -1,0 +1,257 @@
+// The numbers a `design/` document states, against the code it is describing.
+//
+//     wac test --allow-read --allow-write --allow-run tools/
+//
+// **This was tools/designClaims.test.ts** — unbackticked because it no longer exists. It moved to wac on 2026-08-27, when `wac task` replaced
+// `deno task` and the docs lane stopped needing a JavaScript host for anything else. Its argument is
+// unchanged and worth keeping:
+//
+// `design/system/0001`'s state-of-play table is the page anyone reads to find out where WacLand is,
+// and it is the page nobody's test was reading. Four separate sentences said **sixty applets** where
+// there were 63, step 1 said **57 scripts on both backings** where 817 run on three, and step 7 said
+// in its first sentence that `init` was done and in its last that `init` was what was left.
+//
+// None of that was carelessness. A count is written once by someone who has just counted, and then
+// the thing counted grows.
+//
+// ## What can and cannot be checked here
+//
+// Only claims with a number and a mechanical source. "The network is in" is prose and stays prose.
+// So this checks the applet count against `box.wac`'s dispatcher, every "N scripts" against the
+// corpus, and the three-way split in `packages/sh/README.md` — and every *occurrence*, not the first,
+// because the box README's own drift was a second paragraph disagreeing with the first.
+//
+// ## One assertion did not come across, and that is the finding
+//
+// The TypeScript asserted `differential + box == total` — *"every script is on exactly one side"*.
+// It cannot fail. `usesDeleted` is a one-line alias for `needsProgram`, so the two filters it
+// compares partition the corpus by construction, in either language. Reproducing it here would be
+// carrying a check that has never been able to disagree; what replaced it is the *floor* below, which
+// asks whether the two counts are non-trivial.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { tracked, under } from "../../packages/wactest/src/repo.wac";
+import { Vectors, load } from "../../packages/sh/test/wac/vectors.wac";
+
+/** Read a file, or "" — every caller here treats an unreadable source as a failed assertion. */
+string readAll(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** Whether a byte is a decimal digit. `i32`, not `u8`: a packed type is an array's element type
+ * rather than a parameter's, and reading one out of a `u8[]` already widens. */
+bool isDigit(i32 b) { return b >= 48 && b <= 57; }
+
+/**
+ * Every number immediately followed by `after` in `text`, with the line it sits on.
+ *
+ * `123 applets` answers `123`. The scan is deliberate rather than a regex: it is one pattern shape
+ * used four times, and `packages/regex` would be a dependency for the sake of `\d+`.
+ */
+struct Claim {
+  i32 value;
+  i32 line;
+}
+
+Claim[] numbersBefore(string text, string after) {
+  u8[] b = text.toBytes();
+  Claim[] out = Claim[64](fill: Claim(0, 0));
+  i32 n = 0;
+  i32 line = 1;
+  i32 i = 0;
+  while (i < b.len() && n < out.len()) {
+    if (b[i] == 10) { line = line + 1; i = i + 1; continue; }
+    if (!isDigit(b[i])) { i = i + 1; continue; }
+    i32 start = i;
+    i32 v = 0;
+    while (i < b.len() && isDigit(b[i])) { v = v * 10 + (b[i] - 48); i = i + 1; }
+    if (i + after.len() <= b.len() && text.slice(i, i + after.len()) == after) {
+      out[n] = Claim(v, line);
+      n = n + 1;
+    }
+  }
+  Claim[] exact = Claim[n](fill: Claim(0, 0));
+  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  return exact;
+}
+
+/** Every number written `**123**`, in order — the shape `packages/sh/README.md` states its split in. */
+i32[] boldNumbers(string text) {
+  i32[] out = i32[32](fill: 0);
+  i32 n = 0;
+  i32 at = 0;
+  while (at < text.len() && n < out.len()) {
+    i32 rel = text.slice(at, text.len()).indexOf("**");
+    if (rel < 0) { break; }
+    i32 open = at + rel + 2;
+    i32 rel2 = open < text.len() ? text.slice(open, text.len()).indexOf("**") : -1;
+    if (rel2 < 0) { break; }
+    i32 close = open + rel2;
+    string inner = text.slice(open, close);
+    bool digits = inner.len() > 0;
+    for (i32 k = 0; k < inner.len(); k++) { if (!isDigit(inner.toBytes()[k])) { digits = false; } }
+    if (digits) {
+      i32 v = 0;
+      for (i32 k = 0; k < inner.len(); k++) { v = v * 10 + (inner.toBytes()[k] - 48); }
+      out[n] = v;
+      n = n + 1;
+    }
+    at = close + 2;
+  }
+  i32[] exact = i32[n](fill: 0);
+  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  return exact;
+}
+
+/** Every `design/**.md`, both trees, so a note added later is covered without editing this file. */
+string[] designDocs(Core core, Cli cli) {
+  string[] all = tracked(core, cli);
+  string[] hit = string[all.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!under(all[i], string[]("design/"))) { continue; }
+    if (all[i].len() < 3 || all[i].slice(all[i].len() - 3, all[i].len()) != ".md") { continue; }
+    hit[n] = all[i];
+    n = n + 1;
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
+  return out;
+}
+
+/**
+ * How many applets `box.wac` dispatches.
+ *
+ * The same expression `packages/box/test/box.test.ts` counts with, against the same file, so the two
+ * cannot disagree about what an applet is. A doc comment in that file quotes the pattern with an
+ * ellipsis inside the quotes, and a name is lowercase-and-digits — which is why this differs by one
+ * from a naive count of the string.
+ */
+i32 appletCount(Cli cli) {
+  string src = readAll(cli, "packages/box/src/box.wac");
+  string needle = "if (applet == \"";
+  i32 n = 0;
+  i32 at = 0;
+  while (at < src.len()) {
+    i32 rel = src.slice(at, src.len()).indexOf(needle);
+    if (rel < 0) { break; }
+    i32 open = at + rel + needle.len();
+    i32 rel2 = open < src.len() ? src.slice(open, src.len()).indexOf("\"") : -1;
+    if (rel2 < 0) { break; }
+    string name = src.slice(open, open + rel2);
+    bool ok = name.len() > 0;
+    for (i32 k = 0; k < name.len(); k++) {
+      i32 c = name.toBytes()[k];
+      if (!((c >= 97 && c <= 122) || isDigit(c) || c == 45)) { ok = false; }
+    }
+    if (ok) { n = n + 1; }
+    at = open + rel2;
+  }
+  return n;
+}
+
+export string test_every_applet_count_a_design_document_states_is_the_dispatchers(Core core, Cli cli) {
+  T t = T.create();
+  i32 real = appletCount(cli);
+  t.isTrue(real > 50, "box.wac dispatches only " + itoa(real) + " applets — the scan has moved");
+  string[] docs = designDocs(core, cli);
+  t.isTrue(docs.len() >= 8, "only " + itoa(docs.len()) + " design notes found");
+  string wrong = "";
+  for (i32 i = 0; i < docs.len(); i++) {
+    Claim[] said = numbersBefore(readAll(cli, docs[i]), " applets");
+    for (i32 k = 0; k < said.len(); k++) {
+      if (said[k].value != real) {
+        wrong = wrong + "\n  " + docs[i] + ":" + itoa(said[k].line) + ": says " + itoa(said[k].value)
+              + ", box.wac dispatches " + itoa(real);
+      }
+    }
+  }
+  t.eqStr(wrong, "", "a design document's applet count has drifted");
+  return t.report();
+}
+
+export string test_every_corpus_size_a_design_document_states_is_the_corpuss(Core core, Cli cli) {
+  T t = T.create();
+  Vectors v = load(cli);
+  t.eqStr(v.error, "", "the corpus vectors did not load");
+  if (v.error != "") { return t.report(); }
+  i32 total = v.n;
+  t.isTrue(total > 500, "the corpus has only " + itoa(total) + " scripts");
+
+  string[] docs = designDocs(core, cli);
+  string wrong = "";
+  for (i32 i = 0; i < docs.len(); i++) {
+    Claim[] said = numbersBefore(readAll(cli, docs[i]), " scripts");
+    for (i32 k = 0; k < said.len(); k++) {
+      // **A bounded sample is a real claim and may be smaller.** What must not happen is a number
+      // larger than the corpus, or one that used to be the whole of it and has quietly become a
+      // fraction — step 1's "57 scripts" was the second, true when written and fourteen times out by
+      // the time anyone read it.
+      if (said[k].value > total) {
+        wrong = wrong + "\n  " + docs[i] + ":" + itoa(said[k].line) + ": says " + itoa(said[k].value)
+              + ", the corpus has " + itoa(total);
+      }
+    }
+  }
+  t.eqStr(wrong, "", "a design document claims more scripts than there are");
+  return t.report();
+}
+
+export string test_the_shell_readme_states_the_corpus_split_the_corpus_has(Core core, Cli cli) {
+  T t = T.create();
+  Vectors v = load(cli);
+  t.eqStr(v.error, "", "the corpus vectors did not load");
+  if (v.error != "") { return t.report(); }
+  i32 total = v.n;
+  i32 box = 0;
+  for (i32 i = 0; i < v.n; i++) { if (v.items[i].needsProgram) { box = box + 1; } }
+  i32 differential = total - box;
+
+  // **The floor that replaced `differential + box == total`.** That assertion could not fail — the two
+  // filters are the same predicate negated — so what is worth asking instead is whether either side is
+  // trivial. A split of `821/821/0` would satisfy the sum and mean the corpus had stopped being
+  // divided at all.
+  t.isTrue(box > 100, "only " + itoa(box) + " scripts need a program — the split has collapsed");
+  t.isTrue(differential > 100,
+           "only " + itoa(differential) + " scripts are compared with bash — the split has collapsed");
+
+  string readme = readAll(cli, "packages/sh/README.md");
+  i32[] bold = boldNumbers(readme);
+  t.isTrue(bold.len() >= 3,
+           "packages/sh/README.md no longer states the split in digits — nothing here can check it");
+  if (bold.len() < 3) { return t.report(); }
+  t.eqStr(itoa(bold[0]) + "/" + itoa(bold[1]) + "/" + itoa(bold[2]),
+          itoa(total) + "/" + itoa(differential) + "/" + itoa(box),
+          "the README's split disagrees with the corpus");
+
+  // **The fourth place the same file says it**, which is not bold and was invisible to the check
+  // above: *"828 corpus scripts are compared with bash script for script"*, eight behind, in the
+  // paragraph arguing that the corpus is the oracle.
+  Claim[] prose = numbersBefore(readme, " corpus scripts");
+  t.isTrue(prose.len() > 0, "no `N corpus scripts` in packages/sh/README.md — reword this check with it");
+  for (i32 i = 0; i < prose.len(); i++) {
+    t.eqI32(prose[i].value, total,
+            "packages/sh/README.md:" + itoa(prose[i].line) + " says it in prose");
+  }
+  return t.report();
+}
+
+export string test_the_checks_above_have_something_to_check(Core core, Cli cli) {
+  T t = T.create();
+  // **The canary, and not decoration**: the two document checks pass vacuously if nothing matches,
+  // which is what happens the day somebody writes a count as words. Four of design/0001's were words
+  // when this was first written — "sixty applets" — and putting them in digits is what makes them
+  // checkable. If this fails, the numbers have gone back to prose rather than gone away.
+  string zero = readAll(cli, "design/system/0001-a-self-contained-system.md");
+  t.isTrue(numbersBefore(zero, " applets").len() > 0,
+           "design/0001 states no applet count in digits — a spelled-out number cannot be checked");
+  // The corpus size is deliberately not here: it was in six documents, all copies of one number, and
+  // five said 817 after it was 821. design/0001 says "the whole corpus" and links to the README where
+  // the digits live, so that is where the canary looks. A link cannot drift; a second copy always does.
+  t.isTrue(boldNumbers(readAll(cli, "packages/sh/README.md")).len() >= 3,
+           "packages/sh/README.md no longer states the corpus split in digits");
+  return t.report();
+}

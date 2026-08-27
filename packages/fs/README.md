@@ -75,7 +75,7 @@ running a sealed session whose stages read *and write* through the channel.
 `example/ops.wac` runs a script of operations against either backing:
 
 ```
-deno task app:build packages/fs/example/ops.wac --allow-read --allow-write -o ops
+wac task app:build packages/fs/example/ops.wac --allow-read --allow-write -o ops
 printf 'mkdir /d\nwrite /d/f hello\nls /d\n' | ./ops mem
 printf 'mkdir /d\nwrite /d/f hello\nls /d\n' | ./ops host /tmp/somewhere
 ```
@@ -97,7 +97,7 @@ It earned that on the first run, three times:
 - **Writing over a directory** answers the same way, for the same reason.
 
 **And a third differential lives outside this package**, which is worth knowing before writing a
-fourth: `deno task corpus:backings` runs the whole shell corpus through *three* filesystem backings —
+fourth: `wac task corpus:backings` runs the whole shell corpus through *three* filesystem backings —
 memory (`sealedsh`), an image (`imaged`) and the host (`sh`) — and compares them, with bash's answer
 next door as the reference. That is design/0001 D7's question, "the same scripts against a host mount
 and against an image, and any divergence is a VFS bug". It is a `deno task` rather than a suite test
@@ -206,7 +206,7 @@ into the binary rather than an executable-looking blob — which would be D6's "
 
 ## Coverage, and the three things it found on its first run
 
-`deno task coverage:fs`, through `test/wac/cov_probe.wac`. It did not exist until the package had doubled
+`wac task coverage:fs`, through `test/wac/cov_probe.wac`. It did not exist until the package had doubled
 in size — a synthesised backing and an image format, one of them a parser for bytes somebody else wrote —
 which is two ticks of new code with no branch measured in a repo that measures eighteen other packages.
 The first run found three defects, and none of them was a missing test so much as a wrong answer nothing
@@ -252,11 +252,11 @@ It reads, on **2026-08-12**:
 92 branch points the probe never called — and `fs.wac` grew the arms that dispatch to it. The number
 here read 92.7% for two more days, because a percentage in prose is a claim about a package that
 existed when somebody last edited the file. The run itself exited 1 the whole time and
-`deno task coverage:*` was deliberately not in the gate, so nobody met it. That is
+`wac task coverage:*` was deliberately not in the gate, so nobody met it. That is
 [0134](../../issues/system/closed/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md),
 and it is why the figures above carry the date of the run rather than standing on their own.
 
-**That silence is closed as of 2026-08-12**: `deno task coverage:all` runs in `tools/push.sh`, after
+**That silence is closed as of 2026-08-12**: `wac task coverage:all` runs in `tools/push.sh`, after
 the suite and before the push — nineteen packages in 38 seconds. It was held out on the rule that a
 red check in the gate blocks every other agent for something they did not do, and `crypto` was the
 last red one

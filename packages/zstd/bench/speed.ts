@@ -1,6 +1,6 @@
 // How fast, rather than how small.
 //
-//   deno task bench:zstd-speed
+//   wac task bench:zstd-speed
 //
 // Both sides time themselves — ours inside Deno, zstd's inside Node — so neither figure includes
 // the cost of getting the data to the other process. What each *does* include is its own

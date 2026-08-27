@@ -1,6 +1,6 @@
 // Write an onion service descriptor to a file, so tor's own decoder can judge it.
 //
-//   deno task app:build packages/tor/src/genhsdesc.wac --allow-write -o /tmp/genhsdesc.ts
+//   wac task app:build packages/tor/src/genhsdesc.wac --allow-write -o /tmp/genhsdesc.ts
 //   deno run --allow-write /tmp/genhsdesc.ts /tmp/desc.txt /tmp/vector.json
 //   <hsdesc-probe built against libtor.a> plaintext < /tmp/desc.txt
 //

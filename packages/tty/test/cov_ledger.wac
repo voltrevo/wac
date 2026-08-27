@@ -1,7 +1,7 @@
 // tty's coverage, and the finding that the first two packages' pattern is narrower than it looked.
 //
-//   deno task coverage:tty
-//   deno task coverage:tty --verbose
+//   wac task coverage:tty
+//   wac task coverage:tty --verbose
 //
 // **107 of 111**, from 101 on the first run. `issues/system/0205`.
 //

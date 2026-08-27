@@ -1,7 +1,7 @@
 // Branch coverage for platform: the package's own tests, and nothing else.
 //
-//   deno task coverage:platform
-//   deno task coverage:platform --verbose
+//   wac task coverage:platform
+//   wac task coverage:platform --verbose
 //
 // One of the last packages `issues/system/0205` records as unmeasured.
 

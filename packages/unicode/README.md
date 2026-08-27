@@ -32,7 +32,7 @@ separated, for 12 KiB of actual table.
 This is the same move as `packages/codec`, where RFC 4648's own vectors are the oracle: **derive
 the data from the authority, then check the result against that authority from the other
 direction.** It also means there is no `UnicodeData.txt` in the repo to go stale — regenerating is
-`deno task gen:unicode`, and the tests fail if the generated tables and the host disagree.
+`wac task gen:unicode`, and the tests fail if the generated tables and the host disagree.
 
 Checking generated tables against the generator's source looks circular, and for the mapping
 *values* it partly is — and where it was fully circular, it hid a wrong answer for a year. See
@@ -90,7 +90,7 @@ into "these bytes are some other text", and two systems that both substitute dis
 the text was. `isValid` is checked against a `fatal: true` `TextDecoder` over hand-picked
 malformations and 5,000 random byte strings.
 
-`deno task coverage:unicode` reports 98%.
+`wac task coverage:unicode` reports 98%.
 
 ## What this closed, and what it did not
 

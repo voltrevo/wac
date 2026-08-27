@@ -11,7 +11,7 @@ compiler, this one is things built with it.
 
 **[MAP.md](../MAP.md)** is the bird's-eye view: every package with its size, its tests and what
 it builds on, and every program and page you can build, each with a line on what it does. It
-is generated from the tree by `deno task map` and checked by the suite, so it cannot drift.
+is generated from the tree by `wac task map` and checked by the suite, so it cannot drift.
 
 Today, give or take whatever landed this morning: **38 packages, 134,750 lines of wac, 2,783
 tests written in wac, 82 command-line programs and 11 browser pages.** Those are MAP.md's own
@@ -37,7 +37,7 @@ differential-tested against the real tool where one exists. `cat`, `grep`, `sort
 `sha256sum`, `tar`, `diff`, `httpd`, `nc`. It streams: 300MB through `wc` peaks at 94MB of RSS.
 
 ```sh
-deno task app:build packages/box/src/box.wac --allow-read --allow-write --allow-net -o box
+wac task app:build packages/box/src/box.wac --allow-read --allow-write --allow-net -o box
 ./box tar somedir | ./box gzip > out.tgz     # and GNU tar extracts it
 ```
 
@@ -85,7 +85,7 @@ The same compiled wac runs in a page: a worker for the program, the page's own t
 capabilities, and `SharedArrayBuffer` between them.
 
 ```sh
-deno task app:build packages/box/example/term.wac --target browser --allow-read --allow-write -o page/index.html
+wac task app:build packages/box/example/term.wac --target browser --allow-read --allow-write -o page/index.html
 ./box httpd -8080 page -x        # -x sends the two isolation headers a page needs
 ```
 
@@ -99,7 +99,7 @@ file handed straight back.
 
 ```
 deno.json          import map + tasks; the only config
-MAP.md             generated: every package, program and page — `deno task map`
+MAP.md             generated: every package, program and page — `wac task map`
 harness/           TypeScript for driving the compiler
   wacFiles.ts        read an entry file and its transitive imports
   wacBind.ts         compile -> bindgen -> importable JS module
@@ -142,71 +142,71 @@ own. Nothing in this tree waits on it now; the caller left is a package service 
 Everything runs from the repo root, so one command covers every package.
 
 ```sh
-deno task test            # all tests, host-side and wac-written (4-11 min; see below)
-deno task test:changed    # ...only the packages you have touched, for the loop before that
-deno task test:heavy      # ...the ten files `deno task test` skips — docs/development.md
-deno task check           # type-check every .ts, including the drivers no test imports (~1s)
+wac task test            # all tests, host-side and wac-written (4-11 min; see below)
+wac task test:changed    # ...only the packages you have touched, for the loop before that
+wac task test:heavy      # ...the ten files `wac task test` skips — docs/development.md
+wac task check           # type-check every .ts, including the drivers no test imports (~1s)
 wac run --allow-read <entry.wac> args               # run a wac application
-deno task app:build <entry.wac> --allow-read -o wc   # ...or build one JavaScript file; ./wc needs Deno
+wac task app:build <entry.wac> --allow-read -o wc   # ...or build one JavaScript file; ./wc needs Deno
 wac app <entry.wac> --allow-read -o wc               # ...or one executable file; ./wc needs `wac`
-deno task app:build <entry.wac> --target node -o wc  # ...for Node instead of Deno
-deno task app:build <entry.wac> --target browser -o page/index.html  # ...or a browser page
-deno task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
-deno task map             # regenerate MAP.md; the suite fails if it is stale
-deno task coverage        # branch coverage of every package, from its wac-native tests
-deno task coverage:abi
-deno task coverage:bls
-deno task coverage:bignum # ...and the host-driven exercises, per package
-deno task coverage:bytes
-deno task coverage:codec
-deno task coverage:core
-    deno task coverage:crypto
-deno task coverage:datetime
-deno task coverage:ens
-deno task coverage:ethrpc
-deno task coverage:fmt
-deno task coverage:fs
-deno task coverage:gzip
-deno task coverage:git
-deno task coverage:http
-deno task coverage:json
-deno task coverage:lightclient
-deno task coverage:mpt
-deno task coverage:platform
-deno task coverage:quic
-deno task coverage:regex
-deno task coverage:rlp
-deno task coverage:raster
-deno task coverage:server
-deno task coverage:sh
-deno task coverage:ssh
-deno task coverage:ssz
-deno task coverage:stream
-deno task coverage:tor
-deno task coverage:tty
-deno task coverage:tls
-deno task coverage:unicode
-deno task coverage:webrtc
-deno task coverage:url
-deno task coverage:wactest
-deno task coverage:wacpkg
-deno task coverage:zstd
-deno task coverage:all    # every one of them in turn, and says which are red
+wac task app:build <entry.wac> --target node -o wc  # ...for Node instead of Deno
+wac task app:build <entry.wac> --target browser -o page/index.html  # ...or a browser page
+wac task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
+wac task map             # regenerate MAP.md; the suite fails if it is stale
+wac task coverage        # branch coverage of every package, from its wac-native tests
+wac task coverage:abi
+wac task coverage:bls
+wac task coverage:bignum # ...and the host-driven exercises, per package
+wac task coverage:bytes
+wac task coverage:codec
+wac task coverage:core
+    wac task coverage:crypto
+wac task coverage:datetime
+wac task coverage:ens
+wac task coverage:ethrpc
+wac task coverage:fmt
+wac task coverage:fs
+wac task coverage:gzip
+wac task coverage:git
+wac task coverage:http
+wac task coverage:json
+wac task coverage:lightclient
+wac task coverage:mpt
+wac task coverage:platform
+wac task coverage:quic
+wac task coverage:regex
+wac task coverage:rlp
+wac task coverage:raster
+wac task coverage:server
+wac task coverage:sh
+wac task coverage:ssh
+wac task coverage:ssz
+wac task coverage:stream
+wac task coverage:tor
+wac task coverage:tty
+wac task coverage:tls
+wac task coverage:unicode
+wac task coverage:webrtc
+wac task coverage:url
+wac task coverage:wactest
+wac task coverage:wacpkg
+wac task coverage:zstd
+wac task coverage:all    # every one of them in turn, and says which are red
                           # (2026-08-12: crypto only, 57 points — issue 0101)
-deno task mutate          # mutation testing, curated defects
-deno task mutate:operators # ...plus generated ones (removed guards, gutted functions)
-deno task mutate:diff     # ...only for .wac files changed against origin/master
-deno task bench           # gzip throughput
-deno task bench:json      # json throughput, by document shape
-deno task bench:json-lookup # json object lookup: scan vs hash index, and index build cost
-deno task verify:fmt      # fmt exactness over 500k doubles, both directions
+wac task mutate          # mutation testing, curated defects
+wac task mutate:operators # ...plus generated ones (removed guards, gutted functions)
+wac task mutate:diff     # ...only for .wac files changed against origin/master
+wac task bench           # gzip throughput
+wac task bench:json      # json throughput, by document shape
+wac task bench:json-lookup # json object lookup: scan vs hash index, and index build cost
+wac task verify:fmt      # fmt exactness over 500k doubles, both directions
 
 deno run --allow-read tools/check.ts <entry.wac>    # type-check one file, no run
 deno run -A tools/validate.ts <entry.wac>          # ...and check the wasm validates
 tools/push.sh             # run the suite, then push only if it passed
 ```
 
-`deno task test` skips one test: the browser target running in an actual browser, which needs
+`wac task test` skips one test: the browser target running in an actual browser, which needs
 Chromium installed and `deno test -A`. `packages/platform/test/browser_live.test.ts` says how
 in three commands, and skips in milliseconds without them.
 
@@ -245,7 +245,7 @@ Deleting `.cache` is always safe and is the whole of the invalidation story.
 There is no pin now. `deno.json` maps `wac/` to `./compiler/`, so the compiler is whatever
 is in the tree at the commit you have, and the three files that held the pin — a version json, a
 tool that wrote it and a harness check that read it — went with the merge ([MERGE.md](../MERGE.md),
-which names them). `deno task wac:pin`
+which names them). `wac task wac:pin`
 does not exist; a document that still names it is describing the repository as it was
 before 2026-08-09.
 
@@ -285,7 +285,7 @@ deliberate: a repo whose only input is Deno can be checked out and run in five y
 `deno.lock` exists for exactly one exception, and names it: `npm:playwright`, imported
 *dynamically inside* `packages/platform/test/browser_live.test.ts`, which runs the browser
 target in a real browser. That test is ignored unless a browser is installed and the run has
-`--allow-sys`, so `deno task test` skips it in milliseconds and fetches nothing. The lockfile
+`--allow-sys`, so `wac task test` skips it in milliseconds and fetches nothing. The lockfile
 is there to pin the version and its integrity hash rather than resolve whatever is newest at
 the moment somebody happens to run it — an unpinned dynamic import would be the worse
 position to be in, not the purer one.
@@ -313,10 +313,10 @@ no worrying about how `-0.0` or NaN survive the trip.
 
 ## Coverage, and why it belongs here rather than in each package
 
-`deno task coverage:<package>` reports branch coverage for the nineteen packages that have one, driven
+`wac task coverage:<package>` reports branch coverage for the nineteen packages that have one, driven
 by a `cov.ts` in the package itself. **Coverage needs an exercise, and an exercise only measures the
 code it drives**, so each package supplies its own; `harness/wacCoverage.ts` is the shared half. The
-repo-level `deno task coverage` covers gzip only, which is
+repo-level `wac task coverage` covers gzip only, which is
 [0002](../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
 
 **The hazard to know about: `cov.ts` is a second workload written by hand, so it drifts from the test

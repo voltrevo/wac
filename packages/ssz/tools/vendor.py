@@ -308,7 +308,7 @@ def tarball_path() -> str:
         #
         # It is not a rare race. `ssz_generic_valid` and `ssz_generic_invalid` are two fixtures out of
         # this one tarball, the suite runs their test files in parallel, and a cold cache is every
-        # fresh clone — so the first `deno task test` after a clone failed, every time, and looked
+        # fresh clone — so the first `wac task test` after a clone failed, every time, and looked
         # enough like flakiness to be blamed on a busy machine.
         #
         # `os.replace` is atomic on one filesystem, so the name either does not exist or names a whole

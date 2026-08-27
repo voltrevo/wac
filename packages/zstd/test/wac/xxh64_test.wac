@@ -13,7 +13,7 @@
 // `test/wac/xxh64_probe.wac` stays and is imported rather than bound. It existed because `Xxh64` is a
 // struct and bindgen marshals arrays, so the whole streaming run had to happen on the wac side and
 // hand back one number — which is what a wac test would do anyway. It is kept because
-// `packages/zstd/test/cov_exercise.wac` drives it, and `deno task coverage:zstd` is how the streaming path's
+// `packages/zstd/test/cov_exercise.wac` drives it, and `wac task coverage:zstd` is how the streaming path's
 // branches are counted.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.

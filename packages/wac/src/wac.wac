@@ -31,7 +31,7 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { CallResult, Change, Child, Cli, Core, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
+import { CallResult, Change, Child, Cli, Core, Exec, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
          GRANT_RUN, GRANT_WRITE, LoadedModule, Pending, Stat, faultWords }
   from "std/platform.wac";
 import { Read } from "core";
@@ -65,6 +65,7 @@ import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
+import { Task, tasksFile, tasksIn, commandOf, hasTask, listing, nearest } from "./tasks.wac";
 import { fetchAll } from "../../wacpkg/src/fetch.wac";
 import { Shell } from "../../sh/src/exec.wac";
 import { shellMain } from "../../sh/src/entry.wac";
@@ -842,7 +843,7 @@ string usage() {
        + "                and write the lock — the only command that reaches the network\n"
        // Printed by the host until 2026-08-26, appended after this block because the command lived
        // there. It is the program's now, so its line is too — `issues/system/0257c`.
-       + "       wac uninstall [--keep-cache]   remove what `deno task wac:install` put under\n"
+       + "       wac uninstall [--keep-cache]   remove what `wac task wac:install` put under\n"
        + "                $WAC_HOME, the profile line, and nothing else\n"
        // Appended by the host after this block until 2026-08-26, because `app` was the host's
        // command and this program knew nothing about it. It is here now, and so is the command —
@@ -935,7 +936,7 @@ string[] positionals(Cli cli, i32 argc) {
 /**
  * The grants a `build` was asked for, as the bitmask `platform.wac` uses.
  *
- * The same four flags `deno task app:native` takes, and they mean the same thing: whoever packages
+ * The same four flags `wac task app:native` takes, and they mean the same thing: whoever packages
  * the program chooses what it may do, and the person running it cannot quietly widen that. A flag
  * this does not recognise is not silently ignored — see `unknownFlag`.
  *
@@ -1328,6 +1329,54 @@ export i32 main(Core core, Cli cli) {
              " wanted " + itoa(c.values.get(c.values.len() - 1)) +
              " slots " + itoa(c.values.len()));
     return 0;
+  }
+
+  // **`wac task` — the named commands in `tasks.json5`.** What `deno task` was, without needing a
+  // JavaScript host to look a name up in a table. `packages/wac/src/tasks.wac` says why, and why the
+  // grants are one set rather than seventy-eight.
+  if (cmd == "task") {
+    Cli tcli = narrowed(cli, forCommand("task"));
+    FileResult f = tcli.readFile(tasksFile()).wait();
+    if (!f.ok) {
+      core.warn("wac: no " + tasksFile() + " here — `wac task` runs the named commands a project "
+                + "keeps in one, and this directory has none");
+      return 1;
+    }
+    Task[] tasks = tasksIn(f.bytes);
+    if (tasks.len() == 0) {
+      core.warn("wac: " + tasksFile() + " has no tasks in it, or does not parse");
+      return 1;
+    }
+    // **No name lists them**, which is what `deno task` did and what 942 references in this tree have
+    // trained everyone to expect.
+    if (argc < 2) {
+      core.log("usage: wac task <name>\n\n" + listing(tasks));
+      return 0;
+    }
+    string want = string.fromBytes(cli.arg(1).wait());
+    if (!hasTask(tasks, want)) {
+      string near = nearest(tasks, want);
+      core.warn("wac: no task `" + want + "` in " + tasksFile()
+                + (near == "" ? " — `wac task` lists them" : " — did you mean `" + near + "`?"));
+      return 1;
+    }
+    // Handed to the shell this program already carries, with the arguments after the name appended so
+    // `wac task test packages/json` reaches the runner the way `wac task test packages/json` did.
+    string line = commandOf(tasks, want);
+    for (i32 i = 2; i < argc; i++) {
+      line = line + " '" + string.fromBytes(cli.arg(i).wait()) + "'";
+    }
+    // **`execWith(..., inherit)` rather than `exec`.** A task's output belongs on the terminal as it
+    // happens: `wac task test` is a four-minute suite, and `exec` buffers, so the first version of
+    // this ran everything correctly and printed nothing at all — `wac task map` exited 0 in silence
+    // and looked like it had worked. Inheriting costs the capture, which a task runner has no use
+    // for; the status is what it reports on.
+    Exec r = tcli.execWith("/bin/sh", string[]("-c", line), u8[0](), string[0](), false, true).wait();
+    if (!r.ran()) {
+      core.warn("wac: task `" + want + "` did not start — " + r.error);
+      return 1;
+    }
+    return r.status;
   }
 
   if (cmd == "uninstall") { return uninstallCommand(core, narrowed(cli, forCommand("uninstall")), argc); }
@@ -1775,7 +1824,7 @@ export i32 main(Core core, Cli cli) {
 
   // **`build` is `compile` plus the boundary.** A native host cannot run a module without knowing
   // which `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a
-  // module *and* a manifest — `deno task app:native` in one command, which is what lets this binary
+  // module *and* a manifest — `wac task app:native` in one command, which is what lets this binary
   // produce the artefact it is itself made of.
   // **`test` — one file, and it runs where `load` runs.** `issues/system/0230a` step 5.
   //
@@ -2030,7 +2079,7 @@ export i32 main(Core core, Cli cli) {
 }
 
 /**
- * Remove what `deno task wac:install` put under `$WAC_HOME`, and the line it added to a profile.
+ * Remove what `wac task wac:install` put under `$WAC_HOME`, and the line it added to a profile.
  *
  * **In the program, because it is a command and not engine work.** `issues/system/0257c` puts the
  * command surface here; this was 59 lines of Rust doing filesystem calls the program can already

@@ -31,7 +31,7 @@
 // files at one `readFile` each is 2,009 host round trips, and there is no batch read to ask for. The
 // scan itself came down from 3.9s to 2.0s of CPU by working on the file's bytes rather than building a
 // `string` per line — worth doing and not where the money is. Said out loud because this runs in
-// `deno task docs`, which the push gate runs, and a guard that quietly costs four seconds a push is a
+// `wac task docs`, which the push gate runs, and a guard that quietly costs four seconds a push is a
 // thing somebody should be able to find.
 
 import { T } from "../../packages/wactest/src/assert.wac";

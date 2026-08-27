@@ -1,6 +1,6 @@
 // Branch coverage for gzip: the shapes, run natively.
 //
-//   deno task coverage:gzip
+//   wac task coverage:gzip
 //
 // This was gzip's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The exercises
 // are carried over; what left is the reporting, which `tools/wac/covledger.wac` does for every package,

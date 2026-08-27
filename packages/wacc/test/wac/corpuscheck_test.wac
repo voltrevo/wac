@@ -41,7 +41,7 @@
 // reference thinks of the file.
 //
 // It cost a real defect to notice. A new argument-type rule reported on 36 of these files, this test
-// passed — 36 reported, 0 adjudicated — and the way it surfaced instead was `deno task seed` failing
+// passed — 36 reported, 0 adjudicated — and the way it surfaced instead was `wac task seed` failing
 // to build, because one of the 36 was `packages/fs/src/proc.wac`, which is in the seed app's graph.
 // The oracle was blind in exactly the region where the newest language features live.
 //

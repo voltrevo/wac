@@ -68,7 +68,7 @@ bytes of framing for its remnant.
 
 ### Throughput
 
-`deno task bench`, 1 MB inputs. Streaming is the price of bounded memory, and it is not
+`wac task bench`, 1 MB inputs. Streaming is the price of bounded memory, and it is not
 free — reach for it when the data does not fit or has not all arrived, not by default:
 
 | | whole buffer | streamed |
@@ -164,7 +164,7 @@ inflate(data)      // read a raw deflate stream
 
 ## Throughput
 
-`deno task bench`. On 1 MiB, with python zlib alongside:
+`wac task bench`. On 1 MiB, with python zlib alongside:
 
 | | ours | python zlib |
 |---|---:|---:|
@@ -234,7 +234,7 @@ exports are plain `(data: Uint8Array) => Uint8Array` on the JS side.
 ## Testing
 
 ```sh
-deno task test        # from the repo root
+wac task test        # from the repo root
 ```
 
 Two rules, both inherited from wac's CONTRIBUTING.md:
@@ -272,8 +272,8 @@ bytes.
 ### Branch coverage
 
 ```sh
-deno task coverage:gzip [--verbose]   # this package, including the hand-built streams
-deno task coverage [--verbose]        # every package, from its wac-native tests
+wac task coverage:gzip [--verbose]   # this package, including the hand-built streams
+wac task coverage [--verbose]        # every package, from its wac-native tests
 ```
 
 wac gained opt-in branch-coverage instrumentation
@@ -306,7 +306,7 @@ ones the tests assert on so the report describes a workload that is actually che
 Two caveats on the number:
 
 - It measures what `cov.ts` exercises, which mirrors the shapes the test suite drives
-  rather than being the suite. `deno task coverage` gets closer for packages whose tests
+  rather than being the suite. `wac task coverage` gets closer for packages whose tests
   are wac-native, since there the tests *are* the exercise; gzip's are host-side, so it
   does not. Until counters are collected during the real test run, a branch reached with
   no assertion behind it is a gap no number here can show — which is why closing the last
@@ -317,9 +317,9 @@ Two caveats on the number:
 ### Mutation testing
 
 ```sh
-deno task mutate                        # curated defects, all packages
-deno task mutate --package gzip         # just this one
-deno task mutate:operators              # ...plus generated guard and extreme mutants
+wac task mutate                        # curated defects, all packages
+wac task mutate --package gzip         # just this one
+wac task mutate:operators              # ...plus generated guard and extreme mutants
 ```
 
 Mutation testing answers what coverage is a proxy for, and answers it more directly:

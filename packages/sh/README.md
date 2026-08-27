@@ -7,7 +7,7 @@ reading — [The oracle is bash](#the-oracle-is-bash) says why nothing weaker wo
 
 ```sh
 wac run --allow-read --allow-env packages/sh/src/sh.wac -c 'seq 1 10 | grep 1 | wc -l'
-deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-env -o wacsh
+wac task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-env -o wacsh
 ./wacsh script.sh
 ```
 
@@ -26,7 +26,7 @@ directory of its own — through GNU bash and through this, and requires the sam
 *and* the same exit status. `packages/box/test/wac/corpus_test.wac` runs the other **301**, the ones
 naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
 those applets. Between them every script in the corpus is compared with bash. The three counts are
-read out of this paragraph and checked against `corpus.ts` by `tools/designClaims.test.ts`, because
+read out of this paragraph and checked against `corpus.ts` by `tools/wac/designclaims_test.wac`, because
 it said 817 for a while after the corpus had grown and the differential had shrunk — wrong in both
 directions at once. This is the only document that states the size; the rest link here.
 
@@ -122,7 +122,7 @@ and the shell uses it: a program on `$WACPATH` is started as a real child, fed t
 input, and its output and exit status are the command's.
 
 ```sh
-deno task app:build packages/platform/example/wc.wac --worker -o /tmp/bin/wc
+wac task app:build packages/platform/example/wc.wac --worker -o /tmp/bin/wc
 wacsh -c 'WACPATH=/tmp/bin; seq 1 5 | wc | rev'
 ```
 
@@ -213,7 +213,7 @@ and nothing gave it a value, so `echo $$` printed a blank line. A shell also ent
 process table now — it was the one process the system did not know about, so `ps` listed every command
 and never the shell running them.
 
-What made it safe to do at all was `deno task corpus:through`, which runs this package's own corpus
+What made it safe to do at all was `wac task corpus:through`, which runs this package's own corpus
 through some *other* shell against bash: it read 563 of 632 the first time and 649 of 649 before the
 last program went. The precondition was measured rather than assumed, and the paragraph that used to
 sit here had no number in it. The corpus is a module now — `test/corpus.ts` — because two suites read
@@ -720,7 +720,7 @@ what a shell script looks like anyway.
 
 ## Coverage
 
-`deno task coverage:sh` drives about 380 scripts through the lexer, parser and executor
+`wac task coverage:sh` drives about 380 scripts through the lexer, parser and executor
 with the capabilities faked inside wac — `test/wac/probe.wac` builds a `Core` and a `Cli` out of
 pure functions, since wac has no mutable module-level state and a funcref cannot close over
 anything. A fixed answer per path is enough to reach both sides of every branch that asks.
@@ -745,7 +745,7 @@ speak.
 
 ### Mutation testing
 
-`deno task mutate --package sh --operators` generates 117 mutants and **all 117 are killed.** That
+`wac task mutate --package sh --operators` generates 117 mutants and **all 117 are killed.** That
 is a much stronger statement than either number above, and it is the one worth re-running after any
 change to this package: coverage says a line ran, mutation says that breaking it on purpose is
 noticed. It takes about ten minutes.

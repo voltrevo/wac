@@ -1,6 +1,6 @@
 // What the Tor client costs: to ship, and to compile.
 //
-//   deno task size
+//   wac task size
 //
 // The layers are compiled separately and each pulls its own dependencies, so they do not
 // sum to the total — TLS and the Tor protocol share most of the crypto, and the shared part

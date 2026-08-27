@@ -1,7 +1,7 @@
 // http's coverage, and the file that was not being measured at all.
 //
-//   deno task coverage:http
-//   deno task coverage:http --verbose
+//   wac task coverage:http
+//   wac task coverage:http --verbose
 //
 // **505 of 523**, from 404 of 447. Two-way ratchet over `tools/wac/covledger.wac`: anything not
 // listed must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.

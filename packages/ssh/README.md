@@ -20,10 +20,10 @@ borrowed: the crypto is [`packages/crypto`](../crypto/README.md), the shell it s
 
 ```sh
 wac run --allow-read --allow-net --allow-env packages/ssh/src/ssh.wac user@host uname -a
-deno task app:build packages/ssh/src/ssh.wac --allow-read --allow-net --allow-env -o wacssh
+wac task app:build packages/ssh/src/ssh.wac --allow-read --allow-net --allow-env -o wacssh
 ./wacssh -p 2222 user@host 'seq 1 100000 | wc -l'
 
-deno task app:build packages/ssh/src/sshd.wac --allow-read --allow-net --allow-env -o wacsshd
+wac task app:build packages/ssh/src/sshd.wac --allow-read --allow-net --allow-env -o wacsshd
 ./wacsshd -p 2222 -h hostkey -a authorized_keys
 ```
 
@@ -44,8 +44,8 @@ session channels, flow control and `exec`. [What is missing](#what-is-missing) i
 this list and worth reading before you rely on any of it.
 
 ```
-deno task test packages/ssh
-deno task coverage:ssh
+wac task test packages/ssh
+wac task coverage:ssh
 ```
 
 The test that matters runs a real `sshd`, performs the version, KEXINIT and key exchanges
@@ -487,7 +487,7 @@ are asserted against RFC 4250 §4.1.2, and the refusal messages byte for byte ag
 here — `parse` reads a byte and checks it against `msgChannelEof()` — so a wrong number makes
 both sides wrong together and every interop test still passes.
 
-**Mutation testing**, `deno task mutate --package ssh --operators`, about eleven minutes:
+**Mutation testing**, `wac task mutate --package ssh --operators`, about eleven minutes:
 
 ```
 135/151 killed, 3 survived, 13 not covered

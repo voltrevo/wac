@@ -1,7 +1,7 @@
 // Branch coverage for ssz: the package's own tests, and nothing else.
 //
-//   deno task coverage:ssz
-//   deno task coverage:ssz --verbose
+//   wac task coverage:ssz
+//   wac task coverage:ssz --verbose
 //
 // **The first of the eighteen packages `issues/system/0205` records as having no coverage driver at
 // all.** That issue's open half is not "should these numbers be floors" — every driver that exists is

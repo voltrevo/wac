@@ -28,7 +28,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 /**
  * Why this cannot run, or the empty string.
  *
- * **The permission is checked first, and that is not optional.** `deno task test` grants read, write,
+ * **The permission is checked first, and that is not optional.** `wac task test` grants read, write,
  * run, net and env — *not* `--allow-sys`, which `playwright-core` needs at **import** time to work
  * out where Chrome keeps its profile. Asking for a browser without asking for that permission gives
  * a test that passes under `deno test -A` and fails inside the suite with `NotCapable: Requires sys

@@ -28,7 +28,7 @@ export const MARKER = "WAC_SUITE_RUNNING";
  * anything driven through `packages/platform/test/worker.ts`, which is where the concurrent mode is
  * tested on purpose. design/0001 D12.
  *
- * Overridable: an explicit `WAC_SCHED` in the environment wins, so `WAC_SCHED=off deno task test` is how
+ * Overridable: an explicit `WAC_SCHED` in the environment wins, so `WAC_SCHED=off wac task test` is how
  * to check a failure is not the scheduler's doing, and `WAC_SCHED=seed=1234` explores another ordering.
  */
 export const SUITE_ENV: Record<string, string> = {

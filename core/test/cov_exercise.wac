@@ -1,7 +1,7 @@
 // Branch coverage for the built-in tree: its own tests, called.
 //
-//   deno task coverage:core
-//   deno task coverage:core --verbose
+//   wac task coverage:core
+//   wac task coverage:core --verbose
 //
 // **It exists because a move would otherwise have turned coverage off.** `option.wac` and `result.wac`
 // came from `packages/std`, where `coverage:std` measured them; they are `core/`'s now, and the report

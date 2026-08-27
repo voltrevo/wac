@@ -1,7 +1,7 @@
 // `sh` — the shell as a program, entire, in wac.
 //
 //   wac run --allow-read --allow-env packages/sh/src/sh.wac -c 'echo hi | rev'
-//   deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-env -o wacsh
+//   wac task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-env -o wacsh
 //   ./wacsh script.sh
 //
 // Usage:

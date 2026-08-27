@@ -1,7 +1,7 @@
 // bignum's coverage, with the package's own tests in the measurement.
 //
-//   deno task coverage:bignum
-//   deno task coverage:bignum --verbose
+//   wac task coverage:bignum
+//   wac task coverage:bignum --verbose
 //
 // **230 of 230**, and both lists below are empty. `issues/system/0205`.
 //

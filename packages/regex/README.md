@@ -83,7 +83,7 @@ them with nested groups and alternations, which is where all three bugs were. Ev
 capture positions, not just the match. (This said 2 500 for a while; the patterns were counted once
 and then added to.)
 
-`deno task coverage:regex` reports **86.4%** as of 2026-08-11. It reported 62% the day before, of
+`wac task coverage:regex` reports **86.4%** as of 2026-08-11. It reported 62% the day before, of
 which the interesting part is *why*: `basic.wac` and `posix.wac` were both at **0.0%** — 118 of the
 package's 513 branch points — because the coverage run never called them. They were tested all along,
 by `test/basic.test.ts` against `/bin/grep`; what was missing was `cov.ts` driving the two entry

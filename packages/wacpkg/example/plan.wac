@@ -1,6 +1,6 @@
 // What a project's dependencies are, and what an ordinary build would have to fetch.
 //
-//     deno task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
+//     wac task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
 //     ./wacplan .            # or any directory holding a wac.json5
 //
 // This is the first thing that reads a manifest off a disk rather than out of a test's string, and

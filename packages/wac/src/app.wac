@@ -63,7 +63,7 @@ export string preamble(string version) {
        + APP_MARK + version + "\n"
        + "# A wac program. The wasm module begins at the first NUL byte below.\n"
        + "command -v wac >/dev/null 2>&1 || {\n"
-       + "  echo \"$0: needs the wac command on PATH — deno task wac:install\" >&2\n"
+       + "  echo \"$0: needs the wac command on PATH — wac task wac:install\" >&2\n"
        + "  exit 127\n"
        + "}\n"
        + "exec wac app-run \"$0\" \"$@\"\n";

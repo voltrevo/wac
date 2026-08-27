@@ -1,7 +1,7 @@
 // Branch coverage for git: the package's own tests, and nothing else.
 //
-//   deno task coverage:git
-//   deno task coverage:git --verbose
+//   wac task coverage:git
+//   wac task coverage:git --verbose
 //
 // One of the last packages `issues/system/0205` records as unmeasured, and notable for having **no
 // programs in `src/`** — every file is a library and every test imports it. Nine packages into this

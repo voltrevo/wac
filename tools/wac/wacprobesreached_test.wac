@@ -19,7 +19,7 @@
 // `wacBind("…/probe.wac")`, an `instrument(…)` call, a bench, a design note that points at it — and
 // every one of them writes the name.
 //
-// This is the sibling of the rule that keeps catching citations during conversions: `deno task docs`
+// This is the sibling of the rule that keeps catching citations during conversions: `wac task docs`
 // checks backticked paths, and a path passed as an argument is invisible to it. Same gap, other
 // direction.
 //

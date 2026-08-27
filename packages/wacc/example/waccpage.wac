@@ -1,6 +1,6 @@
 // The self-hosted compiler, in a tab: wac in, wasm out, and nothing else in the path.
 //
-//   deno task app:build packages/wacc/example/waccpage.wac --target browser -o page/index.html
+//   wac task app:build packages/wacc/example/waccpage.wac --target browser -o page/index.html
 //
 // The playground on the website runs the **reference** compiler — TypeScript, bundled as JavaScript.
 // This page runs `wacc`: the compiler written in wac, compiled to WebAssembly by the reference, and

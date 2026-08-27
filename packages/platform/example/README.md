@@ -16,7 +16,7 @@ You need [Deno](https://deno.com) 2 and this repository. Nothing else.
 git clone https://github.com/voltrevo/wac-mono
 cd wac-mono
 wac run --allow-read packages/platform/example/wc.wac README.md           # compile and run
-deno task app:build packages/platform/example/wc.wac --allow-read -o wc    # keep the artifact
+wac task app:build packages/platform/example/wc.wac --allow-read -o wc    # keep the artifact
 ```
 
 `app:build` writes one self-contained executable — the wasm is embedded and it fetches nothing.
@@ -36,7 +36,7 @@ parameter has no wasm imports at all — not "none that it uses", none in the bi
 `counter.wac` and `pixels.wac` export `page` instead of `main`, and want `--target browser`:
 
 ```sh
-deno task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
+wac task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
 ```
 
 That writes a single HTML file. Serve it — `file://` will not do, because a page needs an origin
@@ -45,7 +45,7 @@ before it may have a worker — and serve it *cross-origin isolated*, because th
 an isolated page. `box`'s web server does it with `-x`:
 
 ```sh
-deno task app:build packages/box/src/main.wac --allow-read --allow-net -o box
+wac task app:build packages/box/src/main.wac --allow-read --allow-net -o box
 ./box httpd -8080 page -x        # -x adds COOP and COEP
 ```
 
@@ -60,7 +60,7 @@ from scratch on every zoom while the page stays responsive. Click the picture to
 halve the view; the escape count under the pointer is displayed as you move.
 
 ```sh
-deno task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
+wac task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
 ```
 
 No grants — it reads nothing and opens nothing. Three capabilities carry the whole application:

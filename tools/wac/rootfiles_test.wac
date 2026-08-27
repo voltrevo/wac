@@ -53,13 +53,14 @@ string[] expected() {
     ".gitignore",
     "CLAUDE.md",         // the instructions every agent reads
     "CONTRIBUTING.md",   // the compiler directory's rules
-    "MAP.md",            // generated; `deno task map --check` holds it
+    "MAP.md",            // generated; `wac task map --check` holds it
     "MERGE.md",          // why a pre-2026-08-09 checkout cannot fetch this history
     "README.md",
     "SECURITY.md",
     "WASM-WISHLIST.md",
     "deno.json",
-    "deno.lock"
+    "deno.lock",
+    "tasks.json5"       // the named commands; `wac task` reads it, and `deno.json` held them until 2026-08-27
   );
 }
 

@@ -1,7 +1,7 @@
 // ens's coverage.
 //
-//   deno task coverage:ens
-//   deno task coverage:ens --verbose
+//   wac task coverage:ens
+//   wac task coverage:ens --verbose
 //
 // **72 of 89 — 80.9%** on the first run, and unusually for `issues/system/0205`'s sweep there is no
 // story about where the tests run: this package is a library, its tests import it, and the gap is an

@@ -1,6 +1,6 @@
 // Pixels, a pointer, and a frame you can keep.
 //
-//   deno task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
+//   wac task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
 //   box httpd -8080 page -x
 //
 // Everything a raster application needs, and it is three capabilities: `drawPixels` blits a

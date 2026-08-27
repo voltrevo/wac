@@ -174,7 +174,7 @@ export u8[] sha384(u8[] msg) { return oneShot(Sha512.create384(), msg, 48); }
  * `compress` used to live here: it allocated a padded duplicate of the message and copied it element-wise
  * before compressing a byte, so hashing 36 MB allocated 36 MB and read it twice. `update` compresses whole
  * blocks straight out of the caller's array and holds nothing but the 128-byte remainder, which is what
- * the one-shot form always was underneath (wac-mono 0034). `deno task bench:hash --quick`, 4 MB: 19.2 ms
+ * the one-shot form always was underneath (wac-mono 0034). `wac task bench:hash --quick`, 4 MB: 19.2 ms
  * before, 16.3 ms after — 209 MB/s to 246 MB/s.
  */
 u8[] oneShot(Sha512 s, u8[] msg, i32 bytes) {

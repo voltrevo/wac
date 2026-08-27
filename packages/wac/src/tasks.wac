@@ -1,0 +1,125 @@
+// `wac task` — the named commands a project keeps in `tasks.json5`.
+//
+//     wac task            # list them
+//     wac task test       # run one
+//
+// **This replaces `deno task`, which was a JavaScript dependency for the sake of a lookup table.**
+// 41 of this repository's 78 tasks invoke the `wac` binary, three are shell, and `CLAUDE.md` had
+// said so for months: *"`deno task` is only the task runner here; nothing in that command needs a
+// JavaScript host."* A task registry is a name, a command line, and a shell — and since
+// `issues/system/0257c` the shell is inside this program.
+//
+// ## What it is not
+//
+// **Not a build system.** There are no dependencies between tasks, no ordering, no "up to date"
+// check. `tasks.json5` is a table from a name to a command line, and running one hands that line to
+// `wac sh`. If a task needs to run another, it says so in its own command line, the way it would in
+// any shell.
+//
+// **Not `wac.json5`.** That file is the *project manifest* — `imports`, and the lockfile beside it —
+// and it means something to every project that has one, including external ones. Tasks are this
+// repository's own tooling and would look like part of the package format if they lived there.
+//
+// ## The grants
+//
+// `wac task` holds one set, from `forCommand("task")`, and the tasks inherit it. Declaring grants per
+// task was considered and rejected: nearly every entry compiles, spawns and writes, so seventy-eight
+// near-identical grant lines would have claimed to be a boundary while granting everything. The
+// honest statement is that this is a developer command which runs the repository's own tooling, and a
+// caller who wants less says so on the command line — `wac task` narrows, it cannot widen.
+
+import { Cli, Core, Exec, FileResult } from "std/platform.wac";
+import { parseJson5 } from "../../json/src/json.wac";
+import { JsonObject, JsonValue, JsonMember } from "../../json/src/value.wac";
+
+/** Where a project keeps its tasks, relative to the directory the command was run in. */
+export string tasksFile() { return "tasks.json5"; }
+
+/** One task, as the file gives it. */
+export struct Task {
+  string name;
+  string command;
+}
+
+/**
+ * Every task in `src`, in the order the file lists them, or none if it does not parse.
+ *
+ * Order is kept because the listing is read by a person: the file groups the everyday loop first and
+ * the benchmarks last, and sorting would throw that away for no gain.
+ */
+export Task[] tasksIn(u8[] src) {
+  JsonValue? parsed = parseJson5(src);
+  if (parsed is null) { return Task[0](); }
+  match (parsed!) {
+    case Object(obj): {
+      Task[] out = Task[obj.len()](fill: Task("", ""));
+      i32 n = 0;
+      for (i32 i = 0; i < obj.len(); i++) {
+        JsonMember m = obj.at(i);
+        match (m.value) {
+          case Str(bytes): {
+            out[n] = Task(m.keyStr(), string.fromBytes(bytes));
+            n = n + 1;
+          }
+          // A task whose value is not a string is not a task. Skipped rather than refused: the file
+          // may grow fields this command does not read, and a new field should not stop `wac task`
+          // from running the ones it understands.
+          else: { }
+        }
+      }
+      Task[] exact = Task[n](fill: Task("", ""));
+      for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+      return exact;
+    }
+    else: { return Task[0](); }
+  }
+}
+
+/** The command for `name`, or "" — the caller distinguishes "no such task" from "empty command". */
+export string commandOf(Task[] tasks, string name) {
+  for (i32 i = 0; i < tasks.len(); i++) {
+    if (tasks[i].name == name) { return tasks[i].command; }
+  }
+  return "";
+}
+
+/** Whether `name` is one of them, which "" cannot answer. */
+export bool hasTask(Task[] tasks, string name) {
+  for (i32 i = 0; i < tasks.len(); i++) { if (tasks[i].name == name) { return true; } }
+  return false;
+}
+
+/**
+ * The listing, one task per line, names padded to a column.
+ *
+ * The command is shown as well as the name. `deno task`'s listing did the same, and it is the
+ * difference between a list of words and something a reader can act on without opening the file.
+ */
+export string listing(Task[] tasks) {
+  i32 wide = 0;
+  for (i32 i = 0; i < tasks.len(); i++) {
+    if (tasks[i].name.len() > wide) { wide = tasks[i].name.len(); }
+  }
+  string out = "";
+  for (i32 i = 0; i < tasks.len(); i++) {
+    string pad = "";
+    for (i32 k = tasks[i].name.len(); k < wide; k++) { pad = pad + " "; }
+    out = out + "  " + tasks[i].name + pad + "  " + tasks[i].command + "\n";
+  }
+  return out;
+}
+
+/**
+ * The nearest name to `wanted`, or "" — for the message when a task does not exist.
+ *
+ * A prefix match rather than an edit distance: the names are colon-separated families, so a caller
+ * who typed `coverage` when they meant `coverage:all` is the case worth catching, and it is the one
+ * a prefix finds. Nothing here guesses at a typo.
+ */
+export string nearest(Task[] tasks, string wanted) {
+  for (i32 i = 0; i < tasks.len(); i++) {
+    string n = tasks[i].name;
+    if (n.len() > wanted.len() && n.slice(0, wanted.len()) == wanted) { return n; }
+  }
+  return "";
+}
