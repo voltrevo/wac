@@ -37,7 +37,11 @@ export async function l5Compiler(): Promise<WebAssembly.Module> {
  * Depth first and post-order, so a file is emitted after everything it imports; visited once, so a
  * diamond does not duplicate a declaration.
  */
-export async function flatten(entry: string, seen = new Set<string>()): Promise<string> {
+export async function flatten(
+  entry: string,
+  seen = new Set<string>(),
+  claimed = new Map<string, string>(),
+): Promise<string> {
   const path = await Deno.realPath(entry);
   if (seen.has(path)) return "";
   seen.add(path);
@@ -51,7 +55,7 @@ export async function flatten(entry: string, seen = new Set<string>()): Promise<
   // than like words that could also be someone's local: `pathResolveFrom`, `coreIsBuiltinSpec`.
   const aliases = new Map<string, string>();
   for (const m of text.matchAll(/^\s*import\s*\{([^}]*)\}\s*from\s*"([^"]+)"\s*;/gm)) {
-    out += await flatten(`${dir}/${m[2]}`, seen);
+    out += await flatten(await resolve(dir, m[2]), seen, claimed);
     for (const item of m[1].split(",")) {
       const a = item.trim().match(/^(\w+)\s+as\s+(\w+)$/);
       if (a) aliases.set(a[2], a[1]);
@@ -71,8 +75,79 @@ export async function flatten(entry: string, seen = new Set<string>()): Promise<
     );
     if (declared.test(text)) renames.set(orig, `${orig}_${mod}`);
   }
+  // **Two modules may each declare their own private thing with the same name** — bindgen.wac
+  // and manifest.wac both have an `orVoid`, and neither exports it, which is entirely legal
+  // until they are concatenated. The later one is renamed, which is safe precisely because it
+  // is private: nothing outside this module can be referring to it. An *exported* name that
+  // collides is a different matter and is left alone, because renaming it would break whoever
+  // imports it — and the assembler says so plainly if that ever happens.
+  for (const d of topLevelDecls(text)) {
+    if (!d.exported && claimed.has(d.name)) renames.set(d.name, `${d.name}_${mod}`);
+    if (!claimed.has(d.name)) claimed.set(d.name, mod);
+  }
   const rewrite = new Map([...renames, ...aliases]);
   return out + (rewrite.size === 0 ? text : unalias(text, rewrite)) + "\n";
+}
+
+// The names this module declares at the top level, and whether each is exported. A declaration
+// is what starts at brace depth zero and reaches a `(`, a `{` or an `=` — a function, a struct,
+// an enum or a global. Comments and strings are stepped over, because a `{` inside either would
+// otherwise leave the depth wrong for the rest of the file.
+function topLevelDecls(text: string): { name: string; exported: boolean }[] {
+  const out: { name: string; exported: boolean }[] = [];
+  const lines = text.split("\n");
+  let depth = 0;
+  let inBlockComment = false;
+  for (const raw of lines) {
+    let line = "";
+    for (let i = 0; i < raw.length; i++) {
+      if (inBlockComment) {
+        if (raw[i] === "*" && raw[i + 1] === "/") { inBlockComment = false; i++; }
+        continue;
+      }
+      if (raw[i] === "/" && raw[i + 1] === "*") { inBlockComment = true; i++; continue; }
+      if (raw[i] === "/" && raw[i + 1] === "/") break;
+      if (raw[i] === '"' || raw[i] === "'") {
+        const q = raw[i];
+        i++;
+        while (i < raw.length && raw[i] !== q) i += raw[i] === "\\" ? 2 : 1;
+        line += '""';
+        continue;
+      }
+      line += raw[i];
+    }
+    if (depth === 0) {
+      const m = line.match(
+        /^\s*(export\s+)?(?:const\s+)?(?:(?:struct|enum)\s+)?(?:[A-Za-z_][\w<>\[\]?]*\s+)?([A-Za-z_]\w*)\s*[({=]/,
+      );
+      if (m !== null && m[2] !== "import") out.push({ name: m[2], exported: m[1] !== undefined });
+    }
+    for (const c of line) {
+      if (c === "{") depth++;
+      if (c === "}") depth--;
+    }
+  }
+  return out;
+}
+
+// `"./m.wac"` is relative to the importing file and `"core/option.wac"` is a path from a package
+// root — and nothing here knows where the root is, so it is found by walking up until the spec
+// resolves. A real compiler reads it from the manifest; this is a flattener, and the answer is
+// the same one for every layout the corpus uses.
+async function resolve(dir: string, spec: string): Promise<string> {
+  if (spec.startsWith("./") || spec.startsWith("../")) return `${dir}/${spec}`;
+  let at = dir;
+  for (let i = 0; i < 12; i++) {
+    try {
+      await Deno.stat(`${at}/${spec}`);
+      return `${at}/${spec}`;
+    } catch { /* not this level */ }
+    const up = at.slice(0, at.lastIndexOf("/"));
+    if (up === "" || up === at) break;
+    at = up;
+  }
+  // Unresolved, and the caller's error names it better than anything this could throw.
+  return `${dir}/${spec}`;
 }
 
 // Identifiers only: a rename must not reach inside a string, a character literal or a comment.

@@ -2501,6 +2501,11 @@ i32 scratch_copy(i32 level, i32 n) {
 
 i32 mowner = -1;
 
+// **Whether the declaration being emitted said `export`.** Every function used to be exported,
+// which ignored the keyword and made every module-private name have to be globally unique — two
+// modules each with their own `orVoid` collided as soon as they were flattened together.
+i32 fn_exported = 0;
+
 i32 slot_new(i32 t) {
   slotty[nslot] = t;
   nslot = nslot + 1;
@@ -2553,7 +2558,9 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   while (k < blen) { emit1(load8(BODY + k)); k = k + 1; }
   zero_of(ret);
   line("end");
-  if (mowner == 0 - 1) {
+  // `main` is exported whether or not it says so: it is the entry point, and a program whose
+  // entry point cannot be called is not a program.
+  if (mowner == 0 - 1 & (fn_exported | texteq(np, nn, "main"))) {
     word("export"); emit1(34); emitname(np, nn); emit1(34); sp();
     word("func"); emit1(36); emitname(np, nn); nl();
   }
@@ -3422,7 +3429,7 @@ i32 compile(i32 s, i32 out) {
   nl();
 
   while (kind() != K_EOF) {
-    eatword("export");
+    fn_exported = eatword("export");
     if (isword("import")) { while (ispunct(59) == 0 & kind() != K_EOF) { next(); } next(); } else {
     if (isword("struct")) {
       if (record_template(T_STRUCT) == 0) { struct_decl(1, out); }
@@ -3438,6 +3445,7 @@ i32 compile(i32 s, i32 out) {
     if (ispunct(40)) {
       mowner = 0 - 1;
       function(out, ret, p, n);
+      fn_exported = 0;
     } else {
       // A global's initialiser is not run: wac's may be any expression and wasm's may not, so the
       // global emits as zero and the program is expected to set it.
