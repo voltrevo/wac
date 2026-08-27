@@ -591,7 +591,15 @@ function emitBody(f: Func, ix: Index, marks?: Mark[]): number[] {
     }
     switch (op) {
       case "i32.const": out.push(0x41, ...sleb(BigInt(t[1]))); break;
-      case "i64.const": out.push(0x42, ...sleb(BigInt(t[1]))); break;
+      // **A u64 written out is its two's-complement i64.** wac has u64 and wasm does not: the
+      // bits are the same and only the reading differs, so `9223372036854775808` — the sign bit
+      // alone, and a mask wacc writes — is the same constant as -9223372036854775808.
+      case "i64.const": {
+        let v = BigInt(t[1]);
+        if (v >= 1n << 63n) v -= 1n << 64n;
+        out.push(0x42, ...sleb(v));
+        break;
+      }
       // **Eight raw bytes, not a LEB.** A float is stored as itself, so this is the one immediate
       // in the format that is not a variable-length integer.
       case "f32.const": {

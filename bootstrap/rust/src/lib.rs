@@ -878,9 +878,17 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
                 out.push(0x41);
                 out.extend(sleb(t[1].parse().map_err(|_| WaxError(format!("line {}: literal", n)))?));
             }
+            // **A u64 written out is its two's-complement i64.** wac has u64 and wasm does not:
+            // the bits are the same and only the reading differs.
             "i64.const" => {
                 out.push(0x42);
-                out.extend(sleb(t[1].parse().map_err(|_| WaxError(format!("line {}: literal", n)))?));
+                let v: i64 = match t[1].parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => t[1].parse::<u64>().map_err(|_| {
+                        WaxError(format!("line {}: literal {} is not an integer", n, t[1]))
+                    })? as i64,
+                };
+                out.extend(sleb(v));
             }
             // **Eight raw bytes, not a LEB.** A float is stored as itself, so this is the one
             // immediate in the format that is not a variable-length integer.

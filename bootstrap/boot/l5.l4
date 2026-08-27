@@ -28,6 +28,11 @@ i32 K_NAME = 2;
 i32 K_PUNCT = 3;
 i32 K_STR = 4;
 i32 K_FLOAT = 5;
+// **An integer literal too wide for a token's value.** A token carries an i32 and wacc writes
+// 4503599627370496 — two to the fifty-second, the mantissa step a float's bits are assembled
+// from. Wrapped to an i32 it is zero, and every double the compiler emitted came out denormal.
+// Like a float, this keeps its text and lets wac-L0 parse the number itself.
+i32 K_BIGINT = 6;
 
 // ---------------------------------------------------------------- emitting
 
@@ -146,6 +151,26 @@ i32 srclen = 0;
 
 i32 pack2(i32 a, i32 b) { return a + b * 256; }
 
+// Is the decimal literal in [p0, p1) greater than `limit`, which has the same number of digits?
+// Separators are skipped, so `4_294_967_296` compares as `4294967296`.
+i32 digits_over(i32 p0, i32 p1, i32 limit) {
+  i32 i = p0;
+  i32 k = 0;
+  i32 n = load(limit);
+  while (i < p1 & k < n) {
+    if (at(i) != 95) {
+      i32 a = at(i);
+      i32 b = load8(limit + 4 + k);
+      if (a > b) { return 1; }
+      if (a < b) { return 0; }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+
 i32 lex() {
   toks = Tok[srclen + 4]();
   ntok = 0;
@@ -165,17 +190,27 @@ i32 lex() {
           if (isdigit(c)) {
             i32 v = 0;
             i32 s0 = p;
+            i32 big = 0;
+            i32 ndig = 0;
             // `0x80` — a byte range, a mask, a UTF-8 lead. A lexer written in wac is full of them
             // and there is no other way to write one. `_` separates digits in wac and means nothing.
             if (c == 48 & (at(p + 1) == 120 | at(p + 1) == 88)) {
               p = p + 2;
               while (isxdigit(at(p)) | at(p) == 95) {
-                if (at(p) != 95) { v = v * 16 + hexval(at(p)); }
+                // Eight hex digits still fit: a mask written as `0xffffffff` means all the
+                // bits of a u32, which is an i32 here and wraps to the same value.
+                if (at(p) != 95) {
+                  ndig = ndig + 1;
+                  v = v * 16 + hexval(at(p));
+                }
                 p = p + 1;
               }
             } else {
               while (isdigit(at(p)) | at(p) == 95) {
-                if (at(p) != 95) { v = v * 10 + at(p) - 48; }
+                if (at(p) != 95) {
+                  ndig = ndig + 1;
+                  v = v * 10 + at(p) - 48;
+                }
                 p = p + 1;
               }
             }
@@ -196,10 +231,24 @@ i32 lex() {
                 while (isdigit(at(p))) { p = p + 1; }
               }
             }
+            // **Thirty-two bits, not an i32's range.** `4294967295` is how a u32 mask of all
+            // ones is written and it belongs in an i32, where it is the same bits; `4503599627370496`
+            // does not fit in thirty-two and has to keep its text. The count of digits decides it,
+            // with the boundary case compared against the largest that fits.
+            if (c == 48 & (at(s0 + 1) == 120 | at(s0 + 1) == 88)) {
+              if (ndig > 8) { big = 1; }
+            } else {
+              if (ndig > 10) { big = 1; }
+              if (ndig == 10 & digits_over(s0, p, "4294967295")) { big = 1; }
+            }
             if (isf) {
               toks[ntok] = Tok(K_FLOAT, s0, p - s0, 0);
             } else {
-              toks[ntok] = Tok(K_INT, s0, p - s0, v);
+              if (big) {
+                toks[ntok] = Tok(K_BIGINT, s0, p - s0, 0);
+              } else {
+                toks[ntok] = Tok(K_INT, s0, p - s0, v);
+              }
             }
             ntok = ntok + 1;
           } else {
@@ -1499,6 +1548,18 @@ i32 primary() {
     return postfix(string_type());
   }
   if (kind() == K_INT) { konst(val()); next(); return TY_I32; }
+  if (kind() == K_BIGINT) {
+    word("i64.const");
+    // Without the separators: `1_000_000` is a number to wac and not to the assembler.
+    i32 bi = 0;
+    while (bi < tlen()) {
+      if (load8(src + tstart() + bi) != 95) { emit1(load8(src + tstart() + bi)); }
+      bi = bi + 1;
+    }
+    nl();
+    next();
+    return postfix(TY_I64);
+  }
   if (kind() == K_FLOAT) {
     word("f64.const");
     emitname(tstart(), tlen());
@@ -2169,8 +2230,12 @@ i32 ternary() {
     }
     word("if"); label(l); sp(); word("->"); slotvaltype(armty); nl();
     scratch_copy(levelA, lenA);
+    // Either arm may be narrower than the block: `wide ? 4294967295 : 2147483647` has one
+    // literal that fits an i32 and one that does not, and wasm wants both at the block's width.
+    convert(armty, t1);
     line("else");
     scratch_copy(levelB, lenB);
+    convert(armty, t2);
     line("end");
     // The two arms agree in wac, and where one is wider than the other — a plain integer
     // against an i64 — the wider one is the answer.
