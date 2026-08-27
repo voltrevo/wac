@@ -43,7 +43,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    21 sources, 1,726 KB, identical`;
+B == C    23 sources, 1,795 KB, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
