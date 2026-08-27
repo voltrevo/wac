@@ -43,6 +43,22 @@ export i32 declineByte(i32 i) {
   return declined[i];
 }
 
+// **Refusing is a different question from emitting.** `emit` neither parses for errors nor
+// type-checks — a program wac would reject still comes out the other side as a module, which is
+// why asking `emit` whether something was refused answered "no" sixty-one times. These are the
+// two phases that do the rejecting, and a case marked `refused` has to be refused by one of them.
+i32[] errs;
+
+export i32 parseErrors() {
+  errs = dumpErrors(inbuf);
+  return errs.len();
+}
+
+export i32 typeErrors() {
+  errs = dumpTypeErrors(inbuf);
+  return errs.len();
+}
+
 i32 main() {
   return 0;
 }
