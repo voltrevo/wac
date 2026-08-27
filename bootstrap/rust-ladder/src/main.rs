@@ -20,6 +20,7 @@
 use std::path::PathBuf;
 
 mod flatten;
+mod manifest;
 mod wacc;
 
 /// Where a compiler rung expects its source and leaves its output, in its own linear memory.
@@ -200,6 +201,26 @@ fn bench(scope: &mut v8::PinScope, path: &str, already_flat: bool) {
     println!("total                   {:>6} ms", (built + compiled + assembled).as_millis());
 }
 
+/// The `$bind$` exports a host needs to find without knowing the mangling, read off the module
+/// itself — which is where `native.ts` reads them from too, since they are a property of what was
+/// built rather than of what was asked for.
+///
+/// `$bind$sm_` and `$bind$fnref_` are left out: the first is a state-machine helper and the second
+/// is a callback trampoline, and both are reached another way.
+fn bind_table(scope: &mut v8::PinScope, module: &[u8]) -> Vec<(String, String)> {
+    let w = wacc::Wacc::new(scope, module.to_vec());
+    let mut out: Vec<(String, String)> = w
+        .export_names(scope)
+        .into_iter()
+        .filter(|n| {
+            n.starts_with("$bind$") && !n.starts_with("$bind$sm_") && !n.starts_with("$bind$fnref_")
+        })
+        .map(|n| (n["$bind$".len()..].to_string(), n))
+        .collect();
+    out.dedup();
+    out
+}
+
 /// V8's platform is process-wide and may be initialised once. A test binary runs its tests on
 /// several threads, so the guard is not a nicety.
 fn start_v8() {
@@ -268,8 +289,26 @@ fn main() {
             std::process::exit(1);
         }
         eprintln!("wacc built {target}: {} bytes", module.len());
+
         if let Some(path) = out_path {
-            std::fs::write(&path, &module).expect("cannot write the module");
+            // **The manifest, and the module with it inside.** A module on its own is not the
+            // artefact a host can run: it cannot say which export is the memory or what a
+            // function's wac signature was. `native.ts` writes one after compiling and so does
+            // this — see `manifest.rs` for why that copy is checked rather than trusted.
+            let sigs = manifest::parse_sigs(&w.export_sigs(scope));
+            let bind = bind_table(scope, &module);
+            let stem = path.strip_suffix(".wasm").unwrap_or(&path);
+            let base = stem.rsplit('/').next().unwrap_or(stem);
+            let text = manifest::manifest_json(
+                target,
+                &format!("{base}.wasm"),
+                manifest::Grants::from_args(&args),
+                &bind,
+                &sigs,
+            );
+            std::fs::write(&path, manifest::with_manifest_section(&module, &text))
+                .expect("cannot write the module");
+            eprintln!("wrote {path} with a wac.manifest section");
         }
         return;
     }

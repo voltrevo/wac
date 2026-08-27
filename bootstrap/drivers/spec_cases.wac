@@ -267,6 +267,26 @@ export i32 drv_declineFiles() {
   return declined.len();
 }
 
+// **What a host needs to write a manifest.** `exportSigsFiles` answers `name\tret\tparam,param`
+// per line and `bindTypesFiles` answers the `S`/`E`/`M` lines describing every struct a host can
+// hold. Both are wacc's own answers about a program, which is the point: a bootstrap that wants a
+// manifest should ask the compiler rather than carry a second opinion about what a program exports.
+u8[] textout;
+
+export i32 drv_exportSigs() {
+  textout = exportSigsFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return textout.len();
+}
+
+export i32 drv_bindTypes() {
+  textout = bindTypesFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return textout.len();
+}
+
+export i32 drv_textByte(i32 i) {
+  return textout[i];
+}
+
 i32 main() {
   return 0;
 }

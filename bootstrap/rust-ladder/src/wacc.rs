@@ -76,6 +76,32 @@ impl<'s> Wacc<'s> {
         (0..n).map(|i| self.call(scope, "drv_byteAt", &[i]) as u8).collect()
     }
 
+    /// Every name this module exports, in the order the module declares them — which is the
+    /// order `native.ts` sees, and the manifest is compared byte for byte.
+    pub fn export_names(&self, scope: &mut v8::PinScope<'s, '_>) -> Vec<String> {
+        let names = self.exports.get_own_property_names(scope, Default::default()).unwrap();
+        let mut out = Vec::new();
+        for i in 0..names.length() {
+            let k = v8::Integer::new(scope, i as i32).into();
+            if let Some(v) = names.get(scope, k) {
+                out.push(v.to_rust_string_lossy(scope));
+            }
+        }
+        out
+    }
+
+    /// A text answer from the driver, byte at a time.
+    fn text(&self, scope: &mut v8::PinScope<'s, '_>, ask: &str) -> String {
+        let n = self.call(scope, ask, &[]);
+        let bytes: Vec<u8> = (0..n).map(|i| self.call(scope, "drv_textByte", &[i]) as u8).collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// `name\tret\tparam,param` per exported function, from wacc.
+    pub fn export_sigs(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
+        self.text(scope, "drv_exportSigs")
+    }
+
     /// Why a linked build declined, or `""`.
     pub fn decline(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
         let n = self.call(scope, "drv_declineFiles", &[]);

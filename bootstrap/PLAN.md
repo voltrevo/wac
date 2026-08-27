@@ -156,14 +156,20 @@ wac-L5 does not emit bindgen. The first compiler in the chain is the one that ha
 without help, so `drivers/spec_cases.wac` is concatenated onto its source and every value crosses
 as an i32. Four million V8 calls for a 1.6 MB answer.
 
-**What is left is the manifest.** `native.ts` compiles and then appends a `wac.manifest` custom
-section; a module without it is not the artefact `build.rs` embeds. Two things to settle:
+**The manifest is written, and checked rather than trusted.** `rust-ladder/src/manifest.rs`
+assembles the `wac.manifest` section — everything in it is answered by wacc (`exportSigsFiles`) or
+read off the module's own export list, which is where `native.ts` reads the `bind` table from too.
+`ts/manifest_test.ts` builds one program both ways and compares the two manifests byte for byte,
+so a change to wac's format fails here rather than downstream of a bootstrap.
 
-- The manifest's shape, which `describeFiles` can answer for but which then has to be assembled
-  into whatever `withManifestSection` writes today.
-- **Where the boundary is.** wacboot producing `wacc.wasm` may be the right end of its job, with
-  wac's own pipeline doing the rest — except that pipeline is `native.ts`, which is Deno. That is
-  the circularity the criterion is about, and it is worth deciding rather than assuming.
+**Its limit, stated:** a program with no structs and no callbacks. Filling those needs
+`bindTypesFiles`' `S`/`E`/`M` lines parsed, which is the next piece and is what the `wac` CLI —
+which hands the host both — will need.
+
+**The boundary question is answered by having done it.** wacboot writes the manifest because that
+is the only way to close the loop without Deno: wac's own pipeline is `native.ts`, and that is
+TypeScript run by Deno. The drift that a copied format invites is handled by the differential
+rather than by hoping.
 
 ---
 
