@@ -469,3 +469,49 @@ concatenates modules and renames declarations that collide, which is the work `i
 done if wac-L5 implemented it. That is what the shortcut costs, and it is TypeScript that has to be
 trusted, so it belongs in the same column as the assembler rather than the same column as the
 tests.
+
+## How much code is in each rung
+
+                                        lines    code   comment
+    wac-L0  the format                    207       —            spec/l0.md
+              assembler, TypeScript       832     661       20%
+              assembler, Rust           1,212   1,067       11%
+    wac-L1  interpreter, hand-written   1,804   1,630        9%
+    wac-L2  compiler, in wac-L1           298     200       32%
+    wac-L3  compiler, in wac-L2           583     458       21%
+    wac-L4  compiler, in wac-L3         1,326   1,079       18%
+    wac-L5  compiler, in wac-L4         3,795   3,100       18%
+                                        9,850   8,195
+
+Against the reference, like for like: 19,499 lines and 13,009 of code. So the ladder is 63% of it
+by code rather than the 50% the raw line counts suggest — the reference is more heavily commented
+than this table's average, and comparing totals flattered us.
+
+**Each compiler is about two and a half times the one below**: 200, 458, 1,079, 3,100. That ratio
+is the shape of the thing. A rung buys exactly enough language to make writing the next one
+affordable, and if the ratio were much larger the ladder would need more rungs, and if it were much
+smaller it would need fewer.
+
+L1 is 9% comment because it is assembly — one instruction per line, and a comment per instruction
+would double the file. L2 is 32% because it is the smallest file and has the most to explain per
+line: it is the first thing written in a language nobody has ever written anything in.
+
+**wac-L5 is 38% of the ladder on its own**, and that is the one rung whose size was not a choice:
+every other rung's language was picked to make the next one cheap, and L5's was handed to us by
+whatever `packages/wacc/src` happens to be written in.
+
+Inside it, four sections are 83% of the code:
+
+    declarations    978      structs, enums, methods, templates, the emit pass
+    expressions     835      precedence, calls, the builtin methods, casts
+    statements      382      if, while, for, match, return, assignment
+    types           373      the type table, arrays, funcrefs, instantiation
+    the lexer       159
+    everything else 373
+
+The lexer being 159 lines is the part worth noticing. So is generics: the section dedicated to
+templates is 57 lines of code, because monomorphisation here is "record the token index, re-read
+the body with the letters bound" — and the parser's entire state is one integer into the token
+array, so rewinding is free. The expensive part of generics in a normal compiler is having
+somewhere to put a partially-instantiated type; there is nowhere to put anything here, so there is
+nothing to put.
