@@ -4346,6 +4346,10 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   } else {
     scanTokenTypes(env, src, lexed);
   }
+  // **Still the blob here.** The per-file driver — each pass across every file, `env.curFile` set
+  // around each — is written and does not yet work: it reaches `frontOf`'s consumers and they report
+  // declines (`a call to \`ready\` … not in the program`). The pieces it needs are all in place and
+  // verified; what is missing is a way to see *why* at less than a seed rebuild per attempt.
   collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
@@ -12488,20 +12492,59 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   }
 }
 
-/** Between passes 1 and 2: what could not be named until every struct in the program existed. */
-void resolveStructRefs(Env env, u8[] src, Lexed lexed) {
+/** The file a declared key came from, or -1 when nothing declared it. */
+i32 fileOfKey(Env env, string key) {
+  for (i32 i = 0; i < env.declCount; i++) {
+    if (env.declKeys[i] == key) { return env.declFiles[i]; }
+  }
+  return 0 - 1;
+}
+
+/** That file's source, or the blob when there is no per-file set. */
+u8[] srcFor(u8[][] srcs, u8[] blob, i32 fi) {
+  return fi >= 0 && fi < srcs.len() ? srcs[fi] : blob;
+}
+
+/** That file's lex, likewise. */
+Lexed lexFor(Lexed?[] lexeds, Lexed blob, i32 fi) {
+  if (fi < 0 || fi >= lexeds.len() || (lexeds[fi] is null)) { return blob; }
+  return lexeds[fi]!;
+}
+
+/**
+ * Between passes 1 and 2: what could not be named until every struct in the program existed.
+ *
+ * **Each entity is resolved against the file that declared it.** A parent token and a field's `Ty`
+ * are token *indices*, and an index means nothing without the array it came from. While the whole
+ * program was one blob there was only one array and the question never arose; per file, resolving a
+ * field of the third file against the first file's tokens reads whatever bytes happen to be at that
+ * offset — which surfaced as `no method }<"../../sh/src/entry.wac">.len`, a name built from the
+ * middle of somebody else's source.
+ *
+ * The file is derived rather than stored: a field knows its owning struct (`fieldOwners`), a struct
+ * knows its key, and `declFiles` already records the file each key was declared in.
+ */
+void resolveStructRefs(Env env, u8[] src, Lexed lexed, u8[][] srcs, Lexed?[] lexeds) {
 
   // **Now** the parents can be named: every struct in the program is declared, so `Shape` resolves
   // to the same key whether it was written above its child or below it.
   for (i32 i = 0; i < env.structCount; i++) {
     if (env.structParentToks[i] < 0) { continue; }
-    env.structParents[i] = nameKeyOf(env, src, lexed, env.structParentToks[i]);
+    i32 sf = fileOfKey(env, env.structNames[i]);
+    env.curFile = sf;
+    env.structParents[i] = nameKeyOf(env, srcFor(srcs, src, sf), lexFor(lexeds, lexed, sf),
+                                     env.structParentToks[i]);
+    env.curFile = 0 - 1;
   }
   // And the fields, for the same reason and with the same timing: a field written with a name this
   // file imported resolves only once the file it came from has been walked.
   for (i32 i = 0; i < env.fieldCount; i++) {
     if (env.fieldTys[i] is null) { continue; }
-    env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
+    i32 ff = fileOfKey(env, env.fieldOwners[i]);
+    env.curFile = ff;
+    env.fieldTypes[i] = typeOfTyName(env, srcFor(srcs, src, ff), lexFor(lexeds, lexed, ff),
+                                     env.fieldTys[i]!);
+    env.curFile = 0 - 1;
   }
   // **A supertype must be declared before its subtype**, and a rec group does not lift that: being
   // mutually visible is not the same as being defined, and wasm answers a child written first with
@@ -12535,7 +12578,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
   // Kept, so a call to a generic function can read the declaration it names from wherever it is
   env.prog = prog;
   declareStructs(env, src, lexed, prog, file);
-  resolveStructRefs(env, src, lexed);
+  resolveStructRefs(env, src, lexed, u8[][0](fill: u8[0]()), Lexed?[0]());
   declareConsts(env, src, lexed, prog, file);
   declareFuncs(env, src, lexed, prog, file);
   declareBodyTypes(env, src, lexed, prog, file);
