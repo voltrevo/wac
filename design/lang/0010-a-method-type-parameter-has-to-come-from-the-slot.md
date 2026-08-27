@@ -212,9 +212,19 @@ where nothing else determines the letter, which for a well-designed API is rare.
 
 C needs no inference work, but it is not free:
 
-1. **`Pending<T>.then` does not exist in the value-returning form.** `std/platform.wac:286` is
-   `void then(this, fn[void(T)] f)`. Declaring `Pending<U> then<U>(this, fn[U(T)] f)` is part of this,
-   and it is a change to the capability surface rather than to the compiler.
+1. **`Pending<T>.then` does not exist in the value-returning form**, and this item **understates what
+   it is**. `std/platform.wac:286` is `void then(this, fn[void(T)] f)`, which registers a handler and
+   returns nothing. A `Pending<U> then<U>(this, fn[U(T)] f)` has to *make a second ticket* and resolve
+   it when the first resolves — that is scheduler plumbing, not a signature. The machinery is there
+   (`Pending.of` takes a resolve function) but wiring a derived ticket is a platform feature.
+
+   Two further facts, measured 2026-08-27: the existing `then` has **five** real callers, all passing
+   a void lambda, so the two forms cannot share a name — wac has no overloading, and a void-bodied
+   lambda cannot satisfy `fn[U(T)]`. And `std/platform.wac` is embedded verbatim in
+   `packages/wacc/src/coretext.wac`, so any change to it needs `deno task gen:core` and a reseed.
+
+   None of that is compiler work, and the compiler no longer stands in its way: `spec/cases/0248`
+   chains three of them on a `Cell<T>` written for the purpose.
 2. **Method type parameters are refused in three places** — twice in the checker, per the section
    below, and once in the emitter's decline path (`issues/lang/0160`'s guards). All three have to go.
 3. **The emitter monomorphises per (owner instantiation × method type arguments)**, which is the
@@ -262,7 +272,7 @@ the module's numbering.
 | 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this |
 | 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — nothing infers a method's own letters. A separate feature from item 3, and the one that would make C invisible at most call sites |
 | 3 | `v.fold<i64>(0, …)` with one | **yes** — `spec/cases/0245`, answers 12, with an **inline lambda** |
-| 4 | `p.then<Foo>(…)` | **not tried** — `Pending<U> then<U>(…)` still does not exist. The compiler can now carry it; whether `Pending` should grow it is a capability-surface decision, and it wants criterion 5 first since chaining is the reason to |
+| 4 | `p.then<Foo>(…)` | **the compiler is ready; the platform is not.** See below — this is more than the declaration item 1 calls it |
 | 5 | a three-link chain | **yes** — `spec/cases/0248`, answers 9, three inline lambdas each changing the type. `issues/lang/0274b` closed |
 | 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **yes** — `spec/cases/0246`, measured in emitted bytes: 3,287 against 2,897 for the one-instantiation program |
 
