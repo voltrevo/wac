@@ -6,6 +6,40 @@ reference compiler it would replace?**
 
 The question is a number, and this repository exists to produce it rather than to argue about it.
 
+**It works.** The ladder compiles `packages/wacc/src` — 37,873 lines of real wac — into a wasm
+module the engine accepts; that module compiles wac's own source again; and the two compilers
+produce byte-identical output for 295 of the corpus's 296 entry points, the 296th being declined by
+both. All 252 of wac's `spec/cases` come out exactly as their expectations say. There is no
+historical wasm anywhere in the chain: an assembler written twice from a written format, an
+interpreter, four compilers, and then the real compiler reproducing itself.
+
+Three commands say so, and each is a test rather than a claim:
+
+    deno test -A ts/                          # 220 tests, three seconds
+    deno run -A ts/spec_cases.ts              # 252 of wac's spec cases, through the built wacc
+    deno run -A ts/corpus_differential.ts     # the whole corpus, two compilers, compared
+
+## The answer to the question
+
+**The ladder is 9,834 lines against the reference's 19,499** — but the line count is the less
+interesting half, because the two numbers are not the same kind of thing.
+
+    what a human must read to trust it
+      wac-L0 assembler, one of the two           832 lines   (the other is the check, not the trust)
+      wac-L1 interpreter, hand-written         1,804 lines
+                                               -----------
+                                               2,636 lines
+
+    what is derived from that, and checked by running it
+      wac-L2 ... wac-L5                        5,986 lines
+      the second assembler                     1,212 lines
+
+The reference's 19,499 lines are all in the first column: every one of them is trusted because
+somebody read it. Here, 2,636 are — and one of those two files is checked against a second
+implementation of the same written format, so even the root has two witnesses rather than one.
+
+That is the case for a ladder, and it is a different case from "fewer lines".
+
 ## The ladder
 
 Every rung is a language, and every rung's compiler is written in the rung below. **wac-L0 is the
@@ -20,7 +54,7 @@ everything above it is trusted by derivation.
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 200 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 452 lines |
 | **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,005 lines |
-| **wac-L5** | wac itself — *all of `core/`, 3 of `wacc/src`* | wac-L4 | 2,030 lines |
+| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 3,779 lines |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names
@@ -33,7 +67,8 @@ written in: full wac minus the nine omissions `compiler/README.md` documents, an
 Its compiler is the last program in the chain, and compiling `packages/wacc/src` with it produces
 `wacc.wasm` — after which wac is self-hosting, as it already is today.
 
-**Stages 1 and 2 exist**: real wac syntax, and its type system. Structs with `const this` methods,
+**Every stage exists.** Real wac syntax, its type system, generics by monomorphisation,
+and enough of the surface that the corpus compiles. Structs with `const this` methods,
 enums with comma-separated variants, `match` as both a statement and an expression, arrays, `u8[]`,
 reference globals — compiled through six languages and two interpreters.
 
@@ -69,9 +104,29 @@ which `design/lang/0003` calls the instrument behind most of this year's defects
 ## What is here
 
     spec/l0.md      the assembly format: line-oriented, one instruction per line, no folding
-    ts/              the assembler in TypeScript
-    rust/            the assembler in Rust
-    tests/           modules in .wax, and what they should answer
+    ts/             the L0 assembler in TypeScript, the drivers, and the instruments
+    rust/           the L0 assembler in Rust
+    boot/           every rung's compiler, each written in the rung below
+    drivers/        wac programs that give a host a way to ask a built compiler something
+    tests/l0/       modules in .l0, and what they should answer
+
+The instruments are worth naming, because each was built for a failure the one before it could not
+see:
+
+    ts/against_real_wac.ts     every corpus entry point through wac-L5: refused, or assembled, or
+                               validated — with the function count beside the byte count, because a
+                               file of nothing but generic declarations emits nothing and validates
+    ts/first_refusal.ts        what wac-L5 would not read, which function it is in, and how many
+                               *distinct* refusals there are rather than how many times the
+                               commonest one appears
+    ts/validate_real_wac.ts    what it read and emitted wrongly — the engine reports a byte offset
+                               and nothing else, so the assembler hands back a map to a wac-L0 line
+    ts/run_real_wac.ts         what it emitted that traps, with the frames named through that map
+    ts/ask_wacc.ts             one program through the built wacc, *run* — because `f` being
+                               exported is not `f` being right
+    ts/spec_cases.ts           all 252 of wac's spec cases, each against its own expectation
+    ts/selfhost.ts             the built wacc building wacc, and the two compared
+    ts/corpus_differential.ts  the same, over every package in the repo
 
 **Two assemblers on purpose.** The format exists so that no step of the bootstrap needs a binary
 nobody can read, and the way to be sure the format is that simple is to implement it twice and
@@ -80,48 +135,27 @@ lose by retiring its reference compiler, so it is worth practising here.
 
 ## Status
 
-**Four rungs work.** `boot/l1.l0` is a 1,457-instruction s-expression interpreter, hand-written.
-`boot/l2.l1` is a compiler for wx — functions, locals, globals, `if`, `while`, recursion, sixteen
-operators, byte and word memory — written in sx, in **167 lines**. A wx program goes all the way to
-wasm with nothing but the interpreter and the assembler in the path.
+**Every rung works, and the ladder closes.**
 
-`boot/l3.l2` is a compiler for **wac-0** — C-family syntax, typed parameters, declarations with
-shadowing, `return`/`if`/`else`/`while`, precedence climbing — in **345 lines** of wx. `fib(20)`
-answers 6765 through four languages and two interpreters.
+`boot/l1.l0` is a 1,630-instruction s-expression interpreter, hand-written, and the last
+hand-written parser in the chain. `boot/l2.l1` is a compiler in 298 lines of it; `boot/l3.l2` a
+compiler in 583 lines of *that*; `boot/l4.l3` 1,326 lines emitting wasm GC; and `boot/l5.l4` — the
+compiler for wac itself — 3,779 lines of wac-L4.
 
-    i32 fib(i32 n) {
-      if (n < 2) { return n; }
-      return fib(n - 1) + fib(n - 2);
-    }
+Cold, the whole chain builds in under two seconds, and building wacc with it takes a second more.
 
-`boot/l4.l3` is a compiler for **wac-1** — structs, arrays, `null`, and a type system — in 754
-lines of wac-0, emitting **wasm GC**. No allocator anywhere in the ladder:
+    wac-L0 assembler, written twice        832 lines TypeScript, 1,212 Rust
+      -> wac-L1 interpreter                1,630 instructions, hand-written
+        -> wac-L2 -> wac-L3 -> wac-L4 -> wac-L5
+          -> wacc                          661,626 bytes, from 37,873 lines of wac
+            -> wacc again                  681,417 bytes, in three quarters of a second
+              -> and the two agree byte for byte on 295 of 296 corpus entry points
 
-    struct Node { i32 value; Node[] kids; }
+**No type checker, and none missing.** wasm validation is one, and it is total: every wac-level
+type error is refused before the program runs, by the engine or by the compiler's own refusal
+marker. What wac-L5 does check is what wasm cannot see — that a name resolves, that a method
+exists, that a `case` names a variant.
 
-    i32 total(Node n) {
-      i32 sum = n.value;
-      i32 i = 0;
-      while (i < n.kids.len()) { sum = sum + total(n.kids[i]); i = i + 1; }
-      return sum;
-    }
-
-...and `enum` with payloads, `match`, and methods:
-
-    enum Expr { Num(i32 v); Add(Expr a, Expr b); Neg(Expr a); }
-
-    i32 eval(Expr e) {
-      match (e) {
-        case Num(v): { return v; }
-        case Add(a, b): { return eval(a) + eval(b); }
-        case Neg(a): { return 0 - eval(a); }
-      }
-      return 0;
-    }
-
-which is the shape wac's own compiler is written in.
-
-**There is deliberately no type checker**, and none is missing: wasm validation is one, and it is
-total — every wac-level type error is refused before the program runs, by the engine or by the
-compiler's own refusal marker. `spec/l4.md` has the table. What is left is `T?` and generics.
-`NOTES.md` has the numbers and the bugs.
+`NOTES.md` has the numbers and the bugs, and the bugs are the more useful half: six of them were
+found only by *running* what the built compiler produced, which is the difference between a module
+that validates and a compiler that works.
