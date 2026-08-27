@@ -248,8 +248,26 @@ export string test_only_sanctioned_files_reach_the_reference(Core core, Cli cli)
  *
  * **Zero non-test modules reach outward already.** The five exceptions below are all tests, and all
  * of them are *project-level differentials* rather than unit tests of the reference: they ask whether
- * it agrees with `spec/` or with the tree. They belong beside the thing they compare against, and
- * moving them is what makes the rule above true.
+ * it agrees with `spec/` or with the tree.
+ *
+ * ## Moving them was tried on 2026-08-27 and is the wrong mechanism
+ *
+ * `git mv` to `spec/test/` works — 612 tests pass there, and the only edits are import specifiers,
+ * `import.meta.url` depths and two paths spelled with backticks rather than quotes. Then the link
+ * guard reports **34 backticked references that name nothing**, most of them in *closed* issues:
+ * sentences like "held by `compiler/wacSpec.test.ts`" that were true when they were written. Editing
+ * those is falsifying a dated record, which is the mistake `issues/lang/0277a`'s sibling commit spent
+ * a morning undoing after a blanket rename did exactly that.
+ *
+ * `packages/wacc/test/specCases.json` settles it: it records `"source": "compiler/wacSpec.test.ts"`
+ * **with a sha256**, and `specmulti_test.wac` refuses a corpus taken from a different file. The path
+ * is data, not just prose.
+ *
+ * **So the boundary should be declared rather than walked to.** The operator's goal is *"only rerun
+ * these tests if that subproject actually changed"* — which needs a runner to know which tests are
+ * the subproject's own, and that is this list, not a directory. A `// test-lane:`-style marker on the
+ * five, or this array read by the runner, gets the same rule with no churn and no rewritten history.
+ * The move is worth revisiting only if the reference's tests ever need to *ship* separately.
  */
 string[] reachesOutward() {
   return string[](
