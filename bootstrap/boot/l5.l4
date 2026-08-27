@@ -578,14 +578,17 @@ i32 ty_array(i32 elem) {
   i32 i = 0;
   i32 found = 0 - 1;
   while (i < ntype) {
-    if (types[i].kind == T_ARRAY & types[i].elem == elem) { found = i; }
+    if (types[i].kind == T_ARRAY & types[i].elem == elem & types[i].nfields == 0) { found = i; }
     i = i + 1;
   }
   if (found == 0 - 1) { found = ty_new(T_ARRAY, 0, 0, elem); }
   return found;
 }
 
+// `string` and `u8[]` are one wasm type — the distinction is wac-L5's and stops here. So the
+// string's entry is never declared and never named; `strbase` is what both are called.
 i32 tyname(i32 t) {
+  if (t == strty & strty != 0 - 1) { t = strbase; }
   if (types[t].kind == T_ARRAY) { emits("$a"); } else {
     if (types[t].kind == T_ENUM) { emits("$e"); } else {
       if (types[t].kind == T_FUNC) { emits("$f"); } else { emits("$s"); }
@@ -708,8 +711,20 @@ i32 binop_signed(i32 t, i32 name) {
 // here can observe.
 i32 strty = -1;
 
+// **`string` is not `u8[]`,** though it is the same bytes and the same wasm type. The two
+// differ in one place and it is the place the corpus leans on: `b[i]` on a `u8[]` is the byte,
+// and `s[i]` on a `string` is the one-character string. So it gets its own entry, marked by
+// `nfields`, which an array does not otherwise use, and `ty_array` steps over it so that
+// `u8[]` written out still finds the plain one.
+i32 strbase = -1;
+
 i32 string_type() {
-  if (strty == 0 - 1) { strty = ty_array(TY_U8); }
+  if (strty == 0 - 1) {
+    // The plain one first, so that `strbase` exists before anything can ask `tyname` for it.
+    strbase = ty_array(TY_U8);
+    strty = ty_new(T_ARRAY, 0, 0, TY_U8);
+    types[strty] = Ty(T_ARRAY, 0, 0, TY_U8, 0, 1);
+  }
   return strty;
 }
 
@@ -719,6 +734,7 @@ i32 usedslice = 0;
 i32 usedfromcp = 0;
 i32 usedindexof = 0;
 i32 usedtrim = 0;
+i32 usedcharat = 0;
 i32 usedeq = 0;
 
 i32 prim_type() {
@@ -1193,6 +1209,7 @@ i32 postfix(i32 t) {
         // one array type serves both.
         if (t == strty & texteq(p, n, "toBytes")) {
           want(40); want(41);
+          t = ty_array(TY_U8);
         } else {
         // `bytes.byte(i)` — the element, unsigned, which for a `u8[]` is what indexing means.
         if (t == strty & texteq(p, n, "byte")) {
@@ -1258,6 +1275,13 @@ i32 postfix(i32 t) {
         expr();
         want(93);
         if (types[t].kind != T_ARRAY) { oops(); }
+        // `s[i]` on a string is the character, which is a string of one byte rather than the
+        // byte — `inst[i] == "<"` is how the corpus reads a character, and comparing a byte
+        // with a string would be a type error one rung down.
+        if (t == strty) {
+          usedcharat = 1;
+          line("call $__charat");
+        } else {
         i32 et = types[t].elem;
         if (ty_packed(et) != 0) {
           emits("array.get"); signedsuffix(et); sp(); tyname(t); nl();
@@ -1265,6 +1289,7 @@ i32 postfix(i32 t) {
           word("array.get"); tyname(t); nl();
         }
         t = et;
+        }
       }
     }}
   }
@@ -2417,6 +2442,8 @@ i32 emit_typedecls() {
   dp = typep;
   i32 i = 0;
   while (i < ntype) {
+    // `string` shares `u8[]`'s wasm type, so it has no declaration of its own to write.
+    if (i == strty) { i = i; } else {
     if (types[i].kind == T_STRUCT) {
       word("type"); tyname(i); sp(); word("struct");
       i32 j = 0;
@@ -2444,6 +2471,7 @@ i32 emit_typedecls() {
       word("->");
       slotvaltype(types[i].elem);
       nl();
+    }
     }
     i = i + 1;
   }
@@ -2852,6 +2880,19 @@ i32 emit_runtime() {
   }
   // `trim` answers a range of its argument, which is what `slice` already builds.
   if (usedtrim) { usedslice = 1; }
+  if (usedcharat) {
+    // One byte, as a string. `array.new_fixed` with a count of one is the whole of it: the
+    // element is read before the array exists, which is the order the instruction wants.
+    word("func"); line("$__charat -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    line("param i32 $i");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.new_fixed"); tyname(at2); line(" 1");
+    line("end");
+    nl();
+  }
   if (usedindexof) {
     // Naive substring search: every start offset, and at each one a walk of the needle. The
     // inner loop leaves `$j` short of the needle's length on a mismatch, so the two ways out of
@@ -3204,6 +3245,7 @@ i32 compile(i32 s, i32 out) {
   usedfromcp = 0;
   usedindexof = 0;
   usedtrim = 0;
+  usedcharat = 0;
   usedeq = 0;
   tmpls = Tmpl[4096]();
   tparams = TParam[8192]();

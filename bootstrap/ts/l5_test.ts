@@ -243,21 +243,27 @@ const programs: [string, string, number][] = [
   // writes one; an emitted `$__strlit` lifts it into the array.
 
   ["a literal, its length and its bytes", `
-    i32 main() { string s = "hello"; return s.len() * 100 + s[0]; }`, 604],
+    i32 main() { string s = "hello"; return s.len() * 100 + s.byte(0); }`, 604],
+
+  // **`s[i]` is the character, not the byte** — a string of length one, which is what
+  // `inst[i] == "<"` in wacc's own source means by it. `.byte(i)` is the byte. These were one
+  // thing here until the corpus asked for both.
+  ["a character is a string of one", `
+    i32 main() { string s = "a<b"; return (s[1] == "<" ? 1 : 0) * 10 + s[1].len(); }`, 11],
 
   ["concatenation, which is what 659 sites in wacc's source do", `
     i32 main() {
       string a = "Point";
       string b = "sum";
       string j = a + "_" + b;
-      return j.len() * 1000 + j[5] * 10 + (j[0] == 80 ? 1 : 0);
+      return j.len() * 1000 + j.byte(5) * 10 + (j.byte(0) == 80 ? 1 : 0);
     }`, 9951],
 
   ["an empty literal", `i32 main() { return ("" + "ab").len(); }`, 2],
 
   ["a string through a parameter and a return", `
     string twice(string s) { return s + s; }
-    i32 main() { string d = twice("ab"); return d.len() * 10 + d[2]; }`, 137],
+    i32 main() { string d = twice("ab"); return d.len() * 10 + d.byte(2); }`, 137],
 
   ["a string in a struct", `
     struct Named { string name; i32 id; }
