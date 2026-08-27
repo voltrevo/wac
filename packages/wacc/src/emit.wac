@@ -404,7 +404,7 @@ string primTypeName(Env env, u8[] src, Lexed lexed, Expr obj) {
 
 /** The key a name token means — its own file's declaration, or whichever file has one. */
 string nameKeyOf(Env env, u8[] src, Lexed lexed, i32 tok) {
-  return env.keyAt(tokenTextOf(src, lexed, tok), env.fileOf(tokenLine(lexed, tok)));
+  return env.keyAt(tokenTextOf(src, lexed, tok), fileFor(env, lexed, tok, 0 - 1));
 }
 
 /** A non-negative number as text, for building a key no source can spell — and for a diagnostic. */
@@ -2394,6 +2394,21 @@ export struct Env {
    */
   bool usedData;
 
+  /**
+   * The file the walk is currently inside, or -1 when it is walking the concatenated blob.
+   *
+   * **On `Env` rather than a parameter, deliberately.** A declaration's file used to be recovered
+   * from its line by `fileOf`, which works only because every line of one big string is unique. Per
+   * file, `tokenLine` answers the file's *own* line, and that arithmetic then names the wrong file —
+   * a compiler that builds and traps. The call sites that need the answer are inside helpers like
+   * `nameKeyOf` that take `(src, lexed)` and cannot know which file they are for; threading an index
+   * through the 101 functions taking that pair, to reach five of them, is not a trade worth making.
+   *
+   * The driver sets it around each per-file pass. Every caller that still hands the emitter one
+   * concatenated source leaves it at -1, and the old arithmetic runs unchanged.
+   */
+  i32 curFile;
+
   /** Whether the local at `i` is a promoted cell. */
   bool localIsCell(const this, i32 at) {
     return at >= 0 && at < this.localCell.len() && this.localCell[at];
@@ -2622,7 +2637,7 @@ export struct Env {
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
                false, string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
-               i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false);
+               i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1, B.create(), false, false, 0 - 1);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -5832,7 +5847,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       if (raw == env.curGeneric && env.curInst != "") { return env.curInst; }
       // **The key, not the name.** Two linked files may each declare a `K`, and what tells them
       // apart is the line this one is written on.
-      return env.keyAt(raw, env.fileOf(tokenLine(lexed, tok)));
+      return env.keyAt(raw, fileFor(env, lexed, tok, 0 - 1));
     }
     // An array spells itself from the element out, exactly as the checker's `typeOfTy` does. Left
     // out, every array type came back as the empty string — the type section had no array entry, the
@@ -5915,7 +5930,7 @@ string armVariant(Env env, u8[] src, Lexed lexed, i32 tok, string en) {
     // prefix of the key rather than the key.
     if (vk.len() > raw.len() && vk.slice(0, raw.len() + 1) == raw + "@") { return vk; }
   }
-  return env.keyAt(raw, env.fileOf(tokenLine(lexed, tok)));
+  return env.keyAt(raw, fileFor(env, lexed, tok, 0 - 1));
 }
 
 /**
@@ -12193,8 +12208,14 @@ i32 fileCountOf(Program?[] progs) {
   return n;
 }
 
-/** The file a token belongs to: the caller's, or the blob's line arithmetic when there is none. */
+/**
+ * The file a token belongs to.
+ *
+ * The walk's own file if it has one, then the caller's, and only then the blob's line arithmetic —
+ * which is right exactly when every line in play came from one concatenated string.
+ */
 i32 fileFor(Env env, Lexed lexed, i32 tok, i32 file) {
+  if (env.curFile >= 0) { return env.curFile; }
   return file >= 0 ? file : env.fileOf(tokenLine(lexed, tok));
 }
 
@@ -13667,7 +13688,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
-          i32 tf = env.fileOf(tokenLine(lexed, nameTok));
+          i32 tf = fileFor(env, lexed, nameTok, 0 - 1);
           string tplPath = tf >= 0 && tf < env.filePaths.len() ? env.filePaths[tf] : "";
           string bind = bindNameOf(bindTypeSpelling(env, inst, tplPath));
           for (i32 m = 0; m < methods.len(); m++) {
@@ -13871,13 +13892,13 @@ string templatePathOf(Env env, u8[] src, Lexed lexed, string tpl) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
-        i32 f = env.fileOf(tokenLine(lexed, nameTok));
+        i32 f = fileFor(env, lexed, nameTok, 0 - 1);
         return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
-        i32 f = env.fileOf(tokenLine(lexed, nameTok));
+        i32 f = fileFor(env, lexed, nameTok, 0 - 1);
         return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
       }
       else: { }
@@ -14615,12 +14636,12 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
         // `Word`'s fields. Every other root on this walk comes from `typeOfTyName`, which resolves;
         // these two were added later and read the token. `issues/lang/0095`.
         n = noteBindStruct(env, out, n,
-                           env.keyAt(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok))));
+                           env.keyAt(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, 0 - 1)));
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n,
-                           env.keyAt(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok))));
+                           env.keyAt(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, 0 - 1)));
       }
       else: { }
     }
