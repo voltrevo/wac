@@ -395,6 +395,57 @@ written in letters, and a letter is not a type any assignment can be checked aga
 expected type *into* a call, which is the same restriction the struct case documents above and is a
 larger change than writing the argument.
 
+### A method may take type parameters of its own
+
+A method may declare letters the owner does not have, and a call supplies them the same way:
+
+```wac
+struct Vec<T> {
+  T[] items;
+  i32 n;
+  U fold<U>(const this, U seed, fn[U(U, T)] f) { /* … */ }
+}
+
+i32 total = v.fold<i32>(0, (i32 acc, i32 x) => acc + x);
+i64 wide  = v.fold<i64>(0 as i64, (i64 a, i32 x) => a + (x as i64));
+```
+
+`[§wacc-method-type-args]` Both work, and the **lambda is inline** — which is the point rather than a
+detail. The slot the lambda is checked against is written `fn[U(U, T)]`, so it reaches the argument
+only if `T` is bound from the receiver's instantiation *and* `U` from what the call wrote; with either
+missing, a lambda that is perfectly correct is told *nothing here wants a function*.
+
+`[§wacc-method-type-args]` **Monomorphisation is per owner instantiation × method arguments.**
+`Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` are two functions, and a program using both carries
+both. This is a third level beside the two a generic struct and a generic function already have.
+
+`[§wacc-method-type-args]` **They are inferred when the arguments say what they are**, exactly as a
+generic function's are, so most calls write nothing:
+
+```wac
+i32 total = v.fold(0, (i32 acc, i32 x) => acc + x);   // `U` is `i32`, from the seed
+```
+
+An argument with no type of its own — a lambda — says nothing, and saying nothing is not a refusal;
+the seed beside it is enough. What is still refused is a letter **no** argument mentions, which is the
+same rule a generic function has and the reason writing them exists:
+
+```wac
+U make<U>(const this) { … }
+i32 z = c.make();       // error: nothing here says what U is, so write it: make<…>(…)
+```
+
+`[§wacc-method-type-args]` **They chain**, and each link may change the type:
+
+```wac
+Cell<string> s = c.then<i64>((i32 x) => (x * 3) as i64)
+                  .then<bool>((i64 y) => y > 5)
+                  .then<string>((bool b) => b ? "yes" : "no");
+```
+
+Every intermediate there — `Cell<i64>`, `Cell<bool>` — is named by nothing in the program and exists
+only because a method instance returns it.
+
 Two arguments must agree:
 
 ```wac

@@ -1,12 +1,18 @@
 # 0010 — a method's own type parameter has to come from the slot, because a lambda states no return type
 
-- **Status:** **decided 2026-08-26 — option C**, written type arguments. The objection that ruled C
-  out has been removed by [0011](0011-a-call-may-name-its-type-arguments.md); see *The decision*
-  below. Option D moved to [0012](0012-synthesising-a-lambdas-return-type.md) as a separate
-  ergonomic question
+- **Status:** **implemented 2026-08-27 — option C.** Five of six acceptance criteria are met and the
+  sixth is not compiler work: `Pending<T>` has no value-returning continuation, and giving it one is
+  scheduler plumbing rather than a declaration — see *What is left to build* item 1, which understated
+  itself. `spec/cases/0245`–`0249` are the landed behaviour.
+
+  Decided 2026-08-26; the objection that had ruled C out was removed by
+  [0011](0011-a-call-may-name-its-type-arguments.md). Option D moved to
+  [0012](0012-synthesising-a-lambdas-return-type.md) as a separate ergonomic question
 - **Date:** 2026-08-17
 - **Author:** agent-c
-- **Blocks:** chaining on `Pending<T>` — `p.then(() => Foo.create())` answering a `Pending<Foo>`
+- **Blocked:** chaining on `Pending<T>` — `p.then(() => Foo.create())` answering a `Pending<Foo>`.
+  The language no longer stands in its way: `spec/cases/0248` chains three such calls, each with an
+  inline lambda, on a `Cell<T>` written for the purpose
 
 ## What is wanted
 
@@ -212,9 +218,19 @@ where nothing else determines the letter, which for a well-designed API is rare.
 
 C needs no inference work, but it is not free:
 
-1. **`Pending<T>.then` does not exist in the value-returning form.** `std/platform.wac:286` is
-   `void then(this, fn[void(T)] f)`. Declaring `Pending<U> then<U>(this, fn[U(T)] f)` is part of this,
-   and it is a change to the capability surface rather than to the compiler.
+1. **`Pending<T>.then` does not exist in the value-returning form**, and this item **understates what
+   it is**. `std/platform.wac:286` is `void then(this, fn[void(T)] f)`, which registers a handler and
+   returns nothing. A `Pending<U> then<U>(this, fn[U(T)] f)` has to *make a second ticket* and resolve
+   it when the first resolves — that is scheduler plumbing, not a signature. The machinery is there
+   (`Pending.of` takes a resolve function) but wiring a derived ticket is a platform feature.
+
+   Two further facts, measured 2026-08-27: the existing `then` has **five** real callers, all passing
+   a void lambda, so the two forms cannot share a name — wac has no overloading, and a void-bodied
+   lambda cannot satisfy `fn[U(T)]`. And `std/platform.wac` is embedded verbatim in
+   `packages/wacc/src/coretext.wac`, so any change to it needs `deno task gen:core` and a reseed.
+
+   None of that is compiler work, and the compiler no longer stands in its way: `spec/cases/0248`
+   chains three of them on a `Cell<T>` written for the purpose.
 2. **Method type parameters are refused in three places** — twice in the checker, per the section
    below, and once in the emitter's decline path (`issues/lang/0160`'s guards). All three have to go.
 3. **The emitter monomorphises per (owner instantiation × method type arguments)**, which is the
@@ -259,16 +275,32 @@ the module's numbering.
 
 | # | criterion | state |
 |---|---|---|
-| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this — checked rather than assumed, since the point of listing it was that the declaration passes while every call is refused |
-| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — needs item 3 |
-| 3 | `v.fold<i64>(0, …)` with one | **parses** since `design/lang/0011` step 3, and is refused with *"written type arguments are parsed and not yet bound"*. Needs item 3 |
-| 4 | `p.then<Foo>(…)` | **no**, and item 1 has not been done either — `Pending<U> then<U>(…)` does not exist, and declaring it while no call can be emitted adds a method nobody can reach |
-| 5 | a three-link chain | **no** — needs 4 |
-| 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **no** — this *is* item 3 |
+| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this |
+| 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **yes** — `spec/cases/0249`, answers 12. The letter lives inside a funcref, which the checker's binder could not see into; `applyBindings` and `substituteType` both already had that arm |
+| 3 | `v.fold<i64>(0, …)` with one | **yes** — `spec/cases/0245`, answers 12, with an **inline lambda** |
+| 4 | `p.then<Foo>(…)` | **the compiler is ready; the platform is not.** See below — this is more than the declaration item 1 calls it |
+| 5 | a three-link chain | **yes** — `spec/cases/0248`, answers 9, three inline lambdas each changing the type. `issues/lang/0274b` closed |
+| 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **yes** — `spec/cases/0246`, measured in emitted bytes: 3,287 against 2,897 for the one-instantiation program |
 
-**So what landed is the syntax and the diagnostics, and what is left is one thing.** That is a better
-position than it sounds: criterion 3's spelling could not be written at all before, so the refusal
-for criterion 2 was advice pointing at a parse error.
+**Item 3 landed on 2026-08-27** and took six layers, each failing differently — recorded because the
+list is what the next person needs and none of it was predicted:
+
+1. the type section was not sized for the new functions;
+2. the function *count* pass did not know them, which is a module the engine refuses rather than a
+   decline;
+3. the parameter's type was recorded as **unknown**, because `typeOfTy` answers that for a letter
+   that is active and `fn[U(U, T)]` has one — so it had to be recorded *as written*;
+4. `writtenTy` had no funcref arm at all and returned `""`, which reads as "no slot";
+5. `applyBindings` bound the owner's `T` and left the method's `U`, so a correct lambda was told
+   *expected fn(U, i32) -> U, found fn(i32, i32) -> U* — two spellings of one type. It had the arm
+   for an instantiation and not for a funcref, which is the same gap `substituteType` had fixed for
+   itself years of commits earlier;
+6. the emitter's lambda-target walk read the template's entry rather than the instance's, and
+   declined with *a value of a type this emitter cannot write: U*.
+
+Four of the six are the same mistake wearing different clothes: **a letter that nothing bound, and a
+diagnostic about a type nobody wrote.** That is worth knowing in advance, because each one looks like
+a bug in the program rather than in the compiler.
 
 ### A design for item 3, from reading the emitter — agent-b, 2026-08-27
 
@@ -281,12 +313,47 @@ function instance `zero<i32>`, and a generic struct's method `Box<i32>.map` — 
 *declined*, because `funcMethodGeneric` is set for it. The fourth is `Box<i32>.map<i64>`, with
 `funcRecv = Box<i32>` exactly as the third has.
 
-**Register and emit in separate passes, after the struct-instance passes, rather than woven into
-them.** Registration order and emission order have to agree — the function table's order is the
-module's numbering, and the comment at the head of the emission loop records that the last attempt at
-getting it wrong "compiled the corpus into fifty-seven invalid modules". A pass of its own placed
-after the instance pass in *both* keeps the two aligned by construction, and is a much smaller edit
-than a branch inside each of the three loops that walk instances.
+**Register in place of the declined entry, in the loop that already registers instance methods.**
+This is a correction of a first guess — a separate pass afterwards — made after reading the emission
+loops rather than only the registration one, and the reading changes the estimate.
+
+The relevant fact is that the entry already exists. `collectInstances` registers *every* method of
+every instance, including one with its own type parameters, and then declines it (`funcMethodGeneric`
+is what carries that). Emission walks the same methods in the same order against a cursor, `emitAt`,
+skipping entries whose `funcIndex` is negative. So the slot is there and empty.
+
+What changes is the *count*: one method becomes one entry per discovered set of method type
+arguments. Registration and emission must therefore enumerate the same (method, argument-set) pairs
+in the same order, which they will if both read one discovery list in list order.
+
+**Forty-three loops, and this design is the wrong one — tried, measured, reverted.** I built it far
+enough to register the extra entries and reseed, then counted: `emit.wac` has **43**
+`for (i32 m = 0; m < methods.len(); m++)` walks, **six** of them the bare `{ at = at + 1; }` shape
+whose entire job is to advance an index in step with a sequence written elsewhere.
+
+Making one method register N entries means every one of those walks has to count N. A miss in any
+single one slides the function index for everything after it, which is the fifty-seven-invalid-modules
+failure — and it does not show on a small test, because a hand-written case with no strings has no
+helpers, so nothing sits after the slid entries to notice.
+
+That count is the argument, and it is why the *first* instinct here was right after all: **append,
+do not interleave.** A pass that registers method instances after every instance has been registered
+adds entries at the end of the function table, where no existing walk's indices move — so the 43
+loops keep counting exactly what they counted before and none of them needs to know. The matching emission has to be a pass in the same position, and that question is now answered rather
+than open: **emission is decl-walk-driven**. There are six `emitFunction(types, funcs, exports, code,
+…)` call sites and every one of them sits inside a walk over declarations, so an appended table entry
+with no walk to match it gets a function-section slot and no body — a short code section, which is an
+invalid module rather than a wrong answer.
+
+So the append design is one new registration pass **and** one new emission block, and the block has to
+come last, because `funcIndex` is assigned in table order (three loops over `env.funcCount` do the
+renumbering) and the code section has to be in index order. Both sections are filled by the same
+`emitFunction` call, so a final block walking the method instances in registration order keeps them
+in step by construction — which is the property the interleaved design could not get.
+
+**So the honest state is: the syntax and the diagnostics landed, this piece did not, and the reason
+is measured rather than guessed.** The reverted attempt cost one reseed and is worth exactly the
+sentence above.
 
 **`popSubstitution` clears where it would need to restore.** Emitting the body wants two pushes — the
 owner's letters from `Box<i32>`, then the method's from `<i64>` — and `pushSubstitution` already
@@ -294,6 +361,10 @@ returns how many pairs it pushed, so the stack part nests correctly. What does n
 `curGeneric`: `popSubstitution` sets both to `""` rather than to what they were, so an inner pop
 silently drops the outer instance. A save-and-restore variant is the fix, and `Env.lambdaInst` is the
 thing that would notice if it were missed, since it keys a lambda by the instantiation it is inside.
+
+**Discovery has a round to happen in.** `collectInstances` walks every body with `canEmit` before it
+registers anything, and iterates to a fixed point on `instDirty` — so a list built during that walk is
+complete before the registration loop reads it, which is what makes the pairing deterministic.
 
 **Discovery is at the call site**, like `genericCallInstance`, and wants the owner instance and the
 written arguments — which `ExprKind.Call`'s `typeArgs` now carries (`design/lang/0011` step 3). The

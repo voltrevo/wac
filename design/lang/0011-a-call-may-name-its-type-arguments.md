@@ -1,7 +1,13 @@
 # 0011 — a call may name its type arguments, so a generic free function is usable
 
-- **Status:** **accepted** with the operator, 2026-08-26 — the target, the spelling and the trigger
-  are settled below. What is left is work, not decisions
+- **Status:** **implemented 2026-08-27.** All seven steps are done and ten of eleven acceptance
+  criteria are met; the eleventh is `issues/lang/0273b`, which is a decision rather than work — it
+  asks to lift a limit `generics.md` calls deliberate. `spec/cases/0235`–`0244` are the landed
+  behaviour, and `[§wacc-type-args-commit]`, `[§wacc-written-type-args]` and
+  `[§wacc-written-instantiation]` are the rules.
+
+  Accepted with the operator on 2026-08-26; the target, the spelling and the trigger were settled
+  then and none of them changed in the building
 - **Date:** 2026-08-26
 - **Author:** agent-b
 - **Gathers:** `issues/lang/0088` (an enum variant cannot name its arguments), `issues/lang/0235a`
@@ -320,10 +326,10 @@ rather than stylistic, so they are recorded there and repeated here:
 | 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
 | 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
 | 3 — the postfix path | **done** 2026-08-27 — `ExprKind.Call` carries `Ty[] typeArgs`; `v.fold<i64>(0, f)` parses. Not yet *bound* — that is 0010 C |
-| 4 — name resolution | **done for free functions** 2026-08-27 — calls *and* values: `zero<i32>()` and `fn[i32(i32)] g = id<i32>;` both compile and run. `[§wacc-written-type-args]`, cases 0239–0242. The method half is `design/lang/0010` item 3 |
+| 4 — name resolution | **done for free functions** 2026-08-27 — calls *and* values: `zero<i32>()` and `fn[i32(i32)] g = id<i32>;` both compile and run. `[§wacc-written-type-args]`, cases 0239–0244 — including across a module boundary, two letters, and a list closing on `>>`. The method half is `design/lang/0010` item 3 |
 | 5 — the diagnostic | **done** 2026-08-27 — `perrTypeArgsThenValue`; the checker's `TypeName` arm branches on whether the name is a function; and the method-type-parameter refusal stops promising a workaround. `issues/lang/0235a` is covered on both halves |
 | 6 — the emitter | **needed nothing for free functions** — the existing instance machinery registered and emitted them once the checker stopped refusing. The method half is still 0010 item 3 |
-| 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
+| 7 — the spec | **done** 2026-08-27 — the section is *"inferred by default, and may be written"* now, `[§wacc-generic-fn-5hvq3mt]`'s terminal refusal is gone, and `[§wacc-type-args-commit]` states the trigger. One neighbouring paragraph went stale with it and was corrected: it said `identity<i32>(4)` is refused |
 | the tuple constraints | recorded in `issues/lang/0074` |
 
 ### Which acceptance criteria are met
@@ -331,7 +337,7 @@ rather than stylistic, so they are recorded there and repeated here:
 | # | criterion | state |
 |---|---|---|
 | 1 | `zero<i32>()` callable | **yes** — `spec/cases/0239`, answers 7 |
-| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. Worth a decision of its own rather than smuggling in here |
+| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. **Filed as `issues/lang/0273b`** rather than smuggled in here, because it is a decision and it shares [0012](0012-synthesising-a-lambdas-return-type.md) §1's ordering trap |
 | 3 | `fn[i32(i32)] g = id<i32>;` | **yes** — `spec/cases/0242`, answers 6. Needed `typeOfE` an answer as well as the emission: the emitter could write the value and could not say what it was, and declined the module as *untyped a type used as a value* |
 | 4 | `Option<i32>.None.orElse(7)` | **yes** |
 | 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |

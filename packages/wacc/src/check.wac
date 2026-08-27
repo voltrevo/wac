@@ -549,6 +549,73 @@ string templateOf(string t) {
  * parameter: that is a generic's member read without knowing what it was instantiated with, and
  * there is no answer to give.
  */
+/** The `i`th entry of a comma-joined list — `"K,V"` at 1 is `"V"`. */
+string commaAt(string joined, i32 want) {
+  i32 at = 0;
+  i32 n = 0;
+  u8[] b = joined.toBytes();
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == ',') {
+      if (n == want) { return joined.slice(at, i); }
+      n = n + 1;
+      at = i + 1;
+    }
+  }
+  return "";
+}
+
+/**
+ * A method's **own** letters bound to the type arguments a call wrote, applied to a written type.
+ *
+ * `design/lang/0010` option C. `substituteType` binds the owner's — `T` from `Box<i32>` — and stops
+ * there, because until now a method's own letters were never bound at all. Without this second step
+ * the parameter `fn[U(T)]` reaches a lambda argument as `fn[U(i32)]`, `U` names no type, and the
+ * lambda is told *"nothing here wants a function"* — which is the diagnostic the old refusal existed
+ * to pre-empt, and the reason it had to go away in the same change that binds them.
+ */
+string bindMethodLetters(C c, i32 methodIx, Ty[] targs, string t) {
+  if (methodIx < 0 || targs.len() == 0 || methodIx >= c.methodTypeParams.len()) { return t; }
+  string joined = c.methodTypeParams[methodIx];
+  if (joined == "" || commaCount(joined) != targs.len()) { return t; }
+  string[] names = string[targs.len()]();
+  string[] bound = string[targs.len()]();
+  for (i32 i = 0; i < targs.len(); i++) {
+    names[i] = commaAt(joined, i);
+    bound[i] = typeOfTy(c, targs[i]);
+    if (bound[i] == typeNone() || bound[i] == "") { return t; }
+  }
+  return applyBindings(t, names, bound);
+}
+
+/**
+ * A method's own letters bound **however the call supplies them** — written, or inferred from the
+ * arguments — applied to a written type.
+ *
+ * `design/lang/0010`. The two roads have to arrive at the same place, because everything downstream
+ * of the binding is shared: the call's type, the argument slots, and the instance the emitter names.
+ */
+string bindMethodLettersAuto(C c, i32 methodIx, string recv, Ty[] targs, Expr[] args, string t) {
+  if (targs.len() > 0) { return bindMethodLetters(c, methodIx, targs, t); }
+  if (methodIx < 0 || methodIx >= c.methodTypeParams.len()) { return t; }
+  string joined = c.methodTypeParams[methodIx];
+  if (joined == "") { return t; }
+  i32 n = commaCount(joined);
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  bool[] clash = bool[n]();
+  for (i32 i = 0; i < n; i++) { names[i] = commaAt(joined, i); }
+  for (i32 i = 0; i < args.len() && i < c.methodParamCount[methodIx]; i++) {
+    string decl = substituteType(c, recv, c.methodParamTypes[c.methodParamAt[methodIx] + i]);
+    string got = foundType(c, args[i]);
+    if (got == typeNone() || got == "") { continue; }
+    bindTypeParams(c, decl, got, names, bound, clash);
+  }
+  for (i32 i = 0; i < n; i++) {
+    if (bound[i] == "" || clash[i]) { return t; }
+  }
+  return applyBindings(t, names, bound);
+}
+
 /** How many entries a comma-joined list holds — `""` is none, `"U"` is one, `"K,V"` is two. */
 i32 commaCount(string joined) {
   if (joined == "") { return 0; }
@@ -3212,7 +3279,12 @@ export string typeOfExpr(C c, Expr e) {
             if (tmplOf != recvT) { mi = c.methodAt(tmplOf, tokenText(c, nameTok)); }
           }
           if (mi < 0) { return typeNone(); }
-          return substituteType(c, recvT, c.methodReturns[mi]);
+          // **The owner's letters, then the method's** — `design/lang/0010` option C. A method whose
+          // return type *is* its own letter answers `U` without the second step, and `i32 total =
+          // v.fold<i32>(…)` is then *expected i32, found U*: a complaint about a type nobody wrote,
+          // which is the shape this whole area keeps producing when a letter goes unbound.
+          return bindMethodLettersAuto(c, mi, recvT, callTargs, args,
+                                       substituteType(c, recvT, c.methodReturns[mi]));
         }
         else: { return typeNone(); }
       }
@@ -4672,6 +4744,22 @@ void checkExpr(C c, Expr e) {
               // of continuations could not be filled.
               if (templateOf(mrecv) != mrecv) { methodInst = mrecv; }
             }
+            // **A written type argument brings the receiver's world with it** — `design/lang/0010`
+            // option C. A generic receiver is otherwise left alone on purpose, because its parameter
+            // types are spelled in the template's letters and an argument checked against `T` is
+            // checked against a type nobody wrote. That reason does not survive a call that writes
+            // its arguments: `substituteType` binds the owner's letters from `mrecv` and
+            // `bindMethodLetters` binds the method's from what was written, so every letter has a
+            // type and the slot is real.
+            //
+            // Scoped to `callTargs.len() > 0` rather than opened for every generic method call. The
+            // wider change may well be right — the objection above is about `typeOfExpr`, not about
+            // slots — but it would hand a slot to arguments all over the corpus, and that is its own
+            // measurement rather than a side effect of this one.
+            else if (callTargs.len() > 0 && genericBase(mrecv) != "") {
+              methodOwner = genericBase(mrecv);
+              methodInst = mrecv;
+            }
             else if (genericBase(want) == mrecv) {
               // The call's result is an instantiation of the very generic being called on, so its
               // arguments can be read in that world. Anything else is left alone: a generic whose
@@ -4697,7 +4785,9 @@ void checkExpr(C c, Expr e) {
           slotted = true;
         } else if (methodIx >= 0 && i < c.methodParamCount[methodIx]) {
           string mslot = c.methodParamTypes[c.methodParamAt[methodIx] + i];
-          c.expected = methodInst == "" ? mslot : substituteType(c, methodInst, mslot);
+          string osub = methodInst == "" ? mslot : substituteType(c, methodInst, mslot);
+          // **And the method's own letters**, which nothing bound before `design/lang/0010` option C.
+          c.expected = bindMethodLettersAuto(c, methodIx, methodInst, callTargs, args, osub);
           slotted = true;
         }
         c.expectedUnknown = !slotted;
@@ -5335,7 +5425,22 @@ string writtenTy(C c, Ty t) {
     }
     case Arr(elem): { return writtenTy(c, elem) + "[]"; }
     case Nullable(inner): { return writtenTy(c, inner) + "?"; }
-    else: { return ""; }
+    // **A funcref, in the same spelling `typeOfTy` produces.** There was no arm for one, so a
+    // parameter written `fn[U(U, T)]` came back as the empty string — which reads as "no slot" and
+    // told a perfectly good lambda that *"nothing here wants a function"*. It mattered from the day
+    // a method could be called with its type arguments written (`design/lang/0010` option C), since
+    // that is the only way such a parameter reaches a call site with its letters bindable.
+    //
+    // `fn(P, Q) -> R` rather than the source's `fn[R(P, Q)]`, because every other producer of a
+    // funcref type name in this file writes the first and `startsWithFn` looks for it.
+    case Funcref(ret, params): {
+      string out = "fn(";
+      for (i32 i = 0; i < params.len(); i++) {
+        if (i > 0) { out = out + ", "; }
+        out = out + writtenTy(c, params[i]);
+      }
+      return out + ") -> " + writtenTy(c, ret);
+    }
   }
 }
 
@@ -6649,6 +6754,23 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
     bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound, clashed);
     return;
   }
+  // **And through a funcref**, which holds a letter as readily as `Option<V>` does — and is where a
+  // method's own letter usually lives, since `fn[U(T)]` is what a continuation looks like. Without
+  // this arm `U map<U>(const this, fn[U(T)] f)` could not be inferred from `widen`: the parameter
+  // matched, nothing was bound, and the call came back `U`. `applyBindings` and `substituteType` both
+  // have this arm; the binder was the one that did not. `design/lang/0010` criterion 2.
+  if (startsWithFn(written) && startsWithFn(actual)) {
+    string wr = funcrefReturn(written);
+    string ar = funcrefReturn(actual);
+    if (wr != "" && ar != "" && funcrefParamCount(written) == funcrefParamCount(actual)) {
+      for (i32 i = 0; i < funcrefParamCount(written); i++) {
+        bindTypeParams(c, funcrefParamAt(written, i), funcrefParamAt(actual, i), names, bound,
+                       clashed);
+      }
+      bindTypeParams(c, wr, ar, names, bound, clashed);
+    }
+    return;
+  }
   string wb = genericBase(written);
   if (wb == "" || wb != genericBase(actual)) { return; }
   string[] wargs = genericArgs(written);
@@ -6672,6 +6794,22 @@ string applyBindings(string written, string[] names, string[] bound) {
     if (names[i] != core) { continue; }
     if (bound[i] == "") { return typeNone(); }
     return bound[i] + suffix;
+  }
+  // **And inside a funcref**, which is a type holding a letter just as much as `Option<V>` is.
+  // `substituteType` gained this arm for the owner's letters and this function never had it, because
+  // until `design/lang/0010` option C no method's own letter ever reached a slot: `fn[U(U, T)]` came
+  // out as `fn(U, i32) -> U` with `T` bound and `U` untouched, and the lambda was told *expected
+  // fn(U, i32) -> U, found fn(i32, i32) -> U* — a mismatch between two spellings of the same thing.
+  if (startsWithFn(core)) {
+    string fret = funcrefReturn(core);
+    if (fret != "") {
+      string out = "fn(";
+      for (i32 i = 0; i < funcrefParamCount(core); i++) {
+        if (i > 0) { out = out + ", "; }
+        out = out + applyBindings(funcrefParamAt(core, i), names, bound);
+      }
+      return out + ") -> " + applyBindings(fret, names, bound) + suffix;
+    }
   }
   // **And inside an instantiation.** `Box<T> wrap<T>(T v)` returns a `Box<T>`, whose core is not a
   // parameter but a type *holding* one — so answering with the written text made `Box<i32> b =
@@ -7419,10 +7557,39 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
                    (wrote == 1 ? "was" : "were") + " written");
       return;
     }
+    // **Written and the right number: the call is legal** — `design/lang/0010` option C. The
+    // emitter monomorphises per (owner instantiation × these arguments) and checks the arguments
+    // against the method's parameters with both substitutions in force, which is the world this
+    // checker does not have: `substituteType` binds the *owner's* letters and there is no second
+    // binding here to put the method's in. So the count and the argument names are what is checked
+    // here, and the types are the emitter's — stated rather than silent, and the reason a wrong
+    // argument to such a call is reported one phase later than to an ordinary one.
+    if (wrote > 0) { return; }
+    // **Or inferred from the arguments** — `design/lang/0010` criterion 2. A method's own letters are
+    // argument-directed in the same way a generic function's are, and the only reason they were not
+    // is that no call to such a method could be emitted at all. `substituteType` puts the declared
+    // parameter in the receiver's world first, so `fn[U(U, T)]` is matched as `fn[U(U, i32)]` and
+    // only `U` is left to find.
+    i32 want = commaCount(c.methodTypeParams[tpAt]);
+    string[] inames = string[want]();
+    string[] ibound = string[want]();
+    bool[] iclash = bool[want]();
+    for (i32 i = 0; i < want; i++) { inames[i] = commaAt(c.methodTypeParams[tpAt], i); }
+    for (i32 i = 0; i < args.len() && i < c.methodParamCount[tpAt]; i++) {
+      string decl = substituteType(c, recv, c.methodParamTypes[c.methodParamAt[tpAt] + i]);
+      string got = foundType(c, args[i]);
+      if (got == typeNone() || got == "") { continue; }
+      bindTypeParams(c, decl, got, inames, ibound, iclash);
+    }
+    bool allBound = args.len() == c.methodParamCount[tpAt];
+    for (i32 i = 0; i < want; i++) {
+      if (ibound[i] == "" || iclash[i]) { allBound = false; }
+    }
+    if (allBound) { return; }
     c.reportWith(errMethodTypeParams(), callee.line, callee.col,
-                 wrote > 0 ? "no " + recv + "." + name + " yet — written type arguments are parsed "
-                             + "and not yet bound"
-                           : "no " + recv + "." + name + " — it has a type parameter of its own");
+                 "no " + recv + "." + name + " — nothing here says what " +
+                 (want == 1 ? inames[0] : c.methodTypeParams[tpAt]) + " is, so write it: " +
+                 name + "<…>(…)");
     return;
   }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
@@ -9272,13 +9439,26 @@ export void declareModule(C c, Program prog, string[] only) {
           // The method's own letters, so its declared types resolve while they are being recorded —
           // see `addActiveParams`.
           i32 savedActive = addActiveParams(c, methods[i].typeParams);
+          // **A method with its own letters records its types as *written*.** `typeOfTy` answers
+          // unknown for an active parameter — deliberately, since `U` is not a type any question can
+          // be asked about at the declaration — so `fn[U(U, T)]` came back as nothing at all, and a
+          // lambda argument to `v.fold<i32>(0, …)` had no target: *"nothing here wants a function"*
+          // about a lambda that is fine.
+          //
+          // Written, it survives to the call site, where `substituteType` binds the owner's letters
+          // and `bindMethodLetters` binds the method's. The enum branch above already does this and
+          // for the same reason, one level up: a generic's methods are recorded written because the
+          // pass does not put the enum's letters in scope. `design/lang/0010` option C.
+          bool ownLetters = methods[i].typeParams.len() > 0;
           string[] mps = string[methods[i].params.len()]();
           for (i32 pi = 0; pi < methods[i].params.len(); pi++) {
-            mps[pi] = typeOfTy(c, methods[i].params[pi].type);
+            mps[pi] = ownLetters ? writtenTy(c, methods[i].params[pi].type)
+                                 : typeOfTy(c, methods[i].params[pi].type);
           }
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
-                          typeOfTy(c, methods[i].returnType), mps,
+                          ownLetters ? writtenTy(c, methods[i].returnType)
+                                     : typeOfTy(c, methods[i].returnType), mps,
                           methods[i].body, ownParamNames(c, methods[i].typeParams));
           c.activeParamCount = savedActive;
         }

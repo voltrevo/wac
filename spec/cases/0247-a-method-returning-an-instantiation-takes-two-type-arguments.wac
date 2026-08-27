@@ -1,0 +1,25 @@
+// expect: answers f = 9
+// only: wacc
+// spec:  §wacc-method-type-args
+// why: `0246` is two instantiations of a method returning a plain letter; this is two of one whose
+//      return type *is* an instantiation, which is a different question — each call has to bring a
+//      new `Box<…>` into existence, discovered from the method instance rather than from any type the
+//      program writes.
+//
+//      It is the case that made `issues/lang/0274b` look like a chaining bug for an afternoon. The
+//      cause was that the walk which *discovers* instances is also the walk that stops at the first
+//      thing it cannot emit — so declining the first call meant the second was never reached, never
+//      named and never registered, and no number of rounds recovered it. Two calls in two functions
+//      worked and the same two in one function did not.
+// from: design/lang/0010
+struct Box<U> { U w; U get(const this) { return this.w; } }
+struct Cell<T> {
+  T v;
+  Box<U> wrap<U>(const this, fn[U(T)] f) { return Box<U>(f(this.v)); }
+}
+export i32 f() {
+  Cell<i32> c = Cell<i32>(2);
+  Box<i64>  d = c.wrap<i64>((i32 x) => (x * 3) as i64);
+  Box<bool> e = c.wrap<bool>((i32 x) => x > 1);
+  return (d.get() as! i32) + (e.get() ? 3 : 0);
+}

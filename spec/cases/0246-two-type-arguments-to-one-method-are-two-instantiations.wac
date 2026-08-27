@@ -1,0 +1,22 @@
+// expect: answers f = 12
+// only: wacc
+// spec:  §wacc-method-type-args
+// why: the third level of monomorphisation — the owner's instantiation times the method's arguments
+//      — and `design/lang/0010` calls it "the thing most likely to be got wrong quietly", because two
+//      copies of one method compute the same answer and only the module's size differs. Measured:
+//      this program is 3,287 bytes and the same one with only the `<i32>` fold is 2,897.
+// from: design/lang/0010
+struct Vec<T> {
+  T[] items;
+  i32 n;
+  U fold<U>(const this, U seed, fn[U(U, T)] f) {
+    U acc = seed;
+    for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.items[i]); }
+    return acc;
+  }
+}
+export i32 f() {
+  Vec<i32> v = Vec<i32>(i32[3](fill: 4), 3);
+  i64 wide = v.fold<i64>(0 as i64, (i64 a, i32 x) => a + (x as i64));
+  return v.fold<i32>(0, (i32 a, i32 x) => a + x) + (wide as! i32) - 12;
+}
