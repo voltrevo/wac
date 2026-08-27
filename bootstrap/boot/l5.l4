@@ -30,7 +30,29 @@ i32 K_STR = 4;
 
 // ---------------------------------------------------------------- emitting
 
-i32 emit1(i32 b) { store8(dst + dp, b); dp = dp + 1; return 0; }
+// **Every buffer has an end, and running past it should say so.** A parser that loses its place
+// emits until it falls out of memory, and what arrives is `memory access out of bounds` from an
+// address unrelated to the mistake — which has cost more of this project's debugging than any
+// actual bug. Refusing at the boundary turns that into a marker the assembler will name.
+i32 overflowed = 0;
+
+// The room left in whichever buffer `dst` names. It cannot be asked of `outbuf`, which is the
+// *destination a nested emit should return to* and is set to the body scratch while a body is being
+// written — so the first version of this allowed twelve megabytes into a buffer holding one.
+i32 realout = 0;
+
+i32 emit_room() {
+  if (dst == realout) { return 12000000; }
+  if (dst == TYPEBUF) { return 3000000; }
+  return 1000000;
+}
+
+i32 emit1(i32 b) {
+  if (dp >= emit_room()) { overflowed = 1; return 0; }
+  store8(dst + dp, b);
+  dp = dp + 1;
+  return 0;
+}
 
 i32 emits(i32 s) {
   i32 n = load(s);
@@ -2551,6 +2573,7 @@ i32 compile(i32 s, i32 out) {
   forced_ty = 0 - 1;
   expect_ty = 0 - 1;
   cur_ret = 0 - 1;
+  overflowed = 0;
   loop_out = 0 - 1;
   loop_in = 0 - 1;
 
@@ -2560,6 +2583,7 @@ i32 compile(i32 s, i32 out) {
   expand_types();
 
   tp = 0;
+  realout = out;
   outbuf = out;
   dst = out;
   dp = 0;
@@ -2602,6 +2626,14 @@ i32 compile(i32 s, i32 out) {
   emit_generic_methods(out);
   // A method body can name an instantiation that nothing else did, so the types settle once more.
   expand_types();
+  if (overflowed) {
+    // The output is truncated and the marker cannot be trusted to be in the right place, so it says
+    // what happened rather than where.
+    dst = out;
+    if (dp > 11000000) { dp = 11000000; }
+    nl();
+    line("!! wac-L5: emitted more than the buffer holds — the parser lost its place");
+  }
   emit_runtime();
   emit_strdata();
   emit_typedecls();
