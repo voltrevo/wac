@@ -20,7 +20,7 @@ const expected: Record<string, number> = JSON.parse(
 
 for (const [file, want] of Object.entries(expected)) {
   Deno.test(`${file} answers ${want}`, async () => {
-    const src = await Deno.readTextFile(`${root}tests/wax/${file}`);
+    const src = await Deno.readTextFile(`${root}${file}`);
     const bytes = assemble(src);
     const mod = await WebAssembly.compile(bytes.buffer as ArrayBuffer);
     const instance = await WebAssembly.instantiate(mod, {});

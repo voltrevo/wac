@@ -1,0 +1,619 @@
+; sx — a tiny Lisp, hand-written in .wax, as the root of a bootstrap ladder.
+;
+; The claim being tested is that an *interpreter* is small enough to write by hand where a compiler
+; is not, because it never has to encode wasm. Everything here is chosen to keep the line count
+; honest rather than to make the language pleasant.
+;
+; ## Values
+;
+; A value is one i32.
+;
+;   v & 1 == 0   a fixnum, whose numeric value is `v >> 1` (arithmetic, so negatives work)
+;   v & 1 == 1   an object at address `v - 1`, whose first word is a tag
+;
+; One bit rather than two because a fixnum is the only immediate: everything else is worth a word of
+; tag, and 31-bit integers are more than a bootstrap needs.
+;
+; ## Objects
+;
+;   tag 0  pair    [0][car][cdr]
+;   tag 1  symbol  [1][next][len][bytes…]     interned, in one linked list from $symbols
+;   tag 2  nil     [2]                        exactly one, at address 0, so NIL is the value 1
+;   tag 3  prim    [3][id]
+;   tag 4  closure [4][params][body][env]
+;
+; ## Memory
+;
+;   0          the nil object, so that NIL == 1 and address 0 is never a valid allocation
+;   4..1023    reserved
+;   1024..     the source text, from a data segment
+;   $heap      the bump pointer, which only ever goes up
+;
+; Nothing is freed. A bootstrap runs once, and an allocator that can free is a page of code that
+; earns nothing here.
+
+memory 2
+
+global $heap    i32 mut = 65536
+global $symbols i32 mut = 1        ; the interned list, NIL-terminated
+global $pos     i32 mut = 1024     ; the reader's cursor into the source text
+
+; ---------------------------------------------------------------- allocation
+
+func $alloc -> i32
+  param i32 $size
+  local i32 $at
+  global.get $heap
+  local.set $at
+  global.get $heap
+  local.get $size
+  i32.add
+  global.set $heap
+  local.get $at
+end
+
+; ---------------------------------------------------------------- fixnums
+
+func $fix -> i32                   ; a machine integer as a value
+  param i32 $n
+  local.get $n
+  i32.const 1
+  i32.shl
+end
+
+func $unfix -> i32                 ; and back again
+  param i32 $v
+  local.get $v
+  i32.const 1
+  i32.shr_s
+end
+
+func $is_fix -> i32
+  param i32 $v
+  local.get $v
+  i32.const 1
+  i32.and
+  i32.eqz
+end
+
+; ---------------------------------------------------------------- objects
+
+func $tag -> i32                   ; the tag of an object value; nonsense for a fixnum
+  param i32 $v
+  local.get $v
+  i32.const 1
+  i32.sub
+  i32.load 4 0
+end
+
+func $is_obj -> i32
+  param i32 $v
+  param i32 $want
+  local i32 $r
+  local.get $v
+  call $is_fix
+  if $notfix -> i32
+    i32.const 0
+  else
+    local.get $v
+    call $tag
+    local.get $want
+    i32.eq
+  end
+end
+
+func $cons -> i32
+  param i32 $a
+  param i32 $d
+  local i32 $p
+  i32.const 12
+  call $alloc
+  local.set $p
+  local.get $p
+  i32.const 0
+  i32.store 4 0
+  local.get $p
+  local.get $a
+  i32.store 4 4
+  local.get $p
+  local.get $d
+  i32.store 4 8
+  local.get $p
+  i32.const 1
+  i32.add
+end
+
+func $car -> i32
+  param i32 $v
+  local.get $v
+  i32.const 1
+  i32.sub
+  i32.load 4 4
+end
+
+func $cdr -> i32
+  param i32 $v
+  local.get $v
+  i32.const 1
+  i32.sub
+  i32.load 4 8
+end
+
+func $set_cdr -> i32
+  param i32 $v
+  param i32 $d
+  local.get $v
+  i32.const 1
+  i32.sub
+  local.get $d
+  i32.store 4 8
+  i32.const 1
+end
+
+func $is_pair -> i32
+  param i32 $v
+  local.get $v
+  i32.const 0
+  call $is_obj
+end
+
+func $is_nil -> i32
+  param i32 $v
+  local.get $v
+  i32.const 1
+  i32.eq
+end
+
+; ---------------------------------------------------------------- symbols
+;
+; Interned, so that `eq` on two symbols is `i32.eq` on two values and the evaluator never compares
+; bytes. The table is a linked list because a hash table is a second data structure and this list is
+; walked once per symbol in the source.
+
+func $sym_len -> i32
+  param i32 $s
+  local.get $s
+  i32.const 1
+  i32.sub
+  i32.load 4 8
+end
+
+func $sym_byte -> i32
+  param i32 $s
+  param i32 $i
+  local.get $s
+  i32.const 1
+  i32.sub
+  local.get $i
+  i32.add
+  i32.load8_u 1 12
+end
+
+func $sym_eq_text -> i32           ; does symbol $s spell the $len bytes at $at?
+  param i32 $s
+  param i32 $at
+  param i32 $len
+  local i32 $i
+  local.get $s
+  call $sym_len
+  local.get $len
+  i32.ne
+  if $wronglen -> i32
+    i32.const 0
+  else
+    block $done -> i32
+      loop $next -> i32
+        local.get $i
+        local.get $len
+        i32.ge_u
+        if $ranout ->
+          i32.const 1
+          br $done
+        else
+          nop
+        end
+        local.get $s
+        local.get $i
+        call $sym_byte
+        local.get $at
+        local.get $i
+        i32.add
+        i32.load8_u 1 0
+        i32.ne
+        if $differs ->
+          i32.const 0
+          br $done
+        else
+          nop
+        end
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $next
+      end
+    end
+  end
+end
+
+func $intern -> i32                ; the symbol for the $len bytes at $at, made once
+  param i32 $at
+  param i32 $len
+  local i32 $s
+  local i32 $p
+  local i32 $i
+  global.get $symbols
+  local.set $s
+  block $found -> i32
+    block $miss ->
+      loop $walk ->
+        local.get $s
+        call $is_nil
+        br_if $miss
+        local.get $s
+        local.get $at
+        local.get $len
+        call $sym_eq_text
+        if $same ->
+          local.get $s
+          br $found
+        else
+          nop
+        end
+        local.get $s
+        i32.const 1
+        i32.sub
+        i32.load 4 4
+        local.set $s
+        br $walk
+      end
+    end
+    ; Not there: build it, and put it at the head of the list.
+    i32.const 12
+    local.get $len
+    i32.add
+    call $alloc
+    local.set $p
+    local.get $p
+    i32.const 1
+    i32.store 4 0
+    local.get $p
+    global.get $symbols
+    i32.store 4 4
+    local.get $p
+    local.get $len
+    i32.store 4 8
+    block $copied ->
+      loop $byte ->
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $copied
+        local.get $p
+        local.get $i
+        i32.add
+        local.get $at
+        local.get $i
+        i32.add
+        i32.load8_u 1 0
+        i32.store8 1 12
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $byte
+      end
+    end
+    local.get $p
+    i32.const 1
+    i32.add
+    local.tee $s
+    global.set $symbols
+    local.get $s
+  end
+end
+
+; ---------------------------------------------------------------- the reader
+
+func $at_end -> i32
+  global.get $pos
+  i32.load8_u 1 0
+  i32.eqz
+end
+
+func $peek -> i32
+  global.get $pos
+  i32.load8_u 1 0
+end
+
+func $bump ->
+  global.get $pos
+  i32.const 1
+  i32.add
+  global.set $pos
+end
+
+func $is_space -> i32
+  param i32 $c
+  local.get $c
+  i32.const 32
+  i32.le_u
+  local.get $c
+  i32.eqz
+  i32.eqz
+  i32.and
+end
+
+func $is_digit -> i32
+  param i32 $c
+  local.get $c
+  i32.const 48
+  i32.ge_u
+  local.get $c
+  i32.const 57
+  i32.le_u
+  i32.and
+end
+
+func $skip_space ->
+  block $done ->
+    loop $again ->
+      call $peek
+      call $is_space
+      i32.eqz
+      br_if $done
+      call $bump
+      br $again
+    end
+  end
+end
+
+; A delimiter ends an atom: whitespace, either paren, or the end of the text.
+func $is_delim -> i32
+  param i32 $c
+  local.get $c
+  call $is_space
+  local.get $c
+  i32.eqz
+  i32.or
+  local.get $c
+  i32.const 40
+  i32.eq
+  i32.or
+  local.get $c
+  i32.const 41
+  i32.eq
+  i32.or
+end
+
+func $read_atom -> i32
+  local i32 $start
+  local i32 $len
+  local i32 $neg
+  local i32 $n
+  local i32 $i
+  global.get $pos
+  local.set $start
+  block $ended ->
+    loop $scan ->
+      call $peek
+      call $is_delim
+      br_if $ended
+      call $bump
+      br $scan
+    end
+  end
+  global.get $pos
+  local.get $start
+  i32.sub
+  local.set $len
+  ; A run of digits, or a `-` and at least one digit, is a number; anything else is a symbol.
+  local.get $start
+  i32.load8_u 1 0
+  i32.const 45
+  i32.eq
+  local.get $len
+  i32.const 1
+  i32.gt_u
+  i32.and
+  local.set $neg
+  block $notnum -> i32
+    local.get $neg
+    local.set $i
+    local.get $i
+    local.get $len
+    i32.ge_u
+    if $empty ->
+      local.get $start
+      local.get $len
+      call $intern
+      br $notnum
+    else
+      nop
+    end
+    block $checked ->
+      loop $digits ->
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $checked
+        local.get $start
+        local.get $i
+        i32.add
+        i32.load8_u 1 0
+        call $is_digit
+        i32.eqz
+        if $nondigit ->
+          local.get $start
+          local.get $len
+          call $intern
+          br $notnum
+        else
+          nop
+        end
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $digits
+      end
+    end
+    local.get $neg
+    local.set $i
+    block $accumulated ->
+      loop $more ->
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $accumulated
+        local.get $n
+        i32.const 10
+        i32.mul
+        local.get $start
+        local.get $i
+        i32.add
+        i32.load8_u 1 0
+        i32.add
+        i32.const 48
+        i32.sub
+        local.set $n
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $more
+      end
+    end
+    local.get $neg
+    if $negate -> i32
+      i32.const 0
+      local.get $n
+      i32.sub
+    else
+      local.get $n
+    end
+    call $fix
+  end
+end
+
+; `$read` answers one datum. A `)` is reported as the value 3 — an object tag nothing else uses —
+; because a reader that needs a sentinel and invents a global to hold it has two things to get right.
+func $read -> i32
+  local i32 $c
+  call $skip_space
+  call $peek
+  local.tee $c
+  i32.eqz
+  if $eof -> i32
+    i32.const 3
+  else
+    local.get $c
+    i32.const 41
+    i32.eq
+    if $close -> i32
+      call $bump
+      i32.const 3
+    else
+      local.get $c
+      i32.const 40
+      i32.eq
+      if $open -> i32
+        call $bump
+        call $read_list
+      else
+        call $read_atom
+      end
+    end
+  end
+end
+
+func $read_list -> i32
+  local i32 $head
+  local i32 $tail
+  local i32 $cell
+  local i32 $v
+  i32.const 1
+  local.set $head
+  block $done ->
+    loop $item ->
+      call $read
+      local.tee $v
+      i32.const 3
+      i32.eq
+      br_if $done
+      local.get $v
+      i32.const 1
+      call $cons
+      local.set $cell
+      local.get $head
+      call $is_nil
+      if $first ->
+        local.get $cell
+        local.set $head
+        local.get $cell
+        local.set $tail
+      else
+        local.get $tail
+        local.get $cell
+        call $set_cdr
+        drop
+        local.get $cell
+        local.set $tail
+      end
+      br $item
+    end
+  end
+  local.get $head
+end
+
+; ---------------------------------------------------------------- what stage one proves
+;
+; Read `(1 2 (3 4) 5)` and add up the fixnums at the top level, which is 8. It exercises the whole
+; data model — allocation, pairs, the tag bit, the reader's number path and its list path — without
+; needing an evaluator, so that a failure here is a failure of the model rather than of `eval`.
+
+data 1024 "(1 2 (3 4) 5)\x00"
+
+func $sum_top -> i32
+  param i32 $list
+  local i32 $n
+  local i32 $v
+  block $done ->
+    loop $next ->
+      local.get $list
+      call $is_pair
+      i32.eqz
+      br_if $done
+      local.get $list
+      call $car
+      local.tee $v
+      call $is_fix
+      if $isnum ->
+        local.get $n
+        local.get $v
+        call $unfix
+        i32.add
+        local.set $n
+      else
+        nop
+      end
+      local.get $list
+      call $cdr
+      local.set $list
+      br $next
+    end
+  end
+  local.get $n
+end
+
+func $main -> i32
+  ; The nil object, so that address 0 is nil and the value 1 means it.
+  i32.const 0
+  i32.const 2
+  i32.store 4 0
+  call $read
+  call $sum_top
+end
+
+export "main" func $main
+export "memory" memory

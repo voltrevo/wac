@@ -31,9 +31,13 @@ function firstDifference(a: Uint8Array, b: Uint8Array): number {
   return a.length === b.length ? -1 : n;
 }
 
+// Every `.wax` in the repository, so a new module is covered by being written rather than by being
+// remembered.
 const cases: string[] = [];
-for (const e of Deno.readDirSync(`${root}tests/wax`)) {
-  if (e.isFile && e.name.endsWith(".wax")) cases.push(e.name);
+for (const dir of ["tests/wax", "boot"]) {
+  for (const e of Deno.readDirSync(`${root}${dir}`)) {
+    if (e.isFile && e.name.endsWith(".wax")) cases.push(`${dir}/${e.name}`);
+  }
 }
 cases.sort();
 
@@ -42,12 +46,12 @@ for (const file of cases) {
     name: `${file}: rust and typescript agree byte for byte`,
     ignore: !haveRust(),
     fn: async () => {
-      const src = await Deno.readTextFile(`${root}tests/wax/${file}`);
+      const src = await Deno.readTextFile(`${root}${file}`);
       const mine = assemble(src);
 
       const out = await Deno.makeTempFile({ suffix: ".wasm" });
       const cmd = new Deno.Command(rustBin, {
-        args: [`${root}tests/wax/${file}`, out],
+        args: [`${root}${file}`, out],
         stderr: "piped",
       });
       const { code, stderr } = await cmd.output();
@@ -70,7 +74,7 @@ for (const file of cases) {
 }
 
 Deno.test("the corpus is not empty, and the rust half was actually run", () => {
-  if (cases.length === 0) throw new Error("no .wax files in tests/wax");
+  if (cases.length === 0) throw new Error("no .wax files found");
   if (!haveRust()) {
     throw new Error(
       `the rust assembler is not built, so every comparison above was skipped — ` +
