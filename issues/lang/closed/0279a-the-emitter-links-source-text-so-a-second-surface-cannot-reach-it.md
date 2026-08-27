@@ -1,7 +1,7 @@
 # 0279a — the emitter links source *text*, so wapy cannot reach it
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** 2891e909
 - **Reported by:** agent-a
 - **Date:** 2026-08-27
 - **Kind:** decision
@@ -49,7 +49,33 @@ takes programs and a per-file token array instead of one blob. Correct positions
 second surface special-cased. It is a real change to the emitter's front, and `starts`/`edges` and
 everything keyed on blob offsets moves with it.
 
-## Recommendation
+## What happened: B, and sooner than this page expected
+
+**Done in `2891e909`.** The clause that made it cheap is the one below — *"do it when the emitter is
+being touched for another reason"*. Phases C9–C13 de-concatenated the emitter for the reason the
+operator gave separately: *"each file must be lexed and parsed individually to its own ast, and
+analysis continues from `map<path,ast>`"*. Once that landed there was exactly one place where a path
+and some bytes become a tree, and the dispatch is four lines there.
+
+`packages/wacc/src/frontend.wac` holds it, as a module rather than as a dispatch at each site,
+because **four callers have to agree**: the linker, the checker's parse cache, the diagnostics walk
+and `declCountOf`. Two of those were found by them disagreeing — `wac check` reporting wac parse
+errors against `@export`, and a wapy *entry* exporting nothing because its declarations were counted
+by the wrong parser.
+
+The cost this page worried about — positions — did not arise, because B is what was done: a wapy
+file keeps its own tokens and its own spans, and a diagnostic in one points at the line the reader
+wrote.
+
+`packages/wacc/test/wac/wapylink_test.wac` compares the emitted **bytes** of a wapy graph against the
+same program in wac. `compiler/wapyPrint.ts`'s rendering of `packages/json/src/value.wac` — 209
+lines — compiles byte-identically to the original.
+
+**What this does not yet do** is let the site's playground stop routing `.wapy` to the reference, or
+delete `wapyPrint.ts`. The playground change is a site-side edit, and the printer is still the only
+thing that turns wac *into* wapy — which is a separate direction from reading it.
+
+## The recommendation this page carried
 
 **B, and not soon.** A is the shape this repository keeps writing issues about — `0277a` and `0278a`
 were both filed today for defects whose whole character was a diagnostic pointing at text the reader
