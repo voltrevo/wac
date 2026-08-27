@@ -5,7 +5,7 @@
 // precedence chain. What is missing is breadth (integer widths, casts, strings) and one piece of
 // depth (generics), and both are easier to add to something that already parses the language.
 
-import { l5Run } from "./l5.ts";
+import { l5Run, l5RunFile } from "./l5.ts";
 
 const expr: [string, number][] = [
   ["1 + 2 * 3", 7],
@@ -271,6 +271,16 @@ const programs: [string, string, number][] = [
     }
     i32 main() { return same("ab" + "c", "abc") ? 1 : 0; }`, 1],
 ];
+
+// wac compiles a whole program into one wasm module, so an import is a file to *include* rather
+// than a boundary to cross. Resolving one is path arithmetic and a file read, neither of which a
+// wac-L4 program can do — so the driver flattens the graph, which is where `files.wac` does it in
+// the real compiler. Depth first, post-order, visited once, so a diamond does not duplicate.
+Deno.test("wac-L5: imports, flattened, with a diamond = 49", async () => {
+  const root = new URL("..", import.meta.url).pathname;
+  const got = await l5RunFile(`${root}tests/l5/imports.l5`);
+  if (got !== 49) throw new Error(`got ${got}, want 49`);
+});
 
 for (const [name, source, want] of programs) {
   Deno.test(`wac-L5: ${name} = ${want}`, async () => {

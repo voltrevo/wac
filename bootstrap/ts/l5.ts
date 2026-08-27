@@ -26,6 +26,34 @@ export async function l5Compiler(): Promise<WebAssembly.Module> {
   return cached;
 }
 
+/**
+ * The module graph, flattened.
+ *
+ * wac compiles a whole program into **one** wasm module, so an import is a file to include rather
+ * than a boundary to cross — and resolving one is path arithmetic and a file read, neither of which
+ * a wac-L4 program can do. So the driver does it, which is also where `files.wac` does it in the
+ * real compiler.
+ *
+ * Depth first and post-order, so a file is emitted after everything it imports; visited once, so a
+ * diamond does not duplicate a declaration.
+ */
+export async function flatten(entry: string, seen = new Set<string>()): Promise<string> {
+  const path = await Deno.realPath(entry);
+  if (seen.has(path)) return "";
+  seen.add(path);
+  const text = await Deno.readTextFile(path);
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  let out = "";
+  for (const m of text.matchAll(/^\s*import\s*\{[^}]*\}\s*from\s*"([^"]+)"\s*;/gm)) {
+    out += await flatten(`${dir}/${m[1]}`, seen);
+  }
+  return out + text + "\n";
+}
+
+export async function l5RunFile(entry: string, fn = "main"): Promise<number> {
+  return await l5Run(await flatten(entry), fn);
+}
+
 export async function l5ToL0(program: string): Promise<string> {
   const inst = await WebAssembly.instantiate(await l5Compiler(), {});
   const memory = inst.exports.memory as WebAssembly.Memory;
@@ -45,7 +73,7 @@ export async function l5Run(program: string, entry = "main"): Promise<number> {
 }
 
 if (import.meta.main) {
-  const program = await Deno.readTextFile(Deno.args[0]);
+  const program = await flatten(Deno.args[0]);
   if (Deno.args.includes("--l0")) console.log(await l5ToL0(program));
   else console.log(await l5Run(program));
 }

@@ -1,0 +1,7 @@
+// An imported module. wac compiles a whole program into one wasm module, so this is a file to
+// include rather than a boundary to cross.
+export struct Point {
+  i32 x;
+  i32 y;
+  i32 sum(const this) { return this.x + this.y; }
+}
