@@ -6,17 +6,26 @@ reference compiler it would replace?**
 
 The question is a number, and this repository exists to produce it rather than to argue about it.
 
-**It works.** The ladder compiles `packages/wacc/src` — 37,873 lines of real wac — into a wasm
-module the engine accepts; that module compiles wac's own source again; and the two compilers
-produce byte-identical output for all 296 of the corpus's entry points. All 252 of wac's `spec/cases` come out exactly as their expectations say. There is no
-historical wasm anywhere in the chain: an assembler written twice from a written format, an
-interpreter, four compilers, and then the real compiler reproducing itself.
+**It works, and it lands where wac's own bootstrap lands.** The ladder compiles
+`packages/wacc/src` — 37,873 lines of real wac — into a wasm module the engine accepts, and that
+module compiles wac's own source again. All 252 of wac's `spec/cases` come out exactly as their
+expectations say, and the two compilers produce byte-identical output for all 296 of the corpus's
+entry points. There is no historical wasm anywhere in the chain: an assembler written twice from a
+written format, an interpreter, four compilers, and then the real compiler reproducing itself.
+
+**And it is the same wacc wac's own TypeScript bootstrap reaches, byte for byte.** The first rungs
+differ and must — `wac-L5(S)` is 661,626 bytes and `reference(S)` is 884,803, two different
+compilers compiling one source. But both results are *wacc*, so both compile `S` the same way, and
+the second rung is 681,417 bytes on either path. The fixed point belongs to wacc's source rather
+than to whatever compiled it first, which is what makes this a replacement for the reference rather
+than a second opinion.
 
 Three commands say so, and each is a test rather than a claim:
 
-    deno test -A ts/                          # 220 tests, three seconds
+    deno test -A ts/                          # 221 tests, fifteen seconds
     deno run -A ts/spec_cases.ts              # 252 of wac's spec cases, through the built wacc
     deno run -A ts/corpus_differential.ts     # the whole corpus, two compilers, compared
+    deno run -A ts/same_fixed_point.ts        # and the same fixed point as wac's own bootstrap
 
 ## The answer to the question
 

@@ -388,3 +388,38 @@ The instrument mattered more than the reading in every case. The step that chang
 making the probe *call* what the built compiler produced and compare a value: `f` being exported is
 not `f` being right, and a method lookup that falls back to matching on name alone emits a module
 that runs and answers the wrong thing.
+
+## The same fixed point as the TypeScript bootstrap, and what each costs
+
+The ladder does not merely produce *a* wacc — it produces *the* wacc.
+
+    W0  wacc by wac-L5           661,626 bytes
+    X0  wacc by the reference    884,803 bytes
+    W1  wacc by W0               681,417 bytes
+    X1  wacc by X0               681,417 bytes     <- the same bytes
+
+W0 and X0 differ by 223,177 bytes and must: they are one source compiled by two entirely different
+compilers. What matters is the next step. Both are *wacc*, so if each is faithful they compile that
+source the same way — and they do, exactly. `W1 == W2` and `X1 == X2` as well, so both paths are at
+a fixed point and it is the same one.
+
+That is the property that makes a ladder a *replacement* for a reference rather than a second
+opinion, and `ts/same_fixed_point.ts` is the test.
+
+**On speed.** The interpreted rung was the thing to worry about and it is not the thing to worry
+about. In one cold process:
+
+      410 ms   build the ladder — l1.l0 assembled, then L2, L3, L4, L5 in turn
+      104 ms   flatten wacc's 37,873 lines
+      361 ms   wac-L5 compiles it, to 183,862 lines of wac-L0
+      280 ms   assemble that to 659,236 bytes
+    -------
+    1,159 ms   total, cold, from an interpreter written in assembly text
+
+Against that, the TypeScript reference compiles the same source in **679 ms**, and either wacc
+compiles it in about **800 ms**. So the whole ladder — five compilers built from nothing, then the
+work — costs about 1.6x what the reference costs for the work alone; and wac-L5 by itself does the
+job in 641 ms, which is *faster* than the reference doing the same job.
+
+The 410 ms that builds the ladder is paid once per process and buys the thing the reference
+charges 19,499 lines of trusted code for.
