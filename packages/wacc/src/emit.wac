@@ -404,7 +404,7 @@ string primTypeName(Env env, u8[] src, Lexed lexed, Expr obj) {
 
 /** The key a name token means — its own file's declaration, or whichever file has one. */
 string nameKeyOf(Env env, u8[] src, Lexed lexed, i32 tok) {
-  return env.keyAt(tokenTextOf(src, lexed, tok), tokenLine(lexed, tok));
+  return env.keyAt(tokenTextOf(src, lexed, tok), env.fileOf(tokenLine(lexed, tok)));
 }
 
 /** A non-negative number as text, for building a key no source can spell — and for a diagnostic. */
@@ -2641,8 +2641,7 @@ export struct Env {
    * reference in every file that imported this one — is unchanged. A second file declaring the same
    * name gets a key nothing else can spell.
    */
-  string declare(this, string name, i32 line, bool exported) {
-    i32 f = this.fileOf(line);
+  string declare(this, string name, i32 f, bool exported) {
     bool taken = false;
     for (i32 i = 0; i < this.declCount; i++) {
       if (this.declNames[i] == name) { taken = true; }
@@ -2686,12 +2685,11 @@ export struct Env {
    * is the same trade linking by concatenation already made, and safe in the same direction: this
    * emitter accepts more than the language does and the checker one rung down says no.
    */
-  string keyAt(this, string name, i32 line) {
+  string keyAt(this, string name, i32 f) {
     // **A local shadows every file in the module, so it is not an ambiguous global.** Callers reach
     // here speculatively — `ch.toBytes()` asks whether `ch` names a type before deciding it does not
     // — and a speculative question whose answer is discarded must not leave the module unemittable.
     if (this.localAt(name) >= 0) { return name; }
-    i32 f = this.fileOf(line);
     // This file's own declaration first — shadowing, as the language has it.
     for (i32 i = 0; i < this.declCount; i++) {
       if (this.declNames[i] == name && this.declFiles[i] == f) { return this.declKeys[i]; }
@@ -5783,7 +5781,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       if (raw == env.curGeneric && env.curInst != "") { return env.curInst; }
       // **The key, not the name.** Two linked files may each declare a `K`, and what tells them
       // apart is the line this one is written on.
-      return env.keyAt(raw, tokenLine(lexed, tok));
+      return env.keyAt(raw, env.fileOf(tokenLine(lexed, tok)));
     }
     // An array spells itself from the element out, exactly as the checker's `typeOfTy` does. Left
     // out, every array type came back as the empty string — the type section had no array entry, the
@@ -5866,7 +5864,7 @@ string armVariant(Env env, u8[] src, Lexed lexed, i32 tok, string en) {
     // prefix of the key rather than the key.
     if (vk.len() > raw.len() && vk.slice(0, raw.len() + 1) == raw + "@") { return vk; }
   }
-  return env.keyAt(raw, tokenLine(lexed, tok));
+  return env.keyAt(raw, env.fileOf(tokenLine(lexed, tok)));
 }
 
 /**
@@ -12166,7 +12164,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string sname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok),
+        string sname = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
                                    exported);
         if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
         if (env.structCount < env.structNames.len()) {
@@ -12200,7 +12198,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       // another variant's payload, without either being reachable by accident.
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string ename = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok),
+        string ename = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
                                    exported);
         if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
         if (env.structCount < env.structNames.len()) {
@@ -12221,7 +12219,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         for (i32 v = 0; v < variants.len(); v++) {
           // A variant is reachable exactly when its enum is.
           string vname = env.declare(tokenTextOf(src, lexed, variants[v].nameTok),
-                                     tokenLine(lexed, variants[v].nameTok), exported);
+                                     env.fileOf(tokenLine(lexed, variants[v].nameTok)), exported);
           if (env.variantCount >= env.variantNames.len()) { env.ranOut("enum variants"); }
           if (env.variantCount < env.variantNames.len()) {
             env.variantNames[env.variantCount] = vname;
@@ -12304,7 +12302,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.ranOut("constants");
           continue;
         }
-        string cname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok),
+        string cname = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
                                    exported);
         env.constNames[env.constCount] = cname;
         env.constGlobal[env.constCount] = -1;
@@ -12324,7 +12322,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         if (typeParams.len() > 0) { continue; }
         string[] pts = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(env, src, lexed, params[i].type); }
-        string fname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok),
+        string fname = env.declare(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok)),
                                    exported);
         env.addFunc(fname, typeOfTyName(env, src, lexed, returnType), pts);
       }
@@ -14499,12 +14497,12 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
         // `Word`'s fields. Every other root on this walk comes from `typeOfTyName`, which resolves;
         // these two were added later and read the token. `issues/lang/0095`.
         n = noteBindStruct(env, out, n,
-                           env.keyAt(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok)));
+                           env.keyAt(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok))));
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n,
-                           env.keyAt(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok)));
+                           env.keyAt(tokenTextOf(src, lexed, nameTok), env.fileOf(tokenLine(lexed, nameTok))));
       }
       else: { }
     }
