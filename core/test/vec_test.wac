@@ -216,3 +216,31 @@ export string test_with_capacity() {
   t.eqI32(v.capacity(), 128, "the 65th grows it");
   return t.report();
 }
+
+// `fold` is the first method here with a type parameter of its own — `design/lang/0010`
+// option C. The accumulator is `U` rather than `T`, so these check both that it works when
+// the two coincide and that it works when they do not, which is the whole reason for it.
+export string test_fold() {
+  T t = T.create();
+  Vec<i32> v = Vec.create();
+  for (i32 i = 1; i <= 4; i++) { v.push(i); }
+
+  t.eqI32(v.fold<i32>(0, (i32 a, i32 x) => a + x), 10, "a sum, accumulator matching the element");
+  t.eqI32(v.fold<i32>(1, (i32 a, i32 x) => a * x), 24, "and the seed is not ignored");
+  t.eqI32(v.fold(0, (i32 a, i32 x) => a + x), 10, "the type argument is inferable, not required");
+
+  // The accumulator is the *method's* letter, so it need not be the element type — this is the
+  // case a struct-level parameter cannot express.
+  t.eqI64(v.fold<i64>(0 as i64, (i64 a, i32 x) => a + (x as i64)), 10 as i64,
+          "an accumulator of a different type entirely");
+  t.eqStr(v.fold<string>("", (string a, i32 x) => a + "."), "....",
+          "and one that is not a number at all");
+
+  Vec<i32> empty = Vec.create();
+  t.eqI32(empty.fold<i32>(7, (i32 a, i32 x) => a + x), 7, "an empty Vec answers the seed");
+
+  Vec<string> ws = Vec.create();
+  ws.push("a"); ws.push("b");
+  t.eqStr(ws.fold<string>("", (string a, string x) => a + x), "ab", "over a Vec of strings");
+  return t.report();
+}

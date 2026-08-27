@@ -1,14 +1,15 @@
 # 0010 — a method's own type parameter has to come from the slot, because a lambda states no return type
 
-- **Status:** **implemented 2026-08-27 — option C.** Five of six acceptance criteria are met and the
+- **Status:** **implemented 2026-08-27 — option C, and in use.** Five of six acceptance criteria are met and the
   sixth is not compiler work: `Pending<T>` has no value-returning continuation, and giving it one is
   scheduler plumbing rather than a declaration — see *What is left to build* item 1, which understated
   itself. `spec/cases/0245`–`0249` are the landed behaviour.
 
-  **There is still no real user, and one attempt found why.** Adding `fold` to `core/vec.wac` — the
-  method this document is written about — stops `packages/box` compiling, with 29 suite tests failing,
-  although nothing there calls it. `issues/lang/0276b`. So option C is implemented and cannot yet be
-  used on a struct anything else depends on, which is most of the reason to want it.
+  **`fold` is in `core/vec.wac`, so the feature has a real user.** It did not for a day: adding it
+  stopped `packages/box` compiling with 29 suite tests failing, although nothing there called it. The
+  cause was a second registrar — the walk that collects host-callback signatures resolved an instance
+  method's parameter types with only the *owner's* substitution in force, so `fn[U(U, T)]` became
+  `fn[U(U,Mount)]`, a callback signature naming a letter. `issues/lang/0276b`, fixed 2026-08-27.
 
   Decided 2026-08-26; the objection that had ruled C out was removed by
   [0011](0011-a-call-may-name-its-type-arguments.md). Option D moved to
@@ -280,7 +281,7 @@ the module's numbering.
 
 | # | criterion | state |
 |---|---|---|
-| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and was before this. It is still not *used*: adding `fold` to `core/vec.wac` stops `packages/box` compiling — `issues/lang/0276b` |
+| 1 | `Vec<T>.fold<U>` can be **declared** | **yes**, and **used**: `fold` is in `core/vec.wac` with its own tests in `core/test/vec_test.wac`, over four accumulator types. Blocked for a day by `issues/lang/0276b` |
 | 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **yes** — `spec/cases/0249`, answers 12. The letter lives inside a funcref, which the checker's binder could not see into; `applyBindings` and `substituteType` both already had that arm |
 | 3 | `v.fold<i64>(0, …)` with one | **yes** — `spec/cases/0245`, answers 12, with an **inline lambda** |
 | 4 | `p.then<Foo>(…)` | **the compiler is ready; the platform is not.** See below — this is more than the declaration item 1 calls it |

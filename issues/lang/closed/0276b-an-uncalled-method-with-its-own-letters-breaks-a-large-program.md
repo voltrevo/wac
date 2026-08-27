@@ -1,7 +1,8 @@
 # 0276b — an **uncalled** method with its own type parameters breaks a large program
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed 2026-08-27
+- **Claimed by:** agent-b
+- **Fixed in:** `packages/wacc/src/emit.wac` — `noteMethodCallbackSigs` declines a method with its own type parameters
 - **Reported by:** agent-b
 - **Date:** 2026-08-27
 - **Kind:** bug
@@ -201,3 +202,65 @@ see `fold`.
 Threading a one-word marker through `sigType` — set by each candidate before it calls — is ugly and
 answers it in one run, and can come straight back out.
 
+
+## Found: the host-callback walk, and a marker at every call site found it
+
+**`noteMethodCallbackSigs`.** It walks an *instance's* methods to decide which funcref types cross the
+host boundary, pushes the **owner's** substitution — `T` → `Mount` — and resolves each method's
+return and parameter types. `fold`'s parameter is `fn[U(U, T)]`, and that substitution binds `T` and
+nothing else, because `U` is the *method's* letter. So it resolved to `fn[U(U,Mount)]` and was
+recorded as a callback signature, which `writeValType` is then asked to write.
+
+That one entry produces all three shapes in the list above — the signature, its `dispatchSig`, and the
+`fn[…](i32)` pair — from three consecutive registrations at the callback table, so the triple was
+never evidence of `registerFuncTypes`.
+
+The fix is `issues/lang/0173a`'s, in the place that had not had it:
+
+```wac
+if (methods[m].typeParams.len() > 0) { continue; }
+```
+
+The host could not call such a method in any case: it has no way to say what `U` is.
+
+**The two sibling walks were checked and are correct** — `collectCallbackSigs` already guards
+`typeParams.len() > 0` on an exported generic function, and the field walk reads an instance's field
+types, where no method letter can appear.
+
+## What found it, after grep and four eliminated families had not
+
+Every earlier instrument answered *what* was registered and never *who*. Three attempts to get the
+caller failed in an instructive way:
+
+1. tagging each **walk** — the marker said `bindMethodExports`, which was the enclosing region but not
+   the caller;
+2. tagging each **function entry** — it said `countStructFields`, which does not call `sigType` at
+   all. A marker set at an entry is overwritten by any tagged function called afterwards, so it names
+   the last one *entered*, not the caller;
+3. marking `sigType`'s own recursion — it said the parent was `fn[fn[void(Exec)](i32)]`, an unrelated
+   signature that merely happened to be the last one to descend.
+
+What worked was tagging the **call sites** — all 99 of them, one line each, written immediately
+before the call so nothing can intervene:
+
+```wac
+env.lastWhy = "C21";
+env.sigType(env.cbSigs[j]);
+```
+
+**The rule is the general one:** a breadcrumb answers "who called this" only if nothing can run
+between setting it and the call. At a function entry, everything that function calls can. Three
+wrong answers came from that one mistake, and each was plausible enough to have been believed.
+
+No new field was needed — `lastWhy` already exists for decline reasons — and the whole instrument
+came back out with one `git checkout`.
+
+## What it cost, and what pays it back
+
+Nine reproduction shapes, four eliminated families and three wrong markers. **The counts in the
+section above — identical across every attempted fix — were the real signal and I read them as a
+dead end rather than as "none of these is on the path".** They were saying exactly that.
+
+`fold` is now in `core/vec.wac` with tests over four accumulator types, and `harness/appRun.test.ts`
+plus `packages/box/test/` — 92 tests — build an app through the fixed walk on every run, which is the
+regression guard.

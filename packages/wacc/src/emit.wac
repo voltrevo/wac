@@ -310,7 +310,12 @@ void writeValType(B out, Env env, string t) {
   //
   // `issues/lang/0173a` removed the entry — a type argument that is still a letter is spelled back
   // rather than instantiated, and the method that mentions it is declined where it is registered — so
-  // nothing produces such a type any more and this branch became unreachable. Removed rather than kept
+  // nothing produces such a type any more and this branch became unreachable. **It said so for a day
+  // longer than it was true**: `noteMethodCallbackSigs` is a *second* registrar, and it resolved an
+  // instance method's parameter types with only the owner's substitution in force, so an uncalled
+  // `fold` on `core/vec.wac` reached here as `fn[U(U,Mount)]` and failed every program that builds an
+  // app (`issues/lang/0276b`). Read "declined where it is registered" as a claim about every walk
+  // that registers, and count them before believing it. Removed rather than kept
   // as insurance, because a tolerance nothing needs is a hole the next gap falls through silently:
   // `issues/lang/0170a`'s third item is that `""` and its relatives travel as if they were answers.
   // A bare unresolved name now falls to the refusal below and is named.
@@ -13761,6 +13766,15 @@ i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, 
         if (typeParams.len() > 0 && tpl == "") { continue; }
         i32 pushed = tpl == "" ? 0 : pushSubstitution(env, src, lexed, typeParams, owner, tpl);
         for (i32 m = 0; m < methods.len(); m++) {
+          // **A method with its own letters has no signature to hand the host.** The substitution
+          // pushed above binds the *owner's* parameters — `T` — and a method type parameter is bound
+          // by nothing, so `fn[U(U, T)]` resolved here becomes `fn[U(U,Mount)]`: a callback signature
+          // naming a letter, which `writeValType` cannot write. `issues/lang/0173a` declined such a
+          // method where its instance entry is registered and this walk is a second registrar that
+          // did not, so adding an *uncalled* `fold` to `core/vec.wac` failed every program that
+          // builds an app — `issues/lang/0276b`. The host cannot call it either way: it has no way
+          // to say what `U` is.
+          if (methods[m].typeParams.len() > 0) { continue; }
           n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, methods[m].returnType));
           for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
             n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, methods[m].params[pi].type));
