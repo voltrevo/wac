@@ -162,29 +162,4 @@ export struct Vec<T> {
     i32 upTo = other.n;
     for (i32 i = 0; i < upTo; i++) { this.push(other.data[i]); }
   }
-
-  /**
-   * A left fold — `v.fold(0, (i32 acc, i32 x) => acc + x)`.
-   *
-   * **`U` is the method's own type parameter**, and this is the first thing in the repository to
-   * have one. It is the accumulator's type and need not be `T`: summing a `Vec<i32>` into an `i64`,
-   * or joining one into a `string`, is what makes the letter worth having rather than a method fixed
-   * to the element type.
-   *
-   * `design/lang/0010` is the document about exactly this method, and `core/vec.wac` having no
-   * `fold`, `map` or `filter` was that document's own evidence that the feature was missing: a
-   * lambda states no return type — it takes one from the slot it is written into — so the callback's
-   * `U` had nowhere to come from and the method was declarable and uncallable.
-   *
-   * Usually nothing is written, because the **seed** says what `U` is. Where it cannot, the call
-   * says so: `v.fold<i64>(0 as i64, (i64 a, i32 x) => a + (x as i64))`, since `0` alone would make
-   * the accumulator an `i32`.
-   *
-   * Left, and by index, so the order is the vector's and a caller may rely on it.
-   */
-  U fold<U>(const this, U seed, fn[U(U, T)] f) {
-    U acc = seed;
-    for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.data[i]); }
-    return acc;
-  }
 }

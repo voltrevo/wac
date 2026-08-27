@@ -183,7 +183,7 @@ Two of its three open questions are answered by what landed, and not in this doc
 
 §2's join rule and §3 are untouched by any of it.
 
-**What would decide this is a written program**, and now one can be written: `core/vec.wac` has a
-`fold` with a type parameter of its own, so somebody can use it for a while and report whether writing
-`<i64>` in the one case the seed cannot answer is ever annoying. Before today there was nothing to
-try.
+**What would decide this is a written program, and there still is not one.** `core/vec.wac` was given
+a `fold` for exactly that purpose and it had to come out again: `issues/lang/0276b`, where an uncalled
+own-letter method on a widely used struct stops a large program compiling. Until that is fixed the
+question this document asks cannot be answered by use, only by argument.
