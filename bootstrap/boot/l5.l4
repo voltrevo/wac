@@ -1785,14 +1785,19 @@ i32 equality() {
   // type error, so the spelling that reads best is also the only one that works.
   while (isword("is")) {
     next();
-    if (eatword("not")) {
-      eatword("null");
+    i32 negated = eatword("not");
+    // **`x is null` and `x is y` are different questions** with the same keyword: the first
+    // asks whether there is an object and the second whether it is *that* object. Reading
+    // `null` as just another right operand emitted a ref.is_null against the left and left the
+    // right unparsed, which is how one missing operator became nineteen thousand refusals.
+    if (isword("null")) {
+      next();
       line("ref.is_null");
-      line("i32.eqz");
     } else {
-      eatword("null");
-      line("ref.is_null");
+      rel();
+      line("ref.eq");
     }
+    if (negated) { line("i32.eqz"); }
     t = TY_BOOL;
   }
   while (ispunct(15677) | ispunct(15649)) {
