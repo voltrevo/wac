@@ -1,0 +1,287 @@
+// Who may reach the reference compiler, and who the reference may reach.
+//
+//     wac test --allow-read --allow-run tools/wac/referencecallers_test.wac
+//
+// **`design/lang/0003`, 2026-08-12, from a decision with the operator: *"stop using the reference
+// except for bootstrap."*** The rule is two weeks old. Nothing enforced it, and on 2026-08-27 there
+// were **47 files importing `compiler/`**. `issues/lang/0105` closed the day
+// after the rule was set, declaring everything remaining "done or deliberate" — and by the time
+// anybody looked again, there was no way to tell from the tree *which* of them were the deliberate
+// ones. Forty of the forty-seven call into it; the rest import a type.
+//
+// This file is that missing record, and the reason it is a test rather than a document is the same
+// reason: a document would have gone stale in the same two weeks.
+//
+// ## It lists importers, not callers
+//
+// Seven of the forty-seven import only *types* — `WacCompiled`, `CompileResult` — and never run the
+// reference. That distinction is real but it is not the one worth guarding: a type import is one
+// edit away from a call, and telling them apart needs a heuristic over call syntax that would be
+// wrong the first time somebody stored `wacCompile` in a variable. Listing every importer costs
+// four more lines and cannot be fooled.
+//
+// ## What to do when this goes red
+//
+// A **new** entry means a file started using the reference. That is the thing the rule forbids, so
+// the question is which of these it is:
+//
+//   - it is bootstrap work           → add it to `bootstrap()`, and say what it builds
+//   - it is a differential oracle    → add it to `oracle()`; the reference is wacc's second opinion
+//   - it is the playground           → add it to `site()`, and see `issues/lang/0279a`
+//   - it is none of those            → it is what the rule is about, and wacc is the compiler to use
+//
+// A **missing** entry is the good direction and the whole point: delete the line.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { contains, has, splitLines, trimmed } from "../../packages/wactest/src/strings.wac";
+import { sourceFiles, under } from "../../packages/wactest/src/repo.wac";
+import { Vec } from "core/vec.wac";
+
+/**
+ * **The bootstrap, which is the sanctioned use.** The reference exists to turn wacc's own sources
+ * into the first `wacc.wasm`; everything here is on that path.
+ *
+ * `harness/waccBuild.ts` is deliberately absent — it reaches the reference through `wacBind`, which
+ * is the seam, and adding it would record a dependency it does not have.
+ */
+string[] bootstrap() {
+  return string[](
+    "harness/wacBind.ts",              // binds a module; `from: "reference"` is the bootstrap's ask
+    "harness/wacFiles.ts",             // the import walk, which needs a parser to be correct
+    "packages/platform/native.ts",     // the bundler that writes the seed
+    "packages/platform/build.ts"       // the same for the Deno world
+  );
+}
+
+/**
+ * **wacc's differential oracle**, and the most valuable non-bootstrap use there is.
+ *
+ * `compiler/README.md` argues for keeping it: stripping the reference *"would cost the second
+ * opinion above while the two still overlap almost entirely"*. Every entry here is a test that asks
+ * the two compilers the same question and compares the answers.
+ */
+string[] oracle() {
+  return string[](
+    "harness/covTableParity.test.ts",
+    "harness/profileCompiler.test.ts",
+    "harness/referenceCheck.ts",
+    "harness/referenceCompile.ts",
+    "harness/referenceRun.ts",
+    "packages/wacc/test/checkSweep.test.ts",
+    "packages/wacc/test/corpus.ts",
+    "packages/wacc/test/corpusMutate.test.ts",
+    "packages/wacc/test/covkinds_oracle.ts",
+    "packages/wacc/test/emitSweep.test.ts",
+    "packages/wacc/test/linkEmit.test.ts",
+    "packages/wacc/test/missed.ts",
+    "packages/wacc/test/mutateCheck.test.ts",
+    "packages/wacc/test/parse_errors.test.ts",
+    "packages/wacc/test/reference.ts",
+    "packages/wacc/test/referencePrint.ts",
+    "packages/wacc/test/renderdiag_oracle.ts",
+    "packages/wacc/test/specEmit.test.ts",
+    "packages/wacc/test/sweep.test.ts",
+    // `issues/lang/0105` names this one as keeping the reference *on purpose*: it records the
+    // spec's own programs with the reference's answers, which is what makes them an oracle.
+    "packages/wacc/tools/specCases.ts",
+    "packages/wacc/tools/wireDiagnostics.ts"
+  );
+}
+
+/**
+ * **The playground**, which compiles in the reader's browser.
+ *
+ * It prefers wacc and falls back to the reference for `.wapy`, because until 2026-08-27 the
+ * reference was wapy's only implementation. `packages/wacc/src/wapyparse.wac` changed that for
+ * *parsing*; the fallback stays until wacc's **emitter** can take a wapy file, which is
+ * `issues/lang/0279a` — it links source text, and a `.wapy` file's text is not wac.
+ *
+ * `site/src/editor/Bootstrap.tsx` is the four-stage demo and is bootstrap work that happens to live
+ * here: the reference compiles stage A, and A, B and C are wacc.
+ */
+string[] site() {
+  return string[](
+    "site/src/editor/Bootstrap.tsx",
+    "site/src/editor/InlineDemo.tsx",
+    "site/src/editor/OutputPanel.tsx",
+    "site/src/editor/run.worker.ts",
+    "site/src/editor/wac-compile.ts",
+    "site/src/editor/wac-language.ts",
+    "site/src/editor/wac-lint.ts",
+    "site/src/editor/wacc-compile.ts",
+    "site/tools/site.test.ts",
+    "site/tools/siteDeadline.ts",
+    "site/tools/syncWacc.ts"
+  );
+}
+
+/**
+ * **Repository tooling**, and the group with the weakest claim.
+ *
+ * Each of these measures or mutates *this repository*, and each reaches for the reference because it
+ * was the only compiler when it was written. They are the ones to move to wacc, and the reason to
+ * keep the list separate from the three above is so that shrinking it is visible.
+ *
+ * `tools/fuzzBoundary.ts` is the exception with a real argument: `issues/lang/0105` records that it
+ * keeps the reference *on purpose*, to fuzz the reference's own bindgen.
+ */
+string[] tooling() {
+  return string[](
+    "harness/wacCoverage.ts",
+    "harness/wacTestRun.ts",
+    "tools/bindcheck.ts",
+    "tools/constLaundering.ts",
+    "tools/coverage.ts",
+    "tools/emitgen.ts",
+    "tools/fuzz.ts",
+    "tools/fuzzBoundary.ts",
+    "tools/mutate.ts",
+    "tools/mutate/operators.ts",
+    "tools/syncBootstrap.ts"
+  );
+}
+
+string[] allowed() {
+  Vec<string> out = Vec.create();
+  string[][] groups = string[][](bootstrap(), oracle(), site(), tooling());
+  for (i32 g = 0; g < groups.len(); g++) {
+    for (i32 i = 0; i < groups[g].len(); i++) { out.push(groups[g][i]); }
+  }
+  return out.toArray();
+}
+
+/** Read a file, or "". */
+string readAll(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/**
+ * The specifier of every real import in `text`.
+ *
+ * **A line, not a substring.** Scanning the whole file for `from "` reads *fixtures* as imports:
+ * `compiler/wacResolve.test.ts` holds wac programs in template literals, one of which is
+ * `import { util } from "../shared/util.wac"`, and a text search calls that file an importer of a
+ * directory it has never heard of. A real import is a top-level statement, so the line it sits on
+ * begins with `import` — or with `}` where the braces wrapped.
+ */
+string[] specifiersOf(string text) {
+  Vec<string> out = Vec.create();
+  string[] lines = splitLines(text);
+  for (i32 i = 0; i < lines.len(); i++) {
+    string t = trimmed(lines[i]);
+    bool isImport = (t.len() >= 7 && t.slice(0, 7) == "import ")
+                 || (t.len() >= 8 && t.slice(0, 8) == "} from \"");
+    if (!isImport) { continue; }
+    i32 q = t.indexOf("from \"");
+    if (q < 0) { continue; }
+    string rest = t.slice(q + 6, t.len());
+    i32 e = rest.indexOf("\"");
+    if (e < 0) { continue; }
+    out.push(rest.slice(0, e));
+  }
+  return out.toArray();
+}
+
+/**
+ * Whether any of `specs` names something in `compiler/`.
+ *
+ * Both spellings: `deno.json` maps the bare `wac/` specifier to `./compiler/`, and a file that
+ * cannot use the map — anything under `site/`, whose npm resolution scope refuses it — writes a
+ * relative path instead. Missing the second is how a guard over this would go quietly blind.
+ */
+bool importsReference(string[] specs) {
+  for (i32 i = 0; i < specs.len(); i++) {
+    if (specs[i].len() >= 4 && specs[i].slice(0, 4) == "wac/") { return true; }
+    if (contains(specs[i], "/compiler/")) { return true; }
+  }
+  return false;
+}
+
+export string test_only_sanctioned_files_reach_the_reference(Core core, Cli cli) {
+  T t = T.create();
+  string[] ok = allowed();
+  string[] files = sourceFiles(core, cli, string[](".ts", ".tsx"), string[]("compiler/"));
+  t.isTrue(files.len() > 200, "only " + itoa(files.len()) + " TypeScript files found — the walk moved");
+
+  Vec<string> found = Vec.create();
+  string strangers = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    if (!importsReference(specifiersOf(readAll(cli, files[i])))) { continue; }
+    found.push(files[i]);
+    if (!has(ok, files[i])) { strangers = strangers + "\n  " + files[i]; }
+  }
+  // A floor, because a scan that stops matching reports a clean tree and would let the list rot to
+  // nothing while reading green.
+  t.isTrue(found.len() > 30,
+           "only " + itoa(found.len()) + " importers of `compiler/` found — the scan has stopped matching");
+
+  t.eqStr(strangers, "",
+          "a file reaches the reference and this list does not sanction it." +
+          "\n  `design/lang/0003`: the reference exists to bootstrap wacc and for nothing else." +
+          "\n  If it is bootstrap, oracle or playground work, add it to the group that says so." +
+          "\n  Otherwise it is what that rule is about — wacc is the compiler to reach for.");
+
+  // The other direction, which is the one that should keep firing: an entry for a file that has
+  // stopped importing the reference is a line nobody will ever delete on purpose.
+  string gone = "";
+  for (i32 i = 0; i < ok.len(); i++) {
+    bool still = false;
+    for (i32 k = 0; k < found.len(); k++) { if (found.get(k) == ok[i]) { still = true; } }
+    if (!still) { gone = gone + "\n  " + ok[i]; }
+  }
+  t.eqStr(gone, "",
+          "this list sanctions a file that no longer reaches the reference — delete the line, which" +
+          "\n  is the direction `design/lang/0003` is going in");
+  core.log("    reference callers: " + itoa(found.len()) + ", all sanctioned");
+  return t.report();
+}
+
+/**
+ * The reference reaches nothing outside itself — the precondition for making it a subproject.
+ *
+ * The operator's shape, 2026-08-27: *"the reference should be a Deno subproject with its own internal
+ * tests, no knowledge of the larger surrounding wac project — that should make it easy to say 'only
+ * rerun these tests if that subproject changed'."*
+ *
+ * **Zero non-test modules reach outward already.** The five exceptions below are all tests, and all
+ * of them are *project-level differentials* rather than unit tests of the reference: they ask whether
+ * it agrees with `spec/` or with the tree. They belong beside the thing they compare against, and
+ * moving them is what makes the rule above true.
+ */
+string[] reachesOutward() {
+  return string[](
+    "compiler/wacSpec.test.ts",        // runs spec/**'s fences; imports tools/fuzz*.ts
+    "compiler/wacCases.test.ts",       // imports ../spec/cases/cases.ts
+    "compiler/wapyRoundTrip.test.ts",  // reads spec/ and every package
+    "compiler/wapySpec.test.ts",       // reads spec/spec/wapy.md
+    "compiler/wapyPrint.test.ts"       // reads spec/
+  );
+}
+
+export string test_the_reference_reaches_nothing_outside_itself(Core core, Cli cli) {
+  T t = T.create();
+  string[] known = reachesOutward();
+  string[] files = sourceFiles(core, cli, string[](".ts"), string[]());
+  string strangers = "";
+  i32 inside = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    if (!under(files[i], string[]("compiler/"))) { continue; }
+    inside = inside + 1;
+    string[] specs = specifiersOf(readAll(cli, files[i]));
+    bool out = false;
+    for (i32 k = 0; k < specs.len(); k++) {
+      if (specs[k].len() >= 3 && specs[k].slice(0, 3) == "../") { out = true; }
+    }
+    if (!out || has(known, files[i])) { continue; }
+    strangers = strangers + "\n  " + files[i];
+  }
+  t.isTrue(inside > 20, "only " + itoa(inside) + " files under compiler/ — the walk moved");
+  t.eqStr(strangers, "",
+          "a file in `compiler/` reaches outside it, which is what stops the reference being a" +
+          "\n  self-contained subproject with its own tests. If it is a differential against the" +
+          "\n  surrounding tree it belongs beside what it compares against, not in here.");
+  return t.report();
+}
