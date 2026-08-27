@@ -337,3 +337,54 @@ Two other things stay unanswered and should not be forgotten:
 - **an interpreted rung is slow**, and how slow has not been measured. It runs once per cold
   checkout, so the bar is patience rather than performance — but `fib 15` is not evidence about
   compiling 37,000 lines.
+
+## Both of those are now settled
+
+**The differential exists, and it is a better one than the reference gave.** A ladder that ends in
+a real wacc can be its own oracle: wac-L5 builds wacc (round 0), round 0 builds wacc again from the
+same source (round 1), and the two compile the corpus and are compared byte for byte. The argument
+is a fixed point — if wac-L5 were correct then round 0 would be a correct wacc, so round 1 would be
+one too, and the two could not disagree. All 296 corpus entry points now agree.
+
+It needs no expectations at all, which the reference differential also did not; what it adds is
+that both sides are *derived*, so nothing has to be maintained by hand as wac changes.
+
+It found exactly one defect, which is the point: five entry points differed, all by four bytes, all
+one instruction — `i64.const -1` against `i64.const 4294967295`. The threshold for a wide integer
+literal was thirty-two *bits* and should have been an i32's *range*. `4294967295` is both the
+all-ones u32 mask and an ordinary i64, and wacc writes it against an i64.
+
+**And the interpreted rung is not slow enough to matter.** `fib 15` was never evidence; compiling
+37,873 lines is. Cold, the whole chain builds and compiles wacc in about two seconds, and the wacc
+it builds compiles wacc again in three quarters of one. The bar was patience and it is not being
+tested.
+
+## The bugs that only running the output could find
+
+Six, and they are the useful half of this repository. Each produced a module that assembled, that
+the engine accepted, and that was wrong.
+
+- **A `match`'s default arm went where it was written.** `else:` has no tag test, so wherever its
+  code sits is where the match stops — and wacc's own `typeOfE` writes `match (callee.kind) {
+  else: … case Member(…): … }`. Every method call took the default and came back untyped, so
+  `.len()` on an array was declined by a compiler that had read the arm for it and jumped over it.
+  Sixteen spec cases turned on this one.
+- **An integer literal wider than a token's value.** wacc writes `4503599627370496` — two to the
+  fifty-second. Wrapped to an i32 it is zero, so every double the built compiler emitted came out
+  denormal: `return 1.5;` answered 1.6688e-308. The checked casts and the float remainders were the
+  same bug wearing different clothes.
+- **String escapes were not resolved.** `"\n"` was a backslash and an n, so wacc's linker put a
+  backslash between two files, and the module built from the joined text was empty. That reached me
+  as *"emitFiles answers a bare module while emit works"*, with nothing about escapes in it.
+- **A sized array held nulls**, where wac says `Point[10]()` is ten distinct Points and
+  `string[3]()` is three empty strings. A program that validates, runs, and traps on the first read.
+- **`string` was `u8[]`.** Same bytes, same wasm type, and they differ in the one place the corpus
+  leans on: `b[i]` is the byte and `s[i]` is the one-character string.
+- **`emitn(-2147483648)` printed its last digit as `(`.** Negating the most negative i32 overflows
+  back to itself, so `48 + n % 10` adds a negative remainder. All three rungs that print a number
+  had it, written the same way each time.
+
+The instrument mattered more than the reading in every case. The step that changed things was
+making the probe *call* what the built compiler produced and compare a value: `f` being exported is
+not `f` being right, and a method lookup that falls back to matching on name alone emits a module
+that runs and answers the wrong thing.
