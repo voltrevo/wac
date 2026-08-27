@@ -1656,10 +1656,14 @@ export function makeParser(tokens: Token[], file: string) {
 
   // ── Main parse loop ───────────────────────────────────────────────────────
   //
-  // Inside `program()`, not at construction. `makeParser` is a set of entry points into one
-  // grammar, and which one the caller wants is not known until they ask: wapy's frontend takes
-  // `expression` and `type` and never `program`, and a parser that had already consumed the
-  // token stream would hand it an empty one.
+  // Inside `program()`, not at construction, and it is the only entry point left.
+  //
+  // **There were four** — `expression`, `type` and `statement` beside it — because wapy's frontend
+  // took the middle of this grammar and never `program()`, and a parser that had already consumed
+  // the token stream would have handed it an empty one. That frontend is
+  // `packages/wacc/src/wapyparse.wac` now, which reaches wac's grammar through `parse.wac`, so the
+  // three went with compiler/wapyParse.ts on 2026-08-27. The shape stays: `makeParser` returning an
+  // object rather than a parse is what makes adding one back a function rather than a rewrite.
 
   function parseProgram(): TopLevel[] {
     const items: TopLevel[] = [];
@@ -1699,36 +1703,9 @@ export function makeParser(tokens: Token[], file: string) {
     program(): ParseResult {
       return { program: { items: parseProgram() }, errors };
     },
-    /** One expression, for a frontend that has isolated the tokens of one. */
-    expression(): { expr: Expr; errors: ParseError[]; consumed: number } {
-      const expr = parseExpr();
-      return { expr, errors, consumed: cur };
-    },
-    /** One type, likewise. */
-    type(): { type: WacType; errors: ParseError[]; consumed: number } {
-      const type = parseType();
-      return { type, errors, consumed: cur };
-    },
-    /** One statement, for a frontend that delimits statements itself. */
-    statement(): { stmt: Stmt; errors: ParseError[]; consumed: number } {
-      const stmt = parseStatement();
-      return { stmt, errors, consumed: cur };
-    },
   };
 }
 
 export function wacParse(tokens: Token[], file: string): ParseResult {
   return makeParser(tokens, file).program();
-}
-
-/** Parse exactly one expression from `tokens`, for another frontend's use. */
-export function parseExpression(tokens: Token[], file: string): { expr: Expr; errors: ParseError[] } {
-  const { expr, errors } = makeParser(tokens, file).expression();
-  return { expr, errors };
-}
-
-/** Parse exactly one type from `tokens`, likewise. */
-export function parseTypeOnly(tokens: Token[], file: string): { type: WacType; errors: ParseError[] } {
-  const { type, errors } = makeParser(tokens, file).type();
-  return { type, errors };
 }

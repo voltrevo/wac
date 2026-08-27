@@ -635,7 +635,7 @@ function topLevel(t: TopLevel): string[] {
   }
 }
 
-export function printWapy(program: Program): string {
+function printWapy(program: Program): string {
   const out: string[] = [];
   program.items.forEach((item, i) => {
     if (i) out.push("");
