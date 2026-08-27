@@ -48,7 +48,10 @@ i32 emit_room() {
 }
 
 i32 emit1(i32 b) {
-  if (dp >= emit_room()) { overflowed = 1; return 0; }
+  // **Overflow ends the parse.** Dropping the bytes alone turns a runaway into a *hang*, which is
+  // strictly worse than the trap it replaced — so the cursor goes to the end of the token stream,
+  // and every loop above checks for it.
+  if (dp >= emit_room()) { overflowed = 1; tp = ntok; return 0; }
   store8(dst + dp, b);
   dp = dp + 1;
   return 0;
@@ -619,7 +622,7 @@ i32 instantiate(i32 tm) {
   next();
   i32 astart = niarg;
   i32 na = 0;
-  while (at_gt() == 0) {
+  while (at_gt() == 0 & kind() != K_EOF) {
     iargs[niarg] = parse_type();
     niarg = niarg + 1;
     na = na + 1;
@@ -647,7 +650,7 @@ i32 parse_functype() {
   want(40);
   i32 fstart = nfparam;
   i32 np = 0;
-  while (ispunct(41) == 0) {
+  while (ispunct(41) == 0 & kind() != K_EOF) {
     i32 pt2 = parse_type();
     fparams[nfparam] = pt2;
     nfparam = nfparam + 1;
@@ -773,10 +776,10 @@ i32 looks_like_generic_fn() {
 
 // Reads past a whole declaration, body and all, without parsing any of it.
 i32 skip_decl() {
-  while (ispunct(123) == 0) { next(); }
+  while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
   i32 depth = 1;
   next();
-  while (depth > 0) {
+  while (depth > 0 & kind() != K_EOF) {
     if (ispunct(123)) { depth = depth + 1; }
     if (ispunct(125)) { depth = depth - 1; }
     next();
@@ -943,7 +946,7 @@ i32 mangled(i32 owner, i32 p, i32 n) {
 
 i32 args() {
   i32 n = 0;
-  while (ispunct(41) == 0) {
+  while (ispunct(41) == 0 & kind() != K_EOF) {
     // `fill: x` — a named argument, which wac has and which carries no meaning to the emitter
     // beyond the value: the name is a readability device the callee's signature already fixes.
     if (kind() == K_NAME & aheadIs(1, 58)) { next(); next(); }
@@ -1418,7 +1421,7 @@ i32 match_body(i32 wantValue, i32 out) {
   i32 saved = scratch_begin();
   i32 armty = TY_I32;
   want(123);
-  while (ispunct(125) == 0) {
+  while (ispunct(125) == 0 & kind() != K_EOF) {
     // **`else:` is an arm with no tag test.** It reads like a variant named `else` otherwise, and a
     // `match` with a default is what wac writes whenever the interesting cases are a minority —
     // which in a compiler over an AST is most of them.
@@ -1526,7 +1529,7 @@ i32 expr() { return ternary(); }
 i32 block() {
   want(123);
   i32 mark = nloc;
-  while (ispunct(125) == 0) { statement(); }
+  while (ispunct(125) == 0 & kind() != K_EOF) { statement(); }
   want(125);
   nloc = mark;
   return 0;
@@ -1560,7 +1563,7 @@ i32 chain_is_store() {
       if (toks[i].kind == K_PUNCT & toks[i].val == 91) {
         i32 depth = 1;
         i = i + 1;
-        while (depth > 0) {
+        while (depth > 0 & kind() != K_EOF) {
           if (toks[i].kind == K_PUNCT & toks[i].val == 91) { depth = depth + 1; }
           if (toks[i].kind == K_PUNCT & toks[i].val == 93) { depth = depth - 1; }
           i = i + 1;
@@ -1614,7 +1617,7 @@ i32 write_value(i32 op, i32 t) {
 // is three temporaries and no other shape works.
 i32 store_through() {
   i32 t = primary_base();
-  while (1) {
+  while (kind() != K_EOF) {
     if (ispunct(46)) {
       next();
       i32 fp = tstart();
@@ -1826,7 +1829,7 @@ i32 for_statement() {
   // The step is read before the body and emitted after it, so the token cursor has to go back —
   // which is free here, because the parser's whole state is one integer into the token array.
   i32 stepAt = tp;
-  while (ispunct(41) == 0) { next(); }
+  while (ispunct(41) == 0 & kind() != K_EOF) { next(); }
   want(41);
   // **`continue` must run the step.** So the body sits inside a block of its own and `continue`
   // branches to *its* end, which falls through to the step — branching to the loop directly would
@@ -1970,7 +1973,7 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   want(40);
   nloc = 0;
   nslot = 0;
-  while (ispunct(41) == 0) {
+  while (ispunct(41) == 0 & kind() != K_EOF) {
     eatword("const");
     if (isword("this")) { loc_add(tstart(), tlen(), mowner); next(); } else {
       i32 pt = parse_type();
@@ -2083,7 +2086,7 @@ i32 record_template(i32 kind) {
   next();
   i32 pstart = ntparam;
   i32 np = 0;
-  while (at_gt() == 0) {
+  while (at_gt() == 0 & kind() != K_EOF) {
     tparams[ntparam] = TParam(tstart(), tlen());
     ntparam = ntparam + 1;
     np = np + 1;
@@ -2103,7 +2106,7 @@ i32 record_template(i32 kind) {
     ntmpl = ntmpl + 1;
   }
   // Skip the body: it is read again, once per instantiation.
-  while (ispunct(123) == 0) { next(); }
+  while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
   i32 depth = 1;
   next();
   while (depth > 0) {
@@ -2128,7 +2131,7 @@ i32 struct_decl(i32 emitting, i32 out) {
   if (emitting == 0) { types[t] = Ty(T_STRUCT, p, n, 0, nfield, 0); }
   want(123);
   i32 count = 0;
-  while (ispunct(125) == 0) {
+  while (ispunct(125) == 0 & kind() != K_EOF) {
     eatword("const");
     eatword("export");
     i32 ft = parse_type();
@@ -2143,10 +2146,10 @@ i32 struct_decl(i32 emitting, i32 out) {
       } else {
         meths[nmeth] = Meth(t, mp, mn, ft);
         nmeth = nmeth + 1;
-        while (ispunct(123) == 0) { next(); }
+        while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
         i32 depth = 1;
         next();
-        while (depth > 0) {
+        while (depth > 0 & kind() != K_EOF) {
           if (ispunct(123)) { depth = depth + 1; }
           if (ispunct(125)) { depth = depth - 1; }
           next();
@@ -2183,7 +2186,7 @@ i32 enum_decl(i32 emitting, i32 out) {
   i32 count = 0;
   // A variant is a name; a method is a type *then* a name then `(`. One token of lookahead tells
   // them apart, because a variant's name is either followed by `(`, `,` or `}`.
-  while (ispunct(125) == 0) {
+  while (ispunct(125) == 0 & kind() != K_EOF) {
     if (looks_like_member() == 0) {
       i32 vp = tstart();
       i32 vn = tlen();
@@ -2231,10 +2234,10 @@ i32 enum_decl(i32 emitting, i32 out) {
       } else {
         meths[nmeth] = Meth(t, mp2, mn2, mt);
         nmeth = nmeth + 1;
-        while (ispunct(123) == 0) { next(); }
+        while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
         i32 depth2 = 1;
         next();
-        while (depth2 > 0) {
+        while (depth2 > 0 & kind() != K_EOF) {
           if (ispunct(123)) { depth2 = depth2 + 1; }
           if (ispunct(125)) { depth2 = depth2 - 1; }
           next();
@@ -2252,7 +2255,7 @@ i32 collect() {
   tp = 0;
   while (kind() != K_EOF) {
     eatword("export");
-    if (isword("import")) { while (ispunct(59) == 0) { next(); } next(); } else {
+    if (isword("import")) { while (ispunct(59) == 0 & kind() != K_EOF) { next(); } next(); } else {
     if (isword("struct")) {
       if (record_template(T_STRUCT) == 0) { struct_decl(0, 0); }
     } else {
@@ -2272,10 +2275,10 @@ i32 collect() {
     if (ispunct(40)) {
       fns[nfn] = Fn(p, n, ret);
       nfn = nfn + 1;
-      while (ispunct(123) == 0) { next(); }
+      while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
       i32 depth = 1;
       next();
-      while (depth > 0) {
+      while (depth > 0 & kind() != K_EOF) {
         if (ispunct(123)) { depth = depth + 1; }
         if (ispunct(125)) { depth = depth - 1; }
         next();
@@ -2283,7 +2286,7 @@ i32 collect() {
     } else {
       glos[nglo] = Glo(p, n, ret);
       nglo = nglo + 1;
-      while (ispunct(59) == 0) { next(); }
+      while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
       next();
     }}}}}
   }
@@ -2601,7 +2604,7 @@ i32 compile(i32 s, i32 out) {
 
   while (kind() != K_EOF) {
     eatword("export");
-    if (isword("import")) { while (ispunct(59) == 0) { next(); } next(); } else {
+    if (isword("import")) { while (ispunct(59) == 0 & kind() != K_EOF) { next(); } next(); } else {
     if (isword("struct")) {
       if (record_template(T_STRUCT) == 0) { struct_decl(1, out); }
     } else {
@@ -2619,7 +2622,7 @@ i32 compile(i32 s, i32 out) {
     } else {
       // A global's initialiser is not run: wac's may be any expression and wasm's may not, so the
       // global emits as zero and the program is expected to set it.
-      while (ispunct(59) == 0) { next(); }
+      while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
       next();
     }}}}}
   }
