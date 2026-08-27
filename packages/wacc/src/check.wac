@@ -3057,6 +3057,50 @@ string funcValueType(C c, i32 at) {
   return out + ") -> " + c.funcReturns[at];
 }
 
+/**
+ * The same, for a generic function named with its type arguments — `id<i32>` is `fn(i32) -> i32`.
+ *
+ * The comment above says why the bare name has no type: *"its signature is written in letters, and a
+ * letter is not a type any assignment can be checked against"*. Writing the arguments is what turns
+ * the letters into types, so this is that sentence with its own remedy applied.
+ */
+string funcValueTypeWritten(C c, i32 at, Ty[] typeArgs) {
+  i32 n = c.funcTypeParamCount[at];
+  if (typeArgs.len() != n) { return typeNone(); }
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  for (i32 i = 0; i < n; i++) {
+    names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
+    bound[i] = typeOfTy(c, typeArgs[i]);
+    if (bound[i] == typeNone() || bound[i] == "") { return typeNone(); }
+  }
+  string out = "fn(";
+  for (i32 i = 0; i < c.funcParamCount[at]; i++) {
+    if (i > 0) { out = out + ", "; }
+    out = out + applyBindings(c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
+  }
+  return out + ") -> " + applyBindings(c.funcReturns[at], names, bound);
+}
+
+/** The generic function a written instantiation names when it stands alone, or -1. */
+i32 genericFuncOfTypeName(C c, Ty qual) {
+  match (qual.kind) {
+    case Named(tok, targs): {
+      i32 at = c.funcAt(tokenText(c, tok));
+      return at >= 0 && c.funcGenerics[at] ? at : 0 - 1;
+    }
+    else: { return 0 - 1; }
+  }
+}
+
+/** The type arguments a written instantiation carries. */
+Ty[] typeNameArgs(Ty qual) {
+  match (qual.kind) {
+    case Named(tok, targs): { return targs; }
+    else: { return Ty[](); }
+  }
+}
+
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
@@ -3363,6 +3407,15 @@ export string typeOfExpr(C c, Expr e) {
       // Every arm was a literal, so the whole match takes its type from wherever it is going — which
       // is the slot's business and not this function's.
       return mt == "" ? typeNone() : mt;
+    }
+    // **A written instantiation standing alone is a generic function used as a value**, and its type
+    // is that function's signature with the letters bound — `id<i32>` is `fn(i32) -> i32`.
+    // `funcValueType` says why the bare name has none: the signature is written in letters, and a
+    // letter is not a type any assignment can be checked against. Anything else here is a type where
+    // a value belongs, which the checking walk refuses; this one says unknown and stays silent.
+    case TypeName(qual): {
+      i32 gat = genericFuncOfTypeName(c, qual);
+      return gat < 0 ? typeNone() : funcValueTypeWritten(c, gat, typeNameArgs(qual));
     }
     // A construction is either a struct being made or a function being called — the parser cannot
     // tell, so neither can this, and the name decides. A struct name gives the struct; a function
@@ -4176,12 +4229,29 @@ void checkExpr(C c, Expr e) {
         case Named(tok, targs): { base = tokenText(c, tok); }
         else: { }
       }
+      // **A generic function named with its type arguments is a value** — `design/lang/0011`
+      // criterion 3. `fn[i32(i32)] g = id<i32>;` is how one is written, since there is no `&f`, and
+      // the letters are what stopped the bare name from having a type at all.
+      i32 gat = genericFuncOfTypeName(c, qual);
+      if (gat >= 0) {
+        Ty[] gargs = typeNameArgs(qual);
+        i32 want = c.funcTypeParamCount[gat];
+        if (gargs.len() != want) {
+          c.reportWith(errTypeArgCount(), e.line, e.col,
+                       base + " takes " + lineText(want) + " type argument" +
+                       (want == 1 ? "" : "s") + ", and " + lineText(gargs.len()) + " " +
+                       (gargs.len() == 1 ? "was" : "were") + " written");
+          return;
+        }
+        for (i32 i = 0; i < gargs.len(); i++) { typeOfTy(c, gargs[i]); }
+        return;
+      }
       // **Which of the two it is, is a question about the name**, and the checker is the first place
       // that can answer it. Advising parentheses to someone who wrote `id<i32>` meaning the function
       // would be advice for a program they were not writing.
       c.reportWith(errTypeAsValue(), e.line, e.col,
                    c.funcAt(base) >= 0
-                     ? base + " is a function, and a call cannot name its type arguments"
+                     ? base + " is a function, but not a generic one, so it takes no type arguments"
                      : base + "<…> is read as type arguments — parenthesise to compare instead");
     }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be

@@ -555,6 +555,49 @@ bool bindTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] t
 }
 
 /**
+ * The instance a **written** instantiation names when it stands for a generic function, or `""`.
+ *
+ * `id<i32>` used as a value, which is how `design/lang/0011` criterion 3 is spelled — there is no
+ * `&f`, so a name is the whole of the syntax and this is that name with its letters supplied.
+ *
+ * Named exactly as `genericCallInstance` names an inferred one, `canonType` included, because the two
+ * have to land on the same instance: a program writing `id<i32>` beside an inferred `id(4)` must
+ * carry one function, not two. That is measured rather than asserted — see
+ * `packages/wacc/test/wac/typeargsrule_test.wac`.
+ */
+string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
+  if (env.prog is null) { return ""; }
+  match (qual.kind) {
+    case Named(tok, targs): {
+      if (targs.len() == 0) { return ""; }
+      string raw = tokenTextOf(src, lexed, tok);
+      Program pg = env.prog!;
+      for (i32 d = 0; d < pg.decls.len(); d++) {
+        match (pg.decls[d].kind) {
+          case Func(nameTok, returnType, params, body, exported, typeParams): {
+            if (typeParams.len() != targs.len()) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != raw) { continue; }
+            string inst = raw + "<";
+            for (i32 i = 0; i < targs.len(); i++) {
+              string a = env.canonType(typeOfTyName(env, src, lexed, targs[i]));
+              if (a == "") { return ""; }
+              if (i > 0) { inst = inst + ","; }
+              inst = inst + a;
+            }
+            inst = inst + ">";
+            env.instantiate(inst, raw);
+            return inst;
+          }
+          else: { }
+        }
+      }
+      return "";
+    }
+    else: { return ""; }
+  }
+}
+
+/**
  * The instance a call to a generic function names — `mapOption<i32,string>` — or `""`.
  *
  * Spelled the same way a generic type's instance is, because it is the same thing: a name plus its
@@ -6961,7 +7004,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // `Member`, where resolving the member consumes it. Emitting nothing would produce a module
     // that computes the wrong thing silently, so this traps — the same treatment every other
     // "cannot happen" in this walk gets. `issues/lang/0088`.
-    case TypeName(tn): { trap; }
+    case TypeName(tn): {
+      // `id<i32>` as a value: the same pair every funcref is, pointing at the instance. Registering
+      // it is `genericFuncInstance`'s doing and happens in the discovery walk; by here it has an
+      // index like any other function.
+      string inst = genericFuncInstance(env, src, lexed, tn);
+      i32 fr = inst == "" ? 0 - 1 : env.funcAt(inst);
+      if (fr >= 0 && env.funcIndex[fr] >= 0) { emitFuncPair(fb, env, fr, want); return; }
+      env.declineFor("a written instantiation used as a value, which named no function here");
+    }
     case BoolLit(value): {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
@@ -7859,6 +7910,15 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (fi2 >= 0 && env.constAt(key2) < 0) { return signatureOf(env, fi2); }
       i32 ci = env.constAt(key2);
       return ci < 0 ? "" : env.constTypes[ci];
+    }
+    // **A generic function named with its type arguments has its instance's signature**, which is
+    // the arm above with the letters supplied — `id<i32>` is `fn(i32) -> i32`. Without this the
+    // module was declined as *"untyped a type used as a value"*: the emitter could write the value
+    // and could not say what it was, which is a check two steps away from the fact.
+    case TypeName(vt): {
+      string vinst = genericFuncInstance(env, src, lexed, vt);
+      i32 vfi = vinst == "" ? 0 - 1 : env.funcAt(vinst);
+      return vfi < 0 ? "" : signatureOf(env, vfi);
     }
     case Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
     case ArrNew(elem, size, fill, elements): { return typeOfTyName(env, src, lexed, elem) + "[]"; }
@@ -10626,7 +10686,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case NullLit: { return "null"; }
     // **A type is not a value.** Reaches here only for a program the checker should have refused:
     // `TypeName` is valid solely as a `Member`'s object. `issues/lang/0088`.
-    case TypeName(tn): { return "a type used as a value"; }
+    case TypeName(tn): {
+      // A generic function named with its type arguments **is** a value — `design/lang/0011`
+      // criterion 3. Anything else standing here is a type where a value belongs.
+      return genericFuncInstance(env, src, lexed, tn) == "" ? "a type used as a value" : "";
+    }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       if (env.localAt(nm) >= 0) { return ""; }

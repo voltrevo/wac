@@ -79,26 +79,42 @@ export string test_a_comparison_against_a_call_is_still_a_comparison() {
 }
 
 /**
- * A generic function named with its type arguments is refused, and told which of the two it is.
+ * A generic function named with its type arguments is a **value**.
  *
- * `id<i32>` and `a<b>` are the same parse, and the parser hands both on rather than guessing —
- * only the checker knows whether `id` is a function. Advising parentheses to somebody who meant the
- * function would be advice about a program they were not writing, so the note branches on the name.
+ * `design/lang/0011` criterion 3, and this test is the inversion its own earlier version predicted:
+ * it asserted the refusal and said *"when step 4 lands this becomes a compiling program and this test
+ * inverts"*. It landed, so it did.
  *
- * **This is `design/lang/0011` criterion 3, and it is the criterion that is not met yet.** When step
- * 4 lands this becomes a compiling program and this test inverts. That is deliberate: until then the
- * refusal is what the language does, and it should be a refusal that explains itself rather than a
- * silence. `spec/spec/generics.md` still says a call cannot name its type arguments, and this agrees
- * with the spec.
+ * There is no `&f` in wac, so a bare name is the whole of the syntax for a funcref — and a generic
+ * function's bare name has no type, because its signature is written in letters and a letter is not a
+ * type any assignment can be checked against. Writing the arguments is what supplies them.
+ *
+ * The two neighbouring refusals stay, and say which is which: `id<i32>` and `a<b>` are the same
+ * parse, so only the *name* separates a generic function from a comparison, and a non-generic
+ * function is a third thing again.
  */
-export string test_a_generic_function_named_with_its_arguments_says_which_it_is() {
+export string test_a_generic_function_is_a_value_when_it_names_its_type_arguments() {
   T t = T.create();
-  string got = said("i32 id<T>(T x) { return 1; }\n" +
-                   "export i32 main() { fn[i32(i32)] g = id<i32>; return g(7); }");
-  t.isTrue(contains(got, "a call cannot name its type arguments"),
-           "a function is told it is a function, not offered parentheses — got " + got);
-  t.isTrue(!contains(got, "parenthesise"),
-           "and is not given the comparison advice — got " + got);
+
+  string ok = said("i32 id<T>(T x) { return 1; }\n" +
+                   "export i32 f() { fn[i32(i32)] g = id<i32>; return g(7); }");
+  t.isTrue(!contains(ok, "error"),
+           "a generic function with its arguments written is assignable to a funcref — got " + ok);
+
+  string plain = said("i32 id(i32 x) { return 1; }\n" +
+                      "export i32 f() { fn[i32(i32)] g = id<i32>; return g(7); }");
+  t.isTrue(contains(plain, "not a generic one, so it takes no type arguments"),
+           "a non-generic function is told it has no letters to supply — got " + plain);
+
+  string many = said("i32 id<T>(T x) { return 1; }\n" +
+                     "export i32 f() { fn[i32(i32)] g = id<i32, f64>; return g(7); }");
+  t.isTrue(contains(many, "takes 1 type argument, and 2 were written"),
+           "and a wrong count is a wrong count here too — got " + many);
+
+  // The comparison advice is asserted by the first test in this file, on `a < b > c`. It is not
+  // repeated here with a `?` after the `>`, because that shape is a syntax error under *both*
+  // readings — `a < b >` has no right operand — so it would be testing the parser's recovery rather
+  // than the rule.
   return t.report();
 }
 

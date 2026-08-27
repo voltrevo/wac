@@ -380,6 +380,16 @@ instantiation**, not two — the binding is all that differs, and everything aft
 `identity(4)` and `identity<i32>(5)` in one program compile one `identity<i32>`, and adding
 `identity<i64>(…)` compiles a second.
 
+`[§wacc-written-type-args]` **A generic function is a value this way too**, which is the only spelling
+there is — wac has no `&f`, so a name is the whole of the syntax:
+
+```wac
+fn[i32(i32)] g = id<i32>;           // `id<i32>` is `fn(i32) -> i32`
+```
+
+Its bare name has no type at all, and that is the reason rather than an oversight: the signature is
+written in letters, and a letter is not a type any assignment can be checked against.
+
 **A slot still does not determine a call's type parameters.** `Vec<i32> v = empty();` for
 `Vec<T> empty<T>()` is an error, and the fix is `empty<i32>()`. Lifting that would mean propagating an
 expected type *into* a call, which is the same restriction the struct case documents above and is a

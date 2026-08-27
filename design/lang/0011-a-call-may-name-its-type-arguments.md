@@ -320,7 +320,7 @@ rather than stylistic, so they are recorded there and repeated here:
 | 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
 | 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
 | 3 — the postfix path | **done** 2026-08-27 — `ExprKind.Call` carries `Ty[] typeArgs`; `v.fold<i64>(0, f)` parses. Not yet *bound* — that is 0010 C |
-| 4 — name resolution | **done for free functions** 2026-08-27 — `zero<i32>()` compiles and runs; `[§wacc-written-type-args]`, cases 0239–0241. The method half is `design/lang/0010` item 3 |
+| 4 — name resolution | **done for free functions** 2026-08-27 — calls *and* values: `zero<i32>()` and `fn[i32(i32)] g = id<i32>;` both compile and run. `[§wacc-written-type-args]`, cases 0239–0242. The method half is `design/lang/0010` item 3 |
 | 5 — the diagnostic | **done** 2026-08-27 — `perrTypeArgsThenValue`; the checker's `TypeName` arm branches on whether the name is a function; and the method-type-parameter refusal stops promising a workaround. `issues/lang/0235a` is covered on both halves |
 | 6 — the emitter | **needed nothing for free functions** — the existing instance machinery registered and emitted them once the checker stopped refusing. The method half is still 0010 item 3 |
 | 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
@@ -332,7 +332,7 @@ rather than stylistic, so they are recorded there and repeated here:
 |---|---|---|
 | 1 | `zero<i32>()` callable | **yes** — `spec/cases/0239`, answers 7 |
 | 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. Worth a decision of its own rather than smuggling in here |
-| 3 | `fn[i32(i32)] g = id<i32>;` | **no**, and it now fails with a message that says which of the two readings it is, rather than `expected an expression` |
+| 3 | `fn[i32(i32)] g = id<i32>;` | **yes** — `spec/cases/0242`, answers 6. Needed `typeOfE` an answer as well as the emission: the emitter could write the value and could not say what it was, and declined the module as *untyped a type used as a value* |
 | 4 | `Option<i32>.None.orElse(7)` | **yes** |
 | 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |
 | 6 | `core/test/option_test.wac`'s workaround locals | **partly** — one of the three was single-use and is now written inline. The other two are used more than once, so inlining them would make the file *longer*; the criterion's "a real file gets shorter" held for one local rather than three, and what actually changed is that the workaround is no longer forced |

@@ -1,0 +1,10 @@
+// expect: answers f = 6
+// only: wacc
+// spec:  §wacc-written-type-args
+// why: there is no `&f` in wac, so a bare name is the whole of the syntax for a funcref — and a
+//      generic function's bare name has no type, because its signature is written in letters and a
+//      letter is not a type any assignment can be checked against. Writing the arguments supplies
+//      them, and the value is the ordinary pair every funcref is, pointing at the instance.
+// from: design/lang/0011
+i32 id<T>(T x) { return 1; }
+export i32 f() { fn[i32(i32)] g = id<i32>; return g(7) + 5; }
