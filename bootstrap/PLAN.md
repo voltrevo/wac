@@ -64,7 +64,14 @@ comparison matched the wrong thing. Nothing anywhere asserts the buffers do not 
 which is how the scratch stack came to sit exactly on `TYPEBUF`. Make a buffer a base-and-limit
 pair, and assert the layout once at startup.
 
-### 4. One seam, declared by the module — **open**
+### 4. A comparison against a cast is refused — **open**
+
+`d == 3.0 as~ f32` refuses, where `f32 d = 3.0; d == 3.0` and `f32 d = 3.0 as~ f32` are both fine
+on their own. Found by writing the first of the three tests above. Not yet narrowed further, and
+not urgent — nothing in wacc does this — but it is a wrong answer rather than a missing feature,
+which puts it ahead of anything on the *nice* list.
+
+### 5. One seam, declared by the module — **open**
 
 Three conventions across the rungs, and two hosts implementing each:
 
@@ -154,8 +161,9 @@ seven touching funcrefs, and **zero** touching any of those three. The assembler
 
 ### The two things to do
 
-1. **Pin the three.** A case each in `ts/l5_test.ts` for a float, an array copy, a fill and a trim.
-   Cheap, ours, and it converts three features from "present" to "supported".
+1. **Pin the three** — **done**. Six cases in `ts/l5_test.ts` for f64 arithmetic, f32 width, a
+   float's bits both ways, `copyFrom`, `fill` and `trim`. It found a defect within a minute, which
+   is the argument for pinning in one line: see *A comparison against a cast* below.
 2. **Write our own regression cases for generics and funcrefs** if the existing twenty-two look
    thin — but they are ours and they are enough to catch a change breaking something, which is what
    a test is for.

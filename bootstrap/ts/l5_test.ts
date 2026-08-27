@@ -493,6 +493,64 @@ const programs: [string, string, number][] = [
     enum Option<T> { Some(T v), None }
     Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }
     i32 main() { Option<i32> a = Some(4); return match (a) { case Some(v): v, case None: 0 }; }`, 4],
+
+  // **Three features that went in on a throwaway probe and were never pinned.** Each was checked
+  // by hand against a scratch script, printed the right number, and was left with no test — so
+  // they were present rather than supported, which is the state most likely to be quietly wrong
+  // on the day something needs them. `wacc` uses none of the three; the ladder keeps them because
+  // it is allowed to grow, and a feature it keeps should be one it checks.
+
+  // f64 arithmetic, comparison and both conversions. The assemblers have `tests/l0/floats.l0`,
+  // so before this the *format* was covered and the *rung* was not.
+  ["f64 arithmetic and conversion", `
+    i32 main() {
+      f64 x = 2.5;
+      f64 y = x * 4.0 - 1.5;
+      i32 whole = y as i32;
+      f64 back = whole as f64;
+      return whole * 10 + (back == 8.5 ? 0 : 1) + (x < y ? 5 : 0);
+    }`, 86],
+
+  // Without the cast, because `d == 3.0 as~ f32` is refused — see PLAN.md, *A comparison against
+  // a cast*. Pinning these three found it within a minute of the first one being written.
+  ["f32 is its own width", `
+    i32 main() {
+      f32 n = 1.5;
+      f32 d = n * 2.0;
+      f64 wide = d as f64;
+      return (d == 3.0 ? 7 : 0) * 10 + (wide as i32);
+    }`, 73],
+
+  ["a float's bits, both spellings", `
+    i32 main() {
+      f64 v = 2.0;
+      u64 bits = v.toBits();
+      f64 back = f64.fromBits(bits);
+      return (back == 2.0 ? 1 : 0) * 100 + (f32.toBits(1.0 as~ f32) >>> 23) as~ i32;
+    }`, 227],
+
+  // `array.copy` and `array.fill` are instructions rather than helpers, and the operands are in a
+  // different order from the method's arguments — which is the part worth pinning.
+  ["copyFrom moves a range", `
+    i32 main() {
+      u8[] a = u8[](1, 2, 3, 4);
+      u8[] b = u8[6]();
+      b.copyFrom(a, 1, 3, 3);
+      return b[3] * 100 + b[5] * 10 + b[0];
+    }`, 240],
+
+  ["fill takes a range, not a count", `
+    i32 main() {
+      u8[] a = u8[5]();
+      a.fill(7, 1, 4);
+      return a[0] * 1000 + a[1] * 100 + a[3] * 10 + a[4];
+    }`, 770],
+
+  ["trim, both ends and all of it", `
+    i32 main() {
+      string t = "  hi  ".trim();
+      return t.len() * 100 + t.byte(0) + "   ".trim().len();
+    }`, 304],
 ];
 
 // wac compiles a whole program into one wasm module, so an import is a file to *include* rather
