@@ -12236,9 +12236,19 @@ void scanTokenTypes(Env env, u8[] src, Lexed lexed) {
   }
 }
 
-void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
-  // Kept, so a call to a generic function can read the declaration it names from wherever it is
-  env.prog = prog;
+
+// ── The declaration passes ────────────────────────────────────────────────────
+//
+// `collectDeclarations` was one function with four *ordered* walks over every declaration in the
+// program, and the order is load-bearing: a struct's parent may be declared in a later file, so
+// parents are resolved only once every struct is in; a call names a function declared further down,
+// so signatures come before bodies. The comments inside said so; the shape did not.
+//
+// Split so a driver can run **each pass across every file** rather than every pass across one file.
+// Wrapping the old function in a loop over files compiles and produces a compiler that traps.
+
+/** Pass 1: structs, their fields and methods. */
+void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // Structs first of all: their fields are what a construction and every access are about, and a
   // method's receiver type is one of them.
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -12336,45 +12346,10 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
       else: { }
     }
   }
+}
 
-  // **Now** the parents can be named: every struct in the program is declared, so `Shape` resolves
-  // to the same key whether it was written above its child or below it.
-  for (i32 i = 0; i < env.structCount; i++) {
-    if (env.structParentToks[i] < 0) { continue; }
-    env.structParents[i] = nameKeyOf(env, src, lexed, env.structParentToks[i]);
-  }
-  // And the fields, for the same reason and with the same timing: a field written with a name this
-  // file imported resolves only once the file it came from has been walked.
-  for (i32 i = 0; i < env.fieldCount; i++) {
-    if (env.fieldTys[i] is null) { continue; }
-    env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
-  }
-  // **A supertype must be declared before its subtype**, and a rec group does not lift that: being
-  // mutually visible is not the same as being defined, and wasm answers a child written first with
-  // "invalid supertype" from the type section. A struct declares its parent by name and the source
-  // may name it in either order, so the order is fixed here rather than required of the author.
-  for (i32 pass = 0; pass < env.structCount; pass++) {
-    bool moved = false;
-    for (i32 i = 0; i < env.structCount; i++) {
-      if (env.structParents[i] == "") { continue; }
-      i32 pi = -1;
-      for (i32 j = 0; j < env.structCount; j++) {
-        if (env.structNames[j] == env.structParents[i]) { pi = j; }
-      }
-      if (pi <= i) { continue; }
-      string tn = env.structNames[i];
-      env.structNames[i] = env.structNames[pi];
-      env.structNames[pi] = tn;
-      string tp = env.structParents[i];
-      env.structParents[i] = env.structParents[pi];
-      env.structParents[pi] = tp;
-      i32 tt = env.structParentToks[i];
-      env.structParentToks[i] = env.structParentToks[pi];
-      env.structParentToks[pi] = tt;
-      moved = true;
-    }
-    if (!moved) { break; }
-  }
+/** Pass 2: file-scope constants. */
+void declareConsts(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
 
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -12394,6 +12369,10 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
       else: { }
     }
   }
+}
+
+/** Pass 3: function and method signatures, before any body is looked at. */
+void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
 
   // Function names first, over the whole file: a call names one declared elsewhere and often further
   // down, which is the same argument the checker makes for collecting signatures before bodies.
@@ -12447,6 +12426,10 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
       else: { }
     }
   }
+}
+
+/** Pass 4: every type a body can name, so an instantiation reached only from a local is built. */
+void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
 
 
   // **Every type a body can name**, before anything is emitted: an instantiation written only as a
@@ -12482,7 +12465,59 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
       else: { }
     }
   }
-  collectInstances(env, src, lexed, prog);
+}
+
+/** Between passes 1 and 2: what could not be named until every struct in the program existed. */
+void resolveStructRefs(Env env, u8[] src, Lexed lexed) {
+
+  // **Now** the parents can be named: every struct in the program is declared, so `Shape` resolves
+  // to the same key whether it was written above its child or below it.
+  for (i32 i = 0; i < env.structCount; i++) {
+    if (env.structParentToks[i] < 0) { continue; }
+    env.structParents[i] = nameKeyOf(env, src, lexed, env.structParentToks[i]);
+  }
+  // And the fields, for the same reason and with the same timing: a field written with a name this
+  // file imported resolves only once the file it came from has been walked.
+  for (i32 i = 0; i < env.fieldCount; i++) {
+    if (env.fieldTys[i] is null) { continue; }
+    env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
+  }
+  // **A supertype must be declared before its subtype**, and a rec group does not lift that: being
+  // mutually visible is not the same as being defined, and wasm answers a child written first with
+  // "invalid supertype" from the type section. A struct declares its parent by name and the source
+  // may name it in either order, so the order is fixed here rather than required of the author.
+  for (i32 pass = 0; pass < env.structCount; pass++) {
+    bool moved = false;
+    for (i32 i = 0; i < env.structCount; i++) {
+      if (env.structParents[i] == "") { continue; }
+      i32 pi = -1;
+      for (i32 j = 0; j < env.structCount; j++) {
+        if (env.structNames[j] == env.structParents[i]) { pi = j; }
+      }
+      if (pi <= i) { continue; }
+      string tn = env.structNames[i];
+      env.structNames[i] = env.structNames[pi];
+      env.structNames[pi] = tn;
+      string tp = env.structParents[i];
+      env.structParents[i] = env.structParents[pi];
+      env.structParents[pi] = tp;
+      i32 tt = env.structParentToks[i];
+      env.structParentToks[i] = env.structParentToks[pi];
+      env.structParentToks[pi] = tt;
+      moved = true;
+    }
+    if (!moved) { break; }
+  }
+}
+
+void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
+  // Kept, so a call to a generic function can read the declaration it names from wherever it is
+  env.prog = prog;
+  declareStructs(env, src, lexed, prog, file);
+  resolveStructRefs(env, src, lexed);
+  declareConsts(env, src, lexed, prog, file);
+  declareFuncs(env, src, lexed, prog, file);
+  declareBodyTypes(env, src, lexed, prog, file);
   collectInstances(env, src, lexed, prog);
 }
 
