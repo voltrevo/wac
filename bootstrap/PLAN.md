@@ -128,6 +128,59 @@ must be unique across a program* — with the flattener's refusal as its enforce
 
 ---
 
+## What wacc could change, and what needs no change at all — **question**
+
+Measured over the 18 modules `emitFiles` actually links, with comments and string literals
+stripped so prose cannot match.
+
+**Four features wac-L5 implements that wacc never uses.** These need no change to wacc: they are
+simply dead weight, and I added them because I was measuring against the *corpus* when the target
+was only ever wacc.
+
+    feature                sites in wacc   lines in l5.l4   in the assemblers
+    generics                           0              109   —
+    funcrefs / call_ref                0               39   the declarative element segment
+    copyFrom / fill                    0                7   array.copy in both
+    .trim()                            0                7   —
+
+Nothing that must go through wac-L5 needs them either: the four files in `drivers/` use neither,
+and the 252 spec cases run through the *built wacc* — real wacc, with full generics — so deleting
+them costs that oracle nothing. The only users are 18 cases in `ts/l5_test.ts`, which test features
+nothing needs. Deleting them does mean wac-L5 can no longer compile `core/`, so
+`against_real_wac.ts` would read *17 of 17* rather than *24 of 24*.
+
+**One change to wacc removes floats entirely.** Every float in wacc is at a boundary, packed from
+integer bits and immediately unpacked:
+
+    lit.wac      decimalToF64 computes q and biased as integers, then f64.fromBits(q as@ u64)
+    emit.wac     void f64bits(this, f64 v) { u64 bits = f64.toBits(v); ... }
+    emit.wac     void f32bits(this, f32 v) { u32 bits = f32.toBits(v); ... }
+    emit.wac     f64 v = floatLit(...); fb.f32bits(v as~ f32);
+
+A float is never added, compared, or used as a number — it is a carrier between two functions.
+Make `floatLit` answer `u64` and `f32bits`/`f64bits` take bits, about six edits, and wacc needs no
+float type at all. That removes 53 lines from `boot/l5.l4`, roughly 100 across the two assemblers,
+and **the only non-LEB immediate in the wac-L0 format** — the eight raw bytes of `f64.const` — so
+`spec/l0.md` gets shorter too.
+
+**What this is worth.** The trusted root is the number the whole argument turns on:
+
+    today          assemble.ts 832 + l1.l0 1,804 + the flattener 191   = 2,827
+    after          assemble.ts ~700 + l1.l0 1,804 + the flattener ~114 = ~2,618
+
+and `boot/l5.l4` loses about 215 of its 3,100 lines.
+
+**The risk, and the fix for it.** All of this rests on wacc staying inside wac-L5's subset, and
+nothing enforces that today — a future wacc that reaches for a generic would fail in a way nobody
+would connect to this decision. So it should come with a **subset guard**: a check that the
+bootstrap can compile wacc's source, run on wacc's side, so reaching outside the subset fails
+loudly at the moment it is written rather than at the next bootstrap.
+
+That is the same principle as the collision rule above: a bootstrap constraint should be stated and
+enforced, not discovered.
+
+---
+
 ## The shape of the ladder — **parked, with the reasoning**
 
 Reflections, not planned work. Recorded so they are not re-derived.
