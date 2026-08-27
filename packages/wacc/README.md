@@ -468,7 +468,7 @@ are cases rather than a paragraph in a commit message.
 ## The toolchain
 
 **wacc is the `wac` command's compiler.** For a while it was reached through a second toolchain
-instead — `wac task waccx`, the same commands as the reference CLI but over `wacc` — which shared
+instead — `deno task waccx`, the same commands as the reference CLI but over `wacc` — which shared
 that CLI's `readGraph` and `wacDiag` so that the only difference between the two was the compiler in
 the middle. Both CLIs are retired; the binary is what people type, and the comparison they existed
 for is `test/wac/diagnosticgap_test.wac`, which puts `wacCompile` beside `diagnoseFiles` and renders both

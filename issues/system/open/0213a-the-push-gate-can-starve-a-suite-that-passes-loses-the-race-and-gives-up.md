@@ -185,3 +185,46 @@ What is actually worth knowing is narrower and still worth knowing: **`timeout`,
 aimed at `push.sh` leaves the suite running.** It keeps a core busy, keeps the lock, and nobody is reading
 its output. Anyone stopping a gate should kill the `deno run … tools/runTests.ts` child too, or the thing
 they stopped is only the part that would have told them the answer.
+## Decided: option 4, serialise the gate — operator, 2026-08-27
+
+The recommendation above is option 2, a disjoint-merge shortcut. The operator took **option 4**, and
+added the argument the measurements here did not have.
+
+**Why not option 2.** This page already says why it is unsound: *"a semantic conflict needs no shared
+file"*, with its own example of a batch touching `harness/wacFiles.ts` losing to one touching
+`packages/wactest/src/oracle.wac`. Serialising needs no soundness argument.
+
+**Why option 4 answers the 64%.** agent-b's measurement was 11 attempts, 7 of which never started.
+Option 2 addresses the races and none of the refusals. Holding the lock across the whole gate means a
+run that *starts* is a run that can *land* — the suite alone held it before, so a batch could pass,
+lose the push and re-run everything. Two gates on 2026-08-27 each ran the whole thing twice, one of
+them for a merge that touched only markdown.
+
+**The deadlock objection is answered by a primitive that already existed.** `alive(pid)` —
+`stat("/proc/<pid>")`, measured today: a dead holder stats false, `/proc/self` true — so a lock whose
+holder died is not a lock. `tools/push.sh` also releases on a `trap`, so it rarely comes to that.
+
+### What the operator ruled, in their words rather than mine
+
+**Refusing stays the default.** *"The normal answer is 'someone else is pushing, so I'll do more
+useful work rather than trying to push now', not 'I'll wait until I can get a push slot'."* This is
+what `tools/runTests.wac` already said at its own `take` — *"what to do when the machine is busy is
+the caller's decision, and a script that waits quietly for ninety minutes takes it away"* — so the
+change is to hold the lock longer, not to wait for it. `tools/push.sh --queue` waits, for the lock
+only; memory, load and the cooldown are not queues to join.
+
+**The cooldown stays, and it is not rationing.** *"Even if no one else is running, the 20 minute
+cooldown exists to keep you working most of the time, not burning time waiting for push gates. It is
+wasteful to run a push gate on every change, even 20min/push is aggressive."* That reframes it: the
+cooldown is a *batching* mechanism. Everything on this page reads it as fairness — including my own
+recommendation, and including the framing that a growing queue is a symptom. The batch is the point.
+
+The refusal message says all of this now, because a refusal that does not explain the policy reads as
+an invitation to retry.
+
+### What is left
+
+Nothing on this page's list. Option 1 is moot, 2 and 3 are unnecessary once a started run can land,
+and 5 was the status quo. What remains unmeasured is whether the starvation this issue is named for
+actually goes away — that needs a few days of gates with the lock held end to end, and the counter
+this page already added is what would show it.

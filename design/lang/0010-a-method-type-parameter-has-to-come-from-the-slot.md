@@ -233,7 +233,7 @@ C needs no inference work, but it is not free:
    Two further facts, measured 2026-08-27: the existing `then` has **five** real callers, all passing
    a void lambda, so the two forms cannot share a name — wac has no overloading, and a void-bodied
    lambda cannot satisfy `fn[U(T)]`. And `std/platform.wac` is embedded verbatim in
-   `packages/wacc/src/coretext.wac`, so any change to it needs `deno task gen:core` and a reseed.
+   `packages/wacc/src/coretext.wac`, so any change to it needs `wac task gen:core` and a reseed.
 
    None of that is compiler work, and the compiler no longer stands in its way: `spec/cases/0248`
    chains three of them on a `Cell<T>` written for the purpose.

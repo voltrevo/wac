@@ -33,7 +33,7 @@ export function agentName(): string {
  * A heavy non-suite runner announcing itself, so the gate can *see* it.
  *
  * The gate had exactly one caller, the suite runner, while roughly thirty-seven other
- * `deno task` entries build programs and run them — every `mutate*`, `corpus:*`, `coverage:*`,
+ * `wac task` entries build programs and run them — every `mutate*`, `corpus:*`, `coverage:*`,
  * `bench*`, `size` and `shell:fuzz`. None of them is visible here in either direction: they do not
  * wait for a suite and a suite does not wait for them. That is the first candidate in
  * issues/system 0142 and it is the shape every kill on 2026-08-12 had — all three refusals passed,

@@ -11,7 +11,7 @@ follow unless you have a reason not to:
 ```sh
 git clone <this repo> wac && cd wac
 bash tools/seed.sh --bootstrap    # once, from a fresh clone: builds the compiler the binary carries
-wac task wac:install   # builds `wac` and puts it on PATH
+./native/v8/target/release/wac task wac:install    # builds `wac` and puts it on PATH
 ```
 
 **There is a second way as of 2026-08-26** — `wac task wac:install --target deno` — which needs
@@ -20,14 +20,26 @@ equal for one reason, stated where it is documented below: building it shells ou
 which fetches from npm the first time, so the route with no network requirement is this one. Nothing
 about the *result* is lesser; see "Without Cargo" below.
 
-**Why `bash` and `--no-lock` rather than `wac task seed:bootstrap`.** Both forms work; these two do
-not touch the network. `deno task` restores this repository's `deno.lock` before running anything, and
-that lockfile carries every npm package the whole tree uses — **twelve of them**, including Playwright,
+**Why the path to the binary rather than a bare `wac task`.** Because you do not have one yet: that is
+what the second line builds and the third line installs. `wac task` is a subcommand of the `wac`
+command, so a fresh clone cannot dispatch through it at all — the seed is gitignored and there is no
+binary until `tools/seed.sh --bootstrap` has made one. After it has, `./native/v8/target/release/wac`
+is that binary, and naming it explicitly is what `tools/push.sh` does for the same reason: an
+installed `wac` from an earlier day would be a different build than the one this checkout is testing.
+
+**This block said `deno task --no-lock wac:install` until 2026-08-27**, and the argument for it is
+worth keeping because it is still true of Deno, and because the flag it turned on is the reason the
+line looked odd. `deno task` restored this repository's `deno.lock` before running anything, and that
+lockfile carries every npm package the whole tree uses — **twelve of them**, including Playwright,
 ethers, two versions of Binaryen and `ws` — so a fresh clone downloaded all of it before compiling a
-line. Neither of these two steps needs a single one: `tools/install.ts` has no npm in its import graph
-at all. On a slow or unreliable connection the download was what stopped the bootstrap. GitHub issue
-21; `wac task seed:bootstrap` and `wac task wac:install` are still there and still correct if you
-have the packages already.
+line. Neither of these steps needs a single one: `tools/install.ts` has no npm in its import graph at
+all. On a slow or unreliable connection the download was what stopped the bootstrap. GitHub issue 21.
+
+`wac task` restores nothing and has no `--no-lock`, so that whole hazard is gone rather than avoided —
+which is a real gain from moving the registry, and the reason this paragraph is history rather than
+advice. Once `wac` is on PATH, `wac task seed:bootstrap` and `wac task wac:install` are the ordinary
+way to run both, and `seed:bootstrap` is literally `bash tools/seed.sh --bootstrap` dispatched through
+the registry.
 
 Cargo because the seed is a wasm module the `wac` binary *carries*, so building it means building the
 binary, and `native/v8` is Rust. This said "a checkout of this repository and Deno" until 2026-08-20,

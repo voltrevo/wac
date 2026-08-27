@@ -714,7 +714,7 @@ export string stdFile(string path) {
                + "// **Keep new text in this file ASCII, until `issues/lang/0253a` is fixed.** One non-ASCII character\n"
                + "// in a *comment* here is enough to turn `test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes`\n"
                + "// red: this file's text is embedded in `packages/wacc/src/coretext.wac`, so a comment reaches what\n"
-               + "// the compiler is built from, and the reference and wacc then disagree about the bytes. `deno task\n"
+               + "// the compiler is built from, and the reference and wacc then disagree about the bytes. `wac task\n"
                + "// seed`'s own fixpoint check does *not* catch it, so the first sign is a red suite some minutes\n"
                + "// later with no obvious connection to the sentence that was typed. An em dash is the usual way in,\n"
                + "// because the rest of this repository writes them freely.\n"

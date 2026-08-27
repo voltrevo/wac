@@ -30,7 +30,8 @@ string freshScratch(T t, Cli cli, string name) {
   return dir;
 }
 
-/** Build `inside.wac` for the Deno world, which is what `wac task app` does and what ships. */
+/** Build `inside.wac` for the Deno world, which is what ships. `deno task app` did this and the
+ * spawn in one step until `18e3f616` split it into `wac build` and `wac run`. */
 bool build(T t, Cli cli, string out) {
   Exec r = cli.exec("deno",
     string[]("run", "-A", "packages/platform/build.ts", INSIDE,

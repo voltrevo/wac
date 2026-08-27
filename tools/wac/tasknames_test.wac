@@ -1,0 +1,232 @@
+// Every task name this repository tells you to run, against the registry that would run it.
+//
+//     wac test --allow-read --allow-run tools/wac/tasknames_test.wac
+//
+// Two questions, and the second is why this exists.
+//
+// **Does every `wac task <name>` name a real task?** A documented command that does not exist fails
+// loudly when someone runs it, which sounds harmless until you notice that most of these are read
+// far more often than they are run. `issues/system/0230a` is the same shape one layer down: *"the
+// usage line named a task that does not exist"*.
+//
+// **Does anything still say `deno task`?** `wac task` replaced it on 2026-08-27 and `deno.json` kept
+// `imports` and `exclude` and nothing else — so `deno task test` now answers *"Task not found"* with
+// an empty list. There were 328 mentions in the tree the day after, and the interesting thing about
+// them is that **most were correct**: 208 sit in closed issues, which are a dated record of what was
+// run, and rewriting those would falsify the record rather than fix anything.
+//
+// ## What is in scope, and why `issues/` mostly is not
+//
+// An issue is a log entry with a date on it. `issues/system/0005` says *"`deno task mutate --package
+// crypto` exits 0"* — that was a measurement, and it was taken with that command. `issues/system/0142`
+// quotes a transcript. The right thing to do with those is nothing.
+//
+// The exceptions are the two files in an issue tree that are **navigation rather than record**:
+// `README.md`, which states the rules for filing, and `INDEX.md`, which summarises open issues. Both
+// are read as current. `issues/system/README.md` said *"anything that makes `deno task test` red"* —
+// a live rule naming a dead command — and `INDEX.md` carried an open issue's title.
+//
+// Everything else tracked is in scope. `design/` is dated too, but a design note is read as an
+// argument rather than as a transcript, and there was exactly one mention in the whole tree.
+//
+// ## The rule asks about the name, not the phrase
+//
+// A mention is only dangerous when the task is **live**: `deno task test` sends a reader to a command
+// that fails when `wac task test` would have worked. `deno task app:native` cannot mislead anybody —
+// that task was retired in `d1c5b0ae`, so the sentence around it is history by construction.
+//
+// That distinction was learned the hard way and is the most useful thing on this page. The first
+// version forbade the phrase outright and needed **fifteen** file exemptions; the reason so many were
+// needed is that a blanket `deno task` → `wac task` rename had rewritten two dozen *accurate*
+// past-tense sentences so that they offered `app:native`, `waccx` and `wac:pin` as **wac** tasks —
+// commands that never existed under that runner, spelled here without the literal form because the
+// check below reads this file too, and is right to. `packages/README.md` was left declaring that the `wac:pin`
+// task does not exist — under a runner that never had it — which is true twice over and was true
+// once before the rename.
+//
+// Every one of those six names *had* been a real `deno task`, each deliberately retired. Reverting
+// them and asking about the name left two exceptions instead of fifteen. An exception list that long
+// is usually a rule asking the wrong question.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { has } from "../../packages/wactest/src/strings.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { Task, hasTask, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
+
+/** The extensions worth reading. A task name is quoted in prose, in code and in shell alike. */
+string[] kinds() { return string[](".md", ".ts", ".tsx", ".wac", ".sh", ".json5"); }
+
+/**
+ * Whether this file is read as current, rather than as a record of what was run on a given day.
+ *
+ * Only `issues/` is excluded, and only its issue *files* — see the header.
+ */
+export bool isCurrent(string path) {
+  if (path.len() < 7 || path.slice(0, 7) != "issues/") { return true; }
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.toBytes()[i] == '/') { cut = i; } }
+  string base = path.slice(cut + 1, path.len());
+  return base == "README.md" || base == "INDEX.md";
+}
+
+/** Whether a byte can appear in a task name — `coverage:all`, `test:heavy`, `gen:core`. */
+bool isNameByte(i32 b) {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57)
+      || b == 58 || b == 45 || b == 95;
+}
+
+/**
+ * Every `<runner> task <name>` in `text`, with the line it is on.
+ *
+ * A name that does not start with a name byte is skipped rather than reported: the phrase wraps
+ * across lines in comments — ``` `deno task\n// coverage:quic` ``` was a real one — and a line break
+ * is not a claim about a task called nothing. The `deno task` check below sees those, because it
+ * does not need the name.
+ */
+struct Named {
+  string name;
+  i32 line;
+}
+
+Named[] namesAfter(string text, string runner) {
+  u8[] b = text.toBytes();
+  string needle = runner + " task ";
+  Named[] out = Named[64](fill: Named("", 0));
+  i32 n = 0;
+  i32 line = 1;
+  i32 i = 0;
+  while (i < b.len() && n < out.len()) {
+    if (b[i] == '\n') { line = line + 1; i = i + 1; continue; }
+    if (i + needle.len() > b.len() || text.slice(i, i + needle.len()) != needle) { i = i + 1; continue; }
+    i32 at = i + needle.len();
+    // Skip flags — `deno task --quiet wac:uninstall` was a real form.
+    while (at < b.len() && b[at] == '-') {
+      while (at < b.len() && b[at] != ' ' && b[at] != '\n') { at = at + 1; }
+      while (at < b.len() && b[at] == ' ') { at = at + 1; }
+    }
+    i32 start = at;
+    while (at < b.len() && isNameByte(b[at])) { at = at + 1; }
+    // **A placeholder is not a claim about a task.** `wac task coverage:<pkg>` is how every page
+    // spells the family, and `wac task <name>` is how they spell the general form; both stop the
+    // scan at a `<`, and a name left ending in `:` is the first of those with the angle eaten.
+    bool placeholder = (at < b.len() && b[at] == '<')
+                    || (at > start && b[at - 1] == ':');
+    if (at > start && !placeholder) { out[n] = Named(text.slice(start, at), line); n = n + 1; }
+    i = i + needle.len();
+  }
+  Named[] exact = Named[n](fill: Named("", 0));
+  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  return exact;
+}
+
+/** Read a file, or "". */
+string readAll(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/**
+ * The files that quote the old runner with a **live** task name, and may.
+ *
+ * Only two, and that is the point: the rule above asks about the name, so a mention of a retired task
+ * needs no exemption — nobody can follow `deno task app:native` and the sentence around it is history
+ * by construction. What needs saying out loud is a page that writes `deno task <something that still
+ * works>`, because a reader can try it.
+ *
+ * This list was fifteen files for a few minutes on 2026-08-27, before the rule was sharpened, and the
+ * length was the tell: an exception list that long is usually a rule asking the wrong question.
+ */
+string[] mayNameTheOldRunner() {
+  return string[](
+    // The bootstrap block said `deno task --no-lock wac:install` until 2026-08-27, and the paragraph
+    // explaining why keeps the line verbatim — GitHub issue 21 is about that exact invocation.
+    "docs/your-own-project.md",
+    // This file, whose prose has to name both halves of the rule to state it.
+    "tools/wac/tasknames_test.wac"
+  );
+}
+
+export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Core core, Cli cli) {
+  T t = T.create();
+  Task[] tasks = tasksIn(readAll(cli, tasksFile()).toBytes());
+  t.isTrue(tasks.len() > 50, "only " + itoa(tasks.len()) + " tasks parsed from " + tasksFile());
+
+  string[] files = sourceFiles(core, cli, kinds(), string[]());
+  t.isTrue(files.len() > 500, "only " + itoa(files.len()) + " sources found");
+
+  i32 checked = 0;
+  string wrong = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    if (!isCurrent(files[i])) { continue; }
+    Named[] said = namesAfter(readAll(cli, files[i]), "wac");
+    for (i32 k = 0; k < said.len(); k++) {
+      checked = checked + 1;
+      if (hasTask(tasks, said[k].name)) { continue; }
+      wrong = wrong + "\n  " + files[i] + ":" + itoa(said[k].line) + ": `wac task " + said[k].name
+            + "` is not in " + tasksFile();
+    }
+  }
+  // A floor, because a scan that stops matching reports a clean tree.
+  t.isTrue(checked > 40, "only " + itoa(checked) + " `wac task <name>` mentions found — the scan has moved");
+  t.eqStr(wrong, "", "a documented task does not exist");
+  return t.report();
+}
+
+export string test_nothing_current_tells_you_to_run_a_live_task_through_deno(Core core, Cli cli) {
+  T t = T.create();
+  // **The rule is about the name, not the phrase.** `deno task app:native` names a task that was
+  // retired in `d1c5b0ae`; nobody can follow it, and the sentence around it is almost always saying
+  // what used to be true. `deno task test` is the dangerous one: the task is live, the runner is not,
+  // so a reader tries it and gets "Task not found" for a command that works under its new name.
+  //
+  // That distinction is worth more than a file list, and it is why this replaced one. Fifteen files
+  // were exempted here for a few minutes on 2026-08-27 — and the reason so many needed exempting was
+  // that a blanket rename had turned two dozen *accurate past-tense* mentions into `wac task
+  // app:native` and friends, naming commands that never existed under that runner. Reverting those
+  // and asking about the name instead left three exceptions.
+  Task[] tasks = tasksIn(readAll(cli, tasksFile()).toBytes());
+  string[] allowed = mayNameTheOldRunner();
+  string[] files = sourceFiles(core, cli, kinds(), string[]());
+  i32 retired = 0;
+  i32 exempt = 0;
+  string wrong = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    if (!isCurrent(files[i])) { continue; }
+    Named[] said = namesAfter(readAll(cli, files[i]), "deno");
+    for (i32 k = 0; k < said.len(); k++) {
+      if (!hasTask(tasks, said[k].name)) { retired = retired + 1; continue; }
+      if (has(allowed, files[i])) { exempt = exempt + 1; continue; }
+      wrong = wrong + "\n  " + files[i] + ":" + itoa(said[k].line) + ": `deno task " + said[k].name
+            + "` — that task is live, but `deno task` is not a command any more";
+    }
+  }
+  t.eqStr(wrong, "",
+          "`deno.json` has no `tasks` and answers \"Task not found\" with an empty list." +
+          "\n  Say `wac task` instead — the names did not change." +
+          "\n  If the line is about the migration and has to quote the old runner with a live name," +
+          "\n  add the file to `mayNameTheOldRunner` with the reason.");
+  // Floors on both halves, so neither passes by matching nothing.
+  t.isTrue(retired > 10,
+           "only " + itoa(retired) + " `deno task <retired>` mentions — the scan or the history has moved");
+  t.isTrue(exempt > 0, "no exempted file quotes a live name any more — prune `mayNameTheOldRunner`");
+  return t.report();
+}
+
+export string test_the_scope_rule_is_the_one_the_header_describes(Core core, Cli cli) {
+  T t = T.create();
+  // The boundary is the whole judgement in this file, so it is stated as cases rather than left to
+  // the reader of `isCurrent`.
+  t.isTrue(isCurrent("CLAUDE.md"), "the root");
+  t.isTrue(isCurrent("docs/your-own-project.md"), "docs");
+  t.isTrue(isCurrent("design/lang/0010-a-method-type-parameter-has-to-come-from-the-slot.md"),
+           "a design note is an argument, not a transcript");
+  t.isTrue(isCurrent("issues/system/README.md"), "an issue tree's rules");
+  t.isTrue(isCurrent("issues/lang/INDEX.md"), "an issue tree's index");
+  t.isTrue(!isCurrent("issues/system/open/0005-mutation-testing-found-54-untested-beha.md"),
+           "an open issue is a dated record");
+  t.isTrue(!isCurrent("issues/lang/closed/0035-wacx-is-specified-but-does-not-exist.md"),
+           "a closed issue even more so");
+  return t.report();
+}

@@ -56,7 +56,8 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     wac task docs                                    the doc checks — a wac phase, then Deno's
     wac task map --check                             MAP.md is generated; staleness is a failure
     wac task seed                                    rebuild the compiler inside the `wac` binary
-    wac task seed:bootstrap                          ...from a clone with no binary yet
+    bash tools/seed.sh --bootstrap                   ...from a clone with no binary yet — no
+                                                     `wac task` here, there is nothing to run it
     wac task seed:native                             just `wacland`, the wasmtime host
     wac task wac:install                             build it and put it on PATH — $WAC_HOME
     wac task wac:build -o ./wac                      ...or just build one, installing nothing
@@ -78,7 +79,7 @@ wac#26.
 
 **Taking it away is `wac uninstall`, a subcommand rather than a task**, and it removes exactly those
 things and never a manifest, a lockfile, a source file or a build product. There was a
-`wac task wac:uninstall` too until 2026-08-26; it went because it was the copy nobody who had
+`deno task wac:uninstall` too until 2026-08-26; it went because it was the copy nobody who had
 installed the command could reach — a Deno program under `tools/` needs this checkout, and they have
 a `$WAC_HOME` and no checkout.
 
@@ -136,9 +137,15 @@ old" — it is an ordinary file failing to emit with a message about lambdas or 
 was fine yesterday. `wac task seed` cannot recover from that, because it needs the seed to rebuild
 the seed. `seed:bootstrap` can, because it starts from the reference compiler.
 
-The Deno path is `wac task seed:bootstrap`, and it is still the one that works from **nothing**: the
-seed is gitignored, so a fresh clone has no binary to build with and `cargo build` cannot start
-without one. Run it once, then `wac task seed` from then on.
+The Deno path is `bash tools/seed.sh --bootstrap`, and it is still the one that works from
+**nothing**: the seed is gitignored, so a fresh clone has no binary to build with and `cargo build`
+cannot start without one. Run it once, then `wac task seed` from then on.
+
+**Spelled as the script rather than as `wac task seed:bootstrap`, which is the same command and
+cannot be reached.** `wac task` is a subcommand of the `wac` binary, so the one situation this line
+is for is the one situation where the registry is unavailable. The task exists and is correct once
+you have a binary; it is not the way to get one. This said `wac task seed:bootstrap` for a few hours
+on 2026-08-27, which is the migration renaming a string without asking what would run it.
 
 **Plain `seed:bootstrap` is the escape hatch when a wacc change has made wacc unable to build
 itself**, because it builds wacc with the *reference* and the app with wacc — so the binary that

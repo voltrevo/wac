@@ -32,6 +32,30 @@ find /tmp -maxdepth 1 -name 'push-suite-*.log' -mtime +3 -delete 2>/dev/null || 
 # an installed `wac` would be a different build than the one this gate is testing — the seed fixpoint
 # is about *this* tree. Named once so no call site has to remember.
 WAC="./native/v8/target/release/wac"
+
+# **The gate holds the suite lock from before the pull until after the push.** It used to be held by
+# the suite alone — `tools/runTests.wac` took it and let it go four minutes later — so two agents
+# could each run a green suite and only one could land, the loser re-running everything.
+# `issues/system/0213a` measured three green suites and no push in one batch; two gates on 2026-08-27
+# each ran the whole thing twice, at a load of 6.7 on five cores.
+#
+# `$$` is recorded as the holder because this script is what stays alive; a one-shot helper's pid
+# would be dead the instant it was written. `WAC_GATE_LOCK` tells the suite below not to ask for a
+# lock its own parent is holding, and `take` checks that claim against the lock file rather than
+# believing the variable.
+#
+# **Refusing is the default and is the point.** `--queue` waits, and only for the lock; a machine
+# short of memory or an agent inside its cooldown is not a queue to join.
+gateQueue=""
+for a in "$@"; do [ "$a" = "--queue" ] && gateQueue="--queue"; done
+if ! "$WAC" run --allow-read --allow-write --allow-env --allow-run tools/runTests.wac -- lock $$ $gateQueue; then
+  exit 75
+fi
+export WAC_GATE_LOCK=$$
+# Released however this exits — a lock let go only on the happy path is a lock left behind by every
+# failure, which is the shape `release` already guards against one level down.
+trap '"$WAC" run --allow-read --allow-write --allow-env tools/runTests.wac -- unlock '"$$"' >/dev/null 2>&1' EXIT
+
 log="$(mktemp -t push-suite-XXXXXX.log)"
 
 # Space, before blaming the change. This gate has failed twice on `No space left on device` for reasons
@@ -449,7 +473,20 @@ for attempt in 1 2 3; do
   # reads it. There are now 21 packages rather than 19 and all 21 have been green on every gate run
   # since. If this blocks you for something you did not do, the fair answer is the same as it was:
   # say so here and turn it back into a report, rather than pushing past it silently.
-  if ! "$WAC" task coverage:all; then
+  #
+  # **Asked first, because a markdown edit cannot move a branch count.** `tools/docsOnly.wac` answers
+  # whether `origin/master..$tested` is markdown with no ```wac fence changed in a file whose fences
+  # something executes — the range this push would actually add, rather than the working tree. It is
+  # deliberately narrow: a fence in `spec/**` or a `packages/*/README.md` is a program three consumers
+  # compile, so editing one is editing code and the ratchets run.
+  #
+  # It skips **this check and nothing else**. The suite has already run by the time we get here, and it
+  # must: a pure prose edit routinely breaks it on purpose, because `compiler/wacSpec.test.ts` asserts
+  # `N issues, M closed.` against the files in `issues/*/`. Skipping the suite on this predicate would
+  # be wrong; skipping a branch-coverage measurement of code nobody touched is not.
+  if "$WAC" run --allow-read --allow-run tools/docsOnly.wac -- origin/master "$tested" 2>&1; then
+    echo "== skipping the coverage ratchets: documentation only =="
+  elif ! "$WAC" task coverage:all; then
     echo "== the coverage ratchets are red — not pushing =="
     echo "   A package above is below its recorded coverage, or an exemption in its cov.ts no longer"
     echo "   matches the line it names, or it will not build. Run:"
@@ -460,7 +497,7 @@ for attempt in 1 2 3; do
   # whole second gate — a full suite, inside the failure handler of the first — and the only
   # reason nobody met it is that the coverage ratchets are almost never red. Found on 2026-08-27
   # when they were, and the gate took forty minutes to report a failure it had already decided.
-  echo '   If this is a gap you did not open and cannot close, tools/push.sh says how this check'
+    echo '   If this is a gap you did not open and cannot close, tools/push.sh says how this check'
     echo "   went from blocking to reporting once before, and on what argument."
     exit 1
   fi
