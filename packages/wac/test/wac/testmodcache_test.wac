@@ -1,6 +1,6 @@
 // The `wac test` build cache covers a directory whose graph reaches the embedded trees.
 //
-//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/testmodcache_test.wac
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wac/test/wac/testmodcache_test.wac
 //
 // `issues/system/0204` gave `wac test` a content-keyed cache for the aggregate module it compiles per
 // directory, so that an agent running one package's tests over and over pays for the compile once.
@@ -31,11 +31,11 @@
 // much as about this one, and would go flaky the moment the sweep fired. A private `$WAC_HOME` makes
 // the claim exact: *this* run wrote *this* entry.
 
-import { T } from "../../packages/wactest/src/assert.wac";
+import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { wacBinary } from "../../packages/wactest/src/built.wac";
-import { freshDir } from "../../packages/wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 /**
  * A directory that **does** reach `core/`, which is the whole point of the subject choice.

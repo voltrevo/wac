@@ -513,7 +513,7 @@ bool namesCli(JsonObject e) {
  *
  * **Flags in any position**, which is `run`'s opposite and the native command's rule: `wac test
  * packages/fs/ --allow-write` counted the grant as a *file* once, printed a phantom entry that read
- * like a failing test, and ran without the capability — `tools/wac/testcli_test.wac` is that. A test
+ * like a failing test, and ran without the capability — `packages/wac/test/wac/testcli_test.wac` is that. A test
  * target is a path and a path is not a flag, so there is no tail here for `--` to protect.
  */
 export string unknownTestFlag(Cli cli, i32 argc, string entry) {

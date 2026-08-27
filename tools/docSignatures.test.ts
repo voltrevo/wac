@@ -43,60 +43,7 @@ import type { Program, WacType } from "wac/wacParse.ts";
 import { docTest } from "./docCheck.ts";
 
 /** Names that belong to something other than this repo, so a README may say them freely. */
-/**
- * Whether this name is JavaScript's, asked of the runtime rather than of a list.
- *
- * `Number`, `String`, `Date.UTC` and `parseFloat` are all the same case — a README explaining how the
- * compiler works naming the host function it calls — and every one of them had to be *added by hand*
- * after breaking the shared suite for whoever pushed next. Twice in two days, which is what turned a
- * list into a question: `globalThis` already knows its own members, and a `X.y` is foreign when `X` is.
- *
- * It only ever *widens* what is allowed, so the risk is a wac export that shares a name with a
- * JavaScript builtin going unchecked. There is none today, and `FOREIGN` below stays for the names no
- * runtime can answer for — a spec's, another implementation's, or one that deliberately does not exist.
- */
-function isJavaScripts(name: string): boolean {
-  const root = name.split(".")[0];
-  const g = globalThis as unknown as Record<string, unknown>;
-  return Object.prototype.hasOwnProperty.call(g, root) || root in g;
-}
 
-const FOREIGN = new Set([
-  // JavaScript and the host
-  "Number", "String", "Buffer.from", "Date.UTC", "wacCompile", "DecompressionStream", "parseFloat",
-  // Ours, but written in TypeScript, which this check does not parse — test harnesses and oracles.
-  // `wacCompile` above is the same case. Listed rather than resolved because reading TS declarations
-  // is a second parser for a handful of names, and the point of this file is that the wac half is
-  // strict; a name here is unchecked, so keep the group small.
-  "refCompress", "generate",
-  // Browser APIs, named in `packages/webrtc` because the oracle there is a real browser.
-  // `getStats` is `RTCPeerConnection.getStats`, whose candidate-pair statistics are what
-  // `issues/system/0152` was closed with — a peer's own count of the requests it answered.
-  "getStats",
-  // Mathematics and cryptography, written the way the papers write it
-  "e", "E", "EXP", "MAC", "O", "sqrt",
-  // Ethereum's consensus and execution specs
-  "hash_tree_root", "is_valid_merkle_branch", "is_valid_normalized_merkle_branch",
-  "get_subtree_index", "transfer", "addr",
-  // tor's own source and specification
-  "get_time_period_length", "MAX",
-  // Placeholders in prose: `x(…)` is any capability, `chooser()` any of several. `Box` is the
-  // spec's own example generic — `struct Box<T>` appears in generics.md and nowhere in the tree.
-  // `S` joined them on 2026-08-09: `packages/wacc/README.md` explains that `S()` fills a `string`
-  // field with `""` rather than null, and `S` is an example struct that exists nowhere in the tree.
-  // It reached master red — the prose is right and the check is right, and a one-letter example type
-  // is exactly what this group is for.
-  "x", "chooser", "feed", "cliFeed", "transform", "page", "Box", "S",
-  // The language's own surface. These exist, but no package declares them — they are builtins the
-  // compiler knows about, so there is nothing for this check to resolve them against.
-  "f64.toBits", "f64.fromBits", "f32.toBits", "f32.fromBits",
-  "string.fromCodepoint", "string.fromBytes", "toBytes",
-  // Named because they do NOT exist: an API that was removed, or one that was never built
-  "inputError", "torFetch", "XList",
-  // Written by a *reader*, in an example of what their own program exports — `page` is an
-  // application's browser entry point and `test_…` is a wac-written test, so neither is ours.
-  "page", "test_crc32_of_hello_world",
-]);
 
 type Decls = {
   /** Every name a wac declaration introduces: functions, types, variants, fields, methods. */
@@ -204,6 +151,60 @@ async function readmes(): Promise<{ path: string; text: string }[]> {
   return out;
 }
 
+/** `packages/fmt/README.md` -> `fmt`. Every document this file reads belongs to one package. */
+function pkgOf(path: string): string {
+  return path.split("/")[1] ?? "";
+}
+
+/**
+ * Names a package's README may use that are not wac declarations, by package.
+ *
+ * **A judgement call, made where the judgement belongs.** This was a `globalThis` lookup until
+ * 2026-08-27 — `"Number" in globalThis` answering "that one is JavaScript's, skip it" — which is a
+ * clever way to avoid maintaining a list, and the only reason this file needed a JavaScript runtime.
+ * The operator's ruling is that it *is* a list: when the check says *`fmt` has no `String`*, the answer
+ * is "that is JavaScript's, note it and move on", and that decision belongs next to the package that
+ * made it rather than inferred from whichever runtime happens to be executing.
+ *
+ * **Scoped per package on purpose.** `Number` being an oracle for `fmt` and for `json` is two facts,
+ * and a global list lets a third package name `Number` and be believed for free. It also puts the cost
+ * where it belongs: whoever documents a new oracle adds one line to their own package's entry, and
+ * `tools/push.sh` runs these checks — so they meet it on their own push rather than leaving it for
+ * whoever pushes next, which is what the old global list did.
+ */
+const FOREIGN: Map<string, Set<string>> = new Map([
+  // JavaScript, named because it is the oracle these packages are checked against.
+  ["fmt", new Set(["String"])],
+  ["datetime", new Set(["Date.UTC"])],
+  ["codec", new Set(["Buffer.from"])],
+  // Ours, but written in TypeScript, which this check does not parse — harnesses and oracles.
+  ["gzip", new Set(["wacCompile"])],
+  ["zstd", new Set(["refCompress"])],
+  ["wactest", new Set(["test_crc32_of_hello_world"])],
+  // A real browser is the oracle: `getStats` is `RTCPeerConnection.getStats`, whose candidate-pair
+  // statistics closed `issues/system/0152`.
+  ["webrtc", new Set(["getStats"])],
+  // Ethereum's consensus and execution specs, written the way the specs write them.
+  ["ssz", new Set(["hash_tree_root", "is_valid_merkle_branch", "is_valid_normalized_merkle_branch",
+                   "get_subtree_index"])],
+  ["lightclient", new Set(["hash_tree_root"])],
+  ["ens", new Set(["addr"])],
+  // Mathematics and cryptography, written the way the papers write it.
+  ["crypto", new Set(["E", "sqrt", "transfer"])],
+  ["stream", new Set(["O", "transform"])],
+  // tor's own source and specification.
+  ["tor", new Set(["EXP", "MAC", "MAX", "get_time_period_length", "chooser", "torFetch"])],
+  // Placeholders in prose, and the compiler's own examples. `Box` is the spec's example generic —
+  // `struct Box<T>` appears in generics.md and nowhere in the tree; `XList` and `f64.toBits` are the
+  // same. `String` and `parseFloat` are JavaScript's, named where wacc explains what it calls.
+  ["wacc", new Set(["Box", "XList", "f64.toBits", "String", "parseFloat", "generate"])],
+  ["platform", new Set(["page", "inputError"])],
+  ["ssh", new Set(["cliFeed"])],
+]);
+function foreign(path: string, name: string): boolean {
+  return FOREIGN.get(pkgOf(path))?.has(name) ?? false;
+}
+
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
 docTest("docs: an `export` signature in a README is the signature in the source", async () => {
@@ -215,7 +216,7 @@ docTest("docs: an `export` signature in a README is the signature in the source"
         const written = norm(m[1]);
         const name = written.match(/^export\s+\S+\s+([A-Za-z_]\w*)\s*\(/)?.[1];
         if (name === undefined) continue;             // not a function signature
-        if (KEYWORDS.has(name) || FOREIGN.has(name) || isJavaScripts(name)) continue;
+        if (KEYWORDS.has(name) || foreign(path, name)) continue;
         const real = decls.signatures.get(name);
         const line = text.slice(0, text.indexOf(m[1])).split("\n").length;
         if (real === undefined) {
@@ -244,10 +245,7 @@ docTest("docs: a README's `name(…)` names something that exists", async () => 
       // reserved words are a fact the compiler already holds, and a second copy would be a list to
       // maintain in the same way `isJavaScripts` replaced one.
       if (KEYWORDS.has(name) || KEYWORDS.has(written)) continue;
-      if (decls.names.has(name) || FOREIGN.has(name) || FOREIGN.has(written)) continue;
-      // JavaScript's own, asked of the runtime — see `isJavaScripts`. This is the check that
-      // `parseFloat` and `Date.UTC` reached, and the one that was being kept current by hand.
-      if (isJavaScripts(name) || isJavaScripts(written)) continue;
+      if (decls.names.has(name) || foreign(path, name) || foreign(path, written)) continue;
       const line = text.slice(0, m.index!).split("\n").length;
       missing.push(`${path}:${line}: \`${written}(…)\` — no declaration, and not in FOREIGN`);
     }
@@ -256,7 +254,7 @@ docTest("docs: a README's `name(…)` names something that exists", async () => 
     throw new Error(
       `${missing.length} reference(s) to something that does not exist:\n  ${missing.join("\n  ")}\n\n` +
         `If the name belongs to another system — JavaScript, a spec, another implementation — add it ` +
-        `to FOREIGN in this file with the group comment that says which.`,
+        `to that package's entry in FOREIGN in this file, with the reason.`,
     );
   }
 });

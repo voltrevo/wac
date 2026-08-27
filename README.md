@@ -24,7 +24,7 @@ $ echo hello | sha256sum
 5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  -
 ```
 
-Those three lines are not a screenshot. `tools/wac/frontpage_test.wac` runs them through
+Those three lines are not a screenshot. `packages/box/test/wac/frontpage_test.wac` runs them through
 `packages/box/example/boxsh.wac` and fails if the output ever stops matching.
 
 It runs [in a browser tab](https://voltrevo.github.io/wac/) over a filesystem that survives a reload,

@@ -306,7 +306,7 @@ explains nothing.
 `[§wac-cli-app-grants-8xr2knw]` **The grants are inside the module, not in the preamble.** They are
 baked in by the same `wac build` that every other artefact goes through, so the shell lines at the top
 of the file are byte-identical between a sealed build and a granted one, and editing them cannot widen
-what the program may do. `tools/wac/app_test.wac` asserts exactly that — two builds of one source,
+what the program may do. `packages/wac/test/wac/app_test.wac` asserts exactly that — two builds of one source,
 compared byte for byte up to the module — because the alternative design, a `--allow-read` on the
 `exec` line, would put the capability in the one part of the artefact a text editor can reach.
 

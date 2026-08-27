@@ -10,7 +10,7 @@
 // `stat`; 171 of them concurrently is 4ms against 157ms to read.
 //
 // **The stamp is the whole safety argument, and this file is what holds it.** Several tests write a
-// `.wac` and then build it — `tools/wac/testcli_test.wac`, `tools/wac/runcli_test.wac`,
+// `.wac` and then build it — `packages/wac/test/wac/testcli_test.wac`, `packages/wac/test/wac/runcli_test.wac`,
 // `packages/platform/test/wac/trapmessage_test.wac` — and one of them writing *twice* to one path is a
 // program the compiler must see the second version of. A memo keyed on the path alone would hand back
 // the first.

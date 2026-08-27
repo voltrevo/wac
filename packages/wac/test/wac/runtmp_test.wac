@@ -15,9 +15,9 @@
 // This drives the half that a normal environment can still see: a directory named for a pid that is
 // not running, freshly made, is left alone. Under the old rule it was exactly the thing to delete.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath } from "../../packages/wactest/src/host.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath } from "../../../wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Change, Cli, Core, Exec, Stat } from "std/platform.wac";
 
 /**

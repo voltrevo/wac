@@ -1,6 +1,6 @@
 // Every wac program the spec *shows* is one this compiler can build.
 //
-//     wac test --allow-read --allow-write --allow-run tools/
+//     wac test --allow-read --allow-write --allow-run packages/wacc/test/wac/specfences_test.wac
 //
 // `spec/spec/*.md` is prose with code in it, and the code is the part a reader copies. One of those
 // fences was a program wacc could not compile for as long as the feature behind it was unimplemented:
@@ -30,10 +30,10 @@
 // that check clean is asserted as a floor: an extraction that collapses fails instead of congratulating
 // itself. It was 107 when this was written, of 169 candidates.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { nonEmptyLines } from "../../../wactest/src/repo.wac";
 import { Core, Cli, Exec, FileResult, Change } from "std/platform.wac";
 
 string read(Cli cli, string path) {

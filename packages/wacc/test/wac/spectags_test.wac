@@ -129,7 +129,7 @@ void mentionedIn(u8[] b, Strs into) {
  * repository keeps finding, and it surfaced here because adding a clause did not move the count.
  *
  * **`tools/*.test.ts` came back off the list on 2026-08-20**, and the reach check below is what said
- * so rather than anyone noticing: the last of those four moved to `tools/wac/runcli_test.wac`
+ * so rather than anyone noticing: the last of those four moved to `packages/wac/test/wac/runcli_test.wac`
  * (`issues/system/0161`), that source named no tags at all, and the assertion that every source must
  * contribute failed. Which is the assertion doing exactly its job — a directory that stops being read
  * is the failure this whole file is about, and one that has nothing left to read is the same shape.
@@ -222,7 +222,7 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
   // the rest. Flat walks, so a subdirectory holding coverage has to be named.
   //
   // **`tools/*.test.ts` was here too and came off on 2026-08-20**: the last of those four moved to
-  // `tools/wac/runcli_test.wac` (`issues/system/0161`), so that walk had nothing left to find. The
+  // `packages/wac/test/wac/runcli_test.wac` (`issues/system/0161`), so that walk had nothing left to find. The
   // reach assertion in the check below is what noticed — this list has none, so it would have kept
   // walking an empty directory indefinitely.
   string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "tools/wac",

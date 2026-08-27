@@ -223,7 +223,7 @@ export i32 page(Core core, Cli cli, Page page) {
   // same `runScript` the keyboard reaches, so what the frame shows on load is this build's real
   // output — a screenshot of a terminal is a drawing, and a terminal that has already done
   // something is not. The website prints the same three lines beside the embed, and
-  // `tools/wac/frontpage_test.wac` fails if either drifts from what the shell actually answers.
+  // `packages/box/test/wac/frontpage_test.wac` fails if either drifts from what the shell actually answers.
   string[] opening = string[](
     "seq 1 20 | grep 7 | wc -l",
     "echo 'a whole new stack' | gzip -c | wc -c",

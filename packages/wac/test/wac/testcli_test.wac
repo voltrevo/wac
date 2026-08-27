@@ -31,10 +31,10 @@
 // spawns the `wac` binary and reads what it said, which is what `cliCommands_test.wac` beside it has
 // always done. `covdump`'s two cases went to `covdump_test.wac`, which already owns that command.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 
 /** The binary under test, with whatever arguments, and its output as one string. */

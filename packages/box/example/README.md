@@ -77,7 +77,7 @@ It opens on a session rather than on an empty prompt: three commands run through
 `runScript` the keyboard reaches, before the loop starts. That is for the page that embeds it — a
 terminal showing output it produced a second ago says something a terminal showing a help banner
 does not. The website prints the same three lines where the frame cannot load, and
-`tools/wac/frontpage_test.wac` fails if the two lists drift apart or if the shell stops answering what
+`packages/box/test/wac/frontpage_test.wac` fails if the two lists drift apart or if the shell stops answering what
 either of them claims.
 
 ```sh

@@ -13,9 +13,9 @@
 // of every distributed program become the place its permissions live, which is the one place they
 // must not be.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
-import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 
 /** The directory holding a path, so the built `wac` can be put on a child's PATH. */

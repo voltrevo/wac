@@ -17,10 +17,10 @@
 // `[§wac-cli-compile-9wkn3pq]`, `[§wac-cli-bindgen-5tqm7wn]` and `[§wac-cli-usage-3nkq8wj]`. A wac
 // export cannot hold the bracketed spelling, so the suffix carries it.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
 
 string MATH() { return "export i32 gcd(i32 a, i32 b) { return b == 0 ? a : gcd(b, a % b); }\n"; }

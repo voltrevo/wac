@@ -19,10 +19,10 @@
 // `7jnq2mv` in the names is `[§wac-cli-run-7jnq2mv]`, the spec claim these check — `spec/cli/wac.md`.
 // A wac export cannot hold the bracketed spelling, so the suffix carries it.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 
 string LIB() {
