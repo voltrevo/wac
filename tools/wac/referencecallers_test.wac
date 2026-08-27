@@ -48,6 +48,9 @@ import { Vec } from "core/vec.wac";
  */
 string[] bootstrap() {
   return string[](
+    // Asks the reference to *parse* wacc's graph, which is the bootstrap's precondition and 320ms
+    // rather than the bootstrap's three minutes. `tools/wac/waccdeps_test.wac` is the cheap proxy.
+    "harness/bootstrapParses.test.ts",
     "harness/wacBind.ts",              // binds a module; `from: "reference"` is the bootstrap's ask
     "harness/wacFiles.ts",             // the import walk, which needs a parser to be correct
     "packages/platform/native.ts",     // the bundler that writes the seed
