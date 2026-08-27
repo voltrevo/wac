@@ -1,7 +1,13 @@
 # 0011 — a call may name its type arguments, so a generic free function is usable
 
-- **Status:** **accepted** with the operator, 2026-08-26 — the target, the spelling and the trigger
-  are settled below. What is left is work, not decisions
+- **Status:** **implemented 2026-08-27.** All seven steps are done and ten of eleven acceptance
+  criteria are met; the eleventh is `issues/lang/0273b`, which is a decision rather than work — it
+  asks to lift a limit `generics.md` calls deliberate. `spec/cases/0235`–`0244` are the landed
+  behaviour, and `[§wacc-type-args-commit]`, `[§wacc-written-type-args]` and
+  `[§wacc-written-instantiation]` are the rules.
+
+  Accepted with the operator on 2026-08-26; the target, the spelling and the trigger were settled
+  then and none of them changed in the building
 - **Date:** 2026-08-26
 - **Author:** agent-b
 - **Gathers:** `issues/lang/0088` (an enum variant cannot name its arguments), `issues/lang/0235a`
