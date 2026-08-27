@@ -325,11 +325,40 @@ struct Field { i32 nameptr; i32 namelen; i32 ty; }
 Field[] fields;
 i32 nfield = 0;
 
-i32 T_I32 = 0;
-i32 T_U8 = 1;
+// **The numeric lattice.** wasm has two integer value types and wac has eight names for them, which
+// differ in width and in signedness — and those two facts decide which instruction every operator
+// emits. `u32 / u32` is `i32.div_u` and `i32 / i32` is `i32.div_s`, and nothing else in the
+// compiler can tell them apart.
+i32 T_NUM = 0;
 i32 T_STRUCT = 2;
 i32 T_ARRAY = 3;
 i32 T_ENUM = 4;
+
+// Reserved indices, in this order, so that `valtype(0)` is `i32` and the first struct cannot take
+// the slot.
+i32 TY_I32 = 0;
+i32 TY_U8 = 1;
+i32 TY_I64 = 2;
+i32 TY_U32 = 3;
+i32 TY_BOOL = 4;
+i32 TY_I8 = 5;
+i32 TY_U16 = 6;
+i32 TY_I16 = 7;
+i32 TY_U64 = 8;
+i32 NUMTYPES = 9;
+
+// Is it held in an i64? Everything else this rung has fits an i32.
+i32 ty_wide(i32 t) { return t == TY_I64 | t == TY_U64; }
+i32 ty_signed(i32 t) { return (t == TY_U32 | t == TY_U8 | t == TY_U16 | t == TY_U64) == 0; }
+i32 ty_isnum(i32 t) { return t < NUMTYPES; }
+
+// The width a value is *stored* in when it is an array element or a struct field. wasm has i8 and
+// i16 as storage types and no others.
+i32 ty_packed(i32 t) {
+  if (t == TY_U8 | t == TY_I8) { return 8; }
+  if (t == TY_U16 | t == TY_I16) { return 16; }
+  return 0;
+}
 
 i32 ty_new(i32 kind, i32 p, i32 n, i32 elem) {
   types[ntype] = Ty(kind, p, n, elem, nfield, 0);
@@ -368,25 +397,61 @@ i32 tyname(i32 t) {
 }
 
 i32 valtype(i32 t) {
-  if (types[t].kind == T_I32) { emits("i32"); } else {
-    if (types[t].kind == T_U8) { emits("i8"); } else { word("refnull"); tyname(t); }
-  }
+  if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_wide(t)) { emits("i64"); return 0; }
+  i32 pk = ty_packed(t);
+  if (pk == 8) { emits("i8"); return 0; }
+  if (pk == 16) { emits("i16"); return 0; }
+  emits("i32");
   return 0;
 }
+
+// The value type a local or a parameter of this type takes. A packed type has none — wasm has no i8
+// *value* — so it widens to i32, which is what reading one answers anyway.
+i32 slotvaltype(i32 t) {
+  if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_wide(t)) { emits("i64"); return 0; }
+  emits("i32");
+  return 0;
+}
+
+// `i32.` or `i64.`, which is the prefix on every arithmetic instruction.
+i32 opprefix(i32 t) { if (ty_wide(t)) { emits("i64."); } else { emits("i32."); } return 0; }
+
+// The signed or unsigned form of an instruction that has both.
+i32 signedsuffix(i32 t) { if (ty_signed(t)) { emits("_s"); } else { emits("_u"); } return 0; }
+
+i32 binop(i32 t, i32 name) { opprefix(t); emits(name); return nl(); }
+
+i32 binop_signed(i32 t, i32 name) { opprefix(t); emits(name); signedsuffix(t); return nl(); }
 
 // A type, read in full. `T?` is the same wasm type as `T`: every reference this emitter writes is
 // already nullable, and a nullable *primitive* is boxed in wac and is not — which is a gap, and the
 // spec says so rather than this pretending otherwise.
+// The primitive named at the cursor, or -1. One list, consulted by `parse_type` and by the
+// expression grammar, so that a type name means the same thing in both.
+i32 prim_type() {
+  if (isword("i32")) { return TY_I32; }
+  if (isword("bool")) { return TY_BOOL; }
+  if (isword("i64")) { return TY_I64; }
+  if (isword("u32")) { return TY_U32; }
+  if (isword("u64")) { return TY_U64; }
+  if (isword("i8")) { return TY_I8; }
+  if (isword("u8")) { return TY_U8; }
+  if (isword("u16")) { return TY_U16; }
+  if (isword("i16")) { return TY_I16; }
+  return 0 - 1;
+}
+
 i32 parse_type() {
   i32 t = 0;
-  if (isword("i32") | isword("bool")) { next(); } else {
-    if (isword("u8")) { t = 1; next(); } else {
-      i32 p = tstart();
-      i32 n = tlen();
-      next();
-      t = ty_named(p, n);
-      if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
-    }
+  i32 pr = prim_type();
+  if (pr != 0 - 1) { t = pr; next(); } else {
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    t = ty_named(p, n);
+    if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
   }
   while (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); }
   if (ispunct(63)) { next(); }
@@ -545,7 +610,11 @@ i32 postfix(i32 t) {
             i32 fi = field_index(t, p, n);
             if (fi == 0 - 1) { oops(); } else {
               i32 ft = fields[types[t].fstart + fi].ty;
-              word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+              if (ty_packed(ft) != 0) {
+                emits("struct.get"); signedsuffix(ft); sp(); tyname(t); sp(); emitn(fi); nl();
+              } else {
+                word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+              }
               t = ft;
             }
           }
@@ -556,10 +625,12 @@ i32 postfix(i32 t) {
         want(93);
         if (types[t].kind != T_ARRAY) { oops(); }
         i32 et = types[t].elem;
-        if (types[et].kind == T_U8) { word("array.get_u"); tyname(t); nl(); t = 0; } else {
+        if (ty_packed(et) != 0) {
+          emits("array.get"); signedsuffix(et); sp(); tyname(t); nl();
+        } else {
           word("array.get"); tyname(t); nl();
-          t = et;
         }
+        t = et;
       }
     }
   }
@@ -579,23 +650,36 @@ i32 field_index(i32 t, i32 p, i32 n) {
 
 i32 primary() {
   if (kind() == K_STR) { konst(str_add(tstart(), tlen())); next(); return postfix(0); }
-  if (kind() == K_INT) { konst(val()); next(); return 0; }
+  if (kind() == K_INT) { konst(val()); next(); return TY_I32; }
   if (ispunct(40)) { next(); i32 t0 = expr(); want(41); return postfix(t0); }
-  if (ispunct(45)) { next(); konst(0); primary(); line("i32.sub"); return 0; }
-  if (ispunct(33)) { next(); primary(); line("i32.eqz"); return 0; }
-  if (ispunct(126)) { next(); primary(); konst(0 - 1); line("i32.xor"); return 0; }
-  if (isword("true")) { next(); konst(1); return 0; }
-  if (isword("false")) { next(); konst(0); return 0; }
+  if (ispunct(45)) {
+    // Negation, at whatever width its operand turns out to be — so the zero has to be emitted
+    // after the operand's type is known, which means holding the operand in a slot.
+    next();
+    i32 nt2 = primary();
+    i32 held = slot_new(nt2);
+    word("local.set"); slotname(held); nl();
+    if (ty_wide(nt2)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
+    word("local.get"); slotname(held); nl();
+    binop(nt2, "sub");
+    return nt2;
+  }
+  if (ispunct(33)) { next(); i32 nt3 = primary(); opprefix(nt3); emits("eqz"); nl(); return TY_BOOL; }
+  if (ispunct(126)) {
+    next();
+    i32 nt4 = primary();
+    if (ty_wide(nt4)) { word("i64.const"); emitn(-1); nl(); } else { konst(-1); }
+    binop(nt4, "xor");
+    return nt4;
+  }
+  if (isword("true")) { next(); konst(1); return TY_BOOL; }
+  if (isword("false")) { next(); konst(0); return TY_BOOL; }
   if (isword("null")) { next(); line("ref.null none"); return 0; }
   if (isword("match")) { return match_expr(); }
-  // `i32[3]()` and `u8[](…)` begin with a primitive type, and nothing else that starts an
-  // expression does.
-  if (isword("i32") | isword("u8") | isword("bool")) {
-    i32 base = 0;
-    if (isword("u8")) { base = 1; }
-    next();
-    return construct(base);
-  }
+  // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
+  // else that begins an expression does.
+  i32 pt = prim_type();
+  if (pt != 0 - 1) { next(); return construct(pt); }
   if (kind() == K_NAME) {
     i32 p = tstart();
     i32 n = tlen();
@@ -630,16 +714,41 @@ i32 primary() {
   return 0;
 }
 
-i32 mul() {
+// `x as i64`, `n as u32`. `as!` is a *checked* cast in wac and traps on overflow; stage 3 emits the
+// same conversion and does not check, which is a gap the spec names.
+i32 cast() {
   i32 t = primary();
+  while (isword("as")) {
+    next();
+    eat(33);
+    i32 to = parse_type();
+    if (ty_isnum(t) & ty_isnum(to)) {
+      if (ty_wide(to) & ty_wide(t) == 0) {
+        // `word` puts a space after what it writes, and an instruction's suffix is part of its
+        // name — so this is `emits` and not `word`, which is a one-character mistake that reads as
+        // an unknown instruction three rungs down.
+        emits("i64.extend_i32");
+        if (ty_signed(t)) { emits("_s"); } else { emits("_u"); }
+        nl();
+      }
+      if (ty_wide(to) == 0 & ty_wide(t)) { line("i32.wrap_i64"); }
+      // Everything else is a reinterpretation: `i32` and `u32` are one wasm type, and narrowing to
+      // `u8` is what the store does.
+    }
+    t = to;
+  }
+  return t;
+}
+
+i32 mul() {
+  i32 t = cast();
   while (ispunct(42) | ispunct(47) | ispunct(37)) {
     i32 op = val();
     next();
-    primary();
-    if (op == 42) { line("i32.mul"); } else {
-      if (op == 47) { line("i32.div_s"); } else { line("i32.rem_s"); }
+    cast();
+    if (op == 42) { binop(t, "mul"); } else {
+      if (op == 47) { binop_signed(t, "div"); } else { binop_signed(t, "rem"); }
     }
-    t = 0;
   }
   return t;
 }
@@ -650,8 +759,7 @@ i32 add() {
     i32 op = val();
     next();
     mul();
-    if (op == 43) { line("i32.add"); } else { line("i32.sub"); }
-    t = 0;
+    if (op == 43) { binop(t, "add"); } else { binop(t, "sub"); }
   }
   return t;
 }
@@ -662,8 +770,7 @@ i32 shift() {
     i32 op = val();
     next();
     add();
-    if (op == 15420) { line("i32.shl"); } else { line("i32.shr_s"); }
-    t = 0;
+    if (op == 15420) { binop(t, "shl"); } else { binop_signed(t, "shr"); }
   }
   return t;
 }
@@ -674,12 +781,13 @@ i32 rel() {
     i32 op = val();
     next();
     shift();
-    if (op == 60) { line("i32.lt_s"); } else {
-      if (op == 62) { line("i32.gt_s"); } else {
-        if (op == 15676) { line("i32.le_s"); } else { line("i32.ge_s"); }
+    if (op == 60) { binop_signed(t, "lt"); } else {
+      if (op == 62) { binop_signed(t, "gt"); } else {
+        if (op == 15676) { binop_signed(t, "le"); } else { binop_signed(t, "ge"); }
       }
     }
-    t = 0;
+    // A comparison answers a bool however wide its operands were.
+    t = TY_BOOL;
   }
   return t;
 }
@@ -690,27 +798,27 @@ i32 equality() {
     i32 op = val();
     next();
     rel();
-    if (op == 15677) { line("i32.eq"); } else { line("i32.ne"); }
-    t = 0;
+    if (op == 15677) { binop(t, "eq"); } else { binop(t, "ne"); }
+    t = TY_BOOL;
   }
   return t;
 }
 
 i32 bitand() {
   i32 t = equality();
-  while (ispunct(38)) { t = 0; next(); equality(); line("i32.and"); }
+  while (ispunct(38)) { next(); equality(); binop(t, "and"); }
   return t;
 }
 
 i32 bitxor() {
   i32 t = bitand();
-  while (ispunct(94)) { t = 0; next(); bitand(); line("i32.xor"); }
+  while (ispunct(94)) { next(); bitand(); binop(t, "xor"); }
   return t;
 }
 
 i32 bitor() {
   i32 t = bitxor();
-  while (ispunct(124)) { t = 0; next(); bitxor(); line("i32.or"); }
+  while (ispunct(124)) { next(); bitxor(); binop(t, "or"); }
   return t;
 }
 
@@ -881,7 +989,9 @@ i32 declaration() {
   i32 n = tlen();
   next();
   if (ispunct(61)) { next(); expr(); } else {
-    if (types[t].kind == T_I32 | types[t].kind == T_U8) { konst(0); } else { line("ref.null none"); }
+    if (ty_isnum(t)) {
+      if (ty_wide(t)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
+    } else { line("ref.null none"); }
   }
   want(59);
   word("local.set"); slotname(loc_add(p, n, t)); nl();
@@ -947,10 +1057,12 @@ i32 store_through() {
         word("array.set"); tyname(t); nl();
         return 0;
       }
-      if (types[et].kind == T_U8) { word("array.get_u"); tyname(t); nl(); t = 0; } else {
+      if (ty_packed(et) != 0) {
+        emits("array.get"); signedsuffix(et); sp(); tyname(t); nl();
+      } else {
         word("array.get"); tyname(t); nl();
-        t = et;
       }
+      t = et;
     }
   }
   return 0;
@@ -1194,22 +1306,22 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   dp = outp;
   word("func");
   if (mowner == 0 - 1) { emit1(36); emitname(np, nn); } else { mangled(mowner, np, nn); }
-  sp(); word("->"); valtype(ret); nl();
+  sp(); word("->"); slotvaltype(ret); nl();
   i32 i = 0;
   while (i < nparams) {
-    word("param"); valtype(slotty[i]); sp(); slotname(i); nl();
+    word("param"); slotvaltype(slotty[i]); sp(); slotname(i); nl();
     i = i + 1;
   }
   i32 j = nparams;
   while (j < nslot) {
-    word("local"); valtype(slotty[j]); sp(); slotname(j); nl();
+    word("local"); slotvaltype(slotty[j]); sp(); slotname(j); nl();
     j = j + 1;
   }
   i32 k = 0;
   while (k < blen) { emit1(load8(BODY + k)); k = k + 1; }
-  if (types[ret].kind == T_I32 | types[ret].kind == T_U8) { konst(0); } else {
-    line("ref.null none");
-  }
+  if (ty_isnum(ret)) {
+    if (ty_wide(ret)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
+  } else { line("ref.null none"); }
   line("end");
   if (mowner == 0 - 1) {
     word("export"); emit1(34); emitname(np, nn); emit1(34); sp();
@@ -1436,8 +1548,8 @@ i32 compile(i32 s, i32 out) {
   mowner = 0 - 1;
   // Reserved, not assumed: the first struct registered would otherwise be index 0, and `valtype`
   // reads a 0 as the number type.
-  ty_new(T_I32, 0, 0, 0);
-  ty_new(T_U8, 0, 0, 0);
+  i32 nt = 0;
+  while (nt < NUMTYPES) { ty_new(T_NUM, 0, 0, 0); nt = nt + 1; }
   locs = Local[4096]();
   slotty = i32[4096]();
   glos = Glo[1024]();
@@ -1463,7 +1575,7 @@ i32 compile(i32 s, i32 out) {
 
   i32 gi = 0;
   while (gi < nglo) {
-    word("global"); gloname(gi); sp(); valtype(glos[gi].ty); sp(); word("mut"); word("=");
+    word("global"); gloname(gi); sp(); slotvaltype(glos[gi].ty); sp(); word("mut"); word("=");
     emitn(0); nl();
     gi = gi + 1;
   }

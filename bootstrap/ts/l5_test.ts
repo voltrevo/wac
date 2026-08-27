@@ -194,6 +194,47 @@ const programs: [string, string, number][] = [
     P held;
     i32 setup() { held = P(9); return 0; }
     i32 main() { setup(); return held.v; }`, 9],
+  // --- stage 3: the numeric lattice
+  //
+  // wasm has two integer value types; wac has eight names for them, differing in width and in
+  // signedness. Those two facts decide which instruction every operator emits, and nothing else in
+  // the compiler can tell `u32 / u32` from `i32 / i32`.
+
+  ["unsigned division picks div_u", `
+    i32 main() { u32 a = 4294967295 as u32; return (a / 2 as u32) as i32 != 0 ? 1 : 0; }`, 1],
+
+  ["unsigned comparison picks gt_u", `
+    i32 main() { u32 a = -1 as u32; u32 b = 1 as u32; return a > b ? 1 : 0; }`, 1],
+
+  ["...and the same program signed does not", `
+    i32 main() { i32 a = -1; i32 b = 1; return a > b ? 1 : 0; }`, 0],
+
+  ["i64 arithmetic", `
+    i32 main() { i64 a = 3 as i64; i64 b = 4 as i64; return (a * b) as i32; }`, 12],
+
+  ["widened and narrowed again", `
+    i32 main() { return ((7 as i64) + (5 as i64)) as i32; }`, 12],
+
+  ["an i64 comparison", `
+    i32 main() { i64 a = 5 as i64; return a > (2 as i64) ? 1 : 0; }`, 1],
+
+  ["an i64 parameter and return", `
+    i64 twice(i64 n) { return n + n; }
+    i32 main() { return twice(21 as i64) as i32; }`, 42],
+
+  ["negation, at whatever width its operand is", `
+    i32 main() { i64 a = 5 as i64; i64 z = -a; return z < (0 as i64) ? 1 : 0; }`, 1],
+
+  ["a bool is what a comparison answers", `
+    i32 main() { bool b = 3 > 2; return b ? 10 : 20; }`, 10],
+
+  // Packed storage: wasm has i8 and i16 as element types and no others, and reading one widens —
+  // signed or unsigned according to the wac type, which is the whole reason both exist.
+  ["a packed i16 element reads signed", `
+    i32 main() { i16[] xs = i16[2](); xs[0] = -300; return xs[0]; }`, -300],
+
+  ["a packed u16 element reads unsigned", `
+    i32 main() { u16[] xs = u16[2](); xs[0] = 65535; return xs[0]; }`, 65535],
 ];
 
 for (const [name, source, want] of programs) {
