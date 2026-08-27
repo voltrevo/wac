@@ -73,10 +73,17 @@ The rounds ought to recover it — round two should pass the first statement and
 empirically they do not. That is the thing to understand before writing anything: **why a second
 round does not discover what the first could not reach.**
 
-Tried and reverted: making `methodSlotFor` answer *unknown* rather than the template's entry when the
-instance is not registered yet, so the statement would not decline and the walk would carry on. It
-moves the failure rather than fixing it — `main` is then dropped from the module with no reason
-given — so something else is also reading that fallback.
+**Two fixes tried and reverted**, both recorded so nobody spends the reseed again:
+
+- **Answer *unknown* rather than the template's entry** from `methodSlotFor` when the instance is not
+  registered yet, so the statement would not decline and the walk would carry on. It moves the
+  failure: `main` is then dropped from the module with no reason given, so something else reads that
+  fallback and needs the template's answer.
+- **Settle `registerMethodInstances` to a fixed point inside each round** rather than calling it once,
+  on the theory that a body names one instance per round. It breaks the cases that work — `fold<i32>`
+  and `map<i64>` both stop compiling — because the loop has to borrow `env.instBuilt` to detect its
+  own progress and that flag is what the round loop uses to decide whether to run again. A separate
+  flag would be needed, and that is a change to `Env`.
 
 ## What that points at
 
