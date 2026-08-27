@@ -21,10 +21,10 @@
 // *shapes* — a loop in one and two assignments in the other — parts at event 1, which is the driver
 // and not the routine. That cost a measurement before it was noticed.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
-import { contains, startsWith, trimmed, splitLines } from "../../packages/wactest/src/strings.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult, execReason} from "std/platform.wac";
 
 /**

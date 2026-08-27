@@ -19,10 +19,10 @@
 // Nothing else covered it. Every other `"sh"` in the suite is `Frame.of(string[]("sh", …))`, which is
 // `packages/sh` as a *library*; the subcommand had no test at all once that file went.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
-import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
-import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Stat } from "std/platform.wac";
 
 // ## It skipped itself until 2026-08-20 — `issues/system/0216a`

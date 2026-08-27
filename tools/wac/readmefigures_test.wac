@@ -223,7 +223,7 @@ export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli
 /**
  * The README's shell transcript is the front page's, character for character.
  *
- * `tools/wac/frontpage_test.wac` runs those commands for real — but it reads `Home.tsx`, so the README's
+ * `packages/box/test/wac/frontpage_test.wac` runs those commands for real — but it reads `Home.tsx`, so the README's
  * copy is a second transcription with nothing behind it. The README says out loud that the lines are
  * tested, which is only true while the two agree, so this is what makes that sentence honest.
  */

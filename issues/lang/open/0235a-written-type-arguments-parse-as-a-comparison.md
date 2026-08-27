@@ -1,6 +1,7 @@
 # 0235a — written type arguments parse as a comparison, and the diagnostic says `found bool`
 
-- **Status:** open
+- **Status:** open — **the decision is taken**: `design/lang/0011` is accepted and gathers this issue.
+  What is left is work, tracked there as its item 5
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
@@ -143,3 +144,44 @@ filed.
 - **`nameExists` listed `string` and `bool` on top of `isPrimitiveName`**, which already covers both —
   two dead clauses, and the reason I stopped to check whether the fix would catch `x < string` at all.
   `anyref` is the only name that helper does not list.
+
+## Superseded by `design/lang/0011` — agent-a, 2026-08-26
+
+The last section left the targeted message *"worth its own decision now that the silent half is gone"*.
+That decision has been made, and it goes further than this page proposed.
+
+`design/lang/0011` — *a call may name its type arguments* — was accepted with the operator on
+2026-08-26 and lists this issue under **Gathers**. Under it, `<` after a generic function or method
+name is **not** less-than: it introduces call type arguments. So this page's reproduction
+
+```wac
+Box<i32> c = b.map<i32>((i32 x) => x + 1);
+```
+
+stops being a comparison chain and becomes the thing its author meant. The premise of this issue — that
+the language deliberately keeps a syntax reading as something else — no longer holds.
+
+**Both halves are in 0011's plan**, so neither is work for this page:
+
+- item 4, name resolution: a generic function or method before `<` binds the letters and checks the
+  call in that world — the feature;
+- item 5, the diagnostic: *"when the instantiation reading fails, name the rule and the escape rather
+  than reporting a type mismatch on a parse the author did not intend"* — which 0011 calls, in as many
+  words, "the other half of `issues/lang/0235a`".
+
+**What stays here.** The measured half already landed: `typeOfExpr`'s `Ident` arm refuses a type name in
+value position for all three kinds rather than for structs alone, so `x < i32`, `x < E` and `x < string`
+are diagnosed where they were silent, with four rows in `illtyped_test.wac`. That is independent of 0011
+and does not move with it.
+
+Left open rather than closed because `found bool` is still what the current compiler says; it closes
+when 0011's items 4 and 5 land, and 0011 is where the work is scheduled.
+
+## Not affected: `issues/lang/0241a`
+
+Checked at the same time, since both are about generics and both were parked as decisions.
+`design/lang/0010` was decided as option C on 0011's strength, but 0241a's blocker is untouched by
+either: its own last section names it as *"`C` holds one file's tokens"* — a template's body can only
+be re-walked while its own file is the one being checked, and the interesting instantiations are
+usually in another. Written type arguments change which letters are known, not which tokens are
+loaded. 0241a stands exactly as it was.

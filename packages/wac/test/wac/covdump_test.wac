@@ -11,7 +11,7 @@
 // `wac compile` or from the trace instrumentation carries no manifest, declares no capabilities, and is
 // correctly instantiated with no imports — the path this command used to take for everything. Making
 // the manifest mandatory broke `packages/wacc/test/wac/coverage_test.wac` and
-// `tools/wac/ctcompare_test.wac`, which hand it exactly those modules; they are that half's tests, and
+// `packages/wac/test/wac/ctcompare_test.wac`, which hand it exactly those modules; they are that half's tests, and
 // they found it. Reaching a manifest-less instrumented module from a CLI test would mean going through
 // wacc's API, which is what those two files already do.
 //
@@ -20,12 +20,12 @@
 // for both answers from the same program: built with the grant it reads, built without it is told
 // `Not granted`, and neither is the instantiation failure that used to happen.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, putFile, scratch } from "../../packages/wactest/src/host.wac";
-import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
-import { manifestIn } from "../../packages/wacc/src/manifest.wac";
+import { manifestIn } from "../../../wacc/src/manifest.wac";
 
 /** A program that reads a file and says whether it could. */
 const string READER =

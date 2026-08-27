@@ -14,9 +14,9 @@
 // `5vq3mk8` in the names is `[§wac-cli-verbose-5vq3mk8]`, the spec claim these check —
 // `spec/cli/wac.md`. A wac export cannot hold the bracketed spelling, so the suffix carries it.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 
 /**

@@ -378,12 +378,28 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
   // directory with the same sources answers the same key, and one file changing changes it.
   if (cmd == "test") {
     if (target == "") { return ""; }
+  } else if (cmd == "run") {
+    // **`run` compiles and throws the module away, which is the one command that did it every time.**
+    // Measured 2026-08-27: `wac run tools/wac/map.wac --check` was 1608, 1612, 1614 ms over three
+    // consecutive runs — 1146 ms of that the compile, for sources that had not changed. It is also the
+    // command tests reach for when they drive a tool, so the cost lands inside other people's runtimes:
+    // `tools/wac/map_test.wac` was the most expensive doc check at 1777 ms and 73% of it was this.
+    //
+    // There is no stem to key on and none is needed: `run` writes no file, so the entry and the sources
+    // are the whole of what decides the bytes.
   } else if (cmd != "build" || stem == "") {
     return "";
   }
   if (hasFlag(cli, argc, "--coverage") || hasFlag(cli, argc, "--trace")) { return ""; }
   if (hasFlag(cli, argc, "--no-cache")) { return ""; }
-  if (unknownFlag(cli, argc) != "") { return ""; }
+  // **`run`'s flags stop at the entry.** `unknownFlag` scans the whole command line, which is right for
+  // `build` and `test` and wrong here: everything after the entry is the *program's*. Asking the wide
+  // question turned the cache off for exactly the invocations that most want it — measured, `wac run
+  // p.wac` was 814 ms then 91 ms, and `wac run p.wac --check` was 803 ms then 822 ms, because `--check`
+  // read as a flag this command does not have. The run arm below refuses a genuinely unknown flag
+  // *before* the entry, with a message naming it, so nothing is let through by narrowing this.
+  string unknown = cmd == "run" ? unknownFlagBefore(cli, argc, entry) : unknownFlag(cli, argc);
+  if (unknown != "") { return ""; }
   // **A bound of zero turns the cache off, lookup included.** Sweeping to nothing is not the same as
   // being off: entries written before still answer, so a caller who set this because they suspect a
   // stale hit would go on getting hits until the first build swept them away. Measured — a self-build
@@ -399,9 +415,14 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
   h.eat(string.fromBytes(id!));
   h.eat(cmd);
   h.eat(cmd == "test" ? target : entry);
-  h.eat(cmd == "test" ? "" : baseName(stem) + ".wasm");
+  h.eat(cmd == "build" ? baseName(stem) + ".wasm" : "");
   // A bitmask, not a list — `grantsIn` answers the five bits that go into the manifest.
-  h.eat(itoa(grantsIn(cli, argc)));
+  //
+  // **`run` counts only the grants written before the entry**, because that is what it obeys: a
+  // `--allow-read` after the entry is one of the program's own arguments (`grantAfterEntry` refuses the
+  // ambiguous spelling, and after `--` it is deliberate). Keying on `grantsIn` would let
+  // `wac run p.wac -- --allow-net` and `wac run --allow-net p.wac` share an entry, and they must not.
+  h.eat(itoa(cmd == "run" ? grantsBefore(cli, argc, entry) : grantsIn(cli, argc)));
   for (i32 i = 0; i < paths.len(); i++) {
     // **The aggregate's path is replaced, its text is not.** It is `.cache/wac-aggregate-<clock>`,
     // different on every run and the same file every time; hashing the name would make the key
@@ -1533,6 +1554,30 @@ export i32 main(Core core, Cli cli) {
                    : buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc), target);
   if (cachePath != "") {
     FileResult hit = fs.readFile(cachePath);
+    // **A cached `run` is spawned, not written.** Like `test`'s hit and for the same reason: the module
+    // carries its own manifest, so there is nothing to reconstruct and no file the caller asked for.
+    // The grants passed to `spawn` are read from the command line rather than from the module, because
+    // they are a *ceiling* intersected with what this process holds — the cached bytes only have to be
+    // the same program, and the key already says they are.
+    if (hit.ok && hit.bytes.len() > 8 && cmd == "run") {
+      string badFlagRun = unknownFlagBefore(cli, argc, entry);
+      if (badFlagRun != "") {
+        core.warn("wac: unknown flag '" + badFlagRun + "' — --allow-read, --allow-write, --allow-net, "
+                  + "--allow-env, --allow-run");
+        return 2;
+      }
+      string misplacedRun = grantAfterEntry(cli, argc, entry);
+      if (misplacedRun != "") {
+        core.warn("wac: " + misplacedRun + " after the entry is a program argument, not a grant — write "
+                  + "it before " + entry + ", or after `--` if the program wants the string");
+        return 2;
+      }
+      Child cached = cli.spawn(hit.bytes, programArgs(cli, argc, entry),
+                               grantsBefore(cli, argc, entry), "", true, false).wait();
+      if (!cached.unavailable()) { return relay(core, cli, cached); }
+      // A host with no `spawn` falls through and compiles, which ends in the same refusal with the
+      // sentence the run arm below writes — one message for the condition rather than two.
+    }
     if (hit.ok && hit.bytes.len() > 8 && cmd == "test") {
       // **A cached test module is run, not written.** `build`'s hit ends in a file because the file is
       // what was asked for; `test`'s hit ends in the tests, and the module carries its own manifest so
@@ -1819,6 +1864,10 @@ export i32 main(Core core, Cli cli) {
     // `true` for the input, so the program reads the terminal or the pipe this command was given —
     // which is what the native `run` does by instantiating in its own process. `false` for the
     // filesystem channel: this is not a program that answers `Fs.overParent` questions.
+    // Stored before the spawn rather than after: `relay` does not return until the child is done, and
+    // a program that runs for a minute should not have to finish before the next run gets a hit.
+    rememberBuild(cli, cachePath, whole, entry);
+
     Child kid = cli.spawn(whole, programArgs(cli, argc, entry), grants, "", true, false).wait();
     if (kid.unavailable()) {
       core.warn("wac: this host cannot run a module — `wac run` needs `spawn`, which a page has no "

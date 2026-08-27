@@ -1,6 +1,6 @@
 // `wac build` remembers what it built, and a hit is the bytes a fresh build would have written.
 //
-//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/buildcache_test.wac
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wac/test/wac/buildcache_test.wac
 //
 // `[§wac-cli-build-cache-7pk3mq9]` `[§wac-cli-build-nocache-2wq9nk4]`
 //
@@ -26,11 +26,11 @@
 // this change and then read two where it wanted one — the entries were real and one of them was not
 // the test's. What each case owns is the *change* across its own build.
 
-import { T } from "../../packages/wactest/src/assert.wac";
+import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { wacBinary } from "../../packages/wactest/src/built.wac";
-import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
+import { freshDir, putFile } from "../../../wactest/src/host.wac";
 
 const string WACC = "packages/wac/src/wac.wac";
 

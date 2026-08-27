@@ -1,6 +1,6 @@
 // The website's terminal shows a transcript. This runs it.
 //
-//     wac test --allow-read --allow-write --allow-run tools/
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/frontpage_test.wac
 //
 // wac's front page prints a shell session — `seq 1 20 | grep 7 | wc -l`, and what it answers. That
 // output is hardcoded there, because a page cannot boot a shell to render itself. Hardcoded output on
@@ -19,9 +19,9 @@
 // page shows a session rather than twenty separate shells, and rebuilding the shell twenty times
 // would make this the slowest check in the tree for no gain.
 
-import { T } from "../../packages/wactest/src/assert.wac";
+import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string SITE = "site/src/next/Home.tsx";
 const string TERM = "packages/box/example/term.wac";

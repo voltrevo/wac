@@ -27,7 +27,7 @@
 // the skew check below is **dormant rather than dead**: its rule is that only two versions which both
 // exist can differ, so it refuses nothing now and starts working unchanged the day one is defined. The
 // environment variable stays the seam; there is simply no host filling it, and a caller who exports one
-// is passed through — which is how `tools/wac/app_test.wac` still exercises the refusal.
+// is passed through — which is how `packages/wac/test/wac/app_test.wac` still exercises the refusal.
 
 import { Change, Cli, Core, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";

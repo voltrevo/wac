@@ -521,7 +521,7 @@ payloads to embed — did not have the command at all. `issues/system/0257c` is 
 that `wac` is one program containing the compiler *plus more*, so `sh` is dispatched inside it and
 every host has it.
 
-Nothing about the behaviour changed, which is what `tools/wac/sh_test.wac` checks against whichever
+Nothing about the behaviour changed, which is what `packages/wac/test/wac/sh_test.wac` checks against whichever
 binary is on this machine. Sealing moved rather than went: `run_shell` used to build the shell's world
 in Rust with no grants, and `packages/wac/src/grants.wac` now narrows the same forty capabilities in
 wac. It cannot widen, because what it passes on is what this program was handed.

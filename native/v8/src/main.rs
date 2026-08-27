@@ -739,7 +739,7 @@ fn main() {
     // and the day a version is defined it starts working with no change here. `packages/wac/src/app.wac`
     // has that rule; the environment variable is still the seam, and this is simply no longer a host
     // that fills it. A caller who exports one anyway is passed through, which is how the skew case is
-    // exercised in `tools/wac/app_test.wac`.
+    // exercised in `packages/wac/test/wac/app_test.wac`.
     //
     // **Not `WAC_COMPILER_ID`, though it is right there and is a stronger key.** It hashes the seed's
     // bytes as well, so it changes whenever anyone rebuilds the compiler — which in this repository is
@@ -883,7 +883,7 @@ fn validate_modules(paths: &[String], quiet: bool) -> i32 {
                 // null result and a pending exception agree — `Check failed: maybe_compiled.is_null()
                 // == i_isolate->has_exception()` — which aborts the process with SIGABRT rather than
                 // returning. Nothing else in this file needs one because nothing else compiles twice.
-                // `tools/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
+                // `packages/wac/test/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));
                 let mut tc = tc.init();
                 if v8::WasmModuleObject::compile(&tc, &bytes).is_none() {
@@ -994,7 +994,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // `Core` in its manifest because it asked for none, and this refused it with *no struct Core in the
     // manifest* — the host's own bookkeeping, about the smallest program that demonstrates the
     // language's central claim. Whether `main` wants a world is knowable here and is asked for below;
-    // an undefined placeholder is never passed to a `main` that named one. `tools/wac/runcli_test.wac`.
+    // an undefined placeholder is never passed to a `main` that named one. `packages/wac/test/wac/runcli_test.wac`.
     //
     // **And a module with no `main` at all**, which `is_some_and` answered `false` for — so the
     // named-export path below (`wac run math.wac gcd 48 18`) was refused before it was reached,
@@ -2845,7 +2845,7 @@ fn dispatch(
         // exception agree — `Check failed: maybe_compiled.is_null() == i_isolate->has_exception()` —
         // which aborts the process with SIGABRT rather than returning. Nothing else in this file needs
         // one because nothing else compiles twice in a row; a caller validating a corpus does nothing
-        // else. `tools/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
+        // else. `packages/wac/test/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
         Cap::Validated => {
             let bytes = read_bytes(scope, args.get(1));
             let said = {

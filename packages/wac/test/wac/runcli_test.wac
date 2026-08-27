@@ -33,10 +33,10 @@
 // TypeScript used. The two produce byte-identical output — measured on `wc.wac` and `wacc.wac`,
 // `issues/system/0214` — so this is the supported builder rather than a second one.
 
-import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, freshDir, nativeBinaryPath, scratch } from "../../packages/wactest/src/host.wac";
-import { builtByDeno, copyBuilt } from "../../packages/wactest/src/built.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, nativeBinaryPath, scratch } from "../../../wactest/src/host.wac";
+import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
+import { contains } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 
 const string NOCAPS = "export i32 main() { return 3; }\n";

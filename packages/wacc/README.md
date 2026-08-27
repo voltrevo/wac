@@ -534,7 +534,7 @@ length at each of 135 call sites, which is the same sweep the annotation was and
 the annotation was the sentence, and this is only the underline.
 
 `wac bindgen` writes the glue that calls a wacc module and names what it declined —
-`test/bindgen.test.ts` drives the generator at library level and `tools/wac/cliCommands_test.wac`
+`test/bindgen.test.ts` drives the generator at library level and `packages/wac/test/wac/cliCommands_test.wac`
 drives the command. What is still true is that **nothing runs a package through that glue**: `harness/wacBind.ts`
 takes wacc's *code* and keeps the reference's metadata, so a green package says the emitter is right and
 not that the bindgen is. Making the swap is the thing standing between this and a compiler anyone could

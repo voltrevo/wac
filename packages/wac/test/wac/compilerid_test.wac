@@ -1,6 +1,6 @@
 // The host tells every payload which compiler is running it.
 //
-//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/compilerid_test.wac
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wac/test/wac/compilerid_test.wac
 //
 // `issues/system/0204` wants a build cache on the wac side, where the artefact, the file set and the
 // flags are all in hand — and named the one ingredient that is not: *"the identity of the compiler
@@ -20,10 +20,10 @@
 // **The caller can override it**, which is not a hole but the point: a test that wants to force a
 // cache miss says so, and the override is how the future cache gets tested at all.
 
-import { T } from "../../packages/wactest/src/assert.wac";
+import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
-import { wacBinary } from "../../packages/wactest/src/built.wac";
-import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
+import { freshDir, putFile } from "../../../wactest/src/host.wac";
 
 const string PROBE =
   "import { Core, Cli } from \"std/platform.wac\";\n"
