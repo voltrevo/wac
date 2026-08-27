@@ -347,7 +347,12 @@ i32 kind() { return toks[tp].kind; }
 i32 val() { return toks[tp].val; }
 i32 tstart() { return toks[tp].start; }
 i32 tlen() { return toks[tp].len; }
-i32 next() { tp = tp + 1; return 0; }
+// **The cursor stops at the end.** Every reader here looks ahead — `aheadIs(3, ...)` is the
+// deepest — and the lexer pads with four end markers so that is always a real token. Letting
+// `next` run past the last one puts the lookahead in unassigned slots, which for a struct array
+// are null references rather than zeroed structs, so reading one traps. Recovery walks the cursor
+// forward looking for somewhere to resume, which is exactly how it got there.
+i32 next() { if (tp < ntok) { tp = tp + 1; } return 0; }
 i32 ispunct(i32 v) { return (toks[tp].kind == K_PUNCT) & (toks[tp].val == v); }
 i32 aheadIs(i32 k, i32 v) { return (toks[tp + k].kind == K_PUNCT) & (toks[tp + k].val == v); }
 i32 isword(i32 s) { return (toks[tp].kind == K_NAME) & texteq(toks[tp].start, toks[tp].len, s); }
@@ -424,6 +429,24 @@ i32 oops() {
   return 0;
 }
 
+// **A table that has run out is a refusal, not a trap.** `array element access out of bounds`
+// names nothing at all — not the table, not the line, not the program — and it is what a reader
+// gets today when a program outgrows a fixed table. This is the same failure with a sentence
+// attached, and it stops the file rather than writing past the end.
+//
+// The lexer's token array is sized from the source and cannot overflow, so it is not guarded.
+i32 full(i32 n, i32 cap, i32 what) {
+  if (n < cap) { return 0; }
+  if (tp < ntok) {
+    nl();
+    emits("!! wac-L5: ran out of room for ");
+    emits(what);
+    nl();
+  }
+  tp = ntok;
+  return 1;
+}
+
 // **A bound on how many are reported.** Synchronising ends the cascade from one bad token; this
 // ends it for a file that is not wac at all, where every recovery point is another refusal. Fifty
 // is far more than anyone reads and far less than a buffer holds.
@@ -459,6 +482,7 @@ i32 nslot = 0;
 i32[] slotty;
 
 i32 loc_add(i32 p, i32 n, i32 t) {
+  if (full(nloc, 16384, "locals") | full(nslot, 16384, "slots")) { return 0; }
   locs[nloc] = Local(p, n, nslot, t);
   // Slots are never popped and names are, and the function header — written after the body, because
   // wasm wants locals declared before it — needs the types the name table has by then thrown away.
@@ -526,6 +550,7 @@ i32 unescape(i32 c) {
 }
 
 i32 str_add(i32 p, i32 n) {
+  if (full(nstr, 65536, "string literals")) { return 0; }
   strs[nstr] = Str(strnext, p, n);
   nstr = nstr + 1;
   strnext = strnext + 4 * ((4 + n + 3) / 4);
@@ -698,12 +723,14 @@ i32 ty_isnum(i32 t) { return t < NUMTYPES; }
 // The width a value is *stored* in when it is an array element or a struct field. wasm has i8 and
 // i16 as storage types and no others.
 i32 ty_packed(i32 t) {
+  if (ty_known(t) == 0) { return 0; }
   if (t == TY_U8 | t == TY_I8) { return 8; }
   if (t == TY_U16 | t == TY_I16) { return 16; }
   return 0;
 }
 
 i32 ty_new(i32 kind, i32 p, i32 n, i32 elem) {
+  if (full(ntype, 16384, "types")) { return 0; }
   types[ntype] = Ty(kind, p, n, elem, nfield, 0);
   ntype = ntype + 1;
   return ntype - 1;
@@ -976,6 +1003,7 @@ i32 instantiate(i32 tm) {
     return insts[have].ty;
   }
   i32 ty = ty_new(tmpls[tm].kind, tmpls[tm].nameptr, tmpls[tm].namelen, 0);
+  if (full(ninst, 16384, "instantiations")) { return 0; }
   insts[ninst] = Inst(tm, ty, astart, na, 0, 0);
   ninst = ninst + 1;
   expand_one(ninst - 1);
@@ -993,7 +1021,8 @@ i32 parse_functype() {
   i32 np = 0;
   while (ispunct(41) == 0 & kind() != K_EOF) {
     i32 pt2 = parse_type();
-    fparams[nfparam] = pt2;
+    if (full(nfparam, 16384, "funcref parameters")) { return 0; }
+  fparams[nfparam] = pt2;
     nfparam = nfparam + 1;
     np = np + 1;
     if (ispunct(44)) { next(); }
@@ -1596,7 +1625,20 @@ i32 postfix(i32 t) {
   return t;
 }
 
+// **A type index that is not one has no members.** After something fails to resolve, `0 - 1` is
+// carried as a type and reaches every lookup keyed by one — where `types[t]` is a read past the
+// end rather than an answer. Refusing to look is the answer that lets the refusal already
+// reported be the one a reader sees.
+i32 ty_known(i32 t) { return t >= 0 & t < ntype; }
+
+// **Not a `ty_kind` that answers a harmless default.** That was tried: an unknown type answering
+// `T_NUM` reads as "nothing special" to every branch keyed on a kind, and a parser that keeps
+// going on a type it does not have found a cycle between `primary` and `postfix` — 234 corpus
+// files went from one trap each to a stack overflow, which is a worse answer than the trap. A
+// lookup may decline to look; it may not invent what it found.
+
 i32 field_index(i32 t, i32 p, i32 n) {
+  if (ty_known(t) == 0) { return 0 - 1; }
   i32 i = 0;
   i32 found = 0 - 1;
   while (i < types[t].nfields) {
@@ -2341,6 +2383,7 @@ i32 scan_params() {
       if (pt == 0 - 1) { pt = TY_I32; }
       tp = e0;
       next();
+      if (full(nfnparam, 16384, "parameters")) { return st; }
       fnparams[nfnparam] = pt;
       nfnparam = nfnparam + 1;
     }
@@ -2814,6 +2857,7 @@ i32 mowner = -1;
 i32 fn_exported = 0;
 
 i32 slot_new(i32 t) {
+  if (full(nslot, 16384, "slots")) { return 0; }
   slotty[nslot] = t;
   nslot = nslot + 1;
   return nslot - 1;
@@ -2942,6 +2986,7 @@ i32 record_template(i32 kind) {
   i32 pstart = ntparam;
   i32 np = 0;
   while (at_gt() == 0 & kind() != K_EOF) {
+    if (full(ntparam, 8192, "type parameters")) { return 0; }
     tparams[ntparam] = TParam(tstart(), tlen());
     ntparam = ntparam + 1;
     np = np + 1;
@@ -2957,6 +3002,7 @@ i32 record_template(i32 kind) {
   if (tmpl_find(p, n) != 0 - 1) {
     ntparam = pstart;
   } else {
+    if (full(ntmpl, 4096, "templates")) { return 0; }
     tmpls[ntmpl] = Tmpl(p, n, kind, at, pstart, np);
     ntmpl = ntmpl + 1;
   }
@@ -3000,6 +3046,7 @@ i32 struct_decl(i32 emitting, i32 out) {
         mowner = 0 - 1;
       } else {
         i32 mps_mp = scan_params();
+        if (full(nmeth, 16384, "methods")) { return 0; }
         meths[nmeth] = Meth(t, mp, mn, ft, mps_mp, nfnparam - mps_mp);
         nmeth = nmeth + 1;
         while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
@@ -3013,6 +3060,7 @@ i32 struct_decl(i32 emitting, i32 out) {
       }
     } else {
       if (emitting == 0) {
+        if (full(nfield, 65536, "fields")) { return 0; }
         fields[nfield] = Field(mp, mn, ft);
         nfield = nfield + 1;
         count = count + 1;
@@ -3058,6 +3106,7 @@ i32 enum_decl(i32 emitting, i32 out) {
         while (ispunct(41) == 0) {
           i32 ft2 = parse_type();
           if (emitting == 0) {
+            if (full(nfield, 65536, "fields")) { return 0; }
             fields[nfield] = Field(tstart(), tlen(), ft2);
             nfield = nfield + 1;
           }
@@ -3071,6 +3120,7 @@ i32 enum_decl(i32 emitting, i32 out) {
         }
       }
       if (emitting == 0) {
+        if (full(nvar, 8192, "enum variants")) { return 0; }
         vars[nvar] = Var(vp, vn, payload, t);
         nvar = nvar + 1;
         count = count + 1;
@@ -3089,6 +3139,7 @@ i32 enum_decl(i32 emitting, i32 out) {
         mowner = 0 - 1;
       } else {
         i32 mps_mp2 = scan_params();
+        if (full(nmeth, 16384, "methods")) { return 0; }
         meths[nmeth] = Meth(t, mp2, mn2, mt, mps_mp2, nfnparam - mps_mp2);
         nmeth = nmeth + 1;
         while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
@@ -3121,6 +3172,7 @@ i32 collect() {
     } else {
     if (looks_like_generic_fn()) {
       i32 ge = skip_type(tp);
+      if (full(ngfn, 4096, "generic functions")) { return 0; }
       gfns[ngfn] = GFn(toks[ge].start, toks[ge].len);
       ngfn = ngfn + 1;
       skip_decl();
@@ -3131,6 +3183,7 @@ i32 collect() {
     next();
     if (ispunct(40)) {
       i32 ps = scan_params();
+      if (full(nfn, 16384, "functions")) { return 0; }
       fns[nfn] = Fn(p, n, ret, ps, nfnparam - ps);
       nfn = nfn + 1;
       while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
@@ -3142,6 +3195,7 @@ i32 collect() {
         next();
       }
     } else {
+      if (full(nglo, 8192, "globals")) { return 0; }
       glos[nglo] = Glo(p, n, ret);
       nglo = nglo + 1;
       while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
