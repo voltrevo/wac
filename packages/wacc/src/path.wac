@@ -238,3 +238,14 @@ export string resolveVia(Res res, string[] paths, string from, string spec) {
   if (mapped != "") { return mapped; }
   return resolveFromAt(from, spec, res.rootAt(paths, from), res.base);
 }
+
+/**
+ * Whether `s` ends with `p` — string arithmetic, in the module that holds the rest of it.
+ *
+ * **There were two private copies**, in `check.wac` and `bindgen.wac`, written the same day and
+ * spelled two ways: one sliced and compared, the other walked the bytes. Neither was wrong and a
+ * third was about to be added for `.wapy`, which is when a second copy stops being free.
+ */
+export bool endsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
+}

@@ -15,7 +15,8 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
-import { Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
+import { Frontend, frontendOf } from "./frontend.wac";
+import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
   Method, NamedArg,
@@ -3297,9 +3298,22 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     if (partCount < parts.len()) { parts[partCount] = body + "\n"; partCount = partCount + 1; }
     outLines = outLines + countLines(body) + 1;
     u8[] b = body.toBytes();
-    Lexed lexed = lex(b);
-    P p = P.create(b, lexed.tokens, lexed.tokenCount);
-    Program prog = parseProgram(p);
+    // **A `.wapy` file is read by wapy's frontend and is a wac tree from here on.** The surface is
+    // the only thing that differs — `spec/spec/wapy.md`: *"Same types, same semantics, same AST,
+    // same compiler"* — so the dispatch belongs at the one place a file becomes a tree, and every
+    // phase after it is untouched.
+    //
+    // It reaches the emitter *because* the graph is parsed per file. While the emitter compiled a
+    // concatenation, a file arrived as text and there was nowhere to put a second reader:
+    // `issues/lang/0279a` is that argument, and this is its option B.
+    //
+    // The `src` and the tokens come back from `wapyParse` rather than being re-derived, because the
+    // tree's indices refer to *its* array — a rewritten one, with a `;` per line and a synthetic
+    // tail. Lexing the original again would resolve every name to the wrong token.
+    Frontend fe = frontendOf(path, b);
+    b = fe.src;
+    Lexed lexed = fe.lexed;
+    Program prog = fe.prog;
     // **Kept, rather than thrown away.** This parse already happens — it is how the import walk below
     // finds a file's edges — and until 2026-08-27 the tree was discarded and the file's *text* was
     // appended to a blob that the emitter then lexed and parsed a second time, as one unit. Handing
@@ -3421,12 +3435,16 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
   return out;
 }
 
-/** How many declarations the entry file contributes, which is how far the exports reach. */
-i32 declCountOf(string source) {
-  u8[] b = source.toBytes();
-  Lexed lexed = lex(b);
-  P p = P.create(b, lexed.tokens, lexed.tokenCount);
-  return parseProgram(p).decls.len();
+/**
+ * How many declarations the entry file contributes, which is how far the exports reach.
+ *
+ * **It has to be read by the entry's own frontend.** Counting a `.wapy` entry with wac's parser
+ * answered 0, and 0 here means "no declaration is the entry's", so a wapy program exported nothing
+ * and `wac run` reported `exports no main` over a module with a `main` in it. It only bit the
+ * *entry*: a wapy file imported by a wac one is counted by nobody.
+ */
+i32 declCountOf(string path, string source) {
+  return frontendOf(path, source.toBytes()).prog.decls.len();
 }
 
 /**
@@ -3513,7 +3531,7 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, str
   Env env = Env.create();
   env.trace = true;
   env.traceSlots = slots;
-  return emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts,
+  return emitModuleOfInto(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts,
                           edges, names, filePaths, false, true, env, srcs, lexeds, progs);
 }
 
@@ -3530,7 +3548,7 @@ export string covTableLinked(string[] paths, string[] sources, Res res, string e
                           srcs, lexeds, progs);
   if (blob == "") { return ""; }
   Env env = Env.create();
-  return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, false, srcs, lexeds, progs);
 }
 
@@ -3546,7 +3564,7 @@ export string traceTableLinked(string[] paths, string[] sources, Res res, string
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                           srcs, lexeds, progs);
   if (blob == "") { return ""; }
-  return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, true, srcs, lexeds, progs);
 }
 
@@ -3624,7 +3642,7 @@ Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                           srcs, lexeds, progs);
   if (blob == "") { return null; }
-  return frontOfRawIn(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)),
+  return frontOfRawIn(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)),
                       starts, edges, names, filePaths, false, false, Env.create(),
                       srcs, lexeds, progs);
 }
@@ -4101,7 +4119,7 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bo
   string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                           srcs, lexeds, progs);
   if (blob == "") { return bareModule(); }
-  return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+  return emitModuleOfWith(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                           names, filePaths, checked, covered, traced, srcs, lexeds, progs);
 }
 
@@ -4129,7 +4147,7 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
                           srcs, lexeds, progs);
   if (blob == "") { return "the graph did not link"; }
   Env env = Env.create();
-  emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+  emitModuleOfInto(blob.toBytes(), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                    names, filePaths, false, false, env, srcs, lexeds, progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   // **Ambiguity is a decline this could not say.** `emitModuleOfFront` bares out on

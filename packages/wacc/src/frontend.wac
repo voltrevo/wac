@@ -1,0 +1,59 @@
+// Which frontend reads a file, decided in one place by its extension.
+//
+// `spec/spec/wapy.md`: *"wapy is wac with a different layout. Same types, same semantics, same AST,
+// same compiler."* So the two surfaces meet exactly here — at the point where a path and some bytes
+// become a tree — and no phase after this one knows there are two of them.
+//
+// **There are three callers and they must agree**, which is the whole reason this is a module rather
+// than three dispatches: the emitter's linker (`emit.wac`'s `linkFiles`), the checker's parse cache
+// and the diagnostics walk (`api.wac`). A file read as wapy by one and as wac by another reports
+// parse errors against a layout nobody wrote — which is what `wac check` did for the few hours
+// between the emitter learning about `.wapy` and this module existing.
+//
+// **The bytes come back too.** wapy's parse rewrites its token array — a `;` per line, a synthetic
+// tail — and every token index in the tree refers to *that* array and that source. A caller that
+// keeps the tree and re-lexes the original resolves every name to the wrong token, which is a wrong
+// answer rather than a failure. So `Frontend` carries the three together and they are only ever used
+// as a set.
+
+import { Decl, Program } from "./ast.wac";
+import { lex, Lexed } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+import { endsWith } from "./path.wac";
+import { WParsed, wapyParse } from "./wapyparse.wac";
+
+/** One file, read. `src`, `lexed` and `prog` belong together — see the header. */
+export struct Frontend {
+  u8[] src;
+  Lexed lexed;
+  Program prog;
+  /** The parser's errors as `(code, line, col)` triples, and how many. */
+  i32[] errors;
+  i32 errorCount;
+  /** The note beside each error, where the reader has one. Empty for wapy, which records none. */
+  string[] notes;
+  /** How wide the token each error stopped on was, or 0 where nothing measured it. */
+  i32[] widths;
+}
+
+/** Whether `path` is read by the indentation surface rather than by wac's own grammar. */
+export bool isWapyPath(string path) { return endsWith(path, ".wapy"); }
+
+/**
+ * Read `src` as whichever surface `path` names.
+ *
+ * The wac branch keeps the `P` only for its errors: `parseProgram` fills them in as it goes and the
+ * tree is what comes back, so the two are read off one object and copied out here rather than the
+ * caller being handed a parser to interrogate.
+ */
+export Frontend frontendOf(string path, u8[] src) {
+  if (isWapyPath(path)) {
+    WParsed wp = wapyParse(src);
+    return Frontend(wp.src, Lexed(wp.toks, wp.tokCount, i32[0](), 0), wp.program,
+                    wp.errors, wp.errorCount, string[0](fill: ""), i32[wp.errorCount](fill: 0));
+  }
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  return Frontend(src, lexed, prog, p.errors, p.errorCount, p.errorNotes, p.errorWidths);
+}

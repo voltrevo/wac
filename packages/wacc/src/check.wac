@@ -35,6 +35,7 @@
 import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { isBuiltinSpec } from "./coretext.wac";
+import { endsWith } from "./path.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -460,15 +461,6 @@ bool rawCast(string from, string to) {
 }
 
 /** Whether `s` ends with `suffix`. wac has no string method for it. */
-bool endsWith(string s, string suffix) {
-  u8[] a = s.toBytes();
-  u8[] b = suffix.toBytes();
-  if (b.len() > a.len()) { return false; }
-  for (i32 i = 0; i < b.len(); i++) {
-    if (a[a.len() - b.len() + i] != b[i]) { return false; }
-  }
-  return true;
-}
 
 /**
  * The template name in an instantiation — `Box` in `Box<i32>` — or `""` when it is not one.

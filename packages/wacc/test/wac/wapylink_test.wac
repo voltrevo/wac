@@ -1,0 +1,170 @@
+// A `.wapy` file in a graph compiles to the module its wac twin does.
+//
+//     wac test packages/wacc/test/wac/wapylink_test.wac
+//
+// **The oracle is the same program written twice**, which is the only oracle `spec/spec/wapy.md`
+// admits: *"wapy is wac with a different layout. Same types, same semantics, same AST, same
+// compiler."* Two layouts of one program that compile to two different modules would mean one of
+// the frontends is reading something else, and comparing the *bytes* is what makes that impossible
+// to miss — a test that only asked whether the wapy graph compiled would pass on a frontend that
+// dropped a method.
+//
+// `packages/wacc/test/wac/wapy_test.wac` is the other half: it compares the two *parses*, case by
+// case, against `spec/spec/wapy.md`'s clauses. This one asks whether the frontend is wired to the
+// thing that emits, which is a different question and was the open half of `issues/lang/0279a` —
+// the emitter compiled a *concatenation of source text*, so a file arrived as text and a second
+// surface had nowhere to be read.
+//
+// The sources are strings rather than fixtures on disk: `emitFiles` takes the paths and the texts,
+// so the graph is described here and the test needs no capability to run.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core } from "std/platform.wac";
+import { diagnoseGraph, emitFiles } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** The two modules, byte for byte, with the first difference named. */
+void sameModule(T t, u8[] a, u8[] b, string what) {
+  t.isTrue(a.len() > 8, what + ": the wapy graph emitted something");
+  t.isTrue(b.len() > 8, what + ": the wac graph emitted something");
+  t.eqI32(a.len(), b.len(), what + ": the two modules are the same size");
+  if (a.len() != b.len()) { return; }
+  i32 at = 0 - 1;
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i] && at < 0) { at = i; }
+  }
+  t.eqI32(at, 0 - 1, what + ": the two modules are identical (first difference at byte "
+                          + itoa(at) + ")");
+}
+
+/** A function, an export and a call across the file boundary. */
+export string test_a_wapy_function_compiles_to_what_its_wac_twin_does(Core core) {
+  T t = T.create();
+  string main = "import { twice } from \"./lib\";\n"
+              + "export i32 four() { return twice(2); }\n";
+  string wapy = "@export\n"
+              + "def twice(x: i32) -> i32:\n"
+              + "    return x + x\n";
+  string wac = "export i32 twice(i32 x) { return x + x; }\n";
+  string[] pw = string[]("g/main.wac", "g/lib.wapy");
+  string[] sw = string[](replace(main, "./lib", "./lib.wapy"), wapy);
+  string[] pc = string[]("g/main.wac", "g/lib.wac");
+  string[] sc = string[](replace(main, "./lib", "./lib.wac"), wac);
+  sameModule(t, emitFiles(pw, sw, "g/main.wac"), emitFiles(pc, sc, "g/main.wac"), "a function");
+  return t.report();
+}
+
+/** A class with a method and a field, reached from the other file. */
+export string test_a_wapy_class_compiles_to_what_its_wac_twin_does(Core core) {
+  T t = T.create();
+  string main = "import { Box } from \"./lib\";\n"
+              + "export i32 sum() { return Box(2).plus(3); }\n";
+  string wapy = "@export\n"
+              + "class Box:\n"
+              + "    v: i32\n"
+              + "\n"
+              + "    def plus(this, n: i32) -> i32:\n"
+              + "        return this.v + n\n";
+  string wac = "export struct Box {\n"
+             + "  i32 v;\n"
+             + "  i32 plus(this, i32 n) { return this.v + n; }\n"
+             + "}\n";
+  string[] pw = string[]("g/main.wac", "g/lib.wapy");
+  string[] sw = string[](replace(main, "./lib", "./lib.wapy"), wapy);
+  string[] pc = string[]("g/main.wac", "g/lib.wac");
+  string[] sc = string[](replace(main, "./lib", "./lib.wac"), wac);
+  sameModule(t, emitFiles(pw, sw, "g/main.wac"), emitFiles(pc, sc, "g/main.wac"), "a class");
+  return t.report();
+}
+
+/**
+ * The control flow wapy respells rather than reshapes — `and`, `not`, a conditional and a `range`.
+ *
+ * One case rather than four, because what is being tested is that they reach the emitter at all;
+ * `wapy_test.wac` is where each spelling is checked against its clause.
+ */
+export string test_wapys_respellings_reach_the_emitter(Core core) {
+  T t = T.create();
+  string main = "import { count } from \"./lib\";\n"
+              + "export i32 n() { return count(10, true); }\n";
+  string wapy = "@export\n"
+              + "def count(n: i32, up: bool) -> i32:\n"
+              + "    total: i32 = 0\n"
+              + "    for i in range(0, n):\n"
+              + "        if up and not (i == 3):\n"
+              + "            total = total + (i if i < 5 else 0)\n"
+              + "    return total\n";
+  string wac = "export i32 count(i32 n, bool up) {\n"
+             + "  i32 total = 0;\n"
+             + "  for (i32 i = 0; i < n; i++) {\n"
+             + "    if (up && !(i == 3)) {\n"
+             + "      total = total + (i < 5 ? i : 0);\n"
+             + "    }\n"
+             + "  }\n"
+             + "  return total;\n"
+             + "}\n";
+  string[] pw = string[]("g/main.wac", "g/lib.wapy");
+  string[] sw = string[](replace(main, "./lib", "./lib.wapy"), wapy);
+  string[] pc = string[]("g/main.wac", "g/lib.wac");
+  string[] sc = string[](replace(main, "./lib", "./lib.wac"), wac);
+  sameModule(t, emitFiles(pw, sw, "g/main.wac"), emitFiles(pc, sc, "g/main.wac"),
+             "the respellings");
+  return t.report();
+}
+
+/**
+ * A malformed `.wapy` file is reported against **wapy's** grammar, not wac's.
+ *
+ * Without this the three cases above would pass on a wiring that read the file as wapy in one phase
+ * and as wac in another: the emitter would be happy and `wac check` would report a cascade of wac
+ * parse errors starting at the `@` of `@export`, which is what it did for the few hours between the
+ * emitter learning about `.wapy` and `frontend.wac` existing.
+ *
+ * **The refusal is asked of the phase that promises one.** `emitFiles` is the unchecked path and
+ * emits a module for a malformed *wac* file too — that is what `checked` is for, and asserting it
+ * here would be asserting something this entry point has never claimed.
+ */
+export string test_a_malformed_wapy_file_is_reported_as_wapy(Core core) {
+  T t = T.create();
+  string[] p = string[]("g/main.wac", "g/lib.wapy");
+  string[] s = string[]("import { twice } from \"./lib.wapy\";\n"
+                        + "export i32 four() { return twice(2); }\n",
+                        "@export\ndef twice(x: i32) -> i32\n    return x + x\n");
+  string d = diagnoseGraph(p, s, "g/main.wac");
+  t.isTrue(d != "", "a wapy file missing its colon is a diagnostic");
+  t.isTrue(d.indexOf("g/lib.wapy") >= 0, "reported against the file that has the mistake");
+  t.isTrue(d.indexOf("found '@'") < 0,
+           "and not as wac reading `@export`, which is the wiring being tested");
+  return t.report();
+}
+
+/**
+ * A `.wapy` file as the **entry**, which is a different path through the linker.
+ *
+ * `declCountOf` says how many declarations belong to the entry, and that is how far the exports
+ * reach — so counting a wapy entry with wac's parser answered 0 and the module exported nothing.
+ * `wac run` then said *exports no main* over a module with a `main` in it, and listed no exports at
+ * all, which is the tell: not a missing name but an empty list.
+ */
+export string test_a_wapy_entry_exports_what_its_wac_twin_does(Core core) {
+  T t = T.create();
+  string wapy = "@export\n"
+              + "def twice(x: i32) -> i32:\n"
+              + "    return x + x\n"
+              + "\n"
+              + "@export\n"
+              + "def four() -> i32:\n"
+              + "    return twice(2)\n";
+  string wac = "export i32 twice(i32 x) { return x + x; }\n"
+             + "export i32 four() { return twice(2); }\n";
+  sameModule(t, emitFiles(string[]("g/e.wapy"), string[](wapy), "g/e.wapy"),
+                emitFiles(string[]("g/e.wac"), string[](wac), "g/e.wac"), "a wapy entry");
+  return t.report();
+}
+
+/** `s` with the first `from` replaced by `to`. */
+string replace(string s, string from, string to) {
+  i32 at = s.indexOf(from);
+  if (at < 0) { return s; }
+  return s.slice(0, at) + to + s.slice(at + from.len(), s.len());
+}

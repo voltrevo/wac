@@ -24,6 +24,7 @@ import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom, resolveFromIn } from "./files.wac";
 import { Res, resolveVia } from "./path.wac";
+import { Frontend, frontendOf } from "./frontend.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -826,10 +827,9 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
   string out = "";
   bool parseFailed = false;
   for (i32 i = 0; i < paths.len(); i++) {
-    u8[] src = sources[i].toBytes();
-    Lexed lexed = lex(src);
-    P p = P.create(src, lexed.tokens, lexed.tokenCount);
-    parseProgram(p);
+    Frontend fe = frontendOf(paths[i], sources[i].toBytes());
+    u8[] src = fe.src;
+    Lexed lexed = fe.lexed;
     // A lexical complaint names its own phase — the reference has four (`lex`, `parse`, `resolve`,
     // `typecheck`) and this package emitted two, because it never had a lex error to emit.
     for (i32 e = 0; e < lexed.errorCount; e++) {
@@ -838,14 +838,15 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
           + "\t\t\t1\n";
       parseFailed = true;
     }
-    for (i32 e = 0; e < p.errorCount; e++) {
-      string note = e < p.errorNotes.len() ? p.errorNotes[e] : "";
+    for (i32 e = 0; e < fe.errorCount; e++) {
+      string note = e < fe.notes.len() ? fe.notes[e] : "";
       // The span is the token the parser stopped on. A checker diagnostic has no width to give — it
       // reports at an expression, and nothing records how far that expression ran.
-      i32 width = p.errorWidths[e];
-      out = out + paths[i] + "\t" + numText(p.errors[e * 3 + 1]) + "\t" + numText(p.errors[e * 3 + 2])
-          + "\tparse\t" + parseMessage(p.errors[e * 3]) + "\t" + note + "\t"
-          + parseHintFor(p.errors[e * 3]) + "\t" + numText(width) + "\n";
+      i32 width = e < fe.widths.len() ? fe.widths[e] : 0;
+      out = out + paths[i] + "\t" + numText(fe.errors[e * 3 + 1]) + "\t"
+          + numText(fe.errors[e * 3 + 2])
+          + "\tparse\t" + parseMessage(fe.errors[e * 3]) + "\t" + note + "\t"
+          + parseHintFor(fe.errors[e * 3]) + "\t" + numText(width) + "\n";
       parseFailed = true;
     }
   }
@@ -1152,10 +1153,14 @@ i32[] declCountsOf(string[] paths, string[] sources) {
 i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs) {
   i32[] counts = i32[paths.len() + 1]();
   for (i32 i = 0; i < paths.len(); i++) {
-    u8[] csrc = (i < sources.len() ? sources[i] : "").toBytes();
-    Lexed clexed = lex(csrc);
-    P cp = P.create(csrc, clexed.tokens, clexed.tokenCount);
-    Program cprog = parseProgram(cp);
+    // **Through the shared frontend**, so a `.wapy` file is the same tree here that the emitter
+    // links — see `frontend.wac`. The source comes back too because wapy's token indices refer to
+    // its own rewritten array.
+    Frontend cfe = frontendOf(i < paths.len() ? paths[i] : "",
+                              (i < sources.len() ? sources[i] : "").toBytes());
+    u8[] csrc = cfe.src;
+    Lexed clexed = cfe.lexed;
+    Program cprog = cfe.prog;
     counts[i] = declarationsIn(csrc, clexed, cprog);
     if (i < lexes.len()) { lexes[i] = clexed; }
     if (i < progs.len()) { progs[i] = cprog; }

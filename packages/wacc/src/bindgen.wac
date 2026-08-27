@@ -17,6 +17,7 @@
 // and is load-bearing — a helper used by a class has to exist before the class that calls it.
 
 import { splitTop } from "./manifest.wac";
+import { endsWith } from "./path.wac";
 import { field, linesOf } from "./text.wac";
 
 /** What one run needs to know: the wires, taken apart, and which language to write. */
@@ -60,10 +61,6 @@ bool isIdentChar(string ch) {
 
 bool startsWith(string s, string p) {
   return s.len() >= p.len() && s.slice(0, p.len()) == p;
-}
-
-bool endsWith(string s, string p) {
-  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
 }
 
 /** The scalars that cross as numbers, `bool` and `void` among them. */
