@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0276b](open/0276b-an-uncalled-method-with-its-own-letters-breaks-a-large-program.md) | adding a method with its own type parameters to a **widely used** generic struct stops programs compiling that never call it: `fold` on `core/vec.wac` makes `wac app packages/box/src/box.wac` answer *a value of a type this emitter cannot write: U*, and 29 suite tests fail — every one that builds an app. A probe says `subs=0 curInst=`, so the *template's* method is being walked with no substitution, and every `case StructDecl` walk guards on `typeParams.len()`. Five smaller shapes were built and none reproduces, so it needs the larger graph. **Option C is implemented and cannot yet be used on a struct anything else depends on** | bug | the emitter declines a program that does not use the method |
 | [0277a](open/0277a-wapy-accepts-escapes-wac-refuses-and-swallows-the-rest.md) | wapy accepts `\uXXXX`, which wac has not, and returns the character for every *unknown* escape instead of diagnosing: `"\q"` is `q` and `"\u{41}"` is `u{41}`, silently | bug | open |
 | [0278a](open/0278a-parseprogram-rewrites-its-token-array-so-parsing-twice-differs.md) | `splitGt` rewrites `>>` in place, so a `Lexed` is single-use: parsing one twice reads a nested generic as a comparison, and reports it in a file nobody touched | bug | open |
 | [0279a](open/0279a-the-emitter-links-source-text-so-a-second-surface-cannot-reach-it.md) | the emitter concatenates the graph into one source string, so a `.wapy` file cannot reach it — wiring the frontend is not enough | decision | open |
@@ -40,7 +39,7 @@ has been fixed and why.
 
 ## Closed
 
-217 issues, 185 closed.
+218 issues, 187 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

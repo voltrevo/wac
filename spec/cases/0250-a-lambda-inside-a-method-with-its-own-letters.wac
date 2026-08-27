@@ -1,0 +1,27 @@
+// expect: answers f = 7
+// only: wacc
+// spec:  §wacc-method-type-args
+// why: `issues/lang/0277b`. Every other case for `design/lang/0010` option C has an own-letter
+//      method whose body is ordinary code, and a **lambda** in one was declined outright: the
+//      lambda table is keyed per instantiation, and the walk that fills it bound the owner's `T`
+//      and not the method's `U` — so the capture was recorded with a type naming a letter, and the
+//      cell struct built from it was one the type section cannot write.
+//
+//      The captured value is a bare `U` on purpose. It does not have to be a funcref for this: what
+//      matters is only that its type is the *method's* letter rather than the struct's.
+//
+//      `T` is `bool` and `U` is `i32` so that binding one and not the other cannot pass by
+//      coincidence — with both `i32` this program answers 7 even when nothing is substituted.
+// from: design/lang/0010
+struct Cell<T> {
+  T v;
+  Cell<T> of(T v) { return Cell<T>(v); }
+  U pick<U>(const this, U a) {
+    fn[U(i32)] g = (i32 i) => a;
+    return g(0);
+  }
+}
+export i32 f() {
+  Cell<bool> c = Cell.of(true);
+  return c.pick<i32>(7);
+}
