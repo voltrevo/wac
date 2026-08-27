@@ -164,6 +164,39 @@ const cases: [string, string, number][] = [
       Point flip(this) { return Point(this.y, this.x); }
     }
     i32 main() { Point q = Point(3, 4).flip(); return q.x * 10 + q.y; }`, 43],
+  // **The tax for leaving generics out, measured.** A compiler cannot be written without a growable
+  // vector, and wac-1 has no `Vec<T>` — so you hand-write one per element type. This is 25 lines,
+  // and a compiler wants perhaps five of them. That is the whole cost of the decision, and it is
+  // paid in the language you are *writing in* rather than in the one you are implementing.
+  ["a growable vector, hand-written", `
+    struct IntVec {
+      i32[] data;
+      i32 n;
+      i32 push(this, i32 v) {
+        if (this.n == this.data.len()) { this.grow(); }
+        this.data[this.n] = v;
+        this.n = this.n + 1;
+        return v;
+      }
+      i32 grow(this) {
+        i32 want = this.data.len() * 2;
+        if (want == 0) { want = 4; }
+        i32[] bigger = i32[want]();
+        i32 i = 0;
+        while (i < this.n) { bigger[i] = this.data[i]; i = i + 1; }
+        this.data = bigger;
+        return want;
+      }
+      i32 get(this, i32 i) { return this.data[i]; }
+      i32 len(this) { return this.n; }
+    }
+    IntVec newIntVec() { return IntVec(i32[0](), 0); }
+    i32 main() {
+      IntVec v = newIntVec();
+      i32 i = 0;
+      while (i < 100) { v.push(i * i); i = i + 1; }
+      return v.get(9) * 1000 + v.len();
+    }`, 81100],
 ];
 
 for (const [name, source, want] of cases) {
