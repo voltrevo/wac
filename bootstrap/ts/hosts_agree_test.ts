@@ -1,9 +1,13 @@
-// **The same ladder under two engines, compared.**
+// **The same ladder under three hosts, compared.**
 //
-// `ts/` drives every rung through Deno and `rust-ladder/` drives the same rungs through V8 from
-// Rust. This checks that the wac-L0 they produce is identical — which is the argument the two
-// assemblers already make, one level up: a rung that only ever ran under one engine is a rung
-// whose behaviour nobody has checked.
+//   hosts/deno.js     the portable core, Deno reading the files
+//   hosts/node.js     the same core, `node:fs` reading them
+//   rust-ladder/      V8 embedded in Rust, no JavaScript at all
+//
+// This checks the wac-L0 all three produce is identical — the argument the two assemblers already
+// make, one level up: a rung that only ever ran under one host is a rung whose behaviour nobody
+// has checked. It is also the acceptance criterion for the ports, stated as a test rather than a
+// claim in a document.
 //
 // It is not the same as the two assemblers agreeing. That differential covers reading a format;
 // this one covers *running* five compilers, where the differences an engine can introduce are
@@ -16,14 +20,24 @@ import { l5ToL0 } from "./l5.ts";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const BIN = `${HERE}../rust-ladder/target/release/ladder`;
+const NODE_HOST = `${HERE}../hosts/node.js`;
 
-async function binIsBuilt(): Promise<boolean> {
+async function have(path: string): Promise<boolean> {
   try {
-    await Deno.stat(BIN);
+    await Deno.stat(path);
     return true;
   } catch {
     return false;
   }
+}
+
+/** Run a host binary on a file and take its wac-L0 from stdout. */
+async function l0From(cmd: string, args: string[]): Promise<string> {
+  const ran = await new Deno.Command(cmd, { args }).output();
+  if (!ran.success) {
+    throw new Error(`${cmd} failed: ${new TextDecoder().decode(ran.stderr).slice(0, 300)}`);
+  }
+  return new TextDecoder().decode(ran.stdout);
 }
 
 // Chosen to reach what a rung below cannot express: wasm GC, an enum with payloads, `match`,
@@ -47,25 +61,27 @@ i32 main() {
 `;
 
 Deno.test({
-  name: "the ladder produces the same wac-L0 under Deno and under V8 from Rust",
-  ignore: !(await binIsBuilt()),
+  name: "the ladder produces the same wac-L0 under Deno, Node and V8 from Rust",
+  ignore: !(await have(BIN)),
   fn: async () => {
     const tmp = await Deno.makeTempFile({ suffix: ".wac" });
     await Deno.writeTextFile(tmp, PROGRAM);
     try {
-      const ran = await new Deno.Command(BIN, { args: [tmp, "--l0"] }).output();
-      if (!ran.success) {
-        throw new Error(`the Rust ladder failed: ${new TextDecoder().decode(ran.stderr)}`);
-      }
-      const fromRust = new TextDecoder().decode(ran.stdout);
-      const fromDeno = await l5ToL0(PROGRAM);
-      if (fromRust !== fromDeno) {
-        const a = fromRust.split("\n");
-        const b = fromDeno.split("\n");
+      const got: Record<string, string> = {
+        deno: await l5ToL0(PROGRAM),
+        rust: await l0From(BIN, [tmp, "--l0"]),
+      };
+      if (await have(NODE_HOST)) got.node = await l0From("node", [NODE_HOST, tmp, "--l0"]);
+
+      const names = Object.keys(got);
+      for (const name of names.slice(1)) {
+        if (got[name] === got[names[0]]) continue;
+        const a = got[names[0]].split("\n");
+        const b = got[name].split("\n");
         const at = a.findIndex((l, i) => l !== b[i]);
         throw new Error(
-          `the two hosts disagree at line ${at + 1} of ${a.length}/${b.length}:\n` +
-            `  rust: ${a[at]}\n  deno: ${b[at]}`,
+          `${names[0]} and ${name} disagree at line ${at + 1} of ${a.length}/${b.length}:\n` +
+            `  ${names[0]}: ${a[at]}\n  ${name}: ${b[at]}`,
         );
       }
     } finally {
