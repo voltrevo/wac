@@ -1,0 +1,243 @@
+// wapy's lexer — wac's tokens, grouped into indented lines.
+//
+// `spec/spec/wapy.md` is the contract. wapy is wac with a different layout: same types, same
+// semantics, same AST, `.wapy` instead of `.wac`, and blocks by indentation instead of by braces.
+// So the *tokens* are wac's and only the *structure* differs, which is what this file produces.
+//
+// ## It calls `lex` rather than scanning
+//
+// Numbers, strings, character literals, escapes and every operator are identical on both surfaces —
+// `spec/spec/wapy.md` says "same types, same semantics" and means it. A second scanner would be a
+// second place for `0x_1f`, `\u{1f600}` and `1e-9` to be understood, and the two would drift the way
+// every second copy does. This one runs `lex` over the wapy source and fixes up the three things that
+// differ:
+//
+//   1. `#` and `##` comments, which wac spells `//` and `///`
+//   2. indentation, which wac does not care about and wapy structures blocks with
+//   3. six words wapy spells differently — `and or not None True False`
+//
+// **The comment fix is length-preserving.** A `#` comment is overwritten with spaces in a *copy* of
+// the source, so every byte offset, line and column a token carries is the offset, line and column it
+// had in the file the reader wrote. That is why `P.create` below is handed the **original** source and
+// the blanked copy is thrown away: diagnostics quote what was typed, and nothing has to map a position
+// back through a rewrite. Rewriting `#` to `//` would have shifted every column on the line by one.
+//
+// It also means comments are simply gone by the time anything looks, which is correct for compiling:
+// wac's own lexer emits no comment tokens either, and a doc comment is recovered from the gap between
+// tokens by whatever wants it.
+//
+// ## What a line is
+//
+// A `WLine` is a slice of the shared token array plus the column its first token starts at. There is
+// no INDENT or DEDENT token and no block tree: `wapyparse.wac` walks the lines recursively, and "the
+// block under line i" is the run of following lines indented further than it. Introducing structural
+// token kinds would have meant numbers outside `kindCount()` travelling into `parseExpr`, which
+// indexes tables by kind.
+
+import { Lexed, lex, tokenStride } from "./lex.wac";
+import {
+  kAndAnd, kBang, kCase, kDot, kEof, kFalse, kIdent, kIs, kLbrace, kLbrack, kLparen, kNot,
+  kNull, kOrOr,
+  kRbrace, kRbrack, kRparen, kTrue,
+} from "./kinds.wac";
+import { Vec } from "core/vec.wac";
+
+/** One physical line that has tokens on it. */
+export struct WLine {
+  /** The column its first token starts at, 1-based — wapy's indentation. */
+  i32 indent;
+  /** Index of its first token, and how many. */
+  i32 first;
+  i32 count;
+  /** The source line number, for diagnostics. */
+  i32 line;
+}
+
+/** A wapy lex: wac's tokens, the lines they fall on, and what went wrong. */
+export struct WLexed {
+  Lexed toks;
+  WLine[] lines;
+  /** (code, line, col) triples, as `lex` and `parse` both use. */
+  i32[] errors;
+  i32 errorCount;
+}
+
+export i32 werrTab()          { return 40; }
+export i32 werrMisspelled()   { return 41; }
+export i32 werrDedent()       { return 42; }
+export i32 werrUnclosed()     { return 43; }
+export i32 werrIndent()       { return 44; }
+
+/**
+ * The source with every `#` comment overwritten by spaces, same length.
+ *
+ * Strings and character literals are skipped, because `"a # b"` is not a comment — that is the whole
+ * reason this cannot be a search for `#`. Escapes are honoured inside both so a `"\""` does not end
+ * the string early.
+ */
+export u8[] blankComments(u8[] src) {
+  u8[] out = u8[src.len()](fill: 0);
+  for (i32 i = 0; i < src.len(); i++) { out[i] = src[i]; }
+  i32 i = 0;
+  while (i < out.len()) {
+    i32 c = out[i];
+    if (c == '"' || c == '\'') {
+      i32 quote = c;
+      i = i + 1;
+      while (i < out.len() && out[i] != quote) {
+        if (out[i] == '\\') { i = i + 1; }
+        if (i < out.len() && out[i] == '\n') { break; }   // unterminated; let `lex` report it
+        i = i + 1;
+      }
+      i = i + 1;
+      continue;
+    }
+    if (c != '#') { i = i + 1; continue; }
+    while (i < out.len() && out[i] != '\n') { out[i] = ' '; i = i + 1; }
+  }
+  return out;
+}
+
+/**
+ * Whether a byte is leading whitespace — including the tab, which is the point.
+ *
+ * A tab has to be *scanned over* to be found. Stopping at it, which is what "space or carriage
+ * return" did, ended the leading run before the offending byte and reported nothing.
+ */
+bool isBlank(i32 c) { return c == ' ' || c == '\r' || c == '\t'; }
+
+/**
+ * A tab in the leading whitespace of a line, or -1.
+ *
+ * `spec/spec/wapy.md`: **No tabs.** Indentation is measured in columns and a tab makes the depth
+ * depend on how the file is displayed. Checked on the original source, before anything is blanked,
+ * and only in the leading run — a tab inside a string or after code is nobody's business here.
+ */
+i32 leadingTab(u8[] src, i32 lineStart) {
+  i32 i = lineStart;
+  while (i < src.len() && isBlank(src[i])) { i = i + 1; }
+  for (i32 k = lineStart; k < i; k++) { if (src[k] == '\t') { return k - lineStart; } }
+  return -1;
+}
+
+/**
+ * Retag the words wapy spells differently, in place.
+ *
+ * The *kind* becomes wac's, so `parseExpr` matches on it unchanged; the *span* stays where it was
+ * written, so a diagnostic quotes `and` rather than `&&`. Every one of these is also a legal wac
+ * identifier, which is why `lex` produced `kIdent` for it and why the decision is made here rather
+ * than in the scanner.
+ *
+ * **`self` is not in this list**, and was until 2026-08-27 — see `issues/lang/0077`. wapy spells the
+ * receiver `this`, the same as wac, so `self` is an ordinary identifier on both surfaces. It was the
+ * only respelling that could collide: the six here correspond to punctuation and literals in wac, so
+ * no wac identifier is one of them, but `self` shadowed a wac *keyword* and both spellings are legal
+ * wac names — so reserving it here became a rule about identifiers over there.
+ */
+void respell(u8[] src, Lexed lexed) {
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    i32 at = t * tokenStride();
+    // **`not` is a wac keyword, not an identifier**, because wac spells enum-variant testing
+    // `x is not V`. So it never reaches the identifier branch below and has to be handled here:
+    // wapy's `not` is logical negation everywhere *except* directly after `is`, where it is still
+    // wac's. The reference reaches the same rule from the other side — its lexer maps `not` to `!`
+    // unconditionally and `isNot` puts it back.
+    if (lexed.tokens[at] == kNot()) {
+      bool afterIs = t > 0 && lexed.tokens[(t - 1) * tokenStride()] == kIs();
+      if (!afterIs) { lexed.tokens[at] = kBang(); }
+      continue;
+    }
+    if (lexed.tokens[at] != kIdent()) { continue; }
+    // **Not where the grammar wants a name.** `spec/spec/wapy.md`: *"Each of those is an ordinary wac
+    // identifier, so where the grammar wants a name — after a `.`, or after `case` — that is what it
+    // is. `Option.None` and `case None:` mean the variant, not the null literal."* Retagging blindly
+    // turned every `Option.None` in the repository into `Option.null`, which is a parse error three
+    // tokens later and says nothing about the cause.
+    if (t > 0) {
+      i32 prev = lexed.tokens[(t - 1) * tokenStride()];
+      if (prev == kDot() || prev == kCase()) { continue; }
+    }
+    string w = textAt(src, lexed.tokens[at + 1], lexed.tokens[at + 2]);
+    if (w == "and")   { lexed.tokens[at] = kAndAnd(); continue; }
+    if (w == "or")    { lexed.tokens[at] = kOrOr();   continue; }
+    if (w == "not")   { lexed.tokens[at] = kBang();   continue; }
+    if (w == "None")  { lexed.tokens[at] = kNull();   continue; }
+    if (w == "True")  { lexed.tokens[at] = kTrue();   continue; }
+    if (w == "False") { lexed.tokens[at] = kFalse();  continue; }
+  }
+}
+
+/** The text of a span. */
+export string textAt(u8[] src, i32 start, i32 len) {
+  u8[] b = u8[len](fill: 0);
+  for (i32 i = 0; i < len; i++) { b[i] = src[start + i]; }
+  return string.fromBytes(b);
+}
+
+/** Whether a kind opens or shuts a bracket — the three pairs wac has. */
+bool opens(i32 k) { return k == kLparen() || k == kLbrack() || k == kLbrace(); }
+bool shuts(i32 k) { return k == kRparen() || k == kRbrack() || k == kRbrace(); }
+
+/**
+ * Lex a wapy source into wac tokens grouped by line.
+ *
+ * Lines with no tokens on them — blank, or nothing but a comment — do not appear, which is what makes
+ * a comment between two statements invisible to the structure rather than a dedent.
+ *
+ * **An open bracket continues the statement**, `[§wac-wapy-nolines-4gt7wxb]`: while a line leaves a
+ * bracket open the next physical line is joined onto it, its own indentation is not significant, and
+ * every token keeps the line and column it was written at so a diagnostic inside a continuation names
+ * the physical line. A bracket still open at the end of the file is an error there.
+ */
+export WLexed wapyLex(u8[] src) {
+  u8[] blanked = blankComments(src);
+  Lexed lexed = lex(blanked);
+  respell(src, lexed);
+
+  Vec<i32> errs = Vec<i32>.create();
+  for (i32 e = 0; e + 2 < lexed.errorCount * 3; e = e + 3) {
+    errs.push(lexed.errors[e]); errs.push(lexed.errors[e + 1]); errs.push(lexed.errors[e + 2]);
+  }
+
+  // A tab anywhere in a leading run, checked against the original bytes.
+  i32 lineNo = 1;
+  i32 at = 0;
+  while (at <= src.len()) {
+    i32 tab = leadingTab(src, at);
+    if (tab >= 0) { errs.push(werrTab()); errs.push(lineNo); errs.push(tab + 1); }
+    i32 nl = at;
+    while (nl < src.len() && src[nl] != '\n') { nl = nl + 1; }
+    if (nl >= src.len()) { break; }
+    at = nl + 1;
+    lineNo = lineNo + 1;
+  }
+
+  Vec<WLine> lines = Vec<WLine>.create();
+  i32 t = 0;
+  while (t < lexed.tokenCount) {
+    i32 k = lexed.tokens[t * tokenStride()];
+    if (k == kEof()) { break; }                  // not on any line
+    i32 startLine = lexed.tokens[t * tokenStride() + 3];
+    i32 col = lexed.tokens[t * tokenStride() + 4];
+    i32 first = t;
+    i32 depth = 0;
+    // Take tokens while they are on `startLine`, or while a bracket opened on it is still open.
+    while (t < lexed.tokenCount) {
+      i32 kk = lexed.tokens[t * tokenStride()];
+      if (kk == kEof()) { break; }
+      i32 ln = lexed.tokens[t * tokenStride() + 3];
+      if (ln != startLine && depth <= 0) { break; }
+      if (opens(kk)) { depth = depth + 1; }
+      if (shuts(kk)) { depth = depth - 1; }
+      t = t + 1;
+    }
+    if (depth > 0) {
+      errs.push(werrUnclosed()); errs.push(startLine); errs.push(col);
+    }
+    lines.push(WLine(col, first, t - first, startLine));
+  }
+
+  i32[] flat = i32[errs.len()](fill: 0);
+  for (i32 i = 0; i < errs.len(); i++) { flat[i] = errs.get(i); }
+  return WLexed(lexed, lines.toArray(), flat, errs.len() / 3);
+}

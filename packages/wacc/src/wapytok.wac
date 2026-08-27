@@ -1,0 +1,89 @@
+// A working list of tokens, for the rewrites wapy does before handing an expression to wac's grammar.
+//
+// wac's tokens are flat quintuples — `(kind, start, len, line, col)` — held in one `i32[]` and
+// indexed by `tokenStride()`. `parse.wac` reads them and never moves them, because a wac file's
+// tokens are already in the order the grammar wants. wapy's are not: `a if c else b` has to become
+// `c ? a : b` before `parseExpr` sees it, and that is a reordering.
+//
+// So this is a growable quintuple list with the four operations those rewrites need — copy a token
+// from a lex, copy it *as* a different kind, splice a range, and ask where a bracket closes.
+//
+// ## Why a synthetic token keeps the span of the one it came from
+//
+// The `?` that replaces `if` is not in the file. It still needs a start, a length, a line and a
+// column, because everything downstream — a type error, an underline, a spec-case position — reads
+// them off the token. Giving it the `if`'s own span means a diagnostic about the conditional points
+// at the word the reader actually wrote, which is the closest thing to true available. A zero span
+// would point at the start of the file, and pointing at nothing is worse than pointing at the
+// keyword that generated the node.
+
+import { Lexed, tokenStride } from "./lex.wac";
+import { Vec } from "core/vec.wac";
+
+/** A growable list of quintuples. */
+export struct Toks {
+  Vec<i32> a;
+}
+
+export Toks toksNew() { return Toks(Vec<i32>.create()); }
+
+/** How many tokens are in it. */
+export i32 toksLen(Toks t) { return t.a.len() / tokenStride(); }
+
+export i32 kindAt(Toks t, i32 i)  { return t.a.get(i * tokenStride()); }
+export i32 startAt(Toks t, i32 i) { return t.a.get(i * tokenStride() + 1); }
+export i32 lenAt(Toks t, i32 i)   { return t.a.get(i * tokenStride() + 2); }
+export i32 lineAt(Toks t, i32 i)  { return t.a.get(i * tokenStride() + 3); }
+export i32 colAt(Toks t, i32 i)   { return t.a.get(i * tokenStride() + 4); }
+
+export void setKindAt(Toks t, i32 i, i32 k) { t.a.set(i * tokenStride(), k); }
+
+/** Append one token, spelled out. */
+export void push5(Toks t, i32 kind, i32 start, i32 len, i32 line, i32 col) {
+  t.a.push(kind); t.a.push(start); t.a.push(len); t.a.push(line); t.a.push(col);
+}
+
+/** Append token `i` of `src`. */
+export void pushFrom(Toks t, Lexed src, i32 i) {
+  i32 at = i * tokenStride();
+  push5(t, src.tokens[at], src.tokens[at + 1], src.tokens[at + 2],
+        src.tokens[at + 3], src.tokens[at + 4]);
+}
+
+/** Append token `i` of `src`, with a different kind — the respellings and the synthetic operators. */
+export void pushFromAs(Toks t, Lexed src, i32 i, i32 kind) {
+  i32 at = i * tokenStride();
+  push5(t, kind, src.tokens[at + 1], src.tokens[at + 2], src.tokens[at + 3], src.tokens[at + 4]);
+}
+
+/** Append token `i` of another `Toks`. */
+export void pushTok(Toks t, Toks src, i32 i) {
+  push5(t, kindAt(src, i), startAt(src, i), lenAt(src, i), lineAt(src, i), colAt(src, i));
+}
+
+/** Append token `i` of another `Toks`, with a different kind. */
+export void pushTokAs(Toks t, Toks src, i32 i, i32 kind) {
+  push5(t, kind, startAt(src, i), lenAt(src, i), lineAt(src, i), colAt(src, i));
+}
+
+/** Append `[from, to)` of `src`. */
+export void pushRange(Toks t, Toks src, i32 from, i32 to) {
+  for (i32 i = from; i < to; i++) { pushTok(t, src, i); }
+}
+
+/** A copy of `[from, to)`. */
+export Toks slice(Toks src, i32 from, i32 to) {
+  Toks out = toksNew();
+  pushRange(out, src, from, to);
+  return out;
+}
+
+/** The flat array `P.create` wants, with a `kEof` appended. */
+export i32[] finish(Toks t, i32 eofKind, i32 line, i32 col) {
+  Toks c = toksNew();
+  pushRange(c, t, 0, toksLen(t));
+  push5(c, eofKind, 0, 0, line, col);
+  i32[] out = i32[c.a.len()](fill: 0);
+  for (i32 i = 0; i < c.a.len(); i++) { out[i] = c.a.get(i); }
+  return out;
+}

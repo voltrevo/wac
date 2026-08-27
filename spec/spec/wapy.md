@@ -109,7 +109,7 @@ only one that cost anything, because it was the only one where *both* spellings
 are legal wac identifiers: `and`, `or`, `not`, `None`, `True` and `False`
 correspond to punctuation and literals in wac, so no wac program can collide
 with them — but a wac local named `self` had no wapy rendering at all
-([issues/lang/0077](../../issues/lang/0077-a-wac-local-named-self-has-no-wapy-rendering.md)),
+([issues/lang/0077](../../issues/lang/closed/0077-a-wac-local-named-self-has-no-wapy-rendering.md)),
 and the printer round-trips every file in this repository on every suite run. So
 a reserved word on this surface became a rule about identifiers on the other:
 `packages/wacc/src/check.wac` carried a local it could not name `self`, with a
@@ -177,7 +177,8 @@ if_stmt        = "if" , expr , ":" , block , { elif } , [ "else" , ":" , block ]
 elif           = "elif" , expr , ":" , block ;
 while_stmt     = "while" , expr , ":" , block ;
 do_stmt        = "do" , ":" , block , "while" , expr , NEWLINE ;
-for_stmt       = "for" , IDENT , "in" , "range" , "(" , expr , "," , expr , [ "," , expr ] , ")" , ":" , block
+for_stmt       = "for" , IDENT , [ ":" , type ] , "in" , "range" ,
+                 "(" , expr , "," , expr , [ "," , expr ] , ")" , ":" , block
                | "for" , [ init ] , ";" , [ expr ] , ";" , [ update ] , ":" , block ;
 match_stmt     = ( "match" | "switch" ) , expr , ":" , INDENT , { case } , DEDENT ;
 case           = "case" , pattern , ":" , block ;
@@ -187,6 +188,12 @@ scope_stmt     = "scope" , ":" , block ;
 
 `[§wac-wapy-range-6mn4dtq]` `for i in range(a, b):` is exactly
 `for (i32 i = a; i < b; i++)`, and `range(a, b, s)` is the same with `i += s`.
+The variable may be annotated — `for k: i64 in range(0, n):` — and is an `i32`
+when it is not, which is the only place either surface supplies a type the
+reader did not write. **The annotation was missing from the grammar above until
+2026-08-27**, and had been emitted by the printer and accepted by the parser the
+whole time: a counted loop over an `i64` is ordinary in `packages/sh`, and a
+frontend written from the grammar alone refused it.
 It is the counted loop and nothing else — there is no iterator protocol and no
 `for x in collection`. Any other loop keeps wac's three clauses.
 

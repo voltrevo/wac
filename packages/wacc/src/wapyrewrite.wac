@@ -1,0 +1,272 @@
+// The four places wapy's tokens are not already wac's, rewritten before `parseExpr` sees them.
+//
+// Everything below the structure is shared — `spec/spec/wapy.md`: *"Expressions are wac's, unchanged
+// — same operators, same precedence, same associativity."* Four spellings are not, and each is a
+// reordering rather than a substitution, which is why they cannot live in the lexer:
+//
+//   `X if C else Y`   →  `C ? X : Y`        the operands swap around the condition
+//   `Point(y=4.0)`    →  `Point { y: 4.0 }`  a call becomes a construction
+//   `i32[3](fill=v)`  →  `i32[3](fill: v)`   ...except after `]`, where it stays a call
+//   `Vec[i32]`        →  `Vec<i32>`          in a type, and only there
+//   `T | None`        →  `T?`                outermost only
+//
+// Ported from `compiler/wapyParse.ts`. The algorithms are its, including the two details that are
+// easy to get wrong and were: conditionals are rewritten **innermost-first** so a bracket group is
+// already done when the level above it is scanned, and the outer scan is split at `,` and `:` so
+// `f(a, 1 if c else b, d)` takes `1` as the arm rather than `a, 1`.
+
+import { Vec } from "core/vec.wac";
+import {
+  kAssign, kColon, kComma, kElse, kGt, kIdent, kIf, kLbrace, kLbrack, kLparen,
+  kLt, kMatch, kNull, kOr, kQuestion, kRbrace, kRbrack, kRparen,
+} from "./kinds.wac";
+import {
+  Toks, kindAt, pushRange, pushTok, pushTokAs, setKindAt, slice, toksLen, toksNew,
+} from "./wapytok.wac";
+
+export bool opensK(i32 k) { return k == kLparen() || k == kLbrack() || k == kLbrace(); }
+export bool shutsK(i32 k) { return k == kRparen() || k == kRbrack() || k == kRbrace(); }
+
+/** The bracket depth *before* token `i`. */
+export i32 depthAt(Toks t, i32 i) {
+  i32 d = 0;
+  for (i32 k = 0; k < i && k < toksLen(t); k++) {
+    if (opensK(kindAt(t, k))) { d = d + 1; }
+    if (shutsK(kindAt(t, k))) { d = d - 1; }
+  }
+  return d;
+}
+
+/** Where the bracket opened at `i` closes, or -1. */
+export i32 matching(Toks t, i32 i) {
+  i32 d = 0;
+  for (i32 k = i; k < toksLen(t); k++) {
+    if (opensK(kindAt(t, k))) { d = d + 1; }
+    if (shutsK(kindAt(t, k))) {
+      d = d - 1;
+      if (d == 0) { return k; }
+    }
+  }
+  return -1;
+}
+
+/** `t` cut at every depth-0 `sep`, the separators dropped. */
+export Vec<Toks> splitTop(Toks t, i32 sep) {
+  Vec<Toks> out = Vec<Toks>.create();
+  i32 start = 0;
+  for (i32 i = 0; i < toksLen(t); i++) {
+    if (kindAt(t, i) != sep || depthAt(t, i) != 0) { continue; }
+    out.push(slice(t, start, i));
+    start = i + 1;
+  }
+  out.push(slice(t, start, toksLen(t)));
+  return out;
+}
+
+/**
+ * One level of `X if C else Y` → `C ? X : Y`, on tokens whose bracket groups are already done.
+ *
+ * Right-associative, as Python is: `a if c else b if d else e` groups to the right, which falls out
+ * of recursing on the tail rather than on the head.
+ */
+Toks topTernary(Toks t) {
+  i32 ifAt = -1;
+  for (i32 i = 0; i < toksLen(t) && ifAt < 0; i++) {
+    if (kindAt(t, i) == kIf() && depthAt(t, i) == 0) { ifAt = i; }
+  }
+  if (ifAt < 0) { return t; }
+  i32 elseAt = -1;
+  for (i32 i = ifAt + 1; i < toksLen(t) && elseAt < 0; i++) {
+    if (kindAt(t, i) == kElse() && depthAt(t, i) == 0) { elseAt = i; }
+  }
+  if (elseAt < 0) { return t; }
+
+  Toks out = toksNew();
+  Toks cond = topTernary(slice(t, ifAt + 1, elseAt));
+  pushRange(out, cond, 0, toksLen(cond));
+  pushTokAs(out, t, ifAt, kQuestion());
+  Toks then = topTernary(slice(t, 0, ifAt));
+  pushRange(out, then, 0, toksLen(then));
+  pushTokAs(out, t, elseAt, kColon());
+  Toks els = topTernary(slice(t, elseAt + 1, toksLen(t)));
+  pushRange(out, els, 0, toksLen(els));
+  return out;
+}
+
+/**
+ * `topTernary` between separators rather than across them.
+ *
+ * A conditional's operands stop at the nearest `,` or `:` — in `f(a, 1 if c else b, d)` the then-arm
+ * is `1`, not `a, 1`. Scanning the whole level at once swallowed the argument list.
+ */
+Toks segments(Toks t) {
+  Toks out = toksNew();
+  Toks seg = toksNew();
+  for (i32 i = 0; i < toksLen(t); i++) {
+    i32 k = kindAt(t, i);
+    if ((k == kComma() || k == kColon()) && depthAt(seg, toksLen(seg)) == 0) {
+      Toks done = topTernary(seg);
+      pushRange(out, done, 0, toksLen(done));
+      pushTok(out, t, i);
+      seg = toksNew();
+      continue;
+    }
+    pushTok(seg, t, i);
+  }
+  Toks done = topTernary(seg);
+  pushRange(out, done, 0, toksLen(done));
+  return out;
+}
+
+/**
+ * `X if C else Y` → `C ? X : Y`, everywhere in `t`.
+ *
+ * Bracket groups first, then the outermost level: a conditional inside a call argument or a
+ * parenthesised sub-expression is at a depth the outer scan steps over, and `return (a if c else b)`
+ * is ordinary wapy.
+ */
+export Toks ternaries(Toks t) {
+  Toks inner = toksNew();
+  i32 i = 0;
+  while (i < toksLen(t)) {
+    i32 close = opensK(kindAt(t, i)) ? matching(t, i) : -1;
+    if (close < 0) { pushTok(inner, t, i); i = i + 1; continue; }
+    pushTok(inner, t, i);
+    Toks mid = ternaries(slice(t, i + 1, close));
+    pushRange(inner, mid, 0, toksLen(mid));
+    pushTok(inner, t, close);
+    i = close + 1;
+  }
+  return segments(inner);
+}
+
+/** Whether every part is `ident = …`, which is what makes a call a construction. */
+bool allNamed(Vec<Toks> parts) {
+  if (parts.len() == 0) { return false; }
+  for (i32 i = 0; i < parts.len(); i++) {
+    Toks p = parts.get(i);
+    if (toksLen(p) < 2) { return false; }
+    if (kindAt(p, 0) != kIdent()) { return false; }
+    if (kindAt(p, 1) != kAssign()) { return false; }
+  }
+  return true;
+}
+
+/**
+ * `Point(y=4.0)` → `Point { y: 4.0 }`, and `i32[3](fill=v)` → `i32[3](fill: v)`.
+ *
+ * The array form keeps its parentheses, which is the one exception and is decided by the token before
+ * the `(`: after a `]` it is an array construction, whose named argument wac also writes with
+ * parentheses. Scanned right to left so a nested construction is rewritten before the one containing
+ * it and the indices stay valid.
+ */
+export Toks namedArgs(Toks t) {
+  Toks cur = slice(t, 0, toksLen(t));
+  for (i32 open = toksLen(cur) - 1; open >= 0; open--) {
+    if (kindAt(cur, open) != kLparen()) { continue; }
+    i32 close = matching(cur, open);
+    if (close < 0 || close == open + 1) { continue; }
+    Vec<Toks> parts = splitTop(slice(cur, open + 1, close), kComma());
+    if (!allNamed(parts)) { continue; }
+    bool arr = open > 0 && kindAt(cur, open - 1) == kRbrack();
+
+    Toks out = toksNew();
+    pushRange(out, cur, 0, open);
+    pushTokAs(out, cur, open, arr ? kLparen() : kLbrace());
+    for (i32 i = 0; i < parts.len(); i++) {
+      Toks p = parts.get(i);
+      if (i > 0) { pushTokAs(out, p, 0, kComma()); }
+      pushTok(out, p, 0);
+      pushTokAs(out, p, 1, kColon());
+      pushRange(out, p, 2, toksLen(p));
+    }
+    pushTokAs(out, cur, close, arr ? kRparen() : kRbrace());
+    pushRange(out, cur, close + 1, toksLen(cur));
+    cur = out;
+  }
+  return cur;
+}
+
+/**
+ * `T | None` → `T?`, and `Name[args]` → `Name<args>` for a generic reference.
+ *
+ * Only in a type. `Vec[i32]` is a generic there and an index everywhere else, which is exactly why
+ * this is a separate pass applied where a type is expected rather than a rule in the lexer. `fn[…]`
+ * keeps its brackets — that is wac's own spelling for a function type — and so does an empty `[]`,
+ * which is an array suffix. `fn` needs no test of its own here, unlike in the reference: `lex` gives
+ * it `kFn` and the guard below already demands `kIdent` before the bracket.
+ */
+export Toks typeTokens(Toks t) {
+  i32 n = toksLen(t);
+  bool nullable = n >= 2 && kindAt(t, n - 1) == kNull() && kindAt(t, n - 2) == kOr();
+  Toks body = nullable ? slice(t, 0, n - 2) : slice(t, 0, n);
+
+  for (i32 i = 0; i < toksLen(body); i++) {
+    if (kindAt(body, i) != kLbrack()) { continue; }
+    if (i == 0) { continue; }
+    i32 prev = kindAt(body, i - 1);
+    if (prev != kIdent()) { continue; }
+    if (i + 1 < toksLen(body) && kindAt(body, i + 1) == kRbrack()) { continue; }
+    i32 close = matching(body, i);
+    if (close < 0) { continue; }
+    setKindAt(body, i, kLt());
+    setKindAt(body, close, kGt());
+  }
+  if (!nullable) { return body; }
+  Toks out = toksNew();
+  pushRange(out, body, 0, toksLen(body));
+  pushTokAs(out, t, n - 1, kQuestion());
+  return out;
+}
+
+/**
+ * `match x { … }` → `match (x) { … }`.
+ *
+ * wac parenthesises the subject of a match *expression*; wapy does not —
+ * `[§wac-wapy-matchexpr-3jx8rvc]`: it keeps the braces because it is an expression and cannot open an
+ * indented block, but it drops the parentheses, since nothing else in wapy parenthesises the thing a
+ * keyword is about.
+ *
+ * **The brace that opens the arms is not simply the first one.** A subject may itself be a match, and
+ * that one's arms come first, so a nested `match` makes the scan step over a whole brace group before
+ * it will accept one. Only `match` is here: `switch` has no expression form for wac to have
+ * parenthesised.
+ *
+ * This is the one rewrite that changes the token count, which is why it runs while the array is being
+ * built rather than over a range of the finished one — at that point no index has been recorded in a
+ * tree yet, so inserting is free. The inserted brackets take the span of the token beside them, as the
+ * reference's do, so a diagnostic still points into the line.
+ */
+export Toks matchSubjects(Toks t) {
+  i32 i = -1;
+  for (i32 k = 0; k < toksLen(t) && i < 0; k++) { if (kindAt(t, k) == kMatch()) { i = k; } }
+  if (i < 0) { return t; }
+  i32 depth = 0;
+  i32 nested = 0;
+  i32 brace = -1;
+  i32 j = i + 1;
+  while (j < toksLen(t) && brace < 0) {
+    i32 x = kindAt(t, j);
+    if (x == kLparen() || x == kLbrack()) { depth = depth + 1; }
+    else if (x == kRparen() || x == kRbrack()) { depth = depth - 1; }
+    else if (x == kMatch()) { nested = nested + 1; }
+    else if (x == kLbrace() && depth == 0) {
+      if (nested == 0) { brace = j; break; }
+      i32 end = matching(t, j);
+      if (end < 0) { break; }
+      nested = nested - 1;
+      j = end;
+    }
+    j = j + 1;
+  }
+  if (brace < 0 || brace == i + 1) { return t; }
+  Toks out = toksNew();
+  pushRange(out, t, 0, i + 1);
+  pushTokAs(out, t, i + 1, kLparen());
+  Toks subj = matchSubjects(slice(t, i + 1, brace));
+  pushRange(out, subj, 0, toksLen(subj));
+  pushTokAs(out, t, brace, kRparen());
+  Toks rest = matchSubjects(slice(t, brace, toksLen(t)));
+  pushRange(out, rest, 0, toksLen(rest));
+  return out;
+}

@@ -1,0 +1,1144 @@
+// wapy's parser — the indentation surface, into wac's AST.
+//
+// A second frontend for the same language, producing the same tree. wac and wapy differ in their
+// *structure* — indentation against braces, `def f(x: i32) -> i32` against `i32 f(i32 x)` — and not at
+// all below that, so this parses the structure itself and calls `parse.wac`'s shared expression, type
+// and statement grammar for the rest.
+//
+// That split is `compiler/wapyParse.ts`'s, and its header records why the obvious alternative fails:
+//
+// > The first attempt rewrote wapy tokens into wac's shape and let `wacParse` sort it out. It
+// > round-tripped 155 of 155 files, which made it look finished, and it was not:
+// >
+// >   def f(x: i32) ->        →  "expected function name" at the column of the name
+// >   def f(x i32) -> i32:    →  accepted silently
+// >   class P                 →  accepted silently
+// >   if x > 1                →  "expected expression, found ')'" — there is no ')' in the file
+// >
+// > A frontend that does not parse cannot diagnose, and a round-trip test cannot notice, because it
+// > only ever feeds the reader output from the printer — which is valid by construction.
+//
+// Every one of those is **structural**, which is the line drawn here. `def`, `class`, `if`, `while`,
+// `for`, `do`, `match` and the blocks they open are parsed and diagnosed in this file. A statement
+// that is none of those differs from wac only by a missing `;`, so it goes to `parseStatement` rather
+// than being reimplemented — there is no third grammar for `a[i].b += f(x)`.
+//
+// ## One token array for the file, which the AST requires
+//
+// wacc's AST holds token **indices**, not token text: `TyKind.Prim(i32 tok)`, `Param.nameTok`,
+// `ExprKind.Ident(i32 tok)`. The checker and the emitter resolve them against the array the file was
+// parsed with. The reference's tokens carry their own text and can be built freely; these cannot.
+//
+// So this builds exactly one array — every line's tokens, rewritten, each line followed by a
+// synthetic `;` — and every sub-parse is a `P` over *that* array with `at` positioned, never a scratch
+// of its own. A scratch would produce an AST indexing into a buffer nobody downstream has, which
+// compiles and goes wrong later looking like a checker bug.
+//
+// The `;` earns its place twice: it bounds an expression, so `parseExpr` cannot run past the end of a
+// line into the next statement (wapy has no continuation outside brackets), and it makes an ordinary
+// statement something `parseStatement` can read unchanged.
+//
+// ## Synthetic tokens go after the `kEof`, and there is one
+//
+// `ast.wac` warns, on the JSX node: *"Synthesising tokens moves every line and column in every
+// diagnostic, because they are measured against the lexer's array."* Inserting is what does that. The
+// single synthetic here — an `i32` for the induction variable of `for i in range(a, b)`, which the
+// reader did not write and `StmtKind.Var` needs a type token for — is **appended past the end**, so no
+// real token's index moves. Its text lives in three bytes appended to the source for the purpose, and
+// its line and column are the loop variable's, so a diagnostic about it points at `i`.
+
+import { Vec } from "core/vec.wac";
+import {
+  Arm, Case, Decl, DeclKind, Expr, ExprKind, Field, ImportItem, Lvalue, LvalueKind, Method, Param,
+  Program, Stmt, StmtKind, Ty, Variant, tyNullable, tyPrim,
+} from "./ast.wac";
+import { Lexed, lex, tokenStride } from "./lex.wac";
+import {
+  kAssign, kAt, kCase, kColon, kComma, kConst, kDo, kElse, kEnum, kEof, kFor, kGt, kIdent, kIf,
+  kAndEq, kCaretEq, kImport, kInc, kLbrack, kLparen, kMinusEq, kOrEq, kPercentEq, kLt, kMatch, kMinus, kNull, kOr, kPlusEq, kRbrack, kRparen, kReturn, kSemi,
+  kShlEq, kShrEq, kShrUEq, kSlashEq, kStarEq, kString, kSwitch, kThis, kTrap, kWhile,
+} from "./kinds.wac";
+import { P, parseExpr, parseStatement, parseType } from "./parse.wac";
+import { WLexed, WLine, textAt, wapyLex } from "./wapylex.wac";
+import {
+  Toks, kindAt, pushFrom, pushRange, toksLen, toksNew, push5, startAt, lenAt, lineAt, colAt,
+} from "./wapytok.wac";
+import { matchSubjects, namedArgs, ternaries } from "./wapyrewrite.wac";
+
+export i32 werrExpected()     { return 45; }
+export i32 werrBadDecl()      { return 46; }
+export i32 werrBadParam()     { return 47; }
+export i32 werrNoBlock()      { return 48; }
+export i32 werrBadReceiver()  { return 49; }
+export i32 werrBadDecorator() { return 50; }
+export i32 werrJunk()         { return 51; }
+export i32 werrBadRange()     { return 52; }
+export i32 werrBadImport()    { return 53; }
+
+/** One logical line, as a range of the final token array. */
+struct WSeg {
+  i32 first;
+  i32 count;
+  i32 indent;
+  i32 line;
+}
+
+struct W {
+  u8[] src;
+  i32[] toks;
+  i32 tokCount;
+  WSeg[] segs;
+  /** Per segment, the base of its four synthetics — see `Built` — or -1. */
+  i32[] pool;
+  /** The appended `i32`, for `range()`'s induction variable and for error recovery. */
+  i32 i32Tok;
+  Vec<i32> errors;
+}
+
+void err(W w, i32 code, i32 line, i32 col) {
+  w.errors.push(code); w.errors.push(line); w.errors.push(col);
+}
+
+i32 kindOf(W w, i32 t) { return w.toks[t * tokenStride()]; }
+i32 lineOf(W w, i32 t) { return w.toks[t * tokenStride() + 3]; }
+i32 colOf(W w, i32 t)  { return w.toks[t * tokenStride() + 4]; }
+string textOf(W w, i32 t) {
+  return textAt(w.src, w.toks[t * tokenStride() + 1], w.toks[t * tokenStride() + 2]);
+}
+void setKind(W w, i32 t, i32 k) { w.toks[t * tokenStride()] = k; }
+
+/** One past the last real token of segment `i` — the `;` is not included. */
+i32 segEnd(W w, i32 i) { return w.segs[i].first + w.segs[i].count; }
+
+/** The segment index one past the block headed by `i`: the run indented further. */
+i32 blockEnd(W w, i32 i) {
+  i32 ind = w.segs[i].indent;
+  i32 j = i + 1;
+  while (j < w.segs.len() && w.segs[j].indent > ind) { j = j + 1; }
+  return j;
+}
+
+/** A `P` over the file's array, positioned at `at`. */
+P at(W w, i32 pos) {
+  P p = P.create(w.src, w.toks, w.tokCount);
+  p.at = pos;
+  return p;
+}
+
+void drain(W w, P p) {
+  for (i32 e = 0; e < p.errorCount; e++) {
+    w.errors.push(p.errors[e * 3]);
+    w.errors.push(p.errors[e * 3 + 1]);
+    w.errors.push(p.errors[e * 3 + 2]);
+  }
+}
+
+// ── Bracket helpers over the file array ───────────────────────────────────────
+
+bool opensAt(W w, i32 t) { return kindOf(w, t) == kLparen() || kindOf(w, t) == kLbrack(); }
+bool shutsAt(W w, i32 t) { return kindOf(w, t) == kRparen() || kindOf(w, t) == kRbrack(); }
+
+/** The first depth-0 token of kind `k` in `[from, to)`, or -1. */
+i32 findTop(W w, i32 from, i32 to, i32 k) {
+  i32 d = 0;
+  for (i32 i = from; i < to; i++) {
+    if (opensAt(w, i)) { d = d + 1; continue; }
+    if (shutsAt(w, i)) { d = d - 1; continue; }
+    if (d == 0 && kindOf(w, i) == k) { return i; }
+  }
+  return -1;
+}
+
+/** Where the bracket opened at `i` closes within `to`, or -1. */
+i32 mate(W w, i32 i, i32 to) {
+  i32 d = 0;
+  for (i32 k = i; k < to; k++) {
+    if (opensAt(w, k)) { d = d + 1; }
+    if (shutsAt(w, k)) { d = d - 1; if (d == 0) { return k; } }
+  }
+  return -1;
+}
+
+/** `-` immediately followed by `>` — wapy's `->`, which wac has no token for. */
+bool isArrow(W w, i32 i, i32 to) {
+  if (i + 1 >= to || kindOf(w, i) != kMinus() || kindOf(w, i + 1) != kGt()) { return false; }
+  return w.toks[i * tokenStride() + 1] + 1 == w.toks[(i + 1) * tokenStride() + 1];
+}
+
+i32 findArrow(W w, i32 from, i32 to) {
+  i32 d = 0;
+  for (i32 i = from; i < to; i++) {
+    if (opensAt(w, i)) { d = d + 1; continue; }
+    if (shutsAt(w, i)) { d = d - 1; continue; }
+    if (d == 0 && isArrow(w, i, to)) { return i; }
+  }
+  return -1;
+}
+
+// ── Expressions and types ─────────────────────────────────────────────────────
+
+/**
+ * Apply wapy's two expression rewrites to `[from, to)` of the shared array, in place.
+ *
+ * Both preserve the token count, which is what makes in-place possible and is not a coincidence:
+ * `X if C else Y` → `C ? X : Y` moves three operand groups around and retags two keywords, and
+ * `Point(x=1)` → `Point { x: 1 }` retags three brackets — the `,` that `splitTop` drops is put back.
+ * So the range is recomputed with the shared helpers and written over itself.
+ *
+ * **The length is checked before anything is written.** A rewrite that returned a different count
+ * would shift every token after this range, and every index already recorded in the tree with it —
+ * silently, and with the damage surfacing phases later. Refusing to write is the wrong answer too,
+ * but it is a wrong answer that leaves the file readable.
+ */
+void rewriteRange(W w, i32 from, i32 to) {
+  if (to <= from) { return; }
+  Toks t = toksNew();
+  for (i32 i = from; i < to; i++) {
+    push5(t, kindOf(w, i), w.toks[i * tokenStride() + 1], w.toks[i * tokenStride() + 2],
+          lineOf(w, i), colOf(w, i));
+  }
+  Toks r = ternaries(namedArgs(t));
+  if (toksLen(r) != to - from) { err(w, werrJunk(), lineOf(w, from), colOf(w, from)); return; }
+  for (i32 i = 0; i < toksLen(r); i++) {
+    i32 d = (from + i) * tokenStride();
+    w.toks[d] = kindAt(r, i);
+    w.toks[d + 1] = startAt(r, i);
+    w.toks[d + 2] = lenAt(r, i);
+    w.toks[d + 3] = lineAt(r, i);
+    w.toks[d + 4] = colAt(r, i);
+  }
+}
+
+/**
+ * The expression in `[from, to)`.
+ *
+ * The conditional and named-argument rewrites already happened when the array was built, so this is
+ * only `parseExpr` at a position. Anything left over is `junk after the expression`, which is a real
+ * wapy diagnostic: wac would have found a `;`.
+ */
+Expr exprIn(W w, i32 from, i32 to) {
+  if (from >= to) {
+    err(w, werrExpected(), from < w.tokCount ? lineOf(w, from) : 1,
+        from < w.tokCount ? colOf(w, from) : 1);
+    P p = at(w, from);
+    return parseExpr(p);
+  }
+  rewriteRange(w, from, to);
+  P p = at(w, from);
+  Expr e = parseExpr(p);
+  drain(w, p);
+  if (p.at < to) { err(w, werrJunk(), lineOf(w, p.at), colOf(w, p.at)); }
+  return e;
+}
+
+/**
+ * The type in `[from, to)`.
+ *
+ * Two wapy spellings are handled here rather than in the array, because both are only types:
+ * `Name[args]` is a generic reference where an index would be anywhere else, so the brackets are
+ * retagged **in place** — same token count, so no index moves — and `T | None` is the outermost
+ * nullable, which is a *deletion* of two tokens and so cannot be done in a shared array at all. It is
+ * built directly instead, with `tyNullable` around whatever `T` parsed to.
+ */
+Ty typeIn(W w, i32 from, i32 to) {
+  if (from >= to) {
+    err(w, werrExpected(), from < w.tokCount ? lineOf(w, from) : 1, 1);
+    return tyPrim(w.i32Tok, 1, 1);
+  }
+  bool nullable = to - from >= 2 && kindOf(w, to - 1) == kNull() && kindOf(w, to - 2) == kOr();
+  i32 hi = nullable ? to - 2 : to;
+
+  for (i32 i = from + 1; i < hi; i++) {
+    if (kindOf(w, i) != kLbrack()) { continue; }
+    if (kindOf(w, i - 1) != kIdent()) { continue; }
+    if (i + 1 < hi && kindOf(w, i + 1) == kRbrack()) { continue; }   // `[]`, an array suffix
+    i32 close = mate(w, i, hi);
+    if (close < 0) { continue; }
+    setKind(w, i, kLt());
+    setKind(w, close, kGt());
+  }
+
+  P p = at(w, from);
+  Ty t = parseType(p);
+  drain(w, p);
+  if (p.at < hi) { err(w, werrJunk(), lineOf(w, p.at), colOf(w, p.at)); }
+  return nullable ? tyNullable(t, lineOf(w, from), colOf(w, from)) : t;
+}
+
+// ── Parameters ────────────────────────────────────────────────────────────────
+
+/**
+ * `[const] name: T`.
+ *
+ * The annotation is not optional — `spec/spec/wapy.md`: **No inference.** A parameter written
+ * `x i32` is one of the four the reference's header lists as silently accepted by a frontend that
+ * does not parse, so it is an error with a position here.
+ */
+Param paramIn(W w, i32 from, i32 to) {
+  bool isConst = from < to && kindOf(w, from) == kConst();
+  i32 a = isConst ? from + 1 : from;
+  if (a >= to || kindOf(w, a) != kIdent()) {
+    err(w, werrBadParam(), from < to ? lineOf(w, from) : 1, from < to ? colOf(w, from) : 1);
+    return Param(from, tyPrim(w.i32Tok, 1, 1), isConst);
+  }
+  if (a + 1 >= to || kindOf(w, a + 1) != kColon()) {
+    err(w, werrBadParam(), lineOf(w, a), colOf(w, a));
+    return Param(a, tyPrim(w.i32Tok, lineOf(w, a), colOf(w, a)), isConst);
+  }
+  return Param(a, typeIn(w, a + 2, to), isConst);
+}
+
+/** The comma-separated parts of `(from, to)`, each as a `[lo, hi)` pair pushed onto `out`. */
+void commaParts(W w, i32 from, i32 to, Vec<i32> out) {
+  i32 start = from;
+  i32 d = 0;
+  for (i32 i = from; i < to; i++) {
+    if (opensAt(w, i)) { d = d + 1; continue; }
+    if (shutsAt(w, i)) { d = d - 1; continue; }
+    if (d == 0 && kindOf(w, i) == kComma()) {
+      out.push(start); out.push(i);
+      start = i + 1;
+    }
+  }
+  if (to > start) { out.push(start); out.push(to); }
+}
+
+Param[] paramsIn(W w, i32 from, i32 to) {
+  Vec<i32> parts = Vec<i32>.create();
+  commaParts(w, from, to, parts);
+  Vec<Param> out = Vec<Param>.create();
+  for (i32 i = 0; i + 1 < parts.len(); i = i + 2) {
+    out.push(paramIn(w, parts.get(i), parts.get(i + 1)));
+  }
+  return out.toArray();
+}
+
+/** `[T, U]` after a declaration's name — wapy's type parameters, which wac writes `<T, U>`. */
+i32[] typeParamsIn(W w, i32 from, i32 to) {
+  Vec<i32> out = Vec<i32>.create();
+  for (i32 i = from; i < to; i++) { if (kindOf(w, i) == kIdent()) { out.push(i); } }
+  i32[] a = i32[out.len()](fill: 0);
+  for (i32 i = 0; i < out.len(); i++) { a[i] = out.get(i); }
+  return a;
+}
+
+// ── Building the one array ────────────────────────────────────────────────────
+
+/**
+ * The text appended to the source so the synthetic tokens have something to read.
+ *
+ * `for i in range(a, b)` is `for (i32 i = a; i < b; i++)`, and the reader wrote none of `i32`, `<`,
+ * `++` or `+=`. Each needs a span, because `tokenText` is how every later phase learns what a token
+ * says, so the four spellings are appended once to the source and the synthetics point into them.
+ * Offsets into the real file are untouched: this is past its last byte.
+ */
+string synthTail() { return "i32<++ +="; }
+
+i32 synthI32Off(i32 base)   { return base + 0; }
+i32 synthLtOff(i32 base)    { return base + 3; }
+i32 synthIncOff(i32 base)   { return base + 4; }
+i32 synthPlusEqOff(i32 base){ return base + 7; }
+
+/**
+ * The index of the `in` of `for IDENT [: T] in range(…)` in `[from, to)`, or -1.
+ *
+ * **The annotation is real and is not in the spec's EBNF.** `for_stmt` there reads `"for", IDENT,
+ * "in", "range", …`, but `compiler/wapyPrint.ts` emits `for k: i64 in range(0, n):` whenever the
+ * induction variable is not an `i32`, and `compiler/wapyParse.ts` accepts it — checked on both forms.
+ * `spec/spec/wapy.md` is corrected alongside this.
+ */
+i32 rangeIn(u8[] src, i32[] toks, i32 from, i32 to) {
+  if (to - from < 6) { return -1; }
+  if (toks[from * tokenStride()] != kFor()) { return -1; }
+  if (toks[(from + 1) * tokenStride()] != kIdent()) { return -1; }
+  i32 d = 0;
+  for (i32 i = from + 2; i + 2 < to; i++) {
+    i32 k = toks[i * tokenStride()];
+    if (k == kLparen() || k == kLbrack()) { d = d + 1; continue; }
+    if (k == kRparen() || k == kRbrack()) { d = d - 1; continue; }
+    if (d != 0 || k != kIdent()) { continue; }
+    if (textAt(src, toks[i * tokenStride() + 1], toks[i * tokenStride() + 2]) != "in") { continue; }
+    string rg = textAt(src, toks[(i + 1) * tokenStride() + 1], toks[(i + 1) * tokenStride() + 2]);
+    if (rg == "range" && toks[(i + 2) * tokenStride()] == kLparen()) { return i; }
+    return -1;
+  }
+  return -1;
+}
+
+/** Whether `[from, to)` is wapy's counted loop. */
+bool isRangeLoop(u8[] src, i32[] toks, i32 from, i32 to) {
+  return rangeIn(src, toks, from, to) >= 0;
+}
+
+
+/** The final array, the line map, and the synthetics — everything a `W` needs. */
+struct Built {
+  u8[] src;
+  i32[] toks;
+  i32 tokCount;
+  WSeg[] segs;
+  /** Per segment, the base index of its four synthetics, or -1 when it is not a counted loop. */
+  i32[] pool;
+  /** A general-purpose `i32` token, for the types error recovery has to invent. */
+  i32 i32Tok;
+  i32[] errors;
+  i32 errorCount;
+}
+
+/** Append one token to the flat builder. */
+void emit(Vec<i32> a, i32 kind, i32 start, i32 len, i32 line, i32 col) {
+  a.push(kind); a.push(start); a.push(len); a.push(line); a.push(col);
+}
+
+/** The four synthetics for one counted loop, pointing into `synthTail()`. */
+void emitPool(Vec<i32> a, i32 base, i32 line, i32 col) {
+  emit(a, kIdent(),  synthI32Off(base),    3, line, col);
+  emit(a, kLt(),     synthLtOff(base),     1, line, col);
+  emit(a, kInc(),    synthIncOff(base),    2, line, col);
+  emit(a, kPlusEq(), synthPlusEqOff(base), 2, line, col);
+}
+
+Built buildArray(u8[] src) {
+  WLexed wl = wapyLex(src);
+  u8[] tb = synthTail().toBytes();
+  i32 base = src.len();
+  u8[] src2 = u8[base + tb.len()](fill: 0);
+  for (i32 i = 0; i < base; i++) { src2[i] = src[i]; }
+  for (i32 i = 0; i < tb.len(); i++) { src2[base + i] = tb[i]; }
+
+  Vec<i32> a = Vec<i32>.create();
+  Vec<WSeg> segs = Vec<WSeg>.create();
+  for (i32 li = 0; li < wl.lines.len(); li++) {
+    WLine ln = wl.lines[li];
+    Toks t = toksNew();
+    for (i32 k = 0; k < ln.count; k++) { pushFrom(t, wl.toks, ln.first + k); }
+    // **Not rewritten here.** The conditional and named-argument rewrites need to know where an
+    // expression *starts*, and a line does not: `return 1 if c else 2` would take `return 1` as the
+    // then-arm. They are applied by `rewriteRange` once the structure parser has isolated the
+    // operand — which it can do in place, because both preserve the token count.
+    Toks r = matchSubjects(t);
+    i32 first = a.len() / tokenStride();
+    i32 n = toksLen(r);
+    for (i32 k = 0; k < n; k++) {
+      emit(a, kindAt(r, k), startAt(r, k), lenAt(r, k), lineAt(r, k), colAt(r, k));
+    }
+    // The `;` that bounds the line. Zero-width, just past the last token, so an underline of it is
+    // the point after the statement rather than a character the reader did not write.
+    i32 eo = n > 0 ? startAt(r, n - 1) + lenAt(r, n - 1) : 0;
+    i32 el = n > 0 ? lineAt(r, n - 1) : ln.line;
+    i32 ec = n > 0 ? colAt(r, n - 1) + lenAt(r, n - 1) : ln.indent;
+    emit(a, kSemi(), eo, 0, el, ec);
+    segs.push(WSeg(first, n, ln.indent, ln.line));
+  }
+  i32 lastLine = wl.lines.len() > 0 ? wl.lines[wl.lines.len() - 1].line : 1;
+  emit(a, kEof(), base, 0, lastLine + 1, 1);
+
+  // The fallback pool first, so `i32Tok` exists in a file with no counted loop at all.
+  i32 i32Tok = a.len() / tokenStride();
+  emitPool(a, base, 1, 1);
+
+  WSeg[] segArr = segs.toArray();
+  i32[] pool = i32[segArr.len()](fill: -1);
+  i32[] flatSoFar = i32[a.len()](fill: 0);
+  for (i32 i = 0; i < a.len(); i++) { flatSoFar[i] = a.get(i); }
+  for (i32 s = 0; s < segArr.len(); s++) {
+    i32 from = segArr[s].first;
+    i32 to = from + segArr[s].count;
+    if (!isRangeLoop(src2, flatSoFar, from, to)) { continue; }
+    pool[s] = a.len() / tokenStride();
+    emitPool(a, base, flatSoFar[(from + 1) * tokenStride() + 3], flatSoFar[(from + 1) * tokenStride() + 4]);
+  }
+
+  i32[] flat = i32[a.len()](fill: 0);
+  for (i32 i = 0; i < a.len(); i++) { flat[i] = a.get(i); }
+  return Built(src2, flat, a.len() / tokenStride(), segArr, pool, i32Tok,
+               wl.errors, wl.errorCount);
+}
+
+// ── Statements ────────────────────────────────────────────────────────────────
+
+/** An empty statement list. A reference type has no zero, so the fill is a value nothing reads. */
+Stmt[] noStmts() { return Stmt[0](fill: Stmt(StmtKind.Break, 1, 1)); }
+
+/** The statements of segments `[lo, hi)`. */
+Stmt[] stmtsIn(W w, i32 lo, i32 hi) {
+  Vec<Stmt> out = Vec<Stmt>.create();
+  i32 i = lo;
+  while (i < hi) {
+    Res r = stmtAt(w, i, hi);
+    if (r.ok) { out.push(r.stmt); }
+    i = r.next > i ? r.next : i + 1;
+  }
+  return out.toArray();
+}
+
+/** A statement and the segment index after it, since several forms consume more than one line. */
+struct Res {
+  Stmt stmt;
+  i32 next;
+  bool ok;
+}
+
+/** The `:` that ends a block header, or -1 with the error already reported. */
+i32 headColon(W w, i32 i) {
+  i32 e = segEnd(w, i);
+  if (e > w.segs[i].first && kindOf(w, e - 1) == kColon()) { return e - 1; }
+  err(w, werrExpected(), w.segs[i].line, e > w.segs[i].first ? colOf(w, e - 1) : 1);
+  return -1;
+}
+
+/** The statements of the block headed by segment `i`. An empty one is an error; wapy writes `pass`. */
+Stmt[] blockOf(W w, i32 i, i32 hi) {
+  i32 end = blockEnd(w, i);
+  if (end > hi) { end = hi; }
+  if (end <= i + 1) {
+    err(w, werrNoBlock(), w.segs[i].line, w.segs[i].indent);
+    return noStmts();
+  }
+  return stmtsIn(w, i + 1, end);
+}
+
+/** Whether `k` is one of wac's assignment operators — plain or compound. */
+bool isAssignOp(i32 k) {
+  return k == kAssign() || k == kPlusEq() || k == kMinusEq() || k == kStarEq() || k == kSlashEq()
+      || k == kPercentEq() || k == kAndEq() || k == kOrEq() || k == kCaretEq() || k == kShlEq()
+      || k == kShrEq() || k == kShrUEq();
+}
+
+/** The depth-0 assignment operator in `[from, to)`, or -1. */
+i32 assignOpIn(W w, i32 from, i32 to) {
+  i32 d = 0;
+  for (i32 i = from; i < to; i++) {
+    if (opensAt(w, i)) { d = d + 1; continue; }
+    if (shutsAt(w, i)) { d = d - 1; continue; }
+    if (d == 0 && isAssignOp(kindOf(w, i))) { return i; }
+  }
+  return -1;
+}
+
+/** Whether segment `i` is `[const] IDENT ":" …` — a declaration rather than an assignment. */
+bool isVarDecl(W w, i32 i) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 a = (f < e && kindOf(w, f) == kConst()) ? f + 1 : f;
+  if (a + 1 >= e) { return false; }
+  return kindOf(w, a) == kIdent() && kindOf(w, a + 1) == kColon();
+}
+
+/**
+ * `[const] name: T = expr` over a token range, or null when it is not one.
+ *
+ * Shared by the statement dispatcher and by the init clause of a three-clause `for`, which is where
+ * it was missing: `for j: i32 = this.n - 1; j > i; j--:` has a *wapy* declaration in it, and handing
+ * that to `parseStatement` asks wac's grammar to read `j: i32 = …` as if it were `i32 j = …`.
+ */
+Stmt? varDeclIn(W w, i32 from, i32 to) {
+  if (to <= from) { return null; }
+  bool isConst = kindOf(w, from) == kConst();
+  i32 nameTok = isConst ? from + 1 : from;
+  if (nameTok + 1 >= to) { return null; }
+  if (kindOf(w, nameTok) != kIdent() || kindOf(w, nameTok + 1) != kColon()) { return null; }
+  i32 eq = findTop(w, nameTok + 2, to, kAssign());
+  if (eq < 0) { return null; }
+  return Stmt(StmtKind.Var(typeIn(w, nameTok + 2, eq), nameTok, exprIn(w, eq + 1, to), isConst),
+              lineOf(w, nameTok), colOf(w, nameTok));
+}
+
+/**
+ * One statement, starting at segment `i`.
+ *
+ * The block forms are parsed here because they are where wapy's structure lives and therefore where
+ * its diagnostics have to be. Everything else is wac's own statement with the `;` already appended by
+ * the builder, so it goes to `parseStatement`.
+ */
+Res stmtAt(W w, i32 i, i32 hi) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 k = f < e ? kindOf(w, f) : kEof();
+  string word = f < e && k == kIdent() ? textOf(w, f) : "";
+
+  if (word == "pass" && e == f + 1) { return Res(Stmt(StmtKind.Break, ln, cl), i + 1, false); }
+
+  if (word == "scope") {
+    i32 c = headColon(w, i);
+    if (c != f + 1) { err(w, werrExpected(), ln, cl); }
+    return Res(Stmt(StmtKind.Block(blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
+  }
+
+  if (k == kIf()) { return takeIf(w, i, hi); }
+
+  if (k == kWhile()) {
+    i32 c = headColon(w, i);
+    Expr cond = exprIn(w, f + 1, c < 0 ? e : c);
+    return Res(Stmt(StmtKind.While(cond, blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
+  }
+
+  if (k == kDo()) {
+    Stmt[] body = blockOf(w, i, hi);
+    i32 j = blockEnd(w, i);
+    if (j >= hi || kindOf(w, w.segs[j].first) != kWhile()) {
+      err(w, werrExpected(), ln, cl);
+      return Res(Stmt(StmtKind.Block(body), ln, cl), j, true);
+    }
+    Expr cond = exprIn(w, w.segs[j].first + 1, segEnd(w, j));
+    return Res(Stmt(StmtKind.DoWhile(body, cond), ln, cl), j + 1, true);
+  }
+
+  if (k == kFor()) { return takeFor(w, i, hi); }
+
+  if (k == kMatch() || k == kSwitch()) { return takeMatch(w, i, hi, k == kSwitch()); }
+
+  if (isVarDecl(w, i)) {
+    Stmt? v = varDeclIn(w, f, e);
+    if (v is null) {
+      err(w, werrExpected(), ln, cl);
+      return Res(Stmt(StmtKind.Break, ln, cl), i + 1, false);
+    }
+    return Res(v!, i + 1, true);
+  }
+
+  // `trap()` here, `trap;` or `trap e;` in wac — the one statement whose *spelling* differs without
+  // its structure differing, so `parseStatement` cannot be handed it unchanged.
+  if (k == kTrap() && f + 1 < e && kindOf(w, f + 1) == kLparen()) {
+    i32 close = mate(w, f + 1, e);
+    if (close == f + 2) { return Res(Stmt(StmtKind.Trap(null), ln, cl), i + 1, true); }
+    if (close > 0) {
+      Expr v = exprIn(w, f + 2, close);
+      return Res(Stmt(StmtKind.Trap(v), ln, cl), i + 1, true);
+    }
+  }
+
+  // **The operand, not the statement.** `parseStatement` can read the rest of wapy unchanged, but the
+  // rewrites cannot be handed a whole line: `return 1 if c else 2` would take `return 1` as the arm,
+  // and `x = a if c else b` would take `x = a`. So the two sides of an assignment are rewritten
+  // separately, and a leading `return` or `trap` is stepped over first.
+  i32 opAt = assignOpIn(w, f, e);
+  if (opAt >= 0) {
+    rewriteRange(w, f, opAt);
+    rewriteRange(w, opAt + 1, e);
+  } else if (f < e && (kindOf(w, f) == kReturn() || kindOf(w, f) == kTrap())) {
+    rewriteRange(w, f + 1, e);
+  } else {
+    rewriteRange(w, f, e);
+  }
+  P p = at(w, f);
+  Stmt s = parseStatement(p);
+  drain(w, p);
+  return Res(s, i + 1, true);
+}
+
+/** `if` with its `elif` and `else` chain — checked where it is written, never inherited. */
+Res takeIf(W w, i32 i, i32 hi) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 c = headColon(w, i);
+  Expr cond = exprIn(w, f + 1, c < 0 ? e : c);
+  Stmt[] then = blockOf(w, i, hi);
+  i32 j = blockEnd(w, i);
+
+  Stmt[] els = noStmts();
+  if (j < hi && w.segs[j].indent == w.segs[i].indent) {
+    i32 jf = w.segs[j].first;
+    string jw = kindOf(w, jf) == kIdent() ? textOf(w, jf) : "";
+    if (jw == "elif") {
+      // An `elif` is wac's `else if`: a one-statement else block, which is what the printer emits.
+      Res inner = takeIf(w, j, hi);
+      Stmt[] one = Stmt[1](fill: inner.stmt);
+      one[0] = inner.stmt;
+      return Res(Stmt(StmtKind.If(cond, then, one), ln, cl), inner.next, true);
+    }
+    if (kindOf(w, jf) == kElse()) {
+      i32 ec = headColon(w, j);
+      if (ec != jf + 1) { err(w, werrExpected(), w.segs[j].line, w.segs[j].indent); }
+      els = blockOf(w, j, hi);
+      return Res(Stmt(StmtKind.If(cond, then, els), ln, cl), blockEnd(w, j), true);
+    }
+  }
+  return Res(Stmt(StmtKind.If(cond, then, els), ln, cl), j, true);
+}
+
+/**
+ * Both `for` forms.
+ *
+ * `[§wac-wapy-range-6mn4dtq]`: `for i in range(a, b):` is exactly `for (i32 i = a; i < b; i++)`, and
+ * `range(a, b, s)` the same with `i += s`. It is the counted loop and nothing else — no iterator
+ * protocol, no `for x in collection`. Any other loop keeps wac's three clauses, written `for init;
+ * cond; update:`, and those are wac's own statements with wac's own separators, so they are parsed by
+ * `parseStatement` and `parseExpr` unchanged.
+ */
+Res takeFor(W w, i32 i, i32 hi) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 c = headColon(w, i);
+  i32 to = c < 0 ? e : c;
+  Stmt[] body = blockOf(w, i, hi);
+  i32 next = blockEnd(w, i);
+
+  if (w.pool[i] >= 0) {
+    i32 varTok = f + 1;
+    i32 inAt = rangeIn(w.src, w.toks, f, to);
+    // The induction variable's type: written when it is not an `i32`, and the synthetic `i32`
+    // otherwise. This is the only place the invented token is used for anything but recovery.
+    Ty loopTy = tyPrim(w.pool[i], ln, cl);
+    if (inAt > f + 2 && kindOf(w, f + 2) == kColon()) { loopTy = typeIn(w, f + 3, inAt); }
+    i32 open = inAt + 2;
+    i32 close = mate(w, open, to);
+    if (close < 0) {
+      err(w, werrBadRange(), ln, cl);
+      return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
+    }
+    Vec<i32> parts = Vec<i32>.create();
+    commaParts(w, open + 1, close, parts);
+    i32 nparts = parts.len() / 2;
+    if (nparts < 2 || nparts > 3) {
+      err(w, werrBadRange(), ln, cl);
+      return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
+    }
+    i32 pool = w.pool[i];
+    Expr from = exprIn(w, parts.get(0), parts.get(1));
+    Expr limit = exprIn(w, parts.get(2), parts.get(3));
+    Stmt init = Stmt(StmtKind.Var(loopTy, varTok, from, false), ln, cl);
+    Expr iref = Expr(ExprKind.Ident(varTok), ln, cl);
+    Expr cond = Expr(ExprKind.Binary(pool + 1, iref, limit), ln, cl);
+    Lvalue lv = Lvalue(LvalueKind.LIdent(varTok), ln, cl);
+    Stmt step = nparts == 2
+      ? Stmt(StmtKind.IncrStmt(lv, pool + 2), ln, cl)
+      : Stmt(StmtKind.Assign(lv, pool + 3, exprIn(w, parts.get(4), parts.get(5))), ln, cl);
+    return Res(Stmt(StmtKind.For(init, cond, step, body), ln, cl), next, true);
+  }
+
+  // `for init; cond; update:` — wac's three clauses, semicolons and all.
+  i32 s1 = findTop(w, f + 1, to, kSemi());
+  i32 s2 = s1 < 0 ? -1 : findTop(w, s1 + 1, to, kSemi());
+  if (s1 < 0 || s2 < 0) {
+    err(w, werrBadRange(), ln, cl);
+    return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
+  }
+  Stmt? init = null;
+  if (s1 > f + 1) {
+    init = varDeclIn(w, f + 1, s1);
+    if (init is null) {
+      rewriteRange(w, f + 1, s1);
+      P pi = at(w, f + 1);
+      init = parseStatement(pi);
+      drain(w, pi);
+    }
+  }
+  Expr? cond = null;
+  if (s2 > s1 + 1) { cond = exprIn(w, s1 + 1, s2); }
+  Stmt? step = null;
+  if (to > s2 + 1) {
+    // **The header colon becomes the update clause's terminator.** wac writes `for (i; c; u)` with no
+    // `;` after `u`, and `parseStatement` wants one; wapy's header ends in `:` at exactly that place.
+    // Retagging is count-preserving and the token is not read again — the block is found by
+    // indentation, not by this colon.
+    if (c >= 0) { setKind(w, c, kSemi()); }
+    rewriteRange(w, s2 + 1, to);
+    P pu = at(w, s2 + 1);
+    step = parseStatement(pu);
+    drain(w, pu);
+  }
+  return Res(Stmt(StmtKind.For(init, cond, step, body), ln, cl), next, true);
+}
+
+/**
+ * `match` and `switch`, which are two statements rather than one spelling of one.
+ *
+ * `[§wac-wapy-switch-w9pk2hs]`: both are accepted and mean what they mean in wac — `switch` compares
+ * values, `match` destructures enum variants — and the keyword is preserved rather than
+ * canonicalised. wapy writes the default arm `else`, where wac writes `default`.
+ */
+Res takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 c = headColon(w, i);
+  Expr subject = exprIn(w, f + 1, c < 0 ? e : c);
+  i32 end = blockEnd(w, i);
+  if (end > hi) { end = hi; }
+
+  Vec<Case> cases = Vec<Case>.create();
+  Vec<Arm> arms = Vec<Arm>.create();
+  i32 j = i + 1;
+  while (j < end) {
+    i32 jf = w.segs[j].first;
+    i32 je = segEnd(w, j);
+    i32 jln = w.segs[j].line;
+    i32 jcl = w.segs[j].indent;
+    i32 jc = headColon(w, j);
+    i32 upto = jc < 0 ? je : jc;
+    Stmt[] body = blockOf(w, j, end);
+    i32 after = blockEnd(w, j);
+
+    if (kindOf(w, jf) == kElse()) {
+      if (isSwitch) { cases.push(Case(null, body, jln, jcl)); }
+      else { arms.push(Arm(-1, jf, i32[0](fill: 0), body, null)); }
+      j = after;
+      continue;
+    }
+    if (kindOf(w, jf) != kCase()) {
+      err(w, werrExpected(), jln, jcl);
+      j = after;
+      continue;
+    }
+    if (isSwitch) {
+      cases.push(Case(exprIn(w, jf + 1, upto), body, jln, jcl));
+      j = after;
+      continue;
+    }
+    // `case Variant(a, b):` — the bindings are names, not expressions.
+    i32 variantTok = jf + 1 < upto ? jf + 1 : jf;
+    Vec<i32> binds = Vec<i32>.create();
+    if (jf + 2 < upto && kindOf(w, jf + 2) == kLparen()) {
+      i32 close = mate(w, jf + 2, upto);
+      if (close > 0) {
+        for (i32 t = jf + 3; t < close; t++) { if (kindOf(w, t) == kIdent()) { binds.push(t); } }
+      }
+    }
+    i32[] b = i32[binds.len()](fill: 0);
+    for (i32 t = 0; t < binds.len(); t++) { b[t] = binds.get(t); }
+    arms.push(Arm(variantTok, -1, b, body, null));
+    j = after;
+  }
+  Stmt s = isSwitch
+    ? Stmt(StmtKind.Switch(subject, cases.toArray()), ln, cl)
+    : Stmt(StmtKind.Match(subject, arms.toArray()), ln, cl);
+  return Res(s, end, true);
+}
+
+// ── Declarations ──────────────────────────────────────────────────────────────
+
+/** `[T, U]` after a name, as `[open, close]`, or -1 in `open` when there is none. */
+i32 typeParamOpen(W w, i32 nameTok, i32 e) {
+  return nameTok + 1 < e && kindOf(w, nameTok + 1) == kLbrack() ? nameTok + 1 : -1;
+}
+
+/** `def NAME[T](params) -> RET:` at file scope. */
+Decl funcAt(W w, i32 i, i32 hi, bool exported) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 c = headColon(w, i);
+  i32 to = c < 0 ? e : c;
+  i32 nameTok = f + 1;
+  if (nameTok >= to || kindOf(w, nameTok) != kIdent()) {
+    err(w, werrBadDecl(), ln, cl);
+    return Decl(DeclKind.Func(f, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), noStmts(), exported, i32[0](fill: 0)), ln, cl);
+  }
+  i32[] tps = i32[0](fill: 0);
+  i32 after = nameTok + 1;
+  i32 tpo = typeParamOpen(w, nameTok, to);
+  if (tpo >= 0) {
+    i32 tpc = mate(w, tpo, to);
+    if (tpc > 0) { tps = typeParamsIn(w, tpo + 1, tpc); after = tpc + 1; }
+  }
+  if (after >= to || kindOf(w, after) != kLparen()) {
+    err(w, werrBadDecl(), ln, colOf(w, nameTok));
+    return Decl(DeclKind.Func(nameTok, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), blockOf(w, i, hi), exported, tps), ln, cl);
+  }
+  i32 close = mate(w, after, to);
+  if (close < 0) {
+    err(w, werrBadDecl(), ln, colOf(w, after));
+    return Decl(DeclKind.Func(nameTok, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), blockOf(w, i, hi), exported, tps), ln, cl);
+  }
+  Param[] ps = paramsIn(w, after + 1, close);
+  i32 arrow = findArrow(w, close + 1, to);
+  Ty ret = tyPrim(w.i32Tok, ln, cl);
+  if (arrow < 0) { err(w, werrBadDecl(), ln, colOf(w, close)); }
+  else { ret = typeIn(w, arrow + 2, to); }
+  return Decl(DeclKind.Func(nameTok, ret, ps, blockOf(w, i, hi), exported, tps), ln, cl);
+}
+
+Param[] noParams(W w) { return Param[0](fill: Param(0, tyPrim(w.i32Tok, 1, 1), false)); }
+
+/**
+ * `def NAME(this, …) -> RET:` inside a class.
+ *
+ * `[const] this [: Owner]` is the receiver — `spec/spec/wapy.md`'s `receiver` production, spelled
+ * `this` on both surfaces since 2026-08-27. The annotation is redundant, because a method's receiver
+ * can only be the enclosing type, but wapy annotates every parameter and one that silently permitted
+ * a different type there would be lying. So it is checked against the class name.
+ */
+Method methodAt(W w, i32 i, i32 hi, string owner, bool isOverride, i32 overrideTok) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 c = headColon(w, i);
+  i32 to = c < 0 ? e : c;
+  i32 nameTok = f + 1;
+  Ty bad = tyPrim(w.i32Tok, ln, cl);
+  if (nameTok >= to || kindOf(w, nameTok) != kIdent()) {
+    err(w, werrBadDecl(), ln, cl);
+    return Method(f, bad, noParams(w), noStmts(), isOverride, overrideTok, false, false, i32[0](fill: 0));
+  }
+  i32 open = nameTok + 1;
+  if (open >= to || kindOf(w, open) != kLparen()) {
+    err(w, werrBadDecl(), ln, colOf(w, nameTok));
+    return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0));
+  }
+  i32 close = mate(w, open, to);
+  if (close < 0) {
+    err(w, werrBadDecl(), ln, colOf(w, open));
+    return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0));
+  }
+
+  Vec<i32> parts = Vec<i32>.create();
+  commaParts(w, open + 1, close, parts);
+  bool hasThis = false;
+  bool thisConst = false;
+  i32 firstParam = 0;
+  if (parts.len() >= 2) {
+    i32 lo = parts.get(0);
+    i32 hiP = parts.get(1);
+    i32 a = (lo < hiP && kindOf(w, lo) == kConst()) ? lo + 1 : lo;
+    if (a < hiP && kindOf(w, a) == kThis()) {
+      hasThis = true;
+      thisConst = a > lo;
+      firstParam = 2;
+      if (a + 1 < hiP) {
+        if (kindOf(w, a + 1) != kColon() || a + 2 >= hiP) {
+          err(w, werrBadReceiver(), lineOf(w, a), colOf(w, a));
+        } else if (textOf(w, a + 2) != owner) {
+          err(w, werrBadReceiver(), lineOf(w, a + 2), colOf(w, a + 2));
+        }
+      }
+    }
+  }
+  Vec<Param> ps = Vec<Param>.create();
+  for (i32 k = firstParam; k + 1 < parts.len(); k = k + 2) {
+    ps.push(paramIn(w, parts.get(k), parts.get(k + 1)));
+  }
+  i32 arrow = findArrow(w, close + 1, to);
+  Ty ret = bad;
+  if (arrow < 0) { err(w, werrBadDecl(), ln, colOf(w, close)); }
+  else { ret = typeIn(w, arrow + 2, to); }
+  return Method(nameTok, ret, ps.toArray(), blockOf(w, i, hi), isOverride, overrideTok,
+                hasThis, thisConst, i32[0](fill: 0));
+}
+
+/** `class NAME[T](Parent):` or `class NAME(enum):`. */
+Decl classAt(W w, i32 i, i32 hi, bool exported, bool isConst) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 c = headColon(w, i);
+  i32 to = c < 0 ? e : c;
+  i32 nameTok = f + 1;
+  i32 end = blockEnd(w, i);
+  if (end > hi) { end = hi; }
+  if (nameTok >= to || kindOf(w, nameTok) != kIdent()) {
+    err(w, werrBadDecl(), ln, cl);
+    return Decl(DeclKind.StructDecl(f, -1, Field[0](fill: Field(0, tyPrim(w.i32Tok, 1, 1), false)),
+                                    Method[0](fill: methodAt(w, i, hi, "", false, -1)),
+                                    exported, isConst, i32[0](fill: 0)), ln, cl);
+  }
+  string owner = textOf(w, nameTok);
+  i32[] tps = i32[0](fill: 0);
+  i32 after = nameTok + 1;
+  i32 tpo = typeParamOpen(w, nameTok, to);
+  if (tpo >= 0) {
+    i32 tpc = mate(w, tpo, to);
+    if (tpc > 0) { tps = typeParamsIn(w, tpo + 1, tpc); after = tpc + 1; }
+  }
+  i32 parentTok = -1;
+  bool isEnum = false;
+  if (after < to && kindOf(w, after) == kLparen()) {
+    i32 pc = mate(w, after, to);
+    if (pc == after + 2) {
+      if (kindOf(w, after + 1) == kEnum()) { isEnum = true; }
+      else { parentTok = after + 1; }
+    } else { err(w, werrBadDecl(), ln, colOf(w, after)); }
+  }
+
+  Vec<Field> fields = Vec<Field>.create();
+  Vec<Method> methods = Vec<Method>.create();
+  Vec<Variant> variants = Vec<Variant>.create();
+  bool mOverride = false;
+  i32 mOverrideTok = -1;
+  i32 j = i + 1;
+  while (j < end) {
+    i32 jf = w.segs[j].first;
+    i32 je = segEnd(w, j);
+    if (kindOf(w, jf) == kAt()) {
+      string d = jf + 1 < je ? textOf(w, jf + 1) : "";
+      if (d == "override") { mOverride = true; mOverrideTok = jf + 1; }
+      else if (d != "const" && d != "export") { err(w, werrBadDecorator(), w.segs[j].line, w.segs[j].indent); }
+      j = j + 1;
+      continue;
+    }
+    string jw = kindOf(w, jf) == kIdent() ? textOf(w, jf) : "";
+    if (jw == "pass" && je == jf + 1) { j = j + 1; continue; }
+    if (jw == "def") {
+      methods.push(methodAt(w, j, end, owner, mOverride, mOverrideTok));
+      mOverride = false; mOverrideTok = -1;
+      j = blockEnd(w, j);
+      continue;
+    }
+    if (isEnum) {
+      i32 vn = jf;
+      Param[] payload = noParams(w);
+      if (jf + 1 < je && kindOf(w, jf + 1) == kLparen()) {
+        i32 vc = mate(w, jf + 1, je);
+        if (vc > 0) { payload = paramsIn(w, jf + 2, vc); }
+      }
+      variants.push(Variant(vn, payload));
+      j = j + 1;
+      continue;
+    }
+    bool fConst = kindOf(w, jf) == kConst();
+    i32 fname = fConst ? jf + 1 : jf;
+    if (fname + 1 < je && kindOf(w, fname) == kIdent() && kindOf(w, fname + 1) == kColon()) {
+      fields.push(Field(fname, typeIn(w, fname + 2, je), fConst));
+    } else {
+      err(w, werrBadDecl(), w.segs[j].line, w.segs[j].indent);
+    }
+    j = j + 1;
+  }
+
+  if (isEnum) {
+    return Decl(DeclKind.EnumDecl(nameTok, variants.toArray(), exported, methods.toArray(), tps), ln, cl);
+  }
+  return Decl(DeclKind.StructDecl(nameTok, parentTok, fields.toArray(), methods.toArray(),
+                                  exported, isConst, tps), ln, cl);
+}
+
+/**
+ * `from "./m.wac" import a, b as c`, and `from core import Read`.
+ *
+ * `[§wac-wapy-import-8kd3mqp]`: the path keeps its extension, so either surface names either file.
+ * `[§wac-wapy-core-5wq8jhn]`: `core` is spelled bare here and quoted in wac — one module system,
+ * each surface spelling it the way it spells every other specifier. So exactly one of `pathTok` and
+ * `prefixTok` is set, which is what `DeclKind.Import` already requires.
+ */
+Decl importAt(W w, i32 i) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 pathTok = -1;
+  i32 prefixTok = -1;
+  Vec<ImportItem> items = Vec<ImportItem>.create();
+  if (f + 1 >= e) {
+    err(w, werrBadImport(), ln, cl);
+    return Decl(DeclKind.Import(-1, -1, items.toArray()), ln, cl);
+  }
+  if (kindOf(w, f + 1) == kString()) { pathTok = f + 1; }
+  else if (kindOf(w, f + 1) == kIdent()) { prefixTok = f + 1; }
+  else { err(w, werrBadImport(), ln, colOf(w, f + 1)); }
+
+  i32 kw = f + 2;
+  if (kw >= e || kindOf(w, kw) != kImport()) {
+    err(w, werrBadImport(), ln, kw < e ? colOf(w, kw) : cl);
+  }
+  Vec<i32> parts = Vec<i32>.create();
+  commaParts(w, kw + 1, e, parts);
+  for (i32 k = 0; k + 1 < parts.len(); k = k + 2) {
+    i32 lo = parts.get(k);
+    i32 hi = parts.get(k + 1);
+    if (lo >= hi || kindOf(w, lo) != kIdent()) { err(w, werrBadImport(), ln, cl); continue; }
+    i32 alias = lo;
+    if (lo + 2 < hi && textOf(w, lo + 1) == "as" && kindOf(w, lo + 2) == kIdent()) { alias = lo + 2; }
+    items.push(ImportItem(lo, alias));
+  }
+  return Decl(DeclKind.Import(pathTok, prefixTok, items.toArray()), ln, cl);
+}
+
+/** `const NAME: T = expr` at file scope. */
+Decl constAt(W w, i32 i, bool exported) {
+  i32 f = w.segs[i].first;
+  i32 e = segEnd(w, i);
+  i32 ln = w.segs[i].line;
+  i32 cl = w.segs[i].indent;
+  i32 nameTok = f + 1;
+  if (nameTok + 1 >= e || kindOf(w, nameTok) != kIdent() || kindOf(w, nameTok + 1) != kColon()) {
+    err(w, werrBadDecl(), ln, cl);
+    return Decl(DeclKind.ConstDecl(f, tyPrim(w.i32Tok, ln, cl), exprIn(w, e, e), exported), ln, cl);
+  }
+  i32 eq = findTop(w, nameTok + 2, e, kAssign());
+  if (eq < 0) {
+    err(w, werrExpected(), ln, cl);
+    return Decl(DeclKind.ConstDecl(nameTok, tyPrim(w.i32Tok, ln, cl), exprIn(w, e, e), exported), ln, cl);
+  }
+  return Decl(DeclKind.ConstDecl(nameTok, typeIn(w, nameTok + 2, eq), exprIn(w, eq + 1, e), exported), ln, cl);
+}
+
+/**
+ * The file's declarations.
+ *
+ * `@export`, `@const` and `@override` sit on their own lines above the thing they modify and may
+ * stack, which is the `decorator` production. A decorator with nothing after it, or one naming a word
+ * that is not those three, is an error rather than silence.
+ */
+Decl[] topLevel(W w) {
+  Vec<Decl> out = Vec<Decl>.create();
+  bool exported = false;
+  bool isConst = false;
+  i32 i = 0;
+  i32 n = w.segs.len();
+  while (i < n) {
+    i32 f = w.segs[i].first;
+    i32 e = segEnd(w, i);
+    i32 ln = w.segs[i].line;
+    i32 cl = w.segs[i].indent;
+    if (f >= e) { i = i + 1; continue; }
+
+    if (kindOf(w, f) == kAt()) {
+      string d = f + 1 < e ? textOf(w, f + 1) : "";
+      if (d == "export") { exported = true; }
+      else if (d == "const") { isConst = true; }
+      else if (d != "override") { err(w, werrBadDecorator(), ln, cl); }
+      i = i + 1;
+      continue;
+    }
+    string word = kindOf(w, f) == kIdent() ? textOf(w, f) : "";
+    if (word == "from") { out.push(importAt(w, i)); i = i + 1; exported = false; isConst = false; continue; }
+    if (word == "def")  { out.push(funcAt(w, i, n, exported)); i = blockEnd(w, i); exported = false; isConst = false; continue; }
+    if (word == "class"){ out.push(classAt(w, i, n, exported, isConst)); i = blockEnd(w, i); exported = false; isConst = false; continue; }
+    if (kindOf(w, f) == kConst()) { out.push(constAt(w, i, exported)); i = i + 1; exported = false; isConst = false; continue; }
+
+    err(w, werrBadDecl(), ln, cl);
+    i = blockEnd(w, i);
+    exported = false;
+    isConst = false;
+  }
+  return out.toArray();
+}
+
+/** Everything a caller needs: the tree, and the array its token indices point into. */
+export struct WParsed {
+  Program program;
+  u8[] src;
+  i32[] toks;
+  i32 tokCount;
+  i32[] errors;
+  i32 errorCount;
+}
+
+/**
+ * Parse a `.wapy` source into wac's AST.
+ *
+ * **The `src` and `toks` handed back are not the caller's.** `src` has `synthTail()` appended and
+ * `toks` is the rewritten array with a `;` per line — and every token index in the tree refers to
+ * *that* array. A caller that parses with this and then checks against `lex(original)` will resolve
+ * every name to the wrong token, which is why both come back rather than only the tree.
+ */
+export WParsed wapyParse(u8[] src) {
+  Built b = buildArray(src);
+  Vec<i32> errs = Vec<i32>.create();
+  for (i32 i = 0; i < b.errorCount * 3; i++) { errs.push(b.errors[i]); }
+  W w = W(b.src, b.toks, b.tokCount, b.segs, b.pool, b.i32Tok, errs);
+  Decl[] decls = topLevel(w);
+  i32[] flat = i32[w.errors.len()](fill: 0);
+  for (i32 i = 0; i < w.errors.len(); i++) { flat[i] = w.errors.get(i); }
+  return WParsed(Program(decls), w.src, w.toks, w.tokCount, flat, w.errors.len() / 3);
+}

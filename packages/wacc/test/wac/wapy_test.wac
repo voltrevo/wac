@@ -1,0 +1,273 @@
+// wacc's wapy frontend, against wacc's wac frontend on the same program.
+//
+//     wac test packages/wacc/test/wac/wapy_test.wac
+//
+// **The oracle is the other surface.** `spec/spec/wapy.md`: *"wapy is wac with a different layout.
+// Same types, same semantics, same AST, same compiler."* So every case here is one program written
+// twice, parsed by the two frontends, and printed by the one printer — and the two prints have to be
+// the same tree. A test that only asked whether the wapy parsed would pass on a frontend that quietly
+// dropped half of it.
+//
+// ## What is normalised away, and why each is not the parser's business
+//
+// **Positions.** The two layouts put the same declaration on different lines, which is the point of
+// having two layouts. `@line:col` is stripped.
+//
+// **Three operator spellings.** The printer renders a binary operator by reading its token's *text*,
+// and wapy's token says `and` where wac's says `&&`. That is deliberate on both sides —
+// `packages/wacc/src/wapylex.wac` retags the *kind* and leaves the span alone precisely so a
+// diagnostic quotes the word the reader wrote. The kinds are identical; comparing the bytes under
+// them would be comparing the surfaces rather than the parse.
+//
+// Nothing else is normalised. In particular the *structure* is compared in full, so a missing
+// parameter, a dropped `else` or a conditional whose arms are the wrong way round all fail.
+//
+// ## The wider run this was cut down from
+//
+// These cases are hand-written, and hand-written cases only cover what their author thought of. The
+// frontend was developed against a much larger oracle: `compiler/wapyPrint.ts` renders every `.wac`
+// file git tracks into wapy, and both frontends read the pair back. That run needs Deno and a
+// scratch directory, so it is not in the suite; what is here is the set that was failing at the end,
+// one per cause, plus one per clause of `spec/spec/wapy.md` so the tags have a home.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core } from "std/platform.wac";
+import { WParsed, wapyParse } from "../../src/wapyparse.wac";
+import { Pr, printProgram } from "../../src/print.wac";
+import { dump } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** `s` with every `from` replaced by `to`. */
+string replaceAll(string s, string from, string to) {
+  string out = "";
+  i32 i = 0;
+  while (i < s.len()) {
+    if (i + from.len() <= s.len() && s.slice(i, i + from.len()) == from) {
+      out = out + to;
+      i = i + from.len();
+      continue;
+    }
+    out = out + s.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+/** A printed tree with `@line:col` removed. */
+string bare(string t) {
+  string out = "";
+  u8[] b = t.toBytes();
+  i32 i = 0;
+  while (i < b.len()) {
+    if (b[i] == '@') {
+      i = i + 1;
+      while (i < b.len() && ((b[i] >= '0' && b[i] <= '9') || b[i] == ':')) { i = i + 1; }
+      continue;
+    }
+    out = out + t.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+/** …and with the three operator words spelled the way wac spells them. See the header. */
+string norm(string t) {
+  string s = bare(t);
+  s = replaceAll(s, "(binary and ", "(binary && ");
+  s = replaceAll(s, "(binary or ", "(binary || ");
+  s = replaceAll(s, "(unary not ", "(unary ! ");
+  return s;
+}
+
+/** The canonical print of a wapy source, and how many diagnostics it raised. */
+struct Read {
+  string tree;
+  i32 errors;
+}
+
+Read readWapy(string src) {
+  WParsed r = wapyParse(src.toBytes());
+  Pr w = Pr.create(r.src, r.toks, r.tokCount);
+  return Read(norm(printProgram(w, r.program)), r.errorCount);
+}
+
+/** Assert that a wapy program and a wac program are the same tree. */
+void same(T t, string what, string py, string wc) {
+  Read r = readWapy(py);
+  t.eqI32(r.errors, 0, what + ": wapy did not parse cleanly");
+  t.eqStr(r.tree, norm(dump(wc.toBytes())), what);
+}
+
+export string test_the_same_program_on_either_surface_is_the_same_tree(Core core) {
+  T t = T.create();
+  // `[§wac-wapy-h3nq7fv]` — same types, same semantics, same AST. A struct, a field, a receiver and
+  // a member access, which is the smallest program that exercises all four.
+  same(t, "a struct with a method",
+       "class P:\n    x: f64\n\n    def get(const this) -> f64:\n        return this.x\n",
+       "struct P { f64 x; f64 get(const this) { return this.x; } }");
+  // The receiver may be annotated, and the annotation has to name the class. Both forms are one tree.
+  same(t, "an annotated receiver",
+       "class P:\n    x: f64\n\n    def get(this: P) -> f64:\n        return this.x\n",
+       "struct P { f64 x; f64 get(this) { return this.x; } }");
+  return t.report();
+}
+
+export string test_a_declaration_and_its_block_forms(Core core) {
+  T t = T.create();
+  same(t, "export, if, elif and else",
+       "@export\ndef f(n: i32) -> i32:\n    if n > 1:\n        return 1\n    elif n > 0:\n        return 2\n    else:\n        return 3\n",
+       "export i32 f(i32 n) { if (n > 1) { return 1; } else if (n > 0) { return 2; } else { return 3; } }");
+  same(t, "while, and a scope block",
+       "def f(n: i32) -> i32:\n    while n > 0:\n        n -= 1\n    scope:\n        n += 1\n    return n\n",
+       "i32 f(i32 n) { while (n > 0) { n -= 1; } { n += 1; } return n; }");
+  same(t, "do-while",
+       "def f(n: i32) -> i32:\n    do:\n        n -= 1\n    while n > 0\n    return n\n",
+       "i32 f(i32 n) { do { n -= 1; } while (n > 0); return n; }");
+  // An empty body is `pass`, and it is a body rather than a missing one.
+  same(t, "pass is an empty body",
+       "def f() -> void:\n    pass\n",
+       "void f() { }");
+  return t.report();
+}
+
+export string test_the_counted_loop_is_wacs_three_clauses(Core core) {
+  T t = T.create();
+  // `[§wac-wapy-range-6mn4dtq]` — `range(a, b)` is exactly `for (i32 i = a; i < b; i++)`, and
+  // `range(a, b, s)` the same with `i += s`. The induction variable's `i32` is the one token in this
+  // frontend the reader did not write.
+  same(t, "range(a, b)",
+       "def s(n: i32) -> i32:\n    t: i32 = 0\n    for i in range(0, n):\n        t += i\n    return t\n",
+       "i32 s(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { t += i; } return t; }");
+  same(t, "range(a, b, s)",
+       "def s(n: i32) -> i32:\n    t: i32 = 0\n    for i in range(0, n, 2):\n        t += i\n    return t\n",
+       "i32 s(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i += 2) { t += i; } return t; }");
+  // **An annotated induction variable**, which the spec's EBNF did not have until 2026-08-27 —
+  // `wapyPrint.ts` emits it whenever the variable is not an `i32` and `wapyParse.ts` accepts it, so a
+  // frontend written from the grammar alone refuses ordinary `packages/sh` code.
+  same(t, "range with an annotated variable",
+       "def s(n: i64) -> i64:\n    t: i64 = 0\n    for k: i64 in range(0, n):\n        t += k\n    return t\n",
+       "i64 s(i64 n) { i64 t = 0; for (i64 k = 0; k < n; k++) { t += k; } return t; }");
+  // Any other loop keeps wac's three clauses — and its init is a *wapy* declaration, which is what
+  // the whole-repository run caught: `for j: i32 = …` is not something wac's grammar can read.
+  same(t, "the three-clause form, with a wapy declaration in its init",
+       "def s(n: i32) -> i32:\n    t: i32 = 0\n    for j: i32 = n - 1; j > 0; j--:\n        t += j\n    return t\n",
+       "i32 s(i32 n) { i32 t = 0; for (i32 j = n - 1; j > 0; j--) { t += j; } return t; }");
+  return t.report();
+}
+
+export string test_the_respellings_and_where_they_are_names(Core core) {
+  T t = T.create();
+  // `[§wac-wapy-words-p2vm9kx]` — the words wapy spells differently, and the positions where each is
+  // an ordinary name instead.
+  same(t, "and, or, not, True, False",
+       "def f(a: bool, b: bool) -> bool:\n    return a and b or not a\n",
+       "bool f(bool a, bool b) { return a && b || !a; }");
+  same(t, "True and False and None",
+       "def f() -> bool:\n    p: string? = None\n    return True if p is None else False\n",
+       "bool f() { string? p = null; return p is null ? true : false; }");
+  // **After a `.` and after `case`, a respelling is a name.** `Option.None` is the variant, not the
+  // null literal — retagging it blindly turned every one in the repository into `Option.null`, a
+  // parse error three tokens later that said nothing about the cause.
+  same(t, "a respelled word after a dot is a variant",
+       "from \"core/option.wac\" import Option\n\ndef f() -> Option[i32]:\n    return Option.None\n",
+       "import { Option } from \"core/option.wac\";\nOption<i32> f() { return Option.None; }");
+  // `not` is a wac *keyword*, because wac spells variant testing `x is not V`. It is logical
+  // negation everywhere except directly after `is`, where turning it into `!` would give `o is !null`.
+  //
+  // **`None` after `is not` is the null literal, not the variant.** `Option.None` is the variant and
+  // is a name because it follows a `.`; this one follows `not`, which the spec's list does not cover,
+  // and both frontends read it as `null` — checked against `compiler/wapyParse.ts` on this exact
+  // program, which answers `rhs: "null"`. So the wac side below says `null`.
+  same(t, "`is not` keeps wac's keyword, and None after it is the literal",
+       "from \"core/option.wac\" import Option\n\ndef f(o: Option[i32]) -> bool:\n    return o is not None\n",
+       "import { Option } from \"core/option.wac\";\nbool f(Option<i32> o) { return o is not null; }");
+  return t.report();
+}
+
+export string test_conditionals_constructions_and_generics(Core core) {
+  T t = T.create();
+  // The conditional swaps its operands around the condition, and stops at the nearest separator.
+  same(t, "a conditional",
+       "def g(c: bool) -> i32:\n    return 1 if c else 2\n",
+       "i32 g(bool c) { return c ? 1 : 2; }");
+  same(t, "a conditional inside an argument list",
+       "def g(c: bool) -> i32:\n    return max(1 if c else 2, 3)\n",
+       "i32 g(bool c) { return max(c ? 1 : 2, 3); }");
+  // Right-associative, as Python is.
+  same(t, "chained conditionals group to the right",
+       "def g(c: bool, d: bool) -> i32:\n    return 1 if c else 2 if d else 3\n",
+       "i32 g(bool c, bool d) { return c ? 1 : d ? 2 : 3; }");
+  // A call whose every argument is named is a construction; after a `]` it stays a call.
+  same(t, "a construction",
+       "class Point:\n    x: f64\n    y: f64\n\ndef g() -> Point:\n    return Point(x=1.0, y=2.0)\n",
+       "struct Point { f64 x; f64 y; }\nPoint g() { return Point { x: 1.0, y: 2.0 }; }");
+  same(t, "an array construction keeps its parentheses",
+       "def g() -> i32[]:\n    return i32[3](fill=7)\n",
+       "i32[] g() { return i32[3](fill: 7); }");
+  // `Name[args]` is a generic in a type and an index anywhere else.
+  same(t, "generic types and a nullable",
+       "from \"core/vec.wac\" import Vec\n\ndef g(v: Vec[i32]) -> Vec[i32] | None:\n    return v\n",
+       "import { Vec } from \"core/vec.wac\";\nVec<i32>? g(Vec<i32> v) { return v; }");
+  return t.report();
+}
+
+export string test_match_and_switch_are_two_statements(Core core) {
+  T t = T.create();
+  // `[§wac-wapy-switch-w9pk2hs]` — both accepted, and the keyword preserved rather than
+  // canonicalised, because `switch` compares values and `match` destructures variants.
+  same(t, "switch, whose default arm wapy spells `else`",
+       "def f(n: i32) -> i32:\n    switch n:\n        case 1:\n            return 10\n        else:\n            return 20\n",
+       "i32 f(i32 n) { switch (n) { case 1: return 10; default: return 20; } }");
+  same(t, "match, destructuring a variant",
+       "from \"core/option.wac\" import Option\n\ndef f(o: Option[i32]) -> i32:\n    match o:\n        case Some(v):\n            return v\n        else:\n            return 0\n",
+       "import { Option } from \"core/option.wac\";\ni32 f(Option<i32> o) { match (o) { case Some(v): return v; else: return 0; } }");
+  // `[§wac-wapy-matchexpr-3jx8rvc]` — the match *expression* keeps its braces and drops wac's
+  // parentheses, because nothing else in wapy parenthesises the thing a keyword is about.
+  same(t, "a match expression",
+       "from \"core/option.wac\" import Option\n\ndef f(o: Option[i32]) -> bool:\n    return match o { case Some(_): True, case None: False }\n",
+       "import { Option } from \"core/option.wac\";\nbool f(Option<i32> o) { return match (o) { case Some(_): true, case None: false }; }");
+  return t.report();
+}
+
+export string test_imports_keep_their_extension_and_core_stays_bare(Core core) {
+  T t = T.create();
+  // `[§wac-wapy-import-8kd3mqp]` — the path keeps its extension, so either surface names either file.
+  same(t, "a quoted import, with an alias",
+       "from \"core/option.wac\" import Option as Opt\n\ndef f() -> i32:\n    return 1\n",
+       "import { Option as Opt } from \"core/option.wac\";\ni32 f() { return 1; }");
+  // `[§wac-wapy-core-5wq8jhn]` — `core` means the same thing on both surfaces, and each spells it the
+  // way that surface spells every specifier: quoted in wac, bare in a Python-shaped `from X import`.
+  same(t, "core is bare here and quoted in wac",
+       "from core import Read\n\ndef f() -> i32:\n    return 1\n",
+       "import { Read } from core;\ni32 f() { return 1; }");
+  return t.report();
+}
+
+export string test_a_bracket_continues_a_line_and_a_comment_is_not_one(Core core) {
+  T t = T.create();
+  // `[§wac-wapy-nolines-4gt7wxb]` — no backslash continuation; an open bracket continues the
+  // statement and indentation inside it is not significant.
+  same(t, "an argument list across three lines",
+       "def g(a: i32, b: i32, c: i32) -> i32:\n    return g(\n        1,\n            2,\n        3)\n",
+       "i32 g(i32 a, i32 b, i32 c) { return g(1, 2, 3); }");
+  // A comment is not a line as far as the structure is concerned, and a `#` inside a string is not a
+  // comment — which is the case that makes blanking them a scan rather than a search.
+  same(t, "comments, including a hash inside a string",
+       "# a leading comment\ndef f() -> string:\n    # inside the body\n    s: string = \"a # b\"   # trailing\n    return s\n",
+       "string f() { string s = \"a # b\"; return s; }");
+  return t.report();
+}
+
+export string test_a_wapy_program_that_is_wrong_says_so(Core core) {
+  T t = T.create();
+  // **The half a round-trip test cannot reach.** `compiler/wapyParse.ts`'s header is about exactly
+  // this: a frontend that does not parse cannot diagnose, and a round-trip only ever feeds the reader
+  // output from the printer, which is valid by construction. So these are malformed on purpose.
+  t.isTrue(readWapy("def f(x i32) -> i32:\n    return x\n").errors > 0,
+           "a parameter with no `:` is refused, not accepted silently");
+  t.isTrue(readWapy("class P\n    x: f64\n").errors > 0, "a class header with no `:` is refused");
+  t.isTrue(readWapy("def f() -> i32:\n").errors > 0, "a header with no body is refused");
+  t.isTrue(readWapy("def f() -> i32:\n\tif True:\n\t\treturn 1\n").errors > 0,
+           "a tab in the leading whitespace is a lexical error");
+  return t.report();
+}
