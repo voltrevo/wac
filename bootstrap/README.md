@@ -37,4 +37,10 @@ lose by retiring its reference compiler, so it is worth practising here.
 
 ## Status
 
-Early. See `NOTES.md` for what has been measured so far.
+The root exists and works: `boot/sx.wax` is a 1,157-instruction s-expression interpreter with a
+reader, interned symbols, closures, recursion and a growing heap, and 26 programs are run against it
+as tests. That is under the 1,500 lines the experiment set as the bar.
+
+**The next measurement is the rung above** — a compiler, written in sx, emitting `.wax`. The case for
+a ladder rests on that one, not on this one. `NOTES.md` has the figures, what sx still lacks, and
+the two bugs, one of which a passing earlier stage could not have caught.

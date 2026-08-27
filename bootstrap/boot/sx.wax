@@ -40,17 +40,56 @@ global $pos     i32 mut = 1024     ; the reader's cursor into the source text
 
 ; ---------------------------------------------------------------- allocation
 
+; **Sizes are rounded up to a word**, and that is not a performance choice — it is what makes the
+; tag bit work. An object's value is its address plus one, so every address has to be even or the
+; value comes out even and `$is_fix` calls it a fixnum. A symbol allocates `12 + len` bytes, so an
+; odd-length name is all it takes; stage one never saw this because it read a program with no
+; symbols in it and every allocation was a 12-byte pair.
 func $alloc -> i32
   param i32 $size
   local i32 $at
-  global.get $heap
-  local.set $at
+  local i32 $end
+  local.get $size
+  i32.const 3
+  i32.add
+  i32.const -4
+  i32.and
+  local.set $size
   global.get $heap
   local.get $size
   i32.add
+  local.set $end
+  ; **The heap grows rather than running out.** Nothing is freed, so a program that allocates enough
+  ; will ask for more pages, and an interpreter that traps at two pages would be measuring the
+  ; memory directive rather than the program. `memory.grow` answers -1 when the engine refuses,
+  ; which is the one failure worth a trap: carrying on would hand back a pointer past the end.
+  block $enough ->
+    loop $grow ->
+      local.get $end
+      memory.size
+      i32.const 16
+      i32.shl
+      i32.le_u
+      br_if $enough
+      i32.const 1
+      memory.grow
+      i32.const 0
+      i32.lt_s
+      if $refused ->
+        unreachable
+      else
+        nop
+      end
+      br $grow
+    end
+  end
+  global.get $heap
+  local.set $at
+  local.get $end
   global.set $heap
   local.get $at
 end
+
 
 ; ---------------------------------------------------------------- fixnums
 
@@ -566,54 +605,688 @@ func $read_list -> i32
   local.get $head
 end
 
-; ---------------------------------------------------------------- what stage one proves
+; ---------------------------------------------------------------- the evaluator
 ;
-; Read `(1 2 (3 4) 5)` and add up the fixnums at the top level, which is 8. It exercises the whole
-; data model — allocation, pairs, the tag bit, the reader's number path and its list path — without
-; needing an evaluator, so that a failure here is a failure of the model rather than of `eval`.
+; Environments are one alist of `(symbol . value)`, extended by consing, and a lookup that misses
+; falls back to the global list. That fallback is what makes recursion work: a closure captures the
+; environment it was written in, and `(def fact (fn (n) … (fact …)))` binds `fact` *after* the
+; closure exists, so a closure that could only see its captured environment could never call itself.
+; The alternative is a mutable cell per definition, which is a second mechanism for one case.
 
-data 1024 "(1 2 (3 4) 5)\x00"
+global $genv    i32 mut = 1        ; the global alist
+global $s_quote i32 mut = 1
+global $s_if    i32 mut = 1
+global $s_fn    i32 mut = 1
+global $s_def   i32 mut = 1
 
-func $sum_top -> i32
-  param i32 $list
-  local i32 $n
-  local i32 $v
-  block $done ->
-    loop $next ->
-      local.get $list
+func $is_sym -> i32
+  param i32 $v
+  local.get $v
+  i32.const 1
+  call $is_obj
+end
+
+func $lookup -> i32                ; the value of $sym in $env, then in the globals; NIL if neither
+  param i32 $sym
+  param i32 $env
+  local i32 $e
+  block $answer -> i32
+    local.get $env
+    local.set $e
+    block $localmiss ->
+      loop $walk ->
+        local.get $e
+        call $is_pair
+        i32.eqz
+        br_if $localmiss
+        local.get $e
+        call $car
+        call $car
+        local.get $sym
+        i32.eq
+        if $hit ->
+          local.get $e
+          call $car
+          call $cdr
+          br $answer
+        else
+          nop
+        end
+        local.get $e
+        call $cdr
+        local.set $e
+        br $walk
+      end
+    end
+    global.get $genv
+    local.set $e
+    block $globalmiss ->
+      loop $gwalk ->
+        local.get $e
+        call $is_pair
+        i32.eqz
+        br_if $globalmiss
+        local.get $e
+        call $car
+        call $car
+        local.get $sym
+        i32.eq
+        if $ghit ->
+          local.get $e
+          call $car
+          call $cdr
+          br $answer
+        else
+          nop
+        end
+        local.get $e
+        call $cdr
+        local.set $e
+        br $gwalk
+      end
+    end
+    i32.const 1
+  end
+end
+
+func $bind -> i32                  ; $env extended by pairing $names with $vals, positionally
+  param i32 $names
+  param i32 $vals
+  param i32 $env
+  block $done -> i32
+    loop $next -> i32
+      local.get $names
       call $is_pair
       i32.eqz
-      br_if $done
-      local.get $list
-      call $car
-      local.tee $v
-      call $is_fix
-      if $isnum ->
-        local.get $n
-        local.get $v
-        call $unfix
-        i32.add
-        local.set $n
+      if $empty ->
+        local.get $env
+        br $done
       else
         nop
       end
-      local.get $list
+      local.get $names
+      call $car
+      local.get $vals
+      call $car
+      call $cons
+      local.get $env
+      call $cons
+      local.set $env
+      local.get $names
       call $cdr
-      local.set $list
+      local.set $names
+      local.get $vals
+      call $cdr
+      local.set $vals
       br $next
     end
   end
+end
+
+func $make -> i32                  ; a two-word object: a tag and one field
+  param i32 $tag
+  param i32 $a
+  local i32 $p
+  i32.const 8
+  call $alloc
+  local.set $p
+  local.get $p
+  local.get $tag
+  i32.store 4 0
+  local.get $p
+  local.get $a
+  i32.store 4 4
+  local.get $p
+  i32.const 1
+  i32.add
+end
+
+func $closure -> i32               ; [4][params][body][env]
+  param i32 $params
+  param i32 $body
+  param i32 $env
+  local i32 $p
+  i32.const 16
+  call $alloc
+  local.set $p
+  local.get $p
+  i32.const 4
+  i32.store 4 0
+  local.get $p
+  local.get $params
+  i32.store 4 4
+  local.get $p
+  local.get $body
+  i32.store 4 8
+  local.get $p
+  local.get $env
+  i32.store 4 12
+  local.get $p
+  i32.const 1
+  i32.add
+end
+
+func $field -> i32                 ; word $n of the object $v
+  param i32 $v
+  param i32 $n
+  local.get $v
+  i32.const 1
+  i32.sub
   local.get $n
+  i32.const 4
+  i32.mul
+  i32.add
+  i32.load 4 0
+end
+
+func $cadr -> i32
+  param i32 $v
+  local.get $v
+  call $cdr
+  call $car
+end
+
+func $caddr -> i32
+  param i32 $v
+  local.get $v
+  call $cdr
+  call $cdr
+  call $car
+end
+
+func $cadddr -> i32
+  param i32 $v
+  local.get $v
+  call $cdr
+  call $cdr
+  call $cdr
+  call $car
+end
+
+func $evlis -> i32                 ; each element of $l evaluated, in order
+  param i32 $l
+  param i32 $env
+  local i32 $head
+  local i32 $tail
+  local i32 $cell
+  i32.const 1
+  local.set $head
+  block $done ->
+    loop $next ->
+      local.get $l
+      call $is_pair
+      i32.eqz
+      br_if $done
+      local.get $l
+      call $car
+      local.get $env
+      call $eval
+      i32.const 1
+      call $cons
+      local.set $cell
+      local.get $head
+      call $is_nil
+      if $first ->
+        local.get $cell
+        local.set $head
+        local.get $cell
+        local.set $tail
+      else
+        local.get $tail
+        local.get $cell
+        call $set_cdr
+        drop
+        local.get $cell
+        local.set $tail
+      end
+      local.get $l
+      call $cdr
+      local.set $l
+      br $next
+    end
+  end
+  local.get $head
+end
+
+; Everything but NIL is true. A language with one false value needs no boolean type, and `=` can
+; answer the fixnum 1 or NIL without anything else having to know.
+func $truthy -> i32
+  param i32 $v
+  local.get $v
+  call $is_nil
+  i32.eqz
+end
+
+func $prim -> i32                  ; $id applied to the already-evaluated $args
+  param i32 $id
+  param i32 $args
+  local i32 $a
+  local i32 $b
+  local.get $args
+  call $car
+  local.set $a
+  local.get $args
+  call $cdr
+  call $car
+  local.set $b
+  block $answer -> i32
+    local.get $id
+    i32.const 0
+    i32.eq
+    if $add ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.add
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 1
+    i32.eq
+    if $sub ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.sub
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 2
+    i32.eq
+    if $mul ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.mul
+      call $fix
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 3
+    i32.eq
+    if $lt ->
+      local.get $a
+      call $unfix
+      local.get $b
+      call $unfix
+      i32.lt_s
+      if $yes -> i32
+        i32.const 1
+        call $fix
+      else
+        i32.const 1
+      end
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 4
+    i32.eq
+    if $eq ->
+      local.get $a
+      local.get $b
+      i32.eq
+      if $same -> i32
+        i32.const 1
+        call $fix
+      else
+        i32.const 1
+      end
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 5
+    i32.eq
+    if $pcar ->
+      local.get $a
+      call $car
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 6
+    i32.eq
+    if $pcdr ->
+      local.get $a
+      call $cdr
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 7
+    i32.eq
+    if $pcons ->
+      local.get $a
+      local.get $b
+      call $cons
+      br $answer
+    else
+      nop
+    end
+    local.get $id
+    i32.const 8
+    i32.eq
+    if $ppair ->
+      local.get $a
+      call $is_pair
+      if $ispair -> i32
+        i32.const 1
+        call $fix
+      else
+        i32.const 1
+      end
+      br $answer
+    else
+      nop
+    end
+    ; An unknown id is a bug in this file rather than in the program being run, so it traps instead
+    ; of answering NIL — a wrong answer here would be blamed on the interpreted program.
+    unreachable
+  end
+end
+
+func $apply -> i32
+  param i32 $f
+  param i32 $args
+  block $answer -> i32
+    local.get $f
+    i32.const 3
+    call $is_obj
+    if $isprim ->
+      local.get $f
+      i32.const 1
+      call $field
+      local.get $args
+      call $prim
+      br $answer
+    else
+      nop
+    end
+    local.get $f
+    i32.const 4
+    call $is_obj
+    if $isclosure ->
+      local.get $f
+      i32.const 2
+      call $field
+      local.get $f
+      i32.const 1
+      call $field
+      local.get $args
+      local.get $f
+      i32.const 3
+      call $field
+      call $bind
+      call $eval
+      br $answer
+    else
+      nop
+    end
+    unreachable
+  end
+end
+
+func $eval -> i32
+  param i32 $x
+  param i32 $env
+  local i32 $op
+  block $answer -> i32
+    local.get $x
+    call $is_fix
+    if $isfix ->
+      local.get $x
+      br $answer
+    else
+      nop
+    end
+    local.get $x
+    call $is_sym
+    if $issym ->
+      local.get $x
+      local.get $env
+      call $lookup
+      br $answer
+    else
+      nop
+    end
+    local.get $x
+    call $is_pair
+    i32.eqz
+    if $atom ->
+      local.get $x
+      br $answer
+    else
+      nop
+    end
+    local.get $x
+    call $car
+    local.set $op
+    local.get $op
+    global.get $s_quote
+    i32.eq
+    if $isquote ->
+      local.get $x
+      call $cadr
+      br $answer
+    else
+      nop
+    end
+    local.get $op
+    global.get $s_if
+    i32.eq
+    if $isif ->
+      local.get $x
+      call $cadr
+      local.get $env
+      call $eval
+      call $truthy
+      if $then -> i32
+        local.get $x
+        call $caddr
+      else
+        local.get $x
+        call $cadddr
+      end
+      local.get $env
+      call $eval
+      br $answer
+    else
+      nop
+    end
+    local.get $op
+    global.get $s_fn
+    i32.eq
+    if $isfn ->
+      local.get $x
+      call $cadr
+      local.get $x
+      call $caddr
+      local.get $env
+      call $closure
+      br $answer
+    else
+      nop
+    end
+    local.get $op
+    global.get $s_def
+    i32.eq
+    if $isdef ->
+      local.get $x
+      call $cadr
+      local.get $x
+      call $caddr
+      local.get $env
+      call $eval
+      call $cons
+      global.get $genv
+      call $cons
+      global.set $genv
+      local.get $x
+      call $cadr
+      br $answer
+    else
+      nop
+    end
+    local.get $op
+    local.get $env
+    call $eval
+    local.get $x
+    call $cdr
+    local.get $env
+    call $evlis
+    call $apply
+  end
+end
+
+; ---------------------------------------------------------------- starting up
+
+func $defprim ->                   ; bind the name at $at to primitive $id in the global environment
+  param i32 $at
+  param i32 $len
+  param i32 $id
+  local.get $at
+  local.get $len
+  call $intern
+  i32.const 3
+  local.get $id
+  call $make
+  call $cons
+  global.get $genv
+  call $cons
+  global.set $genv
+end
+
+; The names, at offsets this file chose, because a data segment has no other way to be referred to.
+data 512 "+"
+data 513 "-"
+data 514 "*"
+data 515 "<"
+data 516 "="
+data 520 "car"
+data 524 "cdr"
+data 528 "cons"
+data 533 "pair?"
+data 540 "quote"
+data 546 "if"
+data 549 "fn"
+data 552 "def"
+
+func $boot ->
+  i32.const 0
+  i32.const 2
+  i32.store 4 0                    ; the nil object, so NIL == 1
+  i32.const 512
+  i32.const 1
+  i32.const 0
+  call $defprim
+  i32.const 513
+  i32.const 1
+  i32.const 1
+  call $defprim
+  i32.const 514
+  i32.const 1
+  i32.const 2
+  call $defprim
+  i32.const 515
+  i32.const 1
+  i32.const 3
+  call $defprim
+  i32.const 516
+  i32.const 1
+  i32.const 4
+  call $defprim
+  i32.const 520
+  i32.const 3
+  i32.const 5
+  call $defprim
+  i32.const 524
+  i32.const 3
+  i32.const 6
+  call $defprim
+  i32.const 528
+  i32.const 4
+  i32.const 7
+  call $defprim
+  i32.const 533
+  i32.const 5
+  i32.const 8
+  call $defprim
+  i32.const 540
+  i32.const 5
+  call $intern
+  global.set $s_quote
+  i32.const 546
+  i32.const 2
+  call $intern
+  global.set $s_if
+  i32.const 549
+  i32.const 2
+  call $intern
+  global.set $s_fn
+  i32.const 552
+  i32.const 3
+  call $intern
+  global.set $s_def
+end
+
+; ---------------------------------------------------------------- what this proves
+;
+; `fact` is recursive, so it needs `def`, `fn`, `if`, two primitives, a closure, and the global
+; fallback in `$lookup` all at once. 6! is 720.
+
+data 1024 "(def fact (fn (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 6)\x00"
+
+; `$run_at` is the entry the tests use: they write a program into the exported memory and say where
+; it is, so a test is a string in a table rather than a rewrite of the data segment below. `$main`
+; is the same thing pointed at that segment, kept so the module answers something on its own.
+func $run_at -> i32
+  param i32 $at
+  local i32 $v
+  local i32 $last
+  local.get $at
+  global.set $pos
+  call $boot
+  i32.const 1
+  local.set $last
+  block $done ->
+    loop $form ->
+      call $read
+      local.tee $v
+      i32.const 3
+      i32.eq
+      br_if $done
+      local.get $v
+      i32.const 1
+      call $eval
+      local.set $last
+      br $form
+    end
+  end
+  local.get $last
+  call $unfix
 end
 
 func $main -> i32
-  ; The nil object, so that address 0 is nil and the value 1 means it.
-  i32.const 0
-  i32.const 2
-  i32.store 4 0
-  call $read
-  call $sum_top
+  i32.const 1024
+  call $run_at
 end
 
 export "main" func $main
+export "run_at" func $run_at
 export "memory" memory
