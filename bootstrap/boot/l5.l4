@@ -259,7 +259,13 @@ i32 lex() {
       }
     }
   }
-  toks[ntok] = Tok(K_EOF, p, 0, 0);
+  // Four of them, not one. Every reader here looks ahead — `aheadIs(3, ...)` is the deepest —
+  // and a slot that was never assigned holds a null reference rather than a zeroed struct, so
+  // reading one traps instead of answering "end of input". The array is sized `srclen + 4` for
+  // exactly this. A refusal on the last token is where it showed: the message wanted to name
+  // the tokens after the one it stopped on, and there were none.
+  i32 pad = 0;
+  while (pad < 4) { toks[ntok + pad] = Tok(K_EOF, p, 0, 0); pad = pad + 1; }
   return 0;
 }
 
@@ -274,7 +280,38 @@ i32 ispunct(i32 v) { return (toks[tp].kind == K_PUNCT) & (toks[tp].val == v); }
 i32 aheadIs(i32 k, i32 v) { return (toks[tp + k].kind == K_PUNCT) & (toks[tp + k].val == v); }
 i32 isword(i32 s) { return (toks[tp].kind == K_NAME) & texteq(toks[tp].start, toks[tp].len, s); }
 i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
-i32 oops() { nl(); line("!! wac-L5: unexpected token"); return 0; }
+// The refusal marker. It names the token it stopped on and the three after it, because
+// "unexpected token" on its own sends you back to the source to guess which one — and the
+// assembler that reads this line reports it verbatim, so the guess is the whole cost.
+// Anything below a space is dropped: the line format is one instruction per line.
+i32 emitsafe(i32 p, i32 n) {
+  i32 i = 0;
+  i32 cap = n;
+  if (cap > 24) { cap = 24; }
+  while (i < cap) {
+    i32 c = load8(src + p + i);
+    if (c >= 32) { emit1(c); }
+    i = i + 1;
+  }
+  return 0;
+}
+
+i32 oops() {
+  nl();
+  emits("!! wac-L5: unexpected token ");
+  emitsafe(tstart(), tlen());
+  i32 k = 1;
+  emits(" before");
+  while (k < 4) {
+    if (toks[tp + k].kind != K_EOF) {
+      sp();
+      emitsafe(toks[tp + k].start, toks[tp + k].len);
+    }
+    k = k + 1;
+  }
+  nl();
+  return 0;
+}
 i32 want(i32 v) { if (eat(v)) { return 0; } return oops(); }
 i32 eatword(i32 s) { if (isword(s)) { next(); return 1; } return 0; }
 
@@ -671,6 +708,7 @@ i32 string_type() {
 i32 usedstr = 0;
 i32 usedcat = 0;
 i32 usedslice = 0;
+i32 usedfromcp = 0;
 i32 usedeq = 0;
 
 i32 prim_type() {
@@ -1259,6 +1297,23 @@ i32 primary() {
   if (isword("match")) { return match_expr(outbuf); }
   // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
   // else that begins an expression does.
+  // `string.fromBytes(b)` and `string.toBytes(s)` are both the identity, because a `string`
+  // here *is* a `u8[]`. `string.fromCodepoint(c)` is not: it is UTF-8, and the answer is one
+  // to four bytes depending on the codepoint.
+  if (isword("string") & aheadIs(1, 46)) {
+    next(); next();
+    i32 sp2 = tstart();
+    i32 sn2 = tlen();
+    next();
+    want(40);
+    expr();
+    want(41);
+    if (texteq(sp2, sn2, "fromCodepoint")) {
+      usedfromcp = 1;
+      line("call $__fromcp");
+    }
+    return postfix(string_type());
+  }
   i32 pt = prim_type();
   // `f64.fromBits(x)` — a static on a builtin type, which the construction path would read as a
   // missing `(` and refuse. The bits stay and only what reads them differs.
@@ -2577,6 +2632,47 @@ i32 collect() {
 // The two functions a string needs, emitted as text because they are the same every time. A literal
 // lives in linear memory as a length and its bytes — which is how every rung below writes one — and
 // this is what lifts it into a GC array.
+
+// One length's worth of `$__fromcp`. A continuation byte is `0x80 | six bits`, and the lead
+// byte's marker differs only in how many ones it starts with, so both come from arithmetic
+// rather than being written out four times.
+i32 fromcp_store(i32 at2, i32 idx, i32 shift, i32 mask, i32 orwith) {
+  line("local.get $r");
+  word("i32.const"); emitn(idx); nl();
+  line("local.get $c");
+  if (shift > 0) { word("i32.const"); emitn(shift); nl(); line("i32.shr_u"); }
+  word("i32.const"); emitn(mask); nl();
+  line("i32.and");
+  if (orwith > 0) { word("i32.const"); emitn(orwith); nl(); line("i32.or"); }
+  word("array.set"); tyname(at2); nl();
+  return 0;
+}
+
+i32 fromcp_case(i32 at2, i32 n) {
+  line("local.get $n");
+  word("i32.const"); emitn(n); nl();
+  line("i32.eq");
+  word("if"); emits("$uc"); emitn(n); sp(); line("->");
+  if (n == 1) { fromcp_store(at2, 0, 0, 127, 0); }
+  if (n == 2) {
+    fromcp_store(at2, 0, 6, 31, 192);
+    fromcp_store(at2, 1, 0, 63, 128);
+  }
+  if (n == 3) {
+    fromcp_store(at2, 0, 12, 15, 224);
+    fromcp_store(at2, 1, 6, 63, 128);
+    fromcp_store(at2, 2, 0, 63, 128);
+  }
+  if (n == 4) {
+    fromcp_store(at2, 0, 18, 7, 240);
+    fromcp_store(at2, 1, 12, 63, 128);
+    fromcp_store(at2, 2, 6, 63, 128);
+    fromcp_store(at2, 3, 0, 63, 128);
+  }
+  line("end");
+  return 0;
+}
+
 i32 emit_runtime() {
   i32 at2 = string_type();
   if (usedstr) {
@@ -2659,6 +2755,49 @@ i32 emit_runtime() {
     line("end");
     line("end");
     line("i32.const 1");
+    line("end");
+    nl();
+  }
+  if (usedfromcp) {
+    // UTF-8, written out rather than looped: the four cases differ in how many bytes they set
+    // and where the codepoint's bits land in each, so a loop would need the same four cases to
+    // decide the shift. `$n` is chosen by three comparisons before anything is allocated,
+    // because the array has to be the right size when it is made.
+    word("func"); line("$__fromcp -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    line("param i32 $c");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$r");
+    line("local i32 $n");
+    line("i32.const 1");
+    line("local.set $n");
+    line("local.get $c");
+    line("i32.const 128");
+    line("i32.ge_u");
+    line("if $u1 ->");
+    line("i32.const 2");
+    line("local.set $n");
+    line("end");
+    line("local.get $c");
+    line("i32.const 2048");
+    line("i32.ge_u");
+    line("if $u2 ->");
+    line("i32.const 3");
+    line("local.set $n");
+    line("end");
+    line("local.get $c");
+    line("i32.const 65536");
+    line("i32.ge_u");
+    line("if $u3 ->");
+    line("i32.const 4");
+    line("local.set $n");
+    line("end");
+    line("local.get $n");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $r");
+    fromcp_case(at2, 1);
+    fromcp_case(at2, 2);
+    fromcp_case(at2, 3);
+    fromcp_case(at2, 4);
+    line("local.get $r");
     line("end");
     nl();
   }
@@ -2884,6 +3023,7 @@ i32 compile(i32 s, i32 out) {
   usedstr = 0;
   usedcat = 0;
   usedslice = 0;
+  usedfromcp = 0;
   usedeq = 0;
   tmpls = Tmpl[4096]();
   tparams = TParam[8192]();
