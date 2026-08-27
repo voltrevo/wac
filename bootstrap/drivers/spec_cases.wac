@@ -1,0 +1,48 @@
+// **The compiler wac-L5 built, with a way to feed it.**
+//
+// `drivers/emit_and_run.wac` embeds one program as a string literal, which is enough to prove the
+// ladder closes and no use at all for asking the same question 254 times: every source would mean
+// another whole rebuild. So this one takes the source in a byte at a time.
+//
+// A byte at a time in both directions, because a wasm GC array cannot cross into JavaScript and a
+// wac program has no way to reach linear memory. Everything on this boundary is an i32, which is
+// the whole of what wasm hands back without a binding layer — and the binding layer is what wacc
+// itself emits, three rungs above anything here.
+
+u8[] inbuf;
+u8[] built;
+u8[] declined;
+
+export i32 alloc(i32 n) {
+  inbuf = u8[n]();
+  return n;
+}
+
+export i32 setByte(i32 i, i32 b) {
+  inbuf[i] = b;
+  return 0;
+}
+
+/** Compile what was fed in. Answers the length of the module, or 0 if nothing was emitted. */
+export i32 build() {
+  built = emit(inbuf);
+  return built.len();
+}
+
+export i32 byteAt(i32 i) {
+  return built[i];
+}
+
+/** Why the module was not emitted in full, as text — `""` when nothing stopped it. */
+export i32 decline() {
+  declined = blocked(inbuf).toBytes();
+  return declined.len();
+}
+
+export i32 declineByte(i32 i) {
+  return declined[i];
+}
+
+i32 main() {
+  return 0;
+}

@@ -683,6 +683,27 @@ i32 convert(i32 t, i32 rt) {
 
 // The zero of a type. `none` and `nofunc` are two different bottoms — wasm's reference types are two
 // hierarchies that never meet — so a funcref's null is not the one everything else uses.
+// **Does this type have a default value?** wac says a sized array with no `fill:` needs one, and
+// what counts is narrow on purpose here: a number, a string, or a struct whose fields are all of
+// those. A struct holding another struct is left out rather than chased, because a struct that
+// holds itself has no default at all and telling the two apart needs the nullability this rung
+// throws away — `Node` and `Node?` are one type here.
+i32 has_default(i32 t) {
+  if (ty_isnum(t)) { return 1; }
+  if (t == strty & strty != 0 - 1) { return 1; }
+  if (types[t].kind == T_STRUCT) {
+    i32 i = 0;
+    i32 all = 1;
+    while (i < types[t].nfields) {
+      i32 ft = fields[types[t].fstart + i].ty;
+      if (ty_isnum(ft) == 0 & (ft != strty | strty == 0 - 1)) { all = 0; }
+      i = i + 1;
+    }
+    return all;
+  }
+  return 0;
+}
+
 i32 zero_of(i32 t) {
   if (t == TY_VOID) { return 0; }
   if (ty_narrowfloat(t)) { word("f32.const"); emitn(0); return nl(); }
@@ -690,6 +711,22 @@ i32 zero_of(i32 t) {
   if (ty_isnum(t)) {
     if (ty_wide(t)) { word("i64.const"); emitn(0); return nl(); }
     return konst(0);
+  }
+  // **A string's default is the empty string, not null.** `out[i] != ""` on a freshly sized
+  // `string[]` is how wacc asks whether a slot has been filled, and against a null it traps
+  // inside the comparison rather than answering.
+  if (t == strty & strty != 0 - 1) {
+    word("array.new_fixed"); tyname(t); line(" 0");
+    return 0;
+  }
+  if (types[t].kind == T_STRUCT & has_default(t)) {
+    i32 i = 0;
+    while (i < types[t].nfields) {
+      zero_of(fields[types[t].fstart + i].ty);
+      i = i + 1;
+    }
+    word("struct.new"); tyname(t); nl();
+    return 0;
   }
   if (types[t].kind == T_FUNC) { return line("ref.null nofunc"); }
   return line("ref.null none");
@@ -1143,8 +1180,12 @@ i32 args(i32 src, i32 base, i32 np) {
 // `Point(a, b)`, and `T[n]()` / `T[](a, b)` for an array. wac writes a construction as a call, so
 // one token of lookahead past the name is what tells them apart.
 i32 construct(i32 t) {
-  // `Expr?[4]()` — the element is nullable, which is a spelling rather than a different type here.
-  if (ispunct(63)) { next(); }
+  // `Expr?[4]()` — the element is nullable. That is a spelling rather than a different type
+  // everywhere else on this rung, and here it is the whole answer: a nullable element's default
+  // *is* null, and a non-nullable one's is a fresh value. So the `?` is remembered exactly this
+  // far and thrown away again immediately after.
+  i32 elemNullable = 0;
+  if (ispunct(63)) { next(); elemNullable = 1; }
   if (ispunct(91)) {
     // `Param[][1024]()` — a thousand arrays of Param, so every `[...]` but the last names the
     // element type of the one after it and only the last takes the arguments. A size on any
@@ -1174,7 +1215,44 @@ i32 construct(i32 t) {
       while (k < nf) { line("drop"); k = k + 1; }
       word("local.get"); slotname(hsize); nl();
       if (nf == 0) {
-        word("array.new_default"); tyname(at); nl();
+        i32 et2 = types[at].elem;
+        if (ty_isnum(et2) | elemNullable | has_default(et2) == 0) {
+          // A number zeroes, and a type with no default is a nullable reference, whose default
+          // *is* null — which is what array.new_default gives.
+          word("array.new_default"); tyname(at); nl();
+        } else {
+          // **Every element a distinct default.** `Point[10]()` is ten Points, not ten names for
+          // one, and writing through one must never show up in another — so this is a loop and
+          // not `array.new`, which would fill the array with a single reference. A string is the
+          // exception: it has no fields to write through, so one shared empty one would do, and
+          // it goes round the same loop because saying so twice is worse than the loop.
+          i32 held = slot_new(at);
+          i32 idx = slot_new(TY_I32);
+          word("array.new_default"); tyname(at); nl();
+          word("local.set"); slotname(held); nl();
+          konst(0);
+          word("local.set"); slotname(idx); nl();
+          i32 dl = newlabel();
+          i32 bl = newlabel();
+          word("block"); label(dl); sp(); line("->");
+          word("loop"); label(bl); sp(); line("->");
+          word("local.get"); slotname(idx); nl();
+          word("local.get"); slotname(hsize); nl();
+          line("i32.ge_s");
+          word("br_if"); label(dl); nl();
+          word("local.get"); slotname(held); nl();
+          word("local.get"); slotname(idx); nl();
+          zero_of(et2);
+          word("array.set"); tyname(at); nl();
+          word("local.get"); slotname(idx); nl();
+          konst(1);
+          line("i32.add");
+          word("local.set"); slotname(idx); nl();
+          word("br"); label(bl); nl();
+          line("end");
+          line("end");
+          word("local.get"); slotname(held); nl();
+        }
       } else {
         word("array.new"); tyname(at); nl();
       }
