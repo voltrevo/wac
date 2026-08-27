@@ -479,6 +479,16 @@ const programs: [string, string, number][] = [
   ["string.fromBytes, which is the identity too", `
     i32 main() { return string.fromBytes("hey".toBytes()).len(); }`, 3],
 
+  // **A multi-way choice is a chain of ternaries in the else position**, and each one holds its
+  // first arm in scratch while it reads its second — so the chain nests two levels per arm. Four
+  // of them used to reach the end of the compiler's memory and trap with nothing to say.
+  ["a chain of eight ternaries", `
+    i32 pick(i32 n) {
+      return n == 0 ? 0 : n == 1 ? 11 : n == 2 ? 22 : n == 3 ? 33
+           : n == 4 ? 44 : n == 5 ? 55 : n == 6 ? 66 : n == 7 ? 77 : 99;
+    }
+    i32 main() { return pick(7) * 100 + pick(2) + pick(9); }`, 7821],
+
   ["a generic free function, declared and not called", `
     enum Option<T> { Some(T v), None }
     Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }

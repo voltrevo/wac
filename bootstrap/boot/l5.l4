@@ -50,7 +50,8 @@ i32 realout = 0;
 i32 emit_room() {
   if (dst == realout) { return 12000000; }
   if (dst == TYPEBUF) { return 3000000; }
-  return 1000000;
+  if (dst == BODY) { return 1000000; }
+  return 120000;
 }
 
 i32 emit1(i32 b) {
@@ -2714,13 +2715,28 @@ i32 BODY = 25165824;
 // the arms know it. Emit them here, learn the type, then write the header in front — the same trick
 // a function body already needed for its locals, one level down and nestable.
 i32 SCR = 26214400;
+// **A level per open block, and a ternary opens two** — it holds its first arm while reading its
+// second, because the block's result type is one of theirs. So `a ? x : b ? y : c ? z : w`, which
+// is how a multi-way choice is written, nests two levels per arm and reached the end of memory at
+// four of them. A level was a megabyte and there was room for three; an arm is one expression, so
+// 128 KiB is generous and there is room for twenty-four.
+i32 SCRLEVEL = 131072;
+i32 SCRLEVELS = 24;
 i32 scrdepth = 0;
 i32 scrsaved = 0;
 
 i32 scratch_begin() {
   scrsaved = dp;
   scrdepth = scrdepth + 1;
-  dst = SCR + (scrdepth - 1) * 1048576;
+  // Past the last level, say so and stop rather than writing into whatever is next. `overflowed`
+  // truncates the output and the marker at the end names the cause; running off the end of memory
+  // names nothing at all.
+  if (scrdepth > SCRLEVELS) {
+    overflowed = 1;
+    tp = ntok;
+    scrdepth = SCRLEVELS;
+  }
+  dst = SCR + (scrdepth - 1) * SCRLEVEL;
   dp = 0;
   return scrsaved;
 }
@@ -2729,14 +2745,14 @@ i32 scratch_begin() {
 i32 scratch_end(i32 out, i32 saved) {
   i32 n = dp;
   scrdepth = scrdepth - 1;
-  if (scrdepth > 0) { dst = SCR + (scrdepth - 1) * 1048576; } else { dst = out; }
+  if (scrdepth > 0) { dst = SCR + (scrdepth - 1) * SCRLEVEL; } else { dst = out; }
   dp = saved;
   return n;
 }
 
 i32 scratch_copy_range(i32 level, i32 from, i32 n) {
   i32 k = 0;
-  while (k < n) { emit1(load8(SCR + level * 1048576 + from + k)); k = k + 1; }
+  while (k < n) { emit1(load8(SCR + level * SCRLEVEL + from + k)); k = k + 1; }
   return 0;
 }
 
