@@ -618,6 +618,8 @@ i32 cur_inst_ty = -1;
 // wac reads the second `Box` as `Box<i32>` from the declaration it is initialising. Without this a
 // bare template name has nothing to instantiate it with.
 i32 expect_ty = -1;
+// The enclosing function's return type, so `return Option.None;` knows which `Option` it means.
+i32 cur_ret = -1;
 // When set, a declaration fills this type index instead of looking one up by name.
 i32 forced_ty = -1;
 
@@ -683,6 +685,20 @@ i32 var_find(i32 p, i32 n) {
 }
 
 i32 var_tag(i32 v) { return v - types[vars[v].owner].fstart; }
+
+// A variant of *this* type, by name — which is what a qualified `Option.Some` asks for, and what
+// two enums sharing a variant name would otherwise get wrong.
+i32 var_owned(i32 owner, i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nvar) {
+    if (vars[i].owner == owner & vars[i].namelen == n & samebytes(p, n, vars[i].nameptr)) {
+      found = i;
+    }
+    i = i + 1;
+  }
+  return found;
+}
 
 i32 meth_find(i32 owner, i32 p, i32 n) {
   i32 i = 0;
@@ -869,8 +885,31 @@ i32 primary() {
     if (st != 0 - 1 & (ispunct(40) | ispunct(91))) { return postfix(construct(st)); }
     i32 tmc = tmpl_find(p, n);
     if (tmc != 0 - 1) {
+      // `Option.Some(v)` — the enum names the variant. Which *instantiation* comes from the slot,
+      // which for a `return` is the function's declared return type.
+      if (ispunct(46)) {
+        i32 owner = expect_ty;
+        if (owner == 0 - 1) { owner = cur_inst_ty; }
+        next();
+        i32 vp2 = tstart();
+        i32 vn2 = tlen();
+        next();
+        i32 qv = var_owned(owner, vp2, vn2);
+        if (qv == 0 - 1) { oops(); return 0; }
+        return postfix(construct_variant(qv));
+      }
       i32 ity = instantiate(tmc);
       return postfix(construct(ity));
+    }
+    // The same for a non-generic enum, whose name is an ordinary type.
+    if (st != 0 - 1 & ispunct(46)) {
+      next();
+      i32 vp3 = tstart();
+      i32 vn3 = tlen();
+      next();
+      i32 qv2 = var_owned(st, vp3, vn3);
+      if (qv2 == 0 - 1) { oops(); return 0; }
+      return postfix(construct_variant(qv2));
     }
     i32 vi = var_find(p, n);
     if (vi != 0 - 1) { return postfix(construct_variant(vi)); }
@@ -906,7 +945,10 @@ i32 cast() {
   i32 t = primary();
   while (isword("as")) {
     next();
+    // `as!` is checked and `as@` reinterprets; both emit the same conversion here, and only `as!`
+    // is a gap — it should trap on overflow and does not.
     eat(33);
+    eat(64);
     i32 to = parse_type();
     if (ty_isnum(t) & ty_isnum(to)) {
       if (ty_wide(to) & ty_wide(t) == 0) {
@@ -1455,7 +1497,10 @@ i32 assign_or_expr_nosemi() {
 i32 statement() {
   if (isword("return")) {
     next();
+    i32 savedE = expect_ty;
+    expect_ty = cur_ret;
     if (ispunct(59)) { konst(0); } else { expr(); }
+    expect_ty = savedE;
     want(59);
     line("return");
     return 0;
@@ -1529,6 +1574,8 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   }
   want(41);
   i32 nparams = nslot;
+  i32 savedRet = cur_ret;
+  cur_ret = ret;
 
   i32 outp = dp;
   i32 savedout = outbuf;
@@ -1627,8 +1674,17 @@ i32 record_template(i32 kind) {
     if (ispunct(44)) { next(); }
   }
   eat_gt();
-  tmpls[ntmpl] = Tmpl(p, n, kind, at, pstart, np);
-  ntmpl = ntmpl + 1;
+  // **Recorded once.** Both passes walk the declarations, and a template added twice gets two
+  // indices — after which `inst_find` matches on the wrong one and a program ends up with two
+  // `Option<i32>` types, one returned and the other expected, which the engine reports as a
+  // mismatch between two structs that look identical. The parameters just read are dropped again,
+  // because the first recording already has them.
+  if (tmpl_find(p, n) != 0 - 1) {
+    ntparam = pstart;
+  } else {
+    tmpls[ntmpl] = Tmpl(p, n, kind, at, pstart, np);
+    ntmpl = ntmpl + 1;
+  }
   // Skip the body: it is read again, once per instantiation.
   while (ispunct(123) == 0) { next(); }
   i32 depth = 1;
@@ -2040,6 +2096,8 @@ i32 compile(i32 s, i32 out) {
   nsub = 0;
   cur_inst_ty = 0 - 1;
   forced_ty = 0 - 1;
+  expect_ty = 0 - 1;
+  cur_ret = 0 - 1;
 
   lex();
   collect();
