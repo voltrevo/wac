@@ -4319,6 +4319,18 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   //
   // Going per-file means inverting the loops — files *inside* each pass — so the phase has to be
   // decomposed into its passes first. That is the next step.
+  // **The first walk to go per file.** `scanTokenTypes` depends on no ordering — the answer is the
+  // union over every file — so it is the one piece that can move before the passes are decomposed.
+  // It also proves the plumbing end to end: `srcs[i]`/`lexeds[i]` are the file's own arrays, and the
+  // module comes out byte-identical.
+  if (fileCountOf(progs) > 0) {
+    for (i32 i = 0; i < progs.len(); i++) {
+      if (progs[i] is null) { continue; }
+      scanTokenTypes(env, srcs[i], lexeds[i]!);
+    }
+  } else {
+    scanTokenTypes(env, src, lexed);
+  }
   collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
@@ -12194,9 +12206,14 @@ i32 fileFor(Env env, Lexed lexed, i32 tok, i32 file) {
  * `lexed`, `tokenLine` answers the file's own line, and `fileOf` would map line 5 of the third file
  * onto whatever file line 5 of the *blob* fell in.
  */
-void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
-  // Kept, so a call to a generic function can read the declaration it names from wherever it is seen.
-  env.prog = prog;
+/**
+ * The types a *token* implies, which no declaration mentions.
+ *
+ * Split out of `collectDeclarations` on 2026-08-27 as the first piece to go per-file: it depends on
+ * no ordering — the answer is the union over every file, in any sequence — which the passes below it
+ * emphatically do not. See the note at the call site.
+ */
+void scanTokenTypes(Env env, u8[] src, Lexed lexed) {
   // **A string literal names the `i8[]` type**, and nothing else in the file need mention it: a bare
   // `"hello".len()` declares no `string` anywhere. Scanning the tokens is complete by construction,
   // where walking declarations for it would be one more place to forget — which this pre-pass has
@@ -12217,6 +12234,11 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
       break;
     }
   }
+}
+
+void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
+  // Kept, so a call to a generic function can read the declaration it names from wherever it is
+  env.prog = prog;
   // Structs first of all: their fields are what a construction and every access are about, and a
   // method's receiver type is one of them.
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -12460,6 +12482,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
       else: { }
     }
   }
+  collectInstances(env, src, lexed, prog);
   collectInstances(env, src, lexed, prog);
 }
 
@@ -12802,6 +12825,7 @@ string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
     env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
+  scanTokenTypes(env, src, lexed);
   collectDeclarations(env, src, lexed, prog, -1);
   assignGlobals(env, src, lexed);
   // **The lambda walk, because `settleEmittable` asks about lambdas** — `issues/lang/0139`.
