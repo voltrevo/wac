@@ -281,12 +281,26 @@ function instance `zero<i32>`, and a generic struct's method `Box<i32>.map` — 
 *declined*, because `funcMethodGeneric` is set for it. The fourth is `Box<i32>.map<i64>`, with
 `funcRecv = Box<i32>` exactly as the third has.
 
-**Register and emit in separate passes, after the struct-instance passes, rather than woven into
-them.** Registration order and emission order have to agree — the function table's order is the
-module's numbering, and the comment at the head of the emission loop records that the last attempt at
-getting it wrong "compiled the corpus into fifty-seven invalid modules". A pass of its own placed
-after the instance pass in *both* keeps the two aligned by construction, and is a much smaller edit
-than a branch inside each of the three loops that walk instances.
+**Register in place of the declined entry, in the loop that already registers instance methods.**
+This is a correction of a first guess — a separate pass afterwards — made after reading the emission
+loops rather than only the registration one, and the reading changes the estimate.
+
+The relevant fact is that the entry already exists. `collectInstances` registers *every* method of
+every instance, including one with its own type parameters, and then declines it (`funcMethodGeneric`
+is what carries that). Emission walks the same methods in the same order against a cursor, `emitAt`,
+skipping entries whose `funcIndex` is negative. So the slot is there and empty.
+
+What changes is the *count*: one method becomes one entry per discovered set of method type
+arguments. Registration and emission must therefore enumerate the same (method, argument-set) pairs
+in the same order, which they will if both read one discovery list in list order.
+
+**Four loops, not three**, and this is the part a plan made from the registration side alone gets
+wrong. Instances are walked to count functions, to declare their types, to emit their bodies, and to
+register their members — each with its own `for (i32 m = 0; m < methods.len(); m++)` over the same
+methods. All four need the same pairing, and a miss in any one of them slides `emitAt` against
+`funcIndex` for every function after it. That is the fifty-seven-invalid-modules failure, and it does
+not show up on a small test: a hand-written case with no strings has no helpers, so nothing sits
+after the slid entries to notice.
 
 **`popSubstitution` clears where it would need to restore.** Emitting the body wants two pushes — the
 owner's letters from `Box<i32>`, then the method's from `<i64>` — and `pushSubstitution` already
@@ -294,6 +308,10 @@ returns how many pairs it pushed, so the stack part nests correctly. What does n
 `curGeneric`: `popSubstitution` sets both to `""` rather than to what they were, so an inner pop
 silently drops the outer instance. A save-and-restore variant is the fix, and `Env.lambdaInst` is the
 thing that would notice if it were missed, since it keys a lambda by the instantiation it is inside.
+
+**Discovery has a round to happen in.** `collectInstances` walks every body with `canEmit` before it
+registers anything, and iterates to a fixed point on `instDirty` — so a list built during that walk is
+complete before the registration loop reads it, which is what makes the pairing deterministic.
 
 **Discovery is at the call site**, like `genericCallInstance`, and wants the owner instance and the
 written arguments — which `ExprKind.Call`'s `typeArgs` now carries (`design/lang/0011` step 3). The
