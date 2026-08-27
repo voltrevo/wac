@@ -36,10 +36,14 @@ import { EXAMPLES } from "../src/editor/examples.ts";
 import { buildWaccAsset } from "./syncWacc.ts";
 import { compileWithWacc, type WaccModule } from "../src/editor/wacc-compile.ts";
 
-// **The compiler the page uses, which is wacc for a `.wac` entry.** This test exists to catch an
-// example that has stopped compiling, and asking a different compiler than the page asks would catch
-// the wrong thing — an example using JSX would fail here and work in the playground, or the reverse.
-// `.wapy` stays with the reference because that is the only implementation of it (`design/lang/0003`).
+// **The compiler the page uses, which is wacc.** This test exists to catch an example that has
+// stopped compiling, and asking a different compiler than the page asks would catch the wrong thing
+// — an example using JSX would fail here and work in the playground, or the reverse.
+//
+// **`.wapy` included, since 2026-08-27.** It used to stay with the reference because that was the
+// only implementation of it; `packages/wacc/src/frontend.wac` reads it now and a wapy file compiles
+// to the module its wac twin does (`issues/lang/0279a`). Which means this test, and the page, ask
+// one compiler about every example rather than two about some.
 const dir = await Deno.makeTempDir({ prefix: "wac-sitetest-" });
 await Deno.writeTextFile(`${dir}/wacc-api.js`, await buildWaccAsset());
 const wacc = await import(`${dir}/wacc-api.js`) as unknown as WaccModule;
@@ -51,11 +55,14 @@ const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
-  if (entry.endsWith(".wac") && !/from\s+"[^"]*\.wapy"/.test(files[entry] ?? "")) {
-    // Only the `.wac` files: `diagnoseFiles` lexes everything it is handed, and a wapy file in the
-    // same example set is not wac. The page does the same filtering, for the same reason.
+  if (entry.endsWith(".wac") || entry.endsWith(".wapy")) {
+    // Both surfaces, and nothing else: `diagnoseFiles` lexes everything it is handed rather than only
+    // what the entry imports, so a file that is neither would be read as one. The page filters the
+    // same way, for the same reason.
     const only: Record<string, string> = {};
-    for (const [k, v] of Object.entries(files)) if (k.endsWith(".wac")) only[k] = v;
+    for (const [k, v] of Object.entries(files)) {
+      if (k.endsWith(".wac") || k.endsWith(".wapy")) only[k] = v;
+    }
     const r = compileWithWacc(wacc, only, entry);
     return r.ok
       ? { ok: true as const, compiled: r.compiled, diagnostics: [] }

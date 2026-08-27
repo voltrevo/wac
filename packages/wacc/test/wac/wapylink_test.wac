@@ -162,6 +162,38 @@ export string test_a_wapy_entry_exports_what_its_wac_twin_does(Core core) {
   return t.report();
 }
 
+/**
+ * The **checker** reads a wapy file too, against the bytes its tokens actually index.
+ *
+ * wapy's parse hands back a rewritten token array whose synthetic tokens — the `i32`, `<`, `++` and
+ * `+=` of a `range` loop, which the reader wrote none of — point past the file's last byte into
+ * `wapyparse.wac`'s `synthTail`. The checker takes its tokens from the parse cache and its bytes
+ * from the sources array, so leaving the original text there pairs one file's tokens with another
+ * file's bytes and `tokenText` reads off the end.
+ *
+ * It is a **trap in `declareStmt`**, four frames from anything that mentions wapy, and it does not
+ * fire on the small cases above: it needs a counted loop, which is the only thing that synthesises
+ * a token with nowhere to point. The playground's `vec2.wapy` has one, which is how it was found —
+ * every example compiled and the page could not check any of them.
+ */
+export string test_the_checker_reads_a_wapy_counted_loop(Core core) {
+  T t = T.create();
+  string wapy = "@export\n"
+              + "def total(n: i32) -> i32:\n"
+              + "    acc: i32 = 0\n"
+              + "    for i in range(0, n):\n"
+              + "        acc = acc + i\n"
+              + "    return acc\n";
+  string[] p = string[]("g/loop.wapy");
+  string[] s = string[](wapy);
+  t.eqStr(diagnoseGraph(p, s, "g/loop.wapy"), "", "a correct wapy counted loop has no diagnostics");
+  // And the same program with a real mistake in it still reports one, so the line above is not
+  // passing because the checker declined to look.
+  string[] bad = string[](replace(wapy, "acc = acc + i", "acc = acc + missing"));
+  t.isTrue(diagnoseGraph(p, bad, "g/loop.wapy") != "", "an unknown name in one is still reported");
+  return t.report();
+}
+
 /** `s` with the first `from` replaced by `to`. */
 string replace(string s, string from, string to) {
   i32 at = s.indexOf(from);

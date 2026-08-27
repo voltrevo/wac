@@ -50,32 +50,37 @@ export function waccLoaded(): boolean {
 /**
  * Whether wacc can compile this program at all.
  *
- * **wapy is a second surface**, `.wapy`, indentation where wac has braces — `compiler/wacFrontend.ts`
- * dispatches on the extension and `wapyParse` reads it. wacc has no wapy front end, so a `.wapy`
- * entry goes to the reference: not because the reference is the fallback, but because it is the only
- * implementation of that language. The playground ships two wapy examples, and swapping everything
- * to wacc turned them into `unexpected character` — which is what driving the built page in a
- * browser is for. `issues/lang/0105`.
+ * **wapy used to be the exception and is not any more.** `.wapy` is a second surface — indentation
+ * where wac has braces — and until 2026-08-27 wacc had no reader for it, so a wapy entry, or a wac
+ * entry importing one, went to the reference: not because the reference was the fallback but because
+ * it was the only implementation of that language. The playground ships two wapy examples and
+ * swapping everything to wacc turned them into `unexpected character`, which is what driving the
+ * built page in a browser is for (`issues/lang/0105`).
+ *
+ * `packages/wacc/src/frontend.wac` dispatches on the extension now, and a wapy file compiles to the
+ * same module its wac twin does — `issues/lang/0279a`, and
+ * `packages/wacc/test/wac/wapylink_test.wac` is the byte comparison. So there is nothing left for
+ * this to exclude.
  */
 function waccCanCompile(files: FileMap, fileName: string): boolean {
-  if (!fileName.endsWith(".wac")) return false;
-  // A `.wac` file may import a `.wapy` one — `wacFrontend.ts` calls that unremarkable — and wacc
-  // would lex it as wac. Reading the entry's own imports is enough: a wapy file deeper in the graph
-  // is reached through one of them.
-  return !/from\s+"[^"]*\.wapy"/.test(files[fileName] ?? "");
+  return fileName.endsWith(".wac") || fileName.endsWith(".wapy");
 }
 
 /**
- * The files wacc is handed: the `.wac` ones.
+ * The files wacc is handed: the ones it has a frontend for.
  *
- * `diagnoseFiles` lexes **every** file it is given, not only the ones the entry imports — so an
- * unrelated wapy example sitting in the workspace made a perfectly good wac program report
- * `unexpected character` at somebody else's line 1. Found by driving the built page, where the
- * playground's default set has two.
+ * **Both surfaces, since 2026-08-27.** This used to drop `.wapy`, because `diagnoseFiles` lexes
+ * *every* file it is given rather than only the ones the entry imports — so an unrelated wapy
+ * example sitting in the workspace made a perfectly good wac program report `unexpected character`
+ * at somebody else's line 1. Found by driving the built page, where the playground's default set has
+ * two. wacc reads them now, so dropping them would hide the examples from the compiler that is
+ * supposed to build them.
  */
 function waccFiles(files: FileMap): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(files)) if (k.endsWith(".wac")) out[k] = v;
+  for (const [k, v] of Object.entries(files)) {
+    if (k.endsWith(".wac") || k.endsWith(".wapy")) out[k] = v;
+  }
   return out;
 }
 

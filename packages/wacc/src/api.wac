@@ -1159,6 +1159,14 @@ i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[
     Frontend cfe = frontendOf(i < paths.len() ? paths[i] : "",
                               (i < sources.len() ? sources[i] : "").toBytes());
     u8[] csrc = cfe.src;
+    // **And the source goes back, because the tokens index *it*.** wapy's parse hands back a
+    // rewritten array whose synthetic tokens point past the file's last byte, into
+    // `wapyparse.wac`'s `synthTail`. The checker takes its bytes from `sources[i]` and its tokens
+    // from this cache, so leaving the original here pairs one file's tokens with another file's
+    // bytes and `tokenText` reads off the end — which is a trap in `declareStmt`, four frames from
+    // anything that mentions wapy. The tail is behind a `#` so re-reading what we wrote is a
+    // comment rather than a line of code.
+    if (i < sources.len()) { sources[i] = string.fromBytes(csrc); }
     Lexed clexed = cfe.lexed;
     Program cprog = cfe.prog;
     counts[i] = declarationsIn(csrc, clexed, cprog);
