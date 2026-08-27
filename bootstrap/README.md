@@ -217,6 +217,6 @@ type error is refused before the program runs, by the engine or by the compiler'
 marker. What wac-L5 does check is what wasm cannot see — that a name resolves, that a method
 exists, that a `case` names a variant.
 
-`NOTES.md` has the numbers and the bugs, and the bugs are the more useful half: six of them were
+`PLAN.md` has what happens next and why; `NOTES.md` has the numbers and the bugs, and the bugs are the more useful half: six of them were
 found only by *running* what the built compiler produced, which is the difference between a module
 that validates and a compiler that works.
