@@ -1,0 +1,28 @@
+// expect: answers f = 9
+// only: wacc
+// spec:  §wacc-method-type-args
+// why: `design/lang/0010`'s criterion 5, and the operator's constraint on the whole design: three
+//      links, each an **inline lambda**, each changing the type. Every intermediate — `Cell<i64>`,
+//      `Cell<bool>` — is named by nothing in the program and exists only because a method instance
+//      returns it, so this is the case where discovery has to find an instantiation *through* another
+//      one it has just made.
+//
+//      It is also the case that took three fixes to reach. The last was ordering: a method
+//      instantiation is registered at its position in the instance list, not appended in a pass of
+//      its own, because the count, the type pre-pass and the emission all walk that list and step a
+//      cursor through the function table as they go. Appending per round interleaved them with the
+//      struct instances discovered later, and every cursor after that pointed at somebody else's
+//      entry. `issues/lang/0274b`.
+// from: design/lang/0010
+struct Cell<T> {
+  T v;
+  Cell<U> then<U>(const this, fn[U(T)] f) { return Cell<U>(f(this.v)); }
+  T get(const this) { return this.v; }
+}
+export i32 f() {
+  Cell<i32> c = Cell<i32>(2);
+  Cell<string> s = c.then<i64>((i32 x) => (x * 3) as i64)
+                    .then<bool>((i64 y) => y > 5)
+                    .then<string>((bool b) => b ? "yes" : "no");
+  return s.get() == "yes" ? 9 : 4;
+}

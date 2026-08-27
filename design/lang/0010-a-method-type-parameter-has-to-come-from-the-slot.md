@@ -263,7 +263,7 @@ the module's numbering.
 | 2 | `v.fold(0, (i32 acc, i32 x) => acc + x)` with no written argument | **no** — nothing infers a method's own letters. A separate feature from item 3, and the one that would make C invisible at most call sites |
 | 3 | `v.fold<i64>(0, …)` with one | **yes** — `spec/cases/0245`, answers 12, with an **inline lambda** |
 | 4 | `p.then<Foo>(…)` | **not tried** — `Pending<U> then<U>(…)` still does not exist. The compiler can now carry it; whether `Pending` should grow it is a capability-surface decision, and it wants criterion 5 first since chaining is the reason to |
-| 5 | a three-link chain | **no** — `issues/lang/0274b`. A single link compiles and runs; chaining is declined, and it has **two** causes, the first hiding the second |
+| 5 | a three-link chain | **yes** — `spec/cases/0248`, answers 9, three inline lambdas each changing the type. `issues/lang/0274b` closed |
 | 6 | distinct instantiations for `Vec<i32>.fold<i32>` and `Vec<i32>.fold<i64>` | **yes** — `spec/cases/0246`, measured in emitted bytes: 3,287 against 2,897 for the one-instantiation program |
 
 **Item 3 landed on 2026-08-27** and took six layers, each failing differently — recorded because the

@@ -424,9 +424,16 @@ would say what `U` is — nothing binds a method's own letters but the call writ
 rather than a rule, and it is the difference between this and a generic *function*, whose letters are
 argument-directed.
 
-`[§wacc-method-type-args]` **A chain written as one expression does not work yet**:
-`c.then<A>(f).then<B>(g)` is refused by the emitter. Naming the intermediate in a local compiles and
-runs, and that is the workaround. `issues/lang/0274b`.
+`[§wacc-method-type-args]` **They chain**, and each link may change the type:
+
+```wac
+Cell<string> s = c.then<i64>((i32 x) => (x * 3) as i64)
+                  .then<bool>((i64 y) => y > 5)
+                  .then<string>((bool b) => b ? "yes" : "no");
+```
+
+Every intermediate there — `Cell<i64>`, `Cell<bool>` — is named by nothing in the program and exists
+only because a method instance returns it.
 
 Two arguments must agree:
 
