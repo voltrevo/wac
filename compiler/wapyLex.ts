@@ -1,7 +1,7 @@
 // The words wapy spells differently, which is all that is left of wapy in the reference.
 //
 // **This was wapy's lexer** — significant indentation, a line tree, comments kept — until
-// 2026-08-27, when `packages/wacc/src/wapylex.wac` replaced it and `compiler/wapyParse.ts`, the
+// 2026-08-27, when `packages/wacc/src/wapylex.wac` replaced it and compiler/wapyParse.ts, the
 // only caller of `wapyLex()` and `blocks()`, was deleted. What survives is one table, because two
 // things outside the reader still need to know how wapy spells a word:
 //
