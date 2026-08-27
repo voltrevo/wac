@@ -656,13 +656,16 @@ fn gc1(op: &str) -> Option<u8> {
     })
 }
 
-/// ...and those that take a type index and a field index.
+/// ...and those that take a type index and a second number: a field index, or a count.
 fn gc2(op: &str) -> Option<u8> {
     Some(match op {
         "struct.get" => 0x02,
         "struct.get_s" => 0x03,
         "struct.get_u" => 0x04,
         "struct.set" => 0x05,
+        // `array.new_fixed $A <n>` builds an array from the top n values on the stack, which is the
+        // only way to make one whose element type has no default — an array of references, say.
+        "array.new_fixed" => 0x08,
         _ => return None,
     })
 }

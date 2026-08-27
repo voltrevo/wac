@@ -110,6 +110,90 @@ const programs: [string, string, number][] = [
     /* a comment
        over several lines, as every doc comment in wac is */
     i32 main() { return 42; }`, 42],
+  // --- stage 2: the type system
+
+  ["a struct with a method and `const this`", `
+    struct Point {
+      i32 x;
+      i32 y;
+      i32 sum(const this) { return this.x + this.y; }
+    }
+    export i32 main() { Point p = Point(3, 4); return p.sum(); }`, 7],
+
+  ["an array, sized and indexed", `
+    i32 main() {
+      i32[] xs = i32[4]();
+      xs[0] = 10;
+      xs[2] = 5;
+      return xs[0] + xs[2] + xs.len();
+    }`, 19],
+
+  ["an array literal, whose length is how many arguments it has", `
+    i32 main() { i32[] xs = i32[](7, 8, 9); return xs.len() * 100 + xs[2]; }`, 309],
+
+  ["an enum with wac's comma-separated variants, and match as a statement", `
+    enum Shape { Circle(i32 r), Rect(i32 w, i32 h), Empty }
+    i32 area(Shape s) {
+      match (s) {
+        case Circle(r): { return 3 * r * r; }
+        case Rect(w, h): { return w * h; }
+        case Empty: { return 0; }
+      }
+      return -1;
+    }
+    i32 main() { return area(Circle(2)) * 10000 + area(Rect(3, 4)) * 100 + area(Empty); }`, 121200],
+
+  // The shape `core/option.wac` is actually written in: match as an *expression*, `_` for a payload
+  // that is not read, and methods on the enum itself.
+  ["match as an expression, with `_`", `
+    enum Option {
+      Some(i32 v), None
+
+      bool isSome(const this) {
+        return match (this) { case Some(_): true, case None: false };
+      }
+      i32 orElse(const this, i32 d) {
+        return match (this) { case Some(v): v, case None: d };
+      }
+    }
+    export i32 main() {
+      Option a = Some(7);
+      Option b = None;
+      return a.orElse(99) * 1000 + b.orElse(42) * 10 + a.isSome() + b.isSome();
+    }`, 7421],
+
+  ["a struct naming itself through an array", `
+    struct Node { i32 value; Node[] kids; }
+    i32 total(Node n) {
+      i32 sum = n.value;
+      for (i32 i = 0; i < n.kids.len(); i++) { sum += total(n.kids[i]); }
+      return sum;
+    }
+    i32 main() {
+      Node[] none = Node[0]();
+      Node[] two = Node[2]();
+      two[0] = Node(2, none);
+      two[1] = Node(4, none);
+      return total(Node(1, two));
+    }`, 7],
+
+  ["a field assigned through a chain", `
+    struct Inner { i32 v; }
+    struct Outer { Inner in; i32 tag; }
+    i32 main() {
+      Outer o = Outer(Inner(5), 9);
+      o.in.v = 6;
+      return o.in.v * 10 + o.tag;
+    }`, 69],
+
+  ["a byte array", `
+    i32 main() { u8[] b = u8[3](); b[0] = 200; b[1] = 7; return b[0] + b[1] + b.len(); }`, 210],
+
+  ["a reference global", `
+    struct P { i32 v; }
+    P held;
+    i32 setup() { held = P(9); return 0; }
+    i32 main() { setup(); return held.v; }`, 9],
 ];
 
 for (const [name, source, want] of programs) {
