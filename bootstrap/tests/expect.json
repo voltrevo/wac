@@ -1,5 +1,6 @@
 {
   "tests/wax/add.wax": 42,
   "tests/wax/loop.wax": 55,
-  "boot/sx.wax": 720
+  "boot/sx.wax": 720,
+  "tests/wax/gc.wax": 7
 }

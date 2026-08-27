@@ -8,25 +8,39 @@
 
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A value type is a number type, an abstract reference, or a reference to a declared type. The last
+/// is two bytes — a nullability byte and the type's index — which is why this is a shape rather than
+/// a byte, and why every place that emits one asks for a list.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ValType {
-    I32,
-    I64,
+    Plain(u8, &'static str),
+    Ref { nullable: bool, to: String },
 }
 
 impl ValType {
-    fn byte(self) -> u8 {
+    fn name(&self) -> String {
         match self {
-            ValType::I32 => 0x7f,
-            ValType::I64 => 0x7e,
+            ValType::Plain(_, n) => (*n).to_string(),
+            ValType::Ref { nullable, to } => {
+                format!("{} {}", if *nullable { "refnull" } else { "ref" }, to)
+            }
         }
     }
-    fn name(self) -> &'static str {
-        match self {
-            ValType::I32 => "i32",
-            ValType::I64 => "i64",
-        }
-    }
+}
+
+/// The number types and the abstract heap types, spelled as value types.
+fn plain(tok: &str) -> Option<ValType> {
+    Some(match tok {
+        "i32" => ValType::Plain(0x7f, "i32"),
+        "i64" => ValType::Plain(0x7e, "i64"),
+        "anyref" => ValType::Plain(0x6e, "anyref"),
+        "eqref" => ValType::Plain(0x6d, "eqref"),
+        "i31ref" => ValType::Plain(0x6c, "i31ref"),
+        "structref" => ValType::Plain(0x6b, "structref"),
+        "arrayref" => ValType::Plain(0x6a, "arrayref"),
+        "nullref" => ValType::Plain(0x71, "nullref"),
+        _ => return None,
+    })
 }
 
 #[derive(Debug)]
@@ -108,6 +122,17 @@ struct FuncType {
     results: Vec<ValType>,
 }
 
+enum DeclType {
+    Func(FuncType),
+    Struct(Vec<ValType>),
+    Array(ValType),
+}
+
+struct Decl {
+    name: String,
+    body: DeclType,
+}
+
 struct Import {
     module: String,
     field: String,
@@ -157,7 +182,7 @@ struct Func {
 }
 
 struct Module {
-    types: Vec<(String, FuncType)>,
+    types: Vec<Decl>,
     imports: Vec<Import>,
     memory_pages: Option<u32>,
     globals: Vec<Global>,
@@ -239,16 +264,36 @@ fn unquote(tok: &str, line: usize) -> Result<Vec<u8>, WaxError> {
     Ok(out)
 }
 
-fn valtype(tok: &str, line: usize) -> Result<ValType, WaxError> {
-    match tok {
-        "i32" => Ok(ValType::I32),
-        "i64" => Ok(ValType::I64),
-        _ => err(line, format!("not a value type: {}", tok)),
+/// A run of value types. `ref` and `refnull` take the following token, which is why this consumes a
+/// list rather than mapping over one — a reference is two tokens and a number is one.
+fn valtypes(toks: &[String], line: usize) -> Result<Vec<ValType>, WaxError> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < toks.len() {
+        let t = toks[i].as_str();
+        if t == "ref" || t == "refnull" {
+            match toks.get(i + 1) {
+                Some(to) => out.push(ValType::Ref { nullable: t == "refnull", to: to.clone() }),
+                None => return err(line, format!("{} with no type after it", t)),
+            }
+            i += 2;
+            continue;
+        }
+        match plain(t) {
+            Some(v) => out.push(v),
+            None => return err(line, format!("not a value type: {}", t)),
+        }
+        i += 1;
     }
+    Ok(out)
 }
 
-fn valtypes(toks: &[String], line: usize) -> Result<Vec<ValType>, WaxError> {
-    toks.iter().map(|t| valtype(t, line)).collect()
+fn one_valtype(toks: &[String], line: usize, what: &str) -> Result<ValType, WaxError> {
+    let v = valtypes(toks, line)?;
+    if v.len() != 1 {
+        return err(line, format!("{} needs exactly one type", what));
+    }
+    Ok(v.into_iter().next().unwrap())
 }
 
 /// Everything after `->` on a directive line.
@@ -297,18 +342,18 @@ fn read(source: &str) -> Result<Module, WaxError> {
                 m.funcs.push(cur.take().unwrap());
                 continue;
             }
-            if t[0] == "param" {
-                if !f.locals.is_empty() || !f.body.is_empty() {
+            // **The name is last, and the type is everything before it.** A reference type is two
+            // tokens, so a fixed position for the name works for `i32` and not for `refnull $Node`.
+            if t[0] == "param" || t[0] == "local" {
+                if t[0] == "param" && (!f.locals.is_empty() || !f.body.is_empty()) {
                     return err(n, "`param` must come before locals and instructions");
                 }
-                f.params.push(Local { name: t[2].clone(), ty: valtype(&t[1], n)? });
-                continue;
-            }
-            if t[0] == "local" {
-                if !f.body.is_empty() {
+                if t[0] == "local" && !f.body.is_empty() {
                     return err(n, "`local` must come before instructions");
                 }
-                f.locals.push(Local { name: t[2].clone(), ty: valtype(&t[1], n)? });
+                let ty = one_valtype(&t[1..t.len() - 1], n, &t[0])?;
+                let slot = Local { name: t[t.len() - 1].clone(), ty };
+                if t[0] == "param" { f.params.push(slot); } else { f.locals.push(slot); }
                 continue;
             }
             f.body.push(Line { n, tokens: t });
@@ -317,20 +362,30 @@ fn read(source: &str) -> Result<Module, WaxError> {
 
         match t[0].as_str() {
             "type" => {
-                let arrow = match t.iter().position(|x| x == "->") {
-                    Some(a) => a,
-                    None => return err(n, "expected `type $n func … -> …`"),
-                };
-                if t[2] != "func" {
-                    return err(n, "expected `type $n func … -> …`");
+                if t[2] == "struct" {
+                    m.types.push(Decl {
+                        name: t[1].clone(),
+                        body: DeclType::Struct(valtypes(&t[3..], n)?),
+                    });
+                } else if t[2] == "array" {
+                    let el = one_valtype(&t[3..], n, "an array")?;
+                    m.types.push(Decl { name: t[1].clone(), body: DeclType::Array(el) });
+                } else {
+                    let arrow = match t.iter().position(|x| x == "->") {
+                        Some(a) => a,
+                        None => return err(n, "expected `type $n func … -> …`"),
+                    };
+                    if t[2] != "func" {
+                        return err(n, "expected `type $n func … -> …`, `… struct …` or `… array …`");
+                    }
+                    m.types.push(Decl {
+                        name: t[1].clone(),
+                        body: DeclType::Func(FuncType {
+                            params: valtypes(&t[3..arrow], n)?,
+                            results: valtypes(&t[arrow + 1..], n)?,
+                        }),
+                    });
                 }
-                m.types.push((
-                    t[1].clone(),
-                    FuncType {
-                        params: valtypes(&t[3..arrow], n)?,
-                        results: valtypes(&t[arrow + 1..], n)?,
-                    },
-                ));
             }
             "import" => {
                 let arrow = match t.iter().position(|x| x == "->") {
@@ -355,14 +410,21 @@ fn read(source: &str) -> Result<Module, WaxError> {
                 m.memory_pages = Some(t[1].parse().map_err(|_| WaxError(format!("line {}: pages", n)))?);
             }
             "global" => {
-                if t[4] != "=" {
-                    return err(n, "expected `global $n <type> <mut|const> = <lit>`");
-                }
+                let eq = match t.iter().position(|x| x == "=") {
+                    Some(a) if a >= 4 => a,
+                    _ => return err(n, "expected `global $n <type> <mut|const> = <lit>`"),
+                };
+                let ty = one_valtype(&t[2..eq - 1], n, "a global")?;
+                // A reference global starts null and has no literal to read.
+                let value = match ty {
+                    ValType::Ref { .. } => 0,
+                    _ => t[eq + 1].parse().map_err(|_| WaxError(format!("line {}: literal", n)))?,
+                };
                 m.globals.push(Global {
                     name: t[1].clone(),
-                    ty: valtype(&t[2], n)?,
-                    mutable: t[3] == "mut",
-                    value: t[5].parse().map_err(|_| WaxError(format!("line {}: literal", n)))?,
+                    ty,
+                    mutable: t[eq - 1] == "mut",
+                    value,
                 });
             }
             "data" => m.data.push(DataSeg {
@@ -401,31 +463,44 @@ fn read(source: &str) -> Result<Module, WaxError> {
 // ---------------------------------------------------------------- pass 2: index
 
 struct Index {
-    types: Vec<FuncType>,
+    types: Vec<Decl>,
+    type_of: HashMap<String, u32>,
     func_of: HashMap<String, u32>,
     global_of: HashMap<String, u32>,
     func_type_index: Vec<u32>,
 }
 
 fn shape_key(params: &[ValType], results: &[ValType]) -> String {
-    let p: Vec<&str> = params.iter().map(|v| v.name()).collect();
-    let r: Vec<&str> = results.iter().map(|v| v.name()).collect();
+    let p: Vec<String> = params.iter().map(|v| v.name()).collect();
+    let r: Vec<String> = results.iter().map(|v| v.name()).collect();
     format!("{}->{}", p.join(","), r.join(","))
 }
 
 fn index(m: &Module) -> Index {
-    let mut types: Vec<FuncType> = Vec::new();
+    let mut types: Vec<Decl> = Vec::new();
     let mut by_shape: HashMap<String, u32> = HashMap::new();
-    for (_, t) in &m.types {
-        let k = shape_key(&t.params, &t.results);
-        by_shape.entry(k).or_insert(types.len() as u32);
-        types.push(FuncType { params: t.params.clone(), results: t.results.clone() });
+    for d in &m.types {
+        if let DeclType::Func(ft) = &d.body {
+            let k = shape_key(&ft.params, &ft.results);
+            by_shape.entry(k).or_insert(types.len() as u32);
+        }
+        types.push(Decl {
+            name: d.name.clone(),
+            body: match &d.body {
+                DeclType::Func(ft) => DeclType::Func(FuncType {
+                    params: ft.params.clone(),
+                    results: ft.results.clone(),
+                }),
+                DeclType::Struct(f) => DeclType::Struct(f.clone()),
+                DeclType::Array(e) => DeclType::Array(e.clone()),
+            },
+        });
     }
 
     // A shape may already be declared, in which case a function reuses it; an undeclared shape is
     // appended. Declared types are never merged with each other — see the spec.
     fn need(
-        types: &mut Vec<FuncType>,
+        types: &mut Vec<Decl>,
         by_shape: &mut HashMap<String, u32>,
         params: &[ValType],
         results: &[ValType],
@@ -434,7 +509,11 @@ fn index(m: &Module) -> Index {
         if let Some(at) = by_shape.get(&k) {
             return *at;
         }
-        types.push(FuncType { params: params.to_vec(), results: results.to_vec() });
+        let nm = format!("$auto{}", types.len());
+        types.push(Decl {
+            name: nm,
+            body: DeclType::Func(FuncType { params: params.to_vec(), results: results.to_vec() }),
+        });
         let at = types.len() as u32 - 1;
         by_shape.insert(k, at);
         at
@@ -448,7 +527,7 @@ fn index(m: &Module) -> Index {
     let mut func_type_index = Vec::new();
     for (i, f) in m.funcs.iter().enumerate() {
         func_of.insert(f.name.clone(), (m.imports.len() + i) as u32);
-        let params: Vec<ValType> = f.params.iter().map(|p| p.ty).collect();
+        let params: Vec<ValType> = f.params.iter().map(|p| p.ty.clone()).collect();
         func_type_index.push(need(&mut types, &mut by_shape, &params, &f.results));
     }
 
@@ -457,7 +536,13 @@ fn index(m: &Module) -> Index {
         global_of.insert(g.name.clone(), i as u32);
     }
 
-    Index { types, func_of, global_of, func_type_index }
+    // Built after `need` has appended: an auto type is still a name something could refer to.
+    let mut type_of = HashMap::new();
+    for (i, d) in types.iter().enumerate() {
+        type_of.entry(d.name.clone()).or_insert(i as u32);
+    }
+
+    Index { types, type_of, func_of, global_of, func_type_index }
 }
 
 // ---------------------------------------------------------------- pass 3: emit
@@ -508,13 +593,73 @@ fn memop(op: &str) -> Option<u8> {
     })
 }
 
+/// A value type's bytes. A reference is a nullability byte and the type's index as a **signed** LEB —
+/// the same slot holds the negative abbreviations for the abstract types, which is why it cannot be
+/// the unsigned encoding used everywhere else for an index.
+fn vt_bytes(v: &ValType, ix: &Index, line: usize) -> Result<Vec<u8>, WaxError> {
+    match v {
+        ValType::Plain(b, _) => Ok(vec![*b]),
+        ValType::Ref { nullable, to } => match ix.type_of.get(to) {
+            Some(at) => {
+                let mut out = vec![if *nullable { 0x63 } else { 0x64 }];
+                out.extend(sleb(*at as i64));
+                Ok(out)
+            }
+            None => err(line, format!("no type {}", to)),
+        },
+    }
+}
+
+/// A heap type, for `ref.null`, `ref.test` and `ref.cast`.
+fn heap_type(tok: &str, ix: &Index, line: usize) -> Result<Vec<u8>, WaxError> {
+    if let Some(ValType::Plain(b, _)) = plain(tok) {
+        return Ok(vec![b]);
+    }
+    match tok {
+        "none" => return Ok(vec![0x71]),
+        "any" => return Ok(vec![0x6e]),
+        "eq" => return Ok(vec![0x6d]),
+        _ => {}
+    }
+    match ix.type_of.get(tok) {
+        Some(at) => Ok(sleb(*at as i64)),
+        None => err(line, format!("no type {}", tok)),
+    }
+}
+
 /// The block type of a block-like: empty, or a single value type.
-fn block_type(results: &[ValType], line: usize) -> Result<Vec<u8>, WaxError> {
+fn block_type(results: &[ValType], ix: &Index, line: usize) -> Result<Vec<u8>, WaxError> {
     match results.len() {
         0 => Ok(vec![0x40]),
-        1 => Ok(vec![results[0].byte()]),
+        1 => vt_bytes(&results[0], ix, line),
         _ => err(line, "a block with more than one result needs a type index, unsupported"),
     }
+}
+
+/// The GC instructions that take one type index, by their second opcode byte.
+fn gc1(op: &str) -> Option<u8> {
+    Some(match op {
+        "struct.new" => 0x00,
+        "struct.new_default" => 0x01,
+        "array.new" => 0x06,
+        "array.new_default" => 0x07,
+        "array.get" => 0x0b,
+        "array.get_s" => 0x0c,
+        "array.get_u" => 0x0d,
+        "array.set" => 0x0e,
+        _ => return None,
+    })
+}
+
+/// ...and those that take a type index and a field index.
+fn gc2(op: &str) -> Option<u8> {
+    Some(match op {
+        "struct.get" => 0x02,
+        "struct.get_s" => 0x03,
+        "struct.get_u" => 0x04,
+        "struct.set" => 0x05,
+        _ => return None,
+    })
 }
 
 fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
@@ -537,6 +682,29 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
 
         if let Some(b) = nullary(op) {
             out.push(b);
+            continue;
+        }
+        if let Some(code) = gc1(op) {
+            match ix.type_of.get(&t[1]) {
+                Some(at) => {
+                    out.push(0xfb);
+                    out.extend(uleb(code as u32));
+                    out.extend(uleb(*at));
+                }
+                None => return err(n, format!("no type {}", t[1])),
+            }
+            continue;
+        }
+        if let Some(code) = gc2(op) {
+            match ix.type_of.get(&t[1]) {
+                Some(at) => {
+                    out.push(0xfb);
+                    out.extend(uleb(code as u32));
+                    out.extend(uleb(*at));
+                    out.extend(uleb(t[2].parse().unwrap_or(0)));
+                }
+                None => return err(n, format!("no type {}", t[1])),
+            }
             continue;
         }
         if let Some(b) = memop(op) {
@@ -597,13 +765,32 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
                 }
                 None => return err(n, format!("no function {}", t[1])),
             },
+            "array.len" => out.extend_from_slice(&[0xfb, 0x0f]),
+            "ref.is_null" => out.push(0xd1),
+            "ref.eq" => out.push(0xd3),
+            "ref.as_non_null" => out.push(0xd4),
+            "ref.null" => {
+                out.push(0xd0);
+                out.extend(heap_type(&t[1], ix, n)?);
+            }
+            // `ref.test` and `ref.cast` are written with the nullability they test for, the same two
+            // spellings a value type uses, because the opcode differs by exactly that.
+            "ref.test" | "ref.cast" => {
+                if t[1] != "ref" && t[1] != "refnull" {
+                    return err(n, format!("{} needs `ref` or `refnull` and a type", op));
+                }
+                let base: u8 = if op == "ref.test" { 0x14 } else { 0x16 };
+                out.push(0xfb);
+                out.extend(uleb((base + if t[1] == "refnull" { 1 } else { 0 }) as u32));
+                out.extend(heap_type(&t[2], ix, n)?);
+            }
             "block" | "loop" | "if" => {
                 out.push(match op {
                     "block" => 0x02,
                     "loop" => 0x03,
                     _ => 0x04,
                 });
-                out.extend(block_type(&results_after_arrow(t, 2, n)?, n)?);
+                out.extend(block_type(&results_after_arrow(t, 2, n)?, ix, n)?);
                 labels.push(&t[1]);
             }
             "else" => out.push(0x05),
@@ -633,19 +820,19 @@ fn emit_body(f: &Func, ix: &Index) -> Result<Vec<u8>, WaxError> {
 }
 
 /// Consecutive locals of one type are one entry, which is what wasm's format asks for.
-fn local_decls(f: &Func) -> Vec<u8> {
+fn local_decls(f: &Func, ix: &Index) -> Vec<u8> {
     let mut runs: Vec<(ValType, u32)> = Vec::new();
     for l in &f.locals {
         match runs.last_mut() {
-            Some((ty, count)) if *ty == l.ty => *count += 1,
-            _ => runs.push((l.ty, 1)),
+            Some((ty, count)) if ty.name() == l.ty.name() => *count += 1,
+            _ => runs.push((l.ty.clone(), 1)),
         }
     }
     vector(
         runs.into_iter()
             .map(|(ty, count)| {
                 let mut e = uleb(count);
-                e.push(ty.byte());
+                e.extend(vt_bytes(&ty, ix, 0).unwrap_or_default());
                 e
             })
             .collect(),
@@ -657,20 +844,57 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, WaxError> {
     let ix = index(&m);
     let mut out: Vec<u8> = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
-    out.extend(section(
-        1,
-        vector(
-            ix.types
-                .iter()
-                .map(|t| {
-                    let mut e = vec![0x60];
-                    e.extend(vector(t.params.iter().map(|p| vec![p.byte()]).collect()));
-                    e.extend(vector(t.results.iter().map(|r| vec![r.byte()]).collect()));
-                    e
-                })
-                .collect(),
-        ),
-    ));
+    // **One recursive group, or none at all.** A struct whose field refers to another struct — an AST
+    // node holding an array of nodes — needs the two in the same group, because outside one a type may
+    // only name types already defined. Putting every type in a single group is the rule with no cases
+    // in it, and it costs two bytes. A module with no GC types keeps the plain encoding, so nothing
+    // that assembled before assembles differently now.
+    let has_gc = ix.types.iter().any(|d| !matches!(d.body, DeclType::Func(_)));
+    let mut type_entries: Vec<Vec<u8>> = Vec::new();
+    for d in &ix.types {
+        let mut e = Vec::new();
+        match &d.body {
+            DeclType::Func(ft) => {
+                e.push(0x60);
+                let mut ps = Vec::new();
+                for p in &ft.params {
+                    ps.push(vt_bytes(p, &ix, 0)?);
+                }
+                e.extend(vector(ps));
+                let mut rs = Vec::new();
+                for r in &ft.results {
+                    rs.push(vt_bytes(r, &ix, 0)?);
+                }
+                e.extend(vector(rs));
+            }
+            // Every field is mutable. wac has no immutable field and neither does anything above this.
+            DeclType::Struct(fields) => {
+                e.push(0x5f);
+                let mut fs = Vec::new();
+                for f in fields {
+                    let mut b = vt_bytes(f, &ix, 0)?;
+                    b.push(0x01);
+                    fs.push(b);
+                }
+                e.extend(vector(fs));
+            }
+            DeclType::Array(el) => {
+                e.push(0x5e);
+                e.extend(vt_bytes(el, &ix, 0)?);
+                e.push(0x01);
+            }
+        }
+        type_entries.push(e);
+    }
+    let type_payload = if has_gc {
+        let mut p = uleb(1);
+        p.push(0x4e);
+        p.extend(vector(type_entries));
+        p
+    } else {
+        vector(type_entries)
+    };
+    out.extend(section(1, type_payload));
 
     out.extend(section(
         2,
@@ -682,7 +906,10 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, WaxError> {
                     let at = ix
                         .types
                         .iter()
-                        .position(|t| shape_key(&t.params, &t.results) == want)
+                        .position(|d| match &d.body {
+                            DeclType::Func(ft) => shape_key(&ft.params, &ft.results) == want,
+                            _ => false,
+                        })
                         .unwrap() as u32;
                     let mut e = name_bytes(&im.module);
                     e.extend(name_bytes(&im.field));
@@ -702,21 +929,25 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, WaxError> {
         out.extend(section(5, vector(vec![e])));
     }
 
-    out.extend(section(
-        6,
-        vector(
-            m.globals
-                .iter()
-                .map(|g| {
-                    let mut e = vec![g.ty.byte(), if g.mutable { 0x01 } else { 0x00 }];
-                    e.push(if g.ty == ValType::I32 { 0x41 } else { 0x42 });
-                    e.extend(sleb(g.value));
-                    e.push(0x0b);
-                    e
-                })
-                .collect(),
-        ),
-    ));
+    let mut global_entries: Vec<Vec<u8>> = Vec::new();
+    for g in &m.globals {
+        let mut e = vt_bytes(&g.ty, &ix, 0)?;
+        e.push(if g.mutable { 0x01 } else { 0x00 });
+        match &g.ty {
+            // A reference global starts null.
+            ValType::Ref { to, .. } => {
+                e.push(0xd0);
+                e.extend(heap_type(to, &ix, 0)?);
+            }
+            ValType::Plain(b, _) => {
+                e.push(if *b == 0x7f { 0x41 } else { 0x42 });
+                e.extend(sleb(g.value));
+            }
+        }
+        e.push(0x0b);
+        global_entries.push(e);
+    }
+    out.extend(section(6, vector(global_entries)));
 
     let mut exports = Vec::new();
     for e in &m.exports {
@@ -741,7 +972,7 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, WaxError> {
     // Sections are written in ascending id, which wasm requires: code (10) before data (11).
     let mut codes = Vec::new();
     for f in &m.funcs {
-        let mut body = local_decls(f);
+        let mut body = local_decls(f, &ix);
         body.extend(emit_body(f, &ix)?);
         let mut e = uleb(body.len() as u32);
         e.extend(body);

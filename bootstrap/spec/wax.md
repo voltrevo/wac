@@ -25,8 +25,24 @@ a reader has to hold.
 ## Directives
 
     type   $name  func <params...> -> <results...>
+    type   $name  struct <valtype...>
+    type   $name  array <valtype>
 
-`<params...>` and `<results...>` are zero or more of `i32`, `i64`. `->` is always present. A type is
+A **value type** is `i32`, `i64`, one of the abstract references — `anyref`, `eqref`, `i31ref`,
+`structref`, `arrayref`, `nullref` — or a reference to a declared type, written as two tokens:
+`ref $T` for a non-nullable one and `refnull $T` for a nullable one. Two tokens rather than `(ref
+$T)` because the tokenizer splits on whitespace and nothing here needs nesting.
+
+Every struct field and every array element is **mutable**. wac has no immutable field and neither
+does anything built on this.
+
+**The type section is one recursive group whenever any struct or array is declared.** A struct whose
+field refers to another struct — an AST node holding an array of nodes — needs the two in the same
+group, because outside one a type may only name types already defined. One group for everything is
+the rule with no cases in it and it costs two bytes. A module with no GC types keeps the plain
+encoding, so nothing that assembled before assembles differently now.
+
+`<params...>` and `<results...>` are zero or more value types. `->` is always present. A type is
 declared once and referred to by name; two types with the same shape are **not** merged, because
 merging is a decision and the whole point is not to have decisions. The type section is written in
 declaration order.
@@ -41,9 +57,14 @@ is written inline rather than named, because an import's type is read once and n
 At most one, and required if any load or store appears. `<pages>` is the initial size; the maximum is
 left unset.
 
-    global $name <i32|i64> <mut|const> = <literal>
+    global $name <valtype> <mut|const> = <literal>
 
-Globals are numbered in source order. The initialiser is a literal, never an expression.
+Globals are numbered in source order. The initialiser is a literal, never an expression — and a
+global of reference type has none: it starts null, because there is no other value it could have
+before the first instruction runs.
+
+**A `param` or `local` line names its type first and its name last**, and the type may be two tokens.
+A fixed position for the name would work for `i32` and not for `refnull $Node`.
 
     data <offset> "<text>"
 
@@ -55,7 +76,7 @@ program knows the offset because it wrote it.
     export "name" memory
 
     func $name <params...> -> <results...>
-      local <i32|i64> $name        ; zero or more, and they must come first
+      local <valtype> $name        ; zero or more, and they must come first
       <instructions...>
     end
 
@@ -137,6 +158,22 @@ Only what has been needed so far. The list grows when something needs it, and ne
 
 Both operands are written out because leaving them implicit is a default, and a default is a place
 two implementations can differ.
+
+**References and GC**
+
+    struct.new $S            struct.new_default $S
+    struct.get $S <field>    struct.get_s $S <field>   struct.get_u $S <field>
+    struct.set $S <field>
+    array.new $A             array.new_default $A
+    array.get $A             array.get_s $A            array.get_u $A
+    array.set $A             array.len
+    ref.null <$T|none|any|eq|…>
+    ref.is_null              ref.eq                    ref.as_non_null
+    ref.test <ref|refnull> $T
+    ref.cast <ref|refnull> $T
+
+`ref.test` and `ref.cast` are written with the nullability they test for — the same two spellings a
+value type uses — because the opcode differs by exactly that and nothing else would say which.
 
 **Control and calls**
 

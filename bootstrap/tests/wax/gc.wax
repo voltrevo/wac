@@ -1,0 +1,94 @@
+; A struct, an array, and a reference that points back at its own type — which is the case that
+; needs a recursive group, and the reason every type goes into one.
+type $Node   struct i32 refnull $Nodes
+type $Nodes  array refnull $Node
+
+func $leaf -> refnull $Node
+  param i32 $v
+  local.get $v
+  ref.null $Nodes
+  struct.new $Node
+end
+
+func $branch -> refnull $Node
+  param i32 $v
+  param refnull $Node $a
+  param refnull $Node $b
+  local refnull $Nodes $kids
+  i32.const 2
+  array.new_default $Nodes
+  local.tee $kids
+  i32.const 0
+  local.get $a
+  array.set $Nodes
+  local.get $kids
+  i32.const 1
+  local.get $b
+  array.set $Nodes
+  local.get $v
+  local.get $kids
+  struct.new $Node
+end
+
+; The sum of a tree, which needs field access, array access and a null test.
+func $total -> i32
+  param refnull $Node $n
+  local i32 $sum
+  local refnull $Nodes $kids
+  local i32 $i
+  local.get $n
+  ref.is_null
+  if $isnull ->
+    i32.const 0
+    return
+  else
+    nop
+  end
+  local.get $n
+  struct.get $Node 0
+  local.set $sum
+  local.get $n
+  struct.get $Node 1
+  local.tee $kids
+  ref.is_null
+  if $nokids ->
+    local.get $sum
+    return
+  else
+    nop
+  end
+  block $done ->
+    loop $next ->
+      local.get $i
+      local.get $kids
+      array.len
+      i32.ge_u
+      br_if $done
+      local.get $sum
+      local.get $kids
+      local.get $i
+      array.get $Nodes
+      call $total
+      i32.add
+      local.set $sum
+      local.get $i
+      i32.const 1
+      i32.add
+      local.set $i
+      br $next
+    end
+  end
+  local.get $sum
+end
+
+func $main -> i32
+  i32.const 1
+  i32.const 2
+  call $leaf
+  i32.const 4
+  call $leaf
+  call $branch
+  call $total
+end
+
+export "main" func $main
