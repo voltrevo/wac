@@ -1,0 +1,9 @@
+// expect: refused
+// only: wacc
+// spec:  §wacc-written-type-args
+// why: a count the caller and the declaration disagree about. Its own code rather than the inference
+//      one, whose message is "cannot tell what a type parameter is here" — with a count written the
+//      compiler can tell perfectly well, and the complaint is the disagreement.
+// from: design/lang/0011
+T zero<T>() { return 0; }
+export i32 f() { i32 z = zero<i32, f64>(); return z; }

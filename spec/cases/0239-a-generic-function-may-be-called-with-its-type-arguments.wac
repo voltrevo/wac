@@ -1,0 +1,10 @@
+// expect: answers f = 7
+// only: wacc
+// spec:  §wacc-written-type-args
+// why: the whole of `design/lang/0011` in one line. `T zero<T>()` mentions `T` nowhere a caller can
+//      supply it, so argument-directed inference cannot reach it — the declaration checked and every
+//      call was refused, which meant the person who wrote an unusable generic never found out and
+//      only a caller did. Writing the argument is the supply.
+// from: design/lang/0011
+T zero<T>() { return 0; }
+export i32 f() { i32 z = zero<i32>(); return z + 7; }

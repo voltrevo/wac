@@ -320,9 +320,9 @@ rather than stylistic, so they are recorded there and repeated here:
 | 1 — `issues/lang/0088` | **done** 2026-08-27 — `ExprKind.TypeName`, `spec/cases/0235`, `[§wacc-written-instantiation]` |
 | 2 — the trigger becomes "parses as a type list" | **done** 2026-08-27 — the follow set is gone; `[§wacc-type-args-commit]`, cases `0236`–`0238` |
 | 3 — the postfix path | **done** 2026-08-27 — `ExprKind.Call` carries `Ty[] typeArgs`; `v.fold<i64>(0, f)` parses. Not yet *bound* — that is 0010 C |
-| 4 — name resolution | **not started** — this is the feature, and it splits in two: see below |
+| 4 — name resolution | **done for free functions** 2026-08-27 — `zero<i32>()` compiles and runs; `[§wacc-written-type-args]`, cases 0239–0241. The method half is `design/lang/0010` item 3 |
 | 5 — the diagnostic | **done** 2026-08-27 — `perrTypeArgsThenValue`; the checker's `TypeName` arm branches on whether the name is a function; and the method-type-parameter refusal stops promising a workaround. `issues/lang/0235a` is covered on both halves |
-| 6 — the emitter | **not started**, and the only large one |
+| 6 — the emitter | **needed nothing for free functions** — the existing instance machinery registered and emitted them once the checker stopped refusing. The method half is still 0010 item 3 |
 | 7 — the spec | **done for steps 1 and 2**; the *"inferred, never written"* section still stands and is step 4's to change |
 | the tuple constraints | recorded in `issues/lang/0074` |
 
@@ -330,8 +330,8 @@ rather than stylistic, so they are recorded there and repeated here:
 
 | # | criterion | state |
 |---|---|---|
-| 1 | `zero<i32>()` callable | **no** — needs step 4 |
-| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **no** — needs step 4 |
+| 1 | `zero<i32>()` callable | **yes** — `spec/cases/0239`, answers 7 |
+| 2 | `empty<i32>()` / `Vec<i32> v = empty()` | **half** — `empty<i32>()` compiles and runs. `Vec<i32> v = empty()` does not, and asking for it is asking to lift a limit `generics.md` calls deliberate: it needs an expected type propagated *into* a call. Worth a decision of its own rather than smuggling in here |
 | 3 | `fn[i32(i32)] g = id<i32>;` | **no**, and it now fails with a message that says which of the two readings it is, rather than `expected an expression` |
 | 4 | `Option<i32>.None.orElse(7)` | **yes** |
 | 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |
@@ -340,7 +340,7 @@ rather than stylistic, so they are recorded there and repeated here:
 | 8 | `count < list.len() > 0` still a comparison | **yes** — `spec/cases/0238` |
 | 9 | `Cell<Typoo>()` says unknown type `Typoo` | **yes** |
 | 10 | `a < b > c` and `g(a < b, c > e)` stop compiling, with the rule and escape named | **yes** — `spec/cases/0236`, `0237`, and `packages/wacc/test/wac/typeargsrule_test.wac` asserts the words |
-| 11 | one instantiation per written type argument, shared with the inferred one | **no** — needs step 6 |
+| 11 | one instantiation per written type argument, shared with the inferred one | **yes**, and measured in emitted bytes rather than asserted — including the `issues/lang/0260c` shape, where the inferred path binds a *variant* and canonicalises to its enum while the written path spells the enum |
 
 ### Step 4 splits, and the cheaper half is the one this document is named for
 

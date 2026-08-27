@@ -138,10 +138,10 @@ The restriction is what keeps it unambiguous without lookahead. `a < b` cannot b
 instantiation by accident because an instantiation must be followed by `.` and a name, and `a < b > .c`
 is not something anyone writes.
 
-`[§wacc-written-instantiation]` The rule this relaxes is *"type arguments are inferred, never
-written"* under **Generic functions** below, which still holds for a call's own type parameters:
-`identity<i32>(4)` is refused. What is written here belongs to the *receiver's* type, not to the
-method's.
+`[§wacc-written-instantiation]` What is written here belongs to the **receiver's** type. A call's own
+type parameters are a separate rule — `[§wacc-written-type-args]` under **Generic functions** below —
+and the two arrived together but are not the same thing: `Cell<i32>.of(3)` names the type `of` is a
+static of, and `identity<i32>(4)` names what `identity`'s own `T` is.
 
 ### Across modules
 
@@ -325,12 +325,14 @@ export i32 f() {
 `[§wac-generic-fn-5hvq3mt]` This works, and so does `max` on `f64` in the same program: each
 distinct set of type arguments produces a separate concrete function, exactly as for a struct.
 
-### Type arguments are inferred, never written
+### Type arguments are inferred by default, and may be written
 
-There is no `max<i32>(x, y)`. Angle brackets are type syntax only — the same ambiguity with
-less-than — and a call is an expression, so **inference is the whole interface**. It is tractable
-because wac has no declaration type inference: every local and every parameter states its type, so
-an argument's type is available from the syntax alone.
+Inference is the ordinary interface and covers almost every call: `max(x, y)` needs nothing written.
+It is tractable because wac has no declaration type inference — every local and every parameter states
+its type, so an argument's type is available from the syntax alone.
+
+`[§wacc-written-type-args]` A call **may** name them, and `[§wacc-type-args-commit]` is what makes
+that unambiguous: `max<i32>(x, y)` is a type argument list because it parses as one.
 
 An argument's type is evident when it is a literal, a variable, a field, an array element, a cast,
 an unwrap, a struct construction, or a call to a function or method whose return type is declared:
@@ -352,18 +354,36 @@ i32 d = id(null);                   // error: argument 1's type is not evident h
 `[§wac-generic-fn-5hvq3mt]` The diagnostic says to assign the value to a declared variable first,
 which is the fix.
 
-Because inference is argument-directed, **a type parameter that no parameter's type mentions is
-unusable**:
+Inference is argument-directed, so **a type parameter that no parameter's type mentions cannot be
+inferred** — and that is the case writing them exists for:
 
 ```wac
-T zero<T>() { return 0; }           // error at every call: nothing determines T
+T zero<T>() { return 0; }
+i32 z = zero();                     // error: nothing in the call says what T is
+i32 z = zero<i32>();                // this works
 ```
 
-`[§wac-generic-fn-5hvq3mt]` Reported at the call, and terminal — a call cannot name its type
-arguments, so there is no way to supply what inference could not find. A return type alone does not
-determine `T`; that is a deliberate limit rather than an oversight, and lifting it would mean
-propagating an expected type into a call, which is the same restriction the struct case documents
-above.
+`[§wacc-written-type-args]` Until 2026-08-27 the first was terminal and the second did not parse, so
+a generic function whose letter appears only in its return type was *declarable and uncallable* — the
+declaration checked and every call was refused, which meant the person who wrote an unusable generic
+never found out and only a caller did.
+
+`[§wacc-written-type-args]` The count must match the declaration, and each argument must name a type:
+
+```wac
+zero<i32, f64>();                   // error: zero takes 1 type argument, and 2 were written
+zero<Typoo>();                      // error: unknown type 'Typoo'
+```
+
+`[§wacc-written-type-args]` **A written argument and an inferred one that agree are one
+instantiation**, not two — the binding is all that differs, and everything after it is shared. So
+`identity(4)` and `identity<i32>(5)` in one program compile one `identity<i32>`, and adding
+`identity<i64>(…)` compiles a second.
+
+**A slot still does not determine a call's type parameters.** `Vec<i32> v = empty();` for
+`Vec<T> empty<T>()` is an error, and the fix is `empty<i32>()`. Lifting that would mean propagating an
+expected type *into* a call, which is the same restriction the struct case documents above and is a
+larger change than writing the argument.
 
 Two arguments must agree:
 

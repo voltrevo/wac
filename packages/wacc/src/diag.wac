@@ -108,6 +108,7 @@ export string checkMessage(i32 code) {
   if (code == 41) { return "an index must be an integer"; }
   if (code == 206) { return "only an array or a string can be indexed"; }
   if (code == 207) { return "two cases of this switch have the same value"; }
+  if (code == 208) { return "the wrong number of type arguments"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }

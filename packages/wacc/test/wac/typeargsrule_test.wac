@@ -20,7 +20,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { diagnoseFilesRendered } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFilesRendered, emit } from "../../src/api.wac";
 
 /** One source through the checker, rendered the way a user sees it. */
 string said(string src) {
@@ -170,5 +171,74 @@ export string test_a_methods_own_type_arguments_parse_and_the_refusal_is_honest(
            "a wrong count is reported as a wrong count — got " + tooMany);
   t.isTrue(!contains(tooMany, "not yet bound"),
            "and not as something that might work later — got " + tooMany);
+  return t.report();
+}
+
+/**
+ * A generic free function is callable, which is the sentence `design/lang/0011` is titled with.
+ *
+ * `T zero<T>()` mentions `T` nowhere an argument can supply it, so argument-directed inference
+ * cannot reach it. The declaration checked and every call was refused, which meant the person who
+ * wrote an unusable generic never found out and only a caller did.
+ */
+export string test_a_generic_function_can_be_called_with_its_type_arguments() {
+  T t = T.create();
+  string decl = "T zero<T>() { return 0; }\n";
+
+  t.isTrue(!contains(said(decl + "export i32 f() { i32 z = zero<i32>(); return z; }"), "error"),
+           "writing the argument supplies what inference cannot reach");
+  t.isTrue(contains(said(decl + "export i32 f() { i32 z = zero(); return z; }"),
+                    "nothing in the call says what T is"),
+           "and not writing it is still the old refusal, which is the reason the feature exists");
+  t.isTrue(contains(said(decl + "export i32 f() { i32 z = zero<i32, f64>(); return z; }"),
+                    "zero takes 1 type argument, and 2 were written"),
+           "a wrong count is a wrong count, not an inference failure");
+  t.isTrue(contains(said(decl + "export i32 f() { i32 z = zero<Typoo>(); return z; }"),
+                    "unknown type 'Typoo'"),
+           "and the count being right does not excuse an argument that names no type");
+  return t.report();
+}
+
+/**
+ * **A written instantiation and an inferred one that agree are one instantiation**, and a differing
+ * one is a second. Measured in emitted bytes, because that is the only place the answer shows.
+ *
+ * `design/lang/0010` calls the third level of monomorphisation "the thing most likely to be got
+ * wrong quietly", and this is the first level where the same worry applies: the binding is all a
+ * written argument changes, so if it did not join the machinery an inferred one already uses, a
+ * program mixing the two spellings would carry two copies of one function and two `T`s that are the
+ * same type. Nothing about that is visible in what the program *answers* — both copies compute the
+ * same thing — so a test that only ran it would pass.
+ */
+export string test_a_written_and_an_inferred_instantiation_are_the_same_one() {
+  T t = T.create();
+  string decl = "T identity<T>(T x) { return x; }\n";
+  string bothInferred = decl + "export i32 f() { return identity(4) + identity(5); }";
+  string mixed       = decl + "export i32 f() { return identity(4) + identity<i32>(5); }";
+  string twoTypes    = decl + "export i32 f() { return identity(4) + (identity<i64>(5 as i64) as! i32); }";
+
+  i32 a = emit(bothInferred.toBytes()).len();
+  i32 b = emit(mixed.toBytes()).len();
+  i32 c = emit(twoTypes.toBytes()).len();
+
+  t.isTrue(a > 200, "the all-inferred program emitted something — " + itoa(a));
+  t.eqI32(b, a, "mixing a written and an inferred argument for the same type emits the same module");
+  t.isTrue(c > b, "and a second type argument emits a second instantiation — " + itoa(c) +
+                  " against " + itoa(b));
+
+  // **The sharp case, from `issues/lang/0260c`.** `typeOfE` of `Colour.Red` is the *variant*, so the
+  // inferred path binds `T = Colour.Red` and canonicalises it to `Colour` before naming the
+  // instance — without that step it built a `Hold<Colour.Red>`, a different struct with a different
+  // type index, and produced a module the emitter was happy with and the engine would not load. The
+  // written path spells `Colour` directly. Two roads to one name, and nothing but a measurement says
+  // they arrive.
+  string en = "enum Colour { Red, Green }\nT identity<T>(T x) { return x; }\n";
+  i32 inferred = emit((en + "export i32 f() { Colour a = identity(Colour.Red);\n" +
+                       "  Colour b = identity(Colour.Green); return 4; }").toBytes()).len();
+  i32 written  = emit((en + "export i32 f() { Colour a = identity(Colour.Red);\n" +
+                       "  Colour b = identity<Colour>(Colour.Green); return 4; }").toBytes()).len();
+  t.isTrue(inferred > 200, "the enum program emitted something — " + itoa(inferred));
+  t.eqI32(written, inferred,
+          "a variant inferred and its enum written land on one instantiation, not two");
   return t.report();
 }
