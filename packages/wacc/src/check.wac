@@ -7600,7 +7600,14 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // takes none whatever `T` is, so `.wait(1)` is wrong for every instantiation at once — which is
   // seven of the nine diagnostics this checker still missed on the repository's own code, all of
   // them a `Pending<…>` from the platform. Types stay unmodelled; arity does not need them.
-  if (c.isGeneric(recv)) {
+  // **An instantiation counts as generic here, and `isGeneric` does not say so.** It matches the
+  // struct table by exact name, and only the *template* is in that table — so `Vec<i32>` came back
+  // not-generic wherever the instantiation had not been materialised into it, which depends on how
+  // the file was imported. `issues/lang/0275b` is what that cost: `a.fold(…)` on a project-imported
+  // `Vec<i32>` fell past this arm into the ordinary lookup, which asks for `Vec<i32>.fold` and finds
+  // `Vec.fold`. Asking about the base as well is the same question this arm's own first line already
+  // asks when it looks the method up.
+  if (c.isGeneric(recv) || (genericBase(recv) != "" && c.isGeneric(genericBase(recv)))) {
     i32 gm = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
     if (gm >= 0 && args.len() != c.methodParamCount[gm]) {
       c.report(errCallArity(), call.line, call.col);

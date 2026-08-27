@@ -40,16 +40,37 @@ struct with a method that has its own letters reproduces it.)
 - **It is not about the method existing.** `push` resolves; `fold` does not, and the only difference
   between them is that `fold` declares a letter of its own.
 
-## Where it lands
+## The checker half is fixed; the emitter half is not
 
-`checkMethodCall`'s `if (isValueType(recv))` arm, which is the note-less `no such method` — so the
-*receiver's* type is coming back as a value type rather than as `Vec<i32>`. That is the thing to
-chase: why `typeOfExpr` of the receiver answers differently for a project import when the declared
-type of the local is written out in both.
+**Found by probe, not by reading** — marking all nine `errNoMethod` sites and letting the compiler say
+which one fired, then printing the receiver there:
 
-Both `declareMethod` call sites record the letters — `C.methodTypeParams` holds them — so the
-suspicion is the owner *key*: a method is registered under the name the declaring file uses and
-looked up under `genericBase(recv)`, and a project import may rename in between.
+    PROBE recv=[Vec<i32>] gen=n base=[Vec] mAt=-1
+
+`recv` is right. What is wrong is `c.isGeneric("Vec<i32>")` answering **no**: it matches the struct
+table by exact name and only the *template* is in that table, so an instantiation is only "generic"
+where it happens to have been materialised into it — which depends on how the file was imported. The
+call then fell past the generic-receiver arm into the ordinary lookup, which asks for
+`Vec<i32>.fold` and finds `Vec.fold`.
+
+Fixed by asking about the base as well, which is the same question that arm's own next line already
+asks when it looks the method up. **`isGeneric` itself is left alone**: for an instantiation the
+honest answer is arguable — it is a concrete type — and widening it globally would change decisions
+all over the checker.
+
+**The emitter has the same shape of gap and it is what is left.** With the checker fixed, the project
+import gets one phase further and then:
+
+    wacc: cannot emit … — no method Vec<i32>.fold
+
+`methodOn(env, "Vec<i32>", "fold")` is `funcAt("Vec<i32>.fold")`, and it finds nothing — while
+`Vec<i32>.push` resolves in the same program. The suspicion is the *key*: `nameKeyOf` renames an
+imported type when more than one file declares the name, so the instance may be registered under one
+spelling and looked up under another, and only a method with its own letters takes the path that
+needs the exact key.
+
+**Worth doing next**, and cheap: print `env.instName[…]` at that decline the way
+`issues/lang/0274b` did. Three probes settled that issue and none of them was reading.
 
 ## Why it matters more than it looks
 
