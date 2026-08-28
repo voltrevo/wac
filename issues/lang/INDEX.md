@@ -6,10 +6,11 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0282b](open/0282b-waccs-bindgen-surfaces-unsigned-returns-as-signed.md) | wacc's bindgen emits neither `>>> 0` nor `asUintN`, so every `u32`/`u64` above the signed range reaches JS negative — `issues/lang/0039` in the other implementation | bug | wrong answer |
+| [0284b](closed/0284b-a-wapy-files-lexer-diagnostics-are-rendered-with-the-parsers-table.md) | a `.wapy` file's lexer errors are handed back in the parse slot, so all seven render as "the parser refused this" — the codes are right and the table is wrong | diagnostic | wrong answer |
 | [0283b](closed/0283b-a-qualified-variant-on-the-right-of-is-is-always-false.md) | `s is Shape.Circle` parsed as a member access, so the test was reference identity against a freshly built variant and never true — the clause's only checker lived in the deleted reference's suite | bug | wrong answer |
 | [0281b](open/0281b-as-tilde-wraps-instead-of-clamping-when-its-operand-is-constant.md) | `as~` to `i32` wraps instead of clamping when its operand is a constant; through a local it is correct | bug | wrong answer |
 | [0280a](open/0280a-the-wapy-printer-drops-parentheses-the-type-argument-rule-needs.md) | compiler/wapyPrint.ts renders `g((a < b), c > e)` as `g(a < b, c > e)`, and under `§wacc-type-args-commit` those are different programs — wacc reads the rendering as a construction with one null argument. The reference's own round trip cannot see it, because the reference does not have the rule: both its sides read the same wrong thing and agree | bug | wrong answer — the rendering is a different program, and it compiles |
-| [0277a](open/0277a-wapy-accepts-escapes-wac-refuses-and-swallows-the-rest.md) | wapy accepts `\uXXXX`, which wac has not, and returns the character for every *unknown* escape instead of diagnosing: `"\q"` is `q` and `"\u{41}"` is `u{41}`, silently | bug | open |
+| [0277a](closed/0277a-wapy-accepts-escapes-wac-refuses-and-swallows-the-rest.md) | wapy accepts `\uXXXX`, which wac has not, and returns the character for every *unknown* escape instead of diagnosing: `"\q"` is `q` and `"\u{41}"` is `u{41}`, silently | bug | closed |
 | [0278a](open/0278a-parseprogram-rewrites-its-token-array-so-parsing-twice-differs.md) | `splitGt` rewrites `>>` in place, so a `Lexed` is single-use: parsing one twice reads a nested generic as a comparison, and reports it in a file nobody touched | bug | open |
 | [0273b](open/0273b-a-slot-does-not-determine-a-calls-type-parameters.md) | `design/lang/0011` landed and one half of one criterion did not: `Vec<i32> b = empty();` is refused where `empty<i32>()` works. It is a **decision**, not leftover work — `generics.md` calls it a deliberate limit, and the asymmetry it rests on is that a construction takes its arguments from the slot through eight positions while a call takes none. Either that is principled (a construction *is* the type it produces; a call merely returns one) or it is where the implementation stopped, and the spec asserts the first without arguing it. Lifting it adds a third source of truth to order against the two `design/lang/0012` §1 already documents | decision | a program that reads as though it should compile |
 | [0272b](open/0272b-a-bool-compared-against-an-integer-literal-is-accepted.md) | `bool` and `i32` cannot be compared and wacc says so — unless the integer is a **literal**, in which case it compiles and the `bool` is used as a number: `(x < 2) > 0` answers 1 and `(x < 2) > 5` answers false, so `true` is being compared as `1`. The variable form `b > y` is correctly refused, and the reference refuses both with `type mismatch in '>': bool and i32`. The two operands take different paths: a literal has no type of its own and is handed the other operand's without anyone asking whether an integer literal may be that type. Not specific to `>` — any rule that types a literal from its neighbour has the same hole | bug | wrong answer — accepted, emitted, and evaluated as arithmetic on a `bool` |
@@ -42,7 +43,7 @@ has been fixed and why.
 
 ## Closed
 
-222 issues, 189 closed.
+223 issues, 191 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

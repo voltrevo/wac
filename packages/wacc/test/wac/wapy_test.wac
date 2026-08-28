@@ -35,6 +35,7 @@ import { Core } from "std/platform.wac";
 import { WParsed, wapyParse } from "../../src/wapyparse.wac";
 import { Pr, printProgram } from "../../src/print.wac";
 import { dump } from "../../src/api.wac";
+import { Frontend, frontendOf } from "../../src/frontend.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** `s` with every `from` replaced by `to`. */
@@ -269,5 +270,56 @@ export string test_a_wapy_program_that_is_wrong_says_so(Core core) {
   t.isTrue(readWapy("def f() -> i32:\n").errors > 0, "a header with no body is refused");
   t.isTrue(readWapy("def f() -> i32:\n\tif True:\n\t\treturn 1\n").errors > 0,
            "a tab in the leading whitespace is a lexical error");
+  return t.report();
+}
+
+/**
+ * A lexer diagnostic reaches the caller as the lexer's, on both surfaces.
+ *
+ * `issues/lang/0284b`. `frontendOf` handed the wapy branch's `Lexed` an **empty** error array and
+ * put every error — lexer and parser alike — in the parse slot, so a caller rendered the lexer's
+ * codes with `parseMessage`. That table starts at 20, so each of the seven found nothing and fell
+ * through to *"the parser refused this"*, while the wac branch two lines below had them right.
+ *
+ * Same program, two surfaces, two messages, against `[§wac-wapy-h3nq7fv]`'s *"same compiler"*.
+ *
+ * **Asserted as the split rather than as a message**, because a message is what a renderer makes of
+ * this and the defect was upstream of that: the codes were always right and arrived in the wrong
+ * list. So the check is that a lexical fault lands among `lexed.errors` and a syntactic one does
+ * not — which is what makes the rendering correct without this test knowing anything about tables.
+ *
+ * The wac side is asserted too. Both branches build a `Frontend` and only one of them was wrong;
+ * a test that read the wapy side alone could not say the two agree, which is the actual claim.
+ */
+export string test_a_lexical_fault_is_the_lexers_on_either_surface(Core core) {
+  T t = T.create();
+
+  // An unknown escape, which `lex` refuses and the parser never sees.
+  string wac = "export i32 f() { string s = \"\\q\"; return 1; }\n";
+  string wapy = "@export\ndef f() -> i32:\n    s: string = \"\\q\"\n    return 1\n";
+
+  // **The code is read only once the list is known to hold one.** Reverting the fix leaves the
+  // wapy list empty, and reading `errors[0]` from it traps — which fails the test, but reports a
+  // trap where the useful sentence is "the lexer's list is empty and should not be".
+  Frontend fw = frontendOf("a.wac", wac.toBytes());
+  t.isTrue(fw.lexed.errorCount > 0, "wac: the lexer's error is in the lexer's list");
+  if (fw.lexed.errorCount > 0) {
+    t.eqI32(fw.lexed.errors[0], 3, "wac: and it is errUnknownEscape");
+  }
+
+  Frontend fp = frontendOf("a.wapy", wapy.toBytes());
+  t.isTrue(fp.lexed.errorCount > 0,
+           "wapy: the lexer's error is in the lexer's list rather than the parser's — the whole of "
+           + "issues/lang/0284b is that it was not");
+  if (fp.lexed.errorCount > 0) {
+    t.eqI32(fp.lexed.errors[0], 3, "wapy: and it is errUnknownEscape, the same code wac reports");
+  }
+
+  // **A syntactic fault must stay out of that list**, or the split would pass by putting everything
+  // in it — which is the same mistake pointing the other way.
+  string bad = "@export\ndef f() -> i32:\n    return 1 +\n";
+  Frontend fb = frontendOf("b.wapy", bad.toBytes());
+  t.eqI32(fb.lexed.errorCount, 0, "wapy: a parse error is not the lexer's");
+  t.isTrue(fb.errorCount > 0, "wapy: and it is still reported");
   return t.report();
 }

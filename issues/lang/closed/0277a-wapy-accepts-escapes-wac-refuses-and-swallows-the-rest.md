@@ -1,6 +1,7 @@
 # 0277a — wapy accepts escapes wac refuses, and swallows the rest without a word
 
-- **Status:** open
+- **Status:** closed — the defect went with the reference compiler; the remnant is `issues/lang/0284b`
+- **Closed:** 2026-08-28 by agent-b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-27
@@ -92,3 +93,38 @@ wapy respells whole words and nothing smaller.
 wac's escapes and wac's diagnostics exactly. The five failures above are the *reference's rendering*
 being unreadable, not wacc misreading it. This issue is about the compiler that is on its way out, and
 the fix is worth making mainly because the printer is what anybody converting a file will reach for.
+
+## Closed, 2026-08-28 — checked rather than assumed
+
+Both halves are gone, and the third thing this asked for landed the same day.
+
+**The escape grammar.** Its subject was `compiler/wapyLex.ts`'s `unescape`, and that file was
+deleted with the reference on 2026-08-28. `packages/wacc/src/wapylex.wac` has no escape grammar of
+its own: `blankComments` skips over a string so a `#` inside one is not blanked, and leaves the
+contents to `lex` — its own comment says *"unterminated; let `lex` report it"*. So a `.wapy` file
+gets wac's escapes and wac's codes.
+
+Measured, the table at the top of this page as it stands now:
+
+| in a string literal | wapy | wac |
+| --- | --- | --- |
+| `"\q"` | refused | refused |
+| `"\u{41}"` | the letter `A`, length 1 | the letter `A`, length 1 |
+| `"\n"` | newline | newline |
+
+**The printer.** `packages/wacc/src/wapyprint.wac` emits a string literal as `w.tok(tok)` — the
+token's own source span, copied through. There is no re-escaping step, so there is no second
+spelling and nothing that could write `\u0000`. The `JSON.stringify` this issue is about was the
+reference's.
+
+**And the decision it left open** — *"whether `\uXXXX` should survive as a wapy-only convenience.
+Recommendation: no, and further, that wac should be the one to grow a string escape for a codepoint
+if anybody wants one"* — was taken that way. `design/lang/0013` step 2 gives wac `\u{H…H}` in both
+string and character literals, bounded by `string.fromCodepoint`'s rule, and wapy has it because
+wapy runs `lex`. Neither surface has an escape the other lacks.
+
+**What is left is not this.** The two surfaces still disagree about how a lexer diagnostic is
+*rendered*: `"\q"` says `unknown escape` in wac and `the parser refused this` in wapy, because
+`frontendOf` hands the wapy branch's `Lexed` an empty error array and puts every error in the parse
+slot, where the lexer's codes mean nothing. That is `issues/lang/0284b`, and it is a different
+defect — the codes are right and the table looking them up is wrong.
