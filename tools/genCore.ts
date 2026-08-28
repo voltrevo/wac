@@ -147,9 +147,11 @@ ${(await Promise.all(SIBLINGS.map(async (f) =>
 /**
  * Does this specifier name a module inside the compiler rather than a file on disk?
  *
- * The wac twin of \`isBuiltinSpecifier\` in \`compiler/wacCore.ts\`, and the two must agree: a built-in
- * one resolver knows about and the other does not is a module the graph reads and the linker cannot
- * find. Both are generated from the same list, which is the point of generating them.
+ * This had a twin — \`isBuiltinSpecifier\` in the TypeScript reference — and the sentence here was
+ * that the two must agree, because a built-in one resolver knows about and the other does not is a
+ * module the graph reads and the linker cannot find. The reference is deleted, so there is one
+ * resolver and nothing to disagree with; the list is still generated rather than typed, which is
+ * what made the agreement hold while there were two.
  */
 /**
  * A file of the \`std\` tree by the specifier that names it, or "" when there is no such file.
