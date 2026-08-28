@@ -5,7 +5,8 @@
 // and `bootstrap/hosts/browser.js`, which differ from this only in those three things.
 
 import { ladder } from "../js/ladder.js";
-import { flatten } from "../js/flatten.js";
+import { fileSet, flatten } from "../js/flatten.js";
+import { buildWithWacc, grantsOf } from "../js/wacc.js";
 import { assemble } from "../js/assemble.js";
 
 const root = new URL("..", import.meta.url).pathname;
@@ -53,15 +54,43 @@ if (import.meta.main) {
   const args = Deno.args;
   if (args.length < 1) {
     console.error("usage: deno run -A hosts/deno.js <file.wac> [--l0 | -o <out.wasm>]");
+    console.error("         [--with-wacc <entry.wac>] [--allow-read|write|net|env|run]");
     console.error("  default   compile and run `main`");
     console.error("  --l0      print the wac-L0 instead");
     console.error("  -o FILE   write the wasm module");
+    console.error("  --with-wacc E   build wacc from <file.wac>, then compile E with *that*,");
+    console.error("            and seal it with the manifest wacc writes for it");
     Deno.exit(2);
   }
   const l = await boot();
+  const dashO = args.indexOf("-o");
+
+  // **Two compilers, not one.** Everything else here runs wac-L5 on the file named; this builds
+  // wacc with wac-L5 and then runs *that* on a second program. It is how the command itself is
+  // built, and the only mode whose answer carries a manifest.
+  const withWacc = args.indexOf("--with-wacc");
+  if (withWacc >= 0) {
+    if (dashO < 0) {
+      console.error("hosts/deno.js: --with-wacc needs -o, since there is nothing to run");
+      Deno.exit(2);
+    }
+    const out = args[dashO + 1];
+    const base = out.replace(/\.wasm$/, "").split("/").pop();
+    const bytes = await buildWithWacc({
+      l5ToL0: (src) => l.l5ToL0(src),
+      assemble,
+      waccSource: await flattenFrom(args[0]) + "\n" +
+        await Deno.readTextFile(new URL("../drivers/spec_cases.wac", import.meta.url)),
+      target: await fileSet(args[withWacc + 1], files),
+      wasmName: `${base}.wasm`,
+      grants: grantsOf(args),
+    });
+    await Deno.writeFile(out, bytes);
+    Deno.exit(0);
+  }
+
   const source = await flattenFrom(args[0]);
   const l0 = await l.l5ToL0(source);
-  const dashO = args.indexOf("-o");
   if (dashO >= 0) {
     refuseIfRefused(l0);
     await Deno.writeFile(args[dashO + 1], assemble(l0));

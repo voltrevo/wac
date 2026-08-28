@@ -126,6 +126,47 @@ export async function flatten(entry, files, onCollision) {
 }
 
 /**
+ * The same graph, **as a set of files rather than one concatenated text**.
+ *
+ * `flatten` exists because wac-L5 cannot resolve an import. wacc can, and wants the files with the
+ * keys they refer to each other by — so this walks the same graph and answers `{ keys, texts }`,
+ * keyed relative to the deepest directory that contains all of them. The twin of `file_set` in
+ * `bootstrap/rust-ladder/src/flatten.rs`, and the two have to agree: a key is what one module calls
+ * another, so a different root gives a different program.
+ *
+ * The entry is the *last* key, because `gather` is post-order — imports are pushed before the
+ * module that asked for them, so the module nobody imported is at the end.
+ *
+ * @param {string} entry
+ * @param {Files} files
+ * @returns {Promise<{ keys: string[], texts: string[], entry: string }>}
+ */
+export async function fileSet(entry, files) {
+  /** @type {Mod[]} */
+  const mods = [];
+  await gather(entry, new Set(), mods, files);
+  const paths = mods.map((m) => m.path);
+  const root = commonRoot(paths);
+  const keys = paths.map((p) => (p.startsWith(root + "/") ? p.slice(root.length + 1) : p));
+  return { keys, texts: mods.map((m) => m.text), entry: keys[keys.length - 1] ?? "" };
+}
+
+/**
+ * The deepest directory holding every one of them.
+ *
+ * @param {string[]} paths
+ * @returns {string}
+ */
+function commonRoot(paths) {
+  if (paths.length === 0) return "";
+  let root = paths[0].slice(0, paths[0].lastIndexOf("/"));
+  for (const p of paths) {
+    while (root !== "" && !p.startsWith(root + "/")) root = root.slice(0, root.lastIndexOf("/"));
+  }
+  return root;
+}
+
+/**
  * Dependency order, each module once, imports before the module that asks for them.
  *
  * @param {string} entry

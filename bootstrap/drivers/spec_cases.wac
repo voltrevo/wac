@@ -213,6 +213,43 @@ export i32 drv_declineFiles() {
 // manifest should ask the compiler rather than carry a second opinion about what a program exports.
 u8[] textout;
 
+// ── The manifest, asked of wacc rather than written again ───────────────────────────────────────
+//
+// **No host should be formatting this.** `rust-ladder/src/manifest.rs` takes the two wires and
+// writes the JSON itself, which is a second implementation of a format wacc already exports as
+// `manifestOf` and `withManifestSection` — and `ts/manifest.test.ts` exists only to police the
+// drift between the two. Asking wacc, through the driver that is already here, means there is one
+// implementation and nothing to drift.
+u8[] wasmnamebuf;
+
+export i32 drv_allocWasmName(i32 n) {
+  wasmnamebuf = u8[n]();
+  return n;
+}
+
+export i32 drv_setWasmNameByte(i32 i, i32 b) {
+  wasmnamebuf[i] = b;
+  return 0;
+}
+
+/**
+ * Append the `wac.manifest` section to what `drv_buildFiles` produced, and answer the new length.
+ *
+ * `grants` is a bitfield and it is `manifestOf`'s own: read 1, write 2, net 4, env 8, run 16. The
+ * host passes what the command line asked for; nothing here decides policy.
+ *
+ * The name written into the manifest is the *output's*, not the entry's, which is why it comes in
+ * separately — `native.ts` derives it from the `-o` path.
+ */
+export i32 drv_seal(i32 grants) {
+  string entry = string.fromBytes(namebuf);
+  string wire = bindTypesFiles(paths, sources, entry);
+  string sigs = exportSigsFiles(paths, sources, entry);
+  string m = manifestOf(built, wire, sigs, entry, string.fromBytes(wasmnamebuf), grants);
+  built = withManifestSection(built, m);
+  return built.len();
+}
+
 export i32 drv_exportSigs() {
   textout = exportSigsFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
   return textout.len();
