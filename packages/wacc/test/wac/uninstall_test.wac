@@ -105,7 +105,7 @@ export string test_the_subcommand_removes_what_an_install_wrote(Core core, Cli c
   string home = fixture(cli, t, dir);
 
   Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
-                   binaryPath(cli), string[]("uninstall"));
+                   binaryPath(cli), string[]("self", "uninstall"));
   t.isTrue(r.ran(), "the command did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "wac uninstall failed: " + string.fromBytes(r.stderr));
@@ -126,7 +126,7 @@ export string test_keep_cache_keeps_the_cache_and_nothing_else(Core core, Cli cl
   string home = fixture(cli, t, dir);
 
   Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
-                   binaryPath(cli), string[]("uninstall", "--keep-cache"));
+                   binaryPath(cli), string[]("self", "uninstall", "--keep-cache"));
   t.isTrue(r.ran() && r.status == 0,
            "wac uninstall --keep-cache failed: " + string.fromBytes(r.stderr));
   string[] wrong = survivors(cli, home, true);
@@ -143,7 +143,7 @@ export string test_removing_nothing_says_so_rather_than_failing(Core core, Cli c
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](dir + "/.wac", dir),
-                   binaryPath(cli), string[]("uninstall"));
+                   binaryPath(cli), string[]("self", "uninstall"));
   t.isTrue(r.ran(), "the command did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "uninstalling nothing was an error: " + string.fromBytes(r.stderr));

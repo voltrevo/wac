@@ -843,8 +843,8 @@ string usage() {
        + "                and write the lock — the only command that reaches the network\n"
        // Printed by the host until 2026-08-26, appended after this block because the command lived
        // there. It is the program's now, so its line is too — `issues/system/0257c`.
-       + "       wac uninstall [--keep-cache]   remove what `wac task wac:install` put under\n"
-       + "                $WAC_HOME, the profile line, and nothing else\n"
+       + "       wac self install --from PATH   put that command under $WAC_HOME and on PATH\n"
+       + "       wac self uninstall [--keep-cache]   take it away again\n"
        // Appended by the host after this block until 2026-08-26, because `app` was the host's
        // command and this program knew nothing about it. It is here now, and so is the command —
        // which is what makes this the whole list rather than most of it.
@@ -1379,7 +1379,7 @@ export i32 main(Core core, Cli cli) {
     return r.status;
   }
 
-  if (cmd == "uninstall") { return uninstallCommand(core, narrowed(cli, forCommand("uninstall")), argc); }
+  if (cmd == "self") { return selfCommand(core, narrowed(cli, forCommand("self")), argc); }
 
   if (cmd == "update") {
     Cli ucli = narrowed(cli, forCommand("update"));
@@ -2226,13 +2226,150 @@ i32 groupOf(string path, string[] roots, i32 n) {
   return 0;
 }
 
+/**
+ * `wac self install` and `wac self uninstall` — the command acting on its own installation.
+ *
+ * **`self`, rather than a bare `install`.** `wac update` is the *package* updater — a bare `update`
+ * means the project you are in, and it reads `wac.json5` — so the namespace already mixes project
+ * verbs with toolchain verbs. A plain `wac install` would land on that line and read, to anybody
+ * arriving from npm or cargo, as "install this project's dependencies". `self` keeps the two apart
+ * and leaves the name free for the packages that will want it.
+ *
+ * **It was `wac task wac:install` until 2026-08-28**, which is a task, which needs the command to
+ * exist in order to install the command. That was circular at exactly the moment it was needed, and
+ * `bootstrap.sh` is what replaces the half that built.
+ */
+i32 selfCommand(Core core, Cli cli, i32 argc) {
+  string sub = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : "";
+  if (sub == "install") { return installCommand(core, cli, argc); }
+  if (sub == "uninstall") { return uninstallCommand(core, cli, argc); }
+  core.warn("usage: wac self install --from PATH");
+  core.warn("       wac self uninstall [--keep-cache]");
+  if (sub != "") { core.warn("wac: unknown subcommand " + sub); }
+  return 2;
+}
+
+/**
+ * Put an already-built command under `$WAC_HOME` and on `PATH`.
+ *
+ * **It installs, and does not build.** `bootstrap.sh` builds — from source, through the ladder — and
+ * hands the result here. Splitting them is what lets one script serve three hosts: what differs
+ * between a native binary and a JavaScript file with a shebang is entirely in the building.
+ *
+ * **`--from` rather than the running program's own path.** Learning where you are is a capability
+ * wac does not have, and adding one means editing `std/platform.wac`, whose text is carried inside
+ * `packages/wacc/src/coretext.wac` — so it changes the compiler's bytes, and the seed's. That is a
+ * large blast radius for a convenience, and the caller that matters already knows the path because
+ * it just built the file. See `bootstrap/MIGRATION.md`.
+ */
+i32 installCommand(Core core, Cli cli, i32 argc) {
+  string from = "";
+  bool editProfiles = true;
+  for (i32 i = 2; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--no-profile") { editProfiles = false; }
+    else if (a == "--from" && i + 1 < argc) { from = string.fromBytes(cli.arg(i + 1).wait()); i++; }
+    else {
+      core.warn("usage: wac self install --from PATH [--no-profile]");
+      core.warn("wac: unknown argument " + a);
+      return 2;
+    }
+  }
+  if (from == "") {
+    core.warn("usage: wac self install --from PATH [--no-profile]");
+    core.warn("wac: --from names the command to install, and is required");
+    return 2;
+  }
+
+  string home = wacHomeOf(cli);
+  if (home == "") {
+    core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to install to");
+    return 2;
+  }
+
+  FileResult got = cli.readFile(from).wait();
+  if (!got.ok) {
+    core.warn("wac: cannot read " + from);
+    return 1;
+  }
+
+  // **The directories first**, because writing a file into a directory that is not there fails in a
+  // way that names the file rather than the directory.
+  cli.mkdir(home + "/bin", true).wait();
+  cli.mkdir(home + "/cache/git", true).wait();
+
+  Change put = cli.writeFile(home + "/bin/wac", got.bytes).wait();
+  if (!put.ok()) {
+    core.warn("wac: cannot write " + home + "/bin/wac");
+    return 1;
+  }
+  cli.setExecutable(home + "/bin/wac", true).wait();
+
+  // Sourced from a shell profile. Guarded so that sourcing it twice does not put the directory on
+  // `PATH` twice.
+  cli.writeFile(home + "/env",
+    ("# Written by `wac self install`. Sourced from a shell profile.\n"
+     + "case \":${PATH}:\" in\n"
+     + "  *\":" + home + "/bin:\"*) ;;\n"
+     + "  *) PATH=\"" + home + "/bin:${PATH}\" ; export PATH ;;\n"
+     + "esac\n").toBytes()).wait();
+
+  cli.writeFile(home + "/install.json5",
+    ("{\n"
+     + "  // Written by `wac self install`.\n"
+     + "  home: \"" + home + "\",\n"
+     + "  from: \"" + from + "\",\n"
+     + "  bytes: " + itoa(got.bytes.len()) + ",\n"
+     + "}\n").toBytes()).wait();
+
+  i32 lines = 0;
+  if (editProfiles) {
+    u8[]? h = cli.env("HOME").wait();
+    if (!(h is null) && h!.len() > 0) {
+      string hd = string.fromBytes(h!);
+      lines = ensureProfileLine(cli, hd, home);
+    }
+  }
+
+  core.log("wac: installed " + itoa(got.bytes.len()) + " bytes at " + home + "/bin/wac");
+  if (lines > 0) {
+    core.log("     and a line in your shell profile — open a new shell, or `. " + home + "/env`");
+  } else {
+    core.log("     put " + home + "/bin on PATH, or `. " + home + "/env`");
+  }
+  return 0;
+}
+
+/**
+ * Add `. "$home/env"` to the first shell profile that exists, unless one is already there.
+ *
+ * The mirror of `removeProfileLine`, and it uses the same rule to recognise its own line: one
+ * carrying `# wac`. Answers 1 if it wrote one and 0 if it did not, so the caller can say which.
+ */
+i32 ensureProfileLine(Cli cli, string hd, string home) {
+  string[] profiles = string[](hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile");
+  for (i32 i = 0; i < profiles.len(); i++) {
+    FileResult got = cli.readFile(profiles[i]).wait();
+    if (!got.ok) { continue; }
+    string text = string.fromBytes(got.bytes);
+    if (holds(text, "# wac")) { return 0; }
+    string sep = text.len() > 0 && text.slice(text.len() - 1, text.len()) != "\n" ? "\n" : "";
+    Change put = cli.writeFile(profiles[i],
+      (text + sep + ". \"" + home + "/env\"    # wac\n").toBytes()).wait();
+    if (put.ok()) { return 1; }
+  }
+  return 0;
+}
+
 i32 uninstallCommand(Core core, Cli cli, i32 argc) {
   bool keepCache = false;
-  for (i32 i = 1; i < argc; i++) {
+  // **From 2, not 1.** `self` is argument 0 and `uninstall` is argument 1, so the flags start after
+  // both. A loop from 1 reads its own subcommand name as an unknown flag and refuses.
+  for (i32 i = 2; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a == "--keep-cache") { keepCache = true; }
     else {
-      core.warn("usage: wac uninstall [--keep-cache]");
+      core.warn("usage: wac self uninstall [--keep-cache]");
       core.warn("wac: unknown argument " + a);
       return 2;
     }
