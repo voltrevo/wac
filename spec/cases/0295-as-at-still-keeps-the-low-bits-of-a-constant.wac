@@ -1,0 +1,14 @@
+// expect: answers f = 1
+// spec:  §wac-cast-matrix-6hkq4wz
+// why: `as@` keeps the low bits by definition, and fixing `as~`'s constant path must not change it —
+//      the two share the fold that narrows a literal ahead of the cast
+// from: issues/lang/0281b
+export i32 f() {
+  i32 wrapped = 4294967296 as@ i32;                    // 0 — the low 32 bits of 2^32
+  i32 lowMin  = (0 - 9223372036854775807 - 1) as@ i32; // 0 — the low 32 bits of i64 min
+  // In range, through a local: a *bare* literal that fits `i32` already is one, so `42 as~ i32` is
+  // refused as a cast between a type and itself and cannot be written here.
+  i64 n = 42;
+  i32 small = n as~ i32;                               // 42
+  return wrapped == 0 && lowMin == 0 && small == 42 ? 1 : 0;
+}

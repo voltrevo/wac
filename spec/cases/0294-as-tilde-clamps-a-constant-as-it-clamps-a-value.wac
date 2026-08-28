@@ -1,0 +1,14 @@
+// expect: answers f = 1
+// spec:  §wac-cast-matrix-6hkq4wz
+// why: `as~` clamps to the target's range, and a constant operand is not an exception — it was
+//      narrowed to 32 bits first, so the clamp had nothing left to do
+// from: issues/lang/0281b
+export i32 f() {
+  i32 lit   = 4294967296 as~ i32;                    // 2147483647, was 0
+  i32 sum   = (4294967295 + 1) as~ i32;              // 2147483647, was 0
+  i32 low   = (0 - 9223372036854775807 - 1) as~ i32; // -2147483648, was 0
+  i64 n     = 4294967296;
+  i32 local = n as~ i32;                             // always was 2147483647
+  return lit == 2147483647 && sum == 2147483647
+      && low == (0 - 2147483648) && local == 2147483647 ? 1 : 0;
+}
