@@ -77,7 +77,7 @@ indentation is an error.
 ### Interpolation
 
 ```wac
-core.warn("wac: cannot read \(path) — \(words)");
+core.warn("wac: cannot read \{path} — \{words}");
 ```
 
 The expression must already be a `string`.
@@ -151,17 +151,39 @@ blocker.
 Tabs in the indentation are refused outright rather than assigned a width, so no
 block string can mean two things to two readers.
 
-### D7 — `\(` because it is an escape, and interpolation converts nothing yet
+### D7 — `\{…}` because it is an escape *and* the shape JSX already uses
 
-`\(` is an unknown escape today, i.e. an error, so no existing literal can change
-meaning. Brace syntax cannot say that: **6065 lines in the tree have a `{` inside
-a string literal** — `bindgen` writing TypeScript, `emit` writing wasm text — so
-`{…}` would need a `{{` escape and would silently reinterpret every one.
+**It has to be an escape.** `\{` is an unknown escape today, i.e. an error, so no
+existing literal can change meaning. Bare `{…}` or `${…}` cannot say that:
+**6065 lines in the tree have a `{` inside a string literal** — `bindgen` writing
+TypeScript, `emit` writing wasm text — so either would need a `{{` escape and
+would silently reinterpret every one. Under `\{`, a bare `{` in a string stays a
+bare `{` and all 6065 are untouched.
+
+**Braces rather than parens, because wac already embeds expressions in braces.**
+JSX writes `<input size={itoa(n)}/>`, so `\{itoa(n)}` makes one shape mean
+"an embedded expression" in both places instead of two answers to one question.
+Secondarily, the delimiters are visually distinct — `\(itoa(n))` ends in `))` and
+has to be counted — and braces are the majority convention, where `\(` is
+Swift's alone.
+
+Two things that look like objections and are not. **Regex code writes `\\{`**, 16
+sites across `packages/regex` and `packages/sh`; unaffected, because the lexer
+consumes `\\` as the escaped-backslash escape first and the `{` after it is an
+ordinary character. And **135 lambdas in the tree have a block body**, so braces
+do occur inside expressions — meaning `\{…}` needs brace balancing exactly as
+`\(…)` would have needed paren balancing. Neither is free, and the lexer cost
+below is identical either way.
 
 Requiring a `string`-typed expression makes interpolation **exactly sugar for
 `+`**, so precedence, evaluation order and the type rule are all `+`'s and
 nothing new is specified. It is also a pure widening: admitting converted types
 later cannot invalidate anything written now.
+
+**The cost:** the lexer stops being able to scan a string in one pass.
+`"\{f("x")}"` nests a string inside an interpolation inside a string, so it must
+balance delimiters and recognise nested literals rather than stopping at the
+next `"`. That is inherent to interpolation in any syntax.
 
 ## The defects this fixes
 
@@ -251,7 +273,7 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 
 ## Deferred, and not part of this
 
-**Value → string conversion.** Interpolation wants `"\(n)"` for an `i32`, and
+**Value → string conversion.** Interpolation wants `"\{n}"` for an `i32`, and
 JSX wants the same rule rather than one of its own. The obvious mechanism — the
 compiler looking for a method by a magic name like `toString` — is not the
 answer: making a method name special is a smell, and it would be wac's first,
@@ -261,8 +283,8 @@ It does not stand alone either. **Operator overloading** has the identical
 shape: a way for a type to say "I participate in this", *declared* rather than
 inferred from a spelling. Whatever answers one should answer both.
 
-So both wait, and until then `"\(itoa(n))"` is the spelling, JSX is unchanged,
+So both wait, and until then `"\{itoa(n)}"` is the spelling, JSX is unchanged,
 and `§wac-str-noimplicit-p3jw7xf` stands. When conversion does arrive it belongs
-in `\()` and not in `+`: `+` is an operator on values, where an implicit
+in `\{}` and not in `+`: `+` is an operator on values, where an implicit
 conversion is a footgun, while interpolation is syntax whose entire job is
 building a string.
