@@ -83,6 +83,9 @@ export Stripped strip(u8[] src) {
   string err = "";
   i32 errLine = 0;
   i32 errCol = 0;
+  // Inside an `import …` or `export …` statement, where `as` renames rather than casts. Set at the
+  // keyword and cleared at the `;` that ends it.
+  bool inSpecifiers = false;
 
   i32 n = tokenCount(l);
   i32 i = 0;
@@ -91,6 +94,8 @@ export Stripped strip(u8[] src) {
     string tx = textAt(src, l, i);
 
     if (k == kIdent()) {
+      if ((tx == "import" || tx == "export") && startsDeclaration(src, l, i)) { inSpecifiers = true; }
+
       // ── Whole declarations that vanish ────────────────────────────────────
       if (tx == "interface" && startsDeclaration(src, l, i)) {
         i32 end = pastBracedDeclaration(src, l, i);
@@ -151,7 +156,12 @@ export Stripped strip(u8[] src) {
       }
 
       // ── `as` / `satisfies` and their type ────────────────────────────────
-      if (tx == "as" || tx == "satisfies") {
+      //
+      // **Not in an import or export.** `import { collect as realCollect }` renames a binding; it
+      // is not a type assertion, and erasing it silently drops the local name so every use of it
+      // becomes undefined. The two are spelled identically and only the enclosing statement says
+      // which — hence `inSpecifiers`.
+      if ((tx == "as" || tx == "satisfies") && !inSpecifiers) {
         i32 end = pastType(src, l, i + 1, stack);
         if (end < 0) { err = "a type after `" + tx + "` that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
         cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
@@ -164,6 +174,7 @@ export Stripped strip(u8[] src) {
     }
 
     if (k == kPunct()) {
+      if (tx == ";") { inSpecifiers = false; }
       if (tx == "(" || tx == "[" || tx == "{") {
         bool colonIsType = tx == "(" && opensSignature(src, l, i);
         stack.push(Ctx(tx == "(" ? '(' : tx == "[" ? '[' : '{', colonIsType, 0));
@@ -172,9 +183,13 @@ export Stripped strip(u8[] src) {
       }
       if (tx == ")" || tx == "]" || tx == "}") {
         if (stack.len() > 1) { stack.remove(stack.len() - 1); }
-        // A return type follows the `)` of a signature.
+        // A return type follows the `)` of a signature — **unless a conditional is open here**,
+        // where the `:` is its second half. `(a ? f(x) : c)` is the case: `f(x)` ends in a `)`
+        // followed by a `:`, which is exactly the shape of `(a: T): R`, and only the pending `?`
+        // in the enclosing context tells them apart. Erasing here deleted the else branch.
         if (tx == ")" && i + 1 < n && kindAt(l, i + 1) == kPunct()
-            && textAt(src, l, i + 1) == ":" && returnTypeFollows(src, l, i)) {
+            && textAt(src, l, i + 1) == ":" && top(stack).pendingTernary == 0
+            && returnTypeFollows(src, l, i)) {
           i32 end = pastType(src, l, i + 2, stack);
           if (end < 0) { err = "a return type that does not end"; errLine = lineAt(l, i + 1); errCol = colAt(l, i + 1); break; }
           cut(cutFrom, cutTo, startAt(l, i + 1), endOf(l, end - 1));
