@@ -10,8 +10,10 @@ decision), or **parked** (deliberately not now, with a reason).
 
 ## Summary
 
-wacboot moves into wac with its history, and the 35,249-line TypeScript compiler is deleted. The
-ladder becomes the way wac is bootstrapped.
+**Done, 2026-08-28.** wacboot moved into wac with its history and the TypeScript compiler is
+deleted — 35,352 lines. The ladder is how wac is bootstrapped: five rungs whose lowest is
+hand-written wasm assembly text, `./bootstrap.sh` from a cold checkout, and no seed binary in the
+repository to start from.
 
 Getting wac from source becomes one script: `bootstrap.sh` at the repo root, `--host {rust,deno,
 nodejs}`, defaulting to rust and to installing. It works inside a clone or piped from curl, checks
@@ -363,12 +365,31 @@ sha256  3817847b3d99b79dd98c68666a80524d6d4dc39568a3e6dc122e23840960fceb
 compilers. That they converge on one `wacc.wasm` after a single further round is the claim, and it
 is the whole of what the reference was still for.
 
-### Left — two files
+### Done — 2026-08-28
 
-| file | the question |
-|---|---|
-| `packages/wacc/test/wapyRoundTrip.test.ts` | it renders every tracked `.wac` file to wapy with compiler/wapyPrint.ts and reads it back with wacc, comparing trees. **wacc has a wapy parser and no wapy printer**, and the printer is 699 lines walking the *reference's* AST — a rewrite against wacc's tree rather than a translation. The only open decision. |
-| bootstrap/ts/same_fixed_point.ts | sanctioned: it exists to compare against the reference and is the evidence for deleting it. Goes in the final commit, with the last agreed hashes pinned. |
+`compiler/` is deleted: 32 files, 35,352 lines, with `bootstrap/ts/same_fixed_point.ts` and its
+test. `deno.json` has no `imports` block, because the `wac/` mapping was the only entry in it.
+
+**The from-nothing path is verified rather than assumed.** `bash tools/seed.sh --bootstrap` builds
+wacc from source through the ladder and reaches its fixed point at 1,814,475 bytes — that is the
+first command in a fresh checkout, and it is what the reference used to do.
+
+What broke on deletion and what it became:
+
+| what | why it pointed there | now |
+|---|---|---|
+| `tools/wac/referencecallers_test.wac` | it policed which files could reach the reference | deleted with the thing it policed |
+| `tools/genCore.ts` | generated `core`'s declarations into *both* compilers so they could not drift | one output |
+| `tools/wac/genCore_test.wac` | asserted the omission that made two embeddings worth having | that difference has nowhere to be |
+| `selfhostemit_test`'s cache key | walked `compiler/` to date stage A | walks `bootstrap/`; it had gone quiet and the test just got slower |
+| `site/tools/site.test.ts` | measured `compiler/`'s line count against the front page | measures wacc |
+| the front page | "the seed — building wacc is the only job it has left" | wac is self-hosted and there is no seed |
+| `links_test`'s roots | listed `compiler/` | lists `bootstrap/`, and immediately found two stale paths there |
+| `CLAUDE.md`, `README.md`, `CONTRIBUTING.md` | the layout, the bootstrap escape hatch, and an entire methodology for a deleted directory | rewritten |
+
+189 backticked paths across 113 files, and seven markdown links, named files that no longer exist.
+Unbackticked rather than deleted: the sentences are about history and are still true, they had just
+stopped naming a path.
 
 ### What the rest turned into
 
