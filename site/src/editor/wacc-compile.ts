@@ -17,7 +17,7 @@
 // opaque reference either way. So this converts three lists and leaves the rest empty, which is why
 // it is forty lines rather than a second copy of the compiler's metadata.
 
-import type { WacCallback, WacCompiled, WacExport } from "../../../compiler/wacCompile.ts";
+import type { WacCallback, WacCompiled, WacExport } from "./wac-types.ts";
 import {
   type Callback,
   parseCallbacks,
@@ -34,10 +34,25 @@ export type WaccModule = {
 };
 
 /** A diagnostic, in the shape the editor's gutter wants. */
-export type WaccDiagnostic = { file: string; line: number; col: number; message: string };
+export type WaccDiagnostic = {
+  file: string;
+  line: number;
+  col: number;
+  message: string;
+  /** Which pass reported it — `parse`, `check`, and so on. The gutter prefixes with it. */
+  phase: string;
+  /** What to do about it, when wacc has something to say. Empty when it does not. */
+  hint: string;
+  /** How many columns the offending text spans, so an editor can underline it rather than a caret. */
+  width: number;
+};
 
 export type WaccResult =
-  | { ok: true; compiled: WacCompiled }
+  // **`wire` and `sigs` travel with the result**, because the glue the editor shows is generated
+  // from them rather than from `compiled`. `compiled` deliberately leaves `structs`, `enums`,
+  // `arrays`, `boxed` and `funcrefs` empty — the runner never reads them — so anything generating
+  // bindgen out of it emits glue with no struct, enum or array helpers at all.
+  | { ok: true; compiled: WacCompiled; wire: string; sigs: string }
   | { ok: false; diagnostics: WaccDiagnostic[] };
 
 /**
@@ -49,12 +64,18 @@ export function parseDiagnostics(wire: string): WaccDiagnostic[] {
   const out: WaccDiagnostic[] = [];
   for (const line of wire.split("\n")) {
     if (line === "") continue;
-    const [file, l, c, , message, note] = line.split("\t");
+    const [file, l, c, phase, message, note, hint, width] = line.split("\t");
     out.push({
       file,
       line: Number(l),
       col: Number(c),
       message: note ? `${message} — ${note}` : message,
+      phase: phase ?? "",
+      hint: hint ?? "",
+      // Three of the eight fields were parsed and thrown away until the editor's gutter needed
+      // them: it had been underlining with the *reference's* spans, from a compile the page was
+      // no longer running.
+      width: Number(width) > 0 ? Number(width) : 1,
     });
   }
   return out;
@@ -105,29 +126,34 @@ export function compileWithWacc(
   if (blocked !== "") {
     return {
       ok: false,
-      diagnostics: [{ file: entry, line: 1, col: 1, message: `wacc cannot emit this yet: ${blocked}` }],
+      diagnostics: [{
+        file: entry,
+        line: 1,
+        col: 1,
+        message: `wacc cannot emit this yet: ${blocked}`,
+        // This one is made here rather than parsed from the wire, so it says so: no pass reported
+        // it, there is nothing to suggest, and it points at the file rather than at any text in it.
+        phase: "emit",
+        hint: "",
+        width: 1,
+      }],
     };
   }
 
   const wire = wacc.bindTypesFiles(paths, sources, entry);
+  const sigs = wacc.exportSigsFiles(paths, sources, entry);
   return {
     ok: true,
+    wire,
+    sigs,
     compiled: {
       wasm: wacc.emitFiles(paths, sources, entry),
-      exports: exportsOf(wacc.exportSigsFiles(paths, sources, entry)),
+      exports: exportsOf(sigs),
+      // **These three are the whole of it**, which was worth checking rather than assuming: the
+      // runner touches `wasm`, `exports` and `callbacks` and nothing else. The five empty arrays
+      // and the `trapMessages: false` that used to sit here were for the reference's `wacBindgen`,
+      // and went with it — see `wac-types.ts`.
       callbacks: callbacksOf(parseCallbacks(wire)),
-      // **Everything below is read by `wacBindgen` and not by the runner**, which was worth checking
-      // rather than assuming: `wacInstance` touches `wasm`, `exports` and `callbacks` and nothing
-      // else. A struct or an enum crosses as an opaque reference and what is done with it goes
-      // through the module's own accessors; an array is converted by the same helpers by name.
-      structs: [],
-      enums: [],
-      arrays: [],
-      boxed: [],
-      funcrefs: [],
-      // The emitter writes trap messages; nothing here reads the flag, and claiming `true` would be
-      // a claim about a module this file did not build.
-      trapMessages: false,
     },
   };
 }

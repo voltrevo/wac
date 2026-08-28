@@ -1,12 +1,23 @@
-import { wacCompile, type CompileResult, type WacExport, type WacCompiled } from "../../../compiler/wacCompile.ts";
-import { compileWithWacc, type WaccModule } from "./wacc-compile";
+import {
+  compileWithWacc,
+  parseDiagnostics,
+  type WaccDiagnostic,
+  type WaccModule,
+} from "./wacc-compile";
 import { isArrayType, runHere, type RunReply, type RunRequest } from "./run.worker.ts";
-import { wacBindgen } from "../../../compiler/wacBindgen.ts";
-import { wacDiag } from "../../../compiler/wacDiag.ts";
+import {
+  generate,
+  parseAliases,
+  parseBindTypes,
+  parseCallbacks,
+  parseOutRefs,
+  parseSigs,
+} from "../../../packages/wacc/tools/waccBindgen.ts";
+import type { WacCompiled, WacExport } from "./wac-types.ts";
 import type { FileMap } from "./file-store";
 
 export type EditorCompileResult =
-  | { ok: true; wasm: Uint8Array; exports: WacExport[]; compiled: WacCompiled }
+  | { ok: true; wasm: Uint8Array; exports: WacExport[]; compiled: WacCompiled; wire: string; sigs: string }
   | { ok: false; errors: string[] };
 
 // ── Which compiler ───────────────────────────────────────────────────────────
@@ -84,36 +95,68 @@ function waccFiles(files: FileMap): Record<string, string> {
   return out;
 }
 
+/**
+ * What the gutter underlines: wacc's diagnostics for the file being edited.
+ *
+ * **Separate from `compile` because it answers a different question.** `compile` wants a module or
+ * a reason there is none; the linter wants every complaint, positioned. It also has to say nothing
+ * rather than something wrong when there is no compiler yet — an empty gutter while `wacc-api.js`
+ * is still arriving is right, and a red line from a compiler the page is not going to use is what
+ * this replaced. `issues/lang/0105` is that mistake in the Run button; this was the same mistake in
+ * the margin.
+ */
+export function diagnose(files: FileMap, fileName: string): WaccDiagnostic[] {
+  if (wacc === null || !waccCanCompile(files, fileName)) return [];
+  const only = waccFiles(files);
+  const paths = Object.keys(only);
+  return parseDiagnostics(wacc.diagnoseFiles(paths, paths.map((p) => only[p]), fileName));
+}
+
 export function compile(files: FileMap, fileName: string): EditorCompileResult {
-  if (wacc !== null && waccCanCompile(files, fileName)) {
-    const r = compileWithWacc(wacc, waccFiles(files), fileName);
-    if (!r.ok) {
-      return { ok: false, errors: r.diagnostics.map((d) => `${d.file}:${d.line}:${d.col} ${d.message}`) };
-    }
-    return { ok: true, wasm: r.compiled.wasm, exports: r.compiled.exports, compiled: r.compiled };
+  // **One compiler, and it says so when it cannot answer.** Both of these used to fall through to
+  // the TypeScript reference, so the page could compile with something other than what it claims
+  // to compile with — and did, in a published deploy, for as long as the wacc asset was missing
+  // and nothing said so. `issues/system/0146`.
+  if (wacc === null) {
+    return { ok: false, errors: ["the compiler has not loaded yet — wacc-api.js did not arrive"] };
+  }
+  if (!waccCanCompile(files, fileName)) {
+    return { ok: false, errors: [`${fileName}: not a wac or wapy file`] };
   }
 
-  const fileMap = new Map<string, string>();
-  for (const [k, v] of Object.entries(files)) fileMap.set(k, v);
-
-  const result: CompileResult = wacCompile(fileMap, fileName);
-  if (!result.ok) {
-    const sources = new Map<string, string>();
-    for (const [k, v] of Object.entries(files)) sources.set(k, v);
-    return {
-      ok: false,
-      errors: [wacDiag(result.diagnostics, sources)],
-    };
+  const r = compileWithWacc(wacc, waccFiles(files), fileName);
+  if (!r.ok) {
+    return { ok: false, errors: r.diagnostics.map((d) => `${d.file}:${d.line}:${d.col} ${d.message}`) };
   }
-  return { ok: true, wasm: result.compiled.wasm, exports: result.compiled.exports, compiled: result.compiled };
+  return {
+    ok: true,
+    wasm: r.compiled.wasm,
+    exports: r.compiled.exports,
+    compiled: r.compiled,
+    wire: r.wire,
+    sigs: r.sigs,
+  };
 }
 
 export function wasmHex(wasm: Uint8Array): string {
   return Array.from(wasm).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function generateBindgen(compiled: WacCompiled): string {
-  return wacBindgen(compiled);
+/**
+ * The glue for what was just compiled, from **wacc's own description of it** rather than from
+ * `compiled`. It used to be the reference's `wacBindgen(compiled)`, which read five fields that
+ * `wacc-compile.ts` leaves empty because nothing else reads them — so this tab showed glue with no
+ * struct, enum or array helpers whenever wacc was the compiler, which is always.
+ */
+export function generateBindgen(r: Extract<EditorCompileResult, { ok: true }>): string {
+  return generate(
+    r.wasm,
+    parseSigs(r.sigs),
+    parseBindTypes(r.wire),
+    parseCallbacks(r.wire),
+    parseOutRefs(r.wire),
+    parseAliases(r.wire),
+  );
 }
 
 // ── Calling an export ────────────────────────────────────────────────────────
@@ -145,7 +188,13 @@ export async function runFunction(
   // a compiler the reader never asked for. `issues/lang/0105`, and the same shape as `0110`.
   const checked = compile(files, fileName);
   if (!checked.ok) return { success: false, output: checked.errors.join("\n") };
-  const req: RunRequest = { compiled: checked.compiled, funcName, argStrings };
+  const req: RunRequest = {
+    wasm: checked.wasm,
+    wire: checked.wire,
+    sigs: checked.sigs,
+    funcName,
+    argStrings,
+  };
   return await runIsolated(req, timeoutMs);
 }
 

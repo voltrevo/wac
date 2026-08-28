@@ -5,7 +5,7 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import type { FileMap } from "./file-store";
-import type { WacExport } from "../../../compiler/wacCompile.ts";
+import type { WacExport } from "./wac-types.ts";
 import { compile, wasmHex, runFunction, generateBindgen, placeholderFor, runnable, onWaccReady, waccLoaded, type EditorCompileResult } from "./wac-compile";
 
 interface Props {
@@ -63,7 +63,7 @@ function BindgenView({ result }: { result: EditorCompileResult }) {
   const code = useMemo(() => {
     if (!result.ok) return null;
     try {
-      return generateBindgen(result.compiled);
+      return generateBindgen(result);
     } catch {
       return null;
     }

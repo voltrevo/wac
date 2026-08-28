@@ -12,13 +12,32 @@
 // caller is `runFunction` in `wac-compile.ts`.
 //
 // It receives the *compiled* module rather than the source, because the page already compiled it
-// for the export list and the diagnostics, and `WacCompiled` is plain data that clones.
+// for the export list and the diagnostics — and what it receives is bytes and two strings, which
+// clone without anyone having to check that they do.
+//
+// **It calls through wacc's own glue rather than a second marshalling layer.** This used the
+// reference's `wacInstance`, 275 lines that converted JS values to wac values by reading the
+// export metadata. But glue is exactly that layer, wacc emits it, and the editor already generates
+// it to show in the Bindgen tab — so there were two implementations of one thing, and the one that
+// ran was not the one on screen. Generating the module and importing it as a blob is what
+// `Bootstrap.tsx` does to swap compiler stages, and it is a dozen lines.
 
-import type { WacCompiled } from "../../../compiler/wacCompile.ts";
-import { wacInstance, type WacArg, type WacVal } from "../../../compiler/wacInstance.ts";
+import {
+  generate,
+  parseAliases,
+  parseBindTypes,
+  parseCallbacks,
+  parseOutRefs,
+  parseSigs,
+} from "../../../packages/wacc/tools/waccBindgen.ts";
+import type { WacArg, WacVal } from "./wac-types.ts";
 
 export type RunRequest = {
-  compiled: WacCompiled;
+  wasm: Uint8Array;
+  /** wacc's `bindTypes` description of the boundary — the `S`/`E`/`M`/`C`/`A` lines. */
+  wire: string;
+  /** wacc's `exportSigs` — `name\tret\tparams` per exported function. */
+  sigs: string;
   funcName: string;
   /** Exactly what was typed into each box, in parameter order. */
   argStrings: string[];
@@ -61,10 +80,20 @@ export function parseArg(text: string, type: string): WacArg {
   return parseInt(a || "0", 10);
 }
 
-/** The answer, as the panel shows it. */
+/**
+ * The answer, as the panel shows it.
+ *
+ * **A typed array is an array here.** The reference's runner handed back a plain `Array`; wacc's
+ * glue hands back the typed array the element type calls for — an `Int32Array` for `i32[]` — which
+ * is the better answer and is not what `Array.isArray` reports. Missing that showed `i32[] double`
+ * as `2,4,6` instead of `[2, 4, 6]`: still the right numbers, formatted as if it were a scalar.
+ */
 export function show(v: WacVal, type: string): string {
   if (type === "void" || v === undefined) return "(void)";
   if (Array.isArray(v)) return `[${v.join(", ")}]`;
+  if (ArrayBuffer.isView(v) && !(v instanceof DataView)) {
+    return `[${Array.from(v as unknown as ArrayLike<number | bigint>).join(", ")}]`;
+  }
   if (v === null) return "null";
   return String(v);
 }
@@ -77,19 +106,40 @@ export function show(v: WacVal, type: string): string {
  * plumbing's.
  */
 export async function runHere(req: RunRequest): Promise<RunReply> {
-  const meta = req.compiled.exports.find((e) => e.name === req.funcName);
+  const meta = parseSigs(req.sigs).find((e) => e.name === req.funcName);
   if (!meta) return { success: false, output: `No export named '${req.funcName}'` };
 
-  let inst;
+  // `lang: "js"`, because this is imported rather than read: a blob of TypeScript is not a module
+  // any host can load. The Bindgen tab asks the same generator for `ts`, which is the difference
+  // between glue to look at and glue to run.
+  const js = generate(
+    req.wasm,
+    parseSigs(req.sigs),
+    parseBindTypes(req.wire),
+    parseCallbacks(req.wire),
+    parseOutRefs(req.wire),
+    parseAliases(req.wire),
+    { lang: "js" },
+  );
+
+  const url = URL.createObjectURL(new Blob([js], { type: "text/javascript" }));
+  let mod: Record<string, (...a: WacArg[]) => WacVal>;
   try {
-    inst = await wacInstance(req.compiled);
+    mod = await import(/* @vite-ignore */ url);
   } catch (e) {
     return { success: false, output: `Instantiation error: ${(e as Error).message}` };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+
+  const fn = mod[req.funcName];
+  if (typeof fn !== "function") {
+    return { success: false, output: `'${req.funcName}' is not callable through the generated glue` };
   }
 
   try {
-    const args = meta.params.map((p, i) => parseArg(req.argStrings[i] ?? "", p.type));
-    return { success: true, output: show(inst.call(req.funcName, args), meta.ret) };
+    const args = meta.params.map((type, i) => parseArg(req.argStrings[i] ?? "", type));
+    return { success: true, output: show(fn(...args), meta.ret) };
   } catch (e) {
     return { success: false, output: `Runtime error: ${(e as Error).message}` };
   }

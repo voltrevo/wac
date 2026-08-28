@@ -1,10 +1,19 @@
+// The squiggles in the margin.
+//
+// **The same compiler the page compiles and runs with**, which it was not until the TypeScript
+// reference was deleted: this called `wacCompile` while everything else asked wacc, so the gutter
+// could be red about a program that built and ran, or silent about one that did not. That is
+// `issues/lang/0105` — checked with one compiler, run with the other — in the one place a reader
+// looks first.
+
 import { type Diagnostic } from "@codemirror/lint";
 import { type EditorView } from "@codemirror/view";
-import { wacCompile, type CompileDiagnostic } from "../../../compiler/wacCompile.ts";
+import { diagnose } from "./wac-compile";
+import type { WaccDiagnostic } from "./wacc-compile";
 import type { FileMap } from "./file-store";
 
-/** Convert a CompileDiagnostic (1-indexed line/col) to a CM Diagnostic (char offset). */
-function errorToCM(err: CompileDiagnostic, doc: string, fileName: string): Diagnostic | null {
+/** Convert a wacc diagnostic (1-indexed line/col) to a CM Diagnostic (char offset). */
+function errorToCM(err: WaccDiagnostic, doc: string, fileName: string): Diagnostic | null {
   // Only show errors from the current file
   if (err.file !== fileName) return null;
 
@@ -14,14 +23,12 @@ function errorToCM(err: CompileDiagnostic, doc: string, fileName: string): Diagn
     offset += lines[i].length + 1;
   }
   const from = offset + Math.max(0, err.col - 1);
-  const span = (err as Record<string, unknown>).span as number | undefined;
-  const to = Math.min(doc.length, from + (span && span > 0 ? span : 1));
-  let message = `[${err.phase}] ${err.message}`;
-  const annotation = (err as Record<string, unknown>).annotation as string | undefined;
-  const hint = (err as Record<string, unknown>).hint as string | undefined;
-  if (annotation) message += ` — ${annotation}`;
-  if (hint) message += `\nHelp: ${hint}`;
-  return { from, to, severity: err.severity, message };
+  const to = Math.min(doc.length, from + err.width);
+  let message = err.phase === "" ? err.message : `[${err.phase}] ${err.message}`;
+  if (err.hint !== "") message += `\nHelp: ${err.hint}`;
+  // wacc's `diagnoseFiles` reports what stops a program compiling, so everything it says is an
+  // error. The reference carried a severity because it also emitted warnings; nothing here does.
+  return { from, to, severity: "error", message };
 }
 
 /**
@@ -34,17 +41,12 @@ export function wacLintSource(
   return (view: EditorView): Diagnostic[] => {
     const doc = view.state.doc.toString();
     const fileName = getFileName();
-    const files = getFiles();
 
-    const fileMap = new Map<string, string>();
-    for (const [k, v] of Object.entries(files)) fileMap.set(k, v);
-    // Use live editor content for current file
-    fileMap.set(fileName, doc);
+    // Live editor content for the current file, which is the whole point of linting as you type.
+    const files = { ...getFiles(), [fileName]: doc };
 
-    // Surface warnings too — a successful compile can still carry diagnostics
-    const result = wacCompile(fileMap, fileName);
     const diagnostics: Diagnostic[] = [];
-    for (const err of result.diagnostics) {
+    for (const err of diagnose(files, fileName)) {
       const d = errorToCM(err, doc, fileName);
       if (d) diagnostics.push(d);
     }

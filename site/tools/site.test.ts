@@ -26,12 +26,11 @@
 // asserted things — "these two files compile to byte-identical wasm" — that were true when
 // written and had no way to stay true.
 //
-// This runs the playground's examples through the same `wacCompile` the page calls, and checks
+// This runs the playground's examples through the same compiler the page calls, and checks
 // the landing page's paired snippets against the claim printed next to them.
 //
 //   deno test -A tools/site.test.ts
 
-import { wacCompile } from "../../compiler/wacCompile.ts";
 import { EXAMPLES } from "../src/editor/examples.ts";
 import { buildWaccAsset } from "./syncWacc.ts";
 import { compileWithWacc, type WaccModule } from "../src/editor/wacc-compile.ts";
@@ -65,10 +64,15 @@ function compile(files: Record<string, string>, entry: string) {
     }
     const r = compileWithWacc(wacc, only, entry);
     return r.ok
-      ? { ok: true as const, compiled: r.compiled, diagnostics: [] }
+      // `wire` and `sigs` travel because the panel's runner needs them: it calls through the glue
+      // wacc describes rather than through a marshalling layer of its own.
+      ? { ok: true as const, compiled: r.compiled, wire: r.wire, sigs: r.sigs, diagnostics: [] }
       : { ok: false as const, diagnostics: r.diagnostics.map((d) => ({ ...d, phase: "check" })) };
   }
-  return wacCompile(new Map(Object.entries(files)), entry);
+  // There is one compiler. This used to hand anything else to the TypeScript reference, which is
+  // how a test could pass while exercising a compiler the page does not have — see the header on
+  // `run` below, and `issues/system/0146`.
+  throw new Error(`${entry}: not a wac or wapy file, and there is nothing else to compile it with`);
 }
 
 Deno.test("site: every playground example compiles", () => {
@@ -350,7 +354,13 @@ async function run(src: string, file: string, fn: string, args: string[]): Promi
   }
   const runner = createRunner();
   try {
-    const r = await runner.run({ compiled: checked.compiled, funcName: fn, argStrings: args });
+    const r = await runner.run({
+      wasm: checked.compiled.wasm,
+      wire: checked.wire,
+      sigs: checked.sigs,
+      funcName: fn,
+      argStrings: args,
+    });
     if (!r.success) throw new Error(`${fn}: ${r.output}`);
     return r.output;
   } finally {
@@ -396,7 +406,8 @@ Deno.test("site: a program that never terminates is stopped at its deadline", as
   // and delete `siteDeadline.ts`. What is under test either way is the deadline and the recovery,
   // which hold everywhere; the parent SIGKILLs whatever the child leaves behind.
   const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", new URL("./siteDeadline.ts", import.meta.url).pathname, "700"],
+    // The asset this file already built, rather than a second climb of the ladder in the child.
+    args: ["run", "-A", new URL("./siteDeadline.ts", import.meta.url).pathname, "700", `${dir}/wacc-api.js`],
     stdout: "piped",
     stderr: "piped",
   }).spawn();
@@ -458,7 +469,13 @@ Deno.test("site: every runnable playground export actually runs", async () => {
       for (const f of r.compiled.exports) {
         if (runnable(f) !== null) continue;           // the panel would not offer a Run button
         const out = await runner.run(
-          { compiled: r.compiled, funcName: f.name, argStrings: f.params.map(() => "") },
+          {
+            wasm: r.compiled.wasm,
+            wire: r.wire,
+            sigs: r.sigs,
+            funcName: f.name,
+            argStrings: f.params.map(() => ""),
+          },
           3000,
         );
         if (!out.success && !out.output.startsWith("Runtime error: wac trap")) {
@@ -495,7 +512,13 @@ Deno.test("site: the built worker chunk runs, not only the source", async () => 
     const reply = await new Promise<{ success?: boolean; output?: string }>((resolve) => {
       worker.onmessage = (e) => resolve(e.data);
       setTimeout(() => resolve({}), 10_000);
-      worker.postMessage({ compiled: r.compiled, funcName: "hello", argStrings: [] });
+      worker.postMessage({
+        wasm: r.compiled.wasm,
+        wire: r.wire,
+        sigs: r.sigs,
+        funcName: "hello",
+        argStrings: [],
+      });
     });
     if (reply.output !== "from the bundle") throw new Error(JSON.stringify(reply));
   } finally {
