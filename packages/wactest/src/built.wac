@@ -196,8 +196,15 @@ export i64 newestOf(Cli cli, string path) {
   return newestUnder(cli, path);
 }
 
-/** The wasmtime host — `wacland`, the other crate. `wac task seed:native` is what builds it. */
-export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/release/wacland"; }
+/**
+ * The wasmtime-hosted `wac` — the same command as `native/v8`'s, on the engine with no JavaScript
+ * in it. `./bootstrap.sh --host wasmtime` is what builds it.
+ *
+ * **It was `wacland` until 2026-08-28**, which put design/system/0001's name for the *system* on
+ * the one component underneath it. Both crates produce a binary called `wac`, because the command
+ * is `packages/wac/src/wac.wac` and each host carries it as its seed; the engine is the difference.
+ */
+export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/release/wac"; }
 
 /**
  * `""` when the wasmtime host is built and not older than `native/`, otherwise why not.
@@ -216,11 +223,11 @@ export string nativeHostWhyNot(Cli cli) {
   string root = cli.cwd().wait();
   Stat host = cli.stat(nativeHost(cli)).wait();
   if (!host.exists) {
-    return "native/target/release/wacland is not built — `wac task seed:native` builds it";
+    return "native/target/release/wac is not built — `./bootstrap.sh --host wasmtime` builds it";
   }
   // **The crate's own inputs, named — not a walk of `native/`.** A blanket walk answered "stale"
   // forever: `native/v8/seed/*.wasm` is the *seed's output*, written by every `wac task seed`, and it
-  // lives under `native/` without being inside a `target/`. So every seed made `wacland` look older
+  // lives under `native/` without being inside a `target/`. So every seed made the wasmtime binary look older
   // than its sources, six callers skipped their native halves, and the two that *assert* the native
   // half ran failed in the gate. The list is `tools/seedFresh.test.ts`'s, which had it right, and it
   // is `native/`'s crate — `native/v8` is the other one.
@@ -228,8 +235,8 @@ export string nativeHostWhyNot(Cli cli) {
                              "native/Cargo.lock", "native/build.rs");
   for (i32 i = 0; i < inputs.len(); i++) {
     if (host.modifiedMillis < newestOf(cli, root + "/" + inputs[i])) {
-      return "native/target/release/wacland is older than " + inputs[i]
-          + " — `wac task seed:native` rebuilds it";
+      return "native/target/release/wac is older than " + inputs[i]
+          + " — `./bootstrap.sh --host wasmtime` rebuilds it";
     }
   }
   return "";

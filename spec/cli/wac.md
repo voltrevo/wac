@@ -11,8 +11,9 @@ scaffolding: a way to drive a compiler before there was a binary to put it in, a
 the two. Neither is something to tell a reader to type, and describing three toolchains made the
 first question about this page which one you were reading.
 
-There is a second host with no JavaScript at all — `wacland`, `native/src/main.rs`, on wasmtime. It
-runs a built program and does not compile, so the commands below are this binary's.
+There is a second host with no JavaScript at all — `native/src/main.rs`, on wasmtime, built by
+`./bootstrap.sh --host wasmtime`. It carries the same seed and answers the same commands; the engine
+underneath it is the whole of the difference.
 
 ### What the first argument is
 

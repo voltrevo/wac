@@ -149,6 +149,19 @@ happen to need. These abstractions are deliberately unstable while Wacland and w
 would be a fourth JavaScript host and prove nothing new. **Wasmtime is the first host that is not**, so
 it is the only one that tests D8's claim at all.
 
+**The wasmtime host is a `wac`, not a product of its own** (2026-08-28). It was a separate binary
+called `wacland` for three weeks, built by its own task, carrying nothing. That name put the *system*
+on one of its hosts — Wacland is userland written in wac, `wac sh` and the platform under it, which
+is above the host and not any particular one of them — and the separate binary hid how little was
+separate: the same seed module, the same 21 capabilities, the same manifest crate, and one recipe in
+`bootstrap.sh` parameterised by which crate embeds the seed. It is `./bootstrap.sh --host wasmtime`
+now, and what it proves is unchanged, which is the point: the proof is that a wac program runs with
+no JavaScript underneath it, and that is a property of the *program*, not of a second product.
+
+It is not built by default. `nativeHostWhyNot()` in `packages/wactest/src/built.wac` gives the eleven
+tests that reach for it a reason to print, so a checkout without one skips loudly rather than
+quietly losing coverage — `issues/system/0208`.
+
 Running under `wasmtime` as an ordinary program comes *before* a bootable image, because bootable is
 Wasmtime **and** no operating system **and** a kernel **and** `init` **and** a block device, and only
 the first of those says anything about whether Wacland is portable. One variable at a time.

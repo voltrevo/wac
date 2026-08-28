@@ -15,7 +15,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`. **Built with `wac build`**, which is the producer:
 // it writes the module and the `.json` beside it, from `manifest.wac`. That was `deno run native.ts`
 // until 2026-08-19, when the two were re-measured as byte-identical and the Deno path stopped being
-// the one anything is built with — see `tools/seed.sh` and `issues/system/0214`. Testing the manifest
+// the one anything is built with — see `issues/system/0214`. Testing the manifest
 // the toolchain actually writes is the point; testing that a second derivation agrees with it was a
 // separate file, and it is gone.
 
@@ -78,7 +78,7 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // **Out of the module**, where the manifest lives as a `wac.manifest` section. It was a `.json`
-  // beside it until 2026-08-20 — read `tools/seed.sh` and `native/manifest` for why that went.
+  // beside it until 2026-08-20 — read `native/manifest` for why that went.
   FileResult built = cli.readFile(dir + "/wc.wasm").wait();
   t.isTrue(built.ok, "the build wrote no module — " + built.error);
   if (!built.ok) { cli.remove(dir, true).wait(); return t.report(); }

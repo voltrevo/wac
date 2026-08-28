@@ -1,9 +1,9 @@
 // A growable list, for the wapy frontend, in the package that may not import one.
 //
-// **`packages/wacc` has no dependencies, and this is what that rule is for.** The reference compiler
-// builds wacc — that is the whole of `bash tools/seed.sh --bootstrap`, the only command that works
-// in a fresh clone — so every file wacc's graph reaches has to be inside the subset the reference
-// can read. `core/vec.wac` is not: its `fold` takes an `fn[U(U, T)]`, the reference has no lambdas,
+// **`packages/wacc` has no dependencies, and this is what that rule is for.** The top rung of the
+// ladder builds wacc — that is the whole of `./bootstrap.sh`, the only command that works in a
+// fresh clone — so every file wacc's graph reaches has to be inside the subset that rung can read.
+// `core/vec.wac` is not: its `fold` takes an `fn[U(U, T)]`, the rung below has no lambdas,
 // and it stops at the parse. So `import { Vec } from "core/vec.wac"` in one wapy file is enough to
 // make the compiler unbuildable from nothing, in a message about `core/vec.wac:185` that names
 // neither wapy nor the import that reached it.

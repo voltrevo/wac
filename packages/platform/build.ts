@@ -101,8 +101,7 @@ export function bundleFailure(said: string, pkg: string = esbuildPackage()): str
     `wac: this looks like the one-time npm fetch \`deno bundle\` needs — it downloads ${pkg} for\n` +
     `     this platform. With a network: \`deno cache npm:${pkg}\`.\n` +
     `     Without one, nothing here needs a bundler: the binary carries the compiler, and\n` +
-    `     \`bash tools/seed.sh --bootstrap\` then \`wac task wac:install\` reaches it\n` +
-    `     without npm at all.\n`;
+    `     \`./bootstrap.sh\` reaches it without npm at all.\n`;
 }
 
 /** Whether this process is profiling, and so wants instrumented builds. Off is the normal case. */

@@ -1,8 +1,17 @@
 [package]
-name = "wacland"
+# **`wac`, hosted by wasmtime.** The binary was `wacland` until 2026-08-28, which put the name of
+# the *system* — design/system/0001's userland, written in wac — on the one component that is
+# underneath it and not part of it. What this is, is `wac` with a different engine: the same CLI,
+# because the CLI is `packages/wac/src/wac.wac` and both hosts carry it as their seed.
+name = "wac-wasmtime"
 version = "0.1.0"
 edition = "2021"
 description = "A host for wac programs with no JavaScript in it — design/0001 step 2a"
+
+# The binary keeps the plain name: `native/target/release/wac`, beside `native/v8/target/release/wac`.
+[[bin]]
+name = "wac"
+path = "src/main.rs"
 
 [dependencies]
 # Default features pull in the pooling allocator, profiling, `wat` and `wit-parser`, none of which this

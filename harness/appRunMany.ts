@@ -4,7 +4,7 @@
 //
 // The two-host tests run a script through three implementations and compare the answers, and the
 // JavaScript one costs a process start each time: **133ms for a built bundle against 17ms for
-// `wacland` and 2ms for bash**, measured 2026-08-19. `packages/platform/test/wac/native_hostfs_test.wac`
+// the wasmtime host and 2ms for bash**, measured 2026-08-19. `packages/platform/test/wac/native_hostfs_test.wac`
 // makes about a hundred of those runs and is 17s; its two siblings are 9.3s and 11s. That is the
 // largest single item in the `wac test` lane, and all of it is Deno starting.
 //

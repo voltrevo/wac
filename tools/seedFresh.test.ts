@@ -108,7 +108,7 @@ async function rustInputs(): Promise<string[]> {
   // `native/spike-v8` is not in the binary: `native/Cargo.toml` names the members, and a spike is
   // not one of them. Watching it would make this red for an edit that changes nothing.
   // **Its own crate, and `manifest` which it depends on by path — not `native/src`.**
-  // `native/v8` is the crate `wac`; `native/` is the crate `wacland`. They share a `manifest`
+  // `native/v8` is the crate `wac`; `native/` is the crate `wac-wasmtime`. They share a `manifest`
   // dependency and nothing else, so listing `native/src` here asserted a dependency that does not
   // exist — and made this **unclearable**: touching the wasmtime host's source failed this check, and
   // the `cd native/v8 && cargo build --release` it recommends does nothing, because nothing this
@@ -174,7 +174,7 @@ Deno.test("the `wac` binary is not older than the Rust it is built from", async 
 
 // **The wasmtime host is a third per-agent artefact, and it had no freshness check.**
 //
-// `native/target/release/wacland` is gitignored, built on demand by whichever test wants it, and
+// `native/target/release/wac` is gitignored, built on demand by whichever test wants it, and
 // nothing owned it — `issues/system/0208`. That was tolerable while the only consequence was a slow
 // first test. It stopped being tolerable on 2026-08-20, when `tools/push.sh` started deciding whether
 // to rebuild after a merge by *running this file*: a merge that changes `native/src/` then produced a
@@ -182,10 +182,10 @@ Deno.test("the `wac` binary is not older than the Rust it is built from", async 
 // `Cli.execWith is not implemented in the native runtime yet`, from a host binary that predated the
 // merge that added it.
 //
-// **Absent is fine; stale is not.** A fresh clone has no `wacland` and the callers build it, so this
+// **Absent is fine; stale is not.** A fresh clone has no wasmtime binary and the callers build it, so this
 // asks the narrower question. `native/Cargo.toml` counts as a source: it pins wasmtime.
 Deno.test("the wasmtime host, if built, is not older than the Rust it is built from", async () => {
-  const binary = `${ROOT}/native/target/release/wacland`;
+  const binary = `${ROOT}/native/target/release/wac`;
   let built: Date;
   try {
     built = (await Deno.stat(binary)).mtime!;
@@ -202,7 +202,7 @@ Deno.test("the wasmtime host, if built, is not older than the Rust it is built f
   }
   if (newer.length > 0) {
     throw new Error(
-      `native/target/release/wacland is older than ${newer.length} of its sources, the first being ` +
+      `native/target/release/wac is older than ${newer.length} of its sources, the first being ` +
         `${newer[0]}.\n` +
         "  Every test that drives the wasmtime host is running the older one, and a two-host\n" +
         "  differential then fails saying the host lacks something the tree has.\n" +

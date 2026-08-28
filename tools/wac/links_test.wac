@@ -626,7 +626,25 @@ string[][] gone() {
     // And the two this list names in the comment above it, which is the same rule applied to the
     // file that applies it.
     string[]("tools/wac/links_test.wac", "tools/runTests.ts"),
-    string[]("tools/wac/links_test.wac", "tools/killedLane.ts"));
+    string[]("tools/wac/links_test.wac", "tools/killedLane.ts"),
+    // **One deletion, 2026-08-28: `bootstrap.sh` became the only way to build `wac`.**
+    // `tools/seed.sh` rebuilt the seed with the seed, and `tools/install.ts` was the installer it
+    // called; both went when the ladder became the one route in, because a build that starts from
+    // hand-written wasm assembly text every time is also a build that works from nothing. The
+    // sentences below are the design notes that decided the shape and the migration documents that
+    // carried it out — records of what was true on a day, and rewriting them to name
+    // `bootstrap.sh` would claim the decision was made about a script that did not yet exist.
+    string[]("design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "tools/seed.sh"),
+    string[]("design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "tools/install.ts"),
+    string[]("design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md", "tools/seed.sh"),
+    string[]("bootstrap/PLAN.md", "tools/seed.sh"),
+    string[]("bootstrap/MIGRATION.md", "tools/seed.sh"),
+    string[]("bootstrap/MIGRATION.md", "tools/install.ts"),
+    string[]("packages/wacc/test/wac/uninstall_test.wac", "tools/install.test.ts"),
+    string[]("packages/wacc/test/wac/uninstall_test.wac", "tools/install.ts"),
+    // And the two named in the comment above, which is again the rule applied to its own file.
+    string[]("tools/wac/links_test.wac", "tools/seed.sh"),
+    string[]("tools/wac/links_test.wac", "tools/install.ts"));
 }
 
 bool excused(string file, string path) {

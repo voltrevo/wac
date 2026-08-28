@@ -4,12 +4,11 @@
 // Deno, no wasm beside it and no JavaScript anywhere in the path. Absent, it is the runtime it has
 // always been, `wacv8 program.wasm`, and says so when asked to act as one. Produced by:
 //
-//     bash tools/seed.sh
-//     (cd native/v8 && cargo build --release)
+//     ./bootstrap.sh --no-install
 //
 // **It said `wac task app:native` until 2026-08-28**, which is a task the registry has never had —
-// `app:build` is the nearest — and was not how the seed got built in any case: `seed.sh` runs
-// `packages/platform/native.ts` and loops until the output is a fixed point. wac's task-name guard
+// `app:build` is the nearest — and was not how the seed got built in any case: the build script
+// drives the ladder and loops until the output is a fixed point. wac's task-name guard
 // reads markdown and not `.rs`, so this line was checked by nobody until it was quoted into a `.md`
 // and the guard caught the copy rather than the original.
 //

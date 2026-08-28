@@ -1,4 +1,4 @@
-# wacland — a host with no JavaScript in it
+# `wac` on wasmtime — the host with no JavaScript in it
 
 > **The platform is a Rust host on V8, decided 2026-08-12** — see `spike-v8/` and
 > design/lang/0003. This wasmtime host is shelved as a target and kept as a host, and its role is now
@@ -25,7 +25,7 @@ design/0001 step 2a, tracked as [0087](../issues/system/closed/0087-wacland-unde
 ```
 wac build packages/platform/example/wacland.wac -o /tmp/wacland
 cargo build --release
-./target/release/wacland /tmp/wacland.json one two
+./target/release/wac /tmp/prog.wasm one two
 ```
 
 ## A compiler inside it
@@ -35,8 +35,8 @@ With `seed/wacc.json` and `seed/wacc.wasm` present at build time, this binary *i
 ```
 wac build packages/wac/src/wac.wac --allow-read --allow-write -o native/seed/wacc
 cargo build --release
-./target/release/wacland compile packages/wacc/src/api.wac out.wasm     # 3.2s, no JavaScript
-./target/release/wacland check main.wac
+./target/release/wac compile packages/wacc/src/api.wac out.wasm     # 3.2s, no JavaScript
+./target/release/wac check main.wac
 ```
 
 The first argument decides: a readable `.json` is a program bundle, as before; anything else is

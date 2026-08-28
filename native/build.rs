@@ -4,28 +4,25 @@
 // wasmtime, so this is belt as well as braces — but a cache *name* that changes with the engine
 // means a stale entry is never read at all, rather than read and rejected on every run.
 fn main() {
-    // **The seed: a compiler inside the binary.** With `seed/wacc.json` and `seed/wacc.wasm` present,
-    // this runtime can run a wac program with no manifest handed to it — which is what makes a single
-    // `wac` command possible rather than `wacland something.json`. Absent, the binary is exactly what
-    // it was and says so when asked to act as one. Produced by:
+    // **The seed: a compiler inside the binary.** With `seed/wacc.wasm` present, this runtime can
+    // run a wac program with no manifest handed to it — which is what makes a single `wac` command
+    // possible rather than `wacland something.wasm`. Absent, the binary is exactly what it was and
+    // says so when asked to act as one. Produced by `./bootstrap.sh --host wasmtime`.
     //
-    //     wac task app:native packages/wac/src/wac.wac --allow-read --allow-write -o native/seed/wacc
-    //
-    // Whether that artifact is committed is design/lang/0003's open question; the build works either
-    // way, which is the point of not deciding it here.
+    // **It wanted a `seed/wacc.json` as well until 2026-08-28**, from when a program was a module
+    // and a manifest beside it. Nothing has written that file since the manifest moved into a
+    // `wac.manifest` section, so the condition below could never hold and this binary could never
+    // be built as a `wac` command — while `src/main.rs` carried the whole `run_seed` path for it.
     let dir = std::env::var("WAC_SEED_DIR").unwrap_or_else(|_| "seed".into());
-    let json = format!("{dir}/wacc.json");
     let wasm = format!("{dir}/wacc.wasm");
-    println!("cargo:rerun-if-changed={json}");
     println!("cargo:rerun-if-changed={wasm}");
     println!("cargo:rerun-if-env-changed=WAC_SEED_DIR");
-    if std::path::Path::new(&json).exists() && std::path::Path::new(&wasm).exists() {
-        // Absolute: `include_str!` resolves against the *source file* that writes it, so a relative
-        // path here becomes `src/seed/...` and the build fails with a name nobody typed.
+    if std::path::Path::new(&wasm).exists() {
+        // Absolute: `include_bytes!` resolves against the *source file* that writes it, so a
+        // relative path here becomes `src/seed/...` and the build fails with a name nobody typed.
         let abs = |p: &str| {
             std::fs::canonicalize(p).map(|c| c.display().to_string()).unwrap_or_else(|_| p.into())
         };
-        println!("cargo:rustc-env=WAC_SEED_JSON={}", abs(&json));
         println!("cargo:rustc-env=WAC_SEED_WASM={}", abs(&wasm));
         println!("cargo:rustc-cfg=wac_seed");
     }

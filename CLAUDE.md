@@ -56,12 +56,9 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     wac task test                                    the suite
     wac task docs                                    the doc checks — a wac phase, then Deno's
     wac task map --check                             MAP.md is generated; staleness is a failure
-    wac task seed                                    rebuild the compiler inside the `wac` binary
-    bash tools/seed.sh --bootstrap                   ...from a clone with no binary yet — no
-                                                     `wac task` here, there is nothing to run it
-    wac task seed:native                             just `wacland`, the wasmtime host
-    wac task wac:install                             build it and put it on PATH — $WAC_HOME
-    wac task wac:build -o ./wac                      ...or just build one, installing nothing
+    ./bootstrap.sh                                   build the `wac` command and install it
+    ./bootstrap.sh --no-install                      ...leaving it in the tree — `wac task seed`
+    ./bootstrap.sh --host wasmtime                   ...on the engine with no JavaScript in it
     wac uninstall [--keep-cache]                      and take it away again — the command, not a task
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
@@ -84,14 +81,14 @@ things and never a manifest, a lockfile, a source file or a build product. There
 installed the command could reach — a Deno program under `tools/` needs this checkout, and they have
 a `$WAC_HOME` and no checkout.
 
-**`wac task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
+**Rebuild after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
 
-**It no longer uses Deno.** `wac task seed` is now `wac build` — the binary compiling its own
-compiler — followed by `cargo build`. It is a fixed point: the compiler the binary produces, used to
-build the compiler again, is byte-identical — and since 2026-08-17 the command **checks** that
-rather than asserting it, and puts the previous seed back rather than keep one that is not
-(`tools/seed.sh`, `design/lang/0009` D2). Nothing in that command needs a JavaScript host — which
-was true of the task runner generally, and is why the registry moved.
+**There is one build command and it always starts from the ladder.** `./bootstrap.sh` builds the
+five rungs, builds `wacc` with the top one, then rebuilds `wacc` with *that* until two rounds agree
+byte for byte — `design/lang/0009` D2. A build that never settles is refused rather than installed.
+Until 2026-08-28 there were two routes: a shell script for the ordinary case, which needed a
+working `wac` to rebuild `wac`, and a `--bootstrap` flag on it for when that was the thing that was
+broken. The second one subsumes the first, so only it remains.
 
 **`wac task` replaced `deno task` on 2026-08-27.** The names are unchanged; `tasks.json5` holds
 them and `wac task` with no argument lists them. 41 of the 78 invoke the `wac` binary and three
@@ -99,17 +96,20 @@ are shell, so the registry had been a JavaScript dependency for the sake of a lo
 `deno.json` keeps `imports` and `exclude`, which the TypeScript that remains still needs.
 
 **A fresh clone cannot run `wac task` at all**, because the seed is gitignored and there is no
-binary to dispatch with. The first command in a new checkout is `bash tools/seed.sh --bootstrap`,
-and that is why it stays a shell script rather than becoming a task.
+binary to dispatch with. The first command in a new checkout is `./bootstrap.sh`, and that is why it
+stays a shell script rather than becoming a task.
 
-**And since 2026-08-21 it refreshes `wacland`**, the wasmtime host in `native/` — a separate crate that
-had no owner, so six test files each ran their own `cd native && cargo build --release` with their own
-skip message and their own freshness check. They ask now rather than build. `wac task seed:native` is
-how the binary first comes to exist; `wac task seed` rebuilds it **only if it is already there**,
-because cargo costs 7s of CPU and about 10s of wall in that crate with nothing to do, and paying it on
-every seed for a binary this checkout may never run is the waste `issues/system/0208` is about. A
-checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
-task. `issues/system/0208`.
+**`--host` picks the engine, and that is the whole of the difference.** `v8` is the default and
+`wasmtime` is the same command with no JavaScript underneath it — `design/system/0001` D9 is why the
+second one is worth having, since it is the only host that tests the claim that a wac program does
+not depend on one. Both carry the *same* seed module and answer the same 21 capabilities; the
+binaries are 68 MB and 15 MB. Neither is a different product, which is why the wasmtime one stopped
+being called `wacland` on 2026-08-28: Wacland is the system, not one of its hosts.
+
+**The wasmtime binary is not built by default and a checkout without one is not quietly short of
+coverage.** Eleven test files reach for it; `nativeHostWhyNot()` in `packages/wactest/src/built.wac`
+gives them a reason to print, and they skip with it rather than build a Rust crate nobody asked for.
+`issues/system/0208`.
 
 **It builds one payload, since 2026-08-25.** The binary used to carry three — a compiler, a shell and
 a fetcher, answering `wac build`/`run`/`test`, `wac sh` and `wac update` — and `issues/system/0257c`
@@ -123,11 +123,13 @@ ran `wac update` (`issues/system/0216a`). There is no second file to forget now.
 what it built since 2026-08-24 (`issues/system/0204`), keyed on the compiler, the sources, the grants
 and the output name.
 
-**The fixpoint rounds are built with the cache off, and 12.2s was the number for not checking.** This
-paragraph said "about 12s … **12.2s against 27.2s**" for a day, and that saving was the fixpoint check
-not running: every round writes `wacc` into a directory of its own, so in the steady state round 2's
-key is round 1's, and `cmp` compared an artefact with a copy of itself. `tools/seed.sh` now sets
-`WAC_BUILD_CACHE_KEEP=0` around the rounds and the honest figure is back to 27.2s.
+**The fixpoint rounds are built with the cache off, and 12.2s was the number for not checking.** The
+saving was the fixpoint check not running: every round writes `wacc` into a directory of its own, so
+in the steady state round 2's key is round 1's, and `cmp` compared an artefact with a copy of
+itself. `WAC_BUILD_CACHE_KEEP=0` is set around the rounds and the honest figure is 27.2s. Each round
+also writes to the same *basename* in a different directory, because `wac build -o` records the
+output name in the manifest — two builds of one source to two names are never byte-identical, and a
+comparison across names can only ever say "never settles".
 `packages/wacc/test/wac/selfhost_test.wac` had the same hole and uses the `--no-cache` flag, which it
 also *checks* — a hit prints `bytes from cache` and the test refuses one. Reach for either switch if
 you ever suspect the cache of serving something stale.
@@ -135,22 +137,24 @@ you ever suspect the cache of serving something stale.
 **And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from
 another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is
 old" — it is an ordinary file failing to emit with a message about lambdas or about a construct that
-was fine yesterday. `wac task seed` cannot recover from that, because it needs the seed to rebuild
-the seed. `seed:bootstrap` can, because it starts from the ladder rather than from the seed.
+was fine yesterday.
 
-The Deno path is `bash tools/seed.sh --bootstrap`, and it is still the one that works from
-**nothing**: the seed is gitignored, so a fresh clone has no binary to build with and `cargo build`
-cannot start without one. Run it once, then `wac task seed` from then on.
+**`./bootstrap.sh` is the way out, and the only build command there is.** It starts from the ladder
+every time — five rungs whose lowest is hand-written wasm assembly text — so the compiler that is
+false-alarming is out of the loop, and it iterates to a fixed point before handing anything over. A
+first build and a reseed are the same operation, which is why there is no second command for the
+first one.
 
-**Spelled as the script rather than as `wac task seed:bootstrap`, which is the same command and
-cannot be reached.** `wac task` is a subcommand of the `wac` binary, so the one situation this line
-is for is the one situation where the registry is unavailable. The task exists and is correct once
-you have a binary; it is not the way to get one. This said `wac task seed:bootstrap` for a few hours
-on 2026-08-27, which is the migration renaming a string without asking what would run it.
+    ./bootstrap.sh                      # build it and install it into $WAC_HOME
+    ./bootstrap.sh --no-install         # rebuild the seed in the tree — `wac task seed`
+    ./bootstrap.sh --host wasmtime      # the same command on the engine with no JavaScript in it
+    ./bootstrap.sh -o ./wac             # just write a binary here
 
-**Plain `seed:bootstrap` is the escape hatch when a wacc change has made wacc unable to build
-itself**, because it builds the first seed with the *ladder* — so the binary that false-alarms is
-out of the loop. It is needed more often than it sounds: a new checker rule that reports on
+**Spelled as the script rather than as a task**, because `wac task` is a subcommand of the binary,
+and the one situation this line is for is the one where you have not got a binary. There was a task
+named for it for a day — a string nobody in that situation could run.
+
+It is needed more often than it sounds: a new checker rule that reports on
 `packages/fs/src/proc.wac` cannot build its own successor, since that file is in the seed app's
 graph, and the symptom is a seed build failing on a file you did not touch.
 

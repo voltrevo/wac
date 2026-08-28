@@ -10,8 +10,8 @@
 // dependency for the sake of a lookup table.
 //
 // **A fresh clone cannot use this.** The seed is gitignored, so there is no binary to run `wac task`
-// with, and the first step is `bash tools/seed.sh --bootstrap`. That is unchanged and is why it stays
-// a shell script rather than becoming a task.
+// with, and the first step is `./bootstrap.sh`. That is why it stays a shell script rather than
+// becoming a task — a task registry you need a binary to read is no use for getting the binary.
 //
 // **Grants.** `wac task` runs this repository's own tooling and holds one set of them, stated where
 // the command is dispatched. Declaring them per task was considered and rejected: nearly every entry
@@ -26,12 +26,14 @@
   "map": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/map.wac",
   "site:map": "deno run --allow-read --allow-write site/tools/syncMap.ts",
 
-  // Building `wac` and putting it somewhere. `seed:bootstrap` is the one that needs no binary.
-  "seed": "bash tools/seed.sh",
-  "seed:bootstrap": "bash tools/seed.sh --bootstrap",
-  "seed:native": "bash tools/seed.sh --native-only",
-  "wac:install": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts install",
-  "wac:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts build",
+  // **Building `wac`, and there is one way to do it.** `./bootstrap.sh` starts from the ladder
+  // every time and iterates to a fixed point before it hands anything over, so a reseed and a
+  // first build are the same operation and `seed:bootstrap` has nothing left to mean. `--host`
+  // picks the engine; `--no-install` leaves the binary in the tree, which is what a reseed wants.
+  "seed": "bash bootstrap.sh --host v8 --no-install",
+  "seed:native": "bash bootstrap.sh --host wasmtime --no-install",
+  "wac:install": "bash bootstrap.sh --host v8",
+  "wac:build": "bash bootstrap.sh --host v8 -o ./wac",
 
   // The coverage ratchets, one per package plus the runner over all of them.
   // `coverage` was tools/coverage.ts and covered gzip only — `issues/system/0002`.

@@ -605,7 +605,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The same basename in three directories**, not three names in one. `wasmName` is
   // `baseName(stem) + ".wasm"` taken from the `-o`, so the name travels *inside* the module and a
   // comparison across two of them fails for a reason that has nothing to do with the pipeline —
-  // which is the mistake `tools/seed.sh` records at the top of itself.
+  // which is the mistake `bootstrap.sh` records above its fixpoint loop.
   cli.mkdir(dir + "/h1", true).wait();
   cli.mkdir(dir + "/h2", true).wait();
   cli.mkdir(dir + "/h3", true).wait();

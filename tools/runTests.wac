@@ -57,7 +57,7 @@
 // and `tools/wac/suitegate_test.wac` pins the byte format on this side because of it.
 //
 // **A fresh clone cannot run this at all**, where the TypeScript would run its Deno lane and skip the
-// wac one: the runner *is* a wac program, so `wac task seed:bootstrap` has to come first. That is a
+// wac one: the runner *is* a wac program, so `./bootstrap.sh` has to come first. That is a
 // real ordering constraint rather than a detail, and the reason `wac task test` should keep working
 // until the bootstrap path is documented for it.
 //

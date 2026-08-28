@@ -138,7 +138,7 @@ if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2
   if ! "$WAC" task seed >/dev/null 2>&1; then
     echo "== the seed will not rebuild: not running the suite ==" >&2
     echo "   Run \`wac task seed\` by hand to see why; every later failure would be downstream of it." >&2
-    echo "   \`wac task seed:bootstrap\` is the way out if a wacc change has made wacc unable to" >&2
+    echo "   \`./bootstrap.sh\` is the way out if a wacc change has made wacc unable to" >&2
     echo "   build itself." >&2
     exit 1
   fi
@@ -556,12 +556,12 @@ for attempt in 1 2 3; do
       exit 1
     fi
     # **And the wasmtime host, which `wac task seed` does not build.** It builds `native/v8` only, so
-    # a merge touching `native/src/` left `native/target/release/wacland` behind — and the retry then
+    # a merge touching `native/src/` left `native/target/release/wac` behind — and the retry then
     # failed with `Cli.execWith is not implemented in the native runtime yet`, from a host that
     # predated the merge that added it. `issues/system/0208` is that it has no owner; this is the gate
     # not needing one. Only when it exists: a checkout that has never built it has nothing to age, and
     # whichever test wants it builds it.
-    if [ -f native/target/release/wacland ] && ! (cd native && cargo build --release >/dev/null 2>&1); then
+    if [ -f native/target/release/wac ] && ! (cd native && cargo build --release >/dev/null 2>&1); then
       echo "== the wasmtime host would not rebuild after the merge: not retrying ==" >&2
       echo "   Run \`cd native && cargo build --release\` by hand; every two-host test would be" >&2
       echo "   comparing against the older one." >&2

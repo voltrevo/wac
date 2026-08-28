@@ -212,7 +212,7 @@ string projectRootIn(Fs fs, string path, string boundary) {
 }
 
 /**
- * `$WAC_HOME`, or `$HOME/.wac`, or "" when neither is set — the same rule `tools/install.ts` uses.
+ * `$WAC_HOME`, or `$HOME/.wac`, or "" when neither is set — the same rule the installer in `bootstrap.sh` uses.
  *
  * A compiler that reads an environment variable needs the grant for it, and `wac build` may not have
  * been given one. "" is an ordinary answer rather than a failure: it means no cache can be found, so
@@ -358,7 +358,7 @@ string dirOf(string path) {
  * about the compiler cannot be answered from disk. `packages/wacc/test/wac/selfhost_test.wac` builds
  * wacc twice and requires byte equality; served from cache that is one file compared with itself, which
  * `issues/system/0204` predicted before this cache existed and which measured 194 ms against a
- * documented 3 s once it did. `tools/seed.sh` has the same shape in its fixpoint loop, in the steady
+ * documented 3 s once it did. `bootstrap.sh` has the same shape in its fixpoint loop, in the steady
  * state where consecutive rounds run the same compiler over the same sources.
  *
  * **And an unvalidated command line gets no hit.** The lookup happens above the dispatch, where the

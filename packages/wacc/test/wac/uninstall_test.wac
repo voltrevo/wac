@@ -3,7 +3,7 @@
 // `[§wac-cli-uninstall-7kq3mvp]`
 //
 // **There is one uninstaller now, and this file used to exist because there were two.** Until
-// 2026-08-26 the layout was written down twice — TypeScript in `tools/install.ts` behind a
+// 2026-08-26 the layout was written down twice — a TypeScript installer behind a
 // `wac:uninstall` task, and the command itself — so the fourth case here was a differential: two
 // identical fake installs, one taken away with each, compared entry for entry. It found a real bug
 // once, an `~/.wac/env` surviving and erroring on every login.

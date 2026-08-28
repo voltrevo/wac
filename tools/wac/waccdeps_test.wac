@@ -4,7 +4,7 @@
 //
 // **The rule already existed and was a comment.** `emit.wac`'s header says a helper is *"kept local
 // rather than imported because `packages/wacc` has no dependencies"*, and `CLAUDE.md` documents
-// `bash tools/seed.sh --bootstrap` as the first command in a new checkout. Nothing checked it, so
+// `./bootstrap.sh` as the first command in a new checkout. Nothing checked it, so
 // the day the wapy frontend was wired into `api.wac` the compiler's graph gained
 // `core/vec.wac` through four `import { Vec }` lines, and the bootstrap stopped working.
 //
@@ -36,7 +36,7 @@
 //   - copy what you need into the package, small — `wvec.wac` is that, six methods of `Vec`; or
 //   - check that the reference can parse the whole of what you are importing — `deno run -A
 //     packages/platform/native.ts packages/wacc/src/api.wac -o /tmp/w` is the question, and
-//     `bash tools/seed.sh --bootstrap` is the answer that counts — then add it below with a reason.
+//     `./bootstrap.sh` is the answer that counts — then add it below with a reason.
 //
 // The day the reference stops being the bootstrap — `design/lang/0003` — this rule goes with it,
 // and so do the copies it forces.
@@ -111,7 +111,7 @@ export string test_the_compilers_graph_is_inside_its_own_package(Core core, Cli 
   }
   t.eqStr(outside, "",
           "the compiler imports " + itoa(count) + " file(s) outside `packages/wacc/src`, so "
-          + "`bash tools/seed.sh --bootstrap` will fail in a fresh clone — see this file's header");
+          + "`./bootstrap.sh` will fail in a fresh clone — see this file's header");
   return t.report();
 }
 

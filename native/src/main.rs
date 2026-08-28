@@ -1,4 +1,8 @@
-//! wacland: a host for wac programs with no JavaScript in it.
+//! `wac`, hosted by wasmtime: the one host with no JavaScript in it.
+//!
+//! **The binary was `wacland` until 2026-08-28.** Wacland is the system — userland written in wac,
+//! `wac sh` and the platform under it — and naming one host after it said the system was this
+//! engine. It is `wac`, the same command as `native/v8`, carrying the same seed module.
 //!
 //! design/0001 step 2a, wac-mono 0087. The peer of `packages/platform/host/{deno,node,browser}.ts`, in
 //! the role Deno plays but Wasm-native. It is the only host that tests the portability claim at all —
@@ -536,24 +540,49 @@ fn make_u8_array(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, was
 
 // ── Running ───────────────────────────────────────────────────────────────────
 
-/// The compiler built into this binary, when one was: its manifest and its wasm.
+/// The compiler built into this binary, when one was.
 ///
-/// `None` unless `seed/wacc.json` and `seed/wacc.wasm` were present at build time — see `build.rs`.
-/// With one, this binary is a `wac` command; without, it is the runtime it has always been, and
-/// says so rather than pretending.
+/// `None` unless `seed/wacc.wasm` was present at build time — see `build.rs`. With one, this binary
+/// is a `wac` command; without, it is the runtime it has always been, and says so rather than
+/// pretending.
+///
+/// **One file, not two, since 2026-08-28.** This took a `seed/wacc.json` beside the module, because
+/// this host was written when a program was a pair — and `native/v8/build.rs` had already said so in
+/// a comment nobody acted on. The `.json` stopped being written when a module started carrying its
+/// manifest in a `wac.manifest` section, so the pair could never be complete, so `wac_seed` was
+/// never set, so this binary could never be built as a `wac` command at all. The seed on disk went
+/// stale for a fortnight and nothing noticed, because nothing read it.
 #[cfg(wac_seed)]
-const SEED: Option<(&str, &[u8])> = Some((
-    include_str!(env!("WAC_SEED_JSON")),
-    include_bytes!(env!("WAC_SEED_WASM")),
-));
+const SEED: Option<&[u8]> = Some(include_bytes!(env!("WAC_SEED_WASM")));
 #[cfg(not(wac_seed))]
-const SEED: Option<(&str, &[u8])> = None;
+const SEED: Option<&[u8]> = None;
+
+/// The `wac.manifest` section of `wasm`, parsed and version-checked. `what` names it in an error.
+fn manifest_of(wasm: &[u8], what: &str) -> Result<Arc<Manifest>, wasmtime::Error> {
+    let Some(text) = wacmanifest::manifest_in(wasm) else {
+        return Err(wasmtime::Error::msg(format!(
+            "{what}: no `wac.manifest` section — built by something that does not write one?"
+        )));
+    };
+    let m: Arc<Manifest> = serde_json::from_str::<Manifest>(&text).map(Arc::new)
+        .map_err(|e| wasmtime::Error::msg(format!("{what}: {e}")))?;
+    if m.version != SUPPORTED_VERSION {
+        return Err(wasmtime::Error::msg(format!(
+            "{what}: manifest version {} — this runtime speaks {}",
+            m.version, SUPPORTED_VERSION
+        )));
+    }
+    Ok(m)
+}
 
 /// Run the built-in compiler with these arguments.
+///
+/// The manifest comes out of the module's own section, by the same route a module named on the
+/// command line takes — so the payload this binary carries is the identical artefact, and there is
+/// no second form of it that could drift.
 fn run_seed(args: &[String]) -> Result<i32, wasmtime::Error> {
-    let (json, wasm) = SEED.expect("a seed");
-    let m: Arc<Manifest> = serde_json::from_str::<Manifest>(json).map(Arc::new)
-        .map_err(|e| wasmtime::Error::msg(format!("the built-in manifest: {e}")))?;
+    let wasm = SEED.expect("a seed");
+    let m = manifest_of(wasm, "the built-in compiler")?;
     let program_args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
     run(m, wasm, program_args)
 }
@@ -564,12 +593,12 @@ fn main() -> Result<(), wasmtime::Error> {
         if SEED.is_some() {
             std::process::exit(run_seed(&[])? );
         }
-        eprintln!("usage: wacland <program.wasm> [args...]");
+        eprintln!("usage: wac <program.wasm> [args...]");
         eprintln!("  a module carrying its own manifest — `wac build <entry.wac> -o <stem>`");
         std::process::exit(2);
     }
     // **A program, or arguments for the built-in compiler.** Deciding by what the first argument
-    // *is* rather than by a flag: `wac compile x.wac` and `wacland prog.wasm` are both what someone
+    // *is* rather than by a flag: `wac compile x.wac` and `wac prog.wasm` are both what someone
     // would type, and a program is always a readable `.wasm`.
     //
     // It took a `.json` beside the module until 2026-08-20, which was history rather than a reason —
@@ -579,26 +608,13 @@ fn main() -> Result<(), wasmtime::Error> {
         if SEED.is_some() {
             std::process::exit(run_seed(&argv[1..])?);
         }
-        eprintln!("{}: not a manifest, and this build has no compiler in it", argv[1]);
-        eprintln!("  build with seed/wacc.json and seed/wacc.wasm present to get one");
+        eprintln!("{}: not a module, and this build has no compiler in it", argv[1]);
+        eprintln!("  build with seed/wacc.wasm present — `./bootstrap.sh --host wasmtime`");
         std::process::exit(2);
     }
     let wasm = std::fs::read(&argv[1])
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", argv[1])))?;
-    let Some(text) = wacmanifest::manifest_in(&wasm) else {
-        return Err(wasmtime::Error::msg(format!(
-            "{}: no `wac.manifest` section — built by something that does not write one?",
-            argv[1]
-        )));
-    };
-    let m: Arc<Manifest> = serde_json::from_str::<Manifest>(&text).map(Arc::new)
-        .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", argv[1])))?;
-    if m.version != SUPPORTED_VERSION {
-        return Err(wasmtime::Error::msg(format!(
-            "{}: manifest version {} — this runtime speaks {}",
-            argv[1], m.version, SUPPORTED_VERSION
-        )));
-    }
+    let m = manifest_of(&wasm, &argv[1])?;
     let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
     let code = run(m, &wasm, program_args)?;
@@ -661,7 +677,7 @@ fn run_until_stopped(store: &mut Store<Host>, stop: Option<Arc<AtomicBool>>) {
 }
 
 /// What a child's trap says when it was stopped rather than broken. Matched, not shown to anyone.
-const STOPPED: &str = "wacland: stopped by its parent";
+const STOPPED: &str = "wac: stopped by its parent";
 
 /// The module, compiled once and kept.
 ///

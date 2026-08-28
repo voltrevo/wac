@@ -28,7 +28,7 @@ import { Core, Cli, Exec, Stat } from "std/platform.wac";
 // ## It skipped itself until 2026-08-20 — `issues/system/0216a`
 //
 // `native/v8/build.rs` embeds `wacc`, `sh` and `update` from `WAC_SEED_DIR`, "each optional", and
-// `tools/seed.sh` wrote only the first. So the binary from the supported route answered `unknown
+// the build script wrote only the first. So the binary from the supported route answered `unknown
 // command 'sh'` and this file guarded both tests on a probe for that message — skipped by name rather
 // than silent, which was the best a test could do about a command that was not there.
 //

@@ -245,7 +245,7 @@ cargo build --release
 `issues/system/0257c` put the second and third *inside* the first, so `wac sh` and `wac update` are the
 program's rather than the binary's and every host has them; `build.rs` embeds `seed/wacc.wasm` and
 nothing else. The grants widened with it — `--allow-net`, because the command now contains the fetcher,
-which is the line `tools/seed.sh` uses. **Not `--allow-run`**, and that is the one to know about: the
+which is the line `bootstrap.sh` uses. **Not `--allow-run`**, and that is the one to know about: the
 grants are baked into the seed's manifest, so a `--allow-run` on the command line reaches argv and not
 capabilities, and the routes that want to spawn a loaded module cannot get it. `issues/system/0264c`.
 
@@ -262,7 +262,8 @@ see below.
 That is the compiler compiling **its own sources**, in one 67 MB file, with no Deno, no wasm beside
 it and no JavaScript anywhere in the path — and the module is byte-identical to the one
 `wac task app:build` produces from the same input, which is the check that matters.
-`tools/seed.sh` holds that — it builds the compiler with itself and refuses a seed that is not a fixed point. An opt-in test used to assert it a second time afterwards and was deleted on 2026-08-19, because each run
+`bootstrap.sh` holds that — it rebuilds the compiler with itself until two rounds agree, and refuses
+to install a seed that never settles. An opt-in test used to assert it a second time afterwards and was deleted on 2026-08-19, because each run
 rebuilds the crate. It takes **about 1.2s** (best of three: 1.37, 1.18, 1.20), against 1.28–2.05s
 through Deno on a machine several agents are sharing. The two are the same to within that noise,
 which is the answer to expect: same engine, same module, only the embedding differs.

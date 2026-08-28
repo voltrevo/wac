@@ -23,8 +23,8 @@ curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh | 
 the lowest of which is hand-written wasm assembly text — see `bootstrap/README.md`. It needs cargo
 and a C++ toolchain, checks for both before it starts, and reaches no network beyond the clone.
 
-The older route — `bash tools/seed.sh --bootstrap` then `wac task wac:install` — still works and
-builds the compiler with the TypeScript reference rather than from the ladder.
+There used to be a second route that built the compiler with the TypeScript reference instead. That
+reference is deleted and so is the script that drove it: the ladder is the only way in.
 
 **There is a second way as of 2026-08-26** — `wac task wac:install --target deno` — which needs
 neither Cargo nor Rust and installs the same command to the same place. It is second rather than
@@ -35,7 +35,7 @@ about the *result* is lesser; see "Without Cargo" below.
 **Why the path to the binary rather than a bare `wac task`.** Because you do not have one yet: that is
 what the second line builds and the third line installs. `wac task` is a subcommand of the `wac`
 command, so a fresh clone cannot dispatch through it at all — the seed is gitignored and there is no
-binary until `tools/seed.sh --bootstrap` has made one. After it has, `./native/v8/target/release/wac`
+binary until `./bootstrap.sh` has made one. After it has, `./native/v8/target/release/wac`
 is that binary, and naming it explicitly is what `tools/push.sh` does for the same reason: an
 installed `wac` from an earlier day would be a different build than the one this checkout is testing.
 
@@ -44,14 +44,14 @@ worth keeping because it is still true of Deno, and because the flag it turned o
 line looked odd. `deno task` restored this repository's `deno.lock` before running anything, and that
 lockfile carries every npm package the whole tree uses — **twelve of them**, including Playwright,
 ethers, two versions of Binaryen and `ws` — so a fresh clone downloaded all of it before compiling a
-line. Neither of these steps needs a single one: `tools/install.ts` has no npm in its import graph at
-all. On a slow or unreliable connection the download was what stopped the bootstrap. GitHub issue 21.
+line. Neither of these steps needs a single one: nothing on the path from a clone to an installed `wac`
+has npm in its import graph at all. On a slow or unreliable connection the download was what stopped the bootstrap. GitHub issue 21.
 
 `wac task` restores nothing and has no `--no-lock`, so that whole hazard is gone rather than avoided —
 which is a real gain from moving the registry, and the reason this paragraph is history rather than
-advice. Once `wac` is on PATH, `wac task seed:bootstrap` and `wac task wac:install` are the ordinary
-way to run both, and `seed:bootstrap` is literally `bash tools/seed.sh --bootstrap` dispatched through
-the registry.
+advice. `./bootstrap.sh` is how you get `wac` in the first place and how you rebuild it afterwards: it
+starts from the ladder every time and iterates to a fixed point before handing anything over, so
+there is no separate first-build command to remember.
 
 Cargo because the seed is a wasm module the `wac` binary *carries*, so building it means building the
 binary, and `native/v8` is Rust. This said "a checkout of this repository and Deno" until 2026-08-20,
@@ -187,8 +187,8 @@ wac: still bundling (worker) — the first bundle on a machine downloads npm:@es
 
 `deno cache npm:@esbuild/<your platform>` is the one-time step if you would rather do it deliberately;
 nothing requires it. **And it is only the bundler.** Compiling and installing reach no npm at all —
-`bash tools/seed.sh --bootstrap` and `wac task wac:install` are the offline route to the
-whole command, which is why the failure message names them.
+`./bootstrap.sh` is the offline route to the whole command, which is why the failure message names
+it.
 
 **One thing here does need the network, once.** Compiling does not: the two commands above complete
 under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*
