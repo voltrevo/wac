@@ -52,7 +52,7 @@ export i32 matching(Toks t, i32 i) {
 }
 
 /** `t` cut at every depth-0 `sep`, the separators dropped. */
-export WVec<Toks> splitTop(Toks t, i32 sep) {
+export WVec<Toks> splitToks(Toks t, i32 sep) {
   WVec<Toks> out = WVec.create();
   i32 start = 0;
   for (i32 i = 0; i < toksLen(t); i++) {
@@ -167,7 +167,7 @@ export Toks namedArgs(Toks t) {
     if (kindAt(cur, open) != kLparen()) { continue; }
     i32 close = matching(cur, open);
     if (close < 0 || close == open + 1) { continue; }
-    WVec<Toks> parts = splitTop(slice(cur, open + 1, close), kComma());
+    WVec<Toks> parts = splitToks(slice(cur, open + 1, close), kComma());
     if (!allNamed(parts)) { continue; }
     bool arr = open > 0 && kindAt(cur, open - 1) == kRbrack();
 
