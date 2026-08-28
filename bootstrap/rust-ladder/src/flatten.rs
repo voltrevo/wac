@@ -119,7 +119,9 @@ fn gather(entry: &Path, seen: &mut HashSet<PathBuf>, out: &mut Vec<Mod>) -> Resu
 
     let mut aliases: Vec<(String, String)> = Vec::new();
     for (names, spec) in imports(&text) {
-        gather(&resolve(&dir, &spec), seen, out)?;
+        if let Some(from) = resolve(&dir, &spec) {
+            gather(&from, seen, out)?;
+        }
         for item in names.split(',') {
             if let Some((orig, alias)) = as_alias(item) {
                 aliases.push((alias, orig));
@@ -214,26 +216,31 @@ fn as_alias(item: &str) -> Option<(String, String)> {
 
 /// `"./m.wac"` is relative to the importing file, and a bare `"core/option.wac"` is a path from a
 /// package root — found by walking up until it resolves, because nothing here knows where the root
-/// is. A bare specifier that is not a `.wac` file names something wacc carries inside itself.
-fn resolve(dir: &Path, spec: &str) -> PathBuf {
+/// is.
+///
+/// `core` and `std` name no file: `import { Read } from "core"` asks the compiler for a type it
+/// carries itself, and there is nothing to inline. `None`, so the caller skips it. Exactly these
+/// two names, matching `isBuiltinSpec` in `coretext.wac` — the twin of the same rule in
+/// `js/flatten.js`, and the two are compared.
+fn resolve(dir: &Path, spec: &str) -> Option<PathBuf> {
     if spec.starts_with("./") || spec.starts_with("../") {
-        return dir.join(spec);
+        return Some(dir.join(spec));
     }
-    if !spec.ends_with(".wac") {
-        return dir.join(spec);
+    if spec == "core" || spec == "std" {
+        return None;
     }
     let mut at = dir.to_path_buf();
     for _ in 0..12 {
         let tryit = at.join(spec);
         if tryit.is_file() {
-            return tryit;
+            return Some(tryit);
         }
         match at.parent() {
             Some(up) if up != at => at = up.to_path_buf(),
             _ => break,
         }
     }
-    dir.join(spec)
+    Some(dir.join(spec))
 }
 
 /// The names a module declares at the top level, and whether each is exported.
@@ -481,9 +488,10 @@ fn gather_paths(
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     for (_, spec) in imports(&text) {
-        let next = resolve(&dir, &spec);
-        if next.is_file() {
-            gather_paths(&next, seen, out, paths)?;
+        if let Some(next) = resolve(&dir, &spec) {
+            if next.is_file() {
+                gather_paths(&next, seen, out, paths)?;
+            }
         }
     }
     paths.push(path.clone());

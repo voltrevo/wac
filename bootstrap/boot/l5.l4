@@ -1072,12 +1072,27 @@ i32 parse_type() {
   // `Expr[]?` is a nullable array of `Expr` — the same wasm type here, because every reference this
   // emits is already nullable, but two different spellings and only one of them parsed.
   i32 going = 1;
+  // Set before the loop rather than at entry to the function, so a nested `parse_type` — a
+  // function type's parameters, a template's arguments — cannot leave its answer behind.
+  type_q = 0;
   while (going) {
     going = 0;
-    if (ispunct(63)) { next(); going = 1; }
-    if (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); going = 1; }
+    if (ispunct(63)) { next(); going = 1; type_q = 1; }
+    if (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); going = 1; type_q = 0; }
   }
   return t;
+}
+
+// **Whether the `?` this just ate was the last thing it ate.** `Expr?` says yes and `Expr?[]`
+// says no, because in the second the `?` is followed by a suffix and cannot be a ternary's.
+i32 type_q = 0;
+
+// The tokens that can begin an expression, which is how a `?` is told from a nullable marker.
+// `true`, `false` and `this` are names here, so K_NAME covers them.
+i32 starts_expr() {
+  i32 k = kind();
+  if (k == K_INT | k == K_FLOAT | k == K_STR | k == K_NAME) { return 1; }
+  return ispunct(40) | ispunct(33) | ispunct(126) | ispunct(45);
 }
 
 // A type, then a name, then `(` — which is how a *member function* begins inside a struct or an
@@ -1956,6 +1971,17 @@ i32 cast() {
     eat(64);
     eat(126);
     i32 to = parse_type();
+    // **`x as T ? a : b` — the `?` belongs to the ternary, not to the type.** `parse_type` ate
+    // it as a nullable marker, the ternary then found no `?`, and a correct program was refused
+    // at the token after it. The ambiguity is real; wac resolves it toward the ternary and so
+    // does this, by the same test: the last thing the type ate was a `?` and what follows can
+    // start an expression. `x as T?` before `;`, `)` or an operator is untouched, because none
+    // of those begin one. See wac's `issues/lang/closed/0124`, which is the same bug there.
+    //
+    // Nothing undoes the nullability the way wac's `tyOfNullableInner` does: every reference
+    // wac-L5 emits is already nullable, so `T?` and `T` are one type here and there is nothing
+    // to take back but the token.
+    if (type_q & starts_expr()) { tp = tp - 1; }
     if (ty_isnum(t) & ty_isnum(to)) {
       // To and from a float, which is four instructions and no reinterpretation: an integer and a
       // double share no bits worth keeping.

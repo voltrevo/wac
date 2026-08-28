@@ -120,7 +120,8 @@ async function gather(entry, seen, out, files) {
   /** @type {Map<string, string>} */
   const aliases = new Map();
   for (const m of text.matchAll(/^\s*import\s*\{([^}]*)\}\s*from\s*"([^"]+)"\s*;/gm)) {
-    await gather(await resolve(dir, m[2], files), seen, out, files);
+    const from = await resolve(dir, m[2], files);
+    if (from !== null) await gather(from, seen, out, files);
     for (const item of m[1].split(",")) {
       const a = item.trim().match(/^(\w+)\s+as\s+(\w+)$/);
       if (a) aliases.set(a[2], a[1]);
@@ -190,14 +191,24 @@ function topLevelDecls(text) {
  * @param {string} dir
  * @param {string} spec
  * @param {Files} files
- * @returns {Promise<string>}
+ * @returns {Promise<string | null>} the file to read, or `null` when the specifier names no file
  */
 async function resolve(dir, spec, files) {
   if (spec.startsWith("./") || spec.startsWith("../")) return `${dir}/${spec}`;
-  // A bare `core` names a module wacc carries inside it, and on disk it is a *directory* — so
-  // resolving it reads a directory and throws something about the filesystem rather than about
-  // the program.
-  if (!spec.endsWith(".wac")) return `${dir}/${spec}`;
+  // **`core` and `std` name no file.** `import { Read } from "core"` — which `std/platform.wac`
+  // does — asks the compiler for a type it carries itself. `isBuiltinSpec` in `coretext.wac`
+  // answers true for exactly these two bare names, and `coreFile` then has no text for either,
+  // so there is nothing to inline and skipping is the whole of the rule.
+  //
+  // The list is *these two names*, not "anything without a `.wac`". Written the looser way this
+  // also dropped `lib/point.l5`, a real file with the wrong extension, and the imports fixture
+  // went red — one test standing in for every corpus that does not spell things wac's way.
+  //
+  // Before either version it returned the path anyway and let the read fail. The failure was
+  // `realpath '.../std/core'`, which reads as a broken repository rather than as a specifier
+  // this did not understand, and it hid 62 corpus entry points behind an error about the
+  // filesystem — a fifth of the corpus, absent from a census that never said so.
+  if (spec === "core" || spec === "std") return null;
   let at = dir;
   for (let i = 0; i < 12; i++) {
     try {

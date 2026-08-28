@@ -193,14 +193,16 @@ rather than by hoping.
 Host-independent, so they can land before or during the port. Ordered by what each costs when it is
 missing.
 
-### 1. A refusal should name its line — **open**
+### 1. A refusal should name its line — **done**
 
 `struct Tok { kind; start; len; val }` carries a byte offset and never turns it into a line, so a
 refusal says *what* but never *where*. Two instruments exist only to work around this:
 `first_refusal.ts` finds the enclosing function by scanning the *output*, and `bisect_real_wac.ts`
 binary-searches the *input*. Counting newlines from `src` to `tstart()` is one loop.
 
-### 2. A refusal should stop or synchronise — **open**
+`line_of(off)` counts them. A refusal now reads `!! wac-L5: line 412: unexpected token ...`.
+
+### 2. A refusal should stop or synchronise — **done**
 
 `oops()` neither advances the cursor nor stops the file, so a construct the parser cannot get past
 is re-reported until the output buffer fills. One missing operator produced **19,417 refusals** in
@@ -208,11 +210,25 @@ is re-reported until the output buffer fills. One missing operator produced **19
 overflow then truncates the marker itself, which is where `!! wac-L5end` comes from. An earlier
 version had recovery — skip to `;` or `}` — and it was replaced by a one-liner.
 
-### 3. A comparison against a cast is refused — **open**
+Recovery is back — skip to `;` or `}` — with a 50-refusal cap after which the file stops. One bad
+token in a six-line file went from 18,349 refusals and 45,892 lines of output to 1 refusal and 24
+lines. The cascade had been hiding crashes: traps across the corpus rose from 21 files to 56 once
+it stopped. `ts/trace_l5.ts` names the `boot/l5.l4` function a trap *inside the compiler* came
+from, which found an unguarded table append, an unbounded token cursor and a type index of `-1`
+reaching a member lookup. Traps are back down to 39.
+
+### 3. A comparison against a cast is refused — **done**
 
 `d == 3.0 as~ f32` refuses, where `f32 d = 3.0; d == 3.0` and `f32 d = 3.0 as~ f32` are each fine.
 Found by writing the first of the pinning tests. Nothing in wacc does this, but it is a wrong
 answer rather than a missing feature.
+
+It was not about comparison, or about floats: `parse_type` ate the ternary's `?` as a nullable
+marker, so *any* `x as T ? a : b` was refused at the token after the `?`. wac had the same bug —
+`issues/lang/closed/0124` — and had already settled the ambiguity toward the ternary. wac-L5 now
+resolves it the same way and by the same test: the last thing the type ate was a `?` and what
+follows can begin an expression. Reading the oracle's rule was cheaper than inventing one, and it
+means the two parsers cannot disagree about which reading is right.
 
 ### 4. A buffer should carry its own bound — **open**
 

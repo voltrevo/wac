@@ -511,15 +511,30 @@ const programs: [string, string, number][] = [
       return whole * 10 + (back == 8.5 ? 0 : 1) + (x < y ? 5 : 0);
     }`, 86],
 
-  // Without the cast, because `d == 3.0 as~ f32` is refused — see PLAN.md, *A comparison against
-  // a cast*. Pinning these three found it within a minute of the first one being written.
   ["f32 is its own width", `
     i32 main() {
       f32 n = 1.5;
       f32 d = n * 2.0;
       f64 wide = d as f64;
-      return (d == 3.0 ? 7 : 0) * 10 + (wide as i32);
+      return (d == 3.0 as~ f32 ? 7 : 0) * 10 + (wide as i32);
     }`, 73],
+
+  // **Both sides of one ambiguity.** A `?` after a type is a nullable marker or a ternary's, and
+  // which it is can only be told from what follows it. The first two lines are the ternary — the
+  // second with no space, so it cannot be a lexing accident — and the third and fourth are the
+  // nullable marker, before a `;` and before a `)`, neither of which starts an expression.
+  ["a ? after a cast's type", `
+    struct E { i32 v; }
+    i32 nn(E? e) { return e is null ? 1 : 0; }
+    i32 main() {
+      i32 d = 3;
+      E e = E(9);
+      E? maybe = e as E?;
+      return (d == 3 as~ i32 ? 100 : 0)
+           + (d < 4 as~ i32?7:0) * 10
+           + (maybe is null ? 0 : 1)
+           + nn(null as E?);
+    }`, 172],
 
   ["a float's bits, both spellings", `
     i32 main() {
