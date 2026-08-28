@@ -87,6 +87,7 @@ if (isMain) {
       waccSource: await flattenFrom(args[0]) + "\n" +
         await readFile(fileURLToPath(new URL("../drivers/spec_cases.wac", import.meta.url)), "utf8"),
       target: await fileSet(args[withWacc + 1], files),
+      entryAsWritten: args[withWacc + 1],
       wasmName: `${base}.wasm`,
       grants: grantsOf(args),
     });

@@ -82,6 +82,7 @@ if (import.meta.main) {
       waccSource: await flattenFrom(args[0]) + "\n" +
         await Deno.readTextFile(new URL("../drivers/spec_cases.wac", import.meta.url)),
       target: await fileSet(args[withWacc + 1], files),
+      entryAsWritten: args[withWacc + 1],
       wasmName: `${base}.wasm`,
       grants: grantsOf(args),
     });

@@ -83,11 +83,13 @@ export function wacc(instance) {
      * it is what keeps there from being a second implementation to drift — see the comment on
      * `drv_seal` in the driver.
      *
-     * @param {string} wasmName the name the manifest records, which is the *output's*
+     * @param {string} entry    the entry as the command line wrote it, which is what it records
+     * @param {string} wasmName the name the manifest records for the module, from `-o`
      * @param {number} grants
      * @returns {Uint8Array}
      */
-    seal(wasmName, grants) {
+    seal(entry, wasmName, grants) {
+      feed("drv_allocEntryName", "drv_setEntryNameByte", entry);
       feed("drv_allocWasmName", "drv_setWasmNameByte", wasmName);
       return take(e.drv_seal(grants), "drv_byteAt");
     },
@@ -110,6 +112,7 @@ export function wacc(instance) {
  * @param {(l0: string) => Uint8Array} o.assemble
  * @param {string} o.waccSource   wacc's graph, flattened, with the driver concatenated on
  * @param {{ keys: string[], texts: string[], entry: string }} o.target   the program to compile
+ * @param {string} o.entryAsWritten the entry as the command line wrote it
  * @param {string} o.wasmName     the name the manifest records — the output's, not the entry's
  * @param {number} o.grants
  * @returns {Promise<Uint8Array>}
@@ -130,5 +133,5 @@ export async function buildWithWacc(o) {
     const why = w.decline();
     throw new Error(why === "" ? "wacc emitted nothing, and said nothing about why" : why);
   }
-  return w.seal(o.wasmName, o.grants);
+  return w.seal(o.entryAsWritten, o.wasmName, o.grants);
 }

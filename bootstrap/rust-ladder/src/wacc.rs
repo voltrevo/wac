@@ -83,22 +83,31 @@ impl<'s> Wacc<'s> {
     // was replaced, and stayed — two ways to answer one question, one of which fails on the module
     // the answer is actually wanted for.
 
-    /// A text answer from the driver, byte at a time.
-    fn text(&self, scope: &mut v8::PinScope<'s, '_>, ask: &str) -> String {
-        let n = self.call(scope, ask, &[]);
-        let bytes: Vec<u8> = (0..n).map(|i| self.call(scope, "drv_textByte", &[i]) as u8).collect();
-        String::from_utf8_lossy(&bytes).into_owned()
+    /// Append the `wac.manifest` section to what `emit_files` just built.
+    ///
+    /// **wacc writes it.** This used to parse the two metadata wires and format the JSON here, in
+    /// `manifest.rs` — a second implementation of a format `packages/wacc/src/manifest.wac` already
+    /// exports as `manifestOf` and `withManifestSection`. Asking the compiler that owns the format
+    /// leaves one implementation and nothing to drift; the Deno and Node hosts do the same through
+    /// the same driver, and all three write byte-identical artefacts.
+    ///
+    /// `grants` is `manifestOf`'s own bitfield: read 1, write 2, net 4, env 8, run 16.
+    pub fn seal(
+        &self,
+        scope: &mut v8::PinScope<'s, '_>,
+        entry: &str,
+        wasm_name: &str,
+        grants: i32,
+    ) -> Vec<u8> {
+        self.feed(scope, "drv_allocEntryName", "drv_setEntryNameByte", entry);
+        self.feed(scope, "drv_allocWasmName", "drv_setWasmNameByte", wasm_name);
+        let n = self.call(scope, "drv_seal", &[grants]);
+        (0..n).map(|i| self.call(scope, "drv_byteAt", &[i]) as u8).collect()
     }
 
-    /// `name\tret\tparam,param` per exported function, from wacc.
-    pub fn export_sigs(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
-        self.text(scope, "drv_exportSigs")
-    }
-
-    /// The `S`/`E`/`M`/`C`/`A` lines describing every type and callback a host can hold.
-    pub fn bind_types(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
-        self.text(scope, "drv_bindTypes")
-    }
+    // **What was here: `text`, `export_sigs` and `bind_types`.** They fetched wacc's two metadata
+    // wires so that `manifest.rs` could format the manifest from them. wacc formats it itself now,
+    // through `seal`, so nothing needs the wires on this side of the boundary.
 
     /// Why a linked build declined, or `""`.
     pub fn decline(&self, scope: &mut v8::PinScope<'s, '_>) -> String {

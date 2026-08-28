@@ -221,6 +221,17 @@ u8[] textout;
 // drift between the two. Asking wacc, through the driver that is already here, means there is one
 // implementation and nothing to drift.
 u8[] wasmnamebuf;
+u8[] entrybuf;
+
+export i32 drv_allocEntryName(i32 n) {
+  entrybuf = u8[n]();
+  return n;
+}
+
+export i32 drv_setEntryNameByte(i32 i, i32 b) {
+  entrybuf[i] = b;
+  return 0;
+}
 
 export i32 drv_allocWasmName(i32 n) {
   wasmnamebuf = u8[n]();
@@ -238,14 +249,19 @@ export i32 drv_setWasmNameByte(i32 i, i32 b) {
  * `grants` is a bitfield and it is `manifestOf`'s own: read 1, write 2, net 4, env 8, run 16. The
  * host passes what the command line asked for; nothing here decides policy.
  *
- * The name written into the manifest is the *output's*, not the entry's, which is why it comes in
- * separately — `native.ts` derives it from the `-o` path.
+ * **Three names, and they are three different things.** `namebuf` is the *key* the entry has in
+ * the file set, which is what finds it among `paths`. `entrybuf` is the entry as the command line
+ * wrote it, which is what the manifest records — `native.ts` writes the path it was given, and the
+ * two differ whenever the caller passed an absolute path. `wasmnamebuf` is the *output's* name,
+ * derived from `-o`. Using the key for all three read as a manifest that named a file nobody asked
+ * for, and `ts/manifest.test.ts` is what said so.
  */
 export i32 drv_seal(i32 grants) {
-  string entry = string.fromBytes(namebuf);
-  string wire = bindTypesFiles(paths, sources, entry);
-  string sigs = exportSigsFiles(paths, sources, entry);
-  string m = manifestOf(built, wire, sigs, entry, string.fromBytes(wasmnamebuf), grants);
+  string key = string.fromBytes(namebuf);
+  string wire = bindTypesFiles(paths, sources, key);
+  string sigs = exportSigsFiles(paths, sources, key);
+  string m = manifestOf(built, wire, sigs, string.fromBytes(entrybuf),
+                        string.fromBytes(wasmnamebuf), grants);
   built = withManifestSection(built, m);
   return built.len();
 }

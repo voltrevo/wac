@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 
 mod flatten;
-mod manifest;
 mod wacc;
 
 /// Where a rung wants its source and leaves its output, **asked of the rung**.
@@ -214,26 +213,19 @@ fn bench(scope: &mut v8::PinScope, path: &str, already_flat: bool) {
     println!("total                   {:>6} ms", (built + compiled + assembled).as_millis());
 }
 
-/// The `$bind$` exports a host needs to find without knowing the mangling, read off the module
-/// itself — which is where `native.ts` reads them from too, since they are a property of what was
-/// built rather than of what was asked for.
+/// The grant bitfield a `--allow-…` line asks for — `manifestOf`'s own encoding, in
+/// `packages/wacc/src/manifest.wac`: read 1, write 2, net 4, env 8, run 16.
 ///
-/// **`$bind$m_` and `$bind$sm_` are the ones left out** — a method and a static method, which a
-/// host reaches through the struct's entry in `structs` rather than through this table. Everything
-/// else stays, `$bind$fnref_*` included: a callback trampoline is exactly the sort of thing a host
-/// needs to find by name.
-fn bind_table(module: &[u8]) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = manifest::export_names(module)
-        .into_iter()
-        .filter(|n| {
-            n.starts_with("$bind$") && !n.starts_with("$bind$sm_") && !n.starts_with("$bind$m_")
-        })
-        .map(|n| (n["$bind$".len()..].to_string(), n))
-        .collect();
-    // First seen wins, as an object literal's keys do — `dedup` alone would only drop neighbours.
-    let mut seen = std::collections::HashSet::new();
-    out.retain(|(k, _)| seen.insert(k.clone()));
-    out
+/// **What was here: `bind_table`.** It read the `$bind$` exports off the module so the manifest
+/// writer could list them. wacc lists them itself now, so the reading went with the writing.
+fn grants_of(args: &[String]) -> i32 {
+    let mut bits = 0;
+    for (name, bit) in [("read", 1), ("write", 2), ("net", 4), ("env", 8), ("run", 16)] {
+        if args.iter().any(|a| a == &format!("--allow-{name}")) {
+            bits |= bit;
+        }
+    }
+    bits
 }
 
 /// V8's platform is process-wide and may be initialised once. A test binary runs its tests on
@@ -308,25 +300,17 @@ fn main() {
         if let Some(path) = out_path {
             // **The manifest, and the module with it inside.** A module on its own is not the
             // artefact a host can run: it cannot say which export is the memory or what a
-            // function's wac signature was. `native.ts` writes one after compiling and so does
-            // this — see `manifest.rs` for why that copy is checked rather than trusted.
-            let sigs = manifest::parse_sigs(&w.export_sigs(scope));
-            let wire = w.bind_types(scope);
-            let bind = bind_table(&module);
+            // function's wac signature was.
+            //
+            // **wacc writes it, and this used to.** `manifest.rs` parsed wacc's two metadata wires
+            // and formatted the JSON here — a second implementation of a format wacc already
+            // exports, with `ts/manifest.test.ts` existing to police the drift between them. The
+            // driver asks wacc instead, and the Deno and Node hosts ask the same way: all three
+            // write byte-identical artefacts, so there is one implementation and nothing to drift.
             let stem = path.strip_suffix(".wasm").unwrap_or(&path);
             let base = stem.rsplit('/').next().unwrap_or(stem);
-            let text = manifest::manifest_json(
-                target,
-                &format!("{base}.wasm"),
-                manifest::Grants::from_args(&args),
-                &bind,
-                &sigs,
-                &manifest::parse_callbacks(&wire),
-                &manifest::parse_bind_types(&wire),
-                &manifest::parse_aliases(&wire),
-            );
-            std::fs::write(&path, manifest::with_manifest_section(&module, &text))
-                .expect("cannot write the module");
+            let sealed = w.seal(scope, target, &format!("{base}.wasm"), grants_of(&args));
+            std::fs::write(&path, sealed).expect("cannot write the module");
             eprintln!("wrote {path} with a wac.manifest section");
         }
         return;
