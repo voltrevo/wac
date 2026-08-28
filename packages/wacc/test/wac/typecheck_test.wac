@@ -31,10 +31,12 @@
 // to look for: when two neighbours of a rule pass, the gap is the spelling between them.
 //
 // So a clean run of this file is evidence about the cells it has, and adding a cell is worth more than
-// adding an assertion. The cheap generator is a handful of programs with no imports, `wac check` and
-// `harness/referenceCheck.ts` side by side, and a column that says which disagreed — and it wants
-// negative controls in the same batch, because a widening that fixes a false alarm by accepting
-// everything looks identical from the accepted side.
+// adding an assertion. The cheap generator is a handful of programs with no imports and a column
+// saying which of them `wac check` accepts — and it wants negative controls in the same batch,
+// because a widening that fixes a false alarm by accepting everything looks identical from the
+// accepted side. It used to say to put `harness/referenceCheck.ts` in that column; there is no
+// second checker to put there now, so the classification is written by hand, which is what every
+// list in this file already does.
 //
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
@@ -399,12 +401,12 @@ export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_cal
  * `wac check` said the file was fine and the emitter's whole-module decline was the only thing left.
  * `zz?` was silent for the same reason. `issues/lang/0170a`'s class exactly.
  *
- * **Asserted here rather than in `WRONG()` for the `?` case, and the reason is about the oracle.**
- * The differential above compares this checker against the reference's *checker*, through `checkpos`.
- * For `zz?` the reference's checker says nothing — its **resolver** is what refuses the program, with
- * `undefined type 'zz'`, confirmed through `harness/referenceCheck.ts`. wacc has one pass that reports
- * both kinds, so a correct diagnostic here reads as a contradiction to a checker-only oracle. The
- * `zz[]` case *is* in `WRONG()`, because the reference's checker reports that one.
+ * **Asserted here rather than in `WRONG()` for the `?` case**, which was about the oracle this file
+ * used to have. It compared this checker against the reference's *checker*, through `checkpos`, and
+ * for `zz?` that checker said nothing — the reference's **resolver** was what refused the program,
+ * with `undefined type 'zz'`. wacc has one pass that reports both kinds, so a correct diagnostic
+ * here read as a contradiction. The reference is gone and the distinction with it; the case stays
+ * where it is because the reasoning is still what explains the split.
  *
  * The last two are the other two positions a bare name can take. They were never silent — each
  * produces a downstream mismatch against an invented type, `expected fn(zz) -> i32` for the funcref —

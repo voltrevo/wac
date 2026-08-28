@@ -57,27 +57,9 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { dumpTypeErrors, diagnoseGraph } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
-
-/** Whether the reference compiles `path` cleanly — asked only about a file wacc reported on. */
-bool referenceIsHappy(Core core, Cli cli, string path) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceCheck.ts", path),
-                    u8[0]()).wait();
-  // **"Could not look" is not "it is wrong too".** This read `r.ran() && r.status == 0`, so a
-  // missing checker answered *false* for every file — "the reference is unhappy as well", which
-  // waves through exactly the false alarm this call exists to catch. It was dormant, because it is
-  // only reached when wacc has reported something; it would have been a rubber stamp the first time
-  // it mattered. `referenceCheck.ts` exits 2 for could-not-look and 1 for a real diagnostic, and a
-  // trap here is right: a sweep that cannot consult its oracle has no verdict to give.
-  if (!r.ran() || r.status == 2) {
-    core.warn("corpuscheck: the reference checker did not run for " + path + " — "
-              + (r.ran() ? string.fromBytes(r.stderr) : r.error));
-    trap;
-  }
-  return r.status == 0;
-}
 
 /** The `path\tline\tcol\tphase\tmessage\t…\tseverity` rows of a wire, warnings dropped. */
 string[] errorRows(string wire) {
@@ -159,11 +141,12 @@ export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core c
     if (file == CANARY) { sawCanary = true; continue; }
     if (nReported >= reported.len()) { continue; }
 
-    // Only now is the reference worth a process: in the green case this line never runs. The path
-    // it wants is the repository's, without the leading slash the keys carry.
-    string path = file.len() > 0 && file.slice(0, 1) == "/" ? file.slice(1, file.len()) : file;
-    string kind = referenceIsHappy(core, cli, path) ? "" : "  [only wacc compiles this file]";
-    reported[nReported] = rows[i] + kind;
+    // **The reference used to be asked here, and only decorated the message.** It appended
+    // "[only wacc compiles this file]" when the reference was unhappy too, and the verdict below
+    // never read it — so removing the reference costs this test a phrase in a failure it does not
+    // have, and nothing else. The oracle was always the repository: these files compile, so a
+    // diagnostic on one is a false alarm whoever else agrees.
+    reported[nReported] = rows[i];
     nReported = nReported + 1;
   }
 

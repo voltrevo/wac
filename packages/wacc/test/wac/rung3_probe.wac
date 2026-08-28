@@ -25,7 +25,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { checkCodeMessage, dumpTypeErrors } from "../../src/api.wac";
 
-const string ORACLE = "packages/wacc/test/reference.ts";
 
 /**
  * One complaint, as `line:col code — the checker's own sentence`.
