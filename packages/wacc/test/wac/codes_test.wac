@@ -436,3 +436,36 @@ export string test_a_shift_typed_from_its_amount_says_so() {
           "", "and so does an ordinary mismatch");
   return t.report();
 }
+
+/**
+ * `plain<i32>(1)` says that angle brackets are type arguments, not call syntax.
+ *
+ * `issues/lang/0235a`, and the case of it that `design/lang/0011` left. Since 0011 landed, a written
+ * instantiation that *resolves* compiles — `b.map<i32>(…)` runs and answers correctly — and a wrong
+ * *count* says so: "id takes 1 type argument, and 2 were written". What remained was the name that
+ * is not generic at all, which reaches the type reading, fails to resolve, and is reported as an
+ * unknown **type**. That tells the author their function is a type they did not write, and names
+ * neither the rule nor the way out.
+ *
+ * **The annotation is a clause and is unchanged.** `§wac-diag-parse-bad-type-n7qm3xf` pins
+ * *"unknown type 'foo'"* for this code, so the hint carries the explanation instead — which is also
+ * why it is written per site: `undefined type` is a general diagnostic and its own hint must stay
+ * general, and only the site knows the name resolved to a function.
+ */
+export string test_a_type_argument_list_on_a_function_says_which_rule_applies() {
+  T t = T.create();
+  string src = "i32 plain(i32 x) { return x; }\nexport i32 main() { return plain<i32>(1); }";
+
+  t.eqI32(firstCode(dumpTypeErrors(src.toBytes())), 57, "still refused, as an undefined type");
+  string hint = dumpFirstTypeHint(src.toBytes());
+  t.isTrue(contains(hint, "is a function"),
+           "and the hint says the name is a function — got: " + hint);
+  t.isTrue(contains(hint, "type argument list"),
+           "and names the rule that was applied — got: " + hint);
+
+  // **A type that is genuinely unknown keeps the code's own hint**, or the sentence would claim a
+  // function exists wherever a name is misspelled.
+  t.eqStr(dumpFirstTypeHint("export i32 f() { Nope n = Nope(); return 0; }".toBytes()),
+          "", "an unknown type that is not a function takes the code's own hint");
+  return t.report();
+}
