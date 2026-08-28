@@ -693,3 +693,81 @@ Deno.test("a wacc asset the page cannot use is refused rather than written", asy
     throw new Error(`an asset with no module was accepted: ${small || "(no error)"}`);
   }
 });
+
+// ── The editor's vocabulary against the spec ─────────────────────────────────────────────────
+//
+// `wac-language.ts` used to import its keyword list from the TypeScript reference's lexer,
+// because a copy had drifted once — written before `enum` and `match` existed, so the landing
+// page's own enum example rendered them as ordinary identifiers. The reference is gone, wacc has
+// no list to import (`keywordKind` is packed-integer comparisons), and a browser bundle cannot
+// read a `.md` at runtime. So the copy is checked against the definition instead.
+//
+// The other half of this pair is `packages/wacc/test/wac/speckeywords_test.wac`, which holds
+// *wacc's lexer* to the same fence. Neither test compares the highlighter with the compiler
+// directly; they agree because both agree with the document, which is the arrangement that also
+// catches the document being wrong.
+
+import { KEYWORDS, SPELLINGS } from "../src/editor/wac-vocabulary.ts";
+
+/** The words in grammar.md's `### Keywords` fence. */
+function specKeywords(md: string): Set<string> {
+  const m = /### Keywords\n+```\n([\s\S]*?)```/.exec(md);
+  if (m === null) throw new Error("could not find the Keywords fence in grammar.md");
+  return new Set(m[1].split(/\s+/).filter(Boolean));
+}
+
+Deno.test("site: the editor's keyword list is the one the spec prints", async () => {
+  const md = await Deno.readTextFile(new URL("../../spec/spec/grammar.md", import.meta.url));
+  const spec = specKeywords(md);
+
+  // A floor first: a fence that stopped being found, or an extraction that collapsed, would make
+  // every comparison below vacuous and pass.
+  if (spec.size < 28) throw new Error(`the fence gave ${spec.size} words, expected 28 or more`);
+
+  // `as!`, `as~` and `as@` are in the fence and not in the highlighter, because the tokeniser
+  // matches whole identifier-shaped words and none of those three is one. Named exactly, so a
+  // fourth would fail here rather than widen the exemption.
+  const POSTFIX = new Set(["as!", "as~", "as@"]);
+  const want = [...spec].filter((w) => !POSTFIX.has(w)).sort();
+  const got = [...KEYWORDS].sort();
+
+  const missing = want.filter((w) => !KEYWORDS.has(w));
+  const extra = got.filter((w) => !spec.has(w));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `the editor's keyword list has drifted from grammar.md\n` +
+        `  in the spec, not highlighted: ${missing.join(", ") || "(none)"}\n` +
+        `  highlighted, not in the spec: ${extra.join(", ") || "(none)"}`,
+    );
+  }
+
+  // And the three really are in the fence — otherwise the exemption above is hiding their absence
+  // rather than explaining it.
+  for (const w of POSTFIX) {
+    if (!spec.has(w)) throw new Error(`${w} is exempted here but is not in the fence at all`);
+  }
+});
+
+Deno.test("site: the editor's wapy spellings are the ones the spec's table gives", async () => {
+  const md = await Deno.readTextFile(new URL("../../spec/spec/wapy.md", import.meta.url));
+
+  // The table's right-hand column, as backticked code. Each spelling has to appear there as its
+  // own word — `and` inside the prose word "command" is not the table saying anything.
+  const ticked = [...md.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  const words = new Set(ticked.flatMap((t) => t.split(/[^A-Za-z_]+/)).filter(Boolean));
+
+  const absent = [...SPELLINGS.keys()].filter((w) => !words.has(w));
+  if (absent.length > 0) {
+    throw new Error(`the editor respells ${absent.join(", ")}, and wapy.md never mentions them`);
+  }
+
+  // Fixed at six, because this is the weaker direction: the check above cannot notice a seventh
+  // spelling the language grew, only one the editor invented. The count is what makes adding one
+  // to the language come past this test.
+  if (SPELLINGS.size !== 6) {
+    throw new Error(
+      `the editor has ${SPELLINGS.size} wapy spellings; wapy.md's table gives six — ` +
+        `and, or, not, True, False, None. If the language grew one, add it and update this number.`,
+    );
+  }
+});

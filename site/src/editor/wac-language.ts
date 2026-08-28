@@ -1,9 +1,21 @@
 // CodeMirror highlighting for both of wac's surfaces.
 //
-// The vocabulary is imported from the compiler rather than copied. A copy had already drifted:
-// this file's keyword list was written before `enum` and `match` existed and never gained them,
-// so the landing page's own enum example rendered them as ordinary identifiers. `KEYWORDS` and
-// `SPELLINGS` are the sets the lexers actually use, so that cannot happen again.
+// **The vocabulary is a copy, and a test holds it to the spec.** It used to be imported from the
+// TypeScript reference's lexer, on the reasoning that a copy had already drifted once — this
+// file's keyword list was written before `enum` and `match` existed and never gained them, so the
+// landing page's own enum example rendered them as ordinary identifiers.
+//
+// That reasoning was right and the import is no longer available: the reference is deleted, and
+// wacc has no set to import. `keywordKind` in `packages/wacc/src/lex.wac` is a chain of packed
+// integer comparisons with nothing to enumerate, and a browser bundle cannot read a `.md` file at
+// runtime anyway.
+//
+// So the guard moves from "there is only one copy" to "the copies are checked against the
+// definition", which is where it should probably have been: `spec/spec/grammar.md` prints the
+// keywords and `spec/spec/wapy.md` prints the respellings, and both are what a reader is told.
+// `site/tools/site.test.ts` compares this file against them, and
+// `packages/wacc/test/wac/speckeywords_test.wac` compares wacc's lexer against the same fence — so
+// the highlighter and the compiler agree by both agreeing with the document.
 //
 // Both surfaces share one tokeniser. They differ in three things — comment marker, block
 // structure, and how a declaration opens — and everything else about them is the same language,
@@ -15,10 +27,12 @@ import {
   LanguageSupport,
 } from "@codemirror/language";
 import { Tag } from "@lezer/highlight";
-import { KEYWORDS } from "../../../compiler/wacLex.ts";
-import { SPELLINGS } from "../../../compiler/wapyLex.ts";
+
+
+import { KEYWORDS, SPELLINGS } from "./wac-vocabulary.ts";
 
 export const trapTag = Tag.define();
+
 
 const TYPES = new Set(
   "i32 i64 f32 f64 bool i31ref anyref string void".split(" ")
