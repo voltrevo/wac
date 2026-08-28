@@ -341,6 +341,62 @@ implementation:
 - The spec's `// error:` fences had nothing checking them once `wacSpec.test.ts` went, so
   `specfences_test` checks them now: 11 whole programs the document says are rejected.
 
+### The last agreement with the reference — pinned 2026-08-28, on `1ea52134`
+
+The plan asks the removal commit to record what the two sides last agreed on, because the ability
+to re-run it does not survive the deletion. Measured by `bootstrap/ts/same_fixed_point.ts`:
+
+```
+W0  wacc by wac-L5            696,682 bytes
+X0  wacc by the reference     933,140 bytes
+W1  wacc by W0                742,828 bytes
+X1  wacc by X0                742,828 bytes
+
+W1 == W2  (the ladder is at its fixed point)      true
+X1 == X2  (the reference is at its fixed point)   true
+W1 == X1  (the two fixed points are the same)     true
+
+sha256  3817847b3d99b79dd98c68666a80524d6d4dc39568a3e6dc122e23840960fceb
+```
+
+`W0` and `X0` differ and must — they are wacc's source compiled by two entirely different
+compilers. That they converge on one `wacc.wasm` after a single further round is the claim, and it
+is the whole of what the reference was still for.
+
+### Left — two files
+
+| file | the question |
+|---|---|
+| `packages/wacc/test/wapyRoundTrip.test.ts` | it renders every tracked `.wac` file to wapy with `compiler/wapyPrint.ts` and reads it back with wacc, comparing trees. **wacc has a wapy parser and no wapy printer**, and the printer is 699 lines walking the *reference's* AST — a rewrite against wacc's tree rather than a translation. The only open decision. |
+| `bootstrap/ts/same_fixed_point.ts` | sanctioned: it exists to compare against the reference and is the evidence for deleting it. Goes in the final commit, with the last agreed hashes pinned. |
+
+### What the rest turned into
+
+Every tool that reached the reference asks wacc now, and repointing them was not busywork — three
+found bugs on the day they were pointed at the compiler that ships:
+
+- **`tools/fuzz.ts`** → `issues/lang/0281b`: `as~` to `i32` wraps instead of clamping when its
+  operand is a constant. Two of the first forty programs.
+- **`tools/fuzzBoundary.ts`** → `issues/lang/0282b`: wacc's bindgen emits neither `>>> 0` nor
+  `BigInt.asUintN`, so every `u32`/`u64` above the signed range reaches JavaScript negative. The
+  spec states the rule; the reference implements it; this is `issues/lang/closed/0039` reappearing
+  in the implementation nothing was checking.
+- **`tools/mutate`** → the mutation generator had been placing mutations from a mis-lexed token
+  stream on every file containing a lambda, because the reference lexes `=>` as `=` and `>`.
+
+`harness/wacBind`, `wacCoverage` and `wacTestRun` each had an environment variable selecting the
+reference, with wacc already the default; all three are gone, and so is the second copy of the
+bootstrap that `wacBind` carried. `harness/wacFiles.ts` asks wacc for the resolution rules — which
+needed four of them exposed on `api.wac`, a real gap — but **not** for the import scan, because
+`files_oracle.ts` is the oracle for `files.wac`'s own walk and would otherwise compare wacc with
+wacc and pass forever.
+
+### Found and fixed on the way
+
+`wac test A B` ran only `A` and reported success over it; `wac check ok.wac broken.wac` printed "no
+diagnostics" and exited 0 without opening the second file. `build` and `audit` too. Extra paths are
+refused now — `run` and `bindgen` keep theirs, which mean something.
+
 ### Left
 
 | group | files | the question |
