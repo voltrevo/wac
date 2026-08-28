@@ -1,6 +1,6 @@
 {
-  "source": "compiler/wacSpec.test.ts",
-  "sha256": "cd95275d52ed16e73446f5d430ee83f3ea01036531d7a085cb0c11a1c00fd46c",
+  "was_recorded_from": "compiler/wacSpec.test.ts, deleted 2026-08-28 with the TypeScript reference",
+  "note": "Recorded by running that suite against a shim, not by reading it. There is no generator to re-run: add a case here by hand. packages/wacc/test/wac/specmulti_test.wac says why.",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",

@@ -48,11 +48,6 @@ import { Vec } from "core/vec.wac";
  */
 string[] bootstrap() {
   return string[](
-    // The import walk, which needs a parser to be correct: it reads each file's `import` lines with
-    // the reference's lexer and resolves the specifiers with its resolver. The ladder's
-    // `bootstrap/js/flatten.js` does the same walk in JavaScript and is load-bearing for the
-    // bootstrap, so it cannot drift unnoticed — which is what this one should become.
-    "harness/wacFiles.ts",
     // **The one that exists to retire the reference.** The bootstrap ladder builds wacc from five
     // rungs of hand-written source, and this asks whether it lands on the same `wacc.wasm` the
     // reference reaches — `W1 == X1`. It has to import the reference to compare against it, which
@@ -74,12 +69,6 @@ string[] oracle() {
     // A wapy round-trip differential, rendering with `compiler/wapyPrint.ts`. It replaced the
     // reference's own copy of the same test on 2026-08-27 and goes when the reference does.
     "packages/wacc/test/wapyRoundTrip.test.ts",
-    // The **printer**, not the compiler: it renders every tracked `.wac` file to wapy so that wacc
-    // can read it back. That is the one thing the reference still has and wacc does not, and the
-    // comparison is what `design/lang/0003` calls a second opinion rather than a fallback.
-    // `issues/lang/0105` names this one as keeping the reference *on purpose*: it records the
-    // spec's own programs with the reference's answers, which is what makes them an oracle.
-    "packages/wacc/tools/specCases.ts",
   );
 }
 
@@ -96,8 +85,6 @@ string[] oracle() {
  */
 string[] tooling() {
   return string[](
-    "tools/fuzz.ts",
-    "tools/fuzzBoundary.ts",
     "tools/mutate.ts",
     "tools/mutate/operators.ts"
   );

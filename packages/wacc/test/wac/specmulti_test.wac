@@ -10,23 +10,27 @@
 // `packages/wacc/tools/specCases.ts`; the checker is `packages/wacc/src/api.wac`, imported directly
 // rather than reached through `wacBind`, which is the shorter route and the one a wac program takes.
 //
-// ## The staleness check is the first test for a reason
+// ## It was a recording, and it is the record now
 //
-// The corpus is a *recording* of what `wacSpec.test.ts` currently states. A recording that has drifted
-// from its source is a corpus that asserts what the spec used to say, and it would go on passing —
-// so the digest of the file it was taken from is stored with it and compared before anything else.
-// Rewording one comment in that file is enough to invalidate it, which is exactly the sensitivity
-// wanted: nothing in it is decoration.
+// The corpus was a *recording* of what `compiler/wacSpec.test.ts` stated, taken by running that
+// suite against a shim rather than by reading it — four attempts to lift the programs out by
+// reading disagreed with each other, because the file is 9,000 lines of TypeScript carrying wac
+// inside template literals. A digest of the source was stored with it and checked before anything
+// else, because a recording that has drifted from its source asserts what the spec used to say and
+// goes on passing.
+//
+// That file is deleted with the reference, so there is nothing to drift from and the check has
+// gone with it. **These 56 programs are now the statement rather than a copy of one**, and a new
+// multi-file rule is added here by hand — there is no generator to re-run, and the header of the
+// one that is gone explains why writing another would not work.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
 import { Case, CORPUS, load, multiFile, listed, assertKeysExist }
   from "./speccases.wac";
-import { sha256 } from "../../../crypto/src/sha256.wac";
-import { encode } from "../../../codec/src/hex.wac";
 import { dumpErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
 
 /** A program is refused when any phase says no; which phase is not the language's business. */
@@ -53,20 +57,6 @@ string[] knownMisses() { return string[0](fill: ""); }
  * second module's fields were looked up on the first module's struct.
  */
 string[] knownFalseAlarms() { return string[0](fill: ""); }
-
-export string test_the_recorded_corpus_is_the_one_the_spec_suite_currently_states(
-    Core core, Cli cli) {
-  T t = T.create();
-  FileResult f = cli.readFile("compiler/wacSpec.test.ts").wait();
-  t.isTrue(f.ok, "wacSpec.test.ts is readable — " + f.error);
-  if (!f.ok) { return t.report(); }
-  string got = string.fromBytes(encode(sha256(f.bytes)));
-  string want = strOf(jsonFile(cli, CORPUS), "sha256");
-  t.eqStr(got, want,
-          "compiler/wacSpec.test.ts has changed since this corpus was taken — regenerate it: " +
-          "deno run -A packages/wacc/tools/specCases.ts");
-  return t.report();
-}
 
 export string test_rung_3_every_multi_file_program_the_spec_calls_illegal_refused(
     Core core, Cli cli) {
