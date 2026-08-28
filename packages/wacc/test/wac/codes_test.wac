@@ -40,8 +40,9 @@
 // find the declaration without the test being able to follow it.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { dumpErrors, dumpParseErrors, dumpTypeErrors } from "../../src/api.wac";
+import { dumpErrors, dumpFirstTypeHint, dumpParseErrors, dumpTypeErrors } from "../../src/api.wac";
 
 /** The code of the first diagnostic a dump reports, or -1 when it reported none. */
 i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
@@ -392,5 +393,46 @@ export string test_a_missing_quote_reports_at_the_line_it_is_missing_from() {
   if (out.len() >= 3) {
     t.eqI32(out[1], 2, "reported on line 2, where the quote is missing — not line 1");
   }
+  return t.report();
+}
+
+/**
+ * `i64 x = 1 << count;` says why it is refused, rather than only that it is.
+ *
+ * `issues/lang/0233a`. A shift is typed from the value being shifted, and a literal there has no
+ * type of its own — so `1` takes `count`'s `i32` and the `i64` slot is never consulted.
+ * `spec/spec/types.md` says a literal takes its type from what is expected of it, *"including as an
+ * operand of an operator … the other operand counts as an expectation"*, and for a shift the other
+ * operand is an *amount* rather than a second value of the same type. Both compilers refused this
+ * and agreed; what it lacked was a reason.
+ *
+ * The generic hint the code carries — *"use `as!` for a checked conversion"* — is right by accident:
+ * a cast is the fix, and it says nothing about why the language wants one. That issue lists three
+ * ways out and recommends this one first, leaving slot typing in `emitExprAt` for someone already
+ * there.
+ *
+ * **The advice is checked as well as the sentence.** A hint that names a fix nobody can follow is
+ * worse than none, so the program it recommends is compiled here too.
+ */
+export string test_a_shift_typed_from_its_amount_says_so() {
+  T t = T.create();
+  string src = "export i64 f(i32 count) { i64 x = 1 << count; return x; }";
+
+  t.eqI32(firstCode(dumpTypeErrors(src.toBytes())), 3, "still refused, as an initialiser mismatch");
+  string hint = dumpFirstTypeHint(src.toBytes());
+  t.isTrue(contains(hint, "takes its type from the value being shifted"),
+           "and the hint names the cause rather than the cure — got: " + hint);
+
+  // Following it compiles, which is what makes it advice rather than an observation.
+  t.eqI32(firstCode(dumpTypeErrors(
+            "export i64 f(i32 count) { i64 x = 1 as i64 << count; return x; }".toBytes())),
+          0 - 1, "the program the hint recommends is accepted");
+
+  // **Not every mismatch gets this**, or the sentence would be wrong wherever it appeared. A shift
+  // whose left operand is a *value* takes its type from that value and needs no explaining.
+  t.eqStr(dumpFirstTypeHint("export i64 f(i32 a, i32 b) { i64 x = a << b; return x; }".toBytes()),
+          "", "a shift of a variable takes the code's own hint");
+  t.eqStr(dumpFirstTypeHint("export i64 f() { i64 x = \"s\"; return x; }".toBytes()),
+          "", "and so does an ordinary mismatch");
   return t.report();
 }
