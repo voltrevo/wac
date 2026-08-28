@@ -1,6 +1,6 @@
 # Plan
 
-**A living document.** `README.md` says what this is, `NOTES.md` records what has been measured,
+**A living document.** `README.md` says what this is, `bootstrap/NOTES.md` records what has been measured,
 and this says what happens next and why. Items move between sections rather than being deleted, so
 the reasoning for a decision stays next to the decision.
 
@@ -86,7 +86,7 @@ throughout, and `node hosts/node.js prog.wac` and `deno run -A hosts/deno.js pro
 on their own. What remains in `ts/` is tests and instruments, which are Deno's and are not on the
 path a clone with no binary takes.
 
-Criterion 2 is now checked rather than claimed: `ts/hosts_agree_test.ts` has Deno, Node and Rust
+Criterion 2 is now checked rather than claimed: `bootstrap/ts/hosts_agree_test.ts` has Deno, Node and Rust
 each build **wacc** — 659,236 bytes, the eighteen-module graph, not the 47-line probe the other
 test in that file uses — and compares the three byte for byte. Three seconds. It had been verified
 by hand and written into this document, which is where a claim goes to stop being true.
@@ -103,8 +103,8 @@ Mostly follows from the port. What has to be true:
 - **Memory.** wac-L5 asks for 512 pages, 32 MiB. Unremarkable.
 - **No `Deno.*`, no `node:*`.** Which is the port's whole point.
 
-**Done.** `hosts/browser.js` is `fetch` and nothing else; `web/index.html` fetches the five rung
-sources, builds every rung in the page and runs the program. `ts/browser_test.ts` drives it under
+**Done.** `bootstrap/hosts/browser.js` is `fetch` and nothing else; `bootstrap/web/index.html` fetches the five rung
+sources, builds every rung in the page and runs the program. `bootstrap/ts/browser_test.ts` drives it under
 Playwright's Chromium with `--dump-dom` and checks the answer — 819 ms, and it skips when that
 browser is not on the machine.
 
@@ -125,8 +125,8 @@ replace that, the Rust host needs:
 
 1. ~~**A `build` mode.**~~ **Done.** `-o FILE` in all three hosts, plus `--flat` and `--dump-flat`
    in the Rust one.
-2. ~~**The flattener, in Rust.**~~ **Done.** `rust-ladder/src/flatten.rs`, hand-written parsers
-   rather than a regex crate, so that somebody comparing it against `js/flatten.js` reads two
+2. ~~**The flattener, in Rust.**~~ **Done.** `bootstrap/rust-ladder/src/flatten.rs`, hand-written parsers
+   rather than a regex crate, so that somebody comparing it against `bootstrap/js/flatten.js` reads two
    statements of one rule. It agrees byte for byte — on the fixture, as a test, and on wacc's whole
    18-module graph. The Rust host now goes from wacc's *source tree* to 659,236 bytes of wasm in
    828 ms with no JavaScript anywhere, identical to what Deno and Node build.
@@ -136,9 +136,15 @@ replace that, the Rust host needs:
    not. And `from` has to be *required* between the brace and the quote — without it, a line merely
    starting with `import` matched a string thousands of lines away.
 3. ~~**To pin down what the seed actually is.**~~ **Answered.** `native/v8/build.rs` says it: the
-   file is named `wacc.wasm` for historical reasons and is the whole CLI, produced by
+   file is named `wacc.wasm` for historical reasons and is the whole CLI. It is built by
+   `tools/seed.sh`, which runs `packages/platform/native.ts` on `packages/wac/src/wac.wac` and
+   loops until the output is a fixed point.
 
-       wac task app:native packages/wac/src/wac.wac --allow-read --allow-write -o .../seed/wacc.wasm
+   The command `build.rs` names is not that, and this used to quote it. There is no `app:native`
+   task — the registry has `app:build` — and the seed has not been built that way for some time.
+   Quoting a comment is only as good as the comment; wac's task-name guard reads markdown and not
+   `.rs`, which is why the stale line survived in `build.rs` and was caught the moment it was
+   repeated into a `.md`.
 
    **And a compiled module is not yet that artefact.** `packages/platform/native.ts` — the path
    `seed.sh --bootstrap` takes — compiles, then builds a manifest and appends it as a `wac.manifest`
@@ -163,16 +169,16 @@ doing the work is the real one, which is what a bootstrap is for.
 **Driving it is byte at a time, and that is where the 8.8 s goes.** The natural move is the
 `$bind$` layer every wacc-built module exports — but the wacc *wac-L5* builds has none, because
 wac-L5 does not emit bindgen. The first compiler in the chain is the one that has to be driven
-without help, so `drivers/spec_cases.wac` is concatenated onto its source and every value crosses
+without help, so `bootstrap/drivers/spec_cases.wac` is concatenated onto its source and every value crosses
 as an i32. Four million V8 calls for a 1.6 MB answer.
 
-**The manifest is written, and checked rather than trusted.** `rust-ladder/src/manifest.rs`
+**The manifest is written, and checked rather than trusted.** `bootstrap/rust-ladder/src/manifest.rs`
 assembles the `wac.manifest` section — everything in it is answered by wacc (`exportSigsFiles`) or
 read off the module's own export list, which is where `native.ts` reads the `bind` table from too.
-`ts/manifest_test.ts` builds one program both ways and compares the two manifests byte for byte,
+`bootstrap/ts/manifest_test.ts` builds one program both ways and compares the two manifests byte for byte,
 so a change to wac's format fails here rather than downstream of a bootstrap.
 
-**And the whole seed matches.** `ts/seed_matches.ts` builds `packages/wac/src/wac.wac` both ways
+**And the whole seed matches.** `bootstrap/ts/seed_matches.ts` builds `packages/wac/src/wac.wac` both ways
 and compares: **1,731,572 bytes, identical** — module, manifest and section. The CLI's manifest is
 110,935 bytes of it, with 64 callbacks, 703 bind entries and 31 structs, and every one of them
 agrees. So `native/v8/build.rs` can embed either, and the artefact no longer needs a JavaScript
@@ -239,7 +245,7 @@ answer goes into. Each of these is a wrong answer inside machinery that already 
   collisions the flattener *resolves* — two exported declarations are the case it declines, and
   that case took the `continue`. A guard on a class of fault has to cover the whole class; it now
   reports both, and that hole cost a debugging session.
-- `drivers/spec_cases.wac` held eight dead probes calling an eight-argument `linkFiles` that
+- `bootstrap/drivers/spec_cases.wac` held eight dead probes calling an eight-argument `linkFiles` that
   returned a string. wac's `2b6427bb` — *"Phase C14: the blob is gone"* — made it return `bool`
   with three out-parameters. Nothing called them; they had been dead since that commit and were
   only noticed when wac-L5 could compile the file far enough to reach them. **A stale driver reads
@@ -248,7 +254,7 @@ answer goes into. Each of these is a wrong answer inside machinery that already 
 Where it stands: 236 tests pass, the ladder self-hosts, the seed is byte-identical to wac's own path
 at 1,793,909 bytes, and the corpus goes from 90 of 303 entry points validating to **96 of 309**.
 
-**And one flake, which is not this.** `ts/browser_test.ts` fails in a full-suite run while the wac
+**And one flake, which is not this.** `bootstrap/ts/browser_test.ts` fails in a full-suite run while the wac
 gate is running and passes on its own in a second. It drives headless Chromium with
 `--virtual-time-budget` and `--dump-dom`, and under contention the browser is slow to reach the
 point where the DOM is worth dumping. A test that fails when the machine is busy will cry wolf on a
@@ -281,7 +287,7 @@ version had recovery — skip to `;` or `}` — and it was replaced by a one-lin
 Recovery is back — skip to `;` or `}` — with a 50-refusal cap after which the file stops. One bad
 token in a six-line file went from 18,349 refusals and 45,892 lines of output to 1 refusal and 24
 lines. The cascade had been hiding crashes: traps across the corpus rose from 21 files to 56 once
-it stopped. `ts/trace_l5.ts` names the `boot/l5.l4` function a trap *inside the compiler* came
+it stopped. `bootstrap/ts/trace_l5.ts` names the `bootstrap/boot/l5.l4` function a trap *inside the compiler* came
 from, which found an unguarded table append, an unbounded token cursor and a type index of `-1`
 reaching a member lookup. Traps are back down to 39.
 
@@ -344,7 +350,7 @@ addresses so a host reads them instead of knowing them; then a new host is a pag
 nothing to get wrong.
 
 **Correcting this entry: it was written twice, not four times.** The three JavaScript hosts share
-`js/ladder.js`, so the copies were there and in `rust-ladder/src/main.rs`. Two unchecked copies of a
+`bootstrap/js/ladder.js`, so the copies were there and in `bootstrap/rust-ladder/src/main.rs`. Two unchecked copies of a
 fact neither of them owns is still the defect; the count was wrong and the reason it counted was
 not.
 
@@ -392,7 +398,7 @@ package written by one team it usually is; across a corpus it is the normal stat
 reasoning never looked past wacc's own eighteen modules to find that out.
 
 **What replaces it.** The flattener renames, as it did, and gained an optional `onRename` callback —
-so the thing that can quietly produce a wrong compiler can be watched. wacboot's `ts/l5_test.ts`
+so the thing that can quietly produce a wrong compiler can be watched. wacboot's `bootstrap/ts/l5_test.ts`
 asserts wacc's graph needs none of it, and `packages/wacc/README.md` states the constraint on wacc's
 side and names the check. The benefit the section wanted — a reintroduced collision is caught
 loudly, on the one program where renaming is most dangerous — is kept; the 77-line reduction is not.
@@ -430,20 +436,20 @@ the day somebody needs it, and looking supported until then.
     copyFrom / fill               0   nothing — now pinned               keep
     .trim()                       0   nothing — now pinned               keep
 
-**Pinning the three — done.** Six cases in `ts/l5_test.ts`. It found a defect within a minute,
+**Pinning the three — done.** Six cases in `bootstrap/ts/l5_test.ts`. It found a defect within a minute,
 which is the argument for pinning in one line: item 3 above.
 
 **Not: make compiling `core/` a test.** Considered and rejected. `core/` is idiomatic wac and
 should be free to use every feature wac has; gating on it means that the next time it reaches for
 something wac-L5 lacks, the suite goes red and the pressure is to grow wac-L5 to match — exactly
-the accident this rung should avoid. `ts/against_real_wac.ts` already says in its own header that
+the accident this rung should avoid. `bootstrap/ts/against_real_wac.ts` already says in its own header that
 it is *deliberately not a test*, so `core/` stays a **signal**: if it grows past wac-L5 the number
 moves from 24 to 23 and we decide whether to care.
 
 **The growth rule.** wac-L5 grows when **wacc** needs something. Not core, not the corpus, not a
 spec case — all signals worth reading, none a reason on its own.
 
-**Its trigger is the subset guard, which already half exists.** `ts/ladder_test.ts` asserts wacc
+**Its trigger is the subset guard, which already half exists.** `bootstrap/ts/ladder_test.ts` asserts wacc
 compiles with zero refusals, so a wacc change that leaves the subset already turns *this* suite
 red. What is missing is only *where* it surfaces: today, whenever someone next runs wacboot, rather
 than in front of the person who changed wacc. Closing that means wac's own checks running the
@@ -459,7 +465,7 @@ adopts generics, the first move is to run wacc through and find out what is miss
 
 Recorded so it is not re-derived.
 
-**Could wac-L1 be a compiler rather than an interpreter, deleting wac-L2?** `boot/l1.l0` is 1,630
+**Could wac-L1 be a compiler rather than an interpreter, deleting wac-L2?** `bootstrap/boot/l1.l0` is 1,630
 instructions: 785 the evaluator, and 845 reader, symbols, objects, allocation, fixnums — the second
 group needed either way. An emitter for the same syntax needs a symbol table and a text buffer,
 perhaps 400–450 rather than 785. That would make the hand-written rung smaller *and* delete a
@@ -508,8 +514,8 @@ never declared with `tyname` silently remapping it; `overflowed` stops the parse
   with no filesystem and no host API, and it is a test.
 - The assembler, the ladder and the flattener are portable JavaScript. `js/` touches no file;
   `flatten` takes the host as two methods rather than a filesystem.
-- **Acceptance criterion 2 is met.** `hosts/deno.js`, `hosts/node.js` and `rust-ladder/` each
+- **Acceptance criterion 2 is met.** `bootstrap/hosts/deno.js`, `bootstrap/hosts/node.js` and `rust-ladder/` each
   build wacc by themselves, and the three modules are byte for byte identical — 659,236 bytes,
-  `sha256 532902cd…`. Checked by `ts/hosts_agree_test.ts`, which compares the wac-L0 *and* the
+  `sha256 532902cd…`. Checked by `bootstrap/ts/hosts_agree_test.ts`, which compares the wac-L0 *and* the
   wasm, so the two assemblers are now differentialled against real compiler output rather than
   only against the fixtures in `tests/l0/`.

@@ -1,8 +1,8 @@
 // The Deno host: where the strings come from, and nothing else.
 //
 // Everything that decides an answer is in `js/`; this reads files, parses a command line and
-// prints. A host is meant to be small enough that a new one is not a project — see `hosts/node.js`
-// and `hosts/browser.js`, which differ from this only in those three things.
+// prints. A host is meant to be small enough that a new one is not a project — see `bootstrap/hosts/node.js`
+// and `bootstrap/hosts/browser.js`, which differ from this only in those three things.
 
 import { ladder } from "../js/ladder.js";
 import { flatten } from "../js/flatten.js";

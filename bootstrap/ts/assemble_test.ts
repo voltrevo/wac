@@ -1,5 +1,5 @@
 // The assembler's tests: assemble each module in `tests/l0/`, instantiate it, call `main`, and
-// check the answer against `tests/expect.json`.
+// check the answer against `bootstrap/tests/expect.json`.
 //
 // Running the module is the whole point. A byte comparison against a recorded blob would pass for an
 // assembler that is consistently wrong, and the engine is the only thing here that knows wasm.

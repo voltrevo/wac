@@ -9,7 +9,7 @@
 // edit the program first.
 //
 // Skips unless Playwright's Chromium is on the machine. That is a browser this repo did not
-// install and does not manage — if it is absent, `hosts/node.js` is the nearest proxy, since the
+// install and does not manage — if it is absent, `bootstrap/hosts/node.js` is the nearest proxy, since the
 // two differ only in where the bytes come from.
 
 const HERE = new URL(".", import.meta.url).pathname;

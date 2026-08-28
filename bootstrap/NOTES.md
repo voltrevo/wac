@@ -85,7 +85,7 @@ three.
 
 ## What L1 actually is
 
-Enough of a Lisp to write programs in, and it is tested by running 26 of them (`ts/l1_test.ts`):
+Enough of a Lisp to write programs in, and it is tested by running 26 of them (`bootstrap/ts/l1_test.ts`):
 
 - fixnums, symbols interned into one list, pairs, and a one-bit tag telling immediates from objects;
 - a reader for atoms, negative numbers and nested lists;
@@ -149,7 +149,7 @@ than a necessary one, and now it is.
 
 ## What the second rung proved, and what it cost
 
-`ts/l2_test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
+`bootstrap/ts/l2_test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
 `(fib 20)` answers 6765; a `while` inside a `while` counts to 12; `store8`/`load8` move bytes.
 
 Four bugs, and three of them say something.
@@ -194,7 +194,7 @@ an unrelated change removed the coincidence:
    until a symbol of odd length arrived;
 2. `;` comments were read as code and evaluated, harmlessly, until one of them contained a
    parenthesis;
-3. `//` comments were not comments at all, so every comment line in `boot/l3.l2` became a symbol
+3. `//` comments were not comments at all, so every comment line in `bootstrap/boot/l3.l2` became a symbol
    in the program list and `comp-top` called `car` on it.
 
 The third is the one worth the note. wac-L3's *own* syntax uses `//`, so writing its compiler in wac-L2
@@ -235,7 +235,7 @@ else.
 The line counts above answer a question about cost, and cost is not the reason to do this. Here is
 the reason.
 
-**An interpreter is a prompt, and a compiler can never be one.** `ts/repl.ts` is a working wac-L1 REPL:
+**An interpreter is a prompt, and a compiler can never be one.** `bootstrap/ts/repl.ts` is a working wac-L1 REPL:
 definitions survive between lines, `(fact 10)` answers 3628800, a list prints as `(1 2 3 4)` and an
 improper one as `(1 . 2)`. That came free — `$eval_at` is `$run_at` without the reset, nine lines —
 because the rung underneath it interprets rather than compiles.
@@ -250,7 +250,7 @@ entire bootstrap — 1,457 readable instructions at the bottom, a live wac promp
 a browser tab, offline. The 19,499-line TypeScript path cannot do that at any size.
 
 **The printer lives outside.** L1 has none and needs none: the object layout is four words, written
-at the top of `boot/l1.l0`, so the host walks the heap and renders. A hundred instructions saved in
+at the top of `bootstrap/boot/l1.l0`, so the host walks the heap and renders. A hundred instructions saved in
 the rung that is hardest to write, spent on nothing.
 
 ## How big is L5, against L4?
@@ -404,7 +404,7 @@ source the same way — and they do, exactly. `W1 == W2` and `X1 == X2` as well,
 a fixed point and it is the same one.
 
 That is the property that makes a ladder a *replacement* for a reference rather than a second
-opinion, and `ts/same_fixed_point.ts` is the test.
+opinion, and `bootstrap/ts/same_fixed_point.ts` is the test.
 
 **On speed.** The interpreted rung was the thing to worry about and it is not the thing to worry
 about. In one cold process:
@@ -429,7 +429,7 @@ charges 19,499 lines of trusted code for.
 Two numbers in this repository look alike and mean different things, and I conflated them for a
 while.
 
-**296 of 296** is the *corpus differential*: `ts/corpus_differential.ts` compiles every entry point
+**296 of 296** is the *corpus differential*: `bootstrap/ts/corpus_differential.ts` compiles every entry point
 with the wacc wac-L5 built and with the wacc that one built, and the two agree byte for byte. Both
 sides of that comparison are wacc. It is a strong statement — it is the fixed-point argument, and
 it is what caught the `i64.const -1` literal bug — but it is a statement about the *compiler
@@ -463,7 +463,7 @@ Only the first group can produce a wrong artefact. The instruments measure and t
 reading with, so a mistake in either shows up as a bad reading rather than a bad compiler — which
 is the same reason `against_real_wac.ts` is deliberately not a test.
 
-**Within the bootstrap path, 191 lines are a linker.** `ts/l5.ts` is 262 lines of which only 51
+**Within the bootstrap path, 191 lines are a linker.** `bootstrap/ts/l5.ts` is 262 lines of which only 51
 drive the compiler — bytes in at 16 MiB, text out at 4 MiB. The rest resolves specifiers,
 concatenates modules and renames declarations that collide, which is the work `import` would have
 done if wac-L5 implemented it. That is what the shortcut costs, and it is TypeScript that has to be
@@ -551,7 +551,7 @@ a comment about this; the TypeScript one was written after being caught by it.
 
 ## Two benchmarks, and what they say about where the time goes
 
-`ts/bench.ts` and `ladder --bench` print the same table for the same input, so the two hosts can be
+`bootstrap/ts/bench.ts` and `ladder --bench` print the same table for the same input, so the two hosts can be
 read side by side. Compiling wacc — 37,873 lines in, 183,861 lines of wac-L0 out, 659,236 bytes of
 wasm — three cold runs each:
 

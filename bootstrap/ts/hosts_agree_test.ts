@@ -123,7 +123,7 @@ Deno.test({
   },
 });
 
-// **The flattener is written twice too**, in `js/flatten.js` and `rust-ladder/src/flatten.rs`,
+// **The flattener is written twice too**, in `bootstrap/js/flatten.js` and `bootstrap/rust-ladder/src/flatten.rs`,
 // because the Rust host has to reach wacc's source tree without a JavaScript runtime anywhere.
 // Two implementations of one rule need the same check the two assemblers get.
 //
@@ -161,7 +161,7 @@ Deno.test({
 // stop being true. Four seconds for all three, so it is checked every run instead.
 //
 // Deno, Node and Rust; not the browser, which has no `-o` and no filesystem to write to. Criterion
-// 3 is `ts/browser_test.ts`.
+// 3 is `bootstrap/ts/browser_test.ts`.
 Deno.test({
   name: "Deno, Node and Rust each build wacc alone, and the three are identical",
   ignore: !(await have(BIN)) || !(await have(API)),

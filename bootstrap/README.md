@@ -112,7 +112,7 @@ Only `wac` survives as a language name; the rungs are numbered, because they loo
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names
 invited and the numbers do not.
 
-Files say the same thing: `boot/l4.l3` is **the L4 compiler, written in L3**.
+Files say the same thing: `bootstrap/boot/l4.l3` is **the L4 compiler, written in L3**.
 
 **wac-L5 is a language we are handed, not one we choose.** It is whatever `packages/wacc/src` is
 written in: full wac minus the nine omissions `compiler/README.md` documents, and *with* generics.
@@ -131,14 +131,14 @@ reference globals — compiled through six languages and two interpreters.
       }
     }
 
-which is the shape `core/option.wac` is actually written in. `spec/l5.md` has the four stages and
+which is the shape `core/option.wac` is actually written in. `bootstrap/spec/l5.md` has the four stages and
 what each is measured to cost.
 
 **Generics belong to L5's compiler, not to L4's language.** They are the most expensive feature to
 implement and the cheapest to live without, so putting them in L4 would mean implementing
 monomorphisation in L3's compiler as well — paying for them twice, at the rung where code costs most
 to write. The tax for leaving them out is a growable vector hand-written per element type: 25 lines
-each, perhaps five of them, measured in `ts/l4_test.ts`.
+each, perhaps five of them, measured in `bootstrap/ts/l4_test.ts`.
 
 ## Two rules that make it a ladder rather than five unrelated languages
 
@@ -150,7 +150,7 @@ compiler is the previous compiler plus features, ported upward rather than rewri
 makes the ladder converge on wac instead of wandering.
 
 **And the ladder runs under two hosts.** `ts/` drives every rung through Deno; `rust-ladder/`
-drives the same rungs through V8 embedded in Rust, and `ts/hosts_agree_test.ts` checks the wac-L0
+drives the same rungs through V8 embedded in Rust, and `bootstrap/ts/hosts_agree_test.ts` checks the wac-L0
 they produce is identical. That is a different claim from the two assemblers agreeing: that
 differential covers *reading* a format, this one covers *running* five compilers, where the
 differences an engine can introduce are the interesting ones. The one line of JavaScript in the
@@ -198,9 +198,9 @@ lose by retiring its reference compiler, so it is worth practising here.
 
 **Every rung works, and the ladder closes.**
 
-`boot/l1.l0` is a 1,630-instruction s-expression interpreter, hand-written, and the last
-hand-written parser in the chain. `boot/l2.l1` is a compiler in 298 lines of it; `boot/l3.l2` a
-compiler in 583 lines of *that*; `boot/l4.l3` 1,326 lines emitting wasm GC; and `boot/l5.l4` — the
+`bootstrap/boot/l1.l0` is a 1,630-instruction s-expression interpreter, hand-written, and the last
+hand-written parser in the chain. `bootstrap/boot/l2.l1` is a compiler in 298 lines of it; `bootstrap/boot/l3.l2` a
+compiler in 583 lines of *that*; `bootstrap/boot/l4.l3` 1,326 lines emitting wasm GC; and `bootstrap/boot/l5.l4` — the
 compiler for wac itself — 3,779 lines of wac-L4.
 
 Cold, the whole chain builds in under two seconds, and building wacc with it takes a second more.
@@ -217,6 +217,6 @@ type error is refused before the program runs, by the engine or by the compiler'
 marker. What wac-L5 does check is what wasm cannot see — that a name resolves, that a method
 exists, that a `case` names a variant.
 
-`PLAN.md` has what happens next and why; `NOTES.md` has the numbers and the bugs, and the bugs are the more useful half: six of them were
+`bootstrap/PLAN.md` has what happens next and why; `bootstrap/NOTES.md` has the numbers and the bugs, and the bugs are the more useful half: six of them were
 found only by *running* what the built compiler produced, which is the difference between a module
 that validates and a compiler that works.

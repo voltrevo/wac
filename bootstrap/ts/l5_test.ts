@@ -535,7 +535,7 @@ const programs: [string, string, number][] = [
   // on the day something needs them. `wacc` uses none of the three; the ladder keeps them because
   // it is allowed to grow, and a feature it keeps should be one it checks.
 
-  // f64 arithmetic, comparison and both conversions. The assemblers have `tests/l0/floats.l0`,
+  // f64 arithmetic, comparison and both conversions. The assemblers have `bootstrap/tests/l0/floats.l0`,
   // so before this the *format* was covered and the *rung* was not.
   ["f64 arithmetic and conversion", `
     i32 main() {

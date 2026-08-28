@@ -1,13 +1,13 @@
-// `deno run -A ts/trace_l5.ts <file.wac>` — when *the compiler* traps, say where in `boot/l5.l4`.
+// `deno run -A ts/trace_l5.ts <file.wac>` — when *the compiler* traps, say where in `bootstrap/boot/l5.l4`.
 //
-// `ts/run_real_wac.ts` names the frames of a program wac-L5 built. This names the frames of
+// `bootstrap/ts/run_real_wac.ts` names the frames of a program wac-L5 built. This names the frames of
 // wac-L5 itself, which is the case that had no instrument: a trap inside the compiler arrives as
 // `array element access out of bounds` and eight anonymous wasm frames, which says nothing about
 // which array, which table, or which line of the rung.
 //
 // The trick is the same either way. The compiler is wac-L0 text before it is a module, so
 // `assembleMapped` can hand back a map from byte offset to line — and a trap's stack is byte
-// offsets. The wac-L0 line then names the function, and `boot/l5.l4` is one search away.
+// offsets. The wac-L0 line then names the function, and `bootstrap/boot/l5.l4` is one search away.
 
 import { l4ToL0 } from "./l4.ts";
 import { flatten } from "./l5.ts";

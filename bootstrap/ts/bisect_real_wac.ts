@@ -6,7 +6,7 @@
 //   deno run -A ts/bisect_real_wac.ts <flattened.wac>
 //
 // Answers the smallest prefix that wac-L5 will not compile, which is the fastest way from "a real
-// file fails" to "this construct is missing". Pair it with `ts/against_real_wac.ts`, which counts.
+// file fails" to "this construct is missing". Pair it with `bootstrap/ts/against_real_wac.ts`, which counts.
 
 import { l5ToL0 } from "./l5.ts";
 

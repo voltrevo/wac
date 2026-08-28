@@ -1,4 +1,4 @@
-//! The module graph, flattened — the same thing `js/flatten.js` does, and required to agree with
+//! The module graph, flattened — the same thing `bootstrap/js/flatten.js` does, and required to agree with
 //! it byte for byte.
 //!
 //! wac compiles a whole program into **one** wasm module, so an import is a file to include rather
@@ -6,7 +6,7 @@
 //!
 //! **The patterns are hand-written rather than a regex crate.** `rust/` has no dependencies
 //! deliberately, and while this crate already has V8, a second implementation of a *format* is
-//! worth keeping readable: somebody comparing this against `js/flatten.js` should be reading two
+//! worth keeping readable: somebody comparing this against `bootstrap/js/flatten.js` should be reading two
 //! statements of the same rule, not one rule and one regular expression.
 
 use std::collections::{HashMap, HashSet};
@@ -221,7 +221,7 @@ fn as_alias(item: &str) -> Option<(String, String)> {
 /// `core` and `std` name no file: `import { Read } from "core"` asks the compiler for a type it
 /// carries itself, and there is nothing to inline. `None`, so the caller skips it. Exactly these
 /// two names, matching `isBuiltinSpec` in `coretext.wac` — the twin of the same rule in
-/// `js/flatten.js`, and the two are compared.
+/// `bootstrap/js/flatten.js`, and the two are compared.
 fn resolve(dir: &Path, spec: &str) -> Option<PathBuf> {
     if spec.starts_with("./") || spec.starts_with("../") {
         return Some(dir.join(spec));

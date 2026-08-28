@@ -24,7 +24,7 @@ import { assemble } from "./assemble.js";
 /**
  * Where a rung wants its source and leaves its output, **asked of the rung**.
  *
- * These used to be three constants here, and again in `rust-ladder/src/main.rs`. A host that has to
+ * These used to be three constants here, and again in `bootstrap/rust-ladder/src/main.rs`. A host that has to
  * know an address it was never told is a host that can be wrong about it, and neither copy was
  * checked against anything. Each rung now answers for its own, so a new host reads them and there
  * is one statement of the fact rather than one per host.

@@ -1,6 +1,6 @@
 # Migration — wacboot into wac
 
-**A living document**, in the shape `PLAN.md` uses: items carry a status, and they move between
+**A living document**, in the shape `bootstrap/PLAN.md` uses: items carry a status, and they move between
 sections rather than being deleted, so the reasoning stays next to the decision.
 
 Status is one of **agreed** (decided, not started), **doing**, **done**, **open** (needs a
@@ -30,7 +30,7 @@ which is accepted rather than solved.
 ## What moves, and what goes
 
 **Agreed.** wacboot's history is preserved into wac. The ladder's five rungs, its assembler, its
-flattener, its hosts and its tests come across; `PLAN.md` and this file come with them.
+flattener, its hosts and its tests come across; `bootstrap/PLAN.md` and this file come with them.
 
 **Agreed.** `compiler/` is deleted — 35,249 lines of TypeScript, imported by 36 files of which 15
 are tests. `deno.json`'s `"wac/": "./compiler/"` mapping goes with it.
@@ -158,7 +158,7 @@ opt-in differential behind `WAC_APP_FROM=reference` — so removing the compiler
 else-branch and two imports, not a port.
 
 **Two things that share the word "browser" and are not this.** wacboot's ladder-in-a-page —
-acceptance criterion 3, `hosts/browser.js` and `web/index.html` — references nothing under
+acceptance criterion 3, `bootstrap/hosts/browser.js` and `bootstrap/web/index.html` — references nothing under
 `platform/host` and is untouched. And `packages/raster` is a pixel buffer and the drawing on it;
 the browser was one place to show the buffer, not the point.
 

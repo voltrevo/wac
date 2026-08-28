@@ -1,4 +1,9 @@
-//! The `.wax` assembler, in Rust. See `spec/wax.md`.
+//! The wac-L0 assembler, in Rust. See `bootstrap/spec/l0.md`.
+//!
+//! **It said spec/wax.md**, unbackticked here on purpose, and there has never been such a file:
+//! the format was renamed from `.wax` to wac-L0 and the spec is `bootstrap/spec/l0.md`. wacboot
+//! had no link guard, so a reference to a file that was never written survived until the move
+//! brought it under one.
 //!
 //! A deliberate line-for-line translation of `ts/assemble.ts`: the same three passes, the same
 //! names, the same emission order. Two implementations that agree because they were written from

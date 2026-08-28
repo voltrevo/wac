@@ -1,4 +1,4 @@
-// The Node host. The same three things `hosts/deno.js` does — read files, parse a command line,
+// The Node host. The same three things `bootstrap/hosts/deno.js` does — read files, parse a command line,
 // print — against `node:fs` and `process.argv` instead of `Deno.*`.
 //
 // That the two differ only in those three things is the point: a host is not a port of the

@@ -66,6 +66,6 @@ i32 main() {
 
   // **Runs itself when asked to.** `?auto=1` is how a headless browser drives this without a
   // click, which is what makes the browser a test rather than a demonstration — see
-  // `ts/browser_test.ts`. Without the parameter the page waits, so a person can edit first.
+  // `bootstrap/ts/browser_test.ts`. Without the parameter the page waits, so a person can edit first.
   if (new URLSearchParams(location.search).has("auto")) go();
 </script>

@@ -8,7 +8,7 @@
 // `native/v8/build.rs` can embed either, and the bootstrap no longer needs a JavaScript runtime.
 //
 // An instrument rather than a test: it builds the whole CLI twice and takes about half a minute,
-// which is more than a suite should carry. `ts/manifest_test.ts` covers the same ground for a
+// which is more than a suite should carry. `bootstrap/ts/manifest_test.ts` covers the same ground for a
 // small program and runs in a second.
 
 const HERE = new URL(".", import.meta.url).pathname;

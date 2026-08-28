@@ -4,8 +4,14 @@
 // Deno, no wasm beside it and no JavaScript anywhere in the path. Absent, it is the runtime it has
 // always been, `wacv8 program.wasm`, and says so when asked to act as one. Produced by:
 //
-//     wac task app:native packages/wac/src/wac.wac --allow-read --allow-write -o native/v8/seed/wacc
+//     bash tools/seed.sh
 //     (cd native/v8 && cargo build --release)
+//
+// **It said `wac task app:native` until 2026-08-28**, which is a task the registry has never had —
+// `app:build` is the nearest — and was not how the seed got built in any case: `seed.sh` runs
+// `packages/platform/native.ts` and loops until the output is a fixed point. wac's task-name guard
+// reads markdown and not `.rs`, so this line was checked by nobody until it was quoted into a `.md`
+// and the guard caught the copy rather than the original.
 //
 // **One file, not two.** `native/build.rs` embeds a manifest *and* a module, because the wasmtime
 // host was written when a program was a pair. A module built by `packages/platform/native.ts` now

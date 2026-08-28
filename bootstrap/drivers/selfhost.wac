@@ -1,4 +1,4 @@
-// **A module rather than a splice.** `drivers/spec_cases.wac` is concatenated onto wacc's
+// **A module rather than a splice.** `bootstrap/drivers/spec_cases.wac` is concatenated onto wacc's
 // flattened graph, so it can reach anything declared anywhere in it — which is exactly what a
 // file being *compiled by wacc* cannot do. This one imports what it uses and nothing else, and is
 // the only driver that can be part of a program wacc links.

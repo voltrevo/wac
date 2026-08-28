@@ -6,7 +6,7 @@
 // must be identical bytes.
 //
 // **It covers a program with no structs and no callbacks**, which is what
-// `rust-ladder/src/manifest.rs` can write today — `bindTypesFiles`' `S`/`E`/`M` lines are not
+// `bootstrap/rust-ladder/src/manifest.rs` can write today — `bindTypesFiles`' `S`/`E`/`M` lines are not
 // parsed yet, so a program handing the host a struct or a function reference would need more. The
 // test says which case it is checking rather than implying it checks them all.
 //

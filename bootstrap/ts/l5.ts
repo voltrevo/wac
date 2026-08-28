@@ -1,4 +1,4 @@
-// wac-L5, driven under Deno. See `ts/l2.ts`.
+// wac-L5, driven under Deno. See `bootstrap/ts/l2.ts`.
 //
 // `flatten` is here rather than in the portable core's shape because the core takes a filesystem
 // as two methods and this supplies Deno's — the whole point of the split.

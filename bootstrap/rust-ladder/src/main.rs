@@ -25,7 +25,7 @@ mod wacc;
 
 /// Where a rung wants its source and leaves its output, **asked of the rung**.
 ///
-/// These used to be two constants here and three more in `js/ladder.js`. A host that has to know an
+/// These used to be two constants here and three more in `bootstrap/js/ladder.js`. A host that has to know an
 /// address it was never told is a host that can be wrong about it, and neither copy was checked
 /// against anything. Each rung answers for its own now, so this reads them.
 struct Seam {

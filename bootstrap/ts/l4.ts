@@ -1,4 +1,4 @@
-// wac-L4, driven under Deno. See `ts/l2.ts`.
+// wac-L4, driven under Deno. See `bootstrap/ts/l2.ts`.
 
 import { boot } from "../hosts/deno.js";
 

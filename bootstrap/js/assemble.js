@@ -19,7 +19,7 @@
 /** @typedef {{ types: DeclType[]; typeOf: Map<string, number>; funcOf: Map<string, number>; globalOf: Map<string, number>; funcTypeIndex: number[]; }} Index */
 /** @typedef {{ at: number; line: number }} Mark */
 
-// The `.l0` assembler, in TypeScript. See `spec/l0.md`.
+// The `.l0` assembler, in TypeScript. See `bootstrap/spec/l0.md`.
 //
 // Structured so that the Rust implementation can be a line-for-line translation: the same three
 // passes, the same names, the same emission order. Where a choice existed it is written down in the

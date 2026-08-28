@@ -1,6 +1,6 @@
 // The two assemblers, on every module in `tests/l0/`, compared byte for byte.
 //
-// This is the check the format exists for. `spec/l0.md` claims every choice was removed from the
+// This is the check the format exists for. `bootstrap/spec/l0.md` claims every choice was removed from the
 // implementation; a byte that differs is a choice that was left in, and the fix belongs in the spec
 // rather than in whichever assembler is behind.
 //

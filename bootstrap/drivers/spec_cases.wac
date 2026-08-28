@@ -1,6 +1,6 @@
 // **The compiler wac-L5 built, with a way to feed it.**
 //
-// `drivers/emit_and_run.wac` embeds one program as a string literal, which is enough to prove the
+// `bootstrap/drivers/emit_and_run.wac` embeds one program as a string literal, which is enough to prove the
 // ladder closes and no use at all for asking the same question 254 times: every source would mean
 // another whole rebuild. So this one takes the source in a byte at a time.
 //
@@ -126,7 +126,7 @@ export i32 drv_pathLen(i32 i) {
 // links trees and concatenates nothing"*, changed it from returning a concatenated source string to
 // returning a `bool` with three out-parameters. There is no blob left to ask about.
 //
-// Nothing called them: `ts/spec_cases.ts` names each export it drives and none of these was in the
+// Nothing called them: `bootstrap/ts/spec_cases.ts` names each export it drives and none of these was in the
 // list, so they had been dead since that commit. They were only noticed when wac-L5 learned to
 // compile this file far enough to reach them — a stale driver reads exactly like a compiler that
 // cannot parse, and the compiler got suspected first.

@@ -1,5 +1,5 @@
-// wac-L2, driven under Deno. The work is in `js/ladder.js`; this only says where the sources come
-// from — see `hosts/deno.js`, which is the same seam without a TypeScript wrapper around it.
+// wac-L2, driven under Deno. The work is in `bootstrap/js/ladder.js`; this only says where the sources come
+// from — see `bootstrap/hosts/deno.js`, which is the same seam without a TypeScript wrapper around it.
 
 import { boot } from "../hosts/deno.js";
 

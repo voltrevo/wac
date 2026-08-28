@@ -4,7 +4,7 @@
 //! move is to use it — but the wacc wac-L5 builds has none, because wac-L5 does not emit bindgen.
 //! The first compiler in the chain is the one host that has to be driven without help.
 //!
-//! So it is driven the way `ts/selfhost.ts` drives it: a small wac driver is concatenated onto
+//! So it is driven the way `bootstrap/ts/selfhost.ts` drives it: a small wac driver is concatenated onto
 //! wacc's flattened source before wac-L5 sees it, and every value crosses the boundary as an i32,
 //! a byte at a time. That is the whole of what a wasm module can hand a host without a binding
 //! layer — a GC reference cannot be constructed by a host and cannot cross out as anything a host
