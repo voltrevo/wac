@@ -2,7 +2,7 @@
 //
 // `wacBindgen` writes TypeScript that a host imports and calls, and nothing here used to run any of
 // it: the packages exercise the boundary through `harness/wacBind.ts`, which is a different path,
-// and `tools/bindcheck.ts` reads the text without importing it. Both issues below produced a file
+// and tools/bindcheck.ts reads the text without importing it. Both issues below produced a file
 // that looked plausible and did not work, so these tests import what is generated and call it.
 
 import { wacCompile } from "./wacCompile.ts";

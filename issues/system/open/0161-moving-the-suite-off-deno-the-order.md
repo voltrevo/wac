@@ -114,6 +114,16 @@ being rewritten in wac, which is a different project from this issue.
 `crypto` reached zero on 2026-08-19, which is the first package to do so that needed a new command
 rather than a new test.
 
+> **Decided and done, 2026-08-28.** The operator's answer was to delete the reference outright, and
+> the eight went with it — they are differentials whose oracle no longer exists. `packages/wacc` is
+> down from eleven `.test.ts` to four. The rest of this section is the reasoning that was waiting for
+> that answer, kept because it is why the eight were the eight.
+>
+> The reference is being removed as part of moving the bootstrap onto the ladder in `bootstrap/`,
+> which builds wacc from five rungs of hand-written source rather than from a compiler written in
+> another language. `bootstrap/MIGRATION.md` records what was given up and pins, by hash, the last
+> fixed point the two compilers agreed on: `W1 == X1 == 742,168 bytes`, sha256 `3fef5aae…`.
+
 **The eight in `wacc` are the whole of what is blocked and not by a missing feature**: `sweep`,
 `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`, `corpusMutate`, `parse_errors` all
 use the reference compiler as an oracle. `tour` did too and no longer does — see the section below. On 2026-08-19 the operator deleted the

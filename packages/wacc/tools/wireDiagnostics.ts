@@ -12,7 +12,27 @@
 // a command line, and two tests that have nothing to do with either CLI were importing a CLI module
 // to get it.
 
-import { type DiagError } from "wac/wacDiag.ts";
+/**
+ * One diagnostic, in the shape the renderer wants.
+ *
+ * **Declared here since 2026-08-28.** It was `DiagError` from the TypeScript reference's
+ * `wacDiag.ts` — a type imported from a compiler this file does not otherwise use, which is how a
+ * type-only import outlives the thing it describes. wacc's wire is the source of these now, and the
+ * fields below are what `parseDiagnostics` fills from it.
+ */
+export type DiagError = {
+  message: string;
+  file: string;
+  line: number;
+  col: number;
+  phase: "lex" | "parse" | "resolve" | "typecheck";
+  severity: "error" | "warning";
+  span: number;
+  annotation?: string;
+  hint?: string;
+  /** First line of leading context for a multi-line span. */
+  contextStart?: number;
+};
 
 /**
  * wacc's diagnostics, as the shared formatter wants them.
