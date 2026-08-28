@@ -76,19 +76,12 @@ impl<'s> Wacc<'s> {
         (0..n).map(|i| self.call(scope, "drv_byteAt", &[i]) as u8).collect()
     }
 
-    /// Every name this module exports, in the order the module declares them — which is the
-    /// order `native.ts` sees, and the manifest is compared byte for byte.
-    pub fn export_names(&self, scope: &mut v8::PinScope<'s, '_>) -> Vec<String> {
-        let names = self.exports.get_own_property_names(scope, Default::default()).unwrap();
-        let mut out = Vec::new();
-        for i in 0..names.length() {
-            let k = v8::Integer::new(scope, i as i32).into();
-            if let Some(v) = names.get(scope, k) {
-                out.push(v.to_rust_string_lossy(scope));
-            }
-        }
-        out
-    }
+    // **No `export_names` here.** Reading the names off an instance is the obvious way and is
+    // the wrong one for the CLI, which imports dispatchers and so cannot be instantiated without
+    // them. `manifest::export_names` parses the export section out of the bytes instead, and works
+    // for every module rather than the ones that happen to need no imports. This method existed,
+    // was replaced, and stayed — two ways to answer one question, one of which fails on the module
+    // the answer is actually wanted for.
 
     /// A text answer from the driver, byte at a time.
     fn text(&self, scope: &mut v8::PinScope<'s, '_>, ask: &str) -> String {
