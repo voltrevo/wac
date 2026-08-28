@@ -28,8 +28,6 @@
 // ledger of reasoned exemptions to move (`crypto`, `zstd`, `gzip`, `ssh`), one that belongs to
 // another package's owner (`sh`), and `fs`, `bignum` and `stream`.
 
-import { wacCompile } from "wac/wacCompile.ts";
-import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFilesWithRoots } from "./wacFiles.ts";
 
 export type Point = {
@@ -81,21 +79,13 @@ export async function instrument(entry: string): Promise<Instrumented> {
   await Deno.mkdir(".cache", { recursive: true });
   const out = `.cache/cov_${entry.replaceAll("/", "_")}.gen.ts`;
 
-  let points: Point[];
-  if (Deno.env.get("WAC_COV_FROM") === "reference") {
-    const result = wacCompile(files, entry, { coverage: true, roots, base });
-    if (!result.ok) {
-      throw new Error(`compile failed for ${entry}:\n${result.diagnostics.map(d =>
-        `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n")}`);
-    }
-    await Deno.writeTextFile(out, wacBindgen(result.compiled));
-    points = result.compiled.coverage!;
-  } else {
-    const { waccArtifacts } = await import("./waccBuild.ts");
-    const art = await waccArtifacts(files, entry, { coverage: true, roots, base });
-    await Deno.writeTextFile(out, art.glue);
-    points = art.covPoints;
-  }
+  // **`WAC_COV_FROM=reference` is gone with the compiler it named.** It instrumented with the
+  // TypeScript reference instead, so a measurement could be taken with one compiler and read as
+  // being about the other; the default was always wacc.
+  const { waccArtifacts } = await import("./waccBuild.ts");
+  const art = await waccArtifacts(files, entry, { coverage: true, roots, base });
+  await Deno.writeTextFile(out, art.glue);
+  const points: Point[] = art.covPoints;
   const mod = await import(`${Deno.cwd()}/${out}`) as Record<string, unknown>;
   // The counter array is allocated here, not at instantiation. Skip this and every
   // instrumented function traps on its first branch with "dereferencing a null

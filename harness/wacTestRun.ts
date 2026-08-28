@@ -32,8 +32,6 @@
 // is deliberately not used: it puts something that can deadlock inside the part of the
 // system whose job is to fail clearly, and the mutation runner scores a hang as a kill.
 
-import { wacCompile } from "wac/wacCompile.ts";
-import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFilesWithRoots } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 
@@ -89,13 +87,12 @@ export async function wacTestRun(
   // other file, and dropping them makes every name from that import unknown. `issues/system/0229a`.
   const { files, roots } = await wacFilesWithRoots(entry);
   const base = Deno.cwd();
-  const useWacc = Deno.env.get("WAC_TEST_FROM") !== "reference";
-
+  // **`WAC_TEST_FROM=reference` is gone with the compiler it named**, which built the test module
+  // with the TypeScript reference instead. wacc was the default.
+  let covPoints: { index: number; file: string; line: number; col: number; kind: string }[] = [];
   let tests: { name: string; ret: string; params: { type: string }[] }[];
   let glue: string;
-  let covPoints: { index: number; file: string; line: number; col: number; kind: string }[] = [];
-
-  if (useWacc) {
+  {
     const { waccApi, waccArtifacts, waccRes } = await import("./waccBuild.ts");
     const api = await waccApi();
     const paths = [...files.keys()];
@@ -116,20 +113,8 @@ export async function wacTestRun(
     tests = parseSigs(api.exportSigsFilesIn(paths, sources, res, entry))
       .filter(sig => sig.name.startsWith("test") && sig.ret === "string")
       .map(sig => ({ name: sig.name, ret: sig.ret, params: sig.params.map(t => ({ type: t })) }));
-  } else {
-    const result = wacCompile(files, entry, { roots, base, ...(profileDir ? { coverage: true } : {}) });
-    if (!result.ok) {
-      const lines = result.diagnostics.map(d =>
-        `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
-      throw new Error(`wac test file failed to compile: ${entry}\n${lines.join("\n")}`);
-    }
-    for (const d of result.diagnostics) {
-      console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
-    }
-    glue = wacBindgen(result.compiled);
-    covPoints = result.compiled.coverage ?? [];
-    tests = result.compiled.exports.filter(e => e.name.startsWith("test") && e.ret === "string");
   }
+
 
   if (tests.length === 0) {
     throw new Error(
