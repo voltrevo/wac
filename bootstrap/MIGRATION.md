@@ -303,3 +303,58 @@ small and belong with the rest of step 3 rather than alone in front of it.
 
 **`bootstrap/` is the destination**, matching the script's name. Chosen rather than specified; it
 holds the rungs, the assembler, the flattener, the hosts and the ladder's own tests.
+
+---
+
+## Step 4 in progress: what still reaches the reference — 2026-08-28
+
+Step 4 is "delete `compiler/`", and the work is the callers. It started at 36 files and is at 13.
+The groups below are what is left, in the order they are being taken.
+
+### Done
+
+**The whole wac lane.** No `_test.wac` compiles or runs anything with the reference any more.
+
+| what | how it ended up |
+|---|---|
+| `lexcodes_test` | asks wacc's own `lexMessage` table, which is the one a reader's diagnostic comes from |
+| `jsxlex_test` | asserts the language directly: those programs lex, and none of them lexes as JSX |
+| `emit_test` | keeps its 222-call corpus, loses the value comparison; a call must still compile, type and run |
+| `typecheck_test`, `rung3_probe` | the caught/quiet lists were always authored; two grids state their rule; the cast grid reads `spec/spec/casts.md` |
+| `corpuscheck_test` | the reference only decorated a failure message and never touched the verdict |
+| `projectspec_test` | both halves asserted the same written-down answer, so one comes out |
+| `stdspec_test` | its fourth case was about the reference's own refusal message |
+| `bootstrap`/`fixpoint`/`selfhost` `emit_test` | repointed to `harness/ladderRun.ts` — the ladder is the second implementation now |
+| the site | the playground, the editor, the linter, the bindgen tab, the runner and the bootstrap demo |
+
+**The five deleted rung-3 grids are the real loss.** The operator, slot, reference-cast, unary and
+member grids asserted exact agreement across about 3,700 cells in both directions, and a 15×15×15
+operator matrix is not something to invent. Positions go too, everywhere: a diagnostic that drifts
+to the wrong line now passes where it used to fail.
+
+**Two things were gained rather than lost**, both because the spec is a better oracle than a second
+implementation:
+
+- `spec/spec/casts.md`'s lossless table said **"Complete"** and gave 4 of 12 rows. Four were written
+  in a later section and four — `bool` to `i64`, `u64`, `f32`, `f64` — were documented nowhere at
+  all while compiling fine. `[§wac-lossless-unsigned-4qmt8xv]`.
+- The spec's `// error:` fences had nothing checking them once `wacSpec.test.ts` went, so
+  `specfences_test` checks them now: 11 whole programs the document says are rejected.
+
+### Left
+
+| group | files | the question |
+|---|---|---|
+| the harness | `wacBind`, `wacCoverage`, `wacTestRun` | each imports `wacCompile` + `wacBindgen`, which is `wac bindgen`. A repoint, not a port. |
+| `wacFiles` | `wacFiles.ts` | agreed: delete if nothing needs it. It has callers, so they come first. |
+| the oracles | `test/reference.ts`, `test/referencePrint.ts`, `tools/specCases.ts` | `referencePrint` is the wapy printer, which wacc has not got — `issues/lang/0105`. |
+| the tools | `fuzz`, `fuzzBoundary` | local dev tools: shell out to `wac`. |
+| mutation | `mutate.ts`, `mutate/operators.ts` | needs **tokens**, and deliberately not a regex. Agreed: a wac program, not a subcommand. |
+| the sanctioned one | `bootstrap/ts/same_fixed_point.ts` | the `W1 == X1` comparison. It exists to compare against the reference and is the evidence for deleting it. Goes in the final commit. |
+
+### Found on the way, and fixed
+
+`wac test A B` ran only `A` and reported success over it; `wac check ok.wac broken.wac` printed "no
+diagnostics" and exited 0 without opening the second file. `build` and `audit` too. A caller passing
+a list got a green run covering a fraction of it, which reads exactly like a real one. Extra paths
+are refused now. `run` and `bindgen` are untouched — their trailing positionals mean something.
