@@ -241,9 +241,11 @@ FLOAT_LITERAL  = digit , { digit | "_" } ,
 exponent       = ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit | "_" } ;
 STRING         = '"' , { string_char } , '"' ;
 CHAR_LITERAL   = "'" , char_content , "'" ;
-string_char    = (* any character except " and \ *) | escape ;
-char_content   = (* any single character except ' and \ *) | escape ;
-escape         = "\\" , ( "n" | "t" | "r" | "\\" | '"' | "'" | "0" ) ;
+string_char    = (* any character except " and \ *) | string_escape ;
+char_content   = (* any single character except ' and \ *) | char_escape ;
+(* Each form escapes its own delimiter and only its own — design/lang/0013 D1. *)
+string_escape  = "\\" , ( "n" | "t" | "r" | "\\" | '"' | "0" ) ;
+char_escape    = "\\" , ( "n" | "t" | "r" | "\\" | "'" | "0" ) ;
 letter         = "a"..."z" | "A"..."Z" | "_" ;
 digit          = "0"..."9" ;
 ```

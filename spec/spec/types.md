@@ -310,8 +310,10 @@ export i32 emoji()   { return '😀'; }
 UTF-8 byte. Only for ASCII does a character literal equal one byte of the
 corresponding string, so `'é'` is `233` while `"é".len()` is `2`.
 
-Escapes are those of string literals plus `\'`: `\n` `\t` `\r` `\\` `\'` `\"`
-`\0`.
+Escapes are the string form's, with its own delimiter in place of the string's:
+`\n` `\t` `\r` `\\` `\'` `\0`. Six each, differing only in which quote —
+`design/lang/0013` D1. `'\"'` is an error, as `"\'"` is: each is a second
+spelling of a character that needs no escaping where it sits.
 
 `[§wac-charlit-empty-m8qf5np]` `''` is a compile error.
 `[§wac-charlit-multi-w2nk7dr]` `'ab'` is a compile error.

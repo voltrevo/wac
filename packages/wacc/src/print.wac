@@ -19,7 +19,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
-import { tokenStride } from "./lex.wac";
+import { escapeValue, tokenStride } from "./lex.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
 export struct Pr {
@@ -108,13 +108,10 @@ export struct Pr {
       if (c == '\\' && i + 1 < end) {
         i32 e = this.src[i + 1];
         i += 2;
-        if (e == 'n')       { this.escByte(10); }
-        else if (e == 't')  { this.escByte(9); }
-        else if (e == 'r')  { this.escByte(13); }
-        else if (e == '\\') { this.escByte('\\'); }
-        else if (e == '"')  { this.escByte('"'); }
-        else if (e == '0')  { this.escByte(0); }
-        else { this.escByte(e); }        // an unknown escape keeps the character
+        // `escapeValue` answers for an unknown escape too, keeping the character — which is what
+        // this printer wants: the lexer has already reported the spelling, and printing something
+        // else here would make one mistake read as two.
+        this.escByte(escapeValue(e));
         continue;
       }
       this.escByte(c);
@@ -145,17 +142,7 @@ i32 charLitValue(u8[] s, i32 start, i32 len) {
   if (len > 1 && s[end - 1] == '\'') { end = end - 1; }
   i32 i = start + 1;
   if (i >= end) { return 0; }
-  if (s[i] == '\\' && i + 1 < end) {
-    i32 e = s[i + 1];
-    if (e == 'n')  { return 10; }
-    if (e == 't')  { return 9; }
-    if (e == 'r')  { return 13; }
-    if (e == '\\') { return 92; }
-    if (e == '"')  { return 34; }
-    if (e == '\'') { return 39; }
-    if (e == '0')  { return 0; }
-    return e;
-  }
+  if (s[i] == '\\' && i + 1 < end) { return escapeValue(s[i + 1]); }
   // A literal character, decoded from UTF-8 so a non-ASCII one gives its codepoint.
   i32 c = s[i];
   if (c < 0x80) { return c; }

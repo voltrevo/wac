@@ -1952,7 +1952,7 @@
       "files": [
         [
           "main.wac",
-          "\n    export i32 newline() { return '\\n'; }\n    export i32 quote()   { return '\\''; }\n    export i32 tab()     { return '\\t'; }\n    export i32 cr()      { return '\\r'; }\n    export i32 nul()     { return '\\0'; }\n    export i32 bslash()  { return '\\\\'; }\n    export i32 dquote()  { return '\\\"'; }\n  "
+          "\n    export i32 newline() { return '\\n'; }\n    export i32 quote()   { return '\\''; }\n    export i32 tab()     { return '\\t'; }\n    export i32 cr()      { return '\\r'; }\n    export i32 nul()     { return '\\0'; }\n    export i32 bslash()  { return '\\\\'; }\n  "
         ]
       ],
       "ok": true,

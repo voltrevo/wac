@@ -51,11 +51,17 @@ i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
  * something `lex` itself refuses — an unterminated literal, an unknown escape — rather than merely a
  * character the parser then chokes on. `@` is the latter: it lexes fine and fails at code 20.
  */
-string[] lexWhat() { return string[]("a string with no closing quote"); }
-string[] lexSrc() {
-  return string[]("export i32 f() { string s = \"oops; return 0; }");
+string[] lexWhat() {
+  return string[](
+    "a string with no closing quote",
+    "an escape that is not one at all");
 }
-i32[] lexCode() { return i32[](2); }   // errUnterminatedString
+string[] lexSrc() {
+  return string[](
+    "export i32 f() { string s = \"oops; return 0; }",
+    "export i32 f() { string s = \"a\\qb\"; return 0; }");
+}
+i32[] lexCode() { return i32[](2, 3); }   // errUnterminatedString, errUnknownEscape
 
 string[] parseWhat() {
   return string[]("a type name where a type must be", "nothing where an expression must be");
@@ -151,5 +157,39 @@ export string test_a_program_with_nothing_wrong_reports_nothing_in_every_phase()
   t.eqI32(dumpErrors(fine.toBytes()).len(), 0, "the lexer");
   t.eqI32(dumpParseErrors(fine.toBytes()).len(), 0, "the parser");
   t.eqI32(dumpTypeErrors(fine.toBytes()).len(), 0, "the checker");
+  return t.report();
+}
+
+/**
+ * Each literal form escapes its own delimiter, and only its own — `design/lang/0013` D1.
+ *
+ * Not rows in the table above, because these two provoke a code that already has a row there and
+ * that table's other property is that its codes are distinct. What is being pinned here is not the
+ * mapping but the *set*: which spellings the lexer admits.
+ *
+ * `"\\'"` was accepted by wacc and refused by the reference. `packages/wacc/src/lex.wac` carried the
+ * character form's seven-entry table on the string check — copied, and present since this lexer's
+ * first commit, `aedec3b7`. The decoded value is right either way, so nothing downstream could
+ * notice: it was a missing diagnostic, which is the kind of defect a differential finds and a suite
+ * with one implementation in it does not.
+ *
+ * **Both directions, because a rule that removes spellings is half-tested by the half that still
+ * compiles.** `'\\"'` is the other half, and it was legal for the same reason and by the same table.
+ * Neither appears anywhere in this repository, which is what made the change cost nothing.
+ *
+ * And the two that must keep working, so this cannot pass by refusing escapes generally.
+ */
+export string test_each_literal_form_escapes_its_own_delimiter_and_only_its_own() {
+  T t = T.create();
+
+  t.eqI32(firstCode(dumpErrors("export i32 f() { string s = \"it\\'s\"; return 0; }".toBytes())), 3,
+          "a single quote escaped inside a string is not an escape there");
+  t.eqI32(firstCode(dumpErrors("export i32 f() { return '\\\"'; }".toBytes())), 3,
+          "a double quote escaped inside a character literal is not an escape there");
+
+  t.eqI32(firstCode(dumpErrors("export i32 f() { string s = \"say \\\"hi\\\"\"; return 0; }".toBytes())),
+          -1, "a double quote escaped inside a string still is one");
+  t.eqI32(firstCode(dumpErrors("export i32 f() { return '\\''; }".toBytes())), -1,
+          "a single quote escaped inside a character literal still is one");
   return t.report();
 }

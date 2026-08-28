@@ -1,6 +1,6 @@
 # 0013 — what a literal may contain, and where invalid UTF-8 comes from
 
-- **Status:** proposed — the decisions are taken, the implementation waits on the reference's removal
+- **Status:** in progress — the reference is removed, so the order of work below is unblocked
 - **Date:** 2026-08-28
 - **Author:** agent-c
 - **Blocks:** nothing. Three of the defects below are live today and none is urgent.
@@ -263,7 +263,7 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 
 | Step | State |
 | ---- | ----- |
-| 1 — `\'` and `\"` | not started |
+| 1 — `\'` and `\"` | **done**, 2026-08-28 — `codes_test.wac` holds both directions and both controls |
 | 2 — `\u{…}` | not started |
 | 3 — the category rule | not started |
 | 4 — `u8` truncation | not started |

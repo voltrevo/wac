@@ -11,7 +11,7 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
-import { lex, Lexed, tokenStride } from "./lex.wac";
+import { escapeValue, isStringEscape, lex, Lexed, tokenStride } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -13631,9 +13631,11 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
 /**
  * A string literal's bytes, with the quotes dropped and the escapes resolved.
  *
- * Only the four this repository's own sources use — `\\n`, `\\t`, `\\\\`, `\\"` — because an escape
- * this does not know would be emitted as its own two characters, which is a wrong string rather than
- * a missing feature. Anything else declines the literal instead.
+ * The set is the language's, from `escapeValue` in `lex.wac`, rather than a list repeated here.
+ * It was "the four this repository's own sources use" and the two lists agreed by luck: an escape
+ * this did not know was emitted as its own two characters, a wrong string rather than a missing
+ * feature, and `knownEscapes` beside it was the second copy that kept that from happening.
+ * `design/lang/0013` moves the set twice more, and a set written down six times moves five times.
  */
 export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   i32 start = lexed.tokens[tok * tokenStride() + 1];
@@ -13644,12 +13646,7 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   i32 end = start + len - 1;
   while (i < end) {
     if (src[i] == 92 && i + 1 < end) {
-      i32 c = src[i + 1];
-      if (c == 110) { out[n] = 10; }
-      else if (c == 116) { out[n] = 9; }
-      else if (c == 114) { out[n] = 13; }
-      else if (c == 48) { out[n] = 0; }
-      else { out[n] = c; }
+      out[n] = escapeValue(src[i + 1]);
       n = n + 1;
       i = i + 2;
       continue;
@@ -13672,8 +13669,7 @@ bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
     if (src[i] != 92) { i = i + 1; continue; }
     if (i + 1 >= end) { return false; }
     i32 c = src[i + 1];
-    bool ok = c == 110 || c == 116 || c == 114 || c == 48 || c == 92 || c == 34 || c == 39;
-    if (!ok) { return false; }
+    if (!isStringEscape(c)) { return false; }
     i = i + 2;
   }
   return true;

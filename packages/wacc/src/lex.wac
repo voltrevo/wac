@@ -265,9 +265,50 @@ void skipSpaceAndComments(Lexer lx, Lexed out) {
 }
 
 /**
+ * What may follow a backslash, in each of the two literal forms.
+ *
+ * **Each form escapes its own delimiter and only its own** — `design/lang/0013` D1. `\\'` inside a
+ * string and `\\"` inside a character literal are each a second spelling of a character that needs no
+ * escaping there, and admitting them means the two forms have one seven-entry table between them
+ * rather than a six-entry table each.
+ *
+ * That is exactly how the defect arose: `lexString` carried the character form's table, so `"\\'"`
+ * was accepted here and refused by the reference. The decoded value is right either way, so it was a
+ * missing diagnostic and nothing caught it — present since this lexer's first commit, `aedec3b7`.
+ *
+ * **Six places wrote this set down** before it was factored here: the two checks below, the printer's
+ * decoder and `charLitValue` in `print.wac`, and `stringLiteralBytes` and `knownEscapes` in
+ * `emit.wac`. A rule copied six times is a rule that will be changed five times, and
+ * `design/lang/0013` changes it twice more — `\\u{…}` in step 2 and the category rule in step 3.
+ */
+export bool isStringEscape(i32 e) {
+  return e == 'n' || e == 't' || e == 'r' || e == '\\' || e == '"' || e == '0';
+}
+
+/** The same, for a character literal: its own delimiter rather than the string's. */
+export bool isCharEscape(i32 e) {
+  return e == 'n' || e == 't' || e == 'r' || e == '\\' || e == '\'' || e == '0';
+}
+
+/**
+ * What an escape denotes — a byte in a string, a codepoint in a character literal.
+ *
+ * Total on purpose. A caller reaches this only for an escape one of the predicates above admitted,
+ * and the three that denote themselves (`\\\\`, `\\"`, `\\'`) need no entry; answering the character
+ * for anything else keeps a rejected escape's *value* the same as it was before it was rejected,
+ * which is what a diagnostic wants — the error is about the spelling, not about the byte.
+ */
+export i32 escapeValue(i32 e) {
+  if (e == 'n') { return 10; }
+  if (e == 't') { return 9; }
+  if (e == 'r') { return 13; }
+  if (e == '0') { return 0; }
+  return e;
+}
+
+/**
  * A string literal. The span kept is the whole literal including both quotes, so
- * a consumer can re-scan the escapes; the reference stores the decoded value
- * instead, and the differential test decodes the span to compare.
+ * a consumer can re-scan the escapes.
  */
 void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
   i32 start = lx.pos;
@@ -282,10 +323,7 @@ void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
       lx.advance();
       if (lx.atEnd()) { break; }
       i32 esc = lx.advance();
-      if (esc != 'n' && esc != 't' && esc != 'r' && esc != '\\'
-          && esc != '"' && esc != '0' && esc != '\'') {
-        fail(out, errUnknownEscape(), startLine, startCol);
-      }
+      if (!isStringEscape(esc)) { fail(out, errUnknownEscape(), startLine, startCol); }
     } else {
       lx.advance();
     }
@@ -323,10 +361,7 @@ void lexChar(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
       return;
     }
     i32 esc = lx.advance();
-    if (esc != 'n' && esc != 't' && esc != 'r' && esc != '\\'
-        && esc != '"' && esc != '0' && esc != '\'') {
-      fail(out, errUnknownEscape(), startLine, startCol);
-    }
+    if (!isCharEscape(esc)) { fail(out, errUnknownEscape(), startLine, startCol); }
   } else {
     // One character, however many bytes it takes.
     lx.advance();
