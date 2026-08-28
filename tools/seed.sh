@@ -158,9 +158,14 @@ install_seed() {   # $1 is a directory holding wacc.wasm
 # **The first seed, when there is no binary to make one.** Deno's output is not compared with
 # anything: it exists so the binary can be built at all, and the fixpoint below is between two
 # artefacts the binary produced.
+#
+# **It was the TypeScript reference until 2026-08-28 and is the ladder now** — five rungs whose
+# lowest is hand-written wasm assembly text, reached through `harness/waccFromLadder.ts`. Nothing
+# here unpacks a wasm binary somebody compiled once and checked in, which is the property the whole
+# arrangement exists for.
 if [ "$bootstrap" -eq 1 ]; then
   mkdir -p "$tmp/0"
-  stage "bootstrapping: compiling wacc with the reference compiler (Deno, the slow one, once)"
+  stage "bootstrapping: building wacc from source with the ladder (Deno, once)"
   deno run --allow-read --allow-write --allow-env --allow-run \
     packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env --allow-net -o "$tmp/0/wacc" >/dev/null
   install_seed "$tmp/0"

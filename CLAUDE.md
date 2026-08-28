@@ -35,7 +35,8 @@ program that used to compile has stopped.
 ## Where things are
 
     spec/          the language: definition, tour, cli documentation
-    compiler/      the compiler, in TypeScript — was `atoms/wac/`
+    bootstrap/     the ladder that builds the compiler from source — five rungs, the lowest
+                   hand-written wasm assembly text
     packages/      the packages written in wac, including `wacc`, the compiler ported to wac
     native/        the host with no JavaScript in it: Rust on wasmtime
     harness/       the test harness the packages share
@@ -135,7 +136,7 @@ you ever suspect the cache of serving something stale.
 another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is
 old" — it is an ordinary file failing to emit with a message about lambdas or about a construct that
 was fine yesterday. `wac task seed` cannot recover from that, because it needs the seed to rebuild
-the seed. `seed:bootstrap` can, because it starts from the reference compiler.
+the seed. `seed:bootstrap` can, because it starts from the ladder rather than from the seed.
 
 The Deno path is `bash tools/seed.sh --bootstrap`, and it is still the one that works from
 **nothing**: the seed is gitignored, so a fresh clone has no binary to build with and `cargo build`
@@ -148,16 +149,15 @@ you have a binary; it is not the way to get one. This said `wac task seed:bootst
 on 2026-08-27, which is the migration renaming a string without asking what would run it.
 
 **Plain `seed:bootstrap` is the escape hatch when a wacc change has made wacc unable to build
-itself**, because it builds wacc with the *reference* and the app with wacc — so the binary that
-false-alarms is out of the loop. It is needed more often than it sounds: a new checker rule that
-reports on `packages/fs/src/proc.wac` cannot build its own successor, since that file is in the seed
-app's graph, and the symptom is a seed build failing on a file you did not touch.
+itself**, because it builds the first seed with the *ladder* — so the binary that false-alarms is
+out of the loop. It is needed more often than it sounds: a new checker rule that reports on
+`packages/fs/src/proc.wac` cannot build its own successor, since that file is in the seed app's
+graph, and the symptom is a seed build failing on a file you did not touch.
 
-**`WAC_APP_FROM=reference` in front of it no longer works**, and used to be the answer here. It asks
-the reference to compile the *app*, and the app imports `packages/platform`, whose `Pending<T>.then`
-is a lambda — so the reference now answers with a parse error at `platform.wac:278` rather than a
-seed. Not a regression to fix: it is what "the reference has no lambdas" means, arriving in the one
-place that had been reaching past it.
+**`WAC_APP_FROM=reference` is gone**, along with the compiler it selected. It asked the TypeScript
+reference to compile the *app*, and stopped working before it was deleted: the app imports
+`packages/platform`, whose `Pending<T>.then` is a lambda, and that frontend had none. There is one
+compiler now and nothing to select.
 
 The `wac` binary carries a *prebuilt* compiler —
 `native/v8/seed/wacc.wasm`, gitignored, one per agent — so `wac build`, `wac run` and `wac test` keep
@@ -185,12 +185,17 @@ extensionless imports Deno's resolver refuses. Its TypeScript is checked by `npx
 which is the checker that agrees with the bundler building it. `site/` is excluded from the
 repo-wide Deno walks for the same reason.
 
-**A script under `site/` that reaches `harness/` needs `--import-map deno.json`.** `site/package.json`
-puts that subtree in an npm resolution scope, so the bare `wac/` specifier — mapped to `./compiler/`
-at the root — is looked up as an npm package and fails with `Import "wac/wacLex.ts" not a dependency`.
-The same file run from the repo root is fine, which is what makes it confusing. `issues/system/0146`
-is the deploy this cost: the published playground quietly compiled with the reference for a while,
-because the page falls back when the asset is missing and nothing said it was.
+**A script under `site/` cannot import from `harness/`.** `site/package.json` puts that subtree in
+an npm resolution scope, so a specifier that resolves fine from the repo root is looked up as an npm
+package there and fails — which is what makes it confusing. It is why
+`harness/waccFromLadder.ts` lives where it does rather than in `site/tools/`, where it was written:
+two callers wanted it and only one of them could be in that directory. `site/tools/syncWacc.ts`
+re-exports it for the one that is.
+
+`issues/system/0146` is the deploy this cost: the published playground quietly compiled with the
+TypeScript reference for a while, because the page fell back when the asset was missing and nothing
+said so. There is one compiler in the browser now, and both of that dispatcher's guards are
+errors.
 
 **Anyone may change the compiler.** It used to have one owner and a rule that sent everyone else to
 the issues directory; that is no longer the case. If you are building something *in* wac and hit a
@@ -201,5 +206,5 @@ shared test suite red for everyone, or one where two reasonable answers exist an
 expensive to undo. A reproduction is still worth more than a patch when you are not going to write
 the patch.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before touching `compiler/` — it defines the atom rules,
-the pure-TypeScript conventions and the testing discipline that directory follows.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to work here — spec tags, what a test has to
+prove, and when a blocker is an issue rather than a patch.

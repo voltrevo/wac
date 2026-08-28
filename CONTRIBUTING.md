@@ -1,183 +1,71 @@
 # Contributing to wac
 
-The compiler in `compiler/` follows an "atom" methodology:
-small, single-purpose, pure-TypeScript units with disciplined testing. Follow
-these rules when adding or changing atoms.
+Read [CLAUDE.md](CLAUDE.md) first — it is the orienting document, and it says where things are and
+how to run them. This file is the part that is about *how to work*, and it is short on purpose.
 
-## Atom rules
+**This document described a TypeScript compiler until 2026-08-28.** It defined an "atom"
+methodology — one value export per file, pure TypeScript, a `cap` parameter for injected
+capabilities — for the reference compiler in `compiler/`, which is deleted. wac is written in wac
+now, and the conventions that survived the change are the ones below: they were never about
+TypeScript.
 
-1. **One value export.** Exactly one function, class, const, or enum per atom
-   (file). No `export default`. Type exports (`export type`, `export
-   interface`) are unlimited and don't count.
-2. **No `export let`** — use `const`.
-3. **Keep atoms small.** An atom shouldn't do too much.
-4. **High quality code.** Use a strong coding style. No fluff, but make sure
-   the code is readable. Use inline comments where appropriate. Use balanced
-   variable naming (not minified nonsense, not word salad either).
+## The language is unstable by choice
 
-## Pure TypeScript
+There are no users outside this repository and no legacy to support, which
+[CLAUDE.md](CLAUDE.md) states at length. The rule that follows from it is worth repeating here
+because it is the one most often argued with: **when nothing needs a thing, delete it.** Not
+deprecate it, not keep it behind a flag, not keep it because a test happens to read it — change the
+test. If you propose keeping something, say what would break, and check that it is not just a test
+you could edit.
 
-Atoms must be platform-independent. No runtime-specific APIs unless injected.
+## Spec tags
 
-The rule is simple:
+[The language spec](spec/) carries tagged requirements — `[§wac-int32-dfkqg8u]` and the like. Each
+names one testable behaviour, and a test claims it by starting its name with the tag.
 
-- **ECMA standard and deterministic?** Use it directly. (`Array`, `Map`,
-  `Math.sqrt`, `BigInt`, `TextEncoder`, `JSON`, `Uint8Array`, etc.)
-- **Everything else?** Inject as an argument.
+- **The spec is the source of truth.** It describes what the code should do, not what the code
+  happens to do. Where they disagree, one of them is wrong and saying which is the work.
+- **The test must verify what the tag describes.** A tag saying "an error at line 4" needs the test
+  to assert the line, not merely that an error happened. If the implementation has no line numbers,
+  fix the implementation — a weaker test that skips the check is worse than no test, because it
+  reports confidence nobody has.
+- A tag that cannot be satisfied because the *spec* is wrong gets a test for the intention, without
+  the tag in its name, and an explanation in the commit.
 
-`Math.random()` and `Date.now()` are ECMA standard but non-deterministic —
-they must be injected. `crypto.subtle` is not ECMA standard — it must be
-injected (but see "build, don't import" below).
+`packages/wacc/test/wac/spectags_test.wac` checks that every clause is claimed somewhere.
 
-**Build, don't import** these:
+## Writing a test
 
-- Crypto (SHA, AES, HMAC, x25519, etc.)
-- Compression (deflate, inflate, gzip)
-- WebSocket framing
-- HTTP client/server framing
-- TLS
+New tests go in wac — `*_test.wac`, run by `wac test` — rather than in TypeScript. The Deno lane
+still exists for the things that genuinely need a host, and is shrinking.
 
-## Cap convention
+1. **Look for an existing test to extend** before writing a new file. A widened oracle catches more
+   than a new one beside it.
+2. **Exercise the thing with real input before writing assertions.** Edge cases surface from use,
+   not from imagination.
+3. **Verify a non-obvious expected value independently** — another implementation, an external tool,
+   or by hand — before it becomes a test vector. `137 * 429 = 58773` is hard to get right by
+   accident; a round number can pass by coincidence.
+4. **Say what the test would catch**, in the commit or in the file. A test whose failure mode nobody
+   can name is usually asserting that the code ran.
 
-When an atom needs injected capabilities, accept them as a `cap` parameter
-(first argument of function or constructor). Export the `Cap` type so
-importers can compose:
+If you took a shortcut, or you are not sure a test proves what it claims, say so rather than letting
+it pass. An honest gap is cheaper than a false one.
 
-```ts
-// ./compiler/demo/trivia.ts
-export type Cap = { Date: { now(): number } };
+## Bugs and issues
 
-export function trivia(cap: Cap) {
-  return `${cap.Date.now()}ms since epoch`;
-}
-```
+Anyone may change the compiler. If you are building something in wac and hit a compiler bug or need
+a language feature, fixing it is ordinary work.
 
-Compose caps from dependencies with intersection types:
+File an issue in `issues/` when the blocker is a **decision** rather than the work: a change that
+would make the shared suite red for everyone, or one where two reasonable answers exist and picking
+wrong is expensive to undo. A reproduction is worth more than a patch when you are not going to
+write the patch. Each tree has its own README — [issues/lang/README.md](issues/lang/README.md) and
+[issues/system/README.md](issues/system/README.md) — saying what belongs in it, and the most useful
+part of each is what does *not*.
 
-```ts
-// ./compiler/demo/moreTrivia.ts
-import { type Cap as TriviaCap, trivia } from "./trivia.ts";
+## Keeping the repository clean
 
-export type Cap = TriviaCap & { Math: { random(): number } };
-
-export function moreTrivia(cap: Cap) {
-  return `${cap.Math.random()} — ${trivia(cap)}`;
-}
-```
-
-If no external capabilities are needed, skip cap entirely (most of the wac
-compiler is pure functions over ASTs and doesn't need one).
-
-## Main atoms (CLIs)
-
-A CLI's main atom exports a `main` function typed to the subset of
-`globalThis` it needs, so even the entry point is testable:
-
-```ts
-import { httpGet } from "../../ab/cd/efghijklmnopqrstuvw.ts";
-
-export type Cap = {
-  Deno: { args: string[] };
-  console: { log(s: string): void };
-};
-
-export function main(cap: Cap): void | Promise<void> {
-  const url = cap.Deno.args[0];
-  const body = httpGet(url);
-  cap.console.log(body);
-}
-```
-
-Run it for real by calling it with `globalThis`. Keep `main` thin — parse
-args, call library atoms, print output. Logic belongs in the library atoms.
-
-## Testing
-
-Every atom must have tests.
-
-```ts
-// ./compiler/gcd.test.ts
-import { gcd } from "./gcd.ts";
-
-Deno.test("gcd: coprime inputs return 1", () => {
-  if (gcd(7, 13) !== 1) throw new Error("expected gcd(7,13) = 1");
-});
-```
-
-If testing something that accepts `cap`, the test provides a fake:
-
-```ts
-import { type Cap } from "./trivia.ts";
-
-Deno.test("trivia: known timestamp", () => {
-  const cap: Cap = { Date: { now: () => 1774207146202 } };
-  const result = trivia(cap);
-  if (result !== "It has been 1774207146202ms since epoch") {
-    throw new Error("wrong output");
-  }
-});
-```
-
-Tests are pure TypeScript, same as atoms — never platform APIs in `./atoms`.
-
-**Test quality matters more than test quantity.** Use independently verified
-complex outputs — values that are hard to get right by accident. Use external
-tools (Python, reference implementations, official test vectors) to generate
-and verify test values; don't eyeball outputs and assume they're correct.
-
-Do not cheat: no tests that merely check "it runs" or "it returns something."
-
-Use `deno coverage`. An atom should be 100% branch-covered before you move on.
-
-## Spec tags and coverage
-
-The [language spec](spec/) contains tagged requirements — backtick-wrapped
-identifiers starting with `§`, like `[§c32-sort-28f6sz7]`. Each tag defines a
-specific testable behavior.
-
-- Write test atoms whose name starts with the tag:
-  ```ts
-  Deno.test("[§c32-sort-28f6sz7] sort_test returns 12345", () => {
-    // ...
-  });
-  ```
-- **The spec is the source of truth.** It describes what the code should do,
-  not what existing code happens to do. If existing atoms don't match the
-  spec, fix or replace them — no matter how much change that requires.
-- **The test must actually verify the behavior the tag describes.** A tag
-  that says "error at line 4" requires the test to assert the line number is
-  4, not just that an error occurred. If the implementation doesn't produce
-  line numbers, fix the implementation — a weaker test that skips the check
-  is not acceptable. A test that doesn't verify what the tag describes is
-  worse than no test: it gives false confidence.
-- Some tags describe behavior that can only be verified interactively (e.g.
-  real network tests).
-- If a spec tag can't be satisfied because of a bug in the spec itself (e.g.
-  a wrong expected value), write a test for the intention behind the tag
-  *without* including the tag in the test name, and explain why in the PR /
-  commit description.
-
-## Keep the repo clean
-
-Almost everything belongs in `./atoms` and follows the atom rules. Never
-commit codegen or other build outputs (`dist/`, `*.tsbuildinfo`, etc.).
-
-## Workflow
-
-Change one atom at a time. For anything non-trivial:
-
-1. Look for an existing atom to build on before writing a new one.
-2. Draft the atom, then exercise it with real inputs (a scratch script is
-   fine) before writing tests — this surfaces edge cases early.
-3. Verify any non-obvious expected values independently (an external tool,
-   reference implementation, or hand computation) before using them as test
-   vectors. `137 * 429 = 58773` is hard to get right by accident; use values
-   like that, not round numbers that could pass by coincidence.
-4. Add tests to 100% branch coverage. Note in the commit message why you're
-   confident the tests actually prove correctness, not just that the code
-   runs.
-5. Commit the atom on its own.
-
-If you took a shortcut or aren't sure a test really proves what it claims,
-say so rather than letting it slide — a weak test is worse than an honest
-gap.
+Never commit build output. The seed (`native/v8/seed/`), `.cache/`, cargo's `target/` and the
+generated site assets are all ignored, and they are ignored because they are reproducible — if you
+find yourself wanting to commit one, the thing to fix is whatever made it hard to reproduce.

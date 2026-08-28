@@ -121,12 +121,13 @@ then 965,855, then 968,370, which is the reason it is rounded rather than quoted
 Three days earlier they were 414 files, 411 whole, three partial and 431,705 bytes; six days before
 that, 354, 346, 8 and 266,164. The figures move because the repository does.
 
-**wacc builds this repository now.** Applications go through it (`packages/platform/build.ts`), the
-`wac` binary carries a wacc-built compiler inside it, and coverage instruments with it. The reference
-is the seed: it produces the first `wacc.wasm` from a cold checkout, and the specification describes
-`packages/wacc` instead. The one place it still emits by default is the *bytes the test suite runs* —
-`harness/wacBind.ts` takes the interface from wacc and the code from the reference unless
-`WAC_WASM_FROM=wacc` says otherwise, which is the last rung of the swap rather than a hedge about it.
+**wacc builds this repository, and nothing else does.** Applications go through it
+(`packages/platform/build.ts`), the `wac` binary carries a wacc-built compiler inside it, coverage
+instruments with it, and the test suite runs the bytes it emits. The TypeScript reference that
+produced the first `wacc.wasm` was deleted on 2026-08-28, and what makes the first one now is
+`bootstrap/`: five rungs whose lowest is hand-written wasm assembly text, each compiling the next
+until wac-L5 compiles wacc. `./bootstrap.sh` is the whole of it from a cold checkout, and there is
+no seed binary in the repository to start from.
 
 ## Tor
 
@@ -182,7 +183,8 @@ wac task test        # three to four minutes, depending on the machine
 
 ```
 spec/          the language: definition, tour, CLI documentation
-compiler/      the reference — lexer to WasmGC emitter, in TypeScript; now the seed that builds wacc
+bootstrap/     the ladder that builds wacc from source — five rungs, the lowest hand-written
+               wasm assembly text
 packages/      the packages written in wac, including wacc, the compiler ported to wac
 native/        the host with no JavaScript in it: Rust on wasmtime
 harness/       the test harness the packages share
@@ -211,8 +213,8 @@ surprises you.
 | [`design/`](design/) | Why things are the way they are |
 | [`issues/`](issues/) | What is known to be wrong |
 | [`WASM-WISHLIST.md`](WASM-WISHLIST.md) | What wac wanted from WebAssembly and could not have |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Read before touching `compiler/` |
-| compiler/README.md | What the reference is for now, and the shared subset |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to work here: spec tags, and what a test has to prove |
+| [`bootstrap/README.md`](bootstrap/README.md) | The ladder: what each rung is and why there are five |
 
 ## License
 
