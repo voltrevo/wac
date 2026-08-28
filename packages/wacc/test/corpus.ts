@@ -8,8 +8,6 @@
 // invalid semantics is still a useful case — arguably the more useful kind, since it
 // puts the parser somewhere the working code never goes.
 
-import { wacLex } from "wac/wacLex.ts";
-import { wacParse, type WacType } from "wac/wacParse.ts";
 import { resolveFrom } from "../../../harness/wacFiles.ts";
 
 export type Entry = [name: string, source: string];
