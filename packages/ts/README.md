@@ -39,7 +39,16 @@ scanning for a `>` that closes before anything that cannot appear in a type.
 
 ## State
 
-`packages/ts/test/wac/corpus_test.wac` strips all 17 files of `packages/platform/host/` — 313 KB —
-with no refusals and no position drift. That is the acceptance bar of `design/system/0009`, and it
-is not proof of correctness: only the differential against Deno's own stripping, which is step 3 of
-that note, can say the output is *right* rather than merely well-formed.
+**All 22 files of `packages/platform/host/` strip byte-identically to `ts.transpileModule`.**
+That is `packages/ts/test/stripDifferential.test.ts` — step 3 of `design/system/0009`, and the
+check that makes the refusals above worth anything. It runs in the suite, never in bootstrap, which
+is the distinction D5 draws: bootstrap is allowed to be dumb and offline precisely because something
+else, with better tools, has already checked what it cannot.
+
+The differential found eight defects that the hand-written cases did not, and every one was two
+constructs spelled identically with only context to separate them — `import { a as b }` against a
+cast, `(a ? f(x) : c)` against a return type, `f(x as T)` against `(x as T)`. Three were the *same*
+shape: after a type-level operator — `=>`, `|`, or a second `as` — what follows is more type, and
+reading it as code left an object type behind as a statement.
+
+Still to do: the bundler, which is step 4.
