@@ -1,39 +1,39 @@
-// Rung 4's oracle, first slice: **run what both compilers emit and compare the answers.**
+// Rung 4's corpus: **every program the emitter is asked about compiles, and every call runs.**
 //
-// The README argues at length that byte identity is the wrong oracle for this rung — it pins the type
-// section's dedup order, index assignment, LEB widths and a name section, none of which is the
-// language. What it proposes instead is the oracle already sitting in this repository for nothing:
+// The README argues at length that byte identity is the wrong oracle for this rung — it pins the
+// data section's dedup order, index assignment, LEB widths and a name section, none of which is the
+// language. What it proposed instead is the oracle already sitting in this repository for nothing:
 // compile a program and *run* it.
 //
-// So this asks each program of both compilers and compares what comes back. Nothing here asserts an
-// expected answer: a hand-written `5` would be a third opinion, and the point of a differential test
-// is that there are only two.
+// ## It was a differential, and the other side is gone
 //
-// ## Host-side until 2026-08-18, `issues/system/0161`
+// Until 2026-08-28 this asked each program of *both* compilers and compared what came back, and
+// asserted no expected answers at all — "a hand-written `5` would be a third opinion, and the point
+// of a differential test is that there are only two". The TypeScript reference is deleted, so there
+// is one.
 //
-// The reference is TypeScript and unreachable from wac, so it answers through `test/reference.ts` —
-// one process for every question, in the shape every oracle here uses.
+// What survives is the corpus and half the claim. Each call is bound to a variable of its own
+// return type and the driver returns a constant, so a program that fails to compile, a call that
+// fails to type, and a call that traps are all still failures. **What is gone is the value**: a
+// function that returns 6 where it returned 5 now passes, and did not before. That is the accepted
+// half of removing the reference rather than an oversight — see `bootstrap/MIGRATION.md`.
 //
-// **The reference's answer is then compiled into the driver as a literal**, and the driver returns 7
-// or 0. That is what keeps this to one run per program: an exit status is eight bits
-// (`issues/system/0184`), so a test that carried the *answer* out would need four runs per case and
-// could not carry an `f64` at all. Comparing inside the module carries anything.
+// The 222 calls are worth keeping on those terms. The bug this rung was built for — stage B could
+// not type *any* call, because an emitted `switch` ran its default unconditionally — is exactly the
+// kind that fails to type rather than the kind that answers wrongly.
 //
-// **One spelling of an argument serves both sides**: `true` and `false` for a `bool`, and an `n`
-// suffix on an `i64` which the driver strips and the oracle reads as a `bigint`.
+// **One spelling of an argument still serves the driver**: `true` and `false` for a `bool`, and an
+// `n` suffix on an `i64` which the driver strips.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { joined, splitLines, startsWith, contains, trimmed } from "../../../wactest/src/strings.wac";
+import { joined, splitLines, contains, trimmed } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "std/platform.wac";
-import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
 import { Ran, runEmittedOne, scratchDir, Validated,
          validateAll } from "./artifacts_probe.wac";
 import { emitFiles } from "../../src/api.wac";
 
 const string ENTRY = "/main.wac";
-const string ORACLE = "packages/wacc/test/reference.ts";
 
 /** One program, and the calls to ask of it — `name arg…`, several separated by `;`. */
 string[] sources() {
@@ -733,13 +733,6 @@ string wacArg(string ty, string raw) {
   return a;
 }
 
-/** The same argument for the oracle: `true`, and an `n` suffix where the parameter is 64 bits. */
-string refArg(string ty, string raw) {
-  string a = bare(raw);
-  if (ty == "bool") { return a == "0" ? "false" : "true"; }
-  if (isWide(ty)) { return a + "n"; }
-  return a;
-}
 
 /** The `n`th space-separated word of `s`, or `""`. */
 string word(string s, i32 n) {
@@ -798,76 +791,16 @@ string callExpr(string src, string call) {
   return out + ")";
 }
 
-/** The same call as a line for the oracle. */
-string refCall(string src, string call) {
-  string name = word(call, 0);
-  string[] tys = paramTypes(src, name);
-  string out = name;
-  i32 n = wordCount(call);
-  for (i32 i = 1; i < n; i++) {
-    string ty = i - 1 < tys.len() ? tys[i - 1] : "";
-    out = out + " " + refArg(ty, word(call, i));
-  }
-  return out;
-}
 
-/**
- * The reference's answer, spelled as a wac literal of `ty`.
- *
- * **The unsigned fixup.** A `u32` export returns wasm's `i32` and a host reads those bits as signed,
- * so `4294967295` arrives as `-1`. wac's `u32` will not compare against a negative literal, and
- * writing one would make the case fail for a reason that is not about the emitter.
- */
-string literalFor(string ty, string answer, i32[] okOut) {
-  okOut[0] = 1;
-  if (ty == "bool") {
-    // A `bool` export is an `i32` on the wire, so the reference answers 0 or 1.
-    if (answer == "0") { return "false"; }
-    if (answer == "1") { return "true"; }
-    okOut[0] = 0;
-    return answer;
-  }
-  if ((ty == "u32" || ty == "u64") && startsWith(answer, "-")) {
-    // Only `u32` is reachable this way in this corpus: a `u64` wide enough to read as negative does
-    // not fit a wac literal either, and no case here produces one.
-    if (ty == "u64") { okOut[0] = 0; return answer; }
-    i64 v = 0;
-    // `toBytes()[i]` reads as an `i32`, and `v` is an `i64` — the widening is written rather than
-    // assumed, which nothing noticed while a packed read had no type at all.
-    for (i32 i = 1; i < answer.len(); i++) { v = v * 10 + ((answer.toBytes()[i] - '0') as i64); }
-    return itoa64(4294967296 - v);
-  }
-  return answer;
-}
-
-export string test_rung_4_what_wacc_emits_runs_and_answers_what_the_references_does(
-    Core core, Cli cli) {
+export string test_rung_4_what_wacc_emits_compiles_and_runs(Core core, Cli cli) {
   T t = T.create();
   string[] src = sources();
   string[] call = calls();
   t.eqI32(src.len(), call.len(), "a call list per program");
   if (src.len() != call.len()) { return t.report(); }
 
-  // One process for every question.
-  Lines lines = Lines.create();
   i32 asked = 0;
-  for (i32 i = 0; i < src.len(); i++) {
-    string[] cs = parts(call[i]);
-    for (i32 j = 0; j < cs.len(); j++) {
-      lines.add("runfn " + hex(src[i].toBytes()) + " " + refCall(src[i], trimmed(cs[j])));
-      asked = asked + 1;
-    }
-  }
-  // **One process for 222 questions, and not cached.** `askCached` exists and was tried here: the
-  // saving is one `deno run` of a few hundred milliseconds, which did not show above the noise on a
-  // machine three agents share, and the two tree walks a key needs cost something themselves. The
-  // cache pays where a file asks the oracle *many times* — `rung3_probe.wac` asks 48 — not where one
-  // batched call already amortises the process.
-  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
-                  "the reference");
-  if (!a.ok) { return t.report(); }
-  t.eqI32(a.lines.len(), asked, "an answer per question");
-  if (a.lines.len() != asked) { return t.report(); }
+  for (i32 i = 0; i < src.len(); i++) { asked = asked + parts(call[i]).len(); }
 
   string dir = scratchDir(cli);
   i32 at = 0;
@@ -878,18 +811,7 @@ export string test_rung_4_what_wacc_emits_runs_and_answers_what_the_references_d
   for (i32 i = 0; i < src.len(); i++) {
     string[] cs = parts(call[i]);
     for (i32 j = 0; j < cs.len(); j++) {
-      string answer = a.lines[at];
       at = at + 1;
-      // `runfn ERR …` means the reference would not compile it, which is a broken case rather than a
-      // disagreement — and `runfn TRAP …` is an answer this slice does not compare yet.
-      if (startsWith(answer, "runfn ERR") || startsWith(answer, "runfn TRAP")) {
-        if (nWrong < wrong.len()) {
-          wrong[nWrong] = trimmed(cs[j]) + ": the reference said " + answer;
-          nWrong = nWrong + 1;
-        }
-        continue;
-      }
-      string value = answer.slice(6, answer.len());
       string name = word(trimmed(cs[j]), 0);
       string ty = returnTypeOf(src[i], name);
       if (ty == "") {
@@ -899,23 +821,18 @@ export string test_rung_4_what_wacc_emits_runs_and_answers_what_the_references_d
         }
         continue;
       }
-      i32[] ok = i32[1]();
-      string lit = literalFor(ty, value, ok);
-      if (ok[0] != 1) {
-        if (nWrong < wrong.len()) {
-          wrong[nWrong] = name + ": cannot spell " + value + " as a " + ty;
-          nWrong = nWrong + 1;
-        }
-        continue;
-      }
-
-      string driver = src[i] + "\nexport i32 main() { return " + callExpr(src[i], trimmed(cs[j])) +
-                      " == " + lit + " ? 7 : 0; }\n";
+      // The result is bound to a variable of the function's own return type rather than discarded,
+      // so a call has to *type* as well as run — which is the half of the old comparison that
+      // survives. `void` has nothing to bind.
+      string body = ty == "void"
+        ? callExpr(src[i], trimmed(cs[j])) + ";"
+        : ty + " v = " + callExpr(src[i], trimmed(cs[j])) + ";";
+      string driver = src[i] + "\nexport i32 main() { " + body + " return 7; }\n";
       Ran r = runEmittedOne(cli, ENTRY, driver, dir, "emitcase.wasm");
       compared = compared + 1;
       if (!r.ok || r.trapped || r.status != 7) {
         if (nWrong < wrong.len()) {
-          wrong[nWrong] = trimmed(cs[j]) + " is not " + value + " from us, for " + src[i] +
+          wrong[nWrong] = trimmed(cs[j]) + " did not run, in " + src[i] +
                           (r.ok ? (r.trapped ? " — it trapped" : "") : " — " + r.error);
           nWrong = nWrong + 1;
         }
@@ -928,10 +845,10 @@ export string test_rung_4_what_wacc_emits_runs_and_answers_what_the_references_d
   // report the same — so the count is checked against what went to the oracle rather than against a
   // floor that a tenth of the corpus would satisfy.
   t.isTrue(asked >= 200, "only " + itoa(asked) + " calls in the table");
-  t.eqI32(compared, asked, "asked " + itoa(asked) + " and compared " + itoa(compared));
+  t.eqI32(compared, asked, "listed " + itoa(asked) + " and ran " + itoa(compared));
   string[] said = string[nWrong](fill: "");
   for (i32 i = 0; i < nWrong; i++) { said[i] = wrong[i]; }
-  t.eqI32(nWrong, 0, itoa(nWrong) + " disagreement(s): " + joined(said, "; "));
+  t.eqI32(nWrong, 0, itoa(nWrong) + " failure(s): " + joined(said, "; "));
   return t.report();
 }
 
