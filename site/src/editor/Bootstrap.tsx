@@ -1,9 +1,15 @@
 // The bootstrap, run in the reader's browser rather than asserted at them.
 //
-// Four steps. The reference compiler — already bundled here for the playground — compiles wacc's own
-// sources into **stage A**. A compiles the same sources into **B**. B compiles them into **C**. If
-// wacc is a compiler that reproduces itself, B and C are the same bytes, and nothing short of running
-// it can show that.
+// Four steps, and **no compiler written in another language takes part in any of them.** A ladder
+// of five rungs runs here in the page — the lowest is hand-written wasm assembly text, and each
+// compiles the next — until wac-L5 compiles wacc's own sources into **stage A**. A compiles the
+// same sources into **B**. B compiles them into **C**. If wacc is a compiler that reproduces
+// itself, B and C are the same bytes, and nothing short of running it can show that.
+//
+// This used to start from the TypeScript reference compiler, "already bundled here for the
+// playground". It is neither: the playground compiles with wacc now, and the reference is gone.
+// Starting from the ladder is the stronger claim anyway — the story no longer has a compiler in
+// it that this project did not build from assembly text.
 //
 // ## Why there is a glue file to fetch
 //
@@ -12,11 +18,17 @@
 // TypeScript anyway. So `tools/syncBootstrap.ts` generates the glue once, replaces the binary with a
 // placeholder and transpiles it with `tsc`; this substitutes each stage's own bytes and imports the
 // result as a blob. One glue serves every stage because every stage has the same interface — the same
-// property `harness/wacBind.ts` uses when it runs this repository's tests against wacc's code under
-// the reference's metadata.
+// property `harness/wacBind.ts` uses when it runs this repository's tests against wacc's code.
+//
+// **Stage A is the exception, and cannot use the glue.** wac-L5 emits no bindgen, so the wacc it
+// builds exports no binding layer at all — it is driven a byte at a time through a driver
+// concatenated onto its source, which is the whole of what a host can do with a module that offers
+// it nothing. What stage A *emits* has bindgen, so B and C are ordinary.
 
 import { useState } from "react";
-import { wacCompile } from "../../../compiler/wacCompile.ts";
+import { ladder } from "../../../bootstrap/js/ladder.js";
+import { assemble } from "../../../bootstrap/js/assemble.js";
+import { wacc as driveWacc } from "../../../bootstrap/js/wacc.js";
 // The deploy root, not a path relative to wherever this page is served from — the same
 // constant the demo links use, and the mistake `site.test.ts` exists to catch one directory up.
 import { ASSETS } from "../next/tokens";
@@ -78,22 +90,51 @@ export default function Bootstrap() {
         }
       };
 
-      const files = new Map<string, string>();
-      meta.paths.forEach((p, i) => files.set(p, meta.sources[i]));
+      // **Stage A comes from the ladder, in this page.** It used to come from the TypeScript
+      // reference — "already bundled here for the playground" — which is neither bundled nor
+      // present any more. Five rungs: the lowest is hand-written wasm assembly text, and each
+      // compiles the next until wac-L5 compiles wacc. Nothing here was compiled by a compiler
+      // written in another language.
+      const rungs: Record<string, string> =
+        await (await fetch(`${ASSETS}wacc-rungs.json`)).json();
+      const l5Input = await (await fetch(`${ASSETS}wacc-l5-input.wac`)).text();
+      const rungBytes = Object.values(rungs).reduce((n, s) => n + s.length, 0);
+      say({ label: `the ladder: 5 rungs, ${Math.round(rungBytes / 1024)} KB of hand-written source` });
+      await breathe();
 
       let t = performance.now();
-      const compiled = wacCompile(files, meta.entry);
-      if (!compiled.ok) {
-        say({ label: "the reference compiler refused wacc", note: compiled.diagnostics[0]?.message });
+      const l = ladder({
+        l1: rungs["l1.l0"],
+        l2: rungs["l2.l1"],
+        l3: rungs["l3.l2"],
+        l4: rungs["l4.l3"],
+        l5: rungs["l5.l4"],
+      });
+      const l0 = await l.l5ToL0(l5Input);
+      const refused = (l0.match(/^!!/gm) ?? []).length;
+      if (refused > 0) {
+        say({ label: "wac-L5 refused wacc's source", note: `${refused} refusal(s)` });
         setFailed(true);
         return;
       }
-      const A = compiled.compiled.wasm;
-      say({ label: "the reference compiler → stage A", bytes: A.length, ms: Math.round(performance.now() - t) });
+      const A: Uint8Array = assemble(l0);
+      say({ label: "the ladder → stage A", bytes: A.length, ms: Math.round(performance.now() - t) });
+      await breathe();
+
+      // **Stage A is driven without a binding layer.** wac-L5 emits no bindgen, so the wacc it
+      // builds exports no `$bind$` — every value crosses as an i32, a byte at a time, through the
+      // driver concatenated onto its source. Stage A is the only one that needs this: what *it*
+      // emits has bindgen, so B and C are driven through the ordinary glue.
+      const a = driveWacc(
+        await WebAssembly.instantiate(
+          await WebAssembly.compile(A.buffer as ArrayBuffer),
+          {},
+        ),
+      );
       await breathe();
 
       t = performance.now();
-      const B: Uint8Array = (await stage(A)).emitFiles(meta.paths, meta.sources, meta.entry);
+      const B: Uint8Array = a.emitFiles(meta.paths, meta.sources, meta.entry);
       say({ label: "stage A compiles wacc → stage B", bytes: B.length, ms: Math.round(performance.now() - t) });
       await breathe();
 

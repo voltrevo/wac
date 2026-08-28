@@ -8,6 +8,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
+
+    // The ladder's `bootstrap/js/*.js` are plain JavaScript with JSDoc types — `deno check` is
+    // their lint, and they are imported directly rather than through a build step. `allowJs`
+    // reads those types; `checkJs` is deliberately off, since this project does not own them.
+    "allowJs": true,
     "noEmit": true
   },
   "include": ["src"]
