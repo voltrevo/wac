@@ -343,6 +343,19 @@ function fromWasm(t: string, expr: string): string {
   if (isRefArray(t, new Set(namedTypes.keys()))) return `$arrFrom_${arrSuffix(t)}(${expr})`;
   if (namedTypes.has(t)) return `new ${classNameOf(namedTypes.get(t)!)}(${expr})`;
   if (t === "bool") return `${expr} !== 0`;
+  // **An unsigned return has to be made unsigned.** wasm has no unsigned types — a `u32` comes back
+  // as a signed `i32` and a `u64` as a signed `i64` — so the glue is the only place that can say
+  // which reading was meant. `spec/spec/bindgen.md`'s `§wac-bind-unsigned-5wqk3np` states it and
+  // shows both spellings: *"a `u32` returning `0xFF000000` reaches JS as `4278190080`, and a `u64`
+  // returning `0xFF00000000000000` as `18374686479671623680n`. `i32` and `i64` are untouched."*
+  //
+  // Without these, `roundU32(4294967295)` answered `-1` and `roundU64(…)` answered `-1n` — the same
+  // bits read the other way, which is a wrong *answer* rather than a missing feature, and it reached
+  // struct fields too since a getter comes through here. `issues/lang/0282b`.
+  if (t === "u32") return asJs ? `(${expr}) >>> 0` : `((${expr}) as number) >>> 0`;
+  if (t === "u64") {
+    return asJs ? `BigInt.asUintN(64, ${expr})` : `BigInt.asUintN(64, (${expr}) as bigint)`;
+  }
   return asJs ? expr : `${expr} as ${tsType(t)}`;
 }
 

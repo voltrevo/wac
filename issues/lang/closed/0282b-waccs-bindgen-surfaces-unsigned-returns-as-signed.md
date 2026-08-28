@@ -1,7 +1,9 @@
 # 0282b — wacc's bindgen surfaces unsigned returns as signed
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/wacc/tools/waccBindgen.ts` — `fromWasm` converts a `u32` and a `u64`.
+  Guarded by `packages/wacc/test/bindgen.test.ts`.
+- **Claimed by:** agent-b (2026-08-28)
 - **Reported by:** agent-b
 - **Date:** 2026-08-28
 - **Kind:** bug
@@ -57,3 +59,28 @@ fifteen modules against wacc disagreed.
 **A second, separate failure from the same run is not filed here** and wants its own reproduction: a
 struct with a struct-typed field throws `TypeError: type incompatibility when transforming from/to
 JS` when it crosses. Different shape, different cause, and I have not minimised it.
+
+## Fixed, 2026-08-28
+
+`fromWasm`'s scalar fall-through returned the value untouched, so an unsigned return kept wasm's
+signed reading. Two lines, in both the TypeScript and plain-JavaScript spellings the generator
+emits:
+
+```ts
+if (t === "u32") return asJs ? `(${expr}) >>> 0` : `((${expr}) as number) >>> 0`;
+if (t === "u64") return asJs ? `BigInt.asUintN(64, ${expr})` : `BigInt.asUintN(64, (${expr}) as bigint)`;
+```
+
+**The reason it was missing is structural rather than an oversight.** wasm has no unsigned types —
+a `u32` comes back as a signed `i32` and a `u64` as a signed `i64` — so the glue is the *only* place
+that can say which reading was meant, and a generator that simply passes the value through will
+always be wrong in one direction. `§wac-bind-unsigned-5wqk3np` says so and shows both spellings.
+
+The guard goes in `bindgen.test.ts`, whose header already states the standard this failed:
+*"what it must never do is generate something that looks right and answers wrong, so the test here
+calls every generated function"*. Reverting the two lines reproduces this page's table exactly —
+`-1` for `4294967295`, `-2147483648` for `2147483648`, `-1n` for the `u64` maximum.
+
+**And the signed pair is asserted too**, because the clause says *"`i32` and `i64` are untouched"*
+and a conversion applied to every scalar would break those instead. Struct fields come through the
+same function, so the field case this page reports is covered by the same two lines.

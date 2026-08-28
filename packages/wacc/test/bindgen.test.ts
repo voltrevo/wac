@@ -29,13 +29,19 @@ export i32[] doubled(i32[] xs) {
 }
 export i32 total(i32[] xs) { i32 t = 0; for (i32 i = 0; i < xs.len(); i++) { t = t + xs[i]; } return t; }
 export void ignored() { }
+// The unsigned pair, which wasm has no types for: a u32 comes back as a signed i32 and a u64 as a
+// signed i64, so the glue is the only place that can say which reading was meant. These answered
+// -1 and -1n until issues/lang/0282b was fixed. (No backticks here: SRC is a template literal.)
+export u32 roundU32(u32 x) { return x; }
+export u64 roundU64(u64 x) { return x; }
+export i32 roundI32(i32 x) { return x; }
 `;
 
 Deno.test("bindgen: the generated glue calls the module and answers what wac answers", async () => {
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [SRC], "m.wac") as unknown as number[]);
   if (wasm.length <= 8) throw new Error("the module was declined");
   const sigs = parseSigs(exportSigs(["m.wac"], [SRC], "m.wac"));
-  if (sigs.length !== 9) throw new Error(`${sigs.length} exported signatures, wanted 9`);
+  if (sigs.length !== 12) throw new Error(`${sigs.length} exported signatures, wanted 12`);
   if (unsupported(sigs).length > 0) {
     throw new Error(`declined what it should cover: ${unsupported(sigs).join(", ")}`);
   }
@@ -61,6 +67,18 @@ Deno.test("bindgen: the generated glue calls the module and answers what wac ans
     eq("doubled", Array.from(glue.doubled(new Int32Array([1, -2, 3])) as Int32Array).join(","), "2,-4,6");
     eq("total", glue.total(new Int32Array([10, 20, 12])), 42);
     glue.ignored();
+    // **Unsigned, at the top of the range and at the sign bit** — `§wac-bind-unsigned-5wqk3np`.
+    // wasm returns the same bits either way; what differs is how JS reads them, and only the glue
+    // knows. `4294967295` and `2147483648` are the two a signed reading gets wrong, being `-1` and
+    // the smallest negative `i32`. `issues/lang/0282b`.
+    eq("roundU32(4294967295)", glue.roundU32(4294967295), 4294967295);
+    eq("roundU32(2147483648)", glue.roundU32(2147483648), 2147483648);
+    eq("roundU64(max)", glue.roundU64(18446744073709551615n), 18446744073709551615n);
+    eq("roundU64(2^63)", glue.roundU64(9223372036854775808n), 9223372036854775808n);
+    // **And the signed pair is untouched**, which the clause says in as many words: "`i32` and
+    // `i64` are untouched". A conversion applied to everything would break these instead.
+    eq("roundI32(-1)", glue.roundI32(-1), -1);
+    eq("wide(-21n)", glue.wide(-21n), -42n);
     if (wrong.length > 0) throw new Error(`${wrong.length} wrong answer(s):\n  ${wrong.join("\n  ")}`);
   } finally {
     await Deno.remove(path);
