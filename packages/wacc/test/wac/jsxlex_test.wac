@@ -1,17 +1,21 @@
 // The lexer's JSX modes, which rung 1 cannot compare.
 //
-// Every other claim about the lexer is checked against the reference, token for token, over every
-// `.wac` file in the repository. That oracle stops at JSX: the reference has no modes and no
-// `jsx text` kind, so it reads `<p>it's here</p>` as a character literal that swallows the closing
-// tag. `issues/lang/0108`.
+// Every claim about the lexer used to be checked against the reference, token for token, over every
+// `.wac` file in the repository — except JSX, where that oracle stopped: the reference had no modes
+// and no `jsx text` kind, so it read `<p>it's here</p>` as a character literal that swallowed the
+// closing tag. `issues/lang/0108`.
 //
-// So this file asserts the two halves that have no oracle, and asks the reference for the one that
-// does:
+// **The reference is deleted, so every claim here is now one with no second opinion**, which is
+// what this file was already written for. Two halves:
 //
 //   - **what text mode reads** — a run of text is text, whatever bytes are in it;
 //   - **where a tag begins** — `<` is the less-than operator wherever the token before it can end an
-//     expression, and every non-JSX program is on that side of the line, which is why none of them
-//     lexes differently than it did. That half *is* checked against the reference.
+//     expression, and every non-JSX program is on that side of the line.
+//
+// The second half was the one the reference answered, by lexing the same programs and being
+// compared token for token. It is asserted directly now: those programs lex without an error and
+// produce no text token. The positions are what that costs — an off-by-one in a column that
+// produced neither would have been caught before and would not be now.
 //
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
@@ -20,13 +24,8 @@
 // `kind|line|col|text` per token, which is what the positions are compared against. No new oracle.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std/platform.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
-import { decoded } from "../../../codec/src/hex.wac";
 import { lexErrors, lexTokens } from "../../src/lex.wac";
 
-const string ORACLE = "packages/wacc/test/reference.ts";
 const i32 STRIDE = 5;
 const i32 K_JSX_TEXT = 84;
 
@@ -131,7 +130,7 @@ export string test_jsx_text_the_modes_nest_and_come_back() {
   return t.report();
 }
 
-export string test_jsx_a_less_than_that_can_be_the_operator_still_is(Core core, Cli cli) {
+export string test_jsx_a_less_than_that_can_be_the_operator_still_is() {
   // The discriminator is "the token before it cannot end an expression". These are the shapes where
   // it can, and every one of them lexes exactly as the reference lexes it — which is the claim that
   // matters most here, since it is what says no program without JSX changed.
@@ -146,54 +145,28 @@ export string test_jsx_a_less_than_that_can_be_the_operator_still_is(Core core, 
     "i32 f(i32 a) { return a++ < 2 ? 1 : 0; }",
     "bool f(i32 a) { return (a) < 2 && a << 1 > 3; }");
 
-  Lines lines = Lines.create();
+  // **What the reference used to answer, asked of the language instead.** This compared every
+  // token's line and column against the reference's lexer, on the reasoning that agreeing with a
+  // lexer that had never heard of JSX is what says these programs did not change. The reference is
+  // deleted, and there is no second lexer to ask.
+  //
+  // The claim survives without one, because it was never really about the other lexer: it is that
+  // none of these lexes as JSX and all of them still lex. A `<` that had been taken as the start of
+  // an element would produce a text token, which is asserted below, and would swallow the rest of
+  // the line, which is what the error check catches. What is genuinely lost is the *positions* —
+  // an off-by-one in a column that produced no text token and no error would now go unnoticed.
   for (i32 i = 0; i < sources.len(); i++) {
-    lines.add("lexdumpsrc " + hex(sources[i].toBytes()));
-  }
-  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
-                  "the reference lexer");
-  if (!a.ok) { return t.report(); }
-  t.eqI32(a.lines.len(), sources.len(), "a dump per source");
-  if (a.lines.len() != sources.len()) { return t.report(); }
-
-  for (i32 i = 0; i < sources.len(); i++) {
-    string answer = a.lines[i];
-    i32 sp = answer.indexOf(" ");
-    if (sp < 0) { t.fail(sources[i] + ": the reference said " + answer); continue; }
-    string canon = string.fromBytes(decoded(answer.slice(sp + 1, answer.len())));
-
-    // The reference stores each token's text rather than a span, so the comparison is by position:
-    // one token at each place the reference put one, and none of them a run.
-    string theirs = "";
-    i32 at = 0;
-    for (i32 c = 0; c <= canon.len(); c++) {
-      if (c < canon.len() && canon.slice(c, c + 1) != "\n") { continue; }
-      string line = canon.slice(at, c);
-      at = c + 1;
-      if (line == "") { continue; }
-      // `kind|line|col|text` — the middle two are what this compares.
-      i32 bar1 = line.indexOf("|");
-      if (bar1 < 0) { continue; }
-      string rest = line.slice(bar1 + 1, line.len());
-      i32 bar2 = rest.indexOf("|");
-      if (bar2 < 0) { continue; }
-      string lineNo = rest.slice(0, bar2);
-      string colRest = rest.slice(bar2 + 1, rest.len());
-      i32 bar3 = colRest.indexOf("|");
-      string col = bar3 < 0 ? colRest : colRest.slice(0, bar3);
-      theirs = theirs + (theirs == "" ? "" : ",") + lineNo + ":" + col;
-    }
+    i32[] errs = lexErrors(sources[i].toBytes());
+    t.eqI32(errs.len(), 0, sources[i] + ": lexes without an error");
 
     i32[] flat = lexTokens(sources[i].toBytes());
-    string mine = "";
+    t.isTrue(flat.len() > 0, sources[i] + ": produced no tokens at all");
+
     bool anyText = false;
     for (i32 k = 0; k * STRIDE < flat.len(); k++) {
-      i32 base = k * STRIDE;
-      if (flat[base] == K_JSX_TEXT) { anyText = true; }
-      mine = mine + (mine == "" ? "" : ",") + itoa(flat[base + 3]) + ":" + itoa(flat[base + 4]);
+      if (flat[k * STRIDE] == K_JSX_TEXT) { anyText = true; }
     }
-    t.eqStr(mine, theirs, sources[i] + ": a token in each place the reference has one");
-    t.isTrue(!anyText, sources[i] + ": no jsx text");
+    t.isTrue(!anyText, sources[i] + ": no jsx text — the `<` was taken as an element");
   }
   return t.report();
 }
