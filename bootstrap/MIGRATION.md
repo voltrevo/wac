@@ -205,7 +205,7 @@ Measured on commit `246ed978`, against wacc's 23 source files and 40,241 lines:
 
     sha256  3fef5aae8784f4cc96891a38b3426b7a26811b30ccd8de9983590f78c7fd1a2d
 
-`ts/same_fixed_point.ts` prints that hash now rather than only the verdict, so the claim is
+ts/same_fixed_point.ts prints that hash now rather than only the verdict, so the claim is
 checkable against a rebuild rather than being a sentence somebody wrote. After `compiler/` goes,
 `X1` cannot be computed at all — the hash is what remains.
 
@@ -230,7 +230,7 @@ mechanism for that.
 **Three stale references surfaced**, all older than the move and none of them caused by it:
 `rust/src/lib.rs` pointed at a spec file that never existed; `native/v8/build.rs` documents building
 the seed with a task that has never been in the registry, and which is not how it is built; and
-`bootstrap/ts/same_fixed_point.ts` had to be added to `tools/wac/referencecallers_test.wac`'s
+bootstrap/ts/same_fixed_point.ts had to be added to tools/wac/referencecallers_test.wac's
 sanctioned list, which is the right answer — that file exists to compare the ladder against the
 reference, and it goes in the same commit that deletes the reference.
 
@@ -344,7 +344,7 @@ implementation:
 ### The last agreement with the reference — pinned 2026-08-28, on `1ea52134`
 
 The plan asks the removal commit to record what the two sides last agreed on, because the ability
-to re-run it does not survive the deletion. Measured by `bootstrap/ts/same_fixed_point.ts`:
+to re-run it does not survive the deletion. Measured by bootstrap/ts/same_fixed_point.ts:
 
 ```
 W0  wacc by wac-L5            696,682 bytes
@@ -367,8 +367,8 @@ is the whole of what the reference was still for.
 
 | file | the question |
 |---|---|
-| `packages/wacc/test/wapyRoundTrip.test.ts` | it renders every tracked `.wac` file to wapy with `compiler/wapyPrint.ts` and reads it back with wacc, comparing trees. **wacc has a wapy parser and no wapy printer**, and the printer is 699 lines walking the *reference's* AST — a rewrite against wacc's tree rather than a translation. The only open decision. |
-| `bootstrap/ts/same_fixed_point.ts` | sanctioned: it exists to compare against the reference and is the evidence for deleting it. Goes in the final commit, with the last agreed hashes pinned. |
+| `packages/wacc/test/wapyRoundTrip.test.ts` | it renders every tracked `.wac` file to wapy with compiler/wapyPrint.ts and reads it back with wacc, comparing trees. **wacc has a wapy parser and no wapy printer**, and the printer is 699 lines walking the *reference's* AST — a rewrite against wacc's tree rather than a translation. The only open decision. |
+| bootstrap/ts/same_fixed_point.ts | sanctioned: it exists to compare against the reference and is the evidence for deleting it. Goes in the final commit, with the last agreed hashes pinned. |
 
 ### What the rest turned into
 
@@ -402,11 +402,11 @@ refused now — `run` and `bindgen` keep theirs, which mean something.
 | group | files | the question |
 |---|---|---|
 | the import walk | `harness/wacFiles.ts` | `bootstrap/js/flatten.js` does the same walk in JavaScript and is load-bearing for the bootstrap, so it cannot drift unnoticed. |
-| the spec corpus | `packages/wacc/tools/specCases.ts` | extracts the spec's own programs with the reference's answers, which is what makes them an oracle — `issues/lang/0105`. |
+| the spec corpus | packages/wacc/tools/specCases.ts | extracts the spec's own programs with the reference's answers, which is what makes them an oracle — `issues/lang/0105`. |
 | the wapy printer | `packages/wacc/test/wapyRoundTrip.test.ts` | renders wac to wapy so wacc can read it back. The one thing the reference has and wacc has not. |
 | the tools | `tools/fuzz.ts`, `tools/fuzzBoundary.ts` | the fuzzer is repointed; `fuzzBoundary` fuzzes the reference's *own* bindgen, which is a different question. |
 | mutation | `tools/mutate.ts`, `tools/mutate/operators.ts` | needs **tokens**, and deliberately not a regex. Agreed: a wac program, not a subcommand. |
-| the sanctioned one | `bootstrap/ts/same_fixed_point.ts` | the `W1 == X1` comparison. It exists to compare against the reference and is the evidence for deleting it. Goes in the final commit. |
+| the sanctioned one | bootstrap/ts/same_fixed_point.ts | the `W1 == X1` comparison. It exists to compare against the reference and is the evidence for deleting it. Goes in the final commit. |
 
 ### Found on the way, and fixed
 

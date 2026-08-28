@@ -152,7 +152,7 @@ which needed the three things the note above scoped, and one it did not:
    every other key comes from `declare` — so it is carried for the boundary alone.
 2. **`mangleType`'s spelling, mirrored.** A template is qualified by its declaring file
    (`fileTagOf`), each argument is mangled after a `$`, an array is `_arr`, a nullable is `_opt` and
-   a funcref is `fn_…_to_…`. Read off `compiler/wacResolve.ts` rather than derived: `Vec<u8[]>` is
+   a funcref is `fn_…_to_…`. Read off compiler/wacResolve.ts rather than derived: `Vec<u8[]>` is
    `Vec__packages_std_src_vec$u8_arr`, and guessing `u8` there would have left the helper as
    invisible as it was.
 3. **An instance's methods are exported from the instance table**, not from declarations — a

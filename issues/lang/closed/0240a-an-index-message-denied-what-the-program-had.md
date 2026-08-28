@@ -46,7 +46,7 @@ test, because a differential comparing positions and counts cannot see a sentenc
 
 ## The walk, finished
 
-Every rule table in `compiler/wacTypeCheck.ts`, one program per row:
+Every rule table in compiler/wacTypeCheck.ts, one program per row:
 
 | cluster | rows | what it found |
 | --- | --- | --- |

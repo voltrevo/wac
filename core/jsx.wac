@@ -5,7 +5,7 @@
 // author chose the name to be able to fix it. `design/lang/0004`.
 //
 // **wacc-only.** The reference compiler has no JSX frontend, so its embedding of `core` does not
-// include this file — `compiler/README.md` carries the row. That omission is the reason `core` is a
+// include this file — compiler/README.md carries the row. That omission is the reason `core` is a
 // directory rather than one file: which compiler gets a declaration is expressed by which file it
 // is in, and `tools/genCore.ts` lists them. A marker inside a shared file would have been a third
 // thing to invent and to keep true.

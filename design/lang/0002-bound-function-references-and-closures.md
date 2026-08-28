@@ -204,13 +204,13 @@ accept it is not code.
 
 `spec/spec/funcrefs.md` carries `[§wac-fnref-nocapture-j4wk8pm]` — *"`c.inc` as a value is a compile
 error"* — and `spec/tour.wac` says the same twice, at lines 777 and 791. A `§tag` is tested by
-`compiler/wacSpec.test.ts`, which runs against **the reference**, and the reference is bootstrap-bound
+compiler/wacSpec.test.ts, which runs against **the reference**, and the reference is bootstrap-bound
 and not to grow this feature. So:
 
 - **`spec/cases` can express a wacc-only rule** — `only: "both" | "wacc"` in `spec/cases/cases.ts`,
   written `// only: wacc`, exists for exactly this and its comment says so. Nothing uses it yet.
 - **A `§tag` cannot.** There is no scoping in `wacSpec.test.ts`, and its tags are also counted by
-  `site/src/next/Checked.tsx` and cited from `compiler/wacCore.ts`.
+  `site/src/next/Checked.tsx` and cited from compiler/wacCore.ts.
 
 So making `c.inc` work in wacc leaves the specification saying the opposite, with a green test
 asserting the old rule against the reference — a divergence nothing would report. That is worse than
@@ -336,7 +336,7 @@ from reading the same code came out opposite ways round.
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **done** — `0176` a bound reference, `0181` the by-hand closure lowering, `0188` a lambda as a value, `0189` two lambdas staying two functions, `0190` a lambda reading an enclosing local. All `// only: wacc`. Was *not started*, which was stale from the day `0176` landed |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included**, and **half built**. The lambda syntax, the checker, the walk, the signatures and emission all landed; capture runs *read-only* in nine shapes, and a lambda capturing a name that anything assigns declines with "needs a cell". What is left is the cells themselves — see *The cells, worked out* |
-| 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. `compiler/wacBindgen.ts` claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
+| 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. compiler/wacBindgen.ts claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
 | 7 | the lambda syntax, checker and emission | **done, 2026-08-16** — `=>` lexes, `(i32 a) => a + 1` and `() => { … }` parse into one shape, a lambda is typed against its target with five distinct diagnostics for the ways it can be wrong, and it is hoisted into an ordinary function so the wrapper families cover it. Runs in thirteen positions |
 | 8 | capture analysis and the generated struct | **done, 2026-08-16** — free variables per lambda with their types, transitive through nesting, a slab each; `$cap$N` registered in `frontOf`. `lambdaReportLinked` says what it decided, and caught the transitivity and the interleaving bugs |
 | 9 | the cells: a captured local becomes one, and the enclosing function's reads and writes go through it | **done, 2026-08-16** — capture is by reference. A captured local lives in a `$cell$T` both sides hold; a captured *parameter* gets its cell at entry, bound to a same-named local that shadows it. Four sites in the enclosing function and three on the lambda's side (read, write, increment). `spec/cases/0191` and `0192` |
@@ -454,7 +454,7 @@ generated glue wraps the returned reference in a JavaScript closure calling an e
 A closure is the same pair with different bytes in the env, so it crosses on the path that is already
 there and already generated. **The bindgen is not a blocker for tier two.**
 
-One thing found on the way, and fixed: `cbTsType`'s doc comment in `compiler/wacBindgen.ts` said a
+One thing found on the way, and fixed: `cbTsType`'s doc comment in compiler/wacBindgen.ts said a
 returned funcref "stays unbindable — there is nothing to hand back", forty lines below the comment
 describing the shim that hands it back. Nothing tested either direction — the word "funcref" did not
 appear in `wacBindgen.test.ts` at all — which is how a sentence about a working feature survived. The

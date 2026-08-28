@@ -83,10 +83,10 @@ Opts a = Opts { name: "a" };              // title is null
 Opts c = Opts { title: "t" };             // refused — `name` is required
 ```
 
-*wacc only, as the omissions table in [compiler/README.md](../../compiler/README.md) records, and it
+*wacc only, as the omissions table in compiler/README.md records, and it
 is the first divergence in a rule that is not JSX. The tag says so: a `§wacc-` clause is one the seed
 does not implement, where a `§wac-` clause is the language both compilers answer for. That
-distinction is not decoration — `compiler/wacSpec.test.ts` harvests every `err(...)` program it holds
+distinction is not decoration — compiler/wacSpec.test.ts harvests every `err(...)` program it holds
 as "the spec calls this illegal", so a clause the spec makes **legal** in wacc cannot be asserted
 there at all.*
 

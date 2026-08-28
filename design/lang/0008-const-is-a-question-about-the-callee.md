@@ -299,7 +299,7 @@ says why: *"the one hole variables.md names — const lives on the variable, not
 non-const parameter accepts it and may write through it (issue 0052)"*. The spec **documents** this
 hole, and the corpus is where a compiler is held to it.
 
-That corpus is not wacc's. `compiler/wacCases.test.ts` asserts the *reference* meets every case, and
+That corpus is not wacc's. compiler/wacCases.test.ts asserts the *reference* meets every case, and
 says why in its header: "a case the reference fails is a case whose expectation is in doubt".
 
 **But it can be told not to ask — corrected 2026-08-14.** `spec/cases/cases.ts` carries

@@ -100,7 +100,7 @@ expect the same blindfold.
 
 ## Renumbered from 0174 — 2026-08-17
 
-Filed as 0174, and another agent used the same number for a different issue and closed it in the same window — `closed/0174-the-native-share-test-has-run-out-of-subjects...`, which is about the test this one mentions but is not this one. Two files claiming one number made the suite red for everybody, via `compiler/wacSpec.test.ts`'s uniqueness check, so this moved rather than theirs: renaming a closed issue breaks the references its closing commit made.
+Filed as 0174, and another agent used the same number for a different issue and closed it in the same window — `closed/0174-the-native-share-test-has-run-out-of-subjects...`, which is about the test this one mentions but is not this one. Two files claiming one number made the suite red for everybody, via compiler/wacSpec.test.ts's uniqueness check, so this moved rather than theirs: renaming a closed issue breaks the references its closing commit made.
 
 Anything citing "system 0174" from before this date and meaning the profiling lane means this file.
 

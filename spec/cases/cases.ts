@@ -1,6 +1,6 @@
 // Reading the case corpus. See README.md for the format.
 //
-// Deliberately not a test: `compiler/wacCases.test.ts` checks that every case states what it wants,
+// Deliberately not a test: compiler/wacCases.test.ts checks that every case states what it wants,
 // `packages/wacc/test/wac/cases_test.wac` runs the files against wacc, and neither should own the
 // parsing. A third consumer — a compiler nobody has written yet — should need only this file.
 //

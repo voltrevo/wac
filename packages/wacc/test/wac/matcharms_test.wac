@@ -3,7 +3,7 @@
 //     wac test --allow-read --allow-write --allow-run --allow-env \
 //       packages/wacc/test/wac/matcharms_test.wac
 //
-// `compiler/wacTypeCheck.ts`'s `checkMatchArms` has nine. wacc enforced seven; the two it did not were
+// compiler/wacTypeCheck.ts's `checkMatchArms` has nine. wacc enforced seven; the two it did not were
 // found by walking the table rather than by any differential, and both were worse than a missing
 // message:
 //

@@ -25,7 +25,7 @@
 // ## The wider run this was cut down from
 //
 // These cases are hand-written, and hand-written cases only cover what their author thought of. The
-// frontend was developed against a much larger oracle: `compiler/wapyPrint.ts` renders every `.wac`
+// frontend was developed against a much larger oracle: compiler/wapyPrint.ts renders every `.wac`
 // file git tracks into wapy, and both frontends read the pair back. That run needs Deno and a
 // scratch directory, so it is not in the suite; what is here is the set that was failing at the end,
 // one per cause, plus one per clause of `spec/spec/wapy.md` so the tags have a home.

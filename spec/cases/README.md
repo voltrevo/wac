@@ -49,7 +49,7 @@ It exists because the specification targets wacc as of
 [design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)
 — the reference is a subset kept to build the first `wacc.wasm`, so a feature it does not have is
 deliberate rather than a gap. Without the marker the first such case turns
-`compiler/wacCases.test.ts` red, and the fix somebody reaches for is an exception list nobody
+compiler/wacCases.test.ts red, and the fix somebody reaches for is an exception list nobody
 maintains.
 
 **Reach for it last.** A case marked this way has one witness, and one witness is how a wrong

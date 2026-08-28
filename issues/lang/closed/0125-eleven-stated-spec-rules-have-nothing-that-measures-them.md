@@ -10,7 +10,7 @@
 
 ## What
 
-`spec/spec/*.md` states rules in prose and pins them with `[§tag]`s, which `compiler/wacSpec.test.ts`
+`spec/spec/*.md` states rules in prose and pins them with `[§tag]`s, which compiler/wacSpec.test.ts
 executes. Eleven normative claims have **no tag within twelve lines**, so nothing runs them:
 
 | file:line | the claim |
@@ -59,7 +59,7 @@ Two ways to add them, and the choice matters:
 - **A `[§tag]` in `spec/spec`** runs against the reference, which honours all eleven. It also puts
   the case where a reader of the prose sees it, and it is counted by `site/src/next/Checked.tsx` —
   worth checking whether anything asserts the total before the number moves.
-- **A `spec/cases` entry** runs against both compilers via `compiler/wacCases.test.ts` and
+- **A `spec/cases` entry** runs against both compilers via compiler/wacCases.test.ts and
   `packages/wacc/test/cases.test.ts`, and can be `// only: wacc` where the reference is not to grow
   a rule. Nothing needs that here; all eleven are shared.
 

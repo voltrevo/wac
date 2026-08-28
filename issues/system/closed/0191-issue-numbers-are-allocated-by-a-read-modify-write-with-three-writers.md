@@ -33,7 +33,7 @@ what the letter means can, without reopening this.
 
 Filing an issue means reading the directory, taking the highest number, and adding one. Three
 agents do that concurrently against checkouts that are minutes apart, so two people who file
-within one pull of each other pick the same number. `compiler/wacSpec.test.ts` checks uniqueness,
+within one pull of each other pick the same number. compiler/wacSpec.test.ts checks uniqueness,
 so the result is not a cosmetic clash — it is **master red for everybody** until somebody notices
 and renumbers.
 
@@ -82,7 +82,7 @@ below, the sequence stays dense rather than gapped, a fourth agent needs no new 
 and nothing has to be pushed early. `0213a` above is the first one, filed exactly this way, against a
 collision that had already happened twice.
 
-**One place changed**, `compiler/wacSpec.test.ts`: the filename match, the heading match and the
+**One place changed**, compiler/wacSpec.test.ts: the filename match, the heading match and the
 `INDEX.md` row match were all `\d{4}`, and the duplicate check keys on that capture — so as written it
 would have called `0213` and `0213a` a collision, which is the opposite of the point. All three take
 `\d{4}[a-z]?` now and the key is the whole stem. Nothing else in the repository parses an issue

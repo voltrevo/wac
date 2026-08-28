@@ -66,7 +66,7 @@ a suite stopped to free a core, a hung run, `push.sh` hitting its own ceiling. N
 no amount of `finally` in the test would help — the test is not executing when it happens.
 
 Two of them really did remove after their assertions, and those are fixed here:
-`compiler/wacCompile.test.ts`'s `bindgenModule` and `packages/gzip/test/inflate.test.ts`'s FNAME
+compiler/wacCompile.test.ts's `bindgenModule` and `packages/gzip/test/inflate.test.ts`'s FNAME
 case, both now `try`/`finally`.
 
 ## Fixed here, part two: the sweep

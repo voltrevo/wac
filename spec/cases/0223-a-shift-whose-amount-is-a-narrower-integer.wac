@@ -2,7 +2,7 @@
 // why: **a shift's amount is not an operand**, so it does not have to match the value's width. Both
 //      compilers accept `b << a` for an `i64 b` and an `i32 a` and nothing pinned it, which makes it
 //      the case a tightening breaks rather than the case a tightening catches.
-//      `compiler/wacTypeCheck.ts` states the rule and why: *"It is never the thing being widened and
+//      compiler/wacTypeCheck.ts states the rule and why: *"It is never the thing being widened and
 //      has no lossy case — wasm masks it to the operand width regardless — so requiring a cast here
 //      would be asking for one that could not mean anything else"*. It also records what happened
 //      when the checker's list and the emitter's list disagreed: `u64 << i32` type-checked and then

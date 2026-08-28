@@ -6,7 +6,7 @@
 // says that block matches the lexer's set exactly — *"a test asserts that, because this block has
 // drifted from the implementation three times"*.
 //
-// That test was `compiler/wacSpec.test.ts`, and it compared the fence against the **reference's**
+// That test was compiler/wacSpec.test.ts, and it compared the fence against the **reference's**
 // `KEYWORDS`, a `Set<string>` it could read directly. The reference is gone and wacc does not have
 // a set to read: `keywordKind` in `packages/wacc/src/lex.wac` is a chain of packed-integer
 // comparisons — `if (v == p2('i', 'f')) { return kIf(); }` — deliberately allocation-free, with no

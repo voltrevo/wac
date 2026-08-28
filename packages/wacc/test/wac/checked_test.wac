@@ -1,6 +1,6 @@
 // `--checked`: add, subtract and multiply trap where the value does not fit.
 //
-// The contract is the spec suite's — `compiler/wacSpec.test.ts`, "checked arithmetic traps exactly
+// The contract is the spec suite's — compiler/wacSpec.test.ts, "checked arithmetic traps exactly
 // when the value does not fit" — and it has two halves that matter equally. With the flag on, an
 // operation that would wrap traps instead. With it **off**, nothing moves: the instrument must not
 // disturb what it is not measuring, which is asserted here by comparing builds over the whole corpus

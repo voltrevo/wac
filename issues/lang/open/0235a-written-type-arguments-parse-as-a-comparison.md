@@ -109,7 +109,7 @@ are made of programs that work.
 
 ### Incidental: the reference says "a enum"
 
-`'E' is a enum, not a variable` — `compiler/wacTypeCheck.ts`. One article, in a message a user reads;
+`'E' is a enum, not a variable` — compiler/wacTypeCheck.ts. One article, in a message a user reads;
 noted here rather than filed separately because it is a one-word fix in a file this issue already
 touches.
 
@@ -138,7 +138,7 @@ filed.
 
 ### Two things fixed on the way past
 
-- **`compiler/wacTypeCheck.ts` said "is a enum"**, because the article was hardcoded beside an
+- **compiler/wacTypeCheck.ts said "is a enum"**, because the article was hardcoded beside an
   interpolated kind. It picks `an` before a vowel now. The only test on that message asserts the
   `not a variable` tail, so the wording was free to fix.
 - **`nameExists` listed `string` and `bool` on top of `isPrimitiveName`**, which already covers both —

@@ -59,7 +59,7 @@ the message. **Put it back to blocking when this closes**; the comment in `push.
 ## What would fix it
 
 **Corrected within the hour of filing.** My first answer was "implement the five methods in the
-reference so both agree", and that is against the documented design. `compiler/README.md` says it
+reference so both agree", and that is against the documented design. compiler/README.md says it
 outright — *"Everything else — JSX first — lands in wacc alone"* — and carries a table whose whole
 purpose is to separate *"the reference disagrees"*, a defect, from *"the reference does not have
 that"*, deliberate. The bit methods are a row in that table, added by the same commit. So the

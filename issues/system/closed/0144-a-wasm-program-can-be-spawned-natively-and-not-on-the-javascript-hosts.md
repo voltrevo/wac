@@ -154,7 +154,7 @@ manifest has `$bind$arr_i32Arr`, `$bind$arr_u8ArrArr`, `$bind$arr_Mount` and
 ### The fill rule, measured rather than asserted
 
 Both files had a rule for when `$bind$arr_<suffix>_new` takes a fill, and both stated it as a fact
-about type names. The compiler's rule is `needsFill` in `compiler/wasmBuildBin.ts`: fill iff the
+about type names. The compiler's rule is `needsFill` in compiler/wasmBuildBin.ts: fill iff the
 element's value type is a **non-nullable** reference (`0x64`). An array of structs is declared
 nullable, so it is filled with null and every slot is set.
 

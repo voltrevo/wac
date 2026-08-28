@@ -109,7 +109,7 @@ string gutter(i32 n, i32 digits) {
   return t.len() >= digits ? t : repeat(" ", digits - t.len()) + t;
 }
 
-/** One diagnostic, laid out the way `compiler/wacDiag.ts` lays one out. */
+/** One diagnostic, laid out the way compiler/wacDiag.ts lays one out. */
 string renderOne(string line, string[] srcLines) {
   string file = field(line, 0);
   i32 lineNo = numOf(field(line, 1));

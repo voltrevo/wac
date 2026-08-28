@@ -10,7 +10,7 @@
 
 ## What
 
-`compiler/wacTypeCheck.ts` has a `warnAt` and three call sites. `packages/wacc/src/check.wac` has
+compiler/wacTypeCheck.ts has a `warnAt` and three call sites. `packages/wacc/src/check.wac` has
 neither — the word "warn" appears once, in a prose comment about something else. So wacc emits no
 warnings at all, and these three go unsaid:
 
@@ -114,7 +114,7 @@ There are three, and they wanted three different things.
 
 - **The wire** grew a `warn` phase. That field already carried `lex`/`parse`/`check` and nothing
   switches on it exhaustively, so it is additive.
-- **`waccx`** hardcoded `severity: "error"` when parsing the wire; `compiler/wacDiag.ts` has always
+- **`waccx`** hardcoded `severity: "error"` when parsing the wire; compiler/wacDiag.ts has always
   rendered `${e.severity ?? "error"}`, so one line made warnings print as warnings. Its pass/fail then
   had to stop being "was there output" and become "was there an error", or wacc's first warning would
   refuse a legal program.

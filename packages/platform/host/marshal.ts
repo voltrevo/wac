@@ -2,7 +2,7 @@
 //
 // `issues/system/0144`: the native hosts start a child from a `.wasm` alone, because a module carries
 // its own manifest and `native/v8/src/main.rs` reads it at run time. The JavaScript hosts cannot —
-// they start *worker bundles*, because the conversions live in the glue `compiler/wacBindgen.ts`
+// they start *worker bundles*, because the conversions live in the glue compiler/wacBindgen.ts
 // writes per program. So the same wac program spawns on one host and not on another, which is a
 // portability split rather than a missing convenience.
 //
@@ -27,7 +27,7 @@
 // An array's helpers are named from its *element*: `i32[]` gives `$bind$arr_i32_get`, `u8[][]` gives
 // `$bind$arr_u8Arr_get`, `Stat[]` gives `$bind$arr_Stat_get`. Get that spelling wrong and the export
 // does not resolve — and the failure is quiet, because a missing export reads as a missing feature.
-// `arrSuffix` below mirrors `arrBindSuffix` in `compiler/wasmBuildBin.ts`, and `marshal.test.ts`
+// `arrSuffix` below mirrors `arrBindSuffix` in compiler/wasmBuildBin.ts, and `marshal.test.ts`
 // checks the two agree against every module this repository builds rather than against a list.
 
 /** What a type string turns out to be, once. */
@@ -50,7 +50,7 @@ const SCALARS = new Set([
 ]);
 
 /**
- * A wasm-safe name for a type, matching `bindName` in `compiler/wasmBuildBin.ts`.
+ * A wasm-safe name for a type, matching `bindName` in compiler/wasmBuildBin.ts.
  *
  * Runs of anything that is not alphanumeric-or-underscore collapse to a single `$`, and the edges are
  * trimmed — so `Pending<i64>` is `Pending$i64` and `Map<u8[], i32>` is `Map$u8$i32` rather than
@@ -89,7 +89,7 @@ export function shapeOf(type: string): Shape {
   const t = type.trim();
   if (t.endsWith("?")) {
     const inner = shapeOf(t.slice(0, -1));
-    // A nullable element gives `_null` on the suffix — `compiler/wasmBuildBin.ts` again.
+    // A nullable element gives `_null` on the suffix — compiler/wasmBuildBin.ts again.
     return inner.kind === "array" ? { ...inner } : inner;
   }
   if (t === "void" || t === "") return { kind: "void" };
@@ -214,7 +214,7 @@ export function toWasm(b: Bound, shape: Shape, v: unknown): unknown {
       // A defaultable element — `i32`, `bool` — gets `_new(len)`: wasm's `array.new_default` fills
       // it and there is nothing to pass. A reference has no default, so those get `_new(len, fill)`
       // *and* a `_new0()` for the empty case, which has no first element to fill from. The compiler
-      // emits the pair together (`needsFill` in `compiler/wasmBuildBin.ts`), so the presence of
+      // emits the pair together (`needsFill` in compiler/wasmBuildBin.ts), so the presence of
       // `_new0` is the observable form of that decision.
       //
       // Passing a fill to the arity-1 form is silently accepted and ignored, which cost element
@@ -339,7 +339,7 @@ export type Struct = { name: string; bind: string; methods: Method[]; fields?: F
  *
  * **The export name is derived when the manifest does not give one**, which is the usual case:
  * `$bind$sm_<bind>_<name>` for a static method and `$bind$m_<bind>_<name>` for an instance one, from
- * `compiler/wacBindgen.ts`. The *bind* name, not the declared one — two modules may each declare an
+ * compiler/wacBindgen.ts. The *bind* name, not the declared one — two modules may each declare an
  * `S` and the core keeps them apart, which is the whole reason the manifest carries both.
  */
 export function structBridge(b: Bound, structs: Struct[]): {

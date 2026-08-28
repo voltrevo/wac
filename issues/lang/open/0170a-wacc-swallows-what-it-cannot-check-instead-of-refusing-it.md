@@ -761,7 +761,7 @@ Two things that came out of proving it, both worth more than the proof:
 The 2026-08-20 attempt tightened `typeOfE(Binary)` and calibrated against the reference in four rounds,
 each round finding a legal case the previous one refused, and round 4 collapsed self-hosting
 undiagnosably. The rounds were **discovering, one rebuild at a time, a rule that is written down**:
-`compiler/wacTypeCheck.ts`'s `checkBinaryOp`. Here it is, which is the calibration table the attempt
+compiler/wacTypeCheck.ts's `checkBinaryOp`. Here it is, which is the calibration table the attempt
 was reconstructing:
 
 | operator | left | right | result |

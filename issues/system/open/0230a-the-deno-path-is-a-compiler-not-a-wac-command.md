@@ -27,8 +27,8 @@ each, different spellings, different flags, different exit codes:
 | subcommand | the Deno-side thing that does it | how you invoke it |
 |---|---|---|
 | `build` | `packages/platform/native.ts` | `deno run … native.ts entry.wac -o stem` |
-| `check` | `tools/check.ts`, `harness/referenceCheck.ts` | `deno run -A tools/check.ts entry.wac` |
-| `run` | `harness/referenceRun.ts` | `deno run -A harness/referenceRun.ts entry.wac` |
+| `check` | `tools/check.ts`, harness/referenceCheck.ts | `deno run -A tools/check.ts entry.wac` |
+| `run` | harness/referenceRun.ts | `deno run -A harness/referenceRun.ts entry.wac` |
 | `test` | `harness/wacTestRun.ts` | not documented for an outsider |
 | `bindgen` | `tools/emitgen.ts` | `deno task bindgen entry.wac out.gen.ts` |
 | `update` | — | nothing |

@@ -113,7 +113,7 @@ i32 inc(i32 a) { return a + 1; }
  *
  * The clause names the sizes: *"round-trips byte arrays unchanged at 0, 1, 65535, 65536 and 65537 bytes
  * — the sizes either side of a wasm page — and a previously returned array is unaffected by a later
- * call"*. `compiler/wacCompile.test.ts` held **the reference** to it; a measurement of all 419 clauses
+ * call"*. compiler/wacCompile.test.ts held **the reference** to it; a measurement of all 419 clauses
  * on 2026-08-18 found this was one of twelve nothing held wacc to.
  *
  * The second half is the one that would fail quietly: bulk arrays cross through a staging buffer in the

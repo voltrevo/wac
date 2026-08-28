@@ -571,7 +571,7 @@ async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
   //
   // **And the list is what the emitter emits, which is narrower than what it first said here.** It
   // carried `BulkMemory`, `TailCall` and `Strings` as well, described as "what wac emits and nothing
-  // beyond it" — and none of the three is in `compiler/wacEmitFunc.ts`: there is no `return_call`, no
+  // beyond it" — and none of the three is in compiler/wacEmitFunc.ts: there is no `return_call`, no
   // stringref, and the only `0xFC` opcodes are `trunc_sat`, which is `NontrappingFPToInt`.
   // `docs/wasm-floor.md` states the floor a wac module requires, and enabling a feature here is
   // permission for the *optimiser* to reach past it — a rewrite that introduced one would raise the

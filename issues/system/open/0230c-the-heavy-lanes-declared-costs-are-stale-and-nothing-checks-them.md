@@ -71,7 +71,7 @@ decide what a push should pay for.
 ## Renumbered from 0229 to 0230c — 2026-08-21
 
 agent-a filed *"nineteen copies of one fixture helper"* as 0229 and pushed it while this was still
-local, so this is the one that moved. `compiler/wacSpec.test.ts` fails on two files claiming one
+local, so this is the one that moved. compiler/wacSpec.test.ts fails on two files claiming one
 number, which is how a collision is found — after the fact, in somebody's gate.
 
 **Hence the suffix, which is the convention the other agents were already using**: an issue filed by

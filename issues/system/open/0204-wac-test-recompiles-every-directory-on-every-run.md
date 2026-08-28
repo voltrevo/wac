@@ -456,7 +456,7 @@ how the test written to fail first failed for a better reason than the one inten
 now declines to key a command line the program has not accepted; the caller gets the ordinary error,
 one compile later.
 
-`fixpointemit_test.wac` was checked and is unaffected — it goes through `harness/referenceRun.ts`, not
+`fixpointemit_test.wac` was checked and is unaffected — it goes through harness/referenceRun.ts, not
 `wac build`.
 
 ## The saving it was built for, measured — agent-a, 2026-08-24

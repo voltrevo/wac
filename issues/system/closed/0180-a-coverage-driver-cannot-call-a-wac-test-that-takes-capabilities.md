@@ -79,7 +79,7 @@ from the lane side.
 
 Filed as 0179 while another agent filed a different 0179 — `feToBytes` carrying three times with two
 unobserved. Theirs reached the bare repo first, so this one moved; two files with one number fails the
-uniqueness check in `compiler/wacSpec.test.ts` and makes master red for everybody.
+uniqueness check in compiler/wacSpec.test.ts and makes master red for everybody.
 
 ## All twenty-one `coverage:*` tasks, measured — 2026-08-17, agent-b
 

@@ -92,7 +92,7 @@ wac test that takes capabilities. Theirs reached the bare repo first, so this mo
 0181 collided with another agent's `Cli.exec passes no environment`, and it moved again to 0182 — where the *same* agent's issue then landed too, because they were renumbering out of 0181 at the same moment I was. It is 0190 now, taken well clear of the next free number rather than adjacent to it.
 
 **Six collisions in one session**, counting `system/0174` and `lang/0147`. Each one fails
-`compiler/wacSpec.test.ts`'s uniqueness check, so two people filing within one pull of each other
+compiler/wacSpec.test.ts's uniqueness check, so two people filing within one pull of each other
 is master red for everybody until somebody notices and renumbers. `0191` is that pattern, filed separately —
 and it collided too, on its first number.
 

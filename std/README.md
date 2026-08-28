@@ -29,7 +29,7 @@ capabilities. D4's own list names neither.
 ## One file, and why the reference has none of it
 
 `platform.wac` uses lambdas. The reference compiler has none, so it does not carry this tree —
-`compiler/README.md` holds that row, the ninth of its omissions. wacc carries the tree in full.
+compiler/README.md holds that row, the ninth of its omissions. wacc carries the tree in full.
 
 This is the same mechanism as `core/jsx.wac`, which the reference also does not get: which compiler
 gets which file is expressed by which list it is in, in `tools/genCore.ts`, and both embeddings are

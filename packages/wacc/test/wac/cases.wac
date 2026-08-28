@@ -1,6 +1,6 @@
 // The case corpus, read from `spec/cases` — the third reader of one corpus, which the corpus asked for.
 //
-// `spec/cases/cases.ts` reads it for `compiler/wacCases.test.ts`, which holds the *reference* to these
+// `spec/cases/cases.ts` reads it for compiler/wacCases.test.ts, which holds the *reference* to these
 // files, and read it for this file's own predecessor — packages/wacc/test/cases.test.ts, unbackticked
 // because it is gone and `tools/wac/links_test.wac` reads a backticked path as a citation rather than as
 // a disavowal. The corpus's own header says why the cases are files rather than TypeScript: "two

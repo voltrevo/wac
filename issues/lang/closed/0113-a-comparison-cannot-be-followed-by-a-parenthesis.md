@@ -114,7 +114,7 @@ instantiation, nested, an array argument, a `fn[…]` argument, and a nullable g
 
 `design/lang/0003` keeps the reference for two reasons, one of which is a correctness fix big enough
 that leaving it wrong would mislead a reader using it as the second opinion. A grammar rule written
-in `spec/` that the seed cannot parse is that, and more concretely: `compiler/wacSpec.test.ts` runs
+in `spec/` that the seed cannot parse is that, and more concretely: compiler/wacSpec.test.ts runs
 the spec's tagged claims **through the reference**, so a rule the reference does not implement cannot
 be stated there at all.
 

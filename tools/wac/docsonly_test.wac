@@ -134,7 +134,6 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
   string[] known = string[](
     "packages/wacc/test/wac/specfences_test.wac",
     "tools/wac/docsignatures_test.wac",
-    "compiler/wacSpec.test.ts",
     "tools/docsOnly.wac",
     "tools/wac/docsonly_test.wac",
     // The three false friends: prose, not parsers.
@@ -145,7 +144,6 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
   string[] why = string[](
     "compiles every fence in spec/spec that checks clean",
     "matches export lines in packages/*/README.md",
-    "runs spec/**'s fences against the reference",
     "defines wacFences, the extractor this predicate is built on",
     "this file, which contains the search needle itself",
     "embeds std/ and core/'s doc comments as string literals, and parses nothing",

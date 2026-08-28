@@ -63,7 +63,7 @@ survives at all. Same file, the other host:
 === deno:    FAIL test_falls_over — trapped: unreachable
 ```
 
-`compiler/wacBindgen.ts`'s `TRAP_GUARD` already does the right thing for the harness — reads
+compiler/wacBindgen.ts's `TRAP_GUARD` already does the right thing for the harness — reads
 `$trap$message`, rethrows the original when it is null — so the reader exists and `Cli.call` is the
 one place that does not use it. Two files are named `trapmessage_test.wac`: the one under
 `packages/wacc` drives `wac test` through the native binary, and the one under `packages/platform`
@@ -106,7 +106,7 @@ first saying anything, which is the shape no existing test has.
 emitters, identically: `global.get`, then the null that replaces it, then `global.set`. No local —
 `global.get` leaves the message on the stack, the null pushed after it is what `global.set` consumes,
 and the message is still there to return. `packages/wacc/src/emit.wac`'s `emitTrapHelper` and
-`compiler/wasmBuildBin.ts`'s `$trap$message` helper, and the self-host fixpoint holds, which is the
+compiler/wasmBuildBin.ts's `$trap$message` helper, and the self-host fixpoint holds, which is the
 check that the two agree byte for byte.
 
 The reproduction is a test now, in the file that stated the rule and could not see it broken —

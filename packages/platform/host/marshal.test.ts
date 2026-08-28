@@ -2,7 +2,7 @@
 //
 // `marshal.ts` names wasm exports it never declared — `$bind$arr_u8Arr_get` and its family — and the
 // spelling is computed from a type string. If that computation drifts from `arrBindSuffix` in
-// `compiler/wasmBuildBin.ts` the export does not resolve, and the failure is quiet: a missing helper
+// compiler/wasmBuildBin.ts the export does not resolve, and the failure is quiet: a missing helper
 // reads as a missing feature. So the oracle here is **a real module**, not a list of expected names.
 // Every array type its manifest mentions must have helpers the module actually exports, and the test
 // discovers both sides rather than asserting either.

@@ -35,7 +35,7 @@ So it takes line and column as arguments *specifically* to serve an expression w
 And **all eleven of its call sites guard with `litKindOf`**, which knows only a direct literal and a
 sign in front of one. The compound case it was built for cannot reach it from anywhere.
 
-Measured, wacc against the reference (`compiler/wacCompile.ts`), direct form beside compound:
+Measured, wacc against the reference (compiler/wacCompile.ts), direct form beside compound:
 
 | slot | direct | compound |
 |---|---|---|

@@ -42,7 +42,7 @@ The unused `p` is the tell: nothing about the type reached the text it produced.
 **Both generators, because a test holds them to the same bytes.** `packages/wacc/src/bindgen.wac` is
 what the `wac` command runs and `waccBindgen.ts` is the TypeScript port;
 `test/wac/bindgenwac_test.wac` compares their output in `ts` *and* `js` mode, so fixing one alone
-would have turned this into a parity failure. `compiler/wacBindgen.ts` — the reference — has no
+would have turned this into a parity failure. compiler/wacBindgen.ts — the reference — has no
 JavaScript mode at all, so `a0: unknown` is correct there and it is untouched.
 
 ## The test gap, which the report also had right

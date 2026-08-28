@@ -58,7 +58,7 @@ Nine fields, one position. The reference's `DiagError` has something none of the
 contextStart?: number;
 ```
 
-It is set — `compiler/wacSpec.test.ts`'s test for this very clause asserts
+It is set — compiler/wacSpec.test.ts's test for this very clause asserts
 `eq(e.contextStart, 4, "contextStart points back to the compute( line, not left undefined")`, and the
 run above shows `contextStart: 12` for the equivalent program. `wacDiag` then loops
 `for (let ln = contextStart; ln < lineNum; ln++)` and prints them. wacc's renderer cannot, because

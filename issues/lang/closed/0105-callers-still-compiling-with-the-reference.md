@@ -113,7 +113,7 @@ Every remaining caller now has a reason rather than a queue position:
 | --- | --- |
 | `harness/ctTrace.ts` | **done, 2026-08-12** — wacc has trace mode now, and it found one thing the reference records that wacc did not: `and-rhs` |
 | `tools/fuzzBoundary.ts` | it fuzzes **the reference's** bindgen on purpose; pointing both sides at one generator leaves the marshalling with a single witness |
-| `packages/wacc/tools/specCases.ts` | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
+| packages/wacc/tools/specCases.ts | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
 | `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
 | `tools/coverage.ts` | **done, 2026-08-12** — wacc by default, `WAC_COV_FROM=reference` back; see below |
 | `tools/programs.test.ts` | **done** — it guards what a build does, so it has to ask the compiler a build uses |
@@ -272,7 +272,7 @@ Chromium, against the built site:
     page errors                              none
 
 **And that browser run is what found the thing worth recording: wapy.** `.wapy` is a second surface —
-indentation where wac has braces — and `compiler/wacFrontend.ts` dispatches on the extension. wacc has
+indentation where wac has braces — and compiler/wacFrontend.ts dispatches on the extension. wacc has
 no wapy front end, so the reference is not the *fallback* for those files, it is the only
 implementation. Two of the playground's examples are wapy.
 
@@ -292,7 +292,7 @@ Everything in the table above is now either done or deliberate:
 - **the ledgers** that were "waiting on ledgers nobody here should rewrite" closed under
   [0112](0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) —
   `coverage:all` is 19 of 19 under wacc, three runs running.
-- **`tools/fuzzBoundary.ts`, `packages/zstd/bench/corpus.ts`, `packages/wacc/tools/specCases.ts`**
+- **`tools/fuzzBoundary.ts`, `packages/zstd/bench/corpus.ts`, packages/wacc/tools/specCases.ts**
   keep the reference on purpose, each for a reason written beside it.
 - **the site** compiles with wacc and falls back for `.wapy`, which is not an exception to "the
   reference is for the bootstrap" but the other clause of it: the reference is the only

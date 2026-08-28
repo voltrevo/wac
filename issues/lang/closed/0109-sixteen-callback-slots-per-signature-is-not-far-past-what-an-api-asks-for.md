@@ -32,7 +32,7 @@ module")`, which is the same cap counted the same way.
 
 **Two places, and they have to agree.**
 
-- `compiler/wasmBuildBin.ts`: `const CALLBACK_SLOTS = 16`, whose comment is the thing this issue is
+- compiler/wasmBuildBin.ts: `const CALLBACK_SLOTS = 16`, whose comment is the thing this issue is
   named after — *"Sixteen per signature is far past what a callback-taking API asks for, and the host
   is told plainly when it runs out rather than silently reusing a slot."* The second half is exactly
   right and is why this is a clean error rather than a corruption.
@@ -112,7 +112,7 @@ told to enable the comparison rather than having to remember.
 
 The issue asked for exactly this measurement — *"if the answer is a few kilobytes on a 300 KiB floor,
 raising it is obvious"* — so here it is. Every copy of the number moved together: `CALLBACK_SLOTS` in
-`compiler/wasmBuildBin.ts`, `callbackSlots()` in `packages/wacc/src/emit.wac`, the `slot >= 16` guard
+compiler/wasmBuildBin.ts, `callbackSlots()` in `packages/wacc/src/emit.wac`, the `slot >= 16` guard
 and its message in **both** bindgens, and the `slots: 16` the manifest and the site's shim carry.
 Six places, which is itself part of the answer.
 

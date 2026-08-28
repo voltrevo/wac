@@ -67,7 +67,7 @@ validated, and the failure arrived as `(0, 0)` reaching the host dispatcher.
 
 `gzip`, `stream` and `zstd` pass their own suites on wacc-emitted code now; `fs` moved on to the one
 remaining name, a static on a generic instance. `spec/cases/0048` needed its runner taught to supply
-the imports a module declares, which is what `compiler/wacInstance.ts` already does for the
+the imports a module declares, which is what compiler/wacInstance.ts already does for the
 reference — and its `why` line corrected: the call needs no host involvement, but the module still
 declares the dispatcher a host *could* hand one in through.
 

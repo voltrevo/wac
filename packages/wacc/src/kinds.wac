@@ -1,7 +1,7 @@
 // Token kinds, as integers.
 //
 // The numbering is the declaration order of `TokenKind` in the reference lexer's
-// union (`compiler/wacLex.ts`). The test harness derives the same order from
+// union (compiler/wacLex.ts). The test harness derives the same order from
 // that file at run time rather than hardcoding it, so a change to the union fails the
 // differential test loudly instead of silently comparing the wrong names — which is
 // exactly what happened when `enum` and `match` were added to the language and every
@@ -31,7 +31,7 @@
 // caller and both should stay: `kBool` because a boolean literal lexes as the keyword `true` or `false`
 // and never as a `bool` token, and `kindCount` because it states how many kinds there are — the
 // reference's 84 plus wac's own. Deleting either would renumber every kind after it and silently
-// misalign the differential test that derives these names from `compiler/wacLex.ts` at run time.
+// misalign the differential test that derives these names from compiler/wacLex.ts at run time.
 
 
 /** `int` */

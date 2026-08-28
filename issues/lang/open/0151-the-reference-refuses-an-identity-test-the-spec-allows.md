@@ -37,7 +37,7 @@ It came out of `mutateCheck.test.ts`'s missed list, where the reference is the o
 program the spec calls legal. That is the one direction a subset checker may not be wrong in, so the
 recall number carries a permanent 1 that a reader will keep trying to fix.
 
-The fix is in `compiler/wacTypeCheck.ts` and it is one question — is there a *variable* of that name in
+The fix is in compiler/wacTypeCheck.ts and it is one question — is there a *variable* of that name in
 scope — asked before the type lookup fails. What makes it worth an issue rather than a patch is what
 else moves with it:
 
@@ -64,7 +64,7 @@ this reproduction uses.
 So this stays filed as a record of *why the sweep's last row cannot close*, and not as work. The
 reference refusing a program the spec allows costs nothing: it only has to compile wacc's own sources,
 and it does. Anyone reading `mutateCheck`'s missed list and wondering why one row never goes away should
-read this and move on rather than editing `compiler/wacTypeCheck.ts`.
+read this and move on rather than editing compiler/wacTypeCheck.ts.
 
 The general form is worth writing down beside it: the 993 broken programs are useful because they are
 *broken*, and the reference is a cheap oracle for which mutations broke something. A disagreement about a

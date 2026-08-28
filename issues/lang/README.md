@@ -75,7 +75,7 @@ paragraph exists.
 
 Closing one means, at minimum:
 
-- a test in `compiler/wacSpec.test.ts` named after the spec tag it covers,
+- a test in compiler/wacSpec.test.ts named after the spec tag it covers,
 - the tag documented in `spec/spec/*.md` — behaviour that is not written down is not
   a language feature,
 - the test verified to fail without the fix. Reverting the fix and watching the test

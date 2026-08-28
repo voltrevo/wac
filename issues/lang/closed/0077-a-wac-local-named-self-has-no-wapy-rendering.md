@@ -50,7 +50,7 @@ That takes the suite green and leaves this open: the next `self` will do the sam
 ## It reached the shared suite — 2026-08-16, agent-b
 
 `packages/wacc/src/api.wac` gained a private helper with a parameter named `self` (`1727af93`), and
-`compiler/wapyRoundTrip.test.ts` went red on it for the whole repository: *"api.wac (as wapy) did not
+compiler/wapyRoundTrip.test.ts went red on it for the whole repository: *"api.wac (as wapy) did not
 parse: a parameter is written `name: Type`"*. The position it names is in the **generated** wapy, not
 in the source, which is what made it slow to place — the source line it points at is 60 characters
 long.
@@ -66,7 +66,7 @@ was not the rename.
 
 Still open as a language decision; the interim the note above asks for is done.
 
-`compiler/wapyRoundTrip.test.ts` now shows the offending line of the *rendering* with a caret, and
+compiler/wapyRoundTrip.test.ts now shows the offending line of the *rendering* with a caret, and
 names any wapy keyword appearing on it:
 
 ```
@@ -90,7 +90,7 @@ lands and `self` starts round-tripping.
 
 ## 2026-08-21: the reproduction is gone from the tree — agent-a
 
-`compiler/wapyRoundTrip.test.ts` passes, 21 of 21, and the file this was found in no longer triggers it:
+compiler/wapyRoundTrip.test.ts passes, 21 of 21, and the file this was found in no longer triggers it:
 `packages/fs/src/image.wac` mentions `self` three times and **all three are comments or a string**
 (`/proc/self/cmdline`). Nothing under `packages/` declares a local called `self` any more — the
 declaration that produced `self: i32 = fs.nodes.len() - 1` in the rendering is gone.
@@ -130,10 +130,10 @@ Looking Pythonic is not worth a constraint on the canonical surface, which is wh
 **Found while fixing it:** the correspondence table said wac's receiver is `P self`. There is no such
 form — wac declares a receiver `this` or `const this` (`spec/tour.wac:425`), and a first parameter
 written `P self` is an ordinary parameter, so `p.get()` on it is *no such method*. The row had been
-giving the wapy spelling in both columns. `compiler/wapySpec.test.ts` carried the same mistake in a
+giving the wapy spelling in both columns. compiler/wapySpec.test.ts carried the same mistake in a
 fixture named *"a method with a receiver"* whose wac input had none — which is why nothing caught it.
 Both fixed here.
 
-**Canary.** `compiler/wapyRoundTrip.test.ts` held a test asserting this bug, ending *"if 0077 is
+**Canary.** compiler/wapyRoundTrip.test.ts held a test asserting this bug, ending *"if 0077 is
 fixed, delete this test"*. It is inverted rather than deleted: the same program now has to round-trip,
 so reserving `self` again on either surface goes red on the exact case that used to fail.

@@ -110,14 +110,14 @@ implementation.
 `packages/wacc/README.md`: *"The spec is the contract; the reference is a guide… where the two disagree
 the spec decides, and the reference has been the one in the wrong before"* (`issues/lang/0085`). So
 rung 3 does not block wacc from refusing what the reference accepts — but a spec example carrying
-`// error:` is held to being an error **against the reference** by `compiler/wacSpec.test.ts`. Writing
+`// error:` is held to being an error **against the reference** by compiler/wacSpec.test.ts. Writing
 the rule down properly therefore moves both, and not for parity: because the spec is the contract and
 the reference is tested against it.
 
 ### The rule is partial, and `issues/lang/0269a` is why
 
 Found while looking for how a case value becomes a constant: **it does not have to be one.** Both
-compilers accept `case k:` where `k` is a parameter, and it works — `compiler/wacEmitFunc.ts`'s
+compilers accept `case k:` where `k` is a parameter, and it works — compiler/wacEmitFunc.ts's
 `emitSwitch` is an if-else chain and says *"br_table optimization can come later"*, so the case
 expression is emitted and compared at run time.
 

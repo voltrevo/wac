@@ -17,7 +17,7 @@ i32 g(bool x, bool y) { return x && y ? 1 : 0; }
 export i32 f() { i32 a = 1; i32 b = 2; i32 c = 4; i32 e = 3; return g((a < b), c > e); }
 ```
 
-`compiler/wapyPrint.ts` renders the last line as
+compiler/wapyPrint.ts renders the last line as
 
 ```
     return g(a < b, c > e)
@@ -37,12 +37,12 @@ wapy: (construct (named g ()) ((null)) ())
 
 ## Why nothing caught it
 
-`compiler/wapyRoundTrip.test.ts` renders with this printer and reads back with
-`compiler/wapyParse.ts`, and **the reference does not implement the rule** — the case says
+compiler/wapyRoundTrip.test.ts renders with this printer and reads back with
+compiler/wapyParse.ts, and **the reference does not implement the rule** — the case says
 `only: wacc`. So both of its sides read `g(a < b, c > e)` the same way and the round trip is exact.
 The pair agrees; neither agrees with the language.
 
-That is the shape `compiler/wapyParse.ts`'s own header warns about — *"a round-trip test cannot
+That is the shape compiler/wapyParse.ts's own header warns about — *"a round-trip test cannot
 notice, because it only ever feeds the reader output from the printer"* — arriving through the other
 door: not an invented spelling, but a rule the reader does not have.
 

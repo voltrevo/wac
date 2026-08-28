@@ -88,7 +88,7 @@ is keyed by, so an exported signature now says `S__a` and `S__b` and a lookup ca
 wrong struct (part 2). A display name that two of them share falls back to the unique `bind` name
 for **both**, so the glue declares `S__a` and `S__b` rather than `S` twice (part 1).
 
-`compiler/wacBindgen.test.ts` runs the generated glue for that program and checks each function
+compiler/wacBindgen.test.ts runs the generated glue for that program and checks each function
 comes back as the class for *its* struct — `a()` has no `z`, `b()` has no `x` — which is the wrong
 answer this pair exists to rule out.
 
@@ -155,7 +155,7 @@ Where the three parts landed:
 
 Both compilers emit byte-identical bind names for the same input, and both generate glue that
 imports, calls, and comes back with each function bound to *its* struct's class — checked by
-`compiler/wacBindgen.test.ts` and `packages/wacc/test/bindgen.test.ts`, which run what they generate.
+compiler/wacBindgen.test.ts and `packages/wacc/test/bindgen.test.ts`, which run what they generate.
 
 The path-dependence noted above is unchanged and shared: the tag comes from the path as given, so the
 same sources compiled through an absolute path spell it differently from a relative one. The two

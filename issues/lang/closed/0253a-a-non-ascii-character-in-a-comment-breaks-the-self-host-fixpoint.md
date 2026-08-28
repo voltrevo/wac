@@ -100,7 +100,7 @@ generation are worth the next experiment:
 
 If a chunk boundary lands inside a multi-byte sequence, the driver is **invalid UTF-8**: one literal
 ends with a lead byte and the next begins with a continuation. wacc reads bytes and concatenates to the
-right answer; anything that reads the file as UTF-8 *text* cannot, and `harness/referenceRun.ts` is what
+right answer; anything that reads the file as UTF-8 *text* cannot, and harness/referenceRun.ts is what
 compiles the driver for stage A.
 
 **The experiment that would settle it**, and it needs no reseed: run rung 5 once so the driver is
@@ -258,7 +258,7 @@ mechanism whose firing depends on file lengths that change with every commit.
 
 A boundary inside a multi-byte character leaves one literal ending on a lead byte and the next
 beginning on a continuation. wacc reads bytes and concatenates back to the original. The reference
-compiles the driver through `harness/referenceRun.ts`, which decodes it as UTF-8 text, and each stray
+compiles the driver through harness/referenceRun.ts, which decodes it as UTF-8 text, and each stray
 byte comes back as U+FFFD — so **three bytes become nine and the embedded text is six longer**. That
 six is the whole bug, and it is the number both tests report:
 

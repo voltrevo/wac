@@ -3,16 +3,16 @@
 // `specsingle_test.wac` holds this checker to the programs a single file states.
 // They cannot reach the rules that are *about* files — export visibility, re-export, cross-file type
 // identity and type-name scope — because none of those can be written down in one file. Those programs
-// sit in `compiler/wacSpec.test.ts` as `Map`s, and nothing looked at them until the corpus started
+// sit in compiler/wacSpec.test.ts as `Map`s, and nothing looked at them until the corpus started
 // being recorded rather than read.
 //
 // Host-side until 2026-08-19, `issues/system/0161`. The corpus is `specCases.json`, written by
-// `packages/wacc/tools/specCases.ts`; the checker is `packages/wacc/src/api.wac`, imported directly
+// packages/wacc/tools/specCases.ts; the checker is `packages/wacc/src/api.wac`, imported directly
 // rather than reached through `wacBind`, which is the shorter route and the one a wac program takes.
 //
 // ## It was a recording, and it is the record now
 //
-// The corpus was a *recording* of what `compiler/wacSpec.test.ts` stated, taken by running that
+// The corpus was a *recording* of what compiler/wacSpec.test.ts stated, taken by running that
 // suite against a shim rather than by reading it — four attempts to lift the programs out by
 // reading disagreed with each other, because the file is 9,000 lines of TypeScript carrying wac
 // inside template literals. A digest of the source was stored with it and checked before anything

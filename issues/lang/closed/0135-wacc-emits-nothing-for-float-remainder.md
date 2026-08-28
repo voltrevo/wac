@@ -35,7 +35,7 @@ for `i64` — which is why this is float-only and why it reads as an omission ra
 ## Why it was not caught
 
 Nothing runs `spec/tour.wac`'s `selfTest()` under wacc. The reference does, in
-`compiler/wacSpec.test.ts`, and the tour tests this exact function — `rem(-7.0, 2.0) -> -1.0` is on the
+compiler/wacSpec.test.ts, and the tour tests this exact function — `rem(-7.0, 2.0) -> -1.0` is on the
 line below its definition. The tour is in wacc's corpus for *checking* and *emitting*, so wacc compiles
 it into a module that validates and computes the wrong answer, and no test asks what it computes.
 
@@ -56,7 +56,7 @@ the exact algorithm the reference uses rather than an approximation.
 
 ### The algorithm exists, in the reference, and it is not small
 
-`makeFmod()` in `compiler/wasmBuildBin.ts` is it: raw wasm bytes implementing binary restoring
+`makeFmod()` in compiler/wasmBuildBin.ts is it: raw wasm bytes implementing binary restoring
 division — NaN in NaN out first so no comparison sees one, `fmod(±inf, y)` and `fmod(x, 0)` as NaN,
 `fmod(x, ±inf)` and `|x| < |y|` returning **x** rather than `|x|` so `-0.0` and a negative `x` survive,
 then a scale-up loop and a subtract-and-halve loop. `makeFmodF` is `f32` calling into it.

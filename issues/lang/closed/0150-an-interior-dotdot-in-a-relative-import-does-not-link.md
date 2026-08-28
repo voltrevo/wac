@@ -106,7 +106,7 @@ Canaried by putting the old body back: 4 of the 6 spellings stop linking and 2 o
 The seed lost 38 bytes and is still a fixed point, which is the duplicate going away.
 `packages/wacc` is 229 passed, the harness 487.
 
-**Five copies remain** — `compiler/wacResolve.ts`, `harness/wacFiles.ts`, `compiler/wacx.ts`,
+**Five copies remain** — compiler/wacResolve.ts, `harness/wacFiles.ts`, compiler/wacx.ts,
 `packages/wacc/test/corpus.ts` and `site/src/editor/file-store.ts`. None is reachably wrong today
 and each is across a language or subtree boundary, so they are not this fix. They are
 `design/lang/0009`'s problem: that note needs one rule before D6, D7 and D9 give it a manifest

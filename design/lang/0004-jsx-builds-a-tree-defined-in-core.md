@@ -16,7 +16,7 @@ with stated omissions, and this is the first entry in that table.
 
 ## Why the tree belongs in `core`, against a test written to keep things out
 
-`core`'s admission test is deliberately narrow, and `compiler/wacCore.ts` states it: *does a value of
+`core`'s admission test is deliberately narrow, and compiler/wacCore.ts states it: *does a value of
 this type have to cross a repository boundary through a funcref signature? If not, it is a library
 and belongs in a package.* Today only `Read` passes.
 
@@ -117,7 +117,7 @@ Node.Element(
 
 ## How it lands
 
-1. `core` gains the two declarations, in wacc only, with `compiler/README.md` recording the omission.
+1. `core` gains the two declarations, in wacc only, with compiler/README.md recording the omission.
 2. The lexer learns JSX's two modes. **Not needed for the first slice, and needed for the second.**
    What follows is what the first slice found; `issues/lang/0108` is what it cost, and the modes
    landed on 2026-08-12 — three of them, since a tag's attributes are still wac. The parser

@@ -127,7 +127,7 @@ position no construct has, and a `case` point in a file with no `match` is the r
 
 ## Renumbered from 0147 — 2026-08-17
 
-Filed as 0147 while another agent filed a different 0147 — a trap message discarded by wacc and unread by every host. Two files with one number fails the uniqueness check in `compiler/wacSpec.test.ts` and makes master red for everybody. Theirs reached the bare repo first, so this one moved.
+Filed as 0147 while another agent filed a different 0147 — a trap message discarded by wacc and unread by every host. Two files with one number fails the uniqueness check in compiler/wacSpec.test.ts and makes master red for everybody. Theirs reached the bare repo first, so this one moved.
 
 ## Fixed, 2026-08-17 — and the same shape twice more
 

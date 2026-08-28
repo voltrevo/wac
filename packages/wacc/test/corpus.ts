@@ -153,7 +153,7 @@ export async function loadCorpus(caller: string): Promise<Entry[]> {
  * and this one, which is why the figure above is about a set that no longer exists. Between the two
  * that were left: 4232 of 4232 real specifiers agree, and 26 of 27 hand-written spellings. The one
  * was a `..` climbing above an absolute root, and it was the compiler that was wrong. There is now
- * one TypeScript body — `compiler/wacResolve.ts` — and `harness/wacFiles.ts` calls it.
+ * one TypeScript body — compiler/wacResolve.ts — and `harness/wacFiles.ts` calls it.
  */
 export const resolveImportPath = resolveFrom;
 

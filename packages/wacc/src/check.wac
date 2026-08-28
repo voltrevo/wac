@@ -7115,7 +7115,7 @@ bool isPlainName(Expr e) {
 /**
  * Whether a name is one of the builtins the language gives every array, or every string.
  *
- * **Read off `compiler/wacTypeCheck.ts` rather than guessed at**, which is the whole reason this rule
+ * **Read off compiler/wacTypeCheck.ts rather than guessed at**, which is the whole reason this rule
  * can exist: an earlier version of this checker declined to report a missing method on either,
  * saying the surface was larger than `len` and had not been measured. It is four names and three
  * names, and both lists are closed — so the measurement was one grep, and the comment outlived it.

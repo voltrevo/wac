@@ -61,5 +61,5 @@ name every field once`) now allows *none* for a nullable field while still refus
 - **Not positional.** `Opts("a")` is still an arity error: the positional form has no names, so an
   omission there is indistinguishable from a mistake.
 - **Not the reference's rule.** This is the first divergence in a rule that is not JSX — the spec
-  targets wacc (`design/lang/0003`) and `compiler/README.md` records it, so a program using it is a
+  targets wacc (`design/lang/0003`) and compiler/README.md records it, so a program using it is a
   program the seed cannot build.

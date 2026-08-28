@@ -19,7 +19,7 @@
 export string lexMessage(i32 code) {
   if (code == 1) { return "unexpected character"; }
   // **"literal", because three other places say so.** `spec/spec/errors.md`'s
-  // `§wac-diag-lex-unterm-str-m9fk2wq` block shows `unterminated string literal`, `compiler/wacLex.ts`
+  // `§wac-diag-lex-unterm-str-m9fk2wq` block shows `unterminated string literal`, compiler/wacLex.ts
   // pushes that string, and `packages/wacc/test/specCases.json` records it as the case's expected
   // message. This said "unterminated string" until 2026-08-18 and nothing caught it: the differentials
   // compare lex and parse errors by *position*, not by text.

@@ -481,7 +481,7 @@ for attempt in 1 2 3; do
   # compile, so editing one is editing code and the ratchets run.
   #
   # It skips **this check and nothing else**. The suite has already run by the time we get here, and it
-  # must: a pure prose edit routinely breaks it on purpose, because `compiler/wacSpec.test.ts` asserts
+  # must: a pure prose edit routinely breaks it on purpose, because compiler/wacSpec.test.ts asserts
   # `N issues, M closed.` against the files in `issues/*/`. Skipping the suite on this predicate would
   # be wrong; skipping a branch-coverage measurement of code nobody touched is not.
   if "$WAC" run --allow-read --allow-run tools/docsOnly.wac -- origin/master "$tested" 2>&1; then

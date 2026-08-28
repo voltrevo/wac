@@ -58,7 +58,7 @@ each carries its own `wac.json5` — as metadata and as the anchor for its inter
 resolution they go through the ordinary checking and compilation pipeline.
 
 This retires the duplication: `core` is a string literal in **two** places today,
-`compiler/wacCore.ts` and `packages/wacc/src/emit.wac`, and every addition has to be made twice.
+compiler/wacCore.ts and `packages/wacc/src/emit.wac`, and every addition has to be made twice.
 
 **D4 — `core` is the pure part, `std` is the capability part.** `core` holds `Read`, the JSX types
 `Attr` and `Node`, and the whole of today's `packages/std` — `Option`, `Result`, `Vec`, `Map`,
@@ -208,7 +208,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | step | state |
 | --- | --- |
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
-| 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `wac task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
+| 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `wac task gen:core` writes compiler/wacCore.ts and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | **done** (2026-08-19). `core/` holds `read.wac`, `jsx.wac` and the five collections; `std/` holds `platform.wac`, embedded in wacc and refused by name in the reference, which has no lambdas. The sweep was 515 edges across 512 files. **+107,419 bytes of seed for 105,318 of source — 1.02x, against the 384 KB this was costed at** before `issues/lang/0162` made a string literal a data segment. `frame.wac` and `stream.wac` stay packages: both import `packages/bytes`, and a built-in cannot import a package. |
 | 4. quoted specifiers (D5) | **done** (2026-08-19). Every specifier is a quoted path, `core` included: both compilers accept `"core"` and `"core/option.wac"`, the 54 files using the bare form were swept, and the bare form is now an error — `core` gets its own message telling you to quote it, anything else is `unknown module`. `§wac-core-unquoted-3nqk7vd` states the removal and `§wac-core-one-key-5jm2qhx` keeps the property the old clause was really about: however the root is reached it is one module, which nominal types make load-bearing. `spec/spec/grammar.md`'s `source` is `STRING` now. wapy is untouched — a Python-shaped `from X import` names its module bare whatever X is, so the two surfaces still agree about the module and differ only in syntax each already had. |
 | 5. `wac.json5` and `@/` (D6, D7) | **`@/` works, in both compilers** (2026-08-19), with `§wac-import-project-4hq7mnv` and a differential that compiles every fixture with each of them. The upward search for `wac.json5` lives with whichever caller already reads files — `harness/wacFiles.ts` and `gather` — and finds a manifest without reading one, so the JSON parser stays out of the compiler's graph. What is left of D6 is the manifest's *contents*: mappings are D9-D11. The shape was decided first — see *How `@/` gets its root* below. The consolidation this step was waiting on is done: two resolver bodies, one per language, and the change was additive rather than a 22-signature sweep because the hundred-plus call sites have no root to give. **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
@@ -233,10 +233,10 @@ been. An ordering argument over the steps of a design cannot see that; only meas
 
 Measured before starting it, and worth knowing before anybody else does.
 
-**The two embeddings are not the same text, and should not be.** `compiler/wacCore.ts` holds `Read`
+**The two embeddings are not the same text, and should not be.** compiler/wacCore.ts holds `Read`
 and nothing else — 1077 characters, most of it the argument for `core` existing. `coreSource()` in
 `packages/wacc/src/emit.wac` holds `Read` **plus `Attr` and `Node`**, 239 characters with the
-comments deliberately left out. That is not drift: it is the row `compiler/README.md` already
+comments deliberately left out. That is not drift: it is the row compiler/README.md already
 carries — *"`Node` and `Attr` in `core` | no | yes"* — because JSX lands in wacc alone.
 
 So a guard asserting the two agree would be wrong, and a generator writing one text into both would
@@ -250,7 +250,7 @@ and de-duplication means *generating* both from one tree, with the omission expr
 rather than by two people maintaining two files.
 
 That makes step 2 larger than it reads and couples it to how omissions are represented, which is
-`compiler/README.md`'s table today. Worth settling that before writing the generator, because the
+compiler/README.md's table today. Worth settling that before writing the generator, because the
 generator is where the answer gets encoded.
 
 *(2026-08-18: **every addition to `SIBLINGS` needs `seed:bootstrap`, not `seed`.** The seed carries
@@ -313,7 +313,7 @@ Read before starting it, the way step 2's section was.
 `wacCompile.ts` — `wantsCore` looks for an import whose prefix is `CORE.key`, parses `CORE.source`
 under that key and adds it to the program map. wacc does the same with the key `" core"`, in
 `emit.wac`'s `linkFiles` and `api.wac`'s `corePath()`. Everything else is the filesystem, reached by
-path arithmetic in `compiler/wacResolve.ts` and `packages/wacc/src/files.wac`, with the *caller*
+path arithmetic in compiler/wacResolve.ts and `packages/wacc/src/files.wac`, with the *caller*
 (`wacc.wac`'s `gather`) doing the reading.
 
 So there is **no seam where a specifier becomes a source**. There is a special case for `core` and a
@@ -448,7 +448,7 @@ names neither file, so the design was already right and the reasoning here was w
 
 **And the reference does not carry the tree at all.** `platform.wac` uses lambdas; the reference has
 none, so parsing it gives 19 errors cascading from one `(i32 id) => …`. That is the ninth omission in
-`compiler/README.md`, and the reference refuses `std/platform.wac` by name with the reason rather
+compiler/README.md, and the reference refuses `std/platform.wac` by name with the reason rather
 than reporting an unknown module. Worth saying plainly because it is a real narrowing of the shared
 subset rather than a detail: **the playground cannot compile a program that uses a capability.** It
 could not before this either — it had no filesystem to give one — so the move records the limit where
@@ -467,7 +467,7 @@ a reader will meet it instead of moving it.
 | `vec.wac` | 64 | the one that makes this a sweep |
 
 So `option` + `result` are the pair to move first — eight files touched including the four
-`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and that package's `cov.ts`
+`packages/std/test/wac/*_test.wac` that name them, compiler/wapyPrint.ts and that package's `cov.ts`
 — and they exercise the interesting case on the way: `result.wac` imports `./option.wac`, so a
 sibling resolving a sibling inside the tree is proved by the first move rather than the last.
 
@@ -556,7 +556,7 @@ thing to write down:
 That copy is gone: `packages/wacc/src/path.wac` holds the rule, imports nothing, and both
 `files.wac` and `emit.wac` use it (`issues/lang/0150`, where the two disagreed about
 `./sub/../lib.wac` and a valid program read and then failed to link). Four remain —
-`compiler/wacResolve.ts`, `harness/wacFiles.ts`, the reference CLI's and
+compiler/wacResolve.ts, `harness/wacFiles.ts`, the reference CLI's and
 `site/src/editor/file-store.ts`. *(2026-08-18: three, and the count in the measurement below with
 it — the reference CLI was retired. The pairs it contributed are gone from
 the total rather than newly disagreeing.)* `packages/wacc/test/corpus.ts` now
@@ -573,7 +573,7 @@ either time.
 > `packages/wacc/test/corpus.ts`'s, which became the harness's — so the figures above and the
 > "8 of 24, 9 of 16" below are about a population that no longer exists. Between the two that were
 > left: **4232 of 4232 real specifiers agree, and 26 of 27 hand-written spellings.** The one
-> disagreement was `..` climbing above an absolute root, where `compiler/wacResolve.ts` dropped the
+> disagreement was `..` climbing above an absolute root, where compiler/wacResolve.ts dropped the
 > leading slash and returned a *relative* key — which a relative import can also produce, so two
 > specifiers named one module. That is D8's failure at the smallest possible scale, and it
 > compiled: an entry keyed `/home/wac/main.wac` importing four levels up was handed a file keyed
@@ -586,11 +586,11 @@ either time.
 > written — a manifest lookup and a provider table still have to land in both, and the argument
 > below is about those. The useful thing the exercise proved is that the section was right for a
 > reason it did not state: the copies did not agree, and no test noticed, for as long as nobody
-> asked. Over hand-written edge cases, 8 of 24 and 9 of 16. One of those crosses the oracle relationship and is worth naming for whoever consolidates: for `/a/c.wac` importing `../../d.wac`, wacc answers `/../d.wac` and `compiler/wacResolve.ts` answers `d.wac`, because its `..` can pop the root marker. POSIX says `/..` is `/`, so the answer is arguably `/d.wac` and **both** are wrong — which makes it a decision rather than a fix, and an unreachable one until an absolute entry path climbs above its root. That is the shape of this whole
+> asked. Over hand-written edge cases, 8 of 24 and 9 of 16. One of those crosses the oracle relationship and is worth naming for whoever consolidates: for `/a/c.wac` importing `../../d.wac`, wacc answers `/../d.wac` and compiler/wacResolve.ts answers `d.wac`, because its `..` can pop the root marker. POSIX says `/..` is `/`, so the answer is arguably `/d.wac` and **both** are wrong — which makes it a decision rather than a fix, and an unreachable one until an absolute entry path climbs above its root. That is the shape of this whole
 problem: they agree on everything anybody writes today, and the moment the rule grows a
 manifest lookup they will not, and no existing test will notice. The original wording of this paragraph follows, because the shape it describes
 is unchanged even though one copy is: Beyond
-`packages/wacc/src/files.wac`'s `resolveFrom` and `compiler/wacResolve.ts`'s `importKey`, there is
+`packages/wacc/src/files.wac`'s `resolveFrom` and compiler/wacResolve.ts's `importKey`, there is
 `resolveImport(from, rel)` in `packages/wacc/src/emit.wac`, called from `linkFiles` — and that is
 the copy that decides which supplied file an import edge points at. `gather` resolving `@/` gets
 the file *read*; the linker then resolves the same specifier again, from a function that has no
@@ -617,7 +617,7 @@ a flag: it reads as a broken import in a program that is correct.
 
 **The recommendation above is discharged: the resolvers are consolidated.** `packages/wacc/src/path.wac`
 has been the single wac-side rule since 2026-08-18, and as of 2026-08-19 `harness/wacFiles.ts` is a
-call into `compiler/wacResolve.ts` and `site/src/editor/file-store.ts`'s copy is deleted. Two bodies
+call into compiler/wacResolve.ts and `site/src/editor/file-store.ts`'s copy is deleted. Two bodies
 remain, one per language, which is the floor. Consolidating also found the last disagreement between
 them rather than merely tidying — `..` above an absolute root, where the compiler's answer dropped
 the leading slash and produced a relative key — so the exercise paid for itself before `@/` starts.

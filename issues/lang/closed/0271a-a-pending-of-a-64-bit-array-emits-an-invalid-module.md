@@ -67,7 +67,7 @@ struct's funcref field.
     error: `std/platform.wac` is a built-in this compiler does not carry: it uses lambdas,
     which this compiler's frontend does not have
 
-That is documented in `compiler/README.md` and is not a defect. It does mean the whole
+That is documented in compiler/README.md and is not a defect. It does mean the whole
 `Pending`-at-the-boundary surface is wacc's alone, and rung 3 has no opinion about it.
 
 **What did catch it is `native/v8/src/main.rs`'s post-build validation** — the check

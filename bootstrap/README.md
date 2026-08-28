@@ -115,7 +115,7 @@ invited and the numbers do not.
 Files say the same thing: `bootstrap/boot/l4.l3` is **the L4 compiler, written in L3**.
 
 **wac-L5 is a language we are handed, not one we choose.** It is whatever `packages/wacc/src` is
-written in: full wac minus the nine omissions `compiler/README.md` documents, and *with* generics.
+written in: full wac minus the nine omissions compiler/README.md documents, and *with* generics.
 Its compiler is the last program in the chain, and compiling `packages/wacc/src` with it produces
 `wacc.wasm` — after which wac is self-hosting, as it already is today.
 

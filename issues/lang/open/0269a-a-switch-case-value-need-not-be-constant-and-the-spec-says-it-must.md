@@ -19,7 +19,7 @@ i32 pick(i32 n, i32 k) { switch (n) { case k: { return 111; } default: { return 
     running it: pick(5, 5) -> 111,  pick(5, 6) -> 222
 
 A named `const` works too. So a `switch` here is an if-else chain with different syntax, and that is
-not an accident of one implementation — `compiler/wacEmitFunc.ts`'s `emitSwitch` says so in as many
+not an accident of one implementation — compiler/wacEmitFunc.ts's `emitSwitch` says so in as many
 words: *"Use if-else chain for correctness. br_table optimization can come later."* It emits the
 scrutinee and the case expression and compares them at run time.
 

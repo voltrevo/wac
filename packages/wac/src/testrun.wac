@@ -735,7 +735,7 @@ struct Tally {
  * missing one. `issues/system/0243c` refused the flag rather than print that.
  *
  * The signatures are not read back out of the module and are not guessed. The instrumentation is
- * this repository's, and `compiler/wasmBuildBin.ts` states them in one line:
+ * this repository's, and compiler/wasmBuildBin.ts states them in one line:
  * `__cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32`. All three are inside the closed
  * set `Cli.call` accepts, which is not luck -- that set exists to cover what these commands need.
  *

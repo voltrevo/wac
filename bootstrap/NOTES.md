@@ -404,7 +404,7 @@ source the same way — and they do, exactly. `W1 == W2` and `X1 == X2` as well,
 a fixed point and it is the same one.
 
 That is the property that makes a ladder a *replacement* for a reference rather than a second
-opinion, and `bootstrap/ts/same_fixed_point.ts` is the test.
+opinion, and bootstrap/ts/same_fixed_point.ts is the test.
 
 **On speed.** The interpreted rung was the thing to worry about and it is not the thing to worry
 about. In one cold process:

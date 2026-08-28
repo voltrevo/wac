@@ -318,7 +318,7 @@ and link `packages/unicode`'s 733-range printable table. Thirty-five bytes a ran
 expensive for a sorted table, and it was: **only 12 KiB was the table**.
 
 A constant array is emitted as one immutable global built by `array.new_fixed`, every element an
-`i32.const` in its initialiser — five bytes or so each — and `compiler/wasmBuildBin.ts` emits *every*
+`i32.const` in its initialiser — five bytes or so each — and compiler/wasmBuildBin.ts emits *every*
 constant in a module once that module is linked. The printable ranges shared a file with the three
 case-mapping tables, 8,790 entries that `wc` never asks about, and it paid for all of them. Moving
 them to `src/printable.wac` brought it to **464 KiB** with no change to any table.

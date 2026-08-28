@@ -12,7 +12,7 @@
 // and `continue` came along for free: `case 1: continue;` was as legal as `case 1: break;`. The same
 // conflation made a `match` arm accept both, since the arm loop was written from the switch beside it.
 //
-// The three neighbours are in `compiler/wacSpec.test.ts` under the same tag, because a fix here is one
+// The three neighbours are in compiler/wacSpec.test.ts under the same tag, because a fix here is one
 // counter away from breaking them: `break` does leave a switch, `continue` inside a switch inside a
 // loop does reach that loop, and `break` in a match arm is refused.
 

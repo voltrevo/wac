@@ -21,7 +21,7 @@
 // Deliberately **not** asserting that a fence which fails to check is wrong. `casts.md` shows
 // `s as! i32` and `control.md` shows a `needsReturn` that does not return, each carrying its own
 // `// error:` comment — a document's rejected examples are as load-bearing as its accepted ones.
-// `compiler/wacSpec.test.ts` already holds those to being errors, with the reference. This is the other
+// compiler/wacSpec.test.ts already holds those to being errors, with the reference. This is the other
 // direction, and with wacc.
 //
 // ## What the count is for
@@ -154,7 +154,7 @@ export string test_every_spec_fence_that_checks_clean_also_builds(Core core, Cli
  *
  * **The other direction, and it had a home until 2026-08-28.** The header above says this file
  * deliberately does not assert that a fence which fails to check is wrong, because
- * `compiler/wacSpec.test.ts` "already holds those to being errors, with the reference". That file
+ * compiler/wacSpec.test.ts "already holds those to being errors, with the reference". That file
  * is deleted with the reference, so the spec's rejected examples — `s as! i32` in `casts.md`, a
  * `needsReturn` that does not return in `control.md`, 82 `// error:` lines across the tree — had
  * nothing checking them at all.

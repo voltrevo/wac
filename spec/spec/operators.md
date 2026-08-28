@@ -346,4 +346,4 @@ They are methods rather than free functions for a reason that is about existing 
 be shadowed by them or break them. A method cannot collide with a function, so those helpers keep
 working and become one-instruction wrappers — migration is incremental rather than a flag day.
 
-*wacc only, as the omissions table in [compiler/README.md](../../compiler/README.md) records.*
+*wacc only, as the omissions table in compiler/README.md records.*

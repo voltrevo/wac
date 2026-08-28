@@ -1,6 +1,6 @@
 // `core`'s two embeddings are the ones `core/` generates.
 //
-// `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac` are written by `wac task gen:core`
+// compiler/wacCore.ts and `packages/wacc/src/coretext.wac` are written by `wac task gen:core`
 // from `core/read.wac` and `core/jsx.wac` — the reference gets the first, wacc gets both, and which
 // compiler gets a declaration is said by which file it is in. `core/README.md` is the argument.
 //

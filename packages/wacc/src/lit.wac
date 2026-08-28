@@ -4,7 +4,7 @@
 // whether the constant fits. When each read the text itself they disagreed — `f32 x = 1_0e38;` is
 // out of range and the checker's reader stopped at the underscore, saw `1`, and let it through.
 //
-// The reference learned this first: `compiler/wacFloatLit.ts` exists because its emitter, checker
+// The reference learned this first: compiler/wacFloatLit.ts exists because its emitter, checker
 // and constant evaluator each called `parseFloat` and `parseFloat("1_000.5")` is `1` — its issue
 // 0044. It can then delegate to a host that converts correctly; there is no such host here, so the
 // conversion is written out below, and the reason for one copy is the same either way.

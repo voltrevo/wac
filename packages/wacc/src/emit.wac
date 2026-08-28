@@ -3136,7 +3136,7 @@ string joinDir(string dir, string r) {
  * same reason: a capability import is then an ordinary declaration and nothing downstream of the
  * linker has to know it was special.
  *
- * Kept to the declarations. The comments in `compiler/wacCore.ts` are the argument for the type
+ * Kept to the declarations. The comments in compiler/wacCore.ts are the argument for the type
  * existing, and are not what a compiler needs.
  */
 
@@ -3361,7 +3361,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
           // keys for one module is not a missing file — it is `Read` declared twice, and
           // `qualifiedName` below leaves one of them unqualified because it recognises only the
           // carried spelling. Normalised here rather than in `resolveFrom`, which has to keep
-          // answering what `compiler/wacResolve.ts` answers: the reference's key for the root is
+          // answering what compiler/wacResolve.ts answers: the reference's key for the root is
           // the specifier, and a resolver that quietly returned something else would disagree with
           // it in the one place nothing compares them. `design/lang/0009` D5.
           if (target == "core") { target = " core"; }
@@ -9835,7 +9835,7 @@ void f64NaN(B b) {
 /**
  * `__fmod(x, y)` and `__fmodf(x, y)` — the float remainder, which wasm has no instruction for.
  *
- * Ported from `makeFmod` in `compiler/wasmBuildBin.ts`, which is the reference's, so that the two
+ * Ported from `makeFmod` in compiler/wasmBuildBin.ts, which is the reference's, so that the two
  * compilers agree bit for bit rather than approximately. `issues/lang/0135` is the bug this closes:
  * the float branch of `emitBinary` had no `kPercent()` case, emitted nothing at all, and left the
  * second operand on the stack as the answer.
@@ -10058,7 +10058,7 @@ bool isIntType(string t) {
  * A checked add, subtract or multiply: operands on the stack, result on the stack, `unreachable`
  * where the value does not fit.
  *
- * The identities are the reference's (`compiler/wacEmitFunc.ts`), and so is the reasoning for each:
+ * The identities are the reference's (compiler/wacEmitFunc.ts), and so is the reasoning for each:
  * add and sub test signs, a 32-bit multiply widens to 64 and range-checks, and a 64-bit multiply
  * verifies by division because that is obviously correct. Two things in the last one are load-bearing
  * and were learned there the hard way — the signed form guards `MIN / -1` separately, and the
@@ -14240,7 +14240,7 @@ string pathOfKey(Env env, string key) {
  */
 string bindTypeSpelling(Env env, string t, string templatePath) {
   // An array and a nullable are spelled by suffix, a funcref by its shape, and an instantiation by
-  // its arguments after a `$` — `mangleType` in `compiler/wacResolve.ts`, which is what the generated
+  // its arguments after a `$` — `mangleType` in compiler/wacResolve.ts, which is what the generated
   // glue is named from. `u8[]` is `u8_arr`, and `Vec<u8[]>` from `core/vec.wac` is
   // `Vec__core_vec$u8_arr`.
   if (isArrayType(t)) { return bindTypeSpelling(env, elemOf(t), "") + "_arr"; }

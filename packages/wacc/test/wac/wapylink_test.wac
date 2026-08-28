@@ -197,7 +197,7 @@ export string test_the_checker_reads_a_wapy_counted_loop(Core core) {
 /**
  * A `.wapy` file importing a `.wac` one, and a three-deep graph alternating between them.
  *
- * **Moved here from `compiler/wacFrontend.test.ts`** when the reference's wapy reader was deleted.
+ * **Moved here from compiler/wacFrontend.test.ts** when the reference's wapy reader was deleted.
  * Its claim is the one worth keeping and is not the same as the cases above: not that a translation
  * step exists and works, but that *a wapy file is a wac module* — importable from wac, able to
  * import wac, and indistinguishable to everything downstream. The direction matters because the two

@@ -1,7 +1,7 @@
 // The recorded spec corpus, and the ledgers that name what a checker still gets wrong.
 //
-// `specCases.json` is written by `packages/wacc/tools/specCases.ts`: a *recording* of the programs
-// `compiler/wacSpec.test.ts` compiles, rather than a re-reading of its text. That distinction is the
+// `specCases.json` is written by packages/wacc/tools/specCases.ts: a *recording* of the programs
+// compiler/wacSpec.test.ts compiles, rather than a re-reading of its text. That distinction is the
 // whole reason it exists — the text extractor in `specCorpus.ts` finds 101 illegal programs where the
 // suite executes 304, because a regular expression finds the calls written in the shape it knows and
 // the spec does not confine itself to one shape.

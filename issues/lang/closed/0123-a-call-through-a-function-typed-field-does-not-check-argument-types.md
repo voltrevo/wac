@@ -72,7 +72,7 @@ Narrowed to the argument *types* specifically, on this one path:
   check the declaration`. So `checkArgList` is reached and its length branch runs; what does not
   happen is the per-argument `checkAssign`.
 
-`compiler/wacTypeCheck.ts` has the field path at the `fnField` branch of `inferCall` (around line
+compiler/wacTypeCheck.ts has the field path at the `fnField` branch of `inferCall` (around line
 2493), and it calls `checkArgList` with `fr.params` — which looks right, so the interesting question
 is why `checkAssign` inside the loop does not reject. One candidate is `inferExpr(args[i], env, ctx,
 params[i])` returning null for the mismatched argument, since the loop's body is guarded on `if

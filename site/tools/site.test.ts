@@ -295,12 +295,13 @@ Deno.test("site: the compiler size the site claims is the size it is", async () 
   // "~6,000 lines" sat on the front page for months while the compiler grew to 16,000. It is a
   // flattering direction to be wrong in, which is why nobody noticed — a smaller compiler sounds
   // better. The number is measurable, so measure it.
-  const dir = new URL("../../compiler/", import.meta.url).pathname;
+  // **wacc, since the TypeScript compiler was deleted.** The sentence used to be about that one —
+  // "the seed, and building wacc is the only job it has left" — and both halves stopped being true
+  // on the same day. What the page claims now is the size of the compiler that ships.
+  const dir = new URL("../../packages/wacc/src/", import.meta.url).pathname;
   let actual = 0;
   for await (const e of Deno.readDir(dir)) {
-    if (!e.isFile || !e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) continue;
-    // The wapy surface and the CLI are not what "the compiler" means in that sentence.
-    if (e.name.startsWith("wapy") || e.name.startsWith("wacx")) continue;
+    if (!e.isFile || !e.name.endsWith(".wac")) continue;
     actual += (await Deno.readTextFile(dir + e.name)).split("\n").length;
   }
 

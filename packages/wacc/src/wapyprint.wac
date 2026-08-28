@@ -12,7 +12,7 @@
 // > A printer that emitted a spelling no reader outside this pair accepts, and a reader that
 // > accepted it, agree with each other perfectly.
 //
-// It was written against `compiler/wapyPrint.ts`, which is deleted with the TypeScript reference.
+// It was written against compiler/wapyPrint.ts, which is deleted with the TypeScript reference.
 // The comparison stays honest here for the same reason it did there: this is written from
 // `spec/spec/wapy.md`, and so was `wapyparse.wac`. Two independent readings of one document, not a
 // printer and its own reader.

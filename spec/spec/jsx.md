@@ -1,7 +1,7 @@
 ## JSX
 
 *Implemented in `wacc` only. The reference compiler does not have it — see
-[compiler/README.md](../../compiler/README.md)'s omissions table, and
+compiler/README.md's omissions table, and
 [design/lang/0004](../../design/lang/0004-jsx-builds-a-tree-defined-in-core.md) for why the tree is
 where it is.*
 

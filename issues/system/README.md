@@ -78,7 +78,7 @@ Add a row to `INDEX.md` in the same commit. The index is the thing people read.
 
 ## Closing one
 
-Three things in the commit that fixes it, and `compiler/wacSpec.test.ts` fails the suite
+Three things in the commit that fixes it, and compiler/wacSpec.test.ts fails the suite
 for everyone if they disagree:
 
 - **move the file** to `issues/closed/`;

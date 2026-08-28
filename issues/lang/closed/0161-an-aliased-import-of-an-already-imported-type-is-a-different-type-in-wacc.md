@@ -52,7 +52,7 @@ once, and after the alias both names are in scope. So the suspicion is that the 
 a nominal type of its own rather than as another name for one — in which case `E2` is a type with no
 declaration behind it, and everything about it would be a mismatch rather than only arguments.
 
-**What it cost, so the next person can weigh it.** `compiler/wacSpec.test.ts`'s
+**What it cost, so the next person can weigh it.** compiler/wacSpec.test.ts's
 `§wac-core-unquoted-3nqk7vd` case wanted to show that two spellings of one import reach one type,
 and the obvious way to write that is an alias — which made the case fail for this reason instead.
 It is written across two files now, which is a fine test and was not the first choice. A spec case
@@ -203,7 +203,7 @@ and wacc did not implement it. Written as an executable program it was refused:
     // wacc: error: argument does not match the parameter's type   — reference: OK
 
 **Why nothing caught it.** The tag's own program is not compilable — `Box<P> a = ...;` with a literal
-`...` — so `compiler/wacSpec.test.ts` has nothing to run and the rule was never exercised against
+`...` — so compiler/wacSpec.test.ts has nothing to run and the rule was never exercised against
 either compiler. It now answers **7** through `wac run`, and the test below is executable.
 
 ### The mechanism, which is narrower than "a different type"

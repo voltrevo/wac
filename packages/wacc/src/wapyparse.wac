@@ -354,7 +354,7 @@ i32 synthPlusEqOff(i32 base){ return base + 9; }
  * The index of the `in` of `for IDENT [: T] in range(…)` in `[from, to)`, or -1.
  *
  * **The annotation is real and is not in the spec's EBNF.** `for_stmt` there reads `"for", IDENT,
- * "in", "range", …`, but `compiler/wapyPrint.ts` emits `for k: i64 in range(0, n):` whenever the
+ * "in", "range", …`, but compiler/wapyPrint.ts emits `for k: i64 in range(0, n):` whenever the
  * induction variable is not an `i32`, and the reference's reader accepted it — checked on both forms
  * while it existed.
  * `spec/spec/wapy.md` is corrected alongside this.
@@ -808,7 +808,7 @@ WapyRes takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
       // **`case _:` is the default arm**, which wac spells `default:`. `Case` says so with a null
       // value, and reading `_` as an ordinary expression instead builds a case testing a variable
       // nobody declared — accepted here and refused three phases later, or worse, matched.
-      // `compiler/wapyPrint.ts` emits it (`c.value === "default" ? "_" : …`) and this frontend did
+      // compiler/wapyPrint.ts emits it (`c.value === "default" ? "_" : …`) and this frontend did
       // not read it back, which is what `packages/wacc/test/wapyRoundTrip.test.ts` found on the
       // first corpus it was pointed at: five `spec/cases`, `spec/tour.wac` and `json`'s printer.
       bool isDefault = jf + 2 == upto && kindOf(w, jf + 1) == kIdent()

@@ -10,7 +10,7 @@
 ## What
 
 `spec/spec/wapy.md` `[§wac-wapy-h3nq7fv]`: *"wapy is wac with a different layout. Same types, same
-semantics, same AST, same compiler."* String escapes are not. `compiler/wapyLex.ts`'s `unescape` is a
+semantics, same AST, same compiler."* String escapes are not. compiler/wapyLex.ts's `unescape` is a
 second, undocumented grammar:
 
 ```ts
@@ -59,12 +59,12 @@ escape. Five of 400 rendered files fail, all for this, and every one contains a 
 
 ## Why nothing caught it
 
-`compiler/wapyRoundTrip.test.ts` compares the tree from `wac → wapy → parse` against the tree from
+compiler/wapyRoundTrip.test.ts compares the tree from `wac → wapy → parse` against the tree from
 parsing the wac. Both sides go through the *same pair of functions* — `JSON.stringify` writes
 `\u0000` and `unescape` reads it back to a NUL — so the round trip is exact and says nothing about
 whether either agrees with wac.
 
-That is the shape `compiler/wapyParse.ts`'s own header warns about, one level down: *"a round-trip
+That is the shape compiler/wapyParse.ts's own header warns about, one level down: *"a round-trip
 test cannot notice, because it only ever feeds the reader output from the printer — which is valid by
 construction."* It was written about the reader; it is just as true of the escapes, and that was not
 noticed at the time.
@@ -74,7 +74,7 @@ noticed at the time.
 Both halves move together, because changing either alone moves the round trip.
 
 1. `unescape` reads wac's escapes, **including the failure**: an unknown escape is a diagnostic, not a
-   character. The implementations to share are `packages/wacc/src/lit.wac` and `compiler/wacLex.ts`; a
+   character. The implementations to share are `packages/wacc/src/lit.wac` and compiler/wacLex.ts; a
    third would be the thing this issue is about.
 2. The printer emits wac's spelling rather than `JSON.stringify`'s — the *string body* only. The
    import path on `wapyPrint.ts:616` also goes through `JSON.stringify` and can stay: a path has no

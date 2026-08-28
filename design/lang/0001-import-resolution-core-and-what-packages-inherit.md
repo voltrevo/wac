@@ -49,7 +49,7 @@ resolver and they must agree about what a specifier means, is unchanged and is w
 entry, options)` — the browser playground compiles with no filesystem at all. So "sources that are not
 on disk" is not a new idea here; it is the idea the playground has been using without a name.
 
-**The frontend table is the shape to copy.** `compiler/wacFrontend.ts` maps an extension to a parser,
+**The frontend table is the shape to copy.** compiler/wacFrontend.ts maps an extension to a parser,
 and everything downstream takes a `Program` and cannot tell which ran. A resolver table is the same
 move one level out.
 
@@ -179,7 +179,7 @@ it should be its own document when somebody is ready to build it — carrying D7
 
 | step | state |
 | --- | --- |
-| 1. provider table, `core` embedded | **done** — `compiler/wacCore.ts`, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
+| 1. provider table, `core` embedded | **done** — compiler/wacCore.ts, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
 | 2. `Read` into `core` | **done** — `core` declares it, and the 25 importers name it there. `packages/bytes/src/read.wac` is deleted, with no re-export |
 | 3. directory provider | not started — `importKey` is where it goes |
 | 4. specified in `spec/` | **done for `core`** — `§wac-core-one-type-8fjm2wq`, `§wac-core-unquoted-3nqk7vd`, `§wac-core-read-6kv4pnx`, `§wac-wapy-core-5wq8jhn`. Step 3 will add to it |

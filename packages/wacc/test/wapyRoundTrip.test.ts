@@ -5,7 +5,7 @@
 // ## Why this one is not circular and the one it replaces was
 //
 // The test this replaces — compiler/wapyRoundTrip.test.ts, deleted 2026-08-27 — rendered with
-// `compiler/wapyPrint.ts` and read back with compiler/wapyParse.ts, and that reader's own header
+// compiler/wapyPrint.ts and read back with compiler/wapyParse.ts, and that reader's own header
 // said what is wrong with it:
 // *"a round-trip test cannot notice, because it only ever feeds the reader output from the printer —
 // which is valid by construction."* A printer that emitted a spelling no reader outside this pair

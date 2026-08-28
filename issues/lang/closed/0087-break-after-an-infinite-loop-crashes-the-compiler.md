@@ -18,7 +18,7 @@ Expected: `'break' outside loop or switch`, which is what the same program gets 
 `while (false)`.
 
 Actual: an uncaught `TypeError: Cannot read properties of undefined (reading 'breakTarget')` from
-`compiler/wacEmitFunc.ts` — the compiler throws rather than returning diagnostics, so the caller
+compiler/wacEmitFunc.ts — the compiler throws rather than returning diagnostics, so the caller
 gets an exception instead of an answer.
 
 `continue` does the same thing one property along (`continueTarget`), and `for (i32 i = 0; ; i++)`

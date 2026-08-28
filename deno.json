@@ -6,9 +6,6 @@
     "  deno test -A site/tools/site.test.ts",
     "It came inside this walk when the language and package repositories merged."
   ],
-  "imports": {
-    "wac/": "./compiler/"
-  },
   "exclude": [
     ".cache",
     "site/src",

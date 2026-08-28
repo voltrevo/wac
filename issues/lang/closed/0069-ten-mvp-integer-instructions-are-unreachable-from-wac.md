@@ -135,7 +135,7 @@ agent-b caught it. The conclusion held, the evidence did not.
 ## 2026-08-12, agent-b: the five landed, and the call sites did not
 
 `spec/spec/operators.md` §wacc-int-bit-methods, `spec/cases/0139` and `0140`,
-`compiler/README.md`'s omissions table. The shape is this issue's own: methods, so the width comes
+compiler/README.md's omissions table. The shape is this issue's own: methods, so the width comes
 from the receiver and the five `u32 rotl(u32, u32)` helpers in `packages/crypto` keep working.
 
 I then did what this issue asks for and rewrote `packages/zstd`'s four copies of `highBit` as

@@ -10,7 +10,7 @@
 // away, and the difference is not decorative — `§wac-*` is a rule both compilers hold and `§wacc-*` is
 // one only wacc has. A reader following the reference found nothing, and nothing said so:
 //
-//   - `compiler/wacSpec.test.ts` requires every clause to be *checked by something*, but it finds
+//   - compiler/wacSpec.test.ts requires every clause to be *checked by something*, but it finds
 //     clauses by `/\[§(wac-[a-z0-9-]+)\]/` — square brackets — so a reference in backticks is invisible
 //     to it, declared or not;
 //   - `packages/wacc/test/wac/spectags_test.wac` holds the same rule for the wacc-only namespaces, the

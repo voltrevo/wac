@@ -282,7 +282,7 @@ when a package is touched.
 
 ### `specEmit`, and why it is its own question
 
-Its cases come from `compiler/wacSpec.test.ts` — the reference's conformance suite, 529 tests, each
+Its cases come from compiler/wacSpec.test.ts — the reference's conformance suite, 529 tests, each
 named for a `[§tag]` in `spec/spec/*.md`. `extract()` pulls the *source* out of each `run(\`…\`)` and
 then compares what the two compilers emit.
 
@@ -588,14 +588,14 @@ The verifiable facts, and they are the only ones worth planning against:
     meaningful. Three published figures were wrong before that was asked.
 
   - **What the reference oracle now answers**, for whoever takes the rungs on:
-    `packages/wacc/test/reference.ts` is the batched TypeScript half of rungs 1, 2 and 4 —
+    packages/wacc/test/reference.ts is the batched TypeScript half of rungs 1, 2 and 4 —
     `runfn` (compile, instantiate, call an export), `parsehash`/`parsedump`, `lexhash`/`lexdump`,
     `lexerrs` (it adjudicates our triples rather than handing back a table), `lexkinds`, `lexcodes`.
     `typecheck.test.ts` will want a `checkpos`; it was written and then reverted rather than
     committed with no caller.
 
   - **Two files that look easy and are not.** `specAccept` and `specCheck` read `specCorpus.ts`,
-    which extracts programs by *reading* `compiler/wacSpec.test.ts` — the exact thing
+    which extracts programs by *reading* compiler/wacSpec.test.ts — the exact thing
     `tools/specCases.ts` exists to avoid, and which its own header records as having produced three
     disagreeing answers. Pointing them at the generated `specCases.json` instead would merge two
     corpora, which is a decision about coverage rather than a translation.
@@ -1726,7 +1726,7 @@ the reference is half the differential, which is the same reason `jsxBoundary` a
 oracle stayed.
 
 Porting a corpus *reader* is its own trap, looked at and left: `specCorpus.ts` extracts `err(...)`
-programs from `compiler/wacSpec.test.ts` with regexes and unescapes `\uXXXX` including surrogate pairs.
+programs from compiler/wacSpec.test.ts with regexes and unescapes `\uXXXX` including surrogate pairs.
 A wac reimplementation would be a second reader of one corpus whose disagreements arrive looking like
 compiler bugs, for two files of 5 ms each.
 

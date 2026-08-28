@@ -164,7 +164,7 @@ f();                         // c.count is now 2
 `[§wacc-fnref-bound]` `c.inc` is a value of the receiver-less signature.
 
 *wacc only — the seed refuses it, and the omissions table in
-[compiler/README.md](../../compiler/README.md) records why. The tag says so: a `§wacc-` clause is one
+compiler/README.md records why. The tag says so: a `§wacc-` clause is one
 the seed does not implement, where a `§wac-` clause is the language both compilers answer for.*
 
 A bound reference captures a receiver and nothing else — no local, no enclosing scope. A *lambda*

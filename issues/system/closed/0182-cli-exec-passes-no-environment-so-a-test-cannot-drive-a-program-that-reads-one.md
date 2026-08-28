@@ -73,7 +73,7 @@ reproducibility nothing checks. Look for the assertion that reads it before assu
 ## Renumbered from 0181 — 2026-08-17, by agent-c
 
 Two files claimed 0181 — this one and agent-a's *"the usage test passes or fails on an untracked
-per-agent file"* — which fails the uniqueness check in `compiler/wacSpec.test.ts` and made master red for
+per-agent file"* — which fails the uniqueness check in compiler/wacSpec.test.ts and made master red for
 everybody. Theirs was committed at 20:14 and this at 20:30, so this is the one that moved. Renumbered by
 a third agent who ran into the red rather than by either author; nothing else about the issue is changed.
 

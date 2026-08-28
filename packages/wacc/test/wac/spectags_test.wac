@@ -1,6 +1,6 @@
 // Every clause the spec states about **wacc only** is named by something that checks it.
 //
-// `compiler/wacSpec.test.ts` holds this rule for `§wac-*` tags — *"a tag is a promise that the claim
+// compiler/wacSpec.test.ts holds this rule for `§wac-*` tags — *"a tag is a promise that the claim
 // beside it is checked, and a claim nobody checks is the same as a claim nobody wrote, except that it
 // reads as evidence"* — and it can only hold it for clauses the reference implements. The clauses
 // that target wacc alone (`§jsx-*` for JSX, `§wacc-*` for a rule the seed does not have) were outside
@@ -14,7 +14,7 @@
 // line beside `// from:`; a test in this package or in `compiler/` holds one by mentioning the tag.
 // All three count, because the claims are of three kinds: a program's behaviour (a case), what the
 // compiler does with it, and the older `§enum-*` clauses, which both compilers implement and
-// `compiler/wacSpec.test.ts` names one test at a time.
+// compiler/wacSpec.test.ts names one test at a time.
 //
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
@@ -168,7 +168,7 @@ void namedByCase(string text, Strs into) {
  * And the sharper question: is anything holding **wacc** to each clause?
  *
  * The test below asks whether a claim is checked *at all*, and counts `compiler/` as an answer — which is
- * right for that question and wrong for this one. `compiler/wacSpec.test.ts` drives `wacCompile`, the
+ * right for that question and wrong for this one. compiler/wacSpec.test.ts drives `wacCompile`, the
  * reference; a clause whose only checker lives there is one wacc could break without anything noticing.
  *
  * **Measured on 2026-08-18: twelve clauses were in that position.** All fifteen diagnostic clauses in
@@ -304,7 +304,7 @@ export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
     }
   }
 
-  // The `§wac-*` ones are the reference's to answer for, and `compiler/wacSpec.test.ts` already
+  // The `§wac-*` ones are the reference's to answer for, and compiler/wacSpec.test.ts already
   // requires a test per tag there. Asking twice would report the same gap in two places.
   Strs mine = Strs.create();
   Strs mineWhere = Strs.create();

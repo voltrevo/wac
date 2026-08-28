@@ -1,6 +1,6 @@
 // The case corpus, run against wacc — in this process, from wac.
 //
-// The same files `compiler/wacCases.test.ts` holds the reference to, and the point of their being files
+// The same files compiler/wacCases.test.ts holds the reference to, and the point of their being files
 // rather than TypeScript: two compilers read one corpus, and a third could. This is the third.
 //
 // Nothing here compares wacc to the reference. Each case says what it wants, so a disagreement is with

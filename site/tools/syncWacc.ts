@@ -10,6 +10,11 @@
 
 import { buildWaccAsset } from "../../harness/waccFromLadder.ts";
 
+// Re-exported because `site/tools/site.test.ts` builds the asset to compile the playground's
+// examples with, and it is a script under `site/` — which is the subtree that cannot import from
+// `harness/` directly.
+export { buildWaccAsset };
+
 export const REQUIRED = [
   "diagnoseFiles",
   "blockedFiles",

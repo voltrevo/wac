@@ -8,7 +8,7 @@
 - **Kind:** missing feature
 - **Symptom:** not implemented
 
-The reference writes a `name` custom section — `buildNameSection` in `compiler/wasmBuildBin.ts` — and
+The reference writes a `name` custom section — `buildNameSection` in compiler/wasmBuildBin.ts — and
 wacc writes no custom section at all. Same file, both compilers:
 
 ```

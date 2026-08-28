@@ -30,7 +30,7 @@ should do.
 
 ## How it was found, which is the part worth keeping
 
-Not by reading the grammar. `compiler/wapyRoundTrip.test.ts` went red on
+Not by reading the grammar. compiler/wapyRoundTrip.test.ts went red on
 `packages/webrtc/src/sctp.wac` — the first file in the repository to write a parenthesised cast
 inside a ternary — with `unexpected '60000' after the expression`. The wapy printer had dropped the
 parentheses the wac source carried, correctly by its own precedence ladder, and `wapyParse` rewrites
@@ -51,7 +51,7 @@ who writes `x as T ? a : b` directly gets `expected ';'` and no hint about the p
 2. `spec/cases/0175-a-cast-before-a-ternarys-question-mark.wac`, since this is grammar rather than
    checking. Canaried against both: with either fix reverted it fails, the reference with
    "expected ';', found 't'" and wacc with a refusal.
-3. `endsInCast` is gone from `compiler/wapyPrint.ts`. Its own comment gave the reason it existed —
+3. `endsInCast` is gone from compiler/wapyPrint.ts. Its own comment gave the reason it existed —
    "`a is S ? 1 : 2` parses, and `a as S ? 1 : 2` does not" — which stopped being true. The fixture
    beside it stays, and the round trip is still green.
 

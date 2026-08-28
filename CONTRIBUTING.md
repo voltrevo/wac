@@ -1,6 +1,6 @@
 # Contributing to wac
 
-The compiler in [`compiler/`](compiler/) follows an "atom" methodology:
+The compiler in `compiler/` follows an "atom" methodology:
 small, single-purpose, pure-TypeScript units with disciplined testing. Follow
 these rules when adding or changing atoms.
 

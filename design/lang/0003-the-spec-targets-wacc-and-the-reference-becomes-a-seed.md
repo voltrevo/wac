@@ -28,7 +28,7 @@ with, so the oracle that has caught most of this year's defects does not reach i
 
 What reaches it instead:
 
-- **`spec/`, and its `[§wac-…]` tags** — `compiler/wacSpec.test.ts` runs the blocks the spec marks and
+- **`spec/`, and its `[§wac-…]` tags** — compiler/wacSpec.test.ts runs the blocks the spec marks and
   holds the claims true against one compiler, not two. This is why the spec has to be written *first*
   for a new feature rather than describing what already works: for JSX it must say what the syntax
   desugars *to*, because that is the contract there is nothing else to check against.
@@ -48,7 +48,7 @@ deliberately rather than by accident. The check exists already and is not new wo
 compiles `packages/wacc/src/api.wac` with the reference on every suite run, so a violation is red the
 same day. What was missing is that anyone had said so.
 
-**2. `spec/cases` needs to say when a case is wacc-only.** `compiler/wacCases.test.ts` asserts *"the
+**2. `spec/cases` needs to say when a case is wacc-only.** compiler/wacCases.test.ts asserts *"the
 reference meets every one of them"*, on the stated grounds that a case the reference fails is a case
 whose expectation is in doubt. That reasoning inverts for a wacc-only feature. The corpus needs a
 marker — one more line in the header, beside `expect:` — and a count that goes up on purpose, or the
@@ -93,7 +93,7 @@ no such build. This is why the name section comes first.
 | step | state |
 |---|---|
 | the name section | **done** — imports, the module's own functions and every bind helper, `issues/lang/0101` |
-| wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
+| wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is compiler/README.md, empty today |
 | toolchain off the reference | **binding and application builds are wacc by default** — 55 of 55 programs emit, four of box's applets match the reference-built output byte for byte, and `boxsh` runs the website's transcript; the direct `wacCompile` callers are what is left, two of them deliberate — `issues/lang/0105` |
 | unified binary (V8) | **retired 2026-08-20**: `deno task app:binary` wrote one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path — and its test with it. Packaging a program no longer means packaging an engine: `wac app` writes the module behind a `/bin/sh` preamble that calls out to the `wac` on the machine, a few hundred KB. `spec/cli/wac.md` |
 | a Rust host on V8 | **the primary platform**, decided 2026-08-12 with the operator on the spike below — and it is a host in full: `Core`, the whole of `Cli` including the read and write sides, sockets, children on their own isolates, and the ticket table `Pending<T>` needs. box's shell runs on it, pipelines and all, byte-identical to the Deno-built shell. `native/v8/README.md` has the table |
@@ -195,11 +195,11 @@ What that decides, concretely:
   the packages, the programs, the demos or the site. Where a comparison between the two compilers is
   wanted for a *measurement*, it is only available for programs that happen to stay in the shared
   subset, and that is a property of the measurement rather than a constraint on the code.
-- **`compiler/README.md`'s omissions table stops being a warning list and becomes a record.** It says
+- **compiler/README.md's omissions table stops being a warning list and becomes a record.** It says
   what the seed cannot do; the answer to "should we avoid this so the seed keeps working" is no.
 
 **One clause, found by wiring the playground to wacc on 2026-08-13, and discharged on 2026-08-27**:
-`.wapy` — the indentation surface `compiler/wacFrontend.ts` dispatches to — existed only in the
+`.wapy` — the indentation surface compiler/wacFrontend.ts dispatches to — existed only in the
 reference. Sending a `.wapy` file there was not falling back to the seed; it was using the only
 compiler that had that front end, so "the reference is for the bootstrap" read "the bootstrap and
 wapy" for a fortnight.
@@ -215,7 +215,7 @@ compiled a *concatenation of the graph's source text*, so a file arrived as text
 nowhere for a second reader to be. Phases C9–C14 gave each file its own parse, and the dispatch
 became a small change at a seam that now exists.
 
-What the reference still has and wacc does not is the printer — `compiler/wapyPrint.ts`, wac *to*
+What the reference still has and wacc does not is the printer — compiler/wapyPrint.ts, wac *to*
 wapy. Reading a surface and writing it are different directions, and only one of them is a compiler
 front end.
 

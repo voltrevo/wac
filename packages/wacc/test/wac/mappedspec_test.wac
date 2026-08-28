@@ -4,7 +4,7 @@
 //
 // **wacc only, and that is a decision rather than a gap.** Resolving a mapping means reading a
 // manifest, a lockfile and a checkout cache; D11 says package policy does not get a second
-// implementation, and `compiler/README.md` records the reference's omission in the table a reader
+// implementation, and compiler/README.md records the reference's omission in the table a reader
 // consults to tell "the reference disagrees" from "the reference does not have that". The reference
 // exists to build the first `wacc.wasm` from a cold checkout, and that compile has no dependencies
 // by construction — every import in this repository is relative or built-in.

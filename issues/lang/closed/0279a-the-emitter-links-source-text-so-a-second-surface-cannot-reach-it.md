@@ -10,7 +10,7 @@
 ## What
 
 `packages/wacc/src/wapyparse.wac` reads wapy into wac's AST and agrees with wac's own frontend on
-**395 of 400** files of the repository rendered through `compiler/wapyPrint.ts`. It is not wired to
+**395 of 400** files of the repository rendered through compiler/wapyPrint.ts. It is not wired to
 `wac build`, and this is why.
 
 `emitLinkedWith2` does not compile a graph of programs. It **concatenates the graph into one string**
@@ -68,7 +68,7 @@ file keeps its own tokens and its own spans, and a diagnostic in one points at t
 wrote.
 
 `packages/wacc/test/wac/wapylink_test.wac` compares the emitted **bytes** of a wapy graph against the
-same program in wac. `compiler/wapyPrint.ts`'s rendering of `packages/json/src/value.wac` — 209
+same program in wac. compiler/wapyPrint.ts's rendering of `packages/json/src/value.wac` — 209
 lines — compiles byte-identically to the original.
 
 **What this does not yet do** is let the site's playground stop routing `.wapy` to the reference, or

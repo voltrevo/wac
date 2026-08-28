@@ -1,6 +1,6 @@
 // What the editor holds about a compiled module.
 //
-// These used to come from `compiler/wacCompile.ts`, and they described what the *reference* built.
+// These used to come from compiler/wacCompile.ts, and they described what the *reference* built.
 // They are here now because the reference is gone, and they are much smaller than what came across
 // — deliberately, since the trimming is the honest part.
 //

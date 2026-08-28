@@ -39,11 +39,12 @@ import { ASSETS, c, font, space } from "./tokens";
  * rebuild, and it is a fixed point, checked rather than asserted; `packages/wacc/src` is the source
  * count. What the block is really claiming is the word at the end of the line.
  */
-const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
-stage B   wacc, built by stage A
-stage C   wacc, as stage B compiles it
+const BOOTSTRAP = `wac-L0 .. L5   five rungs, the lowest hand-written wasm assembly text
+stage A        wacc, built by wac-L5
+stage B        wacc, built by stage A
+stage C        wacc, as stage B compiles it
 
-B == C    23 sources, 1,795 KB, identical`;
+B == C         24 sources, 1,814 KB, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -231,10 +232,13 @@ export default function Home() {
       {/* ── wacc ──────────────────────────────────────────────────────────── */}
       <Section id="wacc" kicker="one of them, in full" title="The compiler, written in wac">
         <P>
-          <Lead>wac is self-hosted.</Lead> {m({ children: "packages/wacc" })} is the compiler,
-          written in wac, and it is what builds everything here — the packages, the programs, the
-          demos on this page. The TypeScript compiler it grew out of is the seed —{" "}
-          <Lead>~19,000 lines</Lead>, and building wacc is the only job it has left.
+          <Lead>wac is self-hosted, and there is no seed.</Lead>{" "}
+          {m({ children: "packages/wacc" })} is the compiler, written in wac —{" "}
+          <Lead>~41,000 lines</Lead> — and it is what builds everything here: the packages, the
+          programs, the demos on this page. It grew out of a compiler written in TypeScript, which
+          was the seed until 2026-08-28 and is deleted. What builds wacc now is a ladder of five
+          rungs whose lowest is hand-written wasm assembly text, so nothing here starts from a
+          binary somebody compiled once and checked in.
         </P>
         <Code label="wacc compiling itself" lang="text" code={BOOTSTRAP} />
         <P>

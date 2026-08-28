@@ -23,7 +23,7 @@ export Thing make() { return Thing(7); }
 ```
 
 Both compilers refuse it, and the language is right to: the name `Thing` is declared twice. They
-disagree about **what to say**, and this is the kind of disagreement `compiler/README.md` calls the
+disagree about **what to say**, and this is the kind of disagreement compiler/README.md calls the
 fastest signal this project has.
 
     reference   duplicate name 'Thing'

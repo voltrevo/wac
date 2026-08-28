@@ -49,6 +49,6 @@ twice.
 `sum(a0: Point)` — so this was the reference disagreeing with the other compiler as well as with
 itself.
 
-`compiler/wacBindgen.test.ts` is new and is the first thing in the repository that *runs* what
+compiler/wacBindgen.test.ts is new and is the first thing in the repository that *runs* what
 bindgen writes: it generates the glue, imports it as a host would, and calls it. Both of its tests
 fail without this change.

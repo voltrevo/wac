@@ -132,7 +132,7 @@ import `Buf` from `packages/bytes`.
 
 > **`std` is not in every compiler, and that is the only built-in that is not.** `platform.wac` uses
 > lambdas, which the reference frontend does not have, so the reference carries none of this tree and
-> refuses the specifier *by name* with that reason. `compiler/README.md` records it as the ninth
+> refuses the specifier *by name* with that reason. compiler/README.md records it as the ninth
 > omission. The practical edge of it: the playground compiles `core` and cannot compile a program
 > that uses a capability — which was already true, since a browser tab has no filesystem to grant.
 
@@ -182,7 +182,7 @@ Identity is the repository, the resolved commit and the repository-relative path
 naming one repository at one commit are one module, and two commits are two. That falls out of where
 the cache puts a checkout rather than being computed separately.
 
-> **The reference compiler does not resolve mappings** — `compiler/README.md` records it as a stated
+> **The reference compiler does not resolve mappings** — compiler/README.md records it as a stated
 > omission. Reading a manifest, a lockfile and a cache is package policy, and that gets one
 > implementation; the reference exists to build the first `wacc.wasm` from a cold checkout, which has
 > no dependencies by construction.

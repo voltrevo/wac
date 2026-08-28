@@ -113,7 +113,7 @@ export string test_a_specifier_resolves_against_the_file_that_wrote_it() {
   // cannot quietly start "fixing" it.
   //
   // **The two are `packages/wacc/src/path.wac` and `harness/wacFiles.ts`, and there was a third.**
-  // `compiler/wacResolve.ts` — the one the compiler itself keys modules by — carried the root as an
+  // compiler/wacResolve.ts — the one the compiler itself keys modules by — carried the root as an
   // empty first part and let `..` pop it, so this exact case came back as `b.wac`: a *relative* key,
   // and one an ordinary sibling import also produces. It compiled, which is the part that matters:
   // a program could climb above the root and be handed a different file. Fixed on 2026-08-19, and

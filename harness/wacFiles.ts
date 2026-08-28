@@ -261,7 +261,7 @@ if (wantsStats()) {
  * or `undefined` when there is none. `design/lang/0009` D6 and D7.
  *
  * **This is the I/O half of `@/`, which is why it is here and not in the compiler.**
- * `compiler/wacResolve.ts` does no reading by design — "a compiler that reads files is a compiler
+ * compiler/wacResolve.ts does no reading by design — "a compiler that reads files is a compiler
  * that cannot run in a browser" — and D7 defines `@/` by *searching upwards for the nearest
  * manifest*. So the search lives with the walk that already opens files, and the answer is handed to
  * `wacCompile` as `options.roots`.
