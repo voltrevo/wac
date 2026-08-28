@@ -35,7 +35,6 @@ async function ensureOutDir(out: string): Promise<void> {
 // The consequence to keep in view: this file and the runtime are two sides of one format, and nothing
 // but the conformance suite makes them agree. The format is versioned for that reason.
 
-import { wacCompile } from "wac/wacCompile.ts";
 import { wacFilesWithRoots } from "../../harness/wacFiles.ts";
 import type { WaccRes } from "../../harness/waccBuild.ts";
 
@@ -186,114 +185,15 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
   // The directory relative keys are measured from. The walk resolved `@/` against `Deno.cwd()`, so a
   // compiler handed a different base would file the same file under a second key.
   const base = Deno.cwd();
-  // **wacc, unless asked otherwise**, the same rule and the same switch as `build.ts`: both jobs are
-  // "build an application", and a manifest describing a module the reference compiled cannot
-  // describe one that uses a feature only wacc has. `issues/lang/0105` — this was the last bundler
-  // on the reference, and the binary embedding the pair is why it mattered.
-  if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    return await buildNativeWithWacc(entry, out, grants, files, roots, base);
-  }
-  const r = wacCompile(files, entry, { roots, base });
-  if (!r.ok) {
-    throw new Error(
-      `${entry} did not compile:\n` +
-        r.diagnostics.map((d) => `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n"),
-    );
-  }
-  const c = r.compiled;
-
-  // The `$bind$` exports a host needs to find without knowing the mangling. Every wac module has these
-  // and only these: the memory, and the seven string helpers. Named here so a runtime does not carry a
-  // second copy of the prefix convention.
-  const bind: Record<string, string> = {};
-  for (const e of c.exports ?? []) {
-    if (e.name.startsWith("$bind$") && !e.name.startsWith("$bind$sm_") && !e.name.startsWith("$bind$m_")) {
-      bind[e.name.slice("$bind$".length)] = e.name;
-    }
-  }
-  // `$bind$mem` is a memory rather than a function, so it is not in `exports` — it is the one name a
-  // host has to know, and knowing one is different from knowing a convention.
-  bind["mem"] = "$bind$mem";
-
-  const manifest: Manifest = {
-    version: MANIFEST_VERSION,
-    entry,
-    wasm: out.split("/").pop() + ".wasm",
-    grants,
-    callbacks: (c.callbacks ?? []).map((cb) => ({
-      field: cb.field,
-      helper: cb.helper,
-      type: cb.type,
-      params: cb.params,
-      ret: cb.ret,
-      slots: cb.slots,
-    })),
-    bind,
-    // The `$bind$sm_` / `$bind$m_` split is the mangling for static and instance methods. It is
-    // resolved here rather than in the runtime so that there is one copy of it, and it is the copy
-    // that is compiled against the module it describes.
-    // **Enums beside structs, not instead of them.** The reference reports the two separately and
-    // this list carried only the first, so a reference-built manifest described no `Read` at all —
-    // and every host that needed one spelled `$bind$e_Read_Data_new` for itself. `issues/system/0141`.
-    structs: [
-      ...(c.structs ?? []).map((s) => ({
-        name: s.display,
-        bind: s.bind,
-        fields: (s.fields ?? []).map((f: { name: string; type: string }) => ({
-          name: f.name,
-          type: f.type,
-        })),
-        methods: (s.methods ?? []).map((m: {
-          name: string;
-          isStatic: boolean;
-          params?: { type: string }[];
-          ret?: string;
-        }) => ({
-          name: m.name,
-          isStatic: m.isStatic,
-          params: (m.params ?? []).map((p) => p.type),
-          ret: m.ret ?? "void",
-          export: `$bind$${m.isStatic ? "sm" : "m"}_${s.bind}_${m.name}`,
-        })),
-        variants: [],
-      })),
-      ...(c.enums ?? []).map((e) => ({
-        name: e.display,
-        bind: e.bind,
-        fields: [],
-        methods: (e.methods ?? []).map((m: {
-          name: string;
-          isStatic: boolean;
-          params?: { type: string }[];
-          ret?: string;
-        }) => ({
-          name: m.name,
-          isStatic: m.isStatic,
-          params: (m.params ?? []).map((p) => p.type),
-          ret: m.ret ?? "void",
-          export: `$bind$${m.isStatic ? "sm" : "m"}_${e.bind}_${m.name}`,
-        })),
-        variants: (e.variants ?? []).map((v: {
-          name: string;
-          fields?: { name: string; type: string }[];
-        }) => ({
-          name: v.name,
-          fields: (v.fields ?? []).map((f) => ({ name: f.name, type: f.type })),
-          make: `$bind$e_${e.bind}_${v.name}_new`,
-        })),
-      })),
-    ],
-    exports: (c.exports ?? []).filter((e) => !e.name.startsWith("$bind$")).map((e) => ({
-      name: e.name,
-      params: (e.params ?? []).map((p: { type: string }) => p.type),
-      ret: e.ret ?? "void",
-    })),
-  };
-
-  const text = JSON.stringify(manifest, null, 2) + "\n";
-  await ensureOutDir(out);
-  await Deno.writeFile(`${out}.wasm`, withManifestSection(c.wasm as Uint8Array, text));
-  return manifest;
+  // **wacc, and only wacc, since 2026-08-28.** `WAC_APP_FROM=reference` built this with the
+  // TypeScript compiler instead — the switch `build.ts` had, for the same reason and with the same
+  // default. That compiler is deleted; `bootstrap/` builds wacc from source through the ladder, so
+  // the case this branch existed for — no wacc yet — is `./bootstrap.sh` now.
+  //
+  // A hundred lines went with it: a second manifest writer, assembled from the reference's own
+  // export list rather than from wacc's description of what it emitted. `issues/lang/0105` is why
+  // it mattered that this was the last bundler on the reference.
+  return await buildNativeWithWacc(entry, out, grants, files, roots, base);
 }
 
 /**
