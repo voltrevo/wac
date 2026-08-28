@@ -148,3 +148,86 @@ export string test_every_spec_fence_that_checks_clean_also_builds(Core core, Cli
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A fence the spec marks with `// error:` is one this compiler refuses.
+ *
+ * **The other direction, and it had a home until 2026-08-28.** The header above says this file
+ * deliberately does not assert that a fence which fails to check is wrong, because
+ * `compiler/wacSpec.test.ts` "already holds those to being errors, with the reference". That file
+ * is deleted with the reference, so the spec's rejected examples — `s as! i32` in `casts.md`, a
+ * `needsReturn` that does not return in `control.md`, 82 `// error:` lines across the tree — had
+ * nothing checking them at all.
+ *
+ * A document's rejected examples are as load-bearing as its accepted ones: an example that says
+ * "this is an error" and quietly starts compiling is the spec describing a language nobody has.
+ *
+ * ## Why the count matters more here than above
+ *
+ * Most `// error:` fences are *fragments* — a line or two, with the declarations they mention
+ * living elsewhere in the document. A fragment does not check clean whatever its contents, so
+ * asserting "this does not check clean" passes for it without looking at the error at all. The
+ * assertion is only doing work on the fences that are whole programs.
+ *
+ * So the number of whole-program error fences is asserted rather than the failures counted. If the
+ * extraction stops finding them, or the documents stop containing any, this fails instead of
+ * congratulating itself on a sweep of nothing.
+ */
+export string test_a_fence_the_spec_marks_as_an_error_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "specerrfences");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  Exec ls = cli.exec("git", string[]("ls-files", "spec/spec"), u8[0]()).wait();
+  t.isTrue(ls.ran() && ls.status == 0, "git ls-files spec/spec failed");
+  if (!ls.ran() || ls.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string[] docs = nonEmptyLines(string.fromBytes(ls.stdout));
+  i32 whole = 0;
+  string[] accepted = string[16](fill: "");
+  i32 nAccepted = 0;
+  i32 nShown = 0;
+
+  for (i32 d = 0; d < docs.len(); d++) {
+    string doc = docs[d];
+    if (doc.len() < 4) { continue; }
+    if (doc.slice(doc.len() - 3, doc.len()) != ".md") { continue; }
+    string[] fences = string[64](fill: "");
+    i32 nf = fencesOf(read(cli, doc), fences);
+    for (i32 f = 0; f < nf; f++) {
+      // `fencesOf` already keeps only balanced fences carrying an `export`, which is this file's
+      // standing definition of "could be a whole program".
+      if (fences[f].indexOf("// error:") < 0) { continue; }
+      whole = whole + 1;
+      string path = dir + "/e" + itoa(d) + "_" + itoa(f) + ".wac";
+      if (!cli.writeFile(path, fences[f].toBytes()).wait().ok()) { continue; }
+      Exec chk = cli.exec(binaryPath(cli), string[]("check", path), u8[0]()).wait();
+      if (!chk.ran() || chk.status != 0) { continue; }
+      nAccepted = nAccepted + 1;
+      if (nShown < accepted.len()) {
+        accepted[nShown] = doc + " fence " + itoa(f);
+        nShown = nShown + 1;
+      }
+    }
+  }
+
+  core.log("    spec error fences: " + itoa(whole) + " whole programs marked `// error:`, " +
+           itoa(nAccepted) + " accepted");
+
+  t.isTrue(whole >= 5,
+           "only " + itoa(whole) + " whole-program fences carry `// error:` — either the extraction "
+           + "broke or the documents stopped showing rejected programs, and either way this test "
+           + "is asserting nothing");
+
+  string said = "";
+  for (i32 i = 0; i < nShown; i++) { said = said + "\n  " + accepted[i]; }
+  t.eqI32(nAccepted, 0,
+          itoa(nAccepted) + " fence(s) the spec marks `// error:` check clean — the document says "
+          + "this is rejected and the compiler accepts it:" + said);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
