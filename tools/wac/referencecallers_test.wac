@@ -54,7 +54,13 @@ string[] bootstrap() {
     "harness/wacBind.ts",              // binds a module; `from: "reference"` is the bootstrap's ask
     "harness/wacFiles.ts",             // the import walk, which needs a parser to be correct
     "packages/platform/native.ts",     // the bundler that writes the seed
-    "packages/platform/build.ts"       // the same for the Deno world
+    "packages/platform/build.ts",      // the same for the Deno world
+    // **The one that exists to retire the reference.** The bootstrap ladder builds wacc from five
+    // rungs of hand-written source, and this asks whether it lands on the same `wacc.wasm` the
+    // reference reaches — `W1 == X1`. It has to import the reference to compare against it, which
+    // is as sanctioned as a use gets: it is the evidence for deleting `compiler/`, and it goes in
+    // the commit that does.
+    "bootstrap/ts/same_fixed_point.ts"
   );
 }
 

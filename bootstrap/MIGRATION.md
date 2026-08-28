@@ -180,6 +180,40 @@ survives the deletion even though the ability to re-run it does not.
 
 ---
 
+## Found during the move
+
+**The move alone did not put the ladder under wac's gate.** Discovery matches `*.test.ts` and
+`*_test.wac`; wacboot named its tests `*_test.ts`, which is neither, so 237 tests sat in the
+repository untouched — the exact gap the move was for. Renamed, and `browser.test.ts` now declares
+`// test-lane: exclusive` because it is flaky only under contention and wac's lane already has the
+mechanism for that.
+
+**Three stale references surfaced**, all older than the move and none of them caused by it:
+`rust/src/lib.rs` pointed at a spec file that never existed; `native/v8/build.rs` documents building
+the seed with a task that has never been in the registry, and which is not how it is built; and
+`bootstrap/ts/same_fixed_point.ts` had to be added to `tools/wac/referencecallers_test.wac`'s
+sanctioned list, which is the right answer — that file exists to compare the ladder against the
+reference, and it goes in the same commit that deletes the reference.
+
+The general shape: wacboot had no guards and wac has several, so the move ran the ladder's prose
+past checks it had never faced. **wac's task-name guard reads markdown and not `.rs`**, which is why
+`build.rs`'s stale line survived and the `.md` that quoted it did not.
+
+## The manifest, which no host should be writing — **agreed**
+
+`bootstrap.sh --host deno|nodejs` looked blocked: the JavaScript hosts take `-o` and `--l0` only,
+with no `--with-wacc` and no manifest writer. The obvious reading is that they need one.
+
+They do not. The Rust host asks wacc for the `exportSigs` and `bindTypes` wires and then **formats
+the manifest JSON itself**, in `rust-ladder/src/manifest.rs` — while wacc already exports
+`manifestOf(wasm, wire, sigs, entry, wasmName, grants)` and `withManifestSection(wasm, manifest)`,
+which is that job. So there are two implementations of one format, and `ts/manifest.test.ts` exists
+to police the drift between them.
+
+The answer is a deletion rather than a third copy: every host drives wacc's own two functions
+through the byte-at-a-time driver, the way `drivers/spec_cases.wac` already drives everything else.
+The JavaScript hosts then get the manifest for free, and `manifest.rs` can go.
+
 ## Order
 
 1. **The move**: wacboot's history into wac, under `bootstrap/`.
