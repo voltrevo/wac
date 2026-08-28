@@ -1,0 +1,5 @@
+// expect: refused
+// spec:  §wac-str-raw-chars-t7kq2mw
+// why: U+202E reorders what a reviewer sees without changing what the compiler reads
+// from: design/lang/0013 D3
+export i32 f() { return "a‮b".len(); }

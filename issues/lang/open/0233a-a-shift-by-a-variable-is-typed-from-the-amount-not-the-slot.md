@@ -1,6 +1,7 @@
 # 0233a — a shift whose left operand is a literal is typed from the amount, not from the slot
 
-- **Status:** open
+- **Status:** open — the message is done; the slot-typing repair is not
+- **Claimed by:** agent-b (2026-08-28) for the third option only
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
@@ -96,3 +97,32 @@ that wants its own run at the corpus and is not worth bundling with a diagnostic
 `issues/lang/0170a` item 2, tightening `typeOfE(Binary)` so that operands which disagree have no type.
 The shift row had to be exempted, and asking *why* the exemption falls back to the amount is what
 surfaced this.
+
+## The third option is done, 2026-08-28
+
+The recommendation was *"the third now, the first when someone is next in `emitExprAt`"*, and the
+third is in. The refusal is unchanged — it was always correct and both compilers agreed on it — and
+it now says why:
+
+    error: initialiser does not match the declared type
+     1 | export i64 f(i32 count) { i64 x = 1 << count; return x; }
+       |                                     ^^^^^^^^^^ expected i64, found i32
+       = help: a shift takes its type from the value being shifted, and a literal there has
+               none — write the width you mean, as in `1 as i64 << n`
+
+Per-site rather than per-code, through `reportSpanHinted`, which exists for exactly this: `hintFor`
+is keyed by the code alone, and the code here is the ordinary initialiser mismatch, so a hint added
+to that table would have appeared on every mismatch in the language.
+
+**The advice is checked, not just the sentence.** `1 as i64 << count` is compiled in the same test.
+A hint naming a fix nobody can follow is worse than no hint, and this one had to be written twice
+before it named something that works.
+
+Two negative cases hold the line: a shift of a *variable* (`a << b`) and an ordinary mismatch both
+take the code's own hint, so the sentence cannot leak to places it would be false.
+
+`packages/wacc/src/api.wac` gains `dumpFirstTypeHint`, a sibling of `dumpTypeErrors`, so a test can
+ask what a reader is told without running the command and parsing rendered text.
+
+**Left open for the first option**, which is the real repair: type a shift's literal left operand
+from the slot. That wants its own run at the corpus, as this page says.

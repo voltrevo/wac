@@ -1,0 +1,9 @@
+// expect: answers f = 3
+// spec:  §wac-str-block-close-m2jw8rt
+// why: the closing mark decides that and nothing else
+// from: design/lang/0013 D5
+export i32 f() {
+  string s = """
+    abc""";
+  return s.len();
+}

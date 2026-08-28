@@ -72,103 +72,103 @@ Pin[] pins() {
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 536, "case Host(cli): { return cli.readFile(path).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 596, "case Host(cli): { return cli.stat(path).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 660, "case Host(cli): { own = cli.readDir(path).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 696, "case Host(cli): {}", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 703, "case Host(cli): { return cli.writeFile(path, data).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 696, "case Host(cli): {}", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 772, "case Host(cli): { return cli.mkdir(path, parents).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 827, "case Host(cli): { return cli.remove(path, recursive).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 885, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chmod on a host mount is " +
         "not implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 942, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chown on a host mount is " +
         "not implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 984, "case Host(cli): {", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 988, "case Host(cli2): { return cli.rename(from, to).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 989, "else: { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not " +
         "implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/fs.wac", 995, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is " +
         "not implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be â so this is where the measurement " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
     Pin("packages/fs/src/image.wac", 123, "else: { skipped.push(mountName(fs.mounts.get(i).at)); }", false,
         "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
-        "fs.wac entries above â it needs a `Cli`. `test/image.test.ts` drives it through a " +
+        "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
         "built program."),
     Pin("packages/fs/src/image.wac", 140, "for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }", false,
         "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
-        "fs.wac entries above â it needs a `Cli`. `test/image.test.ts` drives it through a " +
+        "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
         "built program."),
     Pin("packages/fs/src/fs.wac", 1064, "if (path.len() < m.at.len()) { return NODE_NONE(); }", true,
         "A path shorter than the mount that owns it. `mountOf` picks by `underMount`, which " +
@@ -179,14 +179,14 @@ Pin[] pins() {
         "and a future one could pass something shorter."),
     Pin("packages/fs/src/fs.wac", 1473, "if (cut < 0) { return path; }", true,
         "`baseOf` on a path with no slash in it. Every path reaching this package is absolute " +
-        "â the shell resolves before it calls â so there is always at least the leading " +
+        "— the shell resolves before it calls — so there is always at least the leading " +
         "one. Kept because it is a general helper and returning the whole string is the right " +
         "answer if that ever stops being true."),
     Pin("packages/fs/src/image.wac", 202, "Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
@@ -194,64 +194,64 @@ Pin[] pins() {
         "programs) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 223, "if (existing.ok) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 225, "if (!got.ok) { return Booted.of(false, fs, got.error); }", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 227, "} else if (existing.fault != FAULT_NOT_FOUND()) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 242, "export bool save(Core core, Cli cli, string who, string path, Fs fs) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 244, "for (i32 i = 0; i < w.skipped.len(); i++) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 257, "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
     Pin("packages/fs/src/image.wac", 261, "if (cli.rename(beside, path).wait().fault != 0) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
-        "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
-        "path that is a directory, a save that succeeds and a save that cannot â against " +
+        "`packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a " +
+        "path that is a directory, a save that succeeds and a save that cannot — against " +
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
@@ -264,13 +264,13 @@ Pin[] pins() {
     Pin("packages/fs/src/fs.wac", 1247, "if (name.len() == 0) { return -1; }", false,
         "A `/proc/` path whose pid is the empty string. Every path reaching `procPid` has " +
         "been through `at`, which collapses `//` and drops a trailing slash, so the component " +
-        "after `/proc` is never empty â `/proc//cmdline` and `/proc/` are both driven by " +
+        "after `/proc` is never empty — `/proc//cmdline` and `/proc/` are both driven by " +
         "`procOps` and both arrive here as something else. The guard is against a future " +
         "caller that does not normalise first."),
     Pin("packages/fs/src/fs.wac", 1372, "if (found is null) { return u8[0](); }", false,
         "`procBytes` for a pid with no process. `synthKind` calls `procPid`, which answers -1 " +
         "for a pid that is not in the table, and a path whose kind is `SYNTH_NONE` never gets " +
-        "as far as reading bytes â so `/proc/9999/cmdline` (driven, in `procOps`) is " +
+        "as far as reading bytes — so `/proc/9999/cmdline` (driven, in `procOps`) is " +
         "refused a step earlier. This is the `Proc?` unwrap the type system requires and it " +
         "has no second answer to give."));
 }
@@ -288,24 +288,24 @@ Rule[] rules() {
          "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
          "is driven by `test/host.test.ts` and " +
          "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-         "is a better oracle than this probe could be â so this is where the measurement " +
+         "is a better oracle than this probe could be — so this is where the measurement " +
          "stops, not where the testing does."),
     Rule("packages/fs/src/fs.wac", "case Remote(chan", "line", false,
          "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot " +
-         "be that peer â a wac fake has no state to answer from â so these are driven by " +
+         "be that peer — a wac fake has no state to answer from — so these are driven by " +
          "`packages/box/test/sealing.test.ts`, which runs a sealed session whose stages read, " +
          "write and rename through the channel. That claim was checked rather than remembered " +
          "on 2026-08-12: the file had no `mv` in it, so `remoteRename` was named here as " +
          "driven and driven by nothing. It has one now, canaried by making every rename " +
          "report success."),
     Rule("packages/fs/src/remote.wac", "struct Chan", "struct", false,
-         "`Chan`'s own methods â `of`, `waitId`, `rearm`, `compact`. Each is about a live " +
+         "`Chan`'s own methods — `of`, `waitId`, `rearm`, `compact`. Each is about a live " +
          "handle: the id a `waitAny` waits on, the outstanding read that has to be re-armed, " +
          "the backlog that has to be compacted. There is no handle without a `Cli` and no " +
          "answer without a peer, so these move with the channel itself and are exercised " +
          "wherever a real child asks a real parent."),
     Rule("packages/fs/src/fs.wac", "Cli cli", "decl", false,
-         "A constructor that takes a `Cli` â `onHost`, `overParent`, `overChan`, " +
+         "A constructor that takes a `Cli` — `onHost`, `overParent`, `overChan`, " +
          "`fromParentOrHost`. Only a built program has one, and what they build is exercised " +
          "by `test/host.test.ts` and by every spawned stage in " +
          "`packages/box/test/sealing.test.ts`; a probe can build the filesystems that need no " +
@@ -313,14 +313,14 @@ Rule[] rules() {
     Rule("packages/fs/src/fs.wac", "rename across mounts", "line", false,
          "The refusal `rename` gives when one end is on a *parent's* filesystem and the other " +
          "is not. Reaching it needs a mount with a `Remote` backing, which needs a channel to " +
-         "a live peer â the same reason as the arms above, one level in: this is the `else` " +
+         "a live peer — the same reason as the arms above, one level in: this is the `else` " +
          "inside `case Remote`, so a probe with no remote mount cannot get to either side of " +
          "it. `packages/box/test/sealing.test.ts` is where a stage renames across the " +
          "boundary."),
     Rule("packages/fs/src/wire.wac", "this.why == \"\"", "line", true,
          "**The `else` of first-error-wins, which cannot happen here.** Every reader that " +
          "records a reason sets `bad` in the same breath, and `byte()` answers zero for a " +
-         "reader with `bad` set â so a reader that already has a `why` reads a length of " +
+         "reader with `bad` set — so a reader that already has a `why` reads a length of " +
          "zero, zero is not negative, and this refusal is never reached a second time. The " +
          "guard is right and is what makes the property hold for the readers that *do* reach " +
          "it twice through other fields; here it is a statement rather than a branch. " +
@@ -329,21 +329,21 @@ Rule[] rules() {
     Rule("packages/fs/src/remote.wac", "remoteSetExecutable", "line", false,
          "**The one wire call with no driver anywhere**, named separately so the blanket " +
          "reason above does not cover for it. Every other opcode is reached by a sealed " +
-         "session because some applet makes that call â `cat` reads, `cp` writes, `mv` " +
-         "renames â but nothing in `packages/box` sets the executable bit: `chmod` is one " +
+         "session because some applet makes that call — `cat` reads, `cp` writes, `mv` " +
+         "renames — but nothing in `packages/box` sets the executable bit: `chmod` is one " +
          "of the shell's *builtins*, so a sealed `chmod +x` never leaves the parent, and the " +
          "only caller of `setExecutable` in the repository is `packages/git`'s checkout, " +
-         "which runs on a host filesystem. So this is not 'driven elsewhere' â it is " +
+         "which runs on a host filesystem. So this is not 'driven elsewhere' — it is " +
          "untested, and it is written down here rather than inside a category that says " +
-         "otherwise. A driver would mean an applet that sets the bit â and `packages/sh`'s " +
+         "otherwise. A driver would mean an applet that sets the bit — and `packages/sh`'s " +
          "README says why there is not one: `chmod` is a *builtin*, along with `echo`, " +
          "`test`, `ls` and `chown`, because 'a builtin is what the shell must answer itself'. " +
          "So this is not an oversight waiting for a small change; driving it means arguing " +
          "with that decision, and the cheaper honest answer is this entry."),
     Rule("packages/fs/src/remote.wac", "Chan c", "decl", false,
          "The child's half of the channel: every one of these writes a question and waits for " +
-         "its parent's answer. The *wire* underneath them is covered â `fs_test.wac` " +
-         "round-trips all four encode/decode pairs â and the asking needs a real peer, " +
+         "its parent's answer. The *wire* underneath them is covered — `fs_test.wac` " +
+         "round-trips all four encode/decode pairs — and the asking needs a real peer, " +
          "which is `packages/box/test/sealing.test.ts`."));
 }
 

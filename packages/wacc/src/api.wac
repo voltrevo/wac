@@ -138,6 +138,28 @@ export i32[] dumpTypeErrors(u8[] src) {
 }
 
 /**
+ * The **hint** written for the first checker diagnostic, or "" where it has none of its own.
+ *
+ * A sibling of `dumpTypeErrors` and for the same reason: a test that wants to know what a reader is
+ * told needs something to ask, and running the whole command to read `= help:` out of rendered text
+ * makes an assertion about a sentence depend on a renderer.
+ *
+ * **Empty is the ordinary answer**, and is not the absence of help — it means the diagnostic takes
+ * the hint its *code* carries, from `hintFor`. What this returns is the narrower thing: a hint some
+ * site wrote for this occurrence because it had the reader's own expression in hand.
+ */
+export string dumpFirstTypeHint(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  C c = C.create(src, lexed.tokens, lexed.tokenCount, lexed.tokenCount);
+  declareModule(c, prog, string[0](fill: ""));
+  checkModule(c, prog);
+  string[] hints = hintsOf(c);
+  return hints.len() > 0 ? hints[0] : "";
+}
+
+/**
  * Rung 4's surface: a wasm module for the program, as bytes.
  *
  * Bytes out rather than a structure, for the same reason everything else here is bytes in — and

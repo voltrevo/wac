@@ -1,0 +1,8 @@
+// expect: refused
+// spec:  §wac-str-raw-newline-h4mn8qv
+// why: a missing quote used to swallow the rest of the file and report at the opening quote
+// from: design/lang/0013 D3
+export i32 f() {
+  string a = "oops;
+  return a.len();
+}

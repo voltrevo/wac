@@ -2696,6 +2696,45 @@ void reportExpr(C c, i32 code, Expr e, string note) {
   c.reportWith(code, e.line, e.col, note);
 }
 
+/**
+ * The sentence for `i64 x = 1 << count;`, or "" when that is not what happened.
+ *
+ * **A shift is typed from the value being shifted, and a literal there has no type of its own.**
+ * `spec/spec/types.md` says a literal takes its type from what is expected of it, *"including as an
+ * operand of an operator … the other operand counts as an expectation"* — and for a shift the other
+ * operand is the *amount*, which is a count rather than a second value of the same type. So `1`
+ * takes `count`'s `i32` and the `i64` slot is never consulted.
+ *
+ * `issues/lang/0233a` records three ways out and recommends this one first: the refusal is correct
+ * and both compilers agreed on it, and what it lacked was a reason. The generic help — *"use `as!`
+ * for a checked conversion"* — is right by accident and tells the reader to cast the literal without
+ * saying why casting it is what the language wants. The deep fix is slot typing in `emitExprAt` and
+ * wants its own run at the corpus.
+ */
+string shiftLiteralHint(C c, Expr e) {
+  return match (e.kind) {
+    case Binary(op, left, right): shiftHintFor(c, op, left),
+    else: ""
+  };
+}
+
+/** The half of `shiftLiteralHint` that needs the operator's kind, which is a token. */
+string shiftHintFor(C c, i32 op, Expr left) {
+  i32 k = tokenKind(c, op);
+  if (k != kShl() && k != kShr() && k != kShrU()) { return ""; }
+  if (litFamily(c, left) != litInteger()) { return ""; }
+  return "a shift takes its type from the value being shifted, and a literal there has none — "
+       + "write the width you mean, as in `1 as i64 << n`";
+}
+
+/** `reportExpr`, with a hint written for this diagnostic rather than for its code. */
+void reportExprHinted(C c, i32 code, Expr e, string note, string hint) {
+  // The whole expression's width, which is what `reportExprSpan` measures — a shift has no single
+  // token of its own, so `tokenOfExpr` answers -1 for it and there is nothing narrower to use.
+  c.reportSpanHinted(code, e.line, e.col, note,
+                     c.widthBetween(firstTokenOfExpr(e), lastTokenOfExpr(e)), hint);
+}
+
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   checkCharLiteral(c, e);
   if (literalFits(c, want, e)) { return; }
@@ -8570,7 +8609,15 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(c, wantVar, gotVar)) {
         c.report(errNullableToNonNull(), init.line, init.col);
       } else if (!assignable(c, wantVar, gotVar)) {
-        reportExpr(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar));
+        // `i64 x = 1 << count;` is the idiom this catches, and the reason is not in the message
+        // without help — `issues/lang/0233a`. Empty for everything else, which falls through to the
+        // code's own hint exactly as before.
+        string sh = shiftLiteralHint(c, init);
+        if (sh == "") {
+          reportExpr(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar));
+        } else {
+          reportExprHinted(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar), sh);
+        }
       }
       c.expected = wantVar;
       checkExpr(c, init);

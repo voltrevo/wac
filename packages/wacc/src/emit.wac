@@ -11,8 +11,8 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
-import { escapeValue, isStringEscape, lex, Lexed, tokenStride, unicodeEscapeEnd,
-         unicodeEscapeValue, utf8Into } from "./lex.wac";
+import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, tokenStride,
+         unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -13641,6 +13641,7 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
 export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   i32 start = lexed.tokens[tok * tokenStride() + 1];
   i32 len = lexed.tokens[tok * tokenStride() + 2];
+  if (isBlockLiteral(src, start, len)) { return blockValue(src, start, len); }
   // **Sized by the span, which is always enough.** `\\u{1F600}` is nine source bytes and four
   // encoded ones, and every other escape shrinks too; no escape encodes to more bytes than it is
   // written with, so the literal's own length bounds the result.
@@ -13680,8 +13681,12 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
 /** Whether a string literal uses only escapes this emitter resolves the same way the language does. */
 bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
   i32 start = lexed.tokens[tok * tokenStride() + 1];
-  i32 end = start + lexed.tokens[tok * tokenStride() + 2] - 1;
-  i32 i = start + 1;
+  // **Three quotes each side for a block string, one for the others.** The escape *set* is the
+  // same — `design/lang/0013` D6 — so only the bounds differ, and getting them wrong would read a
+  // closing quote as content and answer about an escape nobody wrote.
+  i32 mark = isBlockLiteral(src, start, lexed.tokens[tok * tokenStride() + 2]) ? 3 : 1;
+  i32 end = start + lexed.tokens[tok * tokenStride() + 2] - mark;
+  i32 i = start + mark;
   while (i < end) {
     if (src[i] != 92) { i = i + 1; continue; }
     if (i + 1 >= end) { return false; }

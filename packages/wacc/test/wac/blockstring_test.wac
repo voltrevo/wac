@@ -1,0 +1,84 @@
+// Block strings — `design/lang/0013` D5 and D6.
+//
+// **Decoded rather than run.** `stringLiteralBytes` is what turns a literal's span into the bytes a
+// module carries, so asking it directly is the same question the emitter asks, and it answers
+// without a build in between. What a block string *means* is the whole of this step; that the
+// emitter then writes those bytes into a data segment is `spec/cases/0291`-`0293`'s business.
+//
+// The three-quote mark is spelled `\u{22}` three times rather than typed, so this file can hold a
+// program containing `"""` without the mark ending the literal it is inside.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { lex, Lexed, tokenStride } from "../../src/lex.wac";
+import { kString } from "../../src/kinds.wac";
+import { stringLiteralBytes } from "../../src/emit.wac";
+
+/** The bytes of the first string literal in `src`, or "<none>" when there is not one. */
+string firstString(string src) {
+  u8[] b = src.toBytes();
+  Lexed lexed = lex(b);
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (lexed.tokens[t * tokenStride()] != kString()) { continue; }
+    return string.fromBytes(stringLiteralBytes(b, lexed, t));
+  }
+  return "<none>";
+}
+
+/** How many diagnostics `lex` reported. */
+i32 lexErrors(string src) { return lex(src.toBytes()).errorCount; }
+
+string Q() { return "\u{22}\u{22}\u{22}"; }
+
+export string test_a_block_string_decodes_as_D5_and_D6_say() {
+  T t = T.create();
+
+  // The note's own example: margin 4, closing mark on its own line, so the value ends in a newline.
+  t.eqStr(firstString("string s = " + Q() + "\n    usage: wac build\n    more\n    " + Q() + ";"),
+          "usage: wac build\nmore\n", "the margin comes off and the closing line adds a newline");
+
+  // The closing mark at the end of the last content line: no trailing newline. That is the one job
+  // D5 gives it.
+  t.eqStr(firstString("string s = " + Q() + "\n    abc" + Q() + ";"),
+          "abc", "a closing mark on the content line ends the value there");
+
+  // **D5's departure from Java.** Java takes the minimum over the content lines *and* the closing
+  // line, so moving the delimiter reindents the value; here the closing line does not participate,
+  // and the margin is 4 rather than 2.
+  t.eqStr(firstString("string s = " + Q() + "\n    abc\n    def\n  " + Q() + ";"),
+          "abc\ndef\n", "the closing mark's own indentation does not set the margin");
+
+  // A blank line has no indentation to contribute, so it cannot drag the margin to zero.
+  t.eqStr(firstString("string s = " + Q() + "\n    abc\n\n    def\n    " + Q() + ";"),
+          "abc\n\ndef\n", "a blank line contributes nothing to the margin");
+
+  // D6: trailing whitespace is kept, so no `\s`-style escape hatch is needed.
+  t.eqStr(firstString("string s = " + Q() + "\n    ab  \n    " + Q() + ";"),
+          "ab  \n", "trailing spaces are part of the value");
+
+  // D6: cooked, exactly as in a one-line literal — including step 2's escape.
+  t.eqStr(firstString("string s = " + Q() + "\n    a\\tb\\u{41}\n    " + Q() + ";"),
+          "a\tbA\n", "escapes are cooked");
+  return t.report();
+}
+
+export string test_a_block_string_refuses_what_D6_refuses() {
+  T t = T.create();
+
+  // The opening newline is unconditional: content on the opening mark's own line has no
+  // indentation to contribute and would silently set the margin to zero.
+  t.eqI32(lexErrors("string s = " + Q() + "x\n    " + Q() + ";"), 1,
+          "content on the opening line is refused");
+
+  // **A tab in the indentation is refused, and D3 is what refuses it.** D6 asks for this as a rule
+  // of its own; a tab is `Cc`, so the category rule already catches it wherever it appears. A
+  // separate check gave two diagnostics for one tab, which is how that was noticed.
+  t.eqI32(lexErrors("string s = " + Q() + "\n\tabc\n    " + Q() + ";"), 1,
+          "a tab in the indentation is refused, once");
+
+  // And the ordinary form still works, so this cannot pass by refusing block strings generally.
+  t.eqI32(lexErrors("string s = " + Q() + "\n    abc\n    " + Q() + ";"), 0,
+          "a well-formed block string is accepted");
+  t.eqI32(lexErrors("string s = \"ordinary\";"), 0, "and a one-line literal is untouched");
+  return t.report();
+}

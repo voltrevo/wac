@@ -160,6 +160,19 @@ TypeScript, `emit` writing wasm text — so either would need a `{{` escape and
 would silently reinterpret every one. Under `\{`, a bare `{` in a string stays a
 bare `{` and all 6065 are untouched.
 
+**Re-measured 2026-08-28, walking each literal escape by escape** so that `\\{` — an escaped
+backslash followed by a brace — is told apart from `\{`:
+
+| inside a double-quoted literal | occurrences |
+|---|---:|
+| `\{`, which would become interpolation | **0** |
+| `\\`, the escaped backslash regex code relies on | 875 |
+| a bare `{`, which `${…}` or bare braces would reinterpret | **4,875** |
+
+The first row is the argument: no literal in the tree changes meaning. The third is the cost of the
+alternatives, and it is the same order as the 6,065 *lines* counted when this was written — that
+figure counted lines and this counts occurrences.
+
 **Braces rather than parens, because wac already embeds expressions in braces.**
 JSX writes `<input size={itoa(n)}/>`, so `\{itoa(n)}` makes one shape mean
 "an embedded expression" in both places instead of two answers to one question.
@@ -265,11 +278,55 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | ---- | ----- |
 | 1 — `\'` and `\"` | **done**, 2026-08-28 — `codes_test.wac` holds both directions and both controls |
 | 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
-| 3 — the category rule | not started |
+| 3 — the category rule | **done**, 2026-08-28 — six categories of seven; `Cn` deferred, see below |
 | 4 — `u8` truncation | **done**, 2026-08-28 — character literals only; see the note below |
 | 5 — `isUtf8` / `toUtf8` | not started |
-| 6 — block strings | not started |
+| 6 — block strings | **done**, 2026-08-28 — D6's tab clause turned out to be D3's |
 | 7 — interpolation | not started |
+
+## Step 3 is not blocked by the no-dependencies rule, and here is what it costs
+
+Worth writing down because the first answer was wrong. `packages/wacc` may import nothing, so it
+cannot reach `packages/unicode` — and the category rule reads as needing a Unicode database, `Cn`
+(unassigned) most of all. That looks like a wall and is not one.
+
+**The database is already in the repository, and it comes from the host.**
+`packages/unicode/README.md`: *"The tables come from the host — the host already carries a Unicode
+database, that is what `toLowerCase` consults"*. `packages/unicode/tools/gentables.ts` enumerates
+all 1.1 million code points, asks the engine, and emits sorted ranges with a binary search over
+them. The question it asks today is one regex:
+
+```ts
+const notPrintable = /\p{Cc}|\p{Cn}|\p{Cs}|\p{Zl}|\p{Zp}/u;
+```
+
+which is five of this note's seven categories, including the expensive one.
+
+**Measured against `isPrintable` rather than reasoned about**, since "printable" is a glibc word and
+this rule is a Unicode one. Probing one code point per category:
+
+| | `isPrintable` | D3 wants |
+|---|---|---|
+| `U+0007` Cc | no | refuse ✓ |
+| `U+2028` Zl, `U+2029` Zp | no | refuse ✓ |
+| `U+0378` Cn | no | refuse ✓ |
+| `U+00AD` Cf soft hyphen | **yes** | refuse ✗ |
+| `U+202E` Cf bidi override | **yes** | refuse ✗ |
+| `U+E000` Co private use | **yes** | refuse ✗ |
+| `U+200C` ZWNJ, `U+200D` ZWJ | yes | allow ✓ |
+| `U+0041` | yes | allow ✓ |
+
+So the gap is `Cf` and `Co`, both of which the same regex can ask for, and the two exemptions fall
+out as a special case of two code points rather than as a table.
+
+**What the no-dependencies rule actually decides is where the table lives**, not whether the step
+can be done. `packages/wacc/src/coretext.wac` is already a generated file inside wacc's own tree —
+the embedding of `core/` and `std/`, written by `tools/genCore.ts` and checked by the doc lane. A
+category table is the same arrangement: generate it into `packages/wacc/src`, check it the same way,
+and wacc imports nothing.
+
+The cost is a generator, a table of a few hundred ranges, a binary search, and a `--check` mode so
+it cannot go stale silently. Not free, and not blocked.
 
 ## What step 4 turned out to be, and what it is not
 
@@ -293,6 +350,47 @@ rather than the range code: a message reading "out of range" would have been fal
 Two independent checks caught the over-wide version within a minute of each other — the repo-wide
 `corpuscheck_test` on `spec/tour.wac`, and the spec's own acceptance corpus on the clause. Worth
 recording because the widening was reasonable-sounding and only the written rule settled it.
+
+## Step 7's shape, from reading rather than from building it
+
+Not started. What follows is what a reader should know before starting, so the first hour is not
+spent finding it.
+
+**Desugar in the lexer, not the parser.** D7 says interpolation is *exactly* sugar for `+`, and the
+faithful reading of that is that `"a\{e}b"` produces the token stream for `"a" + e + "b"` — after
+which the parser needs no change at all, and neither do the checker, the emitter or the printer.
+`"a" + e + "b"` compiles today; that was the first thing checked.
+
+**Lexing the embedded expression is the easy half.** On `\{` the scanner emits the segment so far,
+emits a `+`, and returns to the ordinary token loop with a brace depth; on the `}` that closes depth
+one it emits a `+` and resumes the string. Nested literals fall out — `"\{f("x")}"` works because the
+inner `"x"` is lexed by the ordinary string rule. That is the balancing D7 says is inherent, and it
+costs a depth counter rather than a second pass.
+
+**The hard half is the spans**, and it is where the design has to be decided rather than derived. A
+synthesised `"a"` token has no `"a"` in the source to point at: the segment sits between a quote and
+a `\{`, and `stringLiteralBytes` reads a span expecting a quote at each end.
+
+**There is a precedent in this repository and it should be followed.**
+`packages/wacc/src/wapyparse.wac` synthesises tokens for a surface whose source does not contain
+them, and gives them spans by appending a `synthTail()` to the source it hands back — its own header
+explains the consequence at length: *"the `src` and `toks` handed back are not the caller's … a
+caller that parses with this and then checks against `lex(original)` will resolve every name to the
+wrong token"*. Interpolation needs the same arrangement and inherits the same warning.
+
+**What to measure before starting**: ten consumers read a `kString` token today. Each one either
+sees only the segments (fine) or needs to know a literal was interpolated (not fine), and which is
+which is a half-hour of grep that will decide whether this is a day or a week.
+
+## D6's tab rule is D3's rule, and asking twice said so twice
+
+*"Tabs in the indentation are refused outright rather than assigned a width, so no block string can
+mean two things to two readers."* That is right and it needs no code of its own: a tab is `Cc`, and
+step 3 refuses every raw category-C character anywhere in a literal — indentation included.
+
+Implemented as a separate check first, and the way it surfaced is the useful part: a block string
+with a tab reported **two** diagnostics for one tab, one from each rule. The second was deleted
+rather than the first, since D3's is the general statement and this is an instance of it.
 
 ## Deferred, and not part of this
 

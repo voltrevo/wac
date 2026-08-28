@@ -1,0 +1,11 @@
+// expect: answers f = 77
+// spec:  §wac-str-block-margin-p9qk4nv
+// why: the margin is the least indentation of the content lines, and comes off each
+// from: design/lang/0013 D5
+export i32 f() {
+  string usage = """
+    usage: wac build <entry.wac> -o <stem>
+           [--allow-read] [--allow-write]
+    """;
+  return usage.len();
+}

@@ -1,0 +1,11 @@
+// expect: answers f = 8
+// spec:  §wac-str-block-close-m2jw8rt
+// why: deliberately not Java, where moving the delimiter reindents the whole value
+// from: design/lang/0013 D5
+export i32 f() {
+  string s = """
+    abc
+    def
+  """;
+  return s.len();
+}

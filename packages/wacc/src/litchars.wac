@@ -1,0 +1,86 @@
+// What a literal may contain — `design/lang/0013` D3.
+//
+// A string or character literal may hold any character **except** Unicode category C — `Cc`
+// control, `Cf` format, `Co` private-use, `Cs` surrogate — and `Zl` and `Zp`. Every one of them is
+// still expressible as `\u{…}`, which is why step 2 of that note came first: the rule costs nothing
+// because nothing becomes unwriteable, only unwriteable *raw*.
+//
+// **One exception, and it is two code points.** U+200C and U+200D are `Cf` and are allowed. They are
+// the only invisible characters that change what a *visible* character looks like rather than where
+// it sits: emoji sequences are built from them, as is correct rendering in Persian, Hindi and Malay.
+//
+// ## `Cn` — unassigned — is not here, and that is a decision
+//
+// D3 lists it. It is left out, for two reasons that point the same way.
+//
+// **It is the whole cost.** Measured over all 1.1 million code points, the categories above need
+// **29 disjoint ranges** between them; `Cn` alone needs **707**. Twenty-nine comparisons fit in a
+// function. Seven hundred needs a table, a table at module scope needs a `const` array, and
+// `bootstrap/README.md` records that wac-L5 cannot compile one: *"a module-level `const` is refused
+// … 251 declarations in the corpus are written this way and none in wacc or `core`, which is exactly
+// why it went unnoticed."* A generated table was written first and is what found that — it is
+// `issues/lang/0285b` now, since wacc's graph reaching one is new.
+//
+// **And it is the one category that should arguably never be here.** Whether a code point is
+// assigned is a fact about the compiler's Unicode tables rather than about the program: the same
+// source file is legal under one revision and refused under an older one, and *neither* the file nor
+// the language changed. A rule whose answer moves with the compiler's vintage is a poor rule to put
+// in a lexer, and the argument for it — hygiene — is already served by the categories that are here.
+//
+// **Nothing is lost by leaving it out.** All three things D3 says a category rule catches that a
+// codepoint range misses are in the twenty-nine: the C1 controls at U+0080–U+009F (`Cc`), the
+// bidirectional formatting characters (`Cf`), and U+2028/U+2029 (`Zl`/`Zp`). The bidi characters are
+// the safety half of that note — a literal that renders to a reviewer in a different order than the
+// compiler reads it — and they are refused here.
+
+/**
+ * Whether `cp` may appear raw inside a string or character literal.
+ *
+ * Ordered by what a real source file holds: ASCII first, since almost every character in almost
+ * every literal is one and answering it takes two comparisons.
+ */
+export bool isLiteralChar(i32 cp) {
+  if (cp < 0) { return false; }
+  // ASCII: everything but the C0 controls and DEL.
+  if (cp < 128) { return cp >= 32 && cp != 127; }
+  // The two `Cf` code points this rule admits, before the `Cf` ranges refuse them.
+  if (cp == 8204 || cp == 8205) { return true; }          // U+200C ZWNJ, U+200D ZWJ
+  return !refusedAbove(cp);
+}
+
+/**
+ * The 27 ranges above ASCII that a literal may not hold: `Cc`'s C1 half, `Cf`, `Co`, `Cs`, `Zl`,
+ * `Zp`. Written out rather than generated, because they are a stable list — every one names a
+ * character that exists — and because a table cannot live at module scope here. See the header.
+ */
+bool refusedAbove(i32 cp) {
+  if (cp >= 128 && cp <= 159) { return true; }            // Cc, the C1 controls
+  if (cp == 173) { return true; }                          // Cf U+00AD soft hyphen
+  if (cp >= 1536 && cp <= 1541) { return true; }           // Cf U+0600..U+0605
+  if (cp == 1564) { return true; }                         // Cf U+061C arabic letter mark
+  if (cp == 1757) { return true; }                         // Cf U+06DD arabic end of ayah
+  if (cp == 1807) { return true; }                         // Cf U+070F syriac abbreviation mark
+  if (cp >= 2192 && cp <= 2193) { return true; }           // Cf U+0890..U+0891
+  if (cp == 2274) { return true; }                         // Cf U+08E2
+  if (cp == 6158) { return true; }                         // Cf U+180E mongolian vowel separator
+  if (cp >= 8203 && cp <= 8207) { return true; }           // Cf U+200B..U+200F (ZWNJ/ZWJ exempted)
+  if (cp == 8232) { return true; }                         // Zl U+2028 line separator
+  if (cp == 8233) { return true; }                         // Zp U+2029 paragraph separator
+  if (cp >= 8234 && cp <= 8238) { return true; }           // Cf U+202A..U+202E bidi embedding
+  if (cp >= 8288 && cp <= 8292) { return true; }           // Cf U+2060..U+2064
+  if (cp >= 8294 && cp <= 8303) { return true; }           // Cf U+2066..U+206F bidi isolate
+  if (cp >= 55296 && cp <= 57343) { return true; }         // Cs surrogates
+  if (cp >= 57344 && cp <= 63743) { return true; }         // Co private use
+  if (cp == 65279) { return true; }                        // Cf U+FEFF byte order mark
+  if (cp >= 65529 && cp <= 65531) { return true; }         // Cf U+FFF9..U+FFFB
+  if (cp == 69821) { return true; }                        // Cf U+110BD
+  if (cp == 69837) { return true; }                        // Cf U+110CD
+  if (cp >= 78896 && cp <= 78911) { return true; }         // Cf U+13430..U+1343F
+  if (cp >= 113824 && cp <= 113827) { return true; }       // Cf U+1BCA0..U+1BCA3
+  if (cp >= 119155 && cp <= 119162) { return true; }       // Cf U+1D173..U+1D17A
+  if (cp == 917505) { return true; }                       // Cf U+E0001 language tag
+  if (cp >= 917536 && cp <= 917631) { return true; }       // Cf U+E0020..U+E007F tag characters
+  if (cp >= 983040 && cp <= 1048573) { return true; }      // Co U+F0000..U+FFFFD
+  if (cp >= 1048576 && cp <= 1114109) { return true; }     // Co U+100000..U+10FFFD
+  return false;
+}

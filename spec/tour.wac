@@ -262,7 +262,32 @@ export i32 strBasics() {
   string emoji = "hello 😀";
   return s.len() + emoji.len();     // 5 + 10 — len() is BYTES, not characters
 }
-// Escapes: \n \t \r \\ \" \0 — each one byte.
+// Escapes: \n \t \r \\ \" \0 — each one byte — and \u{H...H}, one to six hex
+// digits naming a code point, which encodes as UTF-8 and so may be up to four.
+// Its bounds are `string.fromCodepoint`'s: at most 10FFFF, and not a surrogate.
+export i32 strEscapes() {
+  return "\u{41}".len() + "\u{1F600}".len();   // -> 5 — one byte and four
+}
+// A literal may NOT hold an invisible character raw: a control, a format
+// character, private use, or a line/paragraph separator. Write it as \u{...}.
+// U+200C and U+200D are the exception, being the two that change how a VISIBLE
+// character looks rather than where it sits — emoji sequences need them.
+// The bidirectional overrides are why this is a safety rule and not only a
+// tidiness one: one of those reorders what a reviewer sees without changing
+// what the compiler reads.
+// ERROR: string bad = "a\u{202E}b" written with the character itself, not the escape
+
+// BLOCK strings hold newlines: `\u{22}\u{22}\u{22}`, a newline, the content, the
+// closing mark. The margin is the least indentation of the CONTENT lines and
+// comes off each. The closing mark decides one thing — whether the value ends
+// in a newline — and its own indentation is not part of the margin, which is
+// deliberately unlike Java, where moving the delimiter reindents the value.
+export i32 strBlock() {
+  string usage = """
+      usage: wac build <entry.wac>
+      """;
+  return usage.len();               // -> 29 — the margin is gone, the newline stays
+}
 
 export string strOps() {
   string s = "hello";
@@ -918,6 +943,7 @@ export bool selfTest() {
       && raw(3.7) == 3 && raw(0.0 / 0.0) == 0
       && truthy(42) && !truthy(0)
       && strBasics() == 15
+      && strEscapes() == 5 && strBlock() == 29
       && strOps() == "world" && strFind() == 6
       && strIndex() == "😀" && strMid() == 0
       && strEq()

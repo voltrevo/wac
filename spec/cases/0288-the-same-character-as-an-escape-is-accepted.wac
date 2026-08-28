@@ -1,0 +1,5 @@
+// expect: answers f = 5
+// spec:  §wac-str-raw-chars-t7kq2mw
+// why: nothing becomes unwriteable — only the invisible spelling goes
+// from: design/lang/0013 D3
+export i32 f() { return "a\u{202E}b".len(); }
