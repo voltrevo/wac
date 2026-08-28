@@ -1,5 +1,4 @@
 // expect: refused
-// only:   wacc
 // why: an integer's method surface is closed, and a name that is not one of the five is a mistake
 // from: issues/lang/0069
 // spec:  §wacc-int-bit-methods

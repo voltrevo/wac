@@ -1,5 +1,4 @@
 // expect: answers f = 34
-// only: wacc
 // spec:  §wacc-written-instantiation
 // why: a written instantiation may qualify an enum's variant and a generic struct's static. Both
 //      already worked where a slot supplied the instantiation — `Maybe<i32> m = Maybe.Just(4)` — and

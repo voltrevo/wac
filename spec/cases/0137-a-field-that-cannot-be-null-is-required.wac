@@ -1,5 +1,4 @@
 // expect: refused
-// only:   wacc
 // why: absence needs a value to mean, and a non-nullable field has none
 // from: design/lang/0007
 

@@ -1,5 +1,4 @@
 // expect: answers f = 2
-// only: wacc
 // spec:  §wacc-written-type-args
 // why: two letters rather than one, and an argument that is itself an instantiation — so the list
 //      ends in `>>`, which the lexer reads as one shift token and the parser splits. That splitting

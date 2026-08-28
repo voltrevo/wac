@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: text between tags is text, so an apostrophe is an apostrophe and not a character literal
 // from: issues/lang/0108
 // spec:  §jsx-text-is-not-wac-source

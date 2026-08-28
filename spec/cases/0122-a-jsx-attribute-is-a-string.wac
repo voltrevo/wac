@@ -1,5 +1,4 @@
 // expect: refused
-// only:   wacc
 // why: an attribute's value fills a string field, and a number does not
 // from: design/lang/0004
 // spec:  §jsx-attribute-is-a-string

@@ -1,5 +1,4 @@
 // expect: answers f = 5
-// only: wacc
 // spec:  §wacc-written-type-args
 // why: a materialised generic belongs to the **template's** file, and a written type argument is
 //      discovered at the *call*, which is in another one. So the two halves of the instance meet

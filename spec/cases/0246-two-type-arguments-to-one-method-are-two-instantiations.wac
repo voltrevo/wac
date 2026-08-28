@@ -1,5 +1,4 @@
 // expect: answers f = 12
-// only: wacc
 // spec:  §wacc-method-type-args
 // why: the third level of monomorphisation — the owner's instantiation times the method's arguments
 //      — and `design/lang/0010` calls it "the thing most likely to be got wrong quietly", because two

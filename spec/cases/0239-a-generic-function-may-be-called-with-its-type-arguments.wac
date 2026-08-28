@@ -1,5 +1,4 @@
 // expect: answers f = 7
-// only: wacc
 // spec:  §wacc-written-type-args
 // why: the whole of `design/lang/0011` in one line. `T zero<T>()` mentions `T` nowhere a caller can
 //      supply it, so argument-directed inference cannot reach it — the declaration checked and every

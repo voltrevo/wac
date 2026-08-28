@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: ten MVP instructions had no spelling, and the loop that stood in for one is in a hot path
 // from: issues/lang/0069
 // spec:  §wacc-int-bit-methods

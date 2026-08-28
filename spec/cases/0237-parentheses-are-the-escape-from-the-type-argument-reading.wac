@@ -1,5 +1,4 @@
 // expect: answers f = 1
-// only: wacc
 // spec:  §wacc-type-args-commit
 // why: `0236` written the way the rule asks for. **One pair, on the first comparison** — once
 //      `(a < b)` is a parenthesised expression the `c > e` after it has nothing to attach to and is

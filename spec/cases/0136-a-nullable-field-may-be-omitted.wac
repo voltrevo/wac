@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: a named construction must say what it builds, and `null` is what a nullable field says
 // from: design/lang/0007
 // spec:  §wacc-struct-nullable-optional

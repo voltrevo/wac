@@ -1,5 +1,4 @@
 // expect: answers f = 12
-// only: wacc
 // spec:  §wacc-method-type-args
 // why: `design/lang/0010` criterion 2, and the one that makes option C invisible at most call sites:
 //      `0245` is this program with `<i32>` written and this is it without. A method's own letters are

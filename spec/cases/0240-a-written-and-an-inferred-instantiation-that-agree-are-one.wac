@@ -1,5 +1,4 @@
 // expect: answers f = 9
-// only: wacc
 // spec:  §wacc-written-type-args
 // why: the binding is the only thing a written type argument changes; everything after it is the
 //      machinery an inferred one already used, so the two must land on the same instantiation. If

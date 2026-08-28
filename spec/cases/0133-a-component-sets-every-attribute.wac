@@ -1,5 +1,4 @@
 // expect: refused
-// only:   wacc
 // why: a component is a named construction, which builds the whole struct or none of it
 // from: design/lang/0005
 // spec:  §jsx-component-sets-every-attribute

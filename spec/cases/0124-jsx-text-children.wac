@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: text between tags is a child, and a line break between elements is layout
 // from: design/lang/0004
 // spec:  §jsx-text-is-a-child §jsx-whitespace-breaks-are-layout §jsx-empty-run-is-not-a-child

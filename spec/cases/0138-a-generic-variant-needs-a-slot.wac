@@ -1,5 +1,4 @@
 // expect: refused
-// only:   wacc
 // why: inference works from the expected type, and a receiver is the one position with none
 // from: issues/lang/0088
 

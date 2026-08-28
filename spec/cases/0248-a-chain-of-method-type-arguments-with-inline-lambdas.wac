@@ -1,5 +1,4 @@
 // expect: answers f = 9
-// only: wacc
 // spec:  §wacc-method-type-args
 // why: `design/lang/0010`'s criterion 5, and the operator's constraint on the whole design: three
 //      links, each an **inline lambda**, each changing the type. Every intermediate — `Cell<i64>`,

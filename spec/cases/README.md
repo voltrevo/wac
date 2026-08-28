@@ -15,9 +15,9 @@ nothing to run once found.
 A case is one `.wac` file. Its first lines are comments:
 
     // expect: emits | refused | traps <fn> | answers <fn> = <value>
-    // only:   wacc                          (optional — see below)
     // why: one line, in the language of the rule rather than the bug
     // from: issues/lang/0092        (optional — where it came from)
+    // spec: §tag                    (optional — the clause this case holds)
 
 `emits` means it compiles. `refused` means it does not, at any phase — which phase is
 not the language's business. `answers f = 42` means it compiles, `f()` runs, and the
@@ -40,22 +40,27 @@ More than one file, for anything about imports:
 
 The entry is `main.wac`, or the only file when there is one.
 
-### A case only one compiler is asked
+### There was a marker for a case only one compiler was asked
 
-`// only: wacc` says the reference is not expected to meet this one. Leave the line off and both are
-asked, which is the answer to want: a case two implementations meet is a rule with two witnesses.
-
-It exists because the specification targets wacc as of
+`// only: wacc` said the reference was not expected to meet a case, because the specification
+targets wacc as of
 [design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)
-— the reference is a subset kept to build the first `wacc.wasm`, so a feature it does not have is
-deliberate rather than a gap. Without the marker the first such case turns
-compiler/wacCases.test.ts red, and the fix somebody reaches for is an exception list nobody
-maintains.
+— the reference was a subset kept to build the first `wacc.wasm`, so a feature it did not have was
+deliberate rather than a gap. Without the marker the first such case turned the reference's suite
+red, and the fix somebody reaches for is an exception list nobody maintains.
 
-**Reach for it last.** A case marked this way has one witness, and one witness is how a wrong
-expectation survives: the reference disagreeing has been the fastest way this project finds a defect,
-in both directions. Mark a case `wacc` because the feature genuinely is not in the reference, never
-because the reference disagrees and it is late.
+**It is gone as of 2026-08-28, with the reference.** 37 cases carried it and nothing had read it
+since the deletion: the header parser does not recognise the line, so it fell through into the
+program body as an ordinary comment. Inert, and documented here as meaningful, which is the worse
+half — a reader would have reached for it.
+
+What went with it is the reason it was worth having, and it is worth writing down because nothing
+replaces it: **a case two implementations meet is a rule with two witnesses.** The reference
+disagreeing was the fastest way this project found a defect, in both directions, and the advice
+attached to this marker was to reach for it last for exactly that reason. There is one witness now
+for every case here. `bootstrap/`'s ladder is a second implementation of the *compiler*, so the
+nearest thing to the old arrangement is a case run through it as well — which is
+`packages/wacc/test/wac/bootstrapemit_test.wac`'s subject rather than this directory's.
 
 ## The rule
 

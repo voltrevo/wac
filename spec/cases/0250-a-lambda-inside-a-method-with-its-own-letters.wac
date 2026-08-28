@@ -1,5 +1,4 @@
 // expect: answers f = 7
-// only: wacc
 // spec:  §wacc-method-type-args
 // why: `issues/lang/0277b`. Every other case for `design/lang/0010` option C has an own-letter
 //      method whose body is ordinary code, and a **lambda** in one was declined outright: the

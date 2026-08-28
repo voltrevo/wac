@@ -1,5 +1,4 @@
 // expect: refused
-// only:   wacc
 // why: an attribute answers to the field's declared type, not to string
 // from: design/lang/0005
 import { Attr, Node } from "core";

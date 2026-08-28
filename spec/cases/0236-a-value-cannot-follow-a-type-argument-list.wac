@@ -1,5 +1,4 @@
 // expect: refused
-// only: wacc
 // spec:  §wacc-type-args-commit
 // why: `g(a < b, c > e)` parses as `g` applied to an instantiation `a<b, c>` followed by `e`, and the
 //      rule is that a type argument list that parses is one. The cost is stated rather than hidden:

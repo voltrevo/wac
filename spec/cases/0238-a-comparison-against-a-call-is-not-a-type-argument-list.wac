@@ -1,5 +1,4 @@
 // expect: answers f = 1
-// only: wacc
 // spec:  §wacc-type-args-commit
 // why: `0236`'s shape exactly, with one operand changed from a name to a **call** — and that is the
 //      whole difference between refused and accepted. `list.len()` is not a type, so the type parse

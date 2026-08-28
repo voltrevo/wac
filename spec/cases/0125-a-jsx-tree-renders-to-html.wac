@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: the tree exists to be walked, and a renderer is the smallest thing that walks all of it
 // from: design/lang/0004
 import { Attr, Node } from "core";
