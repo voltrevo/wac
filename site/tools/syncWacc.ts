@@ -1,66 +1,15 @@
-import { fileSet } from "../../bootstrap/js/flatten.js";
-import { files as ladderFiles } from "../../bootstrap/hosts/deno.js";
-import { boot } from "../../bootstrap/hosts/deno.js";
-import { flatten } from "../../bootstrap/js/flatten.js";
-import { assemble } from "../../bootstrap/js/assemble.js";
-import { wacc as driveWacc } from "../../bootstrap/js/wacc.js";
-import {
-  generate,
-  parseAliases,
-  parseBindTypes,
-  parseCallbacks,
-  parseOutRefs,
-  parseSigs,
-} from "../../packages/wacc/tools/waccBindgen.ts";
+// Generate `site/public/wacc-api.js` — wacc, bound as a module the playground can import.
+//
+// The build itself is `harness/waccFromLadder.ts`, which `harness/waccBuild.ts` also uses to
+// bootstrap the Deno side. It lived here first and moved out when the second caller appeared:
+// `site/package.json` puts this subtree in an npm resolution scope, so nothing under `harness/`
+// can import from it.
+//
+// What stays here is the part that is about *this asset*: where it goes, and the contract the page
+// depends on.
 
-const ROOT = new URL("../..", import.meta.url).pathname;
-const ENTRY = "packages/wacc/src/api.wac";
+import { buildWaccAsset } from "../../harness/waccFromLadder.ts";
 
-export async function buildWaccAsset(): Promise<string> {
-  // **The ladder builds wacc, and wacc describes itself.** This used to ask the TypeScript reference
-  // for the module and a reference-built wacc for the description, which is why the playground could
-  // not compile the language's own spec examples — `issues/lang/0105`. The reference is deleted; the
-  // ladder in `bootstrap/` builds wacc from five rungs of hand-written source, needing neither cargo
-  // nor a `wac` on the machine, which is what lets this run in the Pages workflow.
-  //
-  // **Round 0 cannot be the asset.** wac-L5 emits no bindgen, so a module it builds exports no
-  // `$bind$` helpers and the glue below would call functions that are not there. wacc *does* emit
-  // them, so round 0 compiles wacc again and round 1 is what ships. The driver is concatenated onto
-  // round 0 only, which is how it can be asked anything at all before a binding layer exists.
-  const driver = await Deno.readTextFile(`${ROOT}/bootstrap/drivers/spec_cases.wac`);
-  const l0 = await (await boot()).l5ToL0(
-    await flatten(`${ROOT}/${ENTRY}`, ladderFiles) + "\n" + driver,
-  );
-  const refused = (l0.match(/^!!/gm) ?? []).length;
-  if (refused > 0) throw new Error(`wac-L5 refused ${refused} thing(s) in wacc's own source`);
-
-  const round0 = driveWacc(
-    await WebAssembly.instantiate(
-      await WebAssembly.compile(assemble(l0).buffer as ArrayBuffer),
-      {},
-    ),
-  );
-
-  const graph = await fileSet(`${ROOT}/${ENTRY}`, ladderFiles);
-  const wasm = round0.emitFiles(graph.keys, graph.texts, graph.entry);
-  if (wasm.length === 0) throw new Error(`the ladder built nothing for ${ENTRY}`);
-
-  const wire = round0.bindTypes();
-  return generate(
-    wasm,
-    parseSigs(round0.exportSigs()),
-    parseBindTypes(wire),
-    parseCallbacks(wire),
-    parseOutRefs(wire),
-    parseAliases(wire),
-    { lang: "js" },
-  );
-}
-
-/**
- * The five entry points `site/src/editor/wacc-compile.ts`'s `WaccModule` calls, and the module the
- * page runs. An asset missing any of them loads and then fails at the first compile.
- */
 export const REQUIRED = [
   "diagnoseFiles",
   "blockedFiles",

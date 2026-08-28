@@ -6,11 +6,12 @@
 // used to ask the reference compiler, which cannot be asked once a program uses a feature only wacc
 // has (design/lang/0003), so both ask wacc here.
 //
-// wacc itself is built by the reference — the bootstrap has to start somewhere, and that somewhere is
-// `wacBind` with `WAC_BIND_FROM=reference`.
+// **wacc itself is built by the ladder**, since 2026-08-28. The bootstrap has to start somewhere,
+// and that somewhere was `wacBind` with `WAC_BIND_FROM=reference` — the TypeScript compiler, which
+// is deleted. `harness/waccFromLadder.ts` is the replacement: five rungs of hand-written source
+// compiling each other up to wac-L5, which compiles wacc. It needs neither cargo nor a `wac` on the
+// machine, which is what makes it usable from here.
 
-import { wacBind } from "./wacBind.ts";
-import { ROOT } from "./programs.ts";
 import {
   cached as cacheFile,
   compilerKeyParts,
@@ -21,6 +22,7 @@ import {
 import {
   generate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
+import { buildWaccAsset, ladderKeyParts } from "./waccFromLadder.ts";
 
 /**
  * The methods of wacc's API that this repository's hosts call — **one list, and that is the point.**
@@ -129,24 +131,39 @@ export function waccRes(
 
 let cached: WaccApi | null = null;
 
-/** wacc, built by the reference. */
+/**
+ * wacc, built from source by the ladder.
+ *
+ * **Cached on disk as well as in the process**, because the ladder takes about four seconds and
+ * `--parallel` gives each test file its own process. The key covers `bootstrap/` as well as
+ * `packages/wacc/src`: a change to a rung, to the assembler or to the flattener changes what comes
+ * out of the same sources, and a key blind to that would serve a stale compiler with nothing to
+ * say it had.
+ *
+ * This used to call `wacBind` with `from: "reference"`. Two notes went with that call and are worth
+ * keeping the shape of. It was built **as a tool**, so that `WAC_PROFILE` would not instrument the
+ * compiler and bury the program the profile is about — nothing here is instrumented, so that is
+ * now true by construction. And the choice was **pinned as an argument rather than set in the
+ * environment**, because tests share a process and a `WAC_BIND_FROM` set for the duration of one
+ * build was read by every other bind running at the same time. There is one compiler now, so there
+ * is nothing to select and nothing to leak.
+ */
 export async function waccApi(): Promise<WaccApi> {
   if (cached === null) {
-    try {
-      // **As a tool.** Everything below is the compiler compiling something else; under
-      // `WAC_PROFILE` a bound module is instrumented and attributed, and profiling the compiler
-      // buries the program the profile is about.
-      // **Pinned as arguments rather than set in the environment**: tests share one process, and a
-      // `WAC_BIND_FROM=reference` set for the duration of this build was read by every other bind
-      // running at the same time — which compiled a package with the seed and refused a wacc-only
-      // feature nobody had opted out of. `harness/wacBind.ts`'s `bindFrom` carries the whole story.
-      cached = (await wacBind(`${ROOT}/packages/wacc/src/api.wac`, {
-        asTool: true,
-        from: "reference",
-        wasmFrom: "reference",
-      })) as unknown as WaccApi;
-    } finally {
+    const wacc = await waccKeyParts();
+    const ladder = await ladderKeyParts();
+    if (wacc === null || ladder === null) {
+      throw new Error(
+        "cannot build wacc: `packages/wacc/src` or `bootstrap/` is not readable from here",
+      );
     }
+    const key = await contentKey([...wacc, ...ladder]);
+    const path = await cacheFile("waccapi", key, ".js", async (p) => {
+      await Deno.writeTextFile(p, await buildWaccAsset());
+    });
+    // `cached` answers a path relative to the cache directory, and `file://` in front of a relative
+    // path is not a URL — `wacBind.ts` resolves the same way two lines apart, twice.
+    cached = await import(`${Deno.cwd()}/${path}`) as unknown as WaccApi;
   }
   return cached;
 }
