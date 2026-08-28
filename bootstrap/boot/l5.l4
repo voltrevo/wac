@@ -42,23 +42,46 @@ i32 K_BIGINT = 6;
 // actual bug. Refusing at the boundary turns that into a marker the assembler will name.
 i32 overflowed = 0;
 
-// The room left in whichever buffer `dst` names. It cannot be asked of `outbuf`, which is the
-// *destination a nested emit should return to* and is set to the body scratch while a body is being
-// written — so the first version of this allowed twelve megabytes into a buffer holding one.
-i32 realout = 0;
+// **A buffer is a base and a bound together, and `to_buf` is the only way to move between them.**
+// This used to ask which buffer `dst` named by comparing the address against a list, and answer a
+// size written beside it:
+//
+//     i32 emit_room() {
+//       if (dst == realout) { return 12000000; }
+//       if (dst == TYPEBUF) { return 3000000; }
+//       if (dst == BODY) { return 1000000; }
+//       return 120000;
+//     }
+//
+// Two things go wrong with that and both did. The comparison can match the wrong entry — `outbuf`
+// is the destination a nested emit *returns* to and is set to the body scratch while a body is
+// being written, which granted twelve megabytes to a buffer holding one. And the sizes are a
+// second copy of the layout, so a region that moves leaves them stale with nothing to notice: the
+// scratch stack came to start exactly where `TYPEBUF` does and this list stayed consistent
+// throughout.
+//
+// Setting the two together makes the bound a property of the buffer rather than a guess about it,
+// and `layout_check` derives every size from the addresses rather than restating them here.
+i32 dstcap = 0;
 
-i32 emit_room() {
-  if (dst == realout) { return 12000000; }
-  if (dst == TYPEBUF) { return 3000000; }
-  if (dst == BODY) { return 1000000; }
-  return 120000;
+i32 to_buf(i32 base, i32 cap) {
+  dst = base;
+  dstcap = cap;
+  return 0;
 }
+
+// The three bounds, derived once by `layout_check` from the addresses themselves. Zero until then,
+// which is a bound that refuses everything rather than one that permits everything — an emit
+// before the layout is settled is a mistake, and this is the reading of it that says so.
+i32 outcap = 0;
+i32 bodycap = 0;
+i32 typecap = 0;
 
 i32 emit1(i32 b) {
   // **Overflow ends the parse.** Dropping the bytes alone turns a runaway into a *hang*, which is
   // strictly worse than the trap it replaced — so the cursor goes to the end of the token stream,
   // and every loop above checks for it.
-  if (dp >= emit_room()) { overflowed = 1; tp = ntok; return 0; }
+  if (dp >= dstcap) { overflowed = 1; tp = ntok; return 0; }
   store8(dst + dp, b);
   dp = dp + 1;
   return 0;
@@ -1918,7 +1941,7 @@ i32 primary() {
 // chance that this happens. The block forms have no choice but scratch; this one does.
 i32 insert_op(i32 mark, i32 s) {
   i32 n = load(s) + 1;
-  if (dp + n >= emit_room()) { overflowed = 1; tp = ntok; return 0; }
+  if (dp + n >= dstcap) { overflowed = 1; tp = ntok; return 0; }
   i32 i = dp;
   while (i > mark) {
     store8(dst + i + n - 1, load8(dst + i - 1));
@@ -2851,7 +2874,7 @@ i32 scratch_begin() {
     tp = ntok;
     scrdepth = SCRLEVELS;
   }
-  dst = SCR + (scrdepth - 1) * SCRLEVEL;
+  to_buf(SCR + (scrdepth - 1) * SCRLEVEL, SCRLEVEL);
   dp = 0;
   return scrsaved;
 }
@@ -2860,7 +2883,11 @@ i32 scratch_begin() {
 i32 scratch_end(i32 out, i32 saved) {
   i32 n = dp;
   scrdepth = scrdepth - 1;
-  if (scrdepth > 0) { dst = SCR + (scrdepth - 1) * SCRLEVEL; } else { dst = out; }
+  if (scrdepth > 0) {
+    to_buf(SCR + (scrdepth - 1) * SCRLEVEL, SCRLEVEL);
+  } else {
+    to_buf(out, outcap);
+  }
   dp = saved;
   return n;
 }
@@ -2910,13 +2937,13 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
   i32 outp = dp;
   i32 savedout = outbuf;
   outbuf = BODY;
-  dst = BODY;
+  to_buf(BODY, bodycap);
   dp = 0;
   block();
   i32 blen = dp;
   outbuf = savedout;
 
-  dst = out;
+  to_buf(out, outcap);
   dp = outp;
   word("func");
   if (mowner == 0 - 1) { emit1(36); emitname(np, nn); } else { mangled(mowner, np, nn); }
@@ -2950,10 +2977,48 @@ i32 function(i32 out, i32 ret, i32 np, i32 nn) {
 i32 TYPEBUF = 29360128;
 i32 typep = 0;
 
+// 512 pages. wac-L5's own memory, not the one it writes into the program it emits.
+i32 MEMBYTES = 33554432;
+
+// **The layout, derived and checked once, instead of believed in four places.**
+//
+// The output buffer's bound is the distance to whatever the host put above it, because the host
+// chooses where the output and the source go and this only learns the two addresses. Deriving it
+// means a host that moves either one gets a bound that moves with it, where the twelve-megabyte
+// constant this replaces would have stayed twelve megabytes and written into the source.
+//
+// The three fixed regions are checked rather than derived, since their addresses are written above
+// and an overlap is a mistake in the writing. It has happened: the scratch stack once began exactly
+// where `TYPEBUF` does, and every buffer still reported the size it was supposed to have. A wrong
+// answer here is the kind that arrives as a corrupted type section a thousand lines later.
+i32 layout_check(i32 out) {
+  outcap = BODY - out;
+  if (src > out & src - out < outcap) { outcap = src - out; }
+  bodycap = SCR - BODY;
+  typecap = MEMBYTES - TYPEBUF;
+
+  i32 bad = 0;
+  if (out >= BODY) { bad = 1; }
+  if (BODY >= SCR) { bad = 1; }
+  if (SCR + SCRLEVELS * SCRLEVEL > TYPEBUF) { bad = 1; }
+  if (TYPEBUF >= MEMBYTES) { bad = 1; }
+  if (outcap < 1) { bad = 1; }
+  if (bad) {
+    // Nothing can be emitted safely, so this says what happened and stops. The marker is the
+    // assembler's, and it names the compiler rather than the program.
+    to_buf(out, 4096);
+    dp = 0;
+    line("!! wac-L5: the buffer layout overlaps — the compiler is misconfigured, not the program");
+    tp = ntok;
+  }
+  return bad;
+}
+
 i32 emit_typedecls() {
   i32 saved = dst;
+  i32 savedcap = dstcap;
   i32 savedp = dp;
-  dst = TYPEBUF;
+  to_buf(TYPEBUF, typecap);
   dp = typep;
   i32 i = 0;
   while (i < ntype) {
@@ -2991,7 +3056,7 @@ i32 emit_typedecls() {
     i = i + 1;
   }
   typep = dp;
-  dst = saved;
+  to_buf(saved, savedcap);
   dp = savedp;
   return 0;
 }
@@ -3791,6 +3856,16 @@ i32 compile(i32 s, i32 out) {
   srclen = 0;
   while (load8(src + srclen) != 0) { srclen = srclen + 1; }
 
+  // **The output buffer is bounded before anything can write to it**, because `collect` refuses
+  // and a refusal emits. With `dstcap` still zero every program came out carrying the overflow
+  // marker, since the first refusal during collection set `overflowed` and nothing clears it —
+  // the previous version instead answered a default 120000 for an unrecognised `dst`, so those
+  // bytes went to address 0 and were scribbled over whatever lives there. Neither is a buffer;
+  // this is. What collection emits is still discarded, by the `dp = 0` below.
+  if (layout_check(out)) { return dp; }
+  to_buf(out, outcap);
+  dp = 0;
+
   types = Ty[16384]();
   fields = Field[65536]();
   fparams = i32[16384]();
@@ -3861,9 +3936,8 @@ i32 compile(i32 s, i32 out) {
   expand_types();
 
   tp = 0;
-  realout = out;
   outbuf = out;
-  dst = out;
+  to_buf(out, outcap);
   dp = 0;
   line("memory 64");
   word("export"); emit1(34); emits("memory"); emit1(34); sp(); line("memory");
@@ -3908,8 +3982,10 @@ i32 compile(i32 s, i32 out) {
   if (overflowed) {
     // The output is truncated and the marker cannot be trusted to be in the right place, so it says
     // what happened rather than where.
-    dst = out;
-    if (dp > 11000000) { dp = 11000000; }
+    to_buf(out, outcap);
+    // Leave a megabyte for the marker itself, so the thing that explains the truncation is not
+    // the thing that gets truncated.
+    if (dp > outcap - 1000000) { dp = outcap - 1000000; }
     nl();
     line("!! wac-L5: emitted more than the buffer holds — the parser lost its place");
   }

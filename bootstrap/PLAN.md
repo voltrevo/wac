@@ -230,7 +230,7 @@ resolves it the same way and by the same test: the last thing the type ate was a
 follows can begin an expression. Reading the oracle's rule was cheaper than inventing one, and it
 means the two parsers cannot disagree about which reading is right.
 
-### 4. A buffer should carry its own bound — **open**
+### 4. A buffer should carry its own bound — **done**
 
 `emit_room()` decides how much room a buffer has by comparing `dst` against an address:
 
@@ -243,6 +243,24 @@ That is what caused the `realout` bug — 12 MB granted to a 1 MB buffer because
 matched the wrong thing — and nothing asserts the buffers do not overlap, which is how the scratch
 stack came to sit exactly on `TYPEBUF`. Make a buffer a base-and-limit pair and assert the layout
 once at startup.
+
+Done, both halves. `to_buf(base, cap)` is the only way to move between buffers and sets the bound
+with the base, so `emit1` compares `dp` against `dstcap` and nothing asks which buffer it is in.
+`layout_check` derives every size from the addresses once per compile — the output buffer's from
+the distance to whatever the host put above it, so a host that moves the source gets a bound that
+moves with it — and refuses if the fixed regions overlap or run past the end of memory.
+
+Two things came out of it. Two corpus files that trapped with `memory access out of bounds` now
+refuse and say which buffer, which is the whole point. And a bound of zero before `layout_check`
+runs turned out to be reachable: `collect` refuses, and a refusal emits, so every program carried
+a spurious overflow marker until the output buffer was bounded before collection rather than after.
+The version this replaces answered a default 120000 for an unrecognised `dst` and those bytes went
+to address 0.
+
+The end of memory is `MEMBYTES`, written in `l5.l4` and again as `memory 512` by wac-L4. wasm has
+`memory.size` and the assembler emits it, but wac-L4 cannot name it, and growing the rung below to
+settle a question in the rung above is the trade this ladder exists to avoid. So it is written
+twice and pinned by a test that reads both.
 
 ### 5. One seam, declared by the module — **open, promoted**
 

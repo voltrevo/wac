@@ -38,12 +38,17 @@ for (const f of files) {
   try {
     const src = await flatten(f);
     n = src.split("\n").length;
+    // **Counted here, once, because every path below leaves by a different door.** Three of the
+    // four used to add it and the trap path did not, so `lines flattened` was really "lines that
+    // got past wac-L5" — and it moved when the compiler changed, which is the one thing a count
+    // of the input must not do. Two files ceasing to trap read as eight thousand more lines of
+    // corpus. A file that fails to flatten still contributes nothing, which is the truth.
+    lines += n;
     const l0 = await l5ToL0(src);
     const fns = String((l0.match(/^func /gm) ?? []).length);
     const refusals = (l0.match(/^!!/gm) ?? []).length;
     if (refusals > 0) {
       say(n, fns, `${refusals} refusal(s)`);
-      lines += n;
       continue;
     }
     let bytes: Uint8Array;
@@ -51,7 +56,6 @@ for (const f of files) {
       bytes = assemble(l0);
     } catch (e) {
       say(n, fns, `wax: ${(e as Error).message.slice(0, 58)}`);
-      lines += n;
       continue;
     }
     try {
@@ -61,7 +65,6 @@ for (const f of files) {
     } catch (e) {
       say(n, fns, `engine: ${(e as Error).message.slice(0, 56)}`);
     }
-    lines += n;
   } catch (e) {
     say(n, "-", (e as Error).message.slice(0, 64));
   }

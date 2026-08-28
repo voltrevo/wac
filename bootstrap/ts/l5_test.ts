@@ -6,6 +6,7 @@
 // depth (generics), and both are easier to add to something that already parses the language.
 
 import { l5Run, l5RunFile } from "./l5.ts";
+import { boot } from "../hosts/deno.js";
 
 const expr: [string, number][] = [
   ["1 + 2 * 3", 7],
@@ -584,3 +585,29 @@ for (const [name, source, want] of programs) {
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
+
+// **wac-L5 knows how big its own memory is, and cannot ask.**
+//
+// `layout_check` bounds the type buffer by the end of memory, and the end of memory is `memory 512`
+// written by wac-L4 when it compiles `l5.l4`. wasm has `memory.size`, and the assembler can emit
+// it, but wac-L4 has no way to *name* it — adding one to make this derivable would grow the rung
+// below to settle a question in the rung above, which is the trade this ladder exists to avoid.
+//
+// So the number is written twice on purpose, and this is what makes that safe. Getting it wrong in
+// the generous direction is the bad one: a bound past the end of memory turns a refusal that names
+// the buffer into `memory access out of bounds` from an address unrelated to the mistake.
+Deno.test("wac-L5's MEMBYTES is the memory wac-L4 gives it", async () => {
+  const root = new URL("..", import.meta.url).pathname;
+  const source = await Deno.readTextFile(`${root}boot/l5.l4`);
+  const declared = source.match(/^i32 MEMBYTES = (\d+);/m)?.[1];
+  if (declared === undefined) throw new Error("boot/l5.l4 no longer declares MEMBYTES");
+
+  const l0 = await (await boot()).l4ToL0(source);
+  const pages = l0.match(/^\s*memory\s+(\d+)\s*$/m)?.[1];
+  if (pages === undefined) throw new Error("the compiled wac-L5 declares no memory");
+
+  const actual = Number(pages) * 65536;
+  if (Number(declared) !== actual) {
+    throw new Error(`MEMBYTES is ${declared}, but wac-L4 gives wac-L5 ${pages} pages = ${actual}`);
+  }
+});
