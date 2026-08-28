@@ -177,9 +177,17 @@ void namedByCase(string text, Strs into) {
  * `§enum-variant-name-collision`, `§wac-bind-bulk-70zh5tg` and `§wac-diag-null-h6kp9wn` — turned out to be
  * *met* and merely unasserted, which is the same risk one lucky commit away.
  *
- * **`§wac-wapy-*` is the exception, and it is a rule rather than a list.** wapy is a Python-shaped surface
- * written in TypeScript in `compiler/`; wacc does not implement it, so the reference's tests are the only
- * place those clauses could be held. Everything else must be named by something outside `compiler/`.
+ * **`§wac-wapy-*` was an exception until 2026-08-28, and it is worth saying why it was one and why
+ * it is not.** wapy was a Python-shaped surface written in TypeScript in the reference; wacc did not
+ * implement it, so those nine clauses were skipped here — the reference's tests were the only place
+ * they could be held, and counting them would have been this guard flattering itself by nine.
+ *
+ * wacc implements wapy now — `wapylex.wac`, `wapyparse.wac`, `wapyprint.wac`, `wapyrewrite.wac`,
+ * `wapytok.wac` — and every one of the nine was already named by a test that checks it, eight in
+ * `wapy_test.wac` beside this file and one in `wapyRoundTrip.test.ts`. So the skip was not merely
+ * out of date: it was excusing clauses that were held, on a premise that had stopped being true, and
+ * the total it printed was nine short of the truth in the *pessimistic* direction. An exemption
+ * costs nothing to keep and says nothing when it stops applying, which is the whole hazard.
  */
 /** This file, whose prose names tags it must not be read as covering. */
 string SELF() { return "packages/wacc/test/wac/spectags_test.wac"; }
@@ -265,20 +273,14 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
 
   string missing = "";
   i32 n = 0;
-  i32 wapy = 0;
   for (i32 i = 0; i < claimed.len(); i++) {
     string tag = claimed.get(i);
-    // wapy is the reference's surface and has no wacc side to hold.
-    if (startsWith(tag, "wac-wapy-")) { wapy = wapy + 1; continue; }
     if (ours.has(tag)) { continue; }
     if (n < 8) { missing = missing + "\n  §" + tag + " — stated in " + wheres.get(i); }
     n = n + 1;
   }
-  // **The wapy ones are excluded from the count, not counted as held.** Reporting them inside the total
-  // would be this guard flattering itself by nine.
-  core.log("    clauses held outside the reference: " + itoa(claimed.len() - wapy - n) + " of " +
-           itoa(claimed.len() - wapy) + " (" + itoa(wapy) + " §wac-wapy-* skipped — the reference is " +
-           "their only home)");
+  core.log("    clauses held outside the reference: " + itoa(claimed.len() - n) + " of " +
+           itoa(claimed.len()));
   t.eqI32(n, 0,
           itoa(n) + " clause(s) are checked only by the reference's own tests, so wacc could break them " +
           "with nothing noticing:" + missing +
