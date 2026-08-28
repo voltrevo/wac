@@ -5,13 +5,15 @@ import { useEffect, useState } from "react";
 import Home from "./Home";
 import Language from "./Language";
 import Stack from "./Stack";
+import Bootstrap from "./Bootstrap";
 import Run from "./Run";
 import Checked from "./Checked";
 import Roadmap from "./Roadmap";
 import Playground from "../Playground";
 import type { Route } from "./ui";
 
-const ROUTES: Record<string, Route> = { "": "home", language: "language", run: "run", stack: "stack", checked: "checked", roadmap: "roadmap", playground: "playground" };
+const ROUTES: Record<string, Route> = { "": "home", language: "language", run: "run",
+  bootstrap: "bootstrap", stack: "stack", checked: "checked", roadmap: "roadmap", playground: "playground" };
 
 /**
  * Where the site this replaces sent people, for links written before it did.
@@ -48,6 +50,7 @@ export default function App() {
     case "language": return <Language />;
     case "run":      return <Run />;
     case "stack":    return <Stack />;
+    case "bootstrap": return <Bootstrap />;
     case "checked":  return <Checked />;
     case "roadmap":  return <Roadmap />;
     // The playground is a tool rather than a page, and is carried over as it is — sending a reader

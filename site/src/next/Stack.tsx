@@ -550,9 +550,18 @@ export default function Stack() {
           friction with a real consumer rather than by argument.
         </P>
         <P>
-          It is built as a ladder, and each rung is checked against the TypeScript implementation
-          before the next is started. Same input, compare outputs, no judgement calls about which is
-          right.
+          It was built a rung at a time, and each rung was checked against the TypeScript
+          implementation before the next was started. Same input, compare outputs, no judgement
+          calls about which is right. That implementation was deleted on 2026-08-28, once this one
+          could build itself without it — so the table below is how this compiler was{" "}
+          <em>arrived at</em>, and what holds it now is the specification&rsquo;s own corpus, the
+          repository as a corpus, and a build that refuses itself unless compiling the compiler
+          twice gives the same bytes.
+        </P>
+        <P>
+          The chain that builds it from source is on{" "}
+          <A href="#/bootstrap">the bootstrap page</A>: five languages, the lowest hand-written wasm
+          assembly text, and nothing checked in that a compiler produced.
         </P>
         <Table
           head={["rung", "oracle", "state"]}

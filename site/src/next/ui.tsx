@@ -14,12 +14,14 @@ export const GITHUB = "https://github.com/voltrevo/wac";
 export const TREE = `${GITHUB}/tree/master`;
 export const BLOB = `${GITHUB}/blob/master`;
 
-export type Route = "home" | "language" | "run" | "stack" | "checked" | "roadmap" | "playground";
+export type Route =
+  | "home" | "language" | "run" | "stack" | "bootstrap" | "checked" | "roadmap" | "playground";
 
 export const PAGES: { route: Route; href: string; label: string }[] = [
   { route: "language", href: "#/language", label: "the language" },
   { route: "run", href: "#/run", label: "run it here" },
   { route: "stack", href: "#/stack", label: "the stack" },
+  { route: "bootstrap", href: "#/bootstrap", label: "the bootstrap" },
   { route: "checked", href: "#/checked", label: "how it is checked" },
   { route: "roadmap", href: "#/roadmap", label: "where this is going" },
 ];

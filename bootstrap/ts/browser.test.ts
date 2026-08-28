@@ -64,12 +64,27 @@ Deno.test({
       // **Virtual time, because `--dump-dom` prints at load** and the ladder is not built by then.
       // The budget is virtual milliseconds rather than real ones, so the figure the page reports
       // for itself is meaningless under this flag — the answer is not.
+      //
+      // **600s, not 180s, and the difference is the gate.** Chrome forces virtual time forward when
+      // tasks keep the main thread busy rather than letting it idle, so a budget that is generous
+      // on a quiet machine is not on a loaded one. This test builds five compilers in a browser: it
+      // takes about 1s alone and failed both of 2026-08-28's gate runs at `status idle, said:
+      // building the ladder…`, meaning `go()` had started and Chrome gave up inside it.
+      //
+      // Raising it costs a passing run nothing. `--dump-dom` prints as soon as the page settles, so
+      // the budget is a ceiling rather than a wait — the only thing a larger one buys is that a
+      // slow machine finishes instead of being cut off partway.
+      //
+      // It sits in the exclusive lane as well, which is separate and was not enough: exclusive
+      // means no other *test* runs beside it, not that the machine is idle, and it runs directly
+      // after a four-worker pass.
+      const began = performance.now();
       const ran = await new Deno.Command(CHROME, {
         args: [
           "--headless",
           "--no-sandbox",
           "--disable-gpu",
-          "--virtual-time-budget=180000",
+          "--virtual-time-budget=600000",
           "--dump-dom",
           url,
         ],
@@ -80,7 +95,15 @@ Deno.test({
       const status = dom.match(/id="out" data-status="(\w+)"/)?.[1];
       if (status !== "ok") {
         const said = dom.match(/data-status="\w+">([^<]*)/)?.[1] ?? "(no output)";
-        throw new Error(`the page did not finish: status ${status}, said: ${said.slice(0, 200)}`);
+        // **How far it got, and how long it really took**, because the two failures this has had
+        // were indistinguishable from each other in the old message: a page that threw and a page
+        // that was cut off mid-build both read as "did not finish". `idle` with text means the
+        // second — `go()` set that text and never returned.
+        const hint = status === "idle"
+          ? ` — still building after ${Math.round(performance.now() - began)}ms of real time, so the`
+            + " virtual-time budget was exhausted rather than the page failing"
+          : "";
+        throw new Error(`the page did not finish: status ${status}, said: ${said.slice(0, 200)}${hint}`);
       }
       const answer = dom.match(/main\(\) = (-?\d+)/)?.[1];
       if (answer !== "44") throw new Error(`the browser answered ${answer}, want 44`);

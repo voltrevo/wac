@@ -86,8 +86,8 @@ specifiers, concatenates modules and *renames the colliding private declarations
 A bug there produces a wrong program quietly, which is the definition of code that has to be
 trusted. It is the cost of the shortcut, and leaving it out of the count was flattering.
 
-The reference's 19,499 lines are all in the first column: every one of them is trusted because
-somebody read it. Here, 2,827 are — and one of those three files is checked against a second
+The reference's 18,203 lines were all in the first column: every one of them was trusted because
+somebody read it. Here, 2,782 are — and one of those three files is checked against a second
 implementation of the same written format, so even the root has a witness.
 
 That is the case for a ladder, and it is a different case from "fewer lines".
@@ -102,11 +102,11 @@ everything above it is trusted by derivation.
 | | adds | its implementation is written in | size |
 |---|---|---|---|
 | **wac-L0** | wasm as text: one instruction per line, every index named, structs, arrays, packed bytes | TypeScript **and** Rust, outside the ladder | 405 + 693 lines |
-| **wac-L1** | s-expressions, closures, a heap — an interpreter, not a compiler | **hand-written wac-L0** | 1,630 instructions |
-| **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 200 lines |
-| **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 452 lines |
-| **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,005 lines |
-| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 3,779 lines |
+| **wac-L1** | s-expressions, closures, a heap — an interpreter, not a compiler | **hand-written wac-L0** | 1,814 lines |
+| **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 298 lines |
+| **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 591 lines |
+| **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,331 lines |
+| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,056 lines |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names

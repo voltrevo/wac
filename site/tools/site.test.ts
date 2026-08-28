@@ -50,7 +50,8 @@ globalThis.addEventListener("unload", () => { Deno.removeSync(dir, { recursive: 
 
 // Snippets live in `src/snippets.ts` (the tour) and beside the page that prints only its own.
 // A name exists once across all of them.
-const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.tsx"]
+const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.tsx",
+  "next/Bootstrap.tsx"]
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
@@ -146,6 +147,11 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
     ["EX_SURFACE_WAC", "a.wac"],
     ["EX_SURFACE_WAPY", "a.wapy"],
     ["EX_WAPY_LIVE", "a.wapy"],
+    // The bootstrap page says this is "the shape `core/option.wac` is actually written in", which
+    // is a claim about real source and therefore one this can check. The rungs' own snippets on
+    // that page are not wac and are not here: L0 is wasm assembly text and L1 is s-expressions,
+    // and a compiler that accepted either would be the thing going wrong.
+    ["EX_L5", "a.wac"],
   ] as const) {
     const r = compile({ [file]: await snippet(name) }, file);
     if (!r.ok) {
@@ -528,6 +534,65 @@ Deno.test("site: the built worker chunk runs, not only the source", async () => 
 });
 
 // ── The specification's own tag count ──────────────────────────────────────
+
+/**
+ * The rung sizes on the bootstrap page are the sizes those files are.
+ *
+ * Same shape as the compiler-size and tag-count checks, and it exists because the numbers it
+ * guards were already wrong somewhere else when this page was written.
+ * `bootstrap/README.md` carried a table of the same five figures — 1,300 / 200 / 452 / 1,005 /
+ * 3,779 — and every one of them was stale, by as much as 500 lines. Copying that table onto a page
+ * whose argument is *"a number here came from somewhere outside the sentence containing it"* would
+ * have published five wrong numbers in the one place least able to afford them.
+ *
+ * A README has no test. A page can have one, so this is it.
+ */
+Deno.test("site: the rung sizes the bootstrap page states are the sizes on disk", async () => {
+  const boot = new URL("../../bootstrap/boot", import.meta.url).pathname;
+  const page = await Deno.readTextFile(new URL("../src/next/Bootstrap.tsx", import.meta.url).pathname);
+
+  for (const [file, rung] of [
+    ["l1.l0", "wac-L1"], ["l2.l1", "wac-L2"], ["l3.l2", "wac-L3"],
+    ["l4.l3", "wac-L4"], ["l5.l4", "wac-L5"],
+  ] as const) {
+    const lines = (await Deno.readTextFile(`${boot}/${file}`)).split("\n").length - 1;
+    const said = page.match(new RegExp(`${rung}</span>[\\s\\S]{0,400}?"([\\d,]+) lines"`));
+    if (said === null) throw new Error(`the page states no size for ${rung}`);
+    const n = Number(said[1].replace(/,/g, ""));
+    if (n !== lines) {
+      throw new Error(`the page says ${rung} is ${n} lines; ${file} is ${lines}`);
+    }
+  }
+});
+
+/**
+ * And the trusted-line count, which is the page's central number.
+ *
+ * "How much of this did somebody have to read" is the whole argument for a ladder over a checked-in
+ * binary, so it is the figure a skeptic will check by hand. Three files: the assembler the build
+ * runs, the L1 interpreter that is the only program written in hand-typed L0, and the flattener
+ * that has no second implementation.
+ *
+ * The first draft of this page named the wrong three — both assemblers and the flattener, leaving
+ * out the interpreter. `bootstrap/README.md` says it plainly, in a column this had skimmed: *"the
+ * other is the check, not the trust"*.
+ */
+Deno.test("site: the trusted-line count is the size of the three files it names", async () => {
+  const root = new URL("../..", import.meta.url).pathname;
+  // The path `./bootstrap.sh` actually runs: `rust-ladder` depends on `../rust` for the assembler,
+  // so the Rust one is what turns L0 into bytes and the JavaScript one is the differential's other
+  // half. A second implementation that exists to check the first is not more code to trust.
+  let total = 0;
+  for (const f of ["bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0",
+                   "bootstrap/rust-ladder/src/flatten.rs"]) {
+    total += (await Deno.readTextFile(`${root}/${f}`)).split("\n").length - 1;
+  }
+  const page = await Deno.readTextFile(new URL("../src/next/Bootstrap.tsx", import.meta.url).pathname);
+  const said = page.match(/"trusted by reading", "([\d,]+) lines/);
+  if (said === null) throw new Error("the bootstrap page no longer states a trusted-line count");
+  const n = Number(said[1].replace(/,/g, ""));
+  if (n !== total) throw new Error(`the page says ${n} trusted lines; those three files are ${total}`);
+});
 
 Deno.test("site: the number of tagged claims the site quotes is the number there are", async () => {
   // Same shape as the compiler-size check above, and it caught the same class of drift: the page
