@@ -65,19 +65,39 @@ export string test_a_double_comparison_is_refused_and_the_message_names_the_esca
 }
 
 /**
- * An ordinary double comparison on a **call** still compiles, and needs no parentheses.
+ * An ordinary comparison on a **call** still compiles, and needs no parentheses.
  *
  * This is the case that decides whether the rule is usable, because it is the shape people actually
  * write. It survives for a reason with nothing to do with `<`: `list.len()` is a call, a call is not
  * a type, so the type parse fails and the `<` is arithmetic again. There is no special case for it
  * anywhere — which is the point, and is why a test says so.
+ *
+ * **The program was `count < list.len() > 0` until 2026-08-28, and it was ill-typed.** That parses
+ * as `(count < list.len()) > 0` — a `bool` compared against an integer — which is not a program
+ * this test wanted to assert compiles. It passed because the checker accepted it: a literal took
+ * the other operand's type without anything asking whether `bool` is a type an integer literal may
+ * be, so `true` was compared as `1`. `issues/lang/0272b`, which was *found* on this very shape and
+ * says so: *"`count < list.len() > 0` checked clean and I expected `bool > i32`"*.
+ *
+ * So this test was pinning the defect while believing it pinned the rule. The shape it needs is
+ * both a `<` and a `>` around a call — the thing that could be misread as a type-argument list —
+ * with operands that type. `spec/cases/0238` already had it, having been *"rewritten to avoid
+ * depending on it"* when the defect was noticed, and this is that program.
  */
 export string test_a_comparison_against_a_call_is_still_a_comparison() {
   T t = T.create();
-  string clean = said("export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
-                      "  return count < list.len() > 0 ? 1 : 0; }");
+  string clean = said("i32 g(bool x, bool y) { return x && y ? 1 : 0; }\n" +
+                      "export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
+                      "  return g(count < list.len(), count > 0); }");
   t.isTrue(!contains(clean, "error"),
            "a comparison whose operand is a call is untouched by the rule — got " + clean);
+
+  // **And the ill-typed spelling is refused**, which is the other half: a test that only asserted
+  // the good program would pass against a rule that had gone back to accepting `bool > i32`.
+  string bad = said("export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
+                    "  return count < list.len() > 0 ? 1 : 0; }");
+  t.isTrue(contains(bad, "error"),
+           "a bool compared against an integer literal is still refused — got " + bad);
   return t.report();
 }
 

@@ -1,6 +1,7 @@
 # 0151 — the reference refuses an identity test the spec allows, so a sweep row cannot be closed
 
-- **Status:** open
+- **Status:** closed — moot: the compiler it is about is deleted, and so is the sweep it explained
+- **Closed:** 2026-08-28 by agent-b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
@@ -70,3 +71,26 @@ The general form is worth writing down beside it: the 993 broken programs are us
 *broken*, and the reference is a cheap oracle for which mutations broke something. A disagreement about a
 program that is legal is not a defect in wacc and not work.
 
+## Closed, 2026-08-28 — both halves of it are gone
+
+This was filed as a record rather than as work, on the operator's ruling that *"the ref is only used
+to build wacc"* and a disagreement about a legal program is not a defect. Both of the things that
+made the record worth keeping have since gone.
+
+**The compiler that refused the program is deleted**, with `compiler/` on 2026-08-28. There is no
+longer anything that answers `undefined type 'A'` for it.
+
+**And the sweep this existed to explain is gone with it.** The closing paragraph said *"anyone
+reading `mutateCheck`'s missed list and wondering why one row never goes away should read this"*.
+`mutateCheck` survives only in the text of four issues; no code in the repository names it, because
+it used the reference as its oracle and went when the oracle did.
+
+**wacc's behaviour, which was never in question, still holds.** The reproduction compiles clean and
+answers `true`:
+
+    const u64[] A = u64[](1, 18446744073709551615, 1);
+    u64[] g() { return A; }
+    export bool f() { return g() is A; }        // true
+
+That is what `[§wac-is-undefined-type-6qbn3wr]` requires — a capital that names a variable in scope
+is an identity test, not a missing type — so there is nothing to fix and nothing left to explain.

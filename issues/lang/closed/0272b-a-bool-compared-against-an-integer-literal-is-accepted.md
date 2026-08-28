@@ -1,7 +1,9 @@
 # 0272b — a `bool` compared against an integer *literal* is accepted, and the bool is used as a number
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/wacc/src/check.wac` — `boolMix`, beside `strMix` in the comparison rule.
+  Guarded by `packages/wacc/test/wac/illtyped_test.wac` rows a35–a37.
+- **Claimed by:** agent-b (2026-08-28)
 - **Reported by:** agent-b
 - **Date:** 2026-08-27
 - **Kind:** bug
@@ -71,3 +73,44 @@ computes something the language does not define.
 **A guard belongs in `illtyped_test.wac`**, which is where the other "checker accepted it, emitter
 was happy, engine ran it" families live, and which already carries the four `x < i32` type-name cases
 that came from the same neighbourhood (`issues/lang/0235a`).
+
+## Fixed, 2026-08-28 — and not where this page proposed
+
+This said the fix *"should be a check on the family the other operand belongs to rather than a
+special case for `bool` under `>`"*. The family part was right; the place was not.
+
+**The rule already existed.** `check.wac`'s comparison arm reports *"these types cannot be
+compared"* and already asks this exact shape one type along:
+
+```wac
+bool strMix = nl != typeNone() && nr != typeNone() && (nl == "string") != (nr == "string");
+```
+
+`bool` needed the same line, and `naturalTypeOf` is what makes the literal visible — it fills `1`
+in as an integer, so the pair is `bool` against `i32` rather than `bool` against nothing. That arm
+runs *before* the literal branch returns, which is why the literal escaped it.
+
+Putting a general family check in the literal branch, as proposed above, would have been wrong
+twice: `s > 1` is already caught by `strMix` and would have been reported twice, and
+`acceptsLiteral` is not the predicate it looks like — it answers about a *declaration slot*, so it
+says `f64` does not accept an integer literal, and `f64 x; x + 1` is legal.
+
+**The hole was narrower than the title.** Measured across the operators, only the comparisons let a
+`bool` through; `+`, `*` and `&` are already refused by the operand-kind rule, which wants numbers.
+So this is `>`, `<`, `>=`, `<=`, `==` and `!=` and nothing else.
+
+## A test was pinning the defect
+
+`packages/wacc/test/wac/typeargsrule_test.wac` asserted that `count < list.len() > 0` compiles
+clean — the program in *How it was found* above, verbatim. Its intent was that a comparison against
+a call is not read as a type-argument list, which is a real thing to check; the program it chose to
+check it with was ill-typed for an unrelated reason, and the assertion held only because of this
+bug. It uses `spec/cases/0238`'s shape now — `g(count < list.len(), count > 0)`, both `<` and `>`
+present and both operands typing — which is the program that case was *"rewritten to avoid
+depending on it"* when this was first noticed. It asserts the refusal too, so a regression cannot
+pass it by going quiet again.
+
+Verified: three rows fail without the change, on both of `illtyped_test`'s properties — the checker
+accepting it, and the checker and emitter both accepting it so a bad module is built.
+`packages/wacc/test/wac` 79 of 79; no false alarm over the repository; the spec's acceptance corpora
+unchanged.
