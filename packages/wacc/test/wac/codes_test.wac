@@ -55,16 +55,18 @@ string[] lexWhat() {
   return string[](
     "a string with no closing quote",
     "an escape that is not one at all",
-    "a Unicode escape naming no codepoint");
+    "a Unicode escape naming no codepoint",
+    "a control character written raw in a literal");
 }
 string[] lexSrc() {
   return string[](
     "export i32 f() { string s = \"oops; return 0; }",
     "export i32 f() { string s = \"a\\qb\"; return 0; }",
-    "export i32 f() { string s = \"\\u{110000}\"; return 0; }");
+    "export i32 f() { string s = \"\\u{110000}\"; return 0; }",
+    "export i32 f() { string s = \"a\u{0094}b\"; return 0; }");
 }
-// errUnterminatedString, errUnknownEscape, errBadUnicodeEscape
-i32[] lexCode() { return i32[](2, 3, 8); }
+// errUnterminatedString, errUnknownEscape, errBadUnicodeEscape, errRawCharacter
+i32[] lexCode() { return i32[](2, 3, 8, 9); }
 
 string[] parseWhat() {
   return string[]("a type name where a type must be", "nothing where an expression must be");
@@ -305,5 +307,90 @@ export string test_a_character_literal_above_ascii_cannot_be_written_into_a_byte
   t.eqI32(firstCode(dumpTypeErrors(
             "export bool f() { u8[] b = u8[1](); return b[0] == 'A'; }".toBytes())),
           0 - 1, "comparing a byte against an ASCII codepoint is what the loops do");
+  return t.report();
+}
+
+/**
+ * What a literal may contain, raw — `design/lang/0013` D3.
+ *
+ * Category C is refused: `Cc` control, `Cf` format, `Co` private-use, `Cs` surrogate, along with
+ * `Zl` and `Zp`. Nothing becomes unwriteable — every one of them is still `\u{…}`, which is why
+ * step 2 of that note came first — only unwriteable *raw*.
+ *
+ * **The bidi characters are the safety half**, and the rest is hygiene. U+202E reorders what a
+ * reviewer sees without changing what the compiler reads, so a literal can render one way on the
+ * screen and mean another. It is refused here and its escape is not, which is the whole shape of
+ * the rule.
+ *
+ * **The programs are built with escapes, so this file holds no invisible characters itself.**
+ * `"a\u{202E}b"` in *this* source is a wac string containing a raw U+202E, and that string is the
+ * program handed to the checker. A test for invisible characters that contained them would be a
+ * test nobody could review, which is the hazard one level up.
+ *
+ * `Cn` — unassigned — is deliberately not in this rule; `packages/wacc/src/litchars.wac` says why at
+ * length, and `issues/lang/0285b` is the ladder constraint that decided it.
+ */
+export string test_a_literal_refuses_the_characters_that_cannot_be_seen() {
+  T t = T.create();
+
+  // Every category, one code point each, raw inside a string.
+  i32[] refused = i32[](
+    0x0094,     // Cc — a C1 control, the case a codepoint range misses
+    0x00AD,     // Cf — soft hyphen
+    0x200B,     // Cf — zero width space
+    0x202E,     // Cf — right-to-left override, the safety case
+    0xFEFF,     // Cf — byte order mark
+    0xE000,     // Co — private use
+    0x2028,     // Zl — line separator
+    0x2029);    // Zp — paragraph separator
+  for (i32 i = 0; i < refused.len(); i++) {
+    string src = "export i32 f() { string s = \"a" + string.fromCodepoint(refused[i])
+               + "b\"; return 0; }";
+    t.eqI32(firstCode(dumpErrors(src.toBytes())), 9,
+            "refused raw: U+" + itoa(refused[i]));
+  }
+
+  // **And the escape for the same character is accepted**, which is what makes the rule cost
+  // nothing: the character stays expressible and only the invisible spelling goes.
+  t.eqI32(firstCode(dumpErrors(
+            "export i32 f() { string s = \"a\\u{202E}b\"; return 0; }".toBytes())),
+          0 - 1, "the same character written as an escape is fine");
+
+  // The two `Cf` code points D3 admits, because they change what a visible character looks like
+  // rather than where it sits — emoji sequences and correct rendering in Persian, Hindi and Malay.
+  i32[] allowed = i32[](0x200C, 0x200D, 0x2014, 0x00E9, 0x1F600);
+  for (i32 i = 0; i < allowed.len(); i++) {
+    string src = "export i32 f() { string s = \"a" + string.fromCodepoint(allowed[i])
+               + "b\"; return 0; }";
+    t.eqI32(firstCode(dumpErrors(src.toBytes())), 0 - 1,
+            "allowed raw: U+" + itoa(allowed[i]));
+  }
+
+  // A character literal is the same set. A rule that held for `"…"` and not for `'…'` would be two.
+  string ch = "export i32 f() { return '" + string.fromCodepoint(0x202E) + "'; }";
+  t.eqI32(firstCode(dumpErrors(ch.toBytes())), 9, "and a character literal refuses it too");
+  return t.report();
+}
+
+/**
+ * A missing closing quote reports where the line ends, not where the string began.
+ *
+ * `design/lang/0013` D3 calls this the everyday payoff of the category rule, and it is the reason
+ * the newline is worth refusing rather than merely the invisible characters: a literal used to run
+ * to the end of the file and report at its *opening* quote, so one typo pointed at the wrong place
+ * and swallowed every line after it.
+ *
+ * One diagnostic, not two — the literal is closed at the newline so the end-of-scan check does not
+ * say it again.
+ */
+export string test_a_missing_quote_reports_at_the_line_it_is_missing_from() {
+  T t = T.create();
+  string src = "export i32 f() {\n  string a = \"oops;\n  string b = \"fine\";\n  return 1;\n}\n";
+  i32[] out = dumpErrors(src.toBytes());
+  t.eqI32(firstCode(out), 2, "unterminated, and it is the lexer saying so");
+  t.isTrue(out.len() >= 3, "the report carries a position");
+  if (out.len() >= 3) {
+    t.eqI32(out[1], 2, "reported on line 2, where the quote is missing — not line 1");
+  }
   return t.report();
 }

@@ -19,6 +19,36 @@ string escaped = "line1\nline2";
 
 Escape sequences: `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, and `\u{H…H}`.
 
+### What may appear raw
+
+A literal may hold any character **except** Unicode category C — `Cc` control,
+`Cf` format, `Co` private-use, `Cs` surrogate — and `Zl` and `Zp`. Nothing
+becomes unwriteable: every one of them is still `\u{…}`, and only the invisible
+spelling goes.
+
+**U+200C and U+200D are the exception** and may be written raw. They are `Cf`,
+and they are the only invisible characters that change what a *visible*
+character looks like rather than where it sits — emoji sequences are built from
+them, as is correct rendering in Persian, Hindi and Malay.
+
+`[§wac-str-raw-chars-t7kq2mw]` A raw `U+202E`, `U+0094`, `U+200B`, `U+FEFF`,
+`U+E000`, `U+2028` or `U+2029` in a literal is a compile error; `"\u{202E}"` is
+not, and a raw `U+200C` or `U+200D` is not.
+
+The bidirectional formatting characters are the reason this is a rule about
+safety rather than only about hygiene: `U+202E` reorders what a reviewer sees
+without changing what the compiler reads, so a literal can render one way and
+mean another.
+
+`[§wac-str-raw-newline-h4mn8qv]` A newline ends the literal where it occurs,
+so a missing closing quote is reported on that line rather than at the opening
+quote with the rest of the file consumed.
+
+**`Cn` — unassigned — is not part of this rule.** Whether a code point is
+assigned is a fact about the compiler's Unicode tables rather than about the
+program, so including it would make the same source legal under one revision
+and refused under an older one.
+
 ### `\u{H…H}`
 
 One to six hex digits, naming a Unicode scalar. In a string it encodes as UTF-8;

@@ -265,11 +265,55 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | ---- | ----- |
 | 1 — `\'` and `\"` | **done**, 2026-08-28 — `codes_test.wac` holds both directions and both controls |
 | 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
-| 3 — the category rule | not started |
+| 3 — the category rule | **done**, 2026-08-28 — six categories of seven; `Cn` deferred, see below |
 | 4 — `u8` truncation | **done**, 2026-08-28 — character literals only; see the note below |
 | 5 — `isUtf8` / `toUtf8` | not started |
 | 6 — block strings | not started |
 | 7 — interpolation | not started |
+
+## Step 3 is not blocked by the no-dependencies rule, and here is what it costs
+
+Worth writing down because the first answer was wrong. `packages/wacc` may import nothing, so it
+cannot reach `packages/unicode` — and the category rule reads as needing a Unicode database, `Cn`
+(unassigned) most of all. That looks like a wall and is not one.
+
+**The database is already in the repository, and it comes from the host.**
+`packages/unicode/README.md`: *"The tables come from the host — the host already carries a Unicode
+database, that is what `toLowerCase` consults"*. `packages/unicode/tools/gentables.ts` enumerates
+all 1.1 million code points, asks the engine, and emits sorted ranges with a binary search over
+them. The question it asks today is one regex:
+
+```ts
+const notPrintable = /\p{Cc}|\p{Cn}|\p{Cs}|\p{Zl}|\p{Zp}/u;
+```
+
+which is five of this note's seven categories, including the expensive one.
+
+**Measured against `isPrintable` rather than reasoned about**, since "printable" is a glibc word and
+this rule is a Unicode one. Probing one code point per category:
+
+| | `isPrintable` | D3 wants |
+|---|---|---|
+| `U+0007` Cc | no | refuse ✓ |
+| `U+2028` Zl, `U+2029` Zp | no | refuse ✓ |
+| `U+0378` Cn | no | refuse ✓ |
+| `U+00AD` Cf soft hyphen | **yes** | refuse ✗ |
+| `U+202E` Cf bidi override | **yes** | refuse ✗ |
+| `U+E000` Co private use | **yes** | refuse ✗ |
+| `U+200C` ZWNJ, `U+200D` ZWJ | yes | allow ✓ |
+| `U+0041` | yes | allow ✓ |
+
+So the gap is `Cf` and `Co`, both of which the same regex can ask for, and the two exemptions fall
+out as a special case of two code points rather than as a table.
+
+**What the no-dependencies rule actually decides is where the table lives**, not whether the step
+can be done. `packages/wacc/src/coretext.wac` is already a generated file inside wacc's own tree —
+the embedding of `core/` and `std/`, written by `tools/genCore.ts` and checked by the doc lane. A
+category table is the same arrangement: generate it into `packages/wacc/src`, check it the same way,
+and wacc imports nothing.
+
+The cost is a generator, a table of a few hundred ranges, a binary search, and a `--check` mode so
+it cannot go stale silently. Not free, and not blocked.
 
 ## What step 4 turned out to be, and what it is not
 

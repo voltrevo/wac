@@ -1,0 +1,5 @@
+// expect: answers f = 5
+// spec:  §wac-str-raw-chars-t7kq2mw
+// why: U+200C and U+200D change what a visible character looks like rather than where it sits
+// from: design/lang/0013 D3
+export i32 f() { return "a‍b".len(); }

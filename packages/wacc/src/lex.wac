@@ -14,6 +14,7 @@
 // adds nothing, a 4-byte sequence adds two (it is a surrogate pair in UTF-16), and
 // everything else adds one.
 
+import { isLiteralChar } from "./litchars.wac";
 import {
   kInt, kFloat, kString, kIdent, kEof,
   kImport, kExport, kStruct, kConst, kThis, kOverride,
@@ -61,6 +62,7 @@ export i32 errUnterminatedChar()    { return 5; }
 export i32 errEmptyChar()           { return 6; }
 export i32 errCharTooLong()         { return 7; }
 export i32 errBadUnicodeEscape()    { return 8; }
+export i32 errRawCharacter()        { return 9; }
 
 // ── Character classification ──────────────────────────────────────────────────
 //
@@ -368,6 +370,28 @@ export i32 utf8Into(u8[] out, i32 at, i32 cp) {
   return 4;
 }
 
+/**
+ * The code point encoded at `s[i]`, or -1 when the bytes there are not a well-formed sequence.
+ *
+ * Enough of UTF-8 to ask a question about a character, which is what `design/lang/0013` D3 needs: a
+ * literal's contents are checked by *category*, and a category is a property of a code point rather
+ * than of a byte. Truncation answers -1 rather than guessing, and a caller reads that as "say
+ * nothing" — a malformed sequence in a source file is not this rule's complaint to make.
+ */
+export i32 codepointAt(u8[] s, i32 i) {
+  if (i >= s.len()) { return 0 - 1; }
+  i32 b0 = s[i];
+  if (b0 < 128) { return b0; }
+  if (b0 < 224 && i + 1 < s.len()) { return ((b0 & 31) * 64) + (s[i + 1] & 63); }
+  if (b0 < 240 && i + 2 < s.len()) {
+    return ((b0 & 15) * 4096) + ((s[i + 1] & 63) * 64) + (s[i + 2] & 63);
+  }
+  if (i + 3 < s.len()) {
+    return ((b0 & 7) * 262144) + ((s[i + 1] & 63) * 4096) + ((s[i + 2] & 63) * 64) + (s[i + 3] & 63);
+  }
+  return 0 - 1;
+}
+
 /** The value of one hex digit, or -1. */
 i32 hexValue(i32 c) {
   if (c >= '0' && c <= '9') { return c - '0'; }
@@ -420,7 +444,32 @@ void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
       } else if (!isStringEscape(esc)) {
         fail(out, errUnknownEscape(), startLine, startCol);
       }
+    } else if (c == '\n') {
+      // **A newline ends the literal, here, rather than running to the end of the file.**
+      // `design/lang/0013` D3 calls this the everyday payoff of the category rule: a missing
+      // closing quote used to swallow every line after it and then report `unterminated string
+      // literal` at the *opening* quote, so one typo pointed at the wrong place and took the rest
+      // of the file with it. Reported where the line ends, and `closed` so the check below does not
+      // say it a second time — one typo, one diagnostic.
+      fail(out, errUnterminatedString(), lx.line, lx.col);
+      closed = true;
     } else {
+      // **What may appear raw** — `design/lang/0013` D3. Category C and the two separators are
+      // refused; every one of them is still expressible as `\u{…}`, which is why step 2 came first.
+      // Asked of the code point rather than the byte, since a category is a property of the
+      // character: `codepointAt` decodes, and answers -1 for a truncated sequence, which is not
+      // this rule's complaint.
+      //
+      // **Only where a character starts.** This loop walks bytes, and asking the question at a
+      // *continuation* byte decodes nonsense: `—` is `E2 80 94`, and the `80` on its own reads as a
+      // two-byte lead and answers 20, which is a C0 control — so every em dash in the tree was
+      // refused, `packages/wac/src/wac.wac` first. `advance` already makes this distinction for the
+      // column count; 0x80..0xBF is the continuation range.
+      i32 b = lx.peek(0);
+      if (b < 128 || b >= 192) {
+        i32 cp = codepointAt(lx.src, lx.pos);
+        if (cp >= 0 && !isLiteralChar(cp)) { fail(out, errRawCharacter(), startLine, startCol); }
+      }
       lx.advance();
     }
   }
@@ -467,6 +516,13 @@ void lexChar(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
       fail(out, errUnknownEscape(), startLine, startCol);
     }
   } else {
+    // The same rule as a string's contents — `design/lang/0013` D3. A character literal is one
+    // character, and "any character except category C" is the same set on both sides of the two
+    // quote marks; a rule that held for `"…"` and not for `'…'` would be two rules.
+    // A character literal's first byte is a character start by construction, so the continuation
+    // guard the string scanner needs is not needed here — the loop below eats the rest.
+    i32 cp = codepointAt(lx.src, lx.pos);
+    if (cp >= 0 && !isLiteralChar(cp)) { fail(out, errRawCharacter(), startLine, startCol); }
     // One character, however many bytes it takes.
     lx.advance();
     while (!lx.atEnd() && lx.peek(0) >= 0x80 && lx.peek(0) < 0xC0) {
