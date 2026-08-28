@@ -121,78 +121,18 @@ export i32 drv_pathLen(i32 i) {
   return paths[i].len();
 }
 
-// `linkFiles` sets `starts[0]` to a small number on its way out — which of its several ways of
-// giving up it took. Calling it here rather than through `emitFiles` is the only way to see it,
-// because `emitLinkedWith2` turns the empty answer into a bare module and drops the code.
-i32[] lstarts;
-string[] lpaths;
-
-export i32 drv_link() {
-  lstarts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  lpaths = string[1024]();
-  Res res = Res.empty();
-  string blob = linkFiles(paths, sources, res, string.fromBytes(namebuf), lstarts, edges, names, lpaths);
-  return blob.len();
-}
-
-export i32 drv_linkCode() {
-  return lstarts[0];
-}
-
-export i32 drv_linkPathLen(i32 i) {
-  return lpaths[i].len();
-}
-
-// `emitLinkedWith2`'s body, opened up: link, then emit, with each argument reachable one at a
-// time. `emit` works and `emitFiles` answers a bare module, and the two differ only in what they
-// pass here — the declaration count that scopes names to files, and the arrays that carry it.
-export i32 drv_declCount() {
-  return declCountOf(sourceOf(paths, sources, string.fromBytes(namebuf)));
-}
-
-/** The blob through `emitModule`'s own tiny arrays: is it the blob or the arrays? */
-export i32 drv_blobOnly() {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] fp = string[1024]();
-  Res res = Res.empty();
-  string blob = linkFiles(paths, sources, res, string.fromBytes(namebuf), starts, edges, names, fp);
-  if (blob.len() == 0) { return 0 - 1; }
-  built = emitModule(blob.toBytes());
-  return built.len();
-}
-
-u8[] blobBytes;
-
-export i32 drv_blob() {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] fp = string[1024]();
-  Res res = Res.empty();
-  blobBytes = linkFiles(paths, sources, res, string.fromBytes(namebuf), starts, edges, names, fp).toBytes();
-  return blobBytes.len();
-}
-
-export i32 drv_blobByte(i32 i) {
-  return blobBytes[i];
-}
-
-export i32 drv_linkEmit(i32 entryDecls) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] fp = string[1024]();
-  Res res = Res.empty();
-  string entry = string.fromBytes(namebuf);
-  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, fp);
-  if (blob.len() == 0) { return 0 - 1; }
-  built = emitModuleOf(blob.toBytes(), entryDecls, starts, edges, names, fp);
-  return built.len();
-}
+// **What was here: eight probes into `linkFiles`, calling it directly.** They are gone because the
+// function they called is gone — wac's `2b6427bb`, *"Phase C14: the blob is gone — `linkFiles`
+// links trees and concatenates nothing"*, changed it from returning a concatenated source string to
+// returning a `bool` with three out-parameters. There is no blob left to ask about.
+//
+// Nothing called them: `ts/spec_cases.ts` names each export it drives and none of these was in the
+// list, so they had been dead since that commit. They were only noticed when wac-L5 learned to
+// compile this file far enough to reach them — a stale driver reads exactly like a compiler that
+// cannot parse, and the compiler got suspected first.
+//
+// If a probe into the linker's give-up paths is wanted again it wants writing against the shape
+// `linkFiles` has now, not repairing.
 
 // wacc carries core's source inside it — `import { Node } from "core"` is answered from
 // coretext.wac rather than from any file the caller supplies. When nine JSX cases all decline

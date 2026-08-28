@@ -477,6 +477,40 @@ const programs: [string, string, number][] = [
       return (xs[1] is null ? 1 : 0) * 100 + xs[0].v * 10 + ys[0].v;
     }`, 174],
 
+  // **Three bugs in one shape: a generic used the way wacc uses it.** All three were live when
+  // `wapytok.wac` upstream wrote `struct Toks { WVec<i32> a; }` and `Toks(WVec.create())`, and the
+  // first two were silent — a structurally valid wasm type, wrong.
+  //
+  //  - a struct field whose type is an instantiation took its *neighbour's* fields, because
+  //    `struct_decl` claims a range of `fields` and expanding the template appends to it midway;
+  //  - a call argument's slot did not supply the wanted type, so a bare `Box.create()` had nothing
+  //    to take its instantiation from one level in;
+  //  - a template's own name resolved through `ty_named`, which answers with whichever
+  //    instantiation it finds — right with one and wrong with two.
+  //
+  // The field is deliberately *not* first, because putting it first hides the range bug behind a
+  // correct-looking offset; and there are two instantiations, because with one the third bug
+  // cannot fire.
+  ["a generic in a struct field, two instantiations", `
+    struct Box<T> {
+      T[] items;
+      i32 n;
+      Box<T> create() { return Box(T[](), 0); }
+      i32 len(const this) { return this.n; }
+      i32 bump(this) { this.n = this.n + 1; return this.n; }
+    }
+    struct Thing { i32 v; }
+    struct Holder { i32 tag; Box<i32> b; }
+    i32 reach(Holder h) { return h.b.len() * 10 + h.tag; }
+    export i32 main() {
+      Holder h = Holder(7, Box.create());
+      Box<Thing> other = Box.create();
+      h.b.bump();
+      h.b.bump();
+      other.bump();
+      return reach(h) * 10 + other.len();
+    }`, 271],
+
   ["string.fromBytes, which is the identity too", `
     i32 main() { return string.fromBytes("hey".toBytes()).len(); }`, 3],
 
@@ -642,16 +676,16 @@ Deno.test({
     const root = new URL("..", import.meta.url).pathname;
     const { flatten } = await import("../js/flatten.js");
     const { files } = await import("../hosts/deno.js");
-    const renamed: string[] = [];
+    const collided: string[] = [];
     await flatten(
       `${root}../wac/packages/wacc/src/api.wac`,
       files,
-      (mod: string, from: string, to: string) => renamed.push(`${from} in ${mod} -> ${to}`),
+      (what: string) => collided.push(what),
     );
-    if (renamed.length > 0) {
+    if (collided.length > 0) {
       throw new Error(
-        `wacc's graph has ${renamed.length} colliding name(s), which the flattener renamed:\n  ` +
-          renamed.sort().join("\n  ") +
+        `wacc's graph has ${collided.length} colliding name(s):\n  ` +
+          collided.sort().join("\n  ") +
           `\nEither give one a distinct name or, if they are the same function, keep one and ` +
           `import it. See packages/wacc/README.md, "One thing the bootstrap asks of this package".`,
       );

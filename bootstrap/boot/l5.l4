@@ -1029,9 +1029,22 @@ i32 instantiate(i32 tm) {
   if (full(ninst, 16384, "instantiations")) { return 0; }
   insts[ninst] = Inst(tm, ty, astart, na, 0, 0);
   ninst = ninst + 1;
-  expand_one(ninst - 1);
+  // **Not while a declaration is collecting its members.** Expanding runs `struct_decl` on the
+  // template, which appends *its* fields to the same `fields` array — in the middle of the range
+  // the enclosing declaration has already claimed. `struct H { Box<i32> b; i32 tag; }` came out as
+  // `struct refnull $a15 i32`, which is `Box<i32>`'s layout: H read its neighbour's fields as its
+  // own, silently, and emitted a structurally valid wrong type.
+  //
+  // Deferring costs nothing, because `expand_types` already loops to a fixpoint over every
+  // instantiation that has not been expanded — this only stops it happening at the one moment when
+  // a caller is holding a start index into an array the expansion writes to.
+  if (defer_expand == 0) { expand_one(ninst - 1); }
   return ty;
 }
+
+// **Nonzero while a declaration is claiming a contiguous range of a shared array.** A counter
+// rather than a flag: `expand_types` reaches `struct_decl` through `expand_one`, so these nest.
+i32 defer_expand = 0;
 
 // `fn[R(A, B)]`. The result comes first in wac and last in wasm, which is the only thing to get
 // right here. Deduplicated by shape, so two parameters of the same funcref type are one wasm type.
@@ -1384,9 +1397,25 @@ i32 args(i32 src, i32 base, i32 np) {
     // `fill: x` — a named argument, which wac has and which carries no meaning to the emitter
     // beyond the value: the name is a readability device the callee's signature already fixes.
     if (kind() == K_NAME & aheadIs(1, 58)) { next(); next(); }
+    // **The argument's slot is a wanted type, and `Vec.create()` needs one.** A bare template
+    // name takes its instantiation from `expect_ty` — that is how `Box<i32> b = Box.create();`
+    // works — and until now only a local's declaration and a `return` supplied it, so the same
+    // call was refused one level in: `Toks(WVec.create())` in wacc's `wapytok.wac`, where the
+    // wanted type is the field's. This already knows it; it just never said so.
+    //
+    // **`0 - 1` when the slot is not known**, rather than leaving whatever the enclosing statement
+    // set. `Box<i32> b = f(Thing.create());` would otherwise offer `Box<i32>` to an argument of
+    // `f`, which is a different slot entirely — a wrong answer where declining gives a refusal.
+    i32 savedE = expect_ty;
     i32 want_ty = TY_I32;
-    if (src != A_NONE & (src == A_ELEM | n < np)) { want_ty = argty(src, base, n); }
+    if (src != A_NONE & (src == A_ELEM | n < np)) {
+      want_ty = argty(src, base, n);
+      expect_ty = want_ty;
+    } else {
+      expect_ty = 0 - 1;
+    }
     convert(want_ty, expr());
+    expect_ty = savedE;
     n = n + 1;
     if (ispunct(44)) { next(); }
   }
@@ -1818,9 +1847,20 @@ i32 primary() {
     // expression grammar read `T` as a name nobody had declared.
     i32 sb = sub_find(p, n);
     if (sb != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(sb)); }
-    i32 st = ty_named(p, n);
-    if (st != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(st)); }
     i32 tmc = tmpl_find(p, n);
+    i32 st = ty_named(p, n);
+    // **A template's own name is not a type to look up.** Every instantiation of `Vec<T>` is
+    // registered in the type table under the bare name `Vec`, so `ty_named` answers with whichever
+    // one it finds first. That is right while there is one and wrong the moment there are two:
+    // inside `Vec<T>`'s own body, `Vec(...)` means *this* instantiation, and `instantiate` — which
+    // consults `cur_inst_ty` and then the slot — is the only thing that knows which that is.
+    //
+    // What it looked like: `WVec<T> create() { return WVec(T[](), 0); }` monomorphised for
+    // `WVec<i32>` emitted `func $WVec_128_create -> refnull $s128` whose body was `struct.new
+    // $s162` — the declared return type from one instantiation and the constructed value from the
+    // other. Nothing refused; the engine did, six hundred functions later.
+    if (tmc != 0 - 1) { st = 0 - 1; }
+    if (st != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(st)); }
     if (tmc != 0 - 1) {
       // `Option.Some(v)` — the enum names the variant. Which *instantiation* comes from the slot,
       // which for a `return` is the function's declared return type.
@@ -3123,6 +3163,9 @@ i32 struct_decl(i32 emitting, i32 out) {
   if (emitting == 0) { types[t] = Ty(T_STRUCT, p, n, 0, nfield, 0); }
   want(123);
   i32 count = 0;
+  // The collect pass owns `fields` from here to the closing brace; see `instantiate`. The emitting
+  // pass is left alone, because it compiles method bodies and those need their types to exist.
+  if (emitting == 0) { defer_expand = defer_expand + 1; }
   while (ispunct(125) == 0 & kind() != K_EOF) {
     eatword("const");
     eatword("export");
@@ -3137,7 +3180,7 @@ i32 struct_decl(i32 emitting, i32 out) {
         mowner = 0 - 1;
       } else {
         i32 mps_mp = scan_params();
-        if (full(nmeth, 16384, "methods")) { return 0; }
+        if (full(nmeth, 16384, "methods")) { defer_expand = defer_expand - 1; return 0; }
         meths[nmeth] = Meth(t, mp, mn, ft, mps_mp, nfnparam - mps_mp);
         nmeth = nmeth + 1;
         while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
@@ -3151,7 +3194,7 @@ i32 struct_decl(i32 emitting, i32 out) {
       }
     } else {
       if (emitting == 0) {
-        if (full(nfield, 65536, "fields")) { return 0; }
+        if (full(nfield, 65536, "fields")) { defer_expand = defer_expand - 1; return 0; }
         fields[nfield] = Field(mp, mn, ft);
         nfield = nfield + 1;
         count = count + 1;
@@ -3159,6 +3202,7 @@ i32 struct_decl(i32 emitting, i32 out) {
       want(59);
     }
   }
+  if (emitting == 0) { defer_expand = defer_expand - 1; }
   want(125);
   if (emitting == 0) { types[t] = Ty(T_STRUCT, p, n, 0, types[t].fstart, count); }
   return 0;
@@ -3179,6 +3223,9 @@ i32 enum_decl(i32 emitting, i32 out) {
   if (emitting == 0) { types[t] = Ty(T_ENUM, p, n, 0, nvar, 0); }
   want(123);
   i32 count = 0;
+  // The same claim `struct_decl` makes, over two arrays rather than one: the variants take a range
+  // of `vars` and each payload takes a range of `fields`.
+  if (emitting == 0) { defer_expand = defer_expand + 1; }
   // A variant is a name; a method is a type *then* a name then `(`. One token of lookahead tells
   // them apart, because a variant's name is either followed by `(`, `,` or `}`.
   while (ispunct(125) == 0 & kind() != K_EOF) {
@@ -3197,7 +3244,7 @@ i32 enum_decl(i32 emitting, i32 out) {
         while (ispunct(41) == 0) {
           i32 ft2 = parse_type();
           if (emitting == 0) {
-            if (full(nfield, 65536, "fields")) { return 0; }
+            if (full(nfield, 65536, "fields")) { defer_expand = defer_expand - 1; return 0; }
             fields[nfield] = Field(tstart(), tlen(), ft2);
             nfield = nfield + 1;
           }
@@ -3211,7 +3258,7 @@ i32 enum_decl(i32 emitting, i32 out) {
         }
       }
       if (emitting == 0) {
-        if (full(nvar, 8192, "enum variants")) { return 0; }
+        if (full(nvar, 8192, "enum variants")) { defer_expand = defer_expand - 1; return 0; }
         vars[nvar] = Var(vp, vn, payload, t);
         nvar = nvar + 1;
         count = count + 1;
@@ -3230,7 +3277,7 @@ i32 enum_decl(i32 emitting, i32 out) {
         mowner = 0 - 1;
       } else {
         i32 mps_mp2 = scan_params();
-        if (full(nmeth, 16384, "methods")) { return 0; }
+        if (full(nmeth, 16384, "methods")) { defer_expand = defer_expand - 1; return 0; }
         meths[nmeth] = Meth(t, mp2, mn2, mt, mps_mp2, nfnparam - mps_mp2);
         nmeth = nmeth + 1;
         while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
@@ -3244,6 +3291,7 @@ i32 enum_decl(i32 emitting, i32 out) {
       }
     }
   }
+  if (emitting == 0) { defer_expand = defer_expand - 1; }
   want(125);
   if (emitting == 0) { types[t] = Ty(T_ENUM, p, n, 0, types[t].fstart, count); }
   return 0;

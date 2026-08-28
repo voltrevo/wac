@@ -198,49 +198,55 @@ rather than by hoping.
 
 ---
 
-## Blocked — the ladder no longer builds wacc
+## The ladder builds wacc again — **done**
 
 **A struct field whose type is a generic instantiation.** `wapytok.wac` and `wapyparse.wac` gained
-one each on 2026-08-27 (`WVec<i32> a`, `WVec<i32> errors`), and wac-L5 gets them wrong.
+one each on 2026-08-27 (`WVec<i32> a`, `WVec<i32> errors`) and wac-L5 got them wrong. Enumerating
+rather than extrapolating — blank each refusing line, recompile, repeat — converged after twelve:
+eleven real sites, all in `wapytok.wac`, all this construct, plus one artefact of the blanking.
+Lifting the refusal cap instead does not work: past about 200 the parser reaches the
+`primary`/`postfix` cycle and overflows the stack, so the cap is load-bearing.
 
-**One feature, found by enumeration rather than assumed.** Blanking each refusing line and
-recompiling converges after twelve: eleven real sites, all in `wapytok.wac`, all this; the twelfth
-is an artefact of the blanking. Lifting the refusal cap instead does not work — past about 200 the
-parser reaches the `primary`/`postfix` cycle and overflows the stack, so the cap is load-bearing.
+**It was three bugs, not one, and the first two were silent.** wac-L5 already had generics —
+generic structs, methods on them, static methods, instantiation inferred from the slot a call's
+answer goes into. Each of these is a wrong answer inside machinery that already existed:
 
-**It is a bug, not a missing mechanism**, which is what decides the recommendation. wac-L5 already
-does generics: a generic struct, a method on one, a static method on one, and the instantiation
-inferred from the slot a call's answer goes into all work. It parses the field's type, instantiates
-the template, and emits the right wasm type for it:
+1. **A struct's field range is not contiguous.** `struct_decl` claims `fstart = nfield` on entry;
+   parsing a field whose type instantiates a template expands it *there*, appending the template's
+   own fields to the same array midway. `struct H { Box<i32> b; i32 tag; }` emitted
+   `struct refnull $a15 i32` — `Box<i32>`'s layout — because H read Box's fields as its own. Fixed
+   by deferring expansion while a declaration is claiming a range; `expand_types` already loops to
+   a fixpoint, so nothing else had to change. `enum_decl` had it twice over, for variants and for
+   payloads.
+2. **An argument's slot did not supply the wanted type.** A bare template name takes its
+   instantiation from `expect_ty`, which only a local's declaration and a `return` ever set — so
+   `Box.create()` worked and `Holder(Box.create())` did not. `args` already computed the wanted
+   type per argument for `convert`; it just never said so. It now also sets `0 - 1` when the slot is
+   unknown, rather than leaving whatever the enclosing statement set.
+3. **A template's own name resolved through `ty_named`.** Every instantiation of `Vec<T>` is
+   registered under the bare name `Vec`, so `ty_named` answers with whichever it finds — right with
+   one instantiation and wrong with two. `WVec<T> create()` monomorphised for `WVec<i32>` emitted
+   `func $WVec_128_create -> refnull $s128` with a body of `struct.new $s162`: the declared return
+   type from one instantiation and the constructed value from the other. Nothing refused; the
+   engine did, six hundred functions later. This one predates the other two — it reproduces on the
+   committed compiler — and was invisible because reaching it required a template with two
+   instantiations *and* a static method.
 
-    struct Box<T> { T[] items; i32 n; }
-    struct H { Box<i32> b; i32 tag; }
+**Two things the wac side needed**, neither of them a language change:
 
-    type $s14 struct refnull $a15 i32       // Box<i32> — correct
-    type $s13 struct refnull $a15 i32       // H — wrong; should be `refnull $s14 i32`
+- `wapyrewrite.wac` exported a second `splitTop`, a different function from `manifest.wac`'s.
+  Renamed `splitToks`. The collision guard had not caught it, because it reported only the
+  collisions the flattener *resolves* — two exported declarations are the case it declines, and
+  that case took the `continue`. A guard on a class of fault has to cover the whole class; it now
+  reports both, and that hole cost a debugging session.
+- `drivers/spec_cases.wac` held eight dead probes calling an eight-argument `linkFiles` that
+  returned a string. wac's `2b6427bb` — *"Phase C14: the blob is gone"* — made it return `bool`
+  with three out-parameters. Nothing called them; they had been dead since that commit and were
+  only noticed when wac-L5 could compile the file far enough to reach them. **A stale driver reads
+  exactly like a compiler that cannot parse**, and the compiler got suspected first.
 
-`$a15` is `i32[]`, which is Box's *first field*. `struct_decl` captures `fstart = nfield` on entry
-and then parses each field's type — and parsing `Box<i32>` instantiates the template, which appends
-Box's own fields to the same array in the middle of H's. H's field range is no longer contiguous, so
-it reads Box's fields as its own. Moving the generic field second moves the damage with it:
-`{ i32 tag; Box<i32> b; }` emits `struct i32 refnull $a15`, the `tag` right and the `b` stolen.
-
-**The dangerous part is that it is silent.** A structurally valid wasm type comes out, wrong. The
-refusals downstream are the *second* symptom; had the layouts happened to agree, the ladder would
-have produced a subtly wrong compiler and said nothing. That is the failure this whole project
-exists to avoid, so it is worth fixing whether or not wacc uses the construct.
-
-**A second, smaller gap, which wacc does not need:** `Box<i32>.make(7)` — a static call with the
-instantiation written out — is refused, where `Box.make(7)` inferred from the slot works.
-
-**How the constraint failed.** Nothing told the author. Two ordinary field declarations, valid wac,
-written by an agent who had no reason to know wac-L5 exists, and the only detector is a suite in
-another repository that nobody else runs. Whatever is decided about the feature, that gap wants
-closing too — see *Migration* below, when it is written.
-
-Six tests red, 229 green: `hosts_agree`, `ladder`, `manifest`, `same_fixed_point`, `selfhost`,
-`spec_cases`. Not caused by the wacc name changes — the same refusal at the same construct is there
-with them stashed.
+Where it stands: 236 tests pass, the ladder self-hosts, the seed is byte-identical to wac's own path
+at 1,793,909 bytes, and the corpus goes from 90 of 303 entry points validating to **96 of 309**.
 
 **And one flake, which is not this.** `ts/browser_test.ts` fails in a full-suite run while the wac
 gate is running and passes on its own in a second. It drives headless Chromium with

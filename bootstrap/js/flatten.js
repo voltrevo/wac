@@ -36,10 +36,10 @@
  *
  * @param {string} entry
  * @param {Files} files
- * @param {(mod: string, from: string, to: string) => void} [onRename] told about each rename
+ * @param {(what: string) => void} [onCollision] told about every colliding name, renamed or not
  * @returns {Promise<string>}
  */
-export async function flatten(entry, files, onRename) {
+export async function flatten(entry, files, onCollision) {
   /** @type {Mod[]} */
   const mods = [];
   await gather(entry, new Set(), mods, files);
@@ -83,7 +83,18 @@ export async function flatten(entry, files, onRename) {
   for (const [name, list] of owners) {
     if (list.length < 2) continue;
     const exported = list.filter((o) => o.exported);
-    if (exported.length > 1) continue;
+    // **Reported even though nothing is done about it.** Two exported declarations of one name is
+    // the case this cannot resolve — renaming either breaks whoever imports it — so it is passed
+    // through and the assembler says `Duplicate export name`. That is a true report about a module
+    // and a useless one about a program: it names neither file. Telling the caller here is the only
+    // place both modules are still in hand.
+    if (exported.length > 1) {
+      if (onCollision !== undefined) {
+        onCollision(`${name}: exported by ${exported.map((e) => e.mod).join(" and ")} — neither ` +
+          `can be renamed, so this reaches the assembler as a duplicate export`);
+      }
+      continue;
+    }
     const keeper = exported.length === 1 ? exported[0].mod : list[0].mod;
     for (const o of list) {
       if (o.mod === keeper) continue;
@@ -91,13 +102,18 @@ export async function flatten(entry, files, onRename) {
     }
   }
 
-  // **What it renamed, if anybody asked.** Renaming is the part of a flattener that can quietly
-  // produce a *wrong* compiler, so it should be possible to see it happen. wacboot's own tests use
-  // this to assert that wacc's graph needs none of it — see `packages/wacc/README.md` in wac, which
-  // states that as a constraint on wacc's source and names this check as its enforcement.
-  if (onRename !== undefined) {
+  // **Every collision, if anybody asked** — the ones renamed apart above and the ones that could
+  // not be. Renaming is the part of a flattener that can quietly produce a *wrong* compiler, so it
+  // should be possible to see it happen. wacboot's tests use this to assert that wacc's graph has
+  // none; see `packages/wacc/README.md` in wac, which states that as a constraint on wacc's source
+  // and names this check as its enforcement.
+  //
+  // **Reporting only the renames was a hole**, and it cost a debugging session: two exported
+  // `splitTop`s went through silently, because the unresolvable case is the one that takes the
+  // `continue` above. A guard on a class of fault has to cover the whole class.
+  if (onCollision !== undefined) {
     for (const [mod, m] of renames) {
-      for (const [from, to] of m) onRename(mod, from, to);
+      for (const [from, to] of m) onCollision(`${from} in ${mod} -> ${to}`);
     }
   }
 
