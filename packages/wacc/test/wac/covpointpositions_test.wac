@@ -37,7 +37,6 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { covTableFiles } from "../../src/api.wac";
 import { wireField, wireLines } from "./wire_probe.wac";
 
-const string ORACLE = "packages/wacc/test/covkinds_oracle.ts";
 const string LIB = "/lib.wac";
 const string ENTRY = "/entry.wac";
 
@@ -169,25 +168,7 @@ const string KINDS_ENTRY =
   "import { spinDo, spinFor, spinWhile } from \"./lib.wac\";\n\n" +
   "export i32 go(i32 n) {\n  return spinDo(n) + spinWhile(n) + spinFor(n);\n}\n";
 
-export string test_wacc_counts_as_many_loops_as_the_reference_does(Core core, Cli cli) {
-  // **A kind-set comparison cannot see this and a count can.** `issues/lang/0112` asked for a test
-  // asserting the two compilers emit the same *kinds*; wacc emitted no point for a `do` body, and any
-  // `while` in the same file supplies the `loop` kind — so the set matched while a construct went
-  // unmeasured. `else` and `entry` counts differ on purpose (0112 records why), so this compares the
-  // kinds where a difference is a defect.
-  T t = T.create();
-  string[] ps = pointsOf(KINDS_LIB, KINDS_ENTRY);
-  string[] kinds = string[]("loop", "case");
-  Lines lines = Lines.create();
-  for (i32 k = 0; k < kinds.len(); k++) {
-    i32 ours = 0;
-    for (i32 i = 0; i < ps.len(); i++) {
-      if (wireField(ps[i], KIND()) == kinds[k]) { ours = ours + 1; }
-    }
-    lines.add("covkinds " + hex(KINDS_LIB.toBytes()) + " " + hex(KINDS_ENTRY.toBytes()) + " " +
-              kinds[k] + " " + itoa(ours));
-  }
-  check(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines,
-        "the reference's coverage points");
-  return t.report();
-}
+// **What was here: `test_wacc_counts_as_many_loops_as_the_reference_does`.** It asked the reference
+// for its own loop count and compared. The reference is deleted — see `bootstrap/MIGRATION.md` —
+// so the comparison has no other side. The two cases above are about wacc alone and stay: a point
+// at a position no construct has is still a decision nobody measures.

@@ -30,7 +30,6 @@ import { parse } from "../../../json/src/json.wac";
 import { diagnoseFiles, diagnoseFilesRendered } from "../../src/api.wac";
 import { wireField, wireLines, ANNOTATION, HINT, SPAN } from "./wire_probe.wac";
 
-const string ORACLE = "packages/wacc/test/renderdiag_oracle.ts";
 const string CORPUS = "packages/wacc/test/specCases.json";
 
 /** One single-file case from the corpus: its path, its source, and whether it should compile. */
@@ -124,62 +123,11 @@ bool refusedByUs(string wire) {
   return false;
 }
 
-export string test_the_two_compilers_on_the_same_programs(Core core, Cli cli) {
-  // Programs both compilers refuse, so the comparison is about what they *say* rather than whether
-  // they agree that something is wrong. Kept small and hand-written: this measures the shape of a
-  // diagnostic, and the spec corpus already measures which programs are refused.
-  T t = T.create();
-  string[] names = string[]("bool", "assign", "const", "undefined", "return");
-  string[] sources = string[](
-    "export i32 f(i32 w) { if (w) { return 0; } return 1; }",
-    "export i32 f() { i32 x = 1.5; return x; }",
-    "export i32 f(const i32[] xs) { xs[0] = 1; return 0; }",
-    "export i32 f() { return nope; }",
-    "export i32 f() { return true; }");
+// **What was here: `test_the_two_compilers_on_the_same_programs`.** It ran the same programs through
+// wacc and the reference and reported where wacc said less. The reference is deleted — see
+// `bootstrap/MIGRATION.md` — so there is no second compiler to be measured against. What survives
+// below is the half that asks wacc about itself: how many of its diagnostics carry their operands.
 
-  Lines lines = Lines.create();
-  for (i32 i = 0; i < sources.len(); i++) {
-    lines.add("refrender " + hex("main.wac".toBytes()) + " " + hex(sources[i].toBytes()));
-  }
-  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
-                  "the reference compiler");
-  if (!a.ok) { return t.report(); }
-  t.eqI32(a.lines.len(), sources.len(), "a rendering per case");
-  if (a.lines.len() != sources.len()) { return t.report(); }
-
-  i32 both = 0;
-  i32 sameLine = 0;
-  i32 sameMessage = 0;
-  i32 oursAnnotated = 0;
-  i32 theirsAnnotated = 0;
-  for (i32 i = 0; i < sources.len(); i++) {
-    string wire = diagnoseFiles(string[]("main.wac"), string[](sources[i]), "main.wac");
-    string ours = diagnoseFilesRendered(string[]("main.wac"), string[](sources[i]), "main.wac");
-    i32 sp = a.lines[i].indexOf(" ");
-    string theirs = sp < 0 ? "" : string.fromBytes(decoded(a.lines[i].slice(sp + 1,
-                                                                          a.lines[i].len())));
-    if (!refusedByUs(wire) || theirs == "") { continue; }
-    both = both + 1;
-    if (positionIn(ours) == positionIn(theirs)) { sameLine = sameLine + 1; }
-    if (messageIn(ours) == messageIn(theirs)) { sameMessage = sameMessage + 1; }
-    if (isAnnotated(ours)) { oursAnnotated = oursAnnotated + 1; }
-    if (isAnnotated(theirs)) { theirsAnnotated = theirsAnnotated + 1; }
-    if (names[i] == "bool") {
-      t.isTrue(ours.indexOf("condition must be bool") >= 0,
-               "the wording the spec quotes is gone:\n" + ours);
-    }
-  }
-
-  core.log("    wacc vs the reference on " + itoa(both) + " refused programs: " + itoa(sameLine) +
-           " at the same position, " + itoa(sameMessage) + " with the same message, " +
-           "annotation-or-hint on " + itoa(oursAnnotated) + " of ours against " +
-           itoa(theirsAnnotated) + " of theirs");
-
-  t.isTrue(both > 0, "neither compiler refused anything — the harness is not working");
-  // The one property that must hold today: where wacc speaks, it speaks about the right place.
-  t.eqI32(sameLine, both, itoa(both - sameLine) + " diagnostics at a different position");
-  return t.report();
-}
 
 export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core, Cli cli) {
   // The count across the spec's whole refused corpus rather than a handful of hand-written cases,
