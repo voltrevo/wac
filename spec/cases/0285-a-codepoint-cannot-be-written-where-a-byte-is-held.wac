@@ -1,0 +1,8 @@
+// expect: refused
+// spec:  §wac-arr-byte-codepoint-v8kq3nw
+// why: a character literal is a codepoint and a byte is a byte; they coincide only below 128
+// from: design/lang/0013 step 4
+export bool f() {
+  u8[] b = "é".toBytes();
+  return b[0] == 'é';        // 233 against 195 — never true, and it said nothing
+}

@@ -139,6 +139,9 @@ export string checkMessage(i32 code) {
   if (code == 206) { return "only an array or a string can be indexed"; }
   if (code == 207) { return "two cases of this switch have the same value"; }
   if (code == 208) { return "the wrong number of type arguments"; }
+  // **Not "out of range", because it is in range.** `'é'` is 233 and a `u8` holds 0..255; what is
+  // wrong is that the two mean different things. `design/lang/0013`.
+  if (code == 209) { return "a character literal is a codepoint, and this element holds a byte"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -230,6 +233,7 @@ export string hintFor(i32 code) {
   if (code == 58) { return "add the missing arms, or an `else`"; }
   if (code == 60) { return "remove the `else` — every variant is already covered"; }
   if (code == 62) { return "unwrap the subject with `!`, or test it with `is null` first"; }
+  if (code == 209) { return "compare against the bytes — `\"é\".toBytes()` is 195 169, not 233"; }
   // Added where the help is real. A hint that only restates the message is worse than none: it
   // costs a line of everybody's terminal and teaches nothing, and the percentage it moves is a
   // measurement of itself.

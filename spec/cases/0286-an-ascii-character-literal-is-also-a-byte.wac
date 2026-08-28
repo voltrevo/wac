@@ -1,0 +1,8 @@
+// expect: answers f = 1
+// spec:  §wac-arr-byte-codepoint-v8kq3nw
+// why: below 128 a codepoint and a byte are the same number, which every byte-scanning loop uses
+// from: design/lang/0013 step 4
+export i32 f() {
+  u8[] b = u8[]('A');
+  return b[0] == 'A' ? 1 : 0;
+}

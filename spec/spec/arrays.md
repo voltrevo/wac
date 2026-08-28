@@ -233,7 +233,25 @@ export i32 byteLitTrunc() {
 ```
 
 `[§wac-arr-i8-lit-3fqjy2m]` `byteLit(0)` returns `104`.
-`[§wac-arr-i8-lit-trunc-i9g6kol]` `byteLitTrunc()` returns `44` — `300` truncates to 8 bits.
+`[§wac-arr-i8-lit-trunc-i9g6kol]` `byteLitTrunc()` returns `44` — `300` truncates to 8 bits
+
+A **character** literal is the exception, because it is not a number that happens
+to be too big: it is a codepoint, and a byte is a byte. The two coincide below
+128 and nowhere else — `'é'` is `233` while `"é"` is the two bytes `195 169` — so
+a byte can never equal it and a comparison saying so would always be false.
+
+```wac
+export i32 byteFromChar() {
+  u8[] b = u8[]('A');           // 65, and a byte is 65
+  return b[0] == 'A' ? 1 : 0;
+}
+```
+
+`[§wac-arr-byte-codepoint-v8kq3nw]` `byteFromChar()` returns `1`: an ASCII
+character literal is both. `u8[]('é')`, `b[0] = 'é'` and `b[0] == 'é'` are
+compile errors — the element, the store and the comparison, since one rule with
+three spellings is one rule. A wider element is not making this claim: `i16[]`
+holds a value that can be a codepoint..
 `[§wac-arr-i16-lit-kyrurqi]` `i16[](70000)` element 0 reads back `4464`.
 
 Element expressions must still be `i32` — no other type is accepted.

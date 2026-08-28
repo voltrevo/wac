@@ -410,6 +410,10 @@ export i32 packedSigned() {
 // ERROR: u8 x = 5;                    // no packed locals
 // ERROR: i32 f(u8 v) { return v; }    // no packed params, and no packed returns
 // ERROR: u8[] bad = u8[](1.5);        // packed elements must be i32
+// ERROR: bytes[0] == 'é';             // a byte is NOT a codepoint: 'é' is 233,
+//                                     // but "é" is the two bytes 195 169, so
+//                                     // this could never be true. Numbers
+//                                     // truncate; codepoints are refused.
 
 // ── 9. STRUCTS ──────────────────────────────────────────────────────────────
 

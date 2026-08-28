@@ -244,3 +244,66 @@ export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
   }
   return t.report();
 }
+
+/**
+ * A character literal in a byte is a codepoint in a byte, and that is its own fault.
+ *
+ * **A plain number is not this rule.** `u8[](300)` truncating to `44` is deliberate and has a clause
+ * of its own — `spec/spec/arrays.md`'s `[§wac-arr-i8-lit-trunc-i9g6kol]`, *"the fixed-element form
+ * takes `i32` values too, and truncates them the same way a write does"* — so a byte array can be
+ * written as a literal list. A first version of this test refused those too; the spec's acceptance
+ * corpus and `spec/tour.wac` both said no within a minute of each other.
+ *
+ * Separate from the range rule above and given its own code, because the range check **cannot see
+ * it**: `'é'` is 233, a `u8` holds 0..255, and 233 fits. What is wrong is that the two mean different
+ * things — é encodes as the two bytes 195 169, so no byte can equal `'é'` and `b[0] == 'é'` is a
+ * comparison that can never be true. It said nothing at all before this.
+ *
+ * A message reading "out of range" would have been false, which is why it is not that code.
+ *
+ * `'A'` is 65 and stays legal: codepoint and byte coincide below 128, which is what every
+ * byte-scanning loop in this repository relies on — this compiler's own lexer, `packages/sh`'s, the
+ * JSON parser. Those loops are right by ASCII accident, and the accident is now checked.
+ */
+export string test_a_character_literal_above_ascii_cannot_be_written_into_a_byte() {
+  T t = T.create();
+
+  string[] refused = string[](
+    "export i32 f() { return u8[]('é')[0]; }",
+    "export i32 f() { return u8[]('\u{1F600}')[0]; }",
+    "export i32 f() { return i8[]('é')[0]; }",
+    "export i32 f() { return u8[1](fill: 'é')[0]; }");
+  for (i32 i = 0; i < refused.len(); i++) {
+    t.eqI32(firstCode(dumpTypeErrors(refused[i].toBytes())), 209, "refused: " + refused[i]);
+  }
+
+  // 127 is the last codepoint that is also a byte, and 128 is the first that is not.
+  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return u8[]('\u{7F}')[0]; }".toBytes())),
+          0 - 1, "the last ASCII codepoint is still a byte");
+  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return u8[]('\u{80}')[0]; }".toBytes())),
+          209, "and the first non-ASCII one is not");
+
+  // A wider packed element is not making this claim: `i16[]('é')` is a codepoint in something that
+  // can hold it, and the rule this test states is about bytes.
+  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return i16[]('é')[0]; }".toBytes())),
+          0 - 1, "a 16-bit element is not a byte");
+
+  // **The two spellings that are not an element slot**, and the comparison is the one
+  // `design/lang/0013` leads with — the case that reads as correct code. Both operands of `==` type
+  // as `i32`, because a packed read widens, so the width has to come from the array's type.
+  t.eqI32(firstCode(dumpTypeErrors(
+            "export bool f() { u8[] b = \"é\".toBytes(); return b[0] == 'é'; }".toBytes())),
+          209, "a byte compared against a codepoint can never be equal");
+  t.eqI32(firstCode(dumpTypeErrors(
+            "export bool f() { u8[] b = \"é\".toBytes(); return 'é' == b[0]; }".toBytes())),
+          209, "and the same written the other way round");
+  t.eqI32(firstCode(dumpTypeErrors(
+            "export i32 f() { u8[] b = u8[1](); b[0] = 'é'; return b[0]; }".toBytes())),
+          209, "storing a codepoint into a byte");
+
+  // And the ASCII comparison every byte-scanning loop here is built on stays legal.
+  t.eqI32(firstCode(dumpTypeErrors(
+            "export bool f() { u8[] b = u8[1](); return b[0] == 'A'; }".toBytes())),
+          0 - 1, "comparing a byte against an ASCII codepoint is what the loops do");
+  return t.report();
+}

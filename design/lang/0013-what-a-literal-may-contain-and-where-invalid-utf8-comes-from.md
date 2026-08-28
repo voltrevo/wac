@@ -266,10 +266,33 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | 1 — `\'` and `\"` | **done**, 2026-08-28 — `codes_test.wac` holds both directions and both controls |
 | 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
 | 3 — the category rule | not started |
-| 4 — `u8` truncation | not started |
+| 4 — `u8` truncation | **done**, 2026-08-28 — character literals only; see the note below |
 | 5 — `isUtf8` / `toUtf8` | not started |
 | 6 — block strings | not started |
 | 7 — interpolation | not started |
+
+## What step 4 turned out to be, and what it is not
+
+**Only the character-literal half of it.** The implementation first refused *any* integer literal
+that did not fit a packed element — `u8[](300)`, `i16[](70000)` — on the reasoning that nothing about
+such a literal can be right. That is wrong, and the specification says so with a tag:
+`spec/spec/arrays.md`'s `[§wac-arr-i8-lit-trunc-i9g6kol]` states that `i8[](300)` returns `44`,
+because *"the fixed-element form takes `i32` values too, and truncates them the same way a write
+does — so a byte array can be written as a literal list"*. `spec/tour.wac` teaches it as well.
+
+So the rule is exactly what this note asked for: a **codepoint** cannot be written where a **byte**
+is held, because those are different things and coincide only below 128. A number that does not fit
+still truncates, deliberately.
+
+Three positions, since one rule with three spellings is one rule: an element of a literal list
+(`u8[]('é')`), a store (`b[0] = 'é'`) and a comparison (`b[0] == 'é'`, in either order — the last is
+the case this note leads with, and the one that reads as correct code). `errCharIntoByte`, code 209,
+rather than the range code: a message reading "out of range" would have been false, since `'é'` is
+233 and a `u8` holds 0..255.
+
+Two independent checks caught the over-wide version within a minute of each other — the repo-wide
+`corpuscheck_test` on `spec/tour.wac`, and the spec's own acceptance corpus on the clause. Worth
+recording because the widening was reasonable-sounding and only the written rule settled it.
 
 ## Deferred, and not part of this
 

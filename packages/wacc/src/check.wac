@@ -246,6 +246,7 @@ export i32 errDuplicateCaseValue() { return 207; }
  * would be the kind of message `design/lang/0011` was written to stop producing.
  */
 export i32 errTypeArgCount() { return 208; }
+export i32 errCharIntoByte() { return 209; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -4042,6 +4043,15 @@ void checkExpr(C c, Expr e) {
         string st = typeOfExpr(c, left);
         if (st == "u32" || st == "u64") { c.reportTok(errShiftOp(), op, ""); }
       }
+      // **A byte compared against a codepoint can never be equal**, and this is the case
+      // `design/lang/0013` leads with, because it is the one that reads as correct code:
+      //
+      //     u8[] b = "é".toBytes();
+      //     b[0] == 'é'                  // false, always — é is the two bytes 195 169
+      //
+      // Both operands type as `i32` — a packed read widens — so nothing above this can see it. The
+      // array's element type is where the width still is.
+      if (k == kEq() || k == kNe()) { checkByteAgainstCodepoint(c, left, right); }
       bool arith = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                    k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
       // Arithmetic and bitwise operators want a number. Two booleans *agree*, so the same-type rule
@@ -4513,6 +4523,10 @@ void checkExpr(C c, Expr e) {
       if (!(size is null) && elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
         c.report(errNoDefault(), e.line, e.col);
       }
+      // **A literal, though, has to fit the element type**, which the widening below would hide.
+      // `design/lang/0013` step 4.
+      for (i32 i = 0; i < elements.len(); i++) { checkPackedLiteral(c, elemWant, elements[i]); }
+      if (!(fill is null)) { checkPackedLiteral(c, elemWant, fill!); }
       // A packed element is an `i32` at this position, the way `bytes[i] = 5` is: the width is the
       // array's business, not the element expression's.
       if (isPackedName(want)) { want = "i32"; }
@@ -5964,6 +5978,112 @@ bool constPath(C c, Lvalue lv) {
 }
 
 /** One array element or fill against the element type. */
+/**
+ * A **character** literal cannot be written into a byte, though a number can.
+ *
+ * `design/lang/0013` step 4. A character literal is a *codepoint* and `u8` is a *byte*, and they
+ * coincide only below 128:
+ *
+ *     u8[]('😀')[0]      0         codepoint 128512, truncated, no diagnostic
+ *     'é' is 233,  "é".toBytes() is 195 169
+ *     b[0] == 'é'       false     can never be true, and said nothing
+ *
+ * Every byte-scanning loop in this repository — this compiler's own lexer, `packages/sh`'s, the
+ * JSON parser — compares bytes against codepoint literals and is right by ASCII accident. There are
+ * zero non-ASCII character literals in the tree, so refusing them costs nothing today.
+ *
+ * **A plain integer literal is not this rule, and asking it to be was a mistake.** The first version
+ * of this refused `u8[](300)` too, on the reasoning that nothing about a literal that cannot fit can
+ * be right. `spec/spec/arrays.md` settles it the other way, deliberately and with a tag:
+ * `[§wac-arr-i8-lit-trunc-i9g6kol]` — *"the fixed-element form takes `i32` values too, and truncates
+ * them the same way a write does, so a byte array can be written as a literal list"* — and
+ * `byteLitTrunc()` returning `44` is a clause, not an accident. `spec/tour.wac` teaches it as well.
+ * The corpus check and the spec's own acceptance corpus both said so within a minute of each other,
+ * which is what those two exist for. The note asked only for the codepoint case; the widening was
+ * mine.
+ */
+void checkPackedLiteral(C c, string want, Expr e) {
+  if (!isByteName(want)) { return; }
+  if (litFamily(c, e) != litInteger()) { return; }
+  if (charLiteralAbove(c, e, 127)) {
+    Expr at = innermostLiteral(e);
+    c.reportWith(errCharIntoByte(), at.line, at.col, "into " + want);
+  }
+}
+
+/**
+ * The packed element type an index expression reads, or "" when it does not read one.
+ *
+ * `typeOfExpr` answers `i32` for `b[0]` on purpose — reading a packed element widens, which is why
+ * `return this.data[i];` from an `i32` function is the ordinary way this repository reads a byte. So
+ * the element's real width is not in the expression's type and has to come from the array's.
+ */
+string packedElementOf(C c, Expr e) {
+  match (e.kind) {
+    case Index(arr, index): {
+      string a = typeOfExpr(c, arr);
+      if (!isArrayName(a)) { return ""; }
+      string elem = dropLast(a, 2);
+      return isPackedName(elem) ? elem : "";
+    }
+    else: { return ""; }
+  }
+  return "";
+}
+
+/** The same question for an assignment target, which is an lvalue rather than an expression. */
+string packedElementOfLvalue(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIndex(arr, index): {
+      string a = typeOfLvalue(c, arr);
+      if (!isArrayName(a)) { return ""; }
+      string elem = dropLast(a, 2);
+      return isPackedName(elem) ? elem : "";
+    }
+    else: { return ""; }
+  }
+  return "";
+}
+
+/**
+ * One side a byte read out of an array, the other a character literal that is not one.
+ *
+ * Order-free, because `b[0] == 'é'` and `'é' == b[0]` are the same mistake and a rule that only saw
+ * one of them would be a rule about where you put the operands.
+ */
+void checkByteAgainstCodepoint(C c, Expr left, Expr right) {
+  if (isByteName(packedElementOf(c, left)) && charLiteralAbove(c, right, 127)) {
+    Expr at = innermostLiteral(right);
+    c.reportWith(errCharIntoByte(), at.line, at.col, "compared against a byte");
+    return;
+  }
+  if (isByteName(packedElementOf(c, right)) && charLiteralAbove(c, left, 127)) {
+    Expr at = innermostLiteral(left);
+    c.reportWith(errCharIntoByte(), at.line, at.col, "compared against a byte");
+  }
+}
+
+/** The 8-bit packed types, where a codepoint and a byte are different things. */
+bool isByteName(string t) { return t == "u8" || t == "i8"; }
+
+/**
+ * Whether `e` is a character literal whose codepoint is above `limit`.
+ *
+ * A character literal is an `IntLit` whose text opens with a quote — the same test `checkCharLiteral`
+ * makes, and for the same reason: the token kind does not distinguish them, so the text does.
+ */
+bool charLiteralAbove(C c, Expr e, i32 limit) {
+  match (e.kind) {
+    case IntLit(tok): {
+      string lit = tokenText(c, tok);
+      if (lit.len() < 2 || lit[0] != "'") { return false; }
+      return parseInt(lit) > (limit as i64);
+    }
+    else: { return false; }
+  }
+  return false;
+}
+
 void checkElement(C c, string want, Expr e) {
   i32 lit = litFamily(c, e);
   if (lit != litNone()) {
@@ -8304,6 +8424,9 @@ void checkStmt(C c, Stmt s, Ty want) {
     case Assign(target, op, rhs): {
       c.expected = typeOfLvalue(c, target);
       checkExpr(c, rhs);
+      // The same rule as an element of a literal, at the other way of writing one. `b[0] = 'é'`
+      // stores 233 into a byte that will never be read back as that character.
+      checkPackedLiteral(c, packedElementOfLvalue(c, target), rhs);
       // **A const reference stored somewhere that outlives the binding.** `h.i = c` and `xs[0] = c`
       // put a `const S` where nothing downstream can tell it apart from a mutable one — the write
       // `h.i.v = 2` is then accepted, which is the laundering `[§wac-const-deep-j6b1nyg]` refuses.
