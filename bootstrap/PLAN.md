@@ -200,42 +200,53 @@ rather than by hoping.
 
 ## Blocked — the ladder no longer builds wacc
 
-**`WVec.create()` in `packages/wacc/src/wapytok.wac`**, which arrived upstream on 2026-08-27 and
-wac-L5 refuses:
+**A struct field whose type is a generic instantiation.** `wapytok.wac` and `wapyparse.wac` gained
+one each on 2026-08-27 (`WVec<i32> a`, `WVec<i32> errors`), and wac-L5 gets them wrong.
 
-    !! wac-L5: line 19390: unexpected token ( before ) ) ;
+**One feature, found by enumeration rather than assumed.** Blanking each refusing line and
+recompiling converges after twelve: eleven real sites, all in `wapytok.wac`, all this; the twelfth
+is an artefact of the blanking. Lifting the refusal cap instead does not work — past about 200 the
+parser reaches the `primary`/`postfix` cycle and overflows the stack, so the cap is load-bearing.
 
-    export Toks toksNew() { return Toks(WVec.create()); }
+**It is a bug, not a missing mechanism**, which is what decides the recommendation. wac-L5 already
+does generics: a generic struct, a method on one, a static method on one, and the instantiation
+inferred from the slot a call's answer goes into all work. It parses the field's type, instantiates
+the template, and emits the right wasm type for it:
 
-A **static method on a generic template**, with the instantiation nowhere in the call. wacc's own
-`emit.wac` describes the shape: *"The instantiation is not in the call — it is in the slot the
-answer goes into, which is the language's own spelling: `Vec<i32> w = Vec.create();`"*. This is the
-harder variant of it: the slot is a struct field's type, reached through the `Toks(...)` constructor
-one level out, so the wanted type comes from the field of the struct being built.
+    struct Box<T> { T[] items; i32 n; }
+    struct H { Box<i32> b; i32 tag; }
 
-**This is the ladder growing to follow wacc, which was expected** — *"it is possible the ladder will
-grow in future so that wacc can use more features"* — and it is the first time it has happened
-since the fixed point was reached. It is not caused by the wacc edits above: the same refusal, at
-the same construct, is there with them stashed.
+    type $s14 struct refnull $a15 i32       // Box<i32> — correct
+    type $s13 struct refnull $a15 i32       // H — wrong; should be `refnull $s14 i32`
 
-What it blocks: the ladder building wacc at all, so every acceptance criterion downstream of it.
-Six tests, measured rather than guessed:
+`$a15` is `i32[]`, which is Box's *first field*. `struct_decl` captures `fstart = nfield` on entry
+and then parses each field's type — and parsing `Box<i32>` instantiates the template, which appends
+Box's own fields to the same array in the middle of H's. H's field range is no longer contiguous, so
+it reads Box's fields as its own. Moving the generic field second moves the damage with it:
+`{ i32 tag; Box<i32> b; }` emits `struct i32 refnull $a15`, the `tag` right and the `b` stolen.
 
-    ts/hosts_agree_test.ts    Deno, Node and Rust each build wacc alone
-    ts/ladder_test.ts         the ladder compiles wacc, and that wacc compiles wac
-    ts/manifest_test.ts       the manifest matches the one wac's own build writes
-    ts/same_fixed_point_test  the ladder and wac's bootstrap reach the same wacc
-    ts/selfhost_test.ts       the wacc wac-L5 built builds wacc, and they agree
-    ts/spec_cases_test.ts     every spec case comes out as its expectation says
+**The dangerous part is that it is silent.** A structurally valid wasm type comes out, wrong. The
+refusals downstream are the *second* symptom; had the layouts happened to agree, the ladder would
+have produced a subtly wrong compiler and said nothing. That is the failure this whole project
+exists to avoid, so it is worth fixing whether or not wacc uses the construct.
 
-229 of the other tests stay green, so the rungs themselves are unaffected — it is one construct in
-one file at the top of the ladder.
+**A second, smaller gap, which wacc does not need:** `Box<i32>.make(7)` — a static call with the
+instantiation written out — is refused, where `Box.make(7)` inferred from the slot works.
+
+**How the constraint failed.** Nothing told the author. Two ordinary field declarations, valid wac,
+written by an agent who had no reason to know wac-L5 exists, and the only detector is a suite in
+another repository that nobody else runs. Whatever is decided about the feature, that gap wants
+closing too — see *Migration* below, when it is written.
+
+Six tests red, 229 green: `hosts_agree`, `ladder`, `manifest`, `same_fixed_point`, `selfhost`,
+`spec_cases`. Not caused by the wacc name changes — the same refusal at the same construct is there
+with them stashed.
 
 **And one flake, which is not this.** `ts/browser_test.ts` fails in a full-suite run while the wac
 gate is running and passes on its own in a second. It drives headless Chromium with
 `--virtual-time-budget` and `--dump-dom`, and under contention the browser is slow to reach the
-point where the DOM is worth dumping. A test that fails when the machine is busy is a test that will
-cry wolf on a shared box; worth fixing, not yet filed.
+point where the DOM is worth dumping. A test that fails when the machine is busy will cry wolf on a
+shared box; worth fixing, not yet filed.
 
 ---
 
