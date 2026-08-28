@@ -53,8 +53,6 @@ string[] bootstrap() {
     "harness/bootstrapParses.test.ts",
     "harness/wacBind.ts",              // binds a module; `from: "reference"` is the bootstrap's ask
     "harness/wacFiles.ts",             // the import walk, which needs a parser to be correct
-    "packages/platform/native.ts",     // the bundler that writes the seed
-    "packages/platform/build.ts",      // the same for the Deno world
     // **The one that exists to retire the reference.** The bootstrap ladder builds wacc from five
     // rungs of hand-written source, and this asks whether it lands on the same `wacc.wasm` the
     // reference reaches — `W1 == X1`. It has to import the reference to compare against it, which
@@ -73,33 +71,20 @@ string[] bootstrap() {
  */
 string[] oracle() {
   return string[](
-    "harness/covTableParity.test.ts",
-    "harness/profileCompiler.test.ts",
+    // A wapy round-trip differential, rendering with `compiler/wapyPrint.ts`. It replaced the
+    // reference's own copy of the same test on 2026-08-27 and goes when the reference does.
+    "packages/wacc/test/wapyRoundTrip.test.ts",
     "harness/referenceCheck.ts",
     "harness/referenceCompile.ts",
     "harness/referenceRun.ts",
-    "packages/wacc/test/checkSweep.test.ts",
-    "packages/wacc/test/corpus.ts",
-    "packages/wacc/test/corpusMutate.test.ts",
-    "packages/wacc/test/covkinds_oracle.ts",
-    "packages/wacc/test/emitSweep.test.ts",
-    "packages/wacc/test/linkEmit.test.ts",
-    "packages/wacc/test/missed.ts",
-    "packages/wacc/test/mutateCheck.test.ts",
-    "packages/wacc/test/parse_errors.test.ts",
     "packages/wacc/test/reference.ts",
     "packages/wacc/test/referencePrint.ts",
-    "packages/wacc/test/renderdiag_oracle.ts",
-    "packages/wacc/test/specEmit.test.ts",
-    "packages/wacc/test/sweep.test.ts",
     // The **printer**, not the compiler: it renders every tracked `.wac` file to wapy so that wacc
     // can read it back. That is the one thing the reference still has and wacc does not, and the
     // comparison is what `design/lang/0003` calls a second opinion rather than a fallback.
-    "packages/wacc/test/wapyRoundTrip.test.ts",
     // `issues/lang/0105` names this one as keeping the reference *on purpose*: it records the
     // spec's own programs with the reference's answers, which is what makes them an oracle.
     "packages/wacc/tools/specCases.ts",
-    "packages/wacc/tools/wireDiagnostics.ts"
   );
 }
 
@@ -126,7 +111,6 @@ string[] site() {
     "site/src/editor/wacc-compile.ts",
     "site/tools/site.test.ts",
     "site/tools/siteDeadline.ts",
-    "site/tools/syncWacc.ts"
   );
 }
 
@@ -144,10 +128,6 @@ string[] tooling() {
   return string[](
     "harness/wacCoverage.ts",
     "harness/wacTestRun.ts",
-    "tools/bindcheck.ts",
-    "tools/constLaundering.ts",
-    "tools/coverage.ts",
-    "tools/emitgen.ts",
     "tools/fuzz.ts",
     "tools/fuzzBoundary.ts",
     "tools/mutate.ts",
@@ -226,10 +206,24 @@ export string test_only_sanctioned_files_reach_the_reference(Core core, Cli cli)
     found.push(files[i]);
     if (!has(ok, files[i])) { strangers = strangers + "\n  " + files[i]; }
   }
-  // A floor, because a scan that stops matching reports a clean tree and would let the list rot to
-  // nothing while reading green.
-  t.isTrue(found.len() > 30,
-           "only " + itoa(found.len()) + " importers of `compiler/` found — the scan has stopped matching");
+  // **A canary, not a floor.** This asserted `found.len() > 30`, because a scan that stops matching
+  // reports a clean tree and would let the list rot to nothing while reading green. That was right
+  // while the population only grew. It is being driven to **zero** on purpose now — the reference
+  // goes once nothing reaches it — so a count floor fails on every step of the work it is meant to
+  // be watching, and would be deleted rather than satisfied.
+  //
+  // A named file proves the same thing and survives the shrinking: `same_fixed_point.ts` compares
+  // the ladder's wacc against the reference's, so it imports the reference by definition and is the
+  // last caller standing — it goes in the commit that removes `compiler/`. If the scan stops
+  // matching, this is what notices.
+  bool sawCanary = false;
+  for (i32 c = 0; c < found.len(); c++) {
+    if (found.get(c) == "bootstrap/ts/same_fixed_point.ts") { sawCanary = true; }
+  }
+  t.isTrue(sawCanary,
+           "the scan found " + itoa(found.len()) + " importers of `compiler/` and not " +
+           "`bootstrap/ts/same_fixed_point.ts`, which imports it by definition — so the scan has " +
+           "stopped matching rather than the tree having become clean");
 
   t.eqStr(strangers, "",
           "a file reaches the reference and this list does not sanction it." +
@@ -302,8 +296,6 @@ string[] reachesOutward() {
   return string[](
     "compiler/wacSpec.test.ts",        // runs spec/**'s fences; imports tools/fuzz*.ts
     "compiler/wacCases.test.ts",       // imports ../spec/cases/cases.ts
-    "compiler/wapyRoundTrip.test.ts",  // reads spec/ and every package
-    "compiler/wapySpec.test.ts",       // reads spec/spec/wapy.md
     "compiler/wapyPrint.test.ts"       // reads spec/
   );
 }
