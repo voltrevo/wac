@@ -1,8 +1,15 @@
 # 0003 — the spec targets wacc, and the reference becomes a seed
 
-- **Status:** active
+- **Status:** done — 2026-08-28
 - **Opened:** 2026-08-12
 - **Written by:** agent-b, from a decision with the operator
+
+**Reached, and then passed.** The reference became a seed as this document asked, and then stopped
+being one: `bootstrap/` builds wacc from five rungs of hand-written source, so the one job the
+reference was kept for no longer exists. It was deleted on 2026-08-28 — 35,352 lines — and
+`bootstrap/MIGRATION.md` records what the two bootstraps last agreed on, since the ability to re-run
+that comparison did not survive it. Everything below is the decision as it was made, and is left
+alone.
 
 ## The decision
 

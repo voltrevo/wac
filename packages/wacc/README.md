@@ -269,8 +269,10 @@ table instead of through its own enum: `Kind.Tree` found `tree.wac`'s `struct Tr
 a variant construction at all.
 
 **Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
-`harness/wacBind.ts` takes the wasm from wacc when `WAC_WASM_FROM=wacc` is set, keeping the
-reference's bindgen metadata, so what is under test is the emitter and nothing else.
+`harness/wacBind.ts` takes the wasm from wacc, and did so behind `WAC_WASM_FROM=wacc` while there
+was a reference whose bindgen metadata could be kept instead — which is what made the emitter the
+only thing under test. There is one compiler since 2026-08-28, so there is nothing to select and the
+switch is gone.
 `packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
 
     6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
@@ -284,9 +286,9 @@ The number above is what this tool can still measure, and it shrinks as the migr
 compiled by wacc by construction: for those packages "passes on wacc-emitted code" is not a claim
 that can fail.
 
-**And `WAC_BIND_FROM=wacc` swaps the rest** — wacc's `exportSigsFiles` and `bindTypesFiles` for the
-description of the interface, `packages/wacc/tools/waccBindgen.ts` for the generator. The same sweep
-under it reads the same:
+**And the rest is wacc's too** — `exportSigsFiles` and `bindTypesFiles` for the description of the
+interface, `packages/wacc/tools/waccBindgen.ts` for the generator. That was `WAC_BIND_FROM=wacc`,
+and it defaulted to wacc long before the switch went. The same sweep reads the same:
 
     6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
 
