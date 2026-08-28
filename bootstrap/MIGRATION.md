@@ -345,11 +345,11 @@ implementation:
 
 | group | files | the question |
 |---|---|---|
-| the harness | `wacBind`, `wacCoverage`, `wacTestRun` | each imports `wacCompile` + `wacBindgen`, which is `wac bindgen`. A repoint, not a port. |
-| `wacFiles` | `wacFiles.ts` | agreed: delete if nothing needs it. It has callers, so they come first. |
-| the oracles | `test/reference.ts`, `test/referencePrint.ts`, `tools/specCases.ts` | `referencePrint` is the wapy printer, which wacc has not got — `issues/lang/0105`. |
-| the tools | `fuzz`, `fuzzBoundary` | local dev tools: shell out to `wac`. |
-| mutation | `mutate.ts`, `mutate/operators.ts` | needs **tokens**, and deliberately not a regex. Agreed: a wac program, not a subcommand. |
+| the import walk | `harness/wacFiles.ts` | `bootstrap/js/flatten.js` does the same walk in JavaScript and is load-bearing for the bootstrap, so it cannot drift unnoticed. |
+| the spec corpus | `packages/wacc/tools/specCases.ts` | extracts the spec's own programs with the reference's answers, which is what makes them an oracle — `issues/lang/0105`. |
+| the wapy printer | `packages/wacc/test/wapyRoundTrip.test.ts` | renders wac to wapy so wacc can read it back. The one thing the reference has and wacc has not. |
+| the tools | `tools/fuzz.ts`, `tools/fuzzBoundary.ts` | the fuzzer is repointed; `fuzzBoundary` fuzzes the reference's *own* bindgen, which is a different question. |
+| mutation | `tools/mutate.ts`, `tools/mutate/operators.ts` | needs **tokens**, and deliberately not a regex. Agreed: a wac program, not a subcommand. |
 | the sanctioned one | `bootstrap/ts/same_fixed_point.ts` | the `W1 == X1` comparison. It exists to compare against the reference and is the evidence for deleting it. Goes in the final commit. |
 
 ### Found on the way, and fixed

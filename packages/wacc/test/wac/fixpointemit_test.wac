@@ -33,7 +33,7 @@
 // ## The other compiler is the ladder, since 2026-08-28
 //
 // Everything below that says "the reference" meant the TypeScript compiler in `compiler/`, which
-// answered through `harness/referenceRun.ts`. It is deleted. The second implementation is
+// answered through a harness runner that has gone with it. The second implementation is
 // `harness/ladderRun.ts` now: five rungs whose lowest is hand-written wasm assembly text,
 // compiling each other up to wac-L5, which compiles wacc.
 //

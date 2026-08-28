@@ -18,8 +18,7 @@
 // and typecheck without affecting the answer. That is deliberate: a compiler is as likely to get
 // the unexecuted branch wrong as the executed one, and validation will say so.
 
-import { wacCompile } from "../compiler/wacCompile.ts";
-import { wacInstance } from "../compiler/wacInstance.ts";
+import { waccApi } from "../harness/waccBuild.ts";
 
 // ── Values and types ──────────────────────────────────────────────────────────
 
@@ -68,7 +67,7 @@ export class Rng {
 
 type Local = { name: string; ty: Ty };
 
-class Gen {
+export class Gen {
   private n = 0;
   /** Locals in scope, innermost last, with the value each holds at this point. */
   private scopes: Local[][] = [[]];
@@ -463,18 +462,39 @@ export type FuzzFailure = { seed: number; src: string; want: bigint; got: string
 
 /** Generate and check `count` programs from `seed`. Returns the failures. */
 export async function fuzz(count: number, seed: number, verbose = false): Promise<FuzzFailure[]> {
+  // **The compiler is wacc, and it is asked once for the whole sweep.** This used to be the
+  // TypeScript reference, which was never the point — the oracle is the generated tree, so the
+  // compiler here is only the thing being checked. `waccApi` caches, so the four seconds the ladder
+  // costs are paid on the first call rather than per program.
+  const api = await waccApi();
   const failures: FuzzFailure[] = [];
   for (let k = 0; k < count; k++) {
     const s = seed + k;
     const { src, want } = new Gen(new Rng(s)).program();
-    const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
-    if (!r.ok) {
-      failures.push({ seed: s, src, want, got: `compile: ${r.diagnostics.map((d) => d.message).join("; ")}` });
+
+    // **Diagnosed before it is emitted.** `wacCompile` answered both questions at once; wacc's
+    // emitter is asked separately from its checker, and a program that does not check emits an
+    // empty module rather than complaining — which would surface here as an instantiation error
+    // about a module with no `main`, three steps from the mistake.
+    const diags = api.diagnoseFiles(["m.wac"], [src], "m.wac");
+    if (diags !== "") {
+      failures.push({ seed: s, src, want, got: `compile: ${diags.replaceAll("\n", "; ")}` });
       continue;
     }
     try {
-      const inst = await wacInstance(r.compiled);
-      const got = inst.call("main", []);
+      // No glue: `main` returns an integer, and an integer crosses a bare wasm boundary. Anything
+      // needing a reference would need bindgen, and the generator emits none.
+      const wasm = api.emitFiles(["m.wac"], [src], "m.wac");
+      const instance = await WebAssembly.instantiate(
+        await WebAssembly.compile(wasm.buffer as ArrayBuffer),
+        {},
+      );
+      const main = (instance.exports as Record<string, unknown>).main;
+      if (typeof main !== "function") {
+        failures.push({ seed: s, src, want, got: "the module exports no callable `main`" });
+        continue;
+      }
+      const got = (main as () => unknown)();
       if (BigInt(got as number) !== want) {
         failures.push({ seed: s, src, want, got: String(got) });
       } else if (verbose) console.log(`seed ${s}: ok (${want})`);

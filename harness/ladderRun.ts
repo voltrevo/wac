@@ -4,7 +4,8 @@
 //
 // ## Why this exists
 //
-// This replaces `harness/referenceRun.ts`, whose own header set the condition for its removal:
+// This replaces the reference runner that stood here, whose own header set the condition for its
+// removal:
 // *"the moment those tests stop needing a second implementation it should go."* They still need
 // one. `packages/wacc/test/wac/{bootstrap,fixpoint,selfhost}emit_test.wac` are the rung-5
 // self-host tests — each compiles a driver with `wacc` and asks a *different* compiler to run the

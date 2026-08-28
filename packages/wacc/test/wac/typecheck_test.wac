@@ -34,7 +34,7 @@
 // adding an assertion. The cheap generator is a handful of programs with no imports and a column
 // saying which of them `wac check` accepts — and it wants negative controls in the same batch,
 // because a widening that fixes a false alarm by accepting everything looks identical from the
-// accepted side. It used to say to put `harness/referenceCheck.ts` in that column; there is no
+// accepted side. It used to say to put the reference checker in that column; there is no
 // second checker to put there now, so the classification is written by hand, which is what every
 // list in this file already does.
 //

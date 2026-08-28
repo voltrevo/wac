@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0281b](open/0281b-as-tilde-wraps-instead-of-clamping-when-its-operand-is-constant.md) | `as~` to `i32` wraps instead of clamping when its operand is a constant; through a local it is correct | bug | wrong answer |
 | [0280a](open/0280a-the-wapy-printer-drops-parentheses-the-type-argument-rule-needs.md) | `compiler/wapyPrint.ts` renders `g((a < b), c > e)` as `g(a < b, c > e)`, and under `§wacc-type-args-commit` those are different programs — wacc reads the rendering as a construction with one null argument. The reference's own round trip cannot see it, because the reference does not have the rule: both its sides read the same wrong thing and agree | bug | wrong answer — the rendering is a different program, and it compiles |
 | [0277a](open/0277a-wapy-accepts-escapes-wac-refuses-and-swallows-the-rest.md) | wapy accepts `\uXXXX`, which wac has not, and returns the character for every *unknown* escape instead of diagnosing: `"\q"` is `q` and `"\u{41}"` is `u{41}`, silently | bug | open |
 | [0278a](open/0278a-parseprogram-rewrites-its-token-array-so-parsing-twice-differs.md) | `splitGt` rewrites `>>` in place, so a `Lexed` is single-use: parsing one twice reads a nested generic as a comparison, and reports it in a file nobody touched | bug | open |
@@ -39,7 +40,7 @@ has been fixed and why.
 
 ## Closed
 
-219 issues, 188 closed.
+220 issues, 188 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
