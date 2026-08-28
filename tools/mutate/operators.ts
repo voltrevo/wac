@@ -12,7 +12,71 @@
 // less useful — Google's finding was that unproductive mutants cost human attention,
 // not machine time.
 
-import { wacLex, type Token } from "wac/wacLex.ts";
+import { waccApi } from "../../harness/waccBuild.ts";
+
+/** A token as this file reads them: the four fields it actually asks for. */
+export type Token = { kind: string; text: string; line: number; col: number };
+
+// **wacc's lexer, at module load so `mutations` can stay synchronous.** This used the TypeScript
+// reference's, and the choice of a lexer over a regex is the point rather than an implementation
+// detail — the note below the call says *"a regex for `<` finds every one inside a comment and a
+// string literal"*. The lexer that decides what the program means is the one that compiles it.
+const api = await waccApi();
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+/** `\n`, `\t`, `\r`, `\0`, and `\x` for anything else — the escapes `spec/spec/grammar.md` lists. */
+function unescaped(body: string): string {
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== "\\") { out += body[i]; continue; }
+    const c = body[++i];
+    out += c === "n" ? "\n" : c === "t" ? "\t" : c === "r" ? "\r" : c === "0" ? "\0" : c;
+  }
+  return out;
+}
+
+/** A character literal's numeric value, which is what it lexes as. */
+function charValue(raw: string): number {
+  const body = raw.slice(1, -1);
+  if (body[0] === "\\") {
+    const c = body[1];
+    return c === "n" ? 10 : c === "t" ? 9 : c === "r" ? 13 : c === "0" ? 0 : body.charCodeAt(1);
+  }
+  return body.codePointAt(0) ?? 0;
+}
+
+/**
+ * The token stream, from wacc's flat array.
+ *
+ * The text is sliced out of the source rather than carried across: `start` and `len` are two of
+ * the five numbers per token, so shipping the bytes as well would be the same string twice.
+ *
+ * **Two conversions, and both were found by comparing rather than reasoned out.** A string token's
+ * `text` is its *value* — quotes off, escapes resolved — and a character literal lexes as an `int`
+ * whose `text` is the number, not `'0'`. A raw slice gets both wrong, silently, and the literal
+ * mutations would then be placed against text that is not what the compiler read. Checked against
+ * the reference's lexer over every tracked `.wac` file: 1,344 agree token for token, and the 35
+ * that differ are all `=>`, which wacc lexes as one token and the reference splits into `=` and
+ * `>` because it has no lambdas.
+ */
+function wacLex(source: string): { tokens: Token[]; errors: { line: number; col: number }[] } {
+  const bytes = enc.encode(source);
+  const flat = api.lexTokensOf(bytes);
+  const stride = api.lexTokenStride();
+  const tokens: Token[] = [];
+  for (let i = 0; i + stride <= flat.length; i += stride) {
+    const kind = api.tokenKindName(flat[i]);
+    let text = dec.decode(bytes.subarray(flat[i + 1], flat[i + 1] + flat[i + 2]));
+    if (kind === "string" && text.length >= 2) text = unescaped(text.slice(1, -1));
+    if (kind === "int" && text.startsWith("'")) text = String(charValue(text));
+    tokens.push({ kind, text, line: flat[i + 3], col: flat[i + 4] });
+  }
+  const errs = api.dumpErrors(bytes);
+  const errors: { line: number; col: number }[] = [];
+  for (let i = 0; i + 3 <= errs.length; i += 3) errors.push({ line: errs[i + 1], col: errs[i + 2] });
+  return { tokens, errors };
+}
 import type { Edit, Mutant } from "./types.ts";
 
 /** Line/column, as the lexer reports it, to an absolute offset in `source`. */

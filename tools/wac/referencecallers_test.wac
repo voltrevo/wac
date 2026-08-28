@@ -73,29 +73,16 @@ string[] oracle() {
 }
 
 
-/**
- * **Repository tooling**, and the group with the weakest claim.
- *
- * Each of these measures or mutates *this repository*, and each reaches for the reference because it
- * was the only compiler when it was written. They are the ones to move to wacc, and the reason to
- * keep the list separate from the three above is so that shrinking it is visible.
- *
- * `tools/fuzzBoundary.ts` is the exception with a real argument: `issues/lang/0105` records that it
- * keeps the reference *on purpose*, to fuzz the reference's own bindgen.
- */
-string[] tooling() {
-  return string[](
-    "tools/mutate.ts",
-    "tools/mutate/operators.ts"
-  );
-}
 
 string[] allowed() {
   Vec<string> out = Vec.create();
   // **`site()` is gone rather than empty.** The playground compiled with the reference as a
   // fallback, which is `issues/system/0146` — a published deploy that quietly used it because
   // the wacc asset was missing and nothing said so. There is one compiler in the browser now.
-  string[][] groups = string[][](bootstrap(), oracle(), tooling());
+  // **`tooling()` is gone rather than empty**, like `site()` before it. Every tool that reached
+  // the reference — the two fuzzers, the mutation generator, the coverage and test runners,
+  // the import walk — asks wacc now, and several found bugs on the day they were repointed.
+  string[][] groups = string[][](bootstrap(), oracle());
   for (i32 g = 0; g < groups.len(); g++) {
     for (i32 i = 0; i < groups[g].len(); i++) { out.push(groups[g][i]); }
   }

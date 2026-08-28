@@ -49,6 +49,16 @@ export type WaccApi = {
    * with a note on why they were the compiler's own rather than a copy.
    */
   importSpecsFor: (path: string, src: Uint8Array) => string[];
+
+  /**
+   * Tokens, for a host placing something at a position in a source. `[kind, start, len, line, col]`
+   * per token, flat because bindgen cannot marshal a struct.
+   */
+  lexTokensOf: (src: Uint8Array) => Int32Array;
+  lexTokenStride: () => number;
+  /** `[code, line, col]` per lex error, stride 3. */
+  dumpErrors: (src: Uint8Array) => Int32Array;
+  tokenKindName: (kind: number) => string;
   isBuiltinSpecifier: (spec: string) => boolean;
   isProjectSpecifier: (spec: string) => boolean;
   resolveSpecifierAt: (from: string, spec: string, root: string, base: string) => string;

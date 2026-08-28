@@ -80,7 +80,10 @@ import { announceHeavy } from "./suiteGate.ts";
 const doneHeavy = announceHeavy("mutate");
 globalThis.addEventListener("unload", () => doneHeavy());
 
-import { wacCompile } from "wac/wacCompile.ts";
+import { waccApi } from "../harness/waccBuild.ts";
+
+// **wacc, at module load**, because `wasmHash` below is called per mutant and is synchronous.
+const api = await waccApi();
 import { wacFiles, wacFilesIn } from "../harness/wacFiles.ts";
 import { CURATED } from "./mutate/curated.ts";
 import { KNOWN_SURVIVORS } from "./mutate/known.ts";
@@ -401,9 +404,13 @@ function wasmHash(files: Map<string, string>, entry: string): string | null {
   // a single unrelated file that does not parse makes *every* mutant in *every* package report
   // "did not compile" — which is exactly what `packages/tor/size/tor_only.wac` did, silently, and
   // for a one-line syntax error nothing else in the suite reaches.
-  const result = wacCompile(wacFilesIn(files, entry), entry);
-  if (!result.ok) return null;
-  const bytes = result.compiled.wasm;
+  const graph = wacFilesIn(files, entry);
+  const paths = [...graph.keys()];
+  // **An empty module is how wacc says no.** Its emitter answers a program that does not check with
+  // no bytes rather than a complaint, so a zero length here is the `!result.ok` this replaces —
+  // and asking the checker separately would double the work for every mutant.
+  const bytes = api.emitFiles(paths, paths.map((p) => graph.get(p)!), entry);
+  if (bytes.length === 0) return null;
   // Two 32-bit FNV-1a lanes with different offset bases, combined with the length.
   // This only has to distinguish, not resist anything — but it does run over every byte
   // of every mutant's wasm, so it has to be cheap. The first version used a 64-bit

@@ -5,7 +5,8 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump the parser's own tests read.
 
-import { lex, Lexed, tokenStride } from "./lex.wac";
+import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
+import { kindName } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
@@ -469,6 +470,27 @@ export string lambdaReportFiles(string[] paths, string[] sources, string entry) 
   Res res = Res.empty();
   return lambdaReportLinked(paths, sources, res, entry);
 }
+
+// ── Tokens, for a host that has to place something in a source ──────────────────────────────
+//
+// **A regex is the wrong instrument and that is the whole reason these exist.** `tools/mutate.ts`
+// places mutations at token positions and its own note says why it will not scan for them: *"a
+// regex for `<` finds every one inside a comment and a string literal."* It had the reference's
+// lexer; the lexer that decides what the program means is this one.
+
+/** `[kind, start, len, line, col]` per token, flat because bindgen cannot marshal a struct. */
+export i32[] lexTokensOf(u8[] src) { return lexTokens(src); }
+
+/** How many `i32`s a token occupies in that array. */
+export i32 lexTokenStride() { return tokenStride(); }
+
+/**
+ * A token kind as the parser spells it in a diagnostic — `ident`, `int`, `const`, `trap`.
+ *
+ * Names rather than numbers across the boundary: a host comparing against `84` is pinned to an
+ * ordering nothing promises, and `kinds.wac` is free to renumber.
+ */
+export string tokenKindName(i32 kind) { return kindName(kind); }
 
 // ── The import walk, for a host that has to gather a graph ──────────────────────────────────
 //
