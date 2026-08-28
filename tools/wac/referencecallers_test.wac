@@ -26,7 +26,6 @@
 // the question is which of these it is:
 //
 //   - it is bootstrap work           → add it to `bootstrap()`, and say what it builds
-//   - it is a differential oracle    → add it to `oracle()`; the reference is wacc's second opinion
 //   - it is none of those            → it is what the rule is about, and wacc is the compiler to use
 //
 // A **missing** entry is the good direction and the whole point: delete the line.
@@ -57,21 +56,6 @@ string[] bootstrap() {
   );
 }
 
-/**
- * **wacc's differential oracle**, and the most valuable non-bootstrap use there is.
- *
- * `compiler/README.md` argues for keeping it: stripping the reference *"would cost the second
- * opinion above while the two still overlap almost entirely"*. Every entry here is a test that asks
- * the two compilers the same question and compares the answers.
- */
-string[] oracle() {
-  return string[](
-    // A wapy round-trip differential, rendering with `compiler/wapyPrint.ts`. It replaced the
-    // reference's own copy of the same test on 2026-08-27 and goes when the reference does.
-    "packages/wacc/test/wapyRoundTrip.test.ts",
-  );
-}
-
 
 
 string[] allowed() {
@@ -82,7 +66,10 @@ string[] allowed() {
   // **`tooling()` is gone rather than empty**, like `site()` before it. Every tool that reached
   // the reference — the two fuzzers, the mutation generator, the coverage and test runners,
   // the import walk — asks wacc now, and several found bugs on the day they were repointed.
-  string[][] groups = string[][](bootstrap(), oracle());
+  // **Only the bootstrap group is left.** `oracle()` held the differentials that used the
+  // reference as wacc's second opinion, and the last of them was the wapy round trip —
+  // `packages/wacc/src/wapyprint.wac` is the second implementation now.
+  string[][] groups = string[][](bootstrap());
   for (i32 g = 0; g < groups.len(); g++) {
     for (i32 i = 0; i < groups[g].len(); i++) { out.push(groups[g][i]); }
   }
