@@ -33,9 +33,28 @@ Complete lossless conversions:
 ```
 i32  -> i64       sign-extend
 i32  -> f64       exact
+u32  -> i64       zero-extend: no u32 is negative
+u32  -> u64       zero-extend
+u32  -> f64       exact
 f32  -> f64       exact
 bool -> i32       false->0, true->1
+bool -> u32       false->0, true->1
+bool -> i64       false->0, true->1
+bool -> u64       false->0, true->1
+bool -> f32       false->0.0, true->1.0
+bool -> f64       false->0.0, true->1.0
 ```
+
+`[§wac-lossless-unsigned-4qmt8xv]` This block said "complete" and gave four of twelve. Four more —
+`u32 -> u64`, `u32 -> i64`, `u32 -> f64` and `bool -> u32` — were written in the unsigned section
+below instead, so the complete list was the union of two blocks and neither said so. The remaining
+four — `bool` to `i64`, `u64`, `f32` and `f64` — were documented nowhere at all and have always
+compiled. They are all here now, and the unsigned section points here rather than repeating a
+second copy to drift.
+
+`i32 -> u64` is **not** here and is not an oversight: an `i32` can be negative and a `u64` cannot,
+so the conversion is checked rather than lossless. That is the whole reason this is a table and not
+"a wider destination".
 
 #### `as!` — checked
 
@@ -235,14 +254,8 @@ destination's range whatever the pair — `i64 as~ u64` of `-1` is `0`, `u64 as~
 accepted by the type checker and emitted nothing at all, so the narrowing ones produced invalid
 wasm and the same-width ones silently reinterpreted the bits — which is `as@`'s job, not `as~`'s.
 
-Widening out of `u32` is exact, so it uses plain `as`:
-
-```
-u32 -> u64    zero-extend
-u32 -> i64    zero-extend — every u32 fits in i64
-u32 -> f64    exact — every u32 is representable
-bool -> u32   false->0, true->1
-```
+Widening out of `u32` is exact, so it uses plain `as` — those rows are in the lossless list above
+with the rest of them, rather than in a second block here.
 
 Everything else follows the same rule as the signed rows: `as!` to check, `as~`
 to round and clamp, `as@` where a distinct raw form exists. Note that `i32 ->

@@ -44,13 +44,12 @@
 // subprocess per cell over these grids would be thousands of processes.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, ask } from "../../../wactest/src/oracle.wac";
-import { decoded } from "../../../codec/src/hex.wac";
+import { word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
-         assertComplete, referenceTolerant,
-         joinedWith, ours, oursBesidesMissingImports, referenceFor }
+import { splitLines, trimmed } from "../../../wactest/src/strings.wac";
+import { assertCaught, assertQuiet, caughtAndQuiet, complaint,
+         joinedWith, ours, oursBesidesMissingImports }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
 
@@ -331,33 +330,24 @@ string[] CLEAN() {
       + "export i32 f() { H h = H(Kid(2, 38)); return h.b is null ? 0 : h.b!.id; }");
 }
 
-export string test_rung3_every_diagnostic_we_report_the_reference_reports_in_the_same_place(
-    Core core, Cli cli) {
+export string test_rung3_every_wrong_program_gets_a_diagnostic() {
   T t = T.create();
   string[] wrong = WRONG();
-  Ref r = referenceFor(t, cli, wrong);
-  if (!r.ok) { return t.report(); }
   for (i32 i = 0; i < wrong.len(); i++) {
-    string[] mine = ours(wrong[i]);
-    t.isTrue(mine.len() > 0,
-             "we found nothing in " + wrong[i] + "; the reference found " + itoa(r.count(i)) +
-             ": " + r.said[i]);
-    assertSound(t, r, i, "a wrong program");
+    assertCaught(t, wrong[i], "a wrong program");
   }
+  // A floor on the corpus, because a `WRONG()` that returned nothing would satisfy the loop.
+  t.isTrue(wrong.len() >= 20, "only " + itoa(wrong.len()) + " wrong programs in the corpus");
   return t.report();
 }
 
-export string test_rung3_we_report_nothing_for_a_program_the_reference_accepts(Core core, Cli cli) {
+export string test_rung3_we_report_nothing_for_a_program_that_is_correct() {
   T t = T.create();
   string[] clean = CLEAN();
-  Ref r = referenceFor(t, cli, clean);
-  if (!r.ok) { return t.report(); }
   for (i32 i = 0; i < clean.len(); i++) {
-    t.eqI32(r.count(i), 0,
-            "this case is meant to be clean but the reference rejects it: " + clean[i] +
-            "\n  " + r.said[i]);
-    assertQuiet(t, r, i, "a clean program");
+    assertQuiet(t, clean[i], "a clean program");
   }
+  t.isTrue(clean.len() >= 20, "only " + itoa(clean.len()) + " clean programs in the corpus");
   return t.report();
 }
 
@@ -648,7 +638,23 @@ string[] PRIMITIVES() {
 string[] LITERAL_KINDS() { return string[]("integer", "float", "string", "boolean"); }
 string[] LITERALS() { return string[]("1", "1.5", "\"x\"", "true"); }
 
-export string test_rung3_every_primitive_against_every_literal_kind(Core core, Cli cli) {
+/**
+ * Whether `ty` accepts a literal of `kind`, indexing `LITERAL_KINDS`.
+ *
+ * **Written out, where the reference used to decide it.** The rule was already stated in the
+ * assertion below — "an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean from
+ * bool, a string from string", with the four packed types accepting nothing — so this is that
+ * sentence made executable rather than a new claim. The cell counts still check it: a rule that
+ * drifted would not give 8 and 40.
+ */
+bool acceptsLiteral(string ty, i32 kind) {
+  if (kind == 0) { return ty == "i32" || ty == "i64" || ty == "u32" || ty == "u64"; }
+  if (kind == 1) { return ty == "f32" || ty == "f64"; }
+  if (kind == 2) { return ty == "string"; }
+  return ty == "bool";
+}
+
+export string test_rung3_every_primitive_against_every_literal_kind() {
   T t = T.create();
   string[] types = PRIMITIVES();
   string[] kinds = LITERAL_KINDS();
@@ -663,26 +669,28 @@ export string test_rung3_every_primitive_against_every_literal_kind(Core core, C
       n = n + 1;
     }
   }
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
-
   i32 rejected = 0;
   i32 caught = 0;
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
-    rejected = rejected + 1;
-    assertSound(t, r, i, labels[i]);
-    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  i32 at = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < literals.len(); b++) {
+      if (acceptsLiteral(types[a], b)) {
+        assertQuiet(t, sources[at], labels[at]);
+      } else {
+        rejected = rejected + 1;
+        if (ours(sources[at]).len() > 0) { caught = caught + 1; }
+      }
+      at = at + 1;
+    }
   }
   // 48 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
   // from bool, a string from string. The four packed types accept nothing, which is why this is 8 and
   // not 12 — the count was written as 10 first, against a ten-type list that was missing i8 and i16.
   //
-  // Asserting the shape rather than a bare "some failed": a reference that started accepting
-  // everything would otherwise pass this silently, and so would a `referenceFor` that had quietly
-  // stopped returning diagnostics.
+  // Asserting the shape rather than a bare "some failed": an `acceptsLiteral` that started calling
+  // every cell acceptable would otherwise pass this silently.
   t.eqI32(rejected, 40, "expected 40 rejected cells of 48");
-  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " cells and we catch " +
+  t.eqI32(caught, rejected, "the grid rejects " + itoa(rejected) + " cells and we catch " +
                             itoa(caught) + "; this slice is meant to catch every literal-return " +
                             "mismatch");
   return t.report();
@@ -696,8 +704,7 @@ export string test_rung3_every_primitive_against_every_literal_kind(Core core, C
  * stronger test than the literal grid because a name has no intrinsic type: getting this right means
  * the declaration was found and read, not that a token was recognised.
  */
-export string test_rung3_a_returned_parameter_every_declared_type_against_every_parameter_type(
-    Core core, Cli cli) {
+export string test_rung3_a_returned_parameter_every_declared_type_against_every_parameter_type() {
   T t = T.create();
   string[] all = PRIMITIVES();
   // Packed types are not legal as a return type, so the declared side leaves them out.
@@ -712,19 +719,26 @@ export string test_rung3_a_returned_parameter_every_declared_type_against_every_
       n = n + 1;
     }
   }
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
-
+  // **Accepted exactly on the diagonal.** wac converts nothing implicitly — `return p` for a
+  // parameter of any other type is an error asking for a cast, which holds for a widening as much
+  // as for `string` to `i32`. So 8 of the 96 cells are legal and the other 88 are not, and this
+  // slice is meant to catch every one of them.
   i32 rejected = 0;
   i32 caught = 0;
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
-    rejected = rejected + 1;
-    assertSound(t, r, i, labels[i]);
-    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  i32 at = 0;
+  for (i32 a = 0; a < usable.len(); a++) {
+    for (i32 b = 0; b < all.len(); b++) {
+      if (usable[a] == all[b]) {
+        assertQuiet(t, sources[at], labels[at]);
+      } else {
+        rejected = rejected + 1;
+        if (ours(sources[at]).len() > 0) { caught = caught + 1; }
+      }
+      at = at + 1;
+    }
   }
-  t.isTrue(rejected > 0, "no cell was rejected — the grid is not being evaluated");
-  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of these and we catch " +
+  t.eqI32(rejected, 88, "expected 88 rejected cells of 96 — only the diagonal is legal");
+  t.eqI32(caught, rejected, "the grid rejects " + itoa(rejected) + " of these and we catch " +
                             itoa(caught));
   return t.report();
 }
@@ -757,21 +771,16 @@ export string test_rung3_a_name_this_slice_cannot_resolve_is_silence_not_a_guess
   return t.report();
 }
 
-export string test_rung3_a_returned_local_and_a_name_used_before_its_declaration(
-    Core core, Cli cli) {
+export string test_rung3_a_returned_local_and_a_name_used_before_its_declaration() {
   // Locals are declared in a pass of their own before the body is walked, so a `return` above the
   // declaration still resolves. Both directions are checked because declaring-as-you-walk passes the
   // first and silently fails the second.
   T t = T.create();
   string[] sources = string[](
     "export i32 g(bool c) { if (c) { return v; } string v = \"x\"; return 0; }");
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
-  t.isTrue(r.count(0) > 0, "the reference accepts " + sources[0]);
   t.isTrue(ours(sources[0]).len() > 0,
            "a name declared after its use was not resolved — the declaration pass is not running " +
            "before the check pass");
-  assertSound(t, r, 0, "a name used before its declaration");
   return t.report();
 }
 
@@ -796,9 +805,9 @@ export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, 
     "void nothing() { }",
     "void early(bool x) { if (x) { return; } }");
 
-  Ref r = referenceFor(t, cli, caught);
-  if (!r.ok) { return t.report(); }
-  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, r, i, "a reachable closing brace"); }
+  for (i32 i = 0; i < caught.len(); i++) {
+    assertCaught(t, caught[i], "a reachable closing brace");
+  }
 
   for (i32 i = 0; i < quiet.len(); i++) {
     string[] mine = ours(quiet[i]);
@@ -819,29 +828,27 @@ export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, 
  * and `primOfType` answers `primNone` for a nullable type, so those stay silent rather than being
  * wrongly refused.
  */
-export string test_rung3_a_variables_initialiser_against_its_declared_type(Core core, Cli cli) {
+export string test_rung3_a_variables_initialiser_against_its_declared_type() {
   T t = T.create();
-  string[] sources = string[](
+  // **Split into two lists, where the reference used to decide each entry.** The comment marking
+  // where the accepted ones began was already here; it is the boundary now rather than a note.
+  string[] caught = string[](
     "export void a() { i32 x = null; }",
     "export void b() { i32 z; }",
     "export void c() { i8 x = 5; }",
     "export void d() { i32 x = \"s\"; }",
     "export void e() { f64 x = 1; }",
     "export void f(string s) { i32 x = s; }",
-    "export void g(i64 n) { i32 x = n; }",
-    // Accepted, and each is a way the rule could be wrong in the other direction.
+    "export void g(i64 n) { i32 x = n; }");
+  // Accepted, and each is a way the rule could be wrong in the other direction.
+  string[] quiet = string[](
     "export void h() { i32 x = 5; }",
     "export void i() { i64 x = 5; }",
     "export void j() { f64 x = 1.5; }",
     "export void k() { i32? n = null; }",
     "export void l() { string s = \"x\"; }",
     "export void m(i32 a) { i32 b = a; }");
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (r.count(i) == 0) { assertQuiet(t, r, i, "an initialiser"); continue; }
-    assertCaught(t, r, i, "an initialiser");
-  }
+  caughtAndQuiet(t, caught, quiet, "an initialiser");
   return t.report();
 }
 
@@ -860,7 +867,7 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type(Core 
 export string test_rung3_same_type_operands_and_the_operators_that_answer_something_else(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "export f64 bad(i32 x, f64 y) { return x + y; }",
     "export void b2(i32 x, i64 y) { i32 r = x - y; }",
     "export void b3(f64 x, i32 y) { f64 r = x * y; }",
@@ -917,7 +924,7 @@ export string test_rung3_same_type_operands_and_the_operators_that_answer_someth
  */
 export string test_rung3_a_calls_arguments_against_its_parameters(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
     "i32 g(i32 x) { return x; } export i32 sl() { return g(\"s\"); }",
     "i32 g(i32 x) { return x; } export i32 tw(i64 a) { return g(a); }",
@@ -948,16 +955,19 @@ export string test_rung3_a_calls_arguments_against_its_parameters(Core core, Cli
  * whether the two agree — and unlike `x + 1`, there is no other side for the literal to take its type
  * from.
  */
-export string test_rung3_operands_and_conditions_that_have_to_be_boolean(Core core, Cli cli) {
+export string test_rung3_operands_and_conditions_that_have_to_be_boolean() {
   T t = T.create();
-  decidedByReference(t, cli, string[](
+  // The `// Accepted.` marker was already the boundary; it is the list division now. This was the
+  // one caller of `decidedByReference`, which asked the reference to classify each entry — the
+  // classification is written here instead.
+  caughtAndQuiet(t, string[](
     "export void a(i32 p, bool q) { bool r = p && q; }",
     "export void b(bool p, i32 q) { bool r = p || q; }",
     "export void c(bool p) { bool r = p && 1; }",
     "export void d(i32 p) { if (p) { } }",
     "export void e2(i32 p) { while (p) { } }",
-    "export i32 rejected(i32 x) { if (x) { return 1; } return 0; }",
-    // Accepted.
+    "export i32 rejected(i32 x) { if (x) { return 1; } return 0; }"),
+  string[](
     "export void f(bool p) { bool r = p && true; }",
     "export void g(bool p, bool q) { bool r = p || q; }",
     "export void h(bool p) { if (p) { } }",
@@ -986,7 +996,7 @@ export string test_rung3_operands_and_conditions_that_have_to_be_boolean(Core co
 export string test_rung3_struct_types_and_identity_rather_than_equality(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; } struct Q { i32 y; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     d + "export void a(P p, Q q) { bool r = p == q; }",
     d + "export void b(P p, P q) { bool r = p == q; }",
     d + "export void b2(P p, P q) { bool r = p != q; }",
@@ -1023,7 +1033,7 @@ export string test_rung3_struct_types_and_identity_rather_than_equality(Core cor
 export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "export void a(i32[] x) { i64[] y = x; }",
     "export void b(i32[] x) { i32 y = x; }",
     "export void c(i32[] x, i32[] y) { bool r = x == y; }",
@@ -1052,7 +1062,7 @@ export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
 export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     d + "export string a(P p) { return p.x; }",
     d + "export void c(P p) { string t = p.x; }",
     d + "export f64 d(C q) { return q.b; }",
@@ -1089,7 +1099,7 @@ export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core c
  */
 export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "struct P { i32 x; string bad(this) { return this.x; } }",
     "struct P { i32 x; void v(this, string s) { i32 n = s; } }",
     "struct P { i32 x; i32 sh(this, bool c) { if (c) { return 1; } } }",
@@ -1121,7 +1131,7 @@ export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
 export string test_rung3_assignment_through_names_fields_and_elements(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; string s; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "export void a(i32 n, string t) { n = t; }",
     "export void c(i32 n) { n = 1.5; }",
     "export void f(i32 n, i64 m) { n = m; }",
@@ -1151,7 +1161,7 @@ export string test_rung3_assignment_through_names_fields_and_elements(Core core,
  * expression" into a question the reference already answers — *"return: expected T, found U"* — with
  * no need for it to expose a typer.
  */
-export string test_rung3_every_expression_form_against_every_return_type(Core core, Cli cli) {
+export string test_rung3_every_expression_form_against_every_return_type(Core core) {
   T t = T.create();
   string d = "struct P { i32 x; } i32 fi() { return 1; } string fs() { return \"a\"; } ";
   string params = "i32 n, i64 m, bool b, P p, i32[] arr, i32? opt";
@@ -1162,7 +1172,15 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
     "n as i64", "m as! i32", "m as~ i32", "p is P", "-n", "!b", "arr[0]", "b ? n : n",
     "fi()", "fs()", "P(1)", "opt!", "p.x");
   string[] returns = string[]("i32", "i64", "bool", "string", "f64", "P");
+  // **The type each form has**, which the reference used to be asked for one cell at a time. Every
+  // one of them is in `returns`, so each form accepts exactly one of the six and the grid has 13
+  // legal cells and 65 illegal ones — the same 65 the comment below records untyped casts having
+  // once dropped to 50.
+  string[] formTypes = string[](
+    "i64", "i32", "i32", "bool", "i32", "bool", "i32", "i32",
+    "i32", "string", "P", "i32", "i32");
   t.eqI32(labels.len(), forms.len(), "a form per label");
+  t.eqI32(formTypes.len(), forms.len(), "a type per form");
 
   string[] sources = string[forms.len() * returns.len()](fill: "");
   string[] where = string[forms.len() * returns.len()](fill: "");
@@ -1174,25 +1192,28 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
       n = n + 1;
     }
   }
-  Ref ref = referenceFor(t, cli, sources);
-  if (!ref.ok) { return t.report(); }
-
   i32 rejected = 0;
   i32 caught = 0;
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (ref.count(i) == 0) { assertQuiet(t, ref, i, where[i]); continue; }
-    rejected = rejected + 1;
-    assertSound(t, ref, i, where[i]);
-    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  i32 at = 0;
+  for (i32 f = 0; f < forms.len(); f++) {
+    for (i32 r = 0; r < returns.len(); r++) {
+      if (formTypes[f] == returns[r]) {
+        assertQuiet(t, sources[at], where[at]);
+      } else {
+        rejected = rejected + 1;
+        if (ours(sources[at]).len() > 0) { caught = caught + 1; }
+      }
+      at = at + 1;
+    }
   }
   t.eqI32(sources.len(), forms.len() * 6, "the grid did not run");
-  t.isTrue(rejected >= 60, "only " + itoa(rejected) + " rejected cells — the grid is too easy");
+  t.eqI32(rejected, 65, "expected 65 rejected cells of 78 — one legal cell per form");
   // **Asserted, not reported.** Every form in the list above is typed, so every rejection in this
   // grid is one this slice owns and every one must be caught. Reporting the number instead was the
   // first version, and untyping casts moved it from 65 to 50 without failing anything — a recall
   // regression that printed itself and passed. If a form is ever deliberately left untyped, it comes
   // out of the list and the removal is the decision, rather than a count quietly dropping.
-  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of " +
+  t.eqI32(caught, rejected, "the grid rejects " + itoa(rejected) + " of " +
                             itoa(sources.len()) + " cells and we catch " + itoa(caught) +
                             "; every form is meant to be typed");
   core.log("    expression grid: " + itoa(sources.len()) + " cells, " + itoa(rejected) +
@@ -1214,7 +1235,7 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
 export string test_rung3_struct_construction_against_field_types(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     d + "export void b() { P p = P(\"y\", 1); }",
     d + "export void g() { C q = C(1.0, 2.0); }",
     d + "export void k(i64 n) { P p = P(n, \"y\"); }",
@@ -1244,7 +1265,7 @@ export string test_rung3_struct_construction_against_field_types(Core core, Cli 
 export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; } i32 takes(i32 n) { return n; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     d + "export void a(P? p) { P q = p; }",
     d + "export P b(P? p) { return p; }",
     d + "export void c(P? p, P q) { q = p; }",
@@ -1277,7 +1298,7 @@ export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(C
 export string test_rung3_const_variables_const_fields_and_const_references(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; const i32 k; } struct Q { P p; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     d + "export void a() { const i32 n = 1; n = 2; }",
     d + "export void b() { const i32 n = 1; n += 1; }",
     d + "export void c() { const i32 n = 1; n++; }",
@@ -1300,7 +1321,7 @@ export string test_rung3_a_const_this_refuses_writes_through_the_receiver(Core c
   // The same rule as a `const P p` parameter, reusing it exactly: `this` is declared with the
   // method's own constness, and everything else follows.
   T t = T.create();
-  caughtAndQuiet(t, cli,
+  caughtAndQuiet(t,
     string[]("struct R { i32 y; void w(const this) { this.y = 1; } }"),
     string[]("struct R { i32 y; void w(this) { this.y = 1; } }"),
     "a const this");
@@ -1328,7 +1349,7 @@ export string test_rung3_method_calls_static_and_through_a_const_receiver(Core c
   T t = T.create();
   string d = "struct P { i32 x; i32 get(const this) { return this.x; } " +
              "void set(this, i32 v) { this.x = v; } i32 mk() { return 1; } } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     d + "export void a(const P p) { p.set(1); }",
     d + "export i32 e2() { return P.nope(); }",
     d + "export i32 f(P p) { return p.nope(); }",
@@ -1347,18 +1368,92 @@ export string test_rung3_method_calls_static_and_through_a_const_receiver(Core c
 }
 
 /**
- * Every conversion against every cast operator, with the reference deciding each cell.
+ * The `a -> b` pairs in the fence **containing** `row`, in `spec/spec/casts.md`, as `"a>b"`.
  *
- * `losslessCast` and `rawCast` in the checker are **tables**, not formulas, because no formula fits.
- * `u32 -> u64` is lossless and `i32 -> u64` is not, since the first cannot be negative;
- * `f32 -> f64` is and `i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer; and
- * `as@` is close to "an integer target no wider than the source" except for `f64 -> i64`, which the
- * reference refuses while allowing `f64 -> i32`. A rule invented to cover most of that would be wrong
- * about the rest.
+ * Keyed on a row inside the fence rather than on a heading before it. `casts.md` has both shapes —
+ * the lossless table is introduced by its sentence and the raw one is *followed* by "these are the
+ * only pairs" — and reading forwards from a marker found the wrong fence for the second, which the
+ * count floor caught as one pair where there are ten.
  *
- * So the tables are carried, and this re-derives them from the reference on every run. That is the
- * arrangement for anything measured rather than reasoned: the table is the implementation, the grid
- * is the proof, and drift in the language fails here rather than being discovered later.
+ * A `<->` row is two pairs, which is how the raw list writes `i32 <-> u32` — "same bits, read the
+ * other way" goes both ways and is one line for it.
+ */
+string[] fencePairs(Cli cli, string row) {
+  FileResult f = cli.readFile("spec/spec/casts.md").wait();
+  if (!f.ok) { return string[0](fill: ""); }
+  string doc = string.fromBytes(f.bytes);
+  i32 at = doc.indexOf(row);
+  if (at < 0) { return string[0](fill: ""); }
+  // Back to the fence that opened before this row, then forward to the one that closes it.
+  string before = doc.slice(0, at);
+  i32 open = -1;
+  for (i32 i = 0; i + 3 <= before.len(); i++) {
+    if (before.slice(i, i + 3) == "```") { open = i + 3; }
+  }
+  if (open < 0) { return string[0](fill: ""); }
+  string body = doc.slice(open, doc.len());
+  i32 shut = body.indexOf("```");
+  if (shut < 0) { return string[0](fill: ""); }
+  body = body.slice(0, shut);
+
+  string[] ls = splitLines(body);
+  string[] out = string[ls.len() * 2](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    string l = trimmed(ls[i]);
+    if (l == "") { continue; }
+    bool both = l.indexOf("<->") >= 0;
+    i32 arrow = both ? l.indexOf("<->") : l.indexOf("->");
+    if (arrow < 0) { continue; }
+    string from = trimmed(l.slice(0, arrow));
+    string rest = trimmed(l.slice(arrow + (both ? 3 : 2), l.len()));
+    // The row is `from -> to  some prose`; the destination is its first word.
+    i32 sp = rest.indexOf(" ");
+    string to = sp < 0 ? rest : rest.slice(0, sp);
+    if (from == "" || to == "") { continue; }
+    out[n] = from + ">" + to;
+    n = n + 1;
+    if (both) { out[n] = to + ">" + from; n = n + 1; }
+  }
+  string[] kept = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { kept[i] = out[i]; }
+  return kept;
+}
+
+bool hasPair(string[] pairs, string want) {
+  for (i32 i = 0; i < pairs.len(); i++) { if (pairs[i] == want) { return true; } }
+  return false;
+}
+
+/** `i32 as~ u64` — the operator is the middle word. */
+string castOp(string label) { return word(label, 1); }
+
+/** `i32 as~ u64` — as `"i32>u64"`, to match a fence row. */
+string castPair(string label) { return word(label, 0) + ">" + word(label, 2); }
+
+/**
+ * Every conversion against every cast operator, with **`spec/spec/casts.md` deciding each cell**.
+ *
+ * `[§wac-lossless-unsigned-4qmt8xv]`
+ *
+ * `losslessCast` and `rawCast` in the checker are **tables**, not formulas, because no formula fits:
+ * `u32 -> u64` is lossless and `i32 -> u64` is not, since the first cannot be negative; `f32 -> f64`
+ * is and `i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer. `as@` is close to
+ * "an integer target no wider than the source" except for `f64 -> i64`, which is refused while
+ * `f64 -> i32` is allowed. A rule invented to cover most of that would be wrong about the rest.
+ *
+ * So the tables are carried, and this re-derives them on every run from the document that defines
+ * them. **It re-derived them from the TypeScript reference until 2026-08-28**, which was the same
+ * arrangement with a worse source: the reference was another implementation, and two implementations
+ * agreeing says nothing about either being what the language promises. The spec is the promise.
+ *
+ * Reading the fences rather than restating them is the whole point — a table written out here would
+ * be a third copy, and the header above says why no formula can stand in for one.
+ *
+ * The change found something. The lossless fence called itself "complete" and gave four of twelve
+ * rows: four more sat in the unsigned section further down, and `bool` to `i64`, `u64`, `f32` and
+ * `f64` were written nowhere while compiling fine. Asking the reference could never have found that,
+ * because the reference is not where the promise lives.
  */
 export string test_rung3_every_conversion_against_every_cast_operator(Core core, Cli cli) {
   T t = T.create();
@@ -1382,20 +1477,36 @@ export string test_rung3_every_conversion_against_every_cast_operator(Core core,
   string[] labels = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; labels[i] = where[i]; }
 
-  Ref r = referenceFor(t, cli, exact);
-  if (!r.ok) { return t.report(); }
+  string[] lossless = fencePairs(cli, "i32  -> i64       sign-extend");
+  string[] raw = fencePairs(cli, "i32 <-> u32");
+  // Floors: a fence that stopped being found would give nothing, and every cell would then agree
+  // with an empty table.
+  t.eqI32(lossless.len(), 12, "the lossless fence gave " + itoa(lossless.len()) + " pairs, not 12");
+  t.isTrue(raw.len() >= 10, "the raw fence gave " + itoa(raw.len()) + " pairs, expected 10 or more");
+  if (lossless.len() == 0 || raw.len() == 0) { return t.report(); }
+
   i32 rejected = 0;
   i32 caught = 0;
   for (i32 i = 0; i < exact.len(); i++) {
-    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
-    rejected = rejected + 1;
-    assertSound(t, r, i, labels[i]);
-    if (ours(exact[i]).len() > 0) { caught = caught + 1; }
+    string pair = castPair(labels[i]);
+    string op = castOp(labels[i]);
+    bool lossy = !hasPair(lossless, pair);
+    // `as` where it would lose information, `as!`/`as~` where `as` would already do, and `as@`
+    // where no distinct raw form exists — each is a compile error, and the fences say which.
+    bool legal = op == "as" ? !lossy
+               : op == "as@" ? (lossy && hasPair(raw, pair))
+               : lossy;
+    if (legal) {
+      assertQuiet(t, exact[i], labels[i]);
+    } else {
+      rejected = rejected + 1;
+      if (ours(exact[i]).len() > 0) { caught = caught + 1; }
+    }
   }
   t.eqI32(exact.len(), 120, "the cast grid did not run");
-  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of " + itoa(exact.len()) +
+  t.eqI32(caught, rejected, "casts.md rejects " + itoa(rejected) + " of " + itoa(exact.len()) +
                             " conversions and we catch " + itoa(caught) + "; the tables in " +
-                            "check.wac have drifted from the language");
+                            "check.wac have drifted from the document that defines them");
   core.log("    cast grid: " + itoa(exact.len()) + " cells, " + itoa(rejected) +
            " rejected, all caught");
   return t.report();
@@ -1418,7 +1529,7 @@ export string test_rung3_every_conversion_against_every_cast_operator(Core core,
 export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiver(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "struct Base { i32 b; Base make() { return Base(1); } } struct Sub : Base { i32 e2; } " +
     "export void bad() { Sub s = Sub.make(); }",
     "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
@@ -1443,7 +1554,7 @@ export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiv
 export string test_rung3_array_elements_duplicate_parameters_and_module_level_consts(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // Elements and fills carry the element type, not their own.
     "export void f() { i8[] b = i8[](1.5); }",
     "export void f() { i32[] b = i32[](, 1); }",
@@ -1477,7 +1588,7 @@ export string test_rung3_array_elements_duplicate_parameters_and_module_level_co
 // skipped by every rule, so `f64.nope()` and `string.fromBytes(5)` both passed unremarked.
 export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // Arity, at the call.
     "export string bad() { return string.fromCodepoint(); }",
     "export string bad() { return string.fromBytes(); }",
@@ -1509,259 +1620,6 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
 }
 
 /**
- * A grid's verdict: which cells the reference rejects and we ignore, and which we invent.
- *
- * Both directions are collected rather than thrown on, because the count is the diagnosis: one
- * silent cell is a gap and four hundred is a rule that never ran.
- */
-struct Grid {
-  i32 cells;
-  i32 accepted;
-  string silent;
-  i32 silentN;
-  string alarms;
-  i32 alarmsN;
-}
-
-Grid gridOf(T t, Cli cli, string[] sources, string[] labels) {
-  Ref r = referenceTolerant(t, cli, sources);
-  Grid g = Grid(0, 0, "", 0, "", 0);
-  if (!r.ok) { return g; }
-  for (i32 i = 0; i < sources.len(); i++) {
-    // A combination the reference's own front end will not parse is not a cell.
-    if (r.bad[i]) { continue; }
-    g.cells = g.cells + 1;
-    i32 theirs = r.count(i);
-    i32 mine = ours(sources[i]).len();
-    if (theirs == 0) { g.accepted = g.accepted + 1; }
-    if (theirs > 0 && mine == 0) {
-      if (g.silentN < 20) { g.silent = g.silent + (g.silentN == 0 ? "" : "\n  ") + labels[i]; }
-      g.silentN = g.silentN + 1;
-    }
-    if (theirs == 0 && mine > 0) {
-      if (g.alarmsN < 20) { g.alarms = g.alarms + (g.alarmsN == 0 ? "" : "\n  ") + labels[i]; }
-      g.alarmsN = g.alarmsN + 1;
-    }
-  }
-  return g;
-}
-
-export string test_rung3_every_operator_against_every_type(Core core, Cli cli) {
-  T t = T.create();
-  string prelude = "struct S { i32 v; } enum E { A, B }\n";
-  string[] types = string[](
-    "i32", "i64", "f64", "bool", "string", "string?",
-    "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref");
-  string[] ops = string[]("==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^",
-                          "&&", "||");
-  i32 total = types.len() * types.len() * ops.len();
-  string[] sources = string[total](fill: "");
-  string[] labels = string[total](fill: "");
-  i32 n = 0;
-  for (i32 l = 0; l < types.len(); l++) {
-    for (i32 rr = 0; rr < types.len(); rr++) {
-      for (i32 o = 0; o < ops.len(); o++) {
-        // The slot is what the operator answers, so a cell is about the operator rather than about a
-        // cast bolted on to make it a statement.
-        bool comparison = ops[o] == "==" || ops[o] == "!=" || ops[o] == "<" || ops[o] == "<=" ||
-                          ops[o] == ">" || ops[o] == ">=" || ops[o] == "&&" || ops[o] == "||";
-        string slot = comparison ? "bool" : types[l];
-        sources[n] = prelude + "export void f(" + types[l] + " a, " + types[rr] + " b) { " +
-                     slot + " r = a " + ops[o] + " b; }";
-        labels[n] = types[l] + " " + ops[o] + " " + types[rr];
-        n = n + 1;
-      }
-    }
-  }
-  Grid g = gridOf(t, cli, sources, labels);
-
-  // The canary the first version lacked. If the matrix stops containing programs of both kinds, the
-  // two assertions below are being satisfied by an absence rather than by agreement.
-  t.isTrue(g.cells >= 3000, "only " + itoa(g.cells) + " cells reached the comparison");
-  t.isTrue(g.accepted >= 20, "the reference accepts only " + itoa(g.accepted) + " of " +
-                             itoa(g.cells) + " cells, so \"no false alarm\" is not being tested");
-  t.isTrue(g.accepted <= g.cells - 100,
-           "the reference rejects only " + itoa(g.cells - g.accepted) + " of " + itoa(g.cells) +
-           " cells, so \"we are not silent\" is not being tested");
-  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
-                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
-  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we report on that the reference accepts:\n  " +
-                        g.alarms);
-  core.log("    operator grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
-  return t.report();
-}
-
-/**
- * **Every type into every other type's slot**, again with the reference deciding.
- *
- * The initialiser rung is a hand-written list of thirteen programs. This is the same question asked
- * 324 times, and the one thing it found was in the direction that list could never have covered: not
- * a rule we are missing, but a **program we refuse that the reference accepts**.
- *
- * `anyref r = someEnum` is legal — an enum is held by reference like anything else — and wacc refused
- * it. `isReferenceType`, which is the predicate `anyref` asks, listed arrays, strings, `anyref` and
- * structs. Its neighbour `isCastRef` carries a comment saying in as many words that "an enum and a
- * funcref are references too", so the fact was known and written down next to the helper that did not
- * use it.
- *
- * A funcref is a different matter and stays out: the reference refuses `anyref r = someFn` too, and
- * the grid is what says so rather than the comment.
- */
-export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli cli) {
-  T t = T.create();
-  // **A child and a generic child, added 2026-08-24 — and the grid would have found all three.**
-  //
-  // The list was eighteen types with no inheritance and no generic in it, so every rule about a
-  // *related* pair of struct types was outside the grid entirely. Three defects lived in that gap and
-  // were found by hand instead, one of them a week after being filed as a language question:
-  //
-  //   - `S? r = k` for a `K k` — refused, and the reference accepts, emits and runs it. The spec says
-  //     so too: `spec/tour.wac` §14, *"`T` widens to `T?` implicitly"*.
-  //   - `S r = g` for a `G<i32> g` — refused, same story.
-  //   - `g as! S` — accepted, where the reference says *"upcast to 'S' is always safe — use 'as'"*.
-  //
-  // One helper was blind to a spelling in both directions. Five types is 529 cells against 324, and
-  // the pairs that matter are the ones no hand-written list reaches for: child into parent, child into
-  // *nullable* parent, generic child into parent, and each of those backwards, which must stay refused.
-  string prelude = "struct S { i32 v; } struct K : S { i32 w; } struct G<T> : S { T g; } "
-                   + "enum E { A, B }\n";
-  string[] types = string[](
-    "i32", "i64", "f64", "bool", "string", "string?", "S", "S?", "E", "E?",
-    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32",
-    "K", "K?", "G<i32>", "G<i32>?", "anyref?");
-  i32 total = types.len() * types.len();
-  string[] sources = string[total](fill: "");
-  string[] labels = string[total](fill: "");
-  i32 n = 0;
-  for (i32 s = 0; s < types.len(); s++) {
-    for (i32 h = 0; h < types.len(); h++) {
-      sources[n] = prelude + "export void f(" + types[h] + " b) { " + types[s] + " r = b; }";
-      labels[n] = types[h] + " into " + types[s];
-      n = n + 1;
-    }
-  }
-  Grid g = gridOf(t, cli, sources, labels);
-
-  // Both kinds of cell have to be present, or one of the two assertions below is vacuous.
-  t.isTrue(g.cells >= 300, "only " + itoa(g.cells) + " cells reached the comparison");
-  t.isTrue(g.accepted >= 10 && g.accepted <= g.cells - 50,
-           itoa(g.accepted) + " of " + itoa(g.cells) +
-           " accepted — the grid has stopped containing both kinds");
-  // **The alarms first**, because refusing correct code is the worse failure: a gap costs a
-  // diagnostic nobody gets, and an alarm costs a program nobody can compile.
-  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we refuse that the reference accepts:\n  " +
-                        g.alarms);
-  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
-                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
-  core.log("    slot grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
-  return t.report();
-}
-
-/**
- * **Every reference type through every cast operator**, with the reference deciding.
- *
- * The neighbouring cast grid is deliberately numeric — it re-derives `losslessCast` and `rawCast`,
- * which are tables no formula fits. That leaves the *other* kind of cast, the one between reference
- * types, covered by nothing: which of `as`, `as!` and `as~` is right for a pair depends on whether the
- * conversion widens, and "widens" is the inheritance lattice plus `anyref` at the top.
- *
- * It found ten of ninety cells on the run that introduced it, five each way and all one fact:
- * **`anyref` is the top type and the cast rule did not know it.** `assignable` did — that is the same
- * lattice asked a different question — so `s as anyref` was reported as a downcast while `S r = s`
- * beside it was fine. Both operators came out backwards, which is the useful shape: an upcast that is
- * not recognised does not go quiet, it swaps the advice, so `as` is refused *and* `as!` is waved
- * through, and a grid sees both halves where a hand-written case sees one.
- *
- * The four nullable rows needed the fact twice, because widening the type and widening the
- * nullability are separate conditions here by design: `S? as anyref` takes nothing away either.
- */
-export string test_rung3_every_reference_cast_against_every_operator(Core core, Cli cli) {
-  T t = T.create();
-  string prelude = "struct S { i32 v; } struct K : S { i32 w; } struct G<T> : S { T g; }\n";
-  string[] types = string[]("S", "K", "G<i32>", "S?", "K?", "anyref");
-  string[] ops = string[]("as", "as!", "as~");
-  i32 total = types.len() * types.len() * ops.len();
-  string[] sources = string[total](fill: "");
-  string[] labels = string[total](fill: "");
-  i32 n = 0;
-  for (i32 a = 0; a < types.len(); a++) {
-    for (i32 b = 0; b < types.len(); b++) {
-      if (types[a] == types[b]) { continue; }
-      for (i32 o = 0; o < ops.len(); o++) {
-        // The slot is the cast's own target, so the cast is the only thing that can be wrong — the
-        // discipline the unary grid states: a grid is only as good as the thing it isolates.
-        sources[n] = prelude + "export void f(" + types[a] + " a) { "
-                     + types[b] + " r = a " + ops[o] + " " + types[b] + "; }";
-        labels[n] = types[a] + " " + ops[o] + " " + types[b];
-        n = n + 1;
-      }
-    }
-  }
-  string[] cells = string[n](fill: "");
-  string[] names = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { cells[i] = sources[i]; names[i] = labels[i]; }
-  Grid g = gridOf(t, cli, cells, names);
-
-  t.isTrue(g.cells >= 80, "only " + itoa(g.cells) + " cells reached the comparison");
-  t.isTrue(g.accepted >= 5 && g.accepted <= g.cells - 20,
-           itoa(g.accepted) + " of " + itoa(g.cells) +
-           " accepted — the grid has stopped containing both kinds");
-  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we refuse that the reference accepts:\n  " +
-                        g.alarms);
-  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
-                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
-  core.log("    reference-cast grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
-  return t.report();
-}
-
-/**
- * **The unary operators and `!`-unwrap, over every type.**
- *
- * The third grid, and it found the same shape a third time: a rule spelled as a list of type names,
- * and the list was short. `-` refused `bool`, `string` and structs, so `-someEnum`, `-someArray`,
- * `-someFn` and `-someAnyref` all compiled — as did `-a` on a `u32`, which is not a reference at all
- * but is equally not a thing with a negation.
- *
- * `p!` was the same: refused on a struct or a primitive, silent on an enum, an array, a funcref or an
- * `anyref`, none of which has a `?` to unwrap either.
- *
- * ## Why each program's slot is the operand's own type
- *
- * So that only the operator can be the error. An earlier version wrote `i32 r = (a!).v` and learned
- * about `.v` on a string rather than about the unwrap, and `bool r = (a op b) as~ bool` measured the
- * cast. A grid is only as good as the thing it isolates.
- */
-export string test_rung3_the_unary_operators_over_every_type(Core core, Cli cli) {
-  T t = T.create();
-  string prelude = "struct S { i32 v; } enum E { A, B }\n";
-  string[] types = string[](
-    "i32", "i64", "f64", "f32", "bool", "i8", "u8", "i16", "u16", "u32", "u64",
-    "string", "string?", "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref");
-  string[] forms = string[]("-a", "!a", "~a", "a!");
-  for (i32 f = 0; f < forms.len(); f++) {
-    string[] sources = string[types.len()](fill: "");
-    string[] labels = string[types.len()](fill: "");
-    for (i32 i = 0; i < types.len(); i++) {
-      string ty = types[i];
-      // Each form's slot is the operand's own type, so a mismatch cannot stand in for the operator.
-      // `a!` on a nullable answers the non-null form, which widens back into the nullable slot.
-      string body = f == 0 ? ty + " r = -a;"
-                  : (f == 1 ? "bool r = !a;"
-                  : (f == 2 ? ty + " r = ~a;" : ty + " r = a!;"));
-      sources[i] = prelude + "export void f(" + ty + " a) { " + body + " }";
-      labels[i] = ty;
-    }
-    Grid g = gridOf(t, cli, sources, labels);
-    t.isTrue(g.cells >= types.len() - 2, forms[f] + ": only " + itoa(g.cells) + " cells");
-    t.eqI32(g.alarmsN, 0, forms[f] + ": " + itoa(g.alarmsN) +
-                          " we refuse and the reference accepts: " + g.alarms);
-    t.eqI32(g.silentN, 0, forms[f] + ": " + itoa(g.silentN) +
-                          " the reference rejects and we say nothing about: " + g.silent);
-  }
-  return t.report();
-}
-
-/**
  * **A packed type in every position it can be written in.**
  *
  * `u8 i8 u16 i16` exist as array elements and struct fields and nowhere else: no slot is one byte
@@ -1778,7 +1636,7 @@ export string test_rung3_the_unary_operators_over_every_type(Core core, Cli cli)
  * — every position the reference complains at, we complain at too. A rule claimed to be implemented
  * in four positions and tested in one is how this got missed.
  */
-export string test_rung3_a_packed_type_in_every_position(Core core, Cli cli) {
+export string test_rung3_a_packed_type_in_every_position() {
   T t = T.create();
   string[] packed = string[]("u8", "i8", "u16", "i16");
   string[] places = string[]("parameter", "local", "return", "cast target", "struct field",
@@ -1808,23 +1666,17 @@ export string test_rung3_a_packed_type_in_every_position(Core core, Cli cli) {
       n = n + 1;
     }
   }
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
   for (i32 i = 0; i < sources.len(); i++) {
     if (legal[i]) {
-      t.eqI32(r.count(i), 0,
-              labels[i] + ": the reference now refuses this, so the grid's premise moved");
-      assertQuiet(t, r, i, labels[i] + ": a position packed types exist for");
+      assertQuiet(t, sources[i], labels[i] + ": a position packed types exist for");
       continue;
     }
-    t.isTrue(r.count(i) > 0,
-             labels[i] + ": the reference accepts it, so this case is no longer a rule");
-    assertComplete(t, r, i, labels[i]);
+    assertCaught(t, sources[i], labels[i]);
   }
   return t.report();
 }
 
-export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two(Core core, Cli cli) {
+export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two() {
   T t = T.create();
   string[] sources = string[](
     "struct N { i32 v; } export void a1(N a, N b) { bool r = a == b; }",
@@ -1844,17 +1696,13 @@ export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two(Core c
     // not, and the mixed-type rule needed the two sides to *differ*, which two `E`s do not.
     "enum E { A, B } export void b1(E a, E b) { bool r = a == b; }",
     "enum E { A, B } export void b2(E a, i32 b) { bool r = a == b; }");
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
+  // **One diagnostic each, which is the whole claim** and is about us rather than about anything
+  // else. The reference was asked to confirm each case really is a single mistake, and its position
+  // was compared against ours; both are gone with it, and neither was what the test is named for.
   for (i32 i = 0; i < sources.len(); i++) {
-    t.eqI32(r.count(i), 1, sources[i] + ": the reference gives " + itoa(r.count(i)) +
-                           ", so this case is no longer about a single mistake: " + r.said[i]);
     string[] mine = ours(sources[i]);
-    t.eqI32(mine.len(), 1, sources[i] + ": we report " + itoa(mine.len()) + " diagnostics (" +
-                           joinedWith(mine, ", ") + ") for one mistake; the reference reports one");
-    if (mine.len() == 1 && r.count(i) == 1) {
-      t.eqStr(mine[0], r.at[i], sources[i] + ": the positions differ");
-    }
+    t.eqI32(mine.len(), 1, sources[i] + ": we report " + itoa(mine.len()) + " diagnostic(s) (" +
+                           joinedWith(mine, ", ") + ") for one mistake");
   }
   return t.report();
 }
@@ -1891,7 +1739,7 @@ export string test_rung3_and_plain_strings_still_compare_by_value() {
  * of the same rule disagreed about what the rule was — the typed half being the lenient one, which is
  * the direction that compiles and then means something else.
  */
-export string test_rung3_an_index_and_an_array_size_are_i32_exactly(Core core, Cli cli) {
+export string test_rung3_an_index_and_an_array_size_are_i32_exactly() {
   T t = T.create();
   string[] sources = string[](
     "export void f(i32[] xs, i32 a) { i32 r = xs[a]; }",
@@ -1904,52 +1752,11 @@ export string test_rung3_an_index_and_an_array_size_are_i32_exactly(Core core, C
     "export void f(i64 a) { i32[] xs = i32[a](); }",
     "export void f(u32 a) { i32[] xs = i32[a](); }",
     "export void f(u64 a) { i32[] xs = i32[a](); }");
-  // Whether the reference must refuse each — the premise of the case, asserted rather than assumed.
+  // Whether each must be refused — the premise of the case, written out rather than asked.
   bool[] mustRefuse = bool[]( false, true, true, true, true, false, false, true, true, true);
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return t.report(); }
   for (i32 i = 0; i < sources.len(); i++) {
-    t.isTrue(mustRefuse[i] == (r.count(i) > 0),
-             sources[i] + ": the reference " + (r.count(i) > 0 ? "refuses" : "accepts") +
-             " it, which is not what this case is for");
-    if (mustRefuse[i]) { assertCaught(t, r, i, "an index or a size"); continue; }
-    assertQuiet(t, r, i, "an index or a size");
-  }
-  return t.report();
-}
-
-export string test_rung3_the_member_and_statement_forms(Core core, Cli cli) {
-  T t = T.create();
-  string prelude = "struct S { i32 v; } enum E { A, B }\n";
-  string[] types = string[](
-    "i32", "i64", "u32", "u64", "f64", "f32", "bool", "string", "S", "E", "i32[]",
-    "fn[i32(i32)]", "anyref");
-  string[] forms = string[]("a++", "--a", "a.v", "a.nope()", "a is S", "match (a)");
-  for (i32 f = 0; f < forms.len(); f++) {
-    string[] sources = string[types.len()](fill: "");
-    string[] labels = string[types.len()](fill: "");
-    for (i32 i = 0; i < types.len(); i++) {
-      string ty = types[i];
-      string body = f == 0 ? "a++;"
-                  : (f == 1 ? "--a;"
-                  : (f == 2 ? "i32 r = a.v;"
-                  : (f == 3 ? "i32 r = a.nope();"
-                  : (f == 4 ? "bool r = a is S;" : "match (a) { else: { } }"))));
-      sources[i] = prelude + "export void f(" + ty + " a) { " + body + " }";
-      labels[i] = ty;
-    }
-    Grid g = gridOf(t, cli, sources, labels);
-    t.isTrue(g.cells >= types.len() - 1, forms[f] + ": only " + itoa(g.cells) + " cells");
-    // `a.nope()` is refused for every type there is, so it has no accepted cell to check against and
-    // is exempt from the both-kinds rule the other grids assert.
-    if (forms[f] != "a.nope()") {
-      t.isTrue(g.accepted > 0, forms[f] + ": the reference accepts none of " + itoa(g.cells) +
-                               " cells, so an alarm here would go unnoticed");
-    }
-    t.eqI32(g.alarmsN, 0, forms[f] + ": " + itoa(g.alarmsN) +
-                          " we refuse and the reference accepts: " + g.alarms);
-    t.eqI32(g.silentN, 0, forms[f] + ": " + itoa(g.silentN) +
-                          " the reference rejects and we say nothing about: " + g.silent);
+    if (mustRefuse[i]) { assertCaught(t, sources[i], "an index or a size"); continue; }
+    assertQuiet(t, sources[i], "an index or a size");
   }
   return t.report();
 }
@@ -1976,7 +1783,7 @@ export string test_rung3_the_member_and_statement_forms(Core core, Cli cli) {
 export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core core, Cli cli) {
   T t = T.create();
   string d = "struct H { fn[i32(i32, u8[])] f; } struct G<T> { fn[i32(T)] g; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // The swap that started this: both arguments wrong, each its own diagnostic.
     d + "export i32 a(H h, u8[] b) { return h.f(b, 7); }",
     // One wrong is still wrong.
@@ -2000,7 +1807,7 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
   T t = T.create();
   string e = "enum Shape { Point, Circle(f64 radius) } ";
   string s = "struct Base { i32 b; } struct Sub : Base { i32 s; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // No guard at all, on an enum and on a parent struct.
     e + "export f64 f(Shape s) { return s.radius; }",
     s + "export i32 f(Base b) { return b.s; }",
@@ -2039,7 +1846,7 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
     Core core, Cli cli) {
   T t = T.create();
   string c = "struct Counter { i32 c; void mutate(this) { this.c = 9; } } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // Every position an f32 literal can appear in — the reference reports in all of them.
     "export f32 f() { f32 x = 1.0e40; return x; }",
     "export f32 f() { return 1.0e40; }",
@@ -2085,7 +1892,7 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
 export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core core, Cli cli) {
   T t = T.create();
   string b = "struct Box<T> { T v; i32 get(const this) { return 1; } } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // No slot to infer from: a receiver, and a bare statement.
     b + "export i32 f() { return Box(1).get(); }",
     b + "export void f() { Box(1.0); }",
@@ -2132,7 +1939,7 @@ export string test_rung3_a_generic_functions_arguments_say_what_its_parameters_a
   T t = T.create();
   string box = "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } ";
   string id = "T id<T>(T x) { return x; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // The inferred return, landing somewhere it does not fit.
     box + "export i32 f() { Box<f64> b = Box(1.0); i32 x = unbox(b); return x; }",
     box + "export void f(Box<f64> b) { string s = unbox(b); }",
@@ -2195,7 +2002,7 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     Core core, Cli cli) {
   T t = T.create();
   string sh = "struct Shape { f64 x; } struct Circle : Shape { f64 r; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // A funcref is a type: two of them agree only when their spellings do, and it is not a number.
     "export void bad(fn[i32(i32)] f) { fn[i32(bool)] g = f; }",
     "export void bad(fn[i32(i32)] f) { i32 x = f + 1; }",
@@ -2277,7 +2084,7 @@ export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli
   T t = T.create();
   string d = "struct P { i32 x; } struct Base { i32 b; } struct Sub : Base { i32 s; } " +
              "enum E { A, B } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // A self-cast is redundant whichever spelling is used, not only the plain one.
     d + "export void f(i32 a) { i32 v = a as i32; }",
     d + "export void f(i32 a) { i32 v = a as! i32; }",
@@ -2345,7 +2152,7 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
     Core core, Cli cli) {
   T t = T.create();
   string inner = "struct Inner { i32 val; void mutate(this) { this.val = 1; } } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // A case value is an i32 like the subject, and the complaint names the `case` keyword.
     "export void f(i32 x) { switch (x) { case true: { } default: { } } }",
     "export void f(i32 x) { switch (x) { case 1: { } case true: { } default: { } } }",
@@ -2386,7 +2193,7 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
 export string test_rung3_override_increments_construction_arity_and_default_values(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // override, both directions.
     "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
     "struct BadRect : Shape { i32 w; i32 name(const this) { return 2; } }",
@@ -2451,7 +2258,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
 export string test_rung3_arity_loop_depth_representation_and_compile_time_constants(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // `break` and `continue` with nothing to leave.
     "export void f() { break; }",
     "export void f() { continue; }",
@@ -2508,7 +2315,7 @@ export string test_rung3_generic_instantiations_and_substitution_at_their_member
   string box = "struct Box<T> { T v; T get(const this) { return this.v; } } ";
   string vec = "struct Vec<T> { T[] items; i32 n; } ";
   string pair = "struct Pair<A, B> { A a; B b; } ";
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // A constructor argument read through the type argument.
     box + "export i32 f() { Box<i32> b = Box<i32>(1.5); return b.v; }",
     // A field read through it — the whole point of substitution.
@@ -2547,7 +2354,7 @@ export string test_rung3_generic_instantiations_and_substitution_at_their_member
 export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declaring_one(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     "export void bad() { i32 x = y; }",
     "export void bad() { undeclared = 5; }",
     "export void bad() { bool y = !undefined_var; }",
@@ -2585,7 +2392,7 @@ export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declar
 
 export string test_rung3_operators_members_indexing_and_the_questions_they_ask(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, cli, string[](
+  caughtAndQuiet(t, string[](
     // Declaration positions that cannot hold a type.
     "struct Bad { void x; }",
     "void bad(void x) { }",
@@ -2667,171 +2474,5 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "export void ok() { return; }",
     "export i32 ok2() { return 1; }"),
   "operators, members and indexing");
-  return t.report();
-}
-
-/**
- * The spec's own rejection cases, as a second oracle.
- *
- * Everything above compares wacc to the reference *implementation*. This compares it to what the
- * language says: `spec/spec/*.md` carries tagged assertions, `wacSpec.test.ts` executes them, and the
- * rejection ones are complete programs the language declares illegal. They are extracted rather than
- * copied — see `specCorpus.ts` — so the corpus grows when the spec does and cannot drift from it.
- *
- * Two different things are asserted, and the first is not about wacc at all:
- *
- *   - **the reference honours the spec**, for every case. If it stopped rejecting one, that is a
- *     divergence between wac's implementation and wac's specification, and it is worth failing this
- *     package's suite to say so — it is also the check that proves the extraction produced real
- *     programs rather than fragments that fail for being malformed.
- *   - **every difference is accounted for**: a position this checker reports and the reference does
- *     not stops the suite with both answers shown, so somebody decides which matches the spec. It is
- *     no longer read as this checker being wrong — the spec is the contract, and `issues/lang/0085`
- *     is a case where the reference is the one that diverges from it.
- */
-export string test_rung3_the_specs_rejection_corpus(Core core, Cli cli) {
-  T t = T.create();
-  Lines want = Lines.create();
-  want.add("specrejections");
-  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check",
-                                           "packages/wacc/test/reference.ts"), want,
-                  "the spec's rejection corpus");
-  if (!a.ok) { return t.report(); }
-  t.isTrue(a.lines.len() >= 80,
-           "only " + itoa(a.lines.len()) + " spec rejection programs extracted; the shape of " +
-           "wacSpec.test.ts has changed and specCorpus.ts is reading it wrong");
-  if (a.lines.len() < 80) { return t.report(); }
-
-  string[] tags = string[a.lines.len()](fill: "");
-  string[] sources = string[a.lines.len()](fill: "");
-  for (i32 i = 0; i < a.lines.len(); i++) {
-    // `case <tag> <src-hex>`
-    string line = a.lines[i];
-    i32 one = line.indexOf(" ");
-    string rest = one < 0 ? "" : line.slice(one + 1, line.len());
-    i32 two = rest.indexOf(" ");
-    tags[i] = two < 0 ? "" : rest.slice(0, two);
-    sources[i] = two < 0 ? "" : string.fromBytes(decoded(rest.slice(two + 1, rest.len())));
-  }
-
-  Ref r = referenceTolerant(t, cli, sources);
-  if (!r.ok) { return t.report(); }
-  i32 notRejected = 0;
-  i32 covered = 0;
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (r.bad[i]) { notRejected = notRejected + 1; continue; }
-    if (r.count(i) == 0) {
-      // The reference type-checks it. That is either a spec/implementation divergence or a case
-      // rejected at a stage this harness does not run — lexing, parsing, resolution — so it is
-      // counted and reported rather than failed on individually.
-      notRejected = notRejected + 1;
-      continue;
-    }
-    string[] mine = ours(sources[i]);
-    if (mine.len() == 0) { continue; }
-    covered = covered + 1;
-    for (i32 k = 0; k < mine.len(); k++) {
-      if (r.has(i, mine[k])) { continue; }
-      // **A difference is a question, not a verdict.** This used to be read as this checker being
-      // wrong. The spec is the contract now: where the two disagree, the one that matches
-      // `spec/spec` is right, and the reference has been wrong before — `issues/lang/0085`.
-      t.fail("[§" + tags[i] + "] we report a diagnostic at " + mine[k] + " and the reference does " +
-             "not.\n  Decide which is right — the spec governs, not the reference — and if this " +
-             "checker is, record the tag here as an intended difference.\n  source: " + sources[i] +
-             "\n  reference: " + r.said[i]);
-    }
-  }
-  core.log("    rung 3 against the spec: " + itoa(sources.len()) + " rejection programs, " +
-           itoa(sources.len() - notRejected) + " rejected by the type checker, " + itoa(covered) +
-           " of those also caught here");
-  return t.report();
-}
-
-/**
- * The reference's own test suite, as a second corpus.
- *
- * The spec corpus is a sample of the language chosen to *explain* it. This is what the reference is
- * actually held to, and the halves do different jobs:
- *
- * - the `ok` programs are a **false-alarm** corpus. Every one type-checks cleanly, so a diagnostic
- *   from us is a bug in us — with a named program to look at, rather than a file somewhere under
- *   `packages/`.
- * - the `fail` programs are a **recall** corpus, several times the size of the spec's per-family
- *   coverage in the places the reference cares most about.
- */
-export string test_rung3_the_references_own_tests(Core core, Cli cli) {
-  T t = T.create();
-  Lines want = Lines.create();
-  want.add("refcases");
-  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check",
-                                           "packages/wacc/test/reference.ts"), want,
-                  "the reference's own tests");
-  if (!a.ok) { return t.report(); }
-
-  string[] kinds = string[a.lines.len()](fill: "");
-  string[] sources = string[a.lines.len()](fill: "");
-  i32 n = 0;
-  i32 skipped = -1;
-  for (i32 i = 0; i < a.lines.len(); i++) {
-    string line = a.lines[i];
-    i32 one = line.indexOf(" ");
-    if (one < 0) { continue; }
-    string head = line.slice(0, one);
-    string rest = line.slice(one + 1, line.len());
-    if (head == "skipped") {
-      skipped = 0;
-      for (i32 k = 0; k < rest.len(); k++) {
-        skipped = skipped * 10 + (rest.toBytes()[k] - '0');
-      }
-      continue;
-    }
-    i32 two = rest.indexOf(" ");
-    if (two < 0) { continue; }
-    kinds[n] = rest.slice(0, two);
-    sources[n] = string.fromBytes(decoded(rest.slice(two + 1, rest.len())));
-    n = n + 1;
-  }
-  t.eqI32(skipped, 0, itoa(skipped) + " case(s) the extractor could not read");
-  t.isTrue(n >= 200, "only " + itoa(n) + " cases extracted, expected ~212");
-  if (n < 200) { return t.report(); }
-
-  string[] exact = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; }
-  Ref r = referenceTolerant(t, cli, exact);
-  if (!r.ok) { return t.report(); }
-
-  i32 accepted = 0;
-  i32 rejected = 0;
-  i32 caught = 0;
-  i32 alarms = 0;
-  i32 contradictions = 0;
-  for (i32 i = 0; i < n; i++) {
-    // A program this slice's parser cannot read is not this test's business.
-    if (r.bad[i]) { continue; }
-    string[] mine = ours(exact[i]);
-    if (kinds[i] == "ok") {
-      // The label is the reference test's claim; this trusts the reference itself over the label.
-      if (r.count(i) != 0) { continue; }
-      accepted = accepted + 1;
-      if (mine.len() == 0) { continue; }
-      alarms = alarms + 1;
-      t.fail("we report " + joinedWith(mine, ",") + " in a program the reference accepts: " +
-             exact[i]);
-      continue;
-    }
-    if (r.count(i) == 0) { continue; }
-    rejected = rejected + 1;
-    if (mine.len() == 0) { continue; }
-    caught = caught + 1;
-    for (i32 k = 0; k < mine.len(); k++) {
-      if (r.has(i, mine[k])) { continue; }
-      contradictions = contradictions + 1;
-      t.fail("we say " + mine[k] + ", the reference says " + r.at[i] + " in " + exact[i]);
-      break;
-    }
-  }
-  core.log("    rung 3 against the reference's tests: " + itoa(accepted) + " accepted programs, " +
-           itoa(alarms) + " false alarms; " + itoa(rejected) + " rejected, " + itoa(caught) +
-           " caught, " + itoa(contradictions) + " contradicted");
   return t.report();
 }

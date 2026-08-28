@@ -1,28 +1,28 @@
-// Rung 3's two sides: what we say about a program, and what the reference says.
+// Rung 3: what we say about a program, and what we must not say.
 //
-// `src/check.wac` decides a subset of what the reference decides, so the comparison here is not the
-// one rungs 1 and 2 use. Those compare complete outputs and demand equality; this compares a subset
-// against a superset, and the two assertions that makes sense are **soundness** — every diagnostic we
-// report, the reference reports at the same line and column — and **no false alarms** — we report
-// nothing for a program the reference accepts.
+// `src/check.wac` decides a subset of what a full checker decides, so this slice has two
+// obligations and they are not the same one: what a rule owns must be **caught**, and what it does
+// not own must be **silent** — where "this program is wrong and we say nothing" is a pass. That is
+// what being a subset means, and it is why every test here carries two lists rather than one.
 //
-// Positions rather than messages, as `parse_errors` does and for the same reason: our side reports
-// numeric codes and the reference reports English.
+// ## It had a second opinion until 2026-08-28
 //
-// ## One batch per test, not one process per program
+// The lists were always written by hand, but the TypeScript reference cross-checked them: it was
+// asked `checkpos` for each program in the *caught* list and answered `line:col` per diagnostic, so
+// `assertSound` could require every position we reported to be one it reported, and `assertComplete`
+// could require the reverse where a slice claims completeness. The *quiet* list never consulted it
+// — that is a claim about us alone, and asking would have invited the merge the split prevents.
 //
-// The reference is a subprocess, so asking it about a program costs a process. The grids here have
-// dozens of cells each and the file has fifty tests, so a call per cell would be thousands of
-// processes. Every caller therefore collects **all** its sources, asks once, and reads the answers
-// back by index — which is also why `Ref` keeps the sources it was given: an answer that cannot name
-// the program it is about is unreadable in a failure.
+// The reference is deleted. What is gone is the **position**: a diagnostic that drifts to the wrong
+// line, or one we report where nothing is wrong but the program is rejected for another reason,
+// now passes. What is kept is the corpus and the caught/quiet split, which was the load-bearing
+// part. See `bootstrap/MIGRATION.md`.
+//
+// Positions are still what `ours` produces, because the messages are numeric codes and a position
+// is what a reader needs to find the complaint.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, ask, askCached, hex } from "../../../wactest/src/oracle.wac";
-import { Cli, Stat, FileResult, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { decoded } from "../../../codec/src/hex.wac";
-import { splitLines } from "../../../wactest/src/strings.wac";
 import { checkCodeMessage, dumpTypeErrors } from "../../src/api.wac";
 
 const string ORACLE = "packages/wacc/test/reference.ts";
@@ -91,227 +91,47 @@ export string joinedWith(string[] all, string sep) {
 }
 
 /**
- * What the reference said about a batch of programs.
+ * Silent: this program is not this rule's to report, and we invent nothing for it.
  *
- * `at[i]` is the positions for `sources[i]`, comma-joined and empty when it accepted the program;
- * `said[i]` is the same diagnostics as `line:col message`, for a failure to quote.
+ * **A claim about us alone**, which is why it never consulted the reference even when there was
+ * one — consulting it here would invite the merge the two-list split exists to prevent.
  */
-export struct Ref {
-  bool ok;
-  string[] sources;
-  string[] at;
-  string[] said;
-  /**
-   * Which sources the reference's own front end would not parse.
-   *
-   * The grids build combinations mechanically and some of them are not programs at all — the
-   * reference throws rather than answering. A hand-written list has no business containing one, so
-   * `referenceFor` fails on it; a grid skips the cell, which is what `referenceTolerant` is for.
-   */
-  bool[] bad;
-
-  /** How many diagnostics the reference reported for source `i`. */
-  i32 count(const this, i32 i) {
-    if (this.at[i] == "") { return 0; }
-    i32 n = 1;
-    for (i32 k = 0; k < this.at[i].len(); k++) {
-      if (this.at[i].slice(k, k + 1) == ",") { n = n + 1; }
-    }
-    return n;
-  }
-
-  /** Whether the reference reported anything at `at` for source `i`. */
-  bool has(const this, i32 i, string at) {
-    string hay = "," + this.at[i] + ",";
-    return hay.indexOf("," + at + ",") >= 0;
-  }
+export void assertQuiet(T t, string src, string what) {
+  string[] mine = ours(src);
+  t.eqI32(mine.len(), 0, what + ": we invented " + itoa(mine.len()) + " diagnostic(s) at " +
+                         joinedWith(mine, ", ") + " in " + src);
 }
 
 /**
- * Ask the reference about every source at once.
+ * Not silent: this program is wrong in a way this rule owns, and we say so.
  *
- * A `checkpos ERR` answer means the reference could not even parse the program — which is a fact
- * about the fixture rather than about the checker, so it is reported as a failure of the test rather
- * than being folded into "the reference said nothing".
+ * **The position is no longer checked**, and was until 2026-08-28. The reference answered
+ * `checkpos` for each program and `assertSound` required every position we reported to be one it
+ * reported; `assertComplete` required the reverse for the slices that claim completeness. Both are
+ * gone with it, and what is left is that we report *something*. A diagnostic that drifts to the
+ * wrong line now passes here. See `bootstrap/MIGRATION.md`.
  */
-/** Ask, failing the test if any source is one the reference cannot read. */
-export Ref referenceFor(T t, Cli cli, string[] sources) {
-  return refAsk(t, cli, sources, true);
-}
-
-/** Ask, recording unreadable sources in `bad` instead of failing — for the generated grids. */
-export Ref referenceTolerant(T t, Cli cli, string[] sources) {
-  return refAsk(t, cli, sources, false);
-}
-
-Ref refAsk(T t, Cli cli, string[] sources, bool strict) {
-  Lines lines = Lines.create();
-  string[] asked = string[sources.len()](fill: "");
-  for (i32 i = 0; i < sources.len(); i++) {
-    asked[i] = "checkpos " + hex(sources[i].toBytes());
-    lines.add(asked[i]);
-  }
-  // **Cached on the questions and on the reference's own sources.** This is asked 48 times in a run
-  // of `typecheck_test.wac` — once per `referenceFor`, `decidedByReference` and `caughtAndQuiet` —
-  // and every one is the same question about the same fixtures as the run before. 8.6s to 3.2s.
-  // Our checker still runs on every pass; what is remembered is the other implementation's answer.
-  Answers a = askCached(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
-                        "the reference type checker", "rung3", string[]("compiler", "harness"));
-  string[] at = string[sources.len()](fill: "");
-  string[] said = string[sources.len()](fill: "");
-  bool[] bad = bool[sources.len()]();
-  if (!a.ok) { return Ref(false, sources, at, said, bad); }
-  if (a.lines.len() != sources.len()) {
-    t.eqI32(a.lines.len(), sources.len(), "an answer per program");
-    return Ref(false, sources, at, said, bad);
-  }
-
-  for (i32 i = 0; i < sources.len(); i++) {
-    string answer = a.lines[i];
-    i32 sp = answer.indexOf(" ");
-    if (sp < 0) {
-      t.fail("the reference said " + answer);
-      return Ref(false, sources, at, said, bad);
-    }
-    string rest = answer.slice(sp + 1, answer.len());
-    if (rest.len() >= 3 && rest.slice(0, 3) == "ERR") {
-      if (strict) {
-        t.fail("the reference could not read " + sources[i] + " — " + rest);
-        return Ref(false, sources, at, said, bad);
-      }
-      bad[i] = true;
-      continue;
-    }
-    string text = string.fromBytes(decoded(rest));
-    // `line:col\tmessage` per diagnostic.
-    string positions = "";
-    string quoted = "";
-    i32 from = 0;
-    for (i32 c = 0; c <= text.len(); c++) {
-      if (c < text.len() && text.slice(c, c + 1) != "\n") { continue; }
-      string line = text.slice(from, c);
-      from = c + 1;
-      if (line == "") { continue; }
-      i32 tab = line.indexOf("\t");
-      string where = tab < 0 ? line : line.slice(0, tab);
-      positions = positions + (positions == "" ? "" : ",") + where;
-      quoted = quoted + (quoted == "" ? "" : "; ") + line.slice(0, tab < 0 ? line.len() : tab) +
-               " " + (tab < 0 ? "" : line.slice(tab + 1, line.len()));
-    }
-    at[i] = positions;
-    said[i] = quoted;
-  }
-  return Ref(true, sources, at, said, bad);
-}
-
-/**
- * The soundness half, for one source of a batch: every position we report, the reference reports.
- *
- * Silence on our side is allowed — that is what "a subset" means — so this says nothing about
- * completeness. What it refuses is a position we invented.
- */
-export void assertSound(T t, Ref r, i32 i, string what) {
-  string[] mine = ours(r.sources[i]);
-  for (i32 k = 0; k < mine.len(); k++) {
-    if (r.has(i, mine[k])) { continue; }
-    t.fail(what + ": we report a diagnostic at " + mine[k] + " that the reference does not, in " +
-           r.sources[i] + "\n  reference: " + (r.said[i] == "" ? "(nothing)" : r.said[i]));
-  }
-}
-
-/**
- * Sound *and* not silent: the reference rejected this program and this rule is meant to own it.
- *
- * Only for the cases a slice claims. Where the reference rejects something this checker does not
- * model, silence is a **pass** — that is what being a subset means — so those use `assertSound`
- * alone and never this.
- */
-export void assertCaught(T t, Ref r, i32 i, string what) {
-  t.isTrue(ours(r.sources[i]).len() > 0,
-           what + ": the reference rejects " + r.sources[i] + " and we said nothing: " +
-           (r.said[i] == "" ? "(nothing)" : r.said[i]));
-  assertSound(t, r, i, what);
+export void assertCaught(T t, string src, string what) {
+  t.isTrue(ours(src).len() > 0, what + ": this program is wrong and we said nothing — " + src);
 }
 
 /**
  * The shape most of rung 3's tests have: a list this rule owns, and a list it does not.
  *
  * **Two lists rather than one filtered on the message.** A subset checker has two obligations and
- * they are not the same one: what the rule owns must be caught at the reference's position, and what
- * it does not own must be silent — where "the reference rejects this and we say nothing" is a *pass*.
- * Splitting them was forced. A single list with "the reference rejects it, so we must report" folds
- * both together and makes `i32 == string` a failure for being correctly quiet.
+ * they are not the same one: what the rule owns must be caught, and what it does not own must be
+ * silent — where "this program is wrong and we say nothing" is a *pass*. Splitting them was forced.
+ * A single list saying "this is wrong, so we must report" folds both together and makes `i32 ==
+ * string` a failure for being correctly quiet.
  *
- * The reference is asked only about `caught`. `quiet` is a claim about *us* — that we invent nothing
- * — and consulting the reference there would invite the merge this split exists to prevent.
+ * The lists were always written by hand; the reference cross-checked the first one's positions and
+ * never saw the second. So the split survives the reference and only the positions are gone.
  */
-export void caughtAndQuiet(T t, Cli cli, string[] caught, string[] quiet, string what) {
-  Ref r = referenceFor(t, cli, caught);
-  if (!r.ok) { return; }
-  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, r, i, what); }
+export void caughtAndQuiet(T t, string[] caught, string[] quiet, string what) {
+  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, caught[i], what); }
   for (i32 i = 0; i < quiet.len(); i++) {
     string[] mine = ours(quiet[i]);
     t.eqI32(mine.len(), 0,
             quiet[i] + " is not this rule's to report, and we said " + joinedWith(mine, ", "));
   }
-}
-
-/**
- * One list, the reference deciding each entry.
- *
- * For rules this slice owns outright, where a case is accepted or rejected by the reference and we
- * must agree either way: silent where it accepts, and right about the position where it rejects.
- * Distinct from `caughtAndQuiet`, which is for a rule with a *neighbour* it must stay out of.
- */
-export void decidedByReference(T t, Cli cli, string[] sources, string what) {
-  Ref r = referenceFor(t, cli, sources);
-  if (!r.ok) { return; }
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (r.count(i) == 0) { assertQuiet(t, r, i, what); continue; }
-    assertCaught(t, r, i, what);
-  }
-}
-
-/**
- * The **completeness** direction: every position the reference reports, we report too.
- *
- * Rung 3 does not ask for this in general — the checker is a subset by design, and demanding it
- * everywhere would fail until the whole rung is finished. It is asked where a rule is small enough
- * to be finished, and a rule claimed to be implemented in four positions and tested in one is how
- * the packed-type family got missed.
- */
-export void assertComplete(T t, Ref r, i32 i, string what) {
-  string[] mine = ours(r.sources[i]);
-  string[] theirs = splitCommas(r.at[i]);
-  for (i32 k = 0; k < theirs.len(); k++) {
-    bool got = false;
-    for (i32 m = 0; m < mine.len(); m++) { if (mine[m] == theirs[k]) { got = true; } }
-    if (got) { continue; }
-    t.fail(what + ": the reference reports at " + theirs[k] + " — " + r.said[i] +
-           " — and we report at " + (mine.len() == 0 ? "nowhere" : joinedWith(mine, ", ")));
-  }
-}
-
-/** `a,b,c` as three strings; empty for "". */
-export string[] splitCommas(string s) {
-  if (s == "") { return string[0](fill: ""); }
-  i32 n = 1;
-  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == ",") { n = n + 1; } }
-  string[] out = string[n](fill: "");
-  i32 k = 0;
-  i32 at = 0;
-  for (i32 i = 0; i <= s.len(); i++) {
-    if (i < s.len() && s.slice(i, i + 1) != ",") { continue; }
-    out[k] = s.slice(at, i);
-    k = k + 1;
-    at = i + 1;
-  }
-  return out;
-}
-
-/** The no-false-alarm half: the reference accepted this program, so we must be silent. */
-export void assertQuiet(T t, Ref r, i32 i, string what) {
-  string[] mine = ours(r.sources[i]);
-  t.eqI32(mine.len(), 0, what + ": we invented " + itoa(mine.len()) + " diagnostic(s) at " +
-                         joinedWith(mine, ", ") + " in " + r.sources[i]);
 }
