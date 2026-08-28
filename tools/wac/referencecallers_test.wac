@@ -42,15 +42,17 @@ import { Vec } from "core/vec.wac";
  * **The bootstrap, which is the sanctioned use.** The reference exists to turn wacc's own sources
  * into the first `wacc.wasm`; everything here is on that path.
  *
- * `harness/waccBuild.ts` is deliberately absent — it reaches the reference through `wacBind`, which
- * is the seam, and adding it would record a dependency it does not have.
+ * `harness/waccBuild.ts` is deliberately absent, and for a better reason than it used to have: it
+ * reached the reference through `wacBind`, which was the seam; it builds wacc with the ladder now
+ * and reaches nothing.
  */
 string[] bootstrap() {
   return string[](
-    // Asks the reference to *parse* wacc's graph, which is the bootstrap's precondition and 320ms
-    // rather than the bootstrap's three minutes. `tools/wac/waccdeps_test.wac` is the cheap proxy.
-    "harness/wacBind.ts",              // binds a module; `from: "reference"` is the bootstrap's ask
-    "harness/wacFiles.ts",             // the import walk, which needs a parser to be correct
+    // The import walk, which needs a parser to be correct: it reads each file's `import` lines with
+    // the reference's lexer and resolves the specifiers with its resolver. The ladder's
+    // `bootstrap/js/flatten.js` does the same walk in JavaScript and is load-bearing for the
+    // bootstrap, so it cannot drift unnoticed — which is what this one should become.
+    "harness/wacFiles.ts",
     // **The one that exists to retire the reference.** The bootstrap ladder builds wacc from five
     // rungs of hand-written source, and this asks whether it lands on the same `wacc.wasm` the
     // reference reaches — `W1 == X1`. It has to import the reference to compare against it, which
@@ -72,8 +74,6 @@ string[] oracle() {
     // A wapy round-trip differential, rendering with `compiler/wapyPrint.ts`. It replaced the
     // reference's own copy of the same test on 2026-08-27 and goes when the reference does.
     "packages/wacc/test/wapyRoundTrip.test.ts",
-    "packages/wacc/test/reference.ts",
-    "packages/wacc/test/referencePrint.ts",
     // The **printer**, not the compiler: it renders every tracked `.wac` file to wapy so that wacc
     // can read it back. That is the one thing the reference still has and wacc does not, and the
     // comparison is what `design/lang/0003` calls a second opinion rather than a fallback.
@@ -96,8 +96,6 @@ string[] oracle() {
  */
 string[] tooling() {
   return string[](
-    "harness/wacCoverage.ts",
-    "harness/wacTestRun.ts",
     "tools/fuzz.ts",
     "tools/fuzzBoundary.ts",
     "tools/mutate.ts",
