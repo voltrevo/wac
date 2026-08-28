@@ -359,7 +359,7 @@ export string test_the_enum_method_rules_say_which_rule_was_broken() {
 // The pattern in four of the five: the spec puts the specific thing in the **message**
 // (`expected ';'`) and wacc puts `unexpected token` there and the specific thing in the annotation.
 // The reference puts both in the message. Nobody is missing information; they disagree about which
-// field it goes in, and no differential compares text — `parse_errors.test.ts` compares by count and
+// field it goes in, and no differential compares text — parse_errors.test.ts compares by count and
 // position, and says so.
 
 /**

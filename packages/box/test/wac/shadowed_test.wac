@@ -17,7 +17,7 @@
 //     invisible, because the skip list is two names written by hand.
 //
 // So this derives the set from both sides and pins it. The known divergences are a shrink-only list,
-// the shape `KNOWN_UNEMITTABLE` uses in `packages/wacc/test/specEmit.test.ts`: an entry that stops
+// the shape `KNOWN_UNEMITTABLE` uses in packages/wacc/test/specEmit.test.ts: an entry that stops
 // diverging fails with "take it out", and a name that starts is a new row nobody chose.
 //
 // ## Why derived and not the four from the issue

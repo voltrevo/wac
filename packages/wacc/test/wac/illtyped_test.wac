@@ -380,7 +380,7 @@ export string test_a_component_tag_and_its_construction_agree() {
  * complaint: the return rule was told the refused comparison had a type, and complained about it. The
  * reference draws only the operand one.
  *
- * Fifteen programs of `mutateCheck.test.ts`'s *"we report more diagnostics than the reference"* queue
+ * Fifteen programs of mutateCheck.test.ts's *"we report more diagnostics than the reference"* queue
  * were this one family — that queue is printed rather than asserted, so it is a list of work rather
  * than a tolerance, and this is the head of it coming off.
  *

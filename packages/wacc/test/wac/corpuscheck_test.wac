@@ -2,7 +2,7 @@
 // test.
 //
 // The other two rung-3 oracles feed it programs that exist to be fed to it — a generated cross
-// product in `sweep.test.ts`, the emitter's corpus in `checkSweep.test.ts`. Both are synthetic, both
+// product in sweep.test.ts, the emitter's corpus in checkSweep.test.ts. Both are synthetic, both
 // are single-file, and both are written by the same hands that wrote the checker. This one is the
 // packages: a Tor relay, an SSH server, a shell, a JSON parser, the compiler itself. Real code is a
 // different distribution — longer functions, deeper types, every feature at once — and it is the

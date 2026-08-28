@@ -61,7 +61,7 @@ string dumpAs(string path, u8[] src) {
  * The **parser's** errors alone, with the lexer's left out.
  *
  * `dumpErrors` is the front end's answer — what a caller asking *is this a program?* wants, and
- * lexical errors belong in it. This one exists for the instrument next to it: `parse_errors.test.ts`
+ * lexical errors belong in it. This one exists for the instrument next to it: parse_errors.test.ts
  * compares this parser against the reference's parser, and asserts of every code that some `perr*`
  * constant declares it. The lexer's codes are a space of their own (1–7), so mixing them in makes a
  * parser instrument fail on a lexer's answer.
@@ -141,7 +141,7 @@ export string blocked(u8[] src) {
  *
  * `blocked` walks a fresh `Env` speculatively, so a decline raised while emitting reaches it only as
  * a fallback. This one emits and reads what `declineFor` recorded. The pair existed at file-set level
- * and not here, which left `packages/wacc/test/specEmit.test.ts` — the census of what wacc cannot
+ * and not here, which left packages/wacc/test/specEmit.test.ts — the census of what wacc cannot
  * emit — with no way to ask the emitter itself. `issues/lang/0170a`.
  */
 export string emitDecline(u8[] src) {
@@ -152,7 +152,7 @@ export string emitDecline(u8[] src) {
  * `blocked`'s last resort, so a caller can rank it below a reason the emitter recorded.
  *
  * Exported rather than spelled out by each caller because three of them need the same precedence —
- * `blockedAgain`, `tighten_probe.wac` and `specEmit.test.ts` — and one that turns on a string literal
+ * `blockedAgain`, `tighten_probe.wac` and specEmit.test.ts — and one that turns on a string literal
  * is one edit away from silently reverting. `issues/lang/0271a`.
  */
 export string declineCatchAll() {

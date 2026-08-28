@@ -604,16 +604,16 @@ That is a change of aim, not of method. A disagreement with the reference is now
 *which of us is right?* — rather than a defect report against this checker, and a program wacc
 refuses because the spec forbids it is a feature even when the reference compiles it happily.
 
-The reference-shaped oracles below stay, because they are the widest supply of cases there is and
-they find real rules cheaply. What they no longer are is a definition of correct:
+The reference-shaped oracles **went on 2026-08-28**, with the reference itself. They were the widest
+supply of cases there was and they found real rules cheaply; what they were not, by the end, was a
+definition of correct. `bootstrap/MIGRATION.md` records what was given up and pins the last fixed
+point the two compilers agreed on, by hash. What remains here is the spec's own programs and the
+repository's own files:
 
 | oracle | input | what it asserts |
 |---|---|---|
 | `test/wac/specsingle_test.wac` | the 671 one-file programs the suite **runs** | **the contract** — **317 of 317** illegal refused, 371 of 371 legal silent, and the ledger of known misses is empty |
 | `test/wac/specmulti_test.wac` | the spec's programs that take more than one file | **the contract** — all 15 illegal refused, all 42 legal silent |
-| `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction, and **no repeat** — a diagnostic twice at one position is a third property since 2026-08-25, keyed on code as well as position because the other two cannot see a duplicate; **100%** recall (9,125 of 9,127), held by a 97% floor, and the misses are printed by context now |
-| `checkSweep.test.ts` | the emitter's **4,594** valid programs, nothing skipped | no false alarm, and guarded against an empty run and a narrowed corpus |
-| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **100%** recall (1,185 of 1,189), held by a 92% floor. Its queue's `undefined type` row is `issues/lang/0151` — the reference refusing an identity test the spec allows — so "missed" there means the reference is wrong, which the header now says |
 | `test/wac/corpuscheck_test.wac` | the repository's own **975** files, imports in scope | no false alarm |
 
 That figure was **541** and the walk behind it read three fixed directories per package one level
@@ -631,7 +631,7 @@ then reverted, because resolving a specifier in the files-based checker needs a 
 does not carry, so this row no longer *depends* on the rule. The walk fix outlives it: an extractor
 bounds the invariant it feeds, and the bound is invisible from inside until something refuses to be
 silent.
-| `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **99.5%** recall (195 of 196), held by a 97% floor — the miss is `issues/lang/0241a` |
+| corpusMutate.test.ts | those files, broken 23 ways | no contradiction where the reference says one thing; **99.5%** recall (195 of 196), held by a 97% floor — the miss is `issues/lang/0241a` |
 
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
 re-export, cross-file type identity and type-name scope cannot be stated in a single file, so the 56
@@ -1953,7 +1953,7 @@ compilers agree on.
 
 Rung 3's sweep is ten thousand programs and reports 99% recall, and both numbers are true of the
 cross product its generator builds — type against context, a hundred and seventy lines of it.
-Meanwhile `generateEmit.ts` had grown to four and a half thousand programs covering everything the
+Meanwhile generateEmit.ts had grown to four and a half thousand programs covering everything the
 *emitter* learned this week: generics, subtyping, method references, narrowed enums, `is T` guards,
 named construction, `anyref`. **Nothing had ever put one of them to the checker.**
 
@@ -2799,7 +2799,7 @@ correctly-rounded conversion would take.
 | spec rejections wacc also makes | 84/84 | 84/84 |
 | corpus | 316 whole, 0 invalid | unchanged |
 
-The floor in `specEmit.test.ts` is now *every* answer rather than a number, because a number that has
+The floor in specEmit.test.ts is now *every* answer rather than a number, because a number that has
 reached its ceiling should be spelled as one.
 
 ### Every rejection the spec asks for — 72 of 84 to 84 of 84
@@ -2874,7 +2874,7 @@ of which 337 corpus files and 3,853 generated programs had caught:
 | spec rejections wacc also makes | 72/84 | 72/84 |
 | corpus | 316 whole, 0 invalid | unchanged |
 
-`specEmit.test.ts` keeps both numbers, as floors, because they are meant to rise. The second one is
+specEmit.test.ts keeps both numbers, as floors, because they are meant to rise. The second one is
 the honest measure of what is left: **wacc accepts twelve programs the reference rejects**, and a
 compiler that will replace the reference has to reject all of them.
 
@@ -3504,7 +3504,7 @@ answer:
 
 Both are now counted rather than picked: more than one candidate and the module is declined —
 `a name more than one file declares`. What a *single* candidate buys is real: two files each with
-their own `h`, each call reaching its own, is a case in `linkEmit.test.ts` now rather than a decline.
+their own `h`, each call reaching its own, is a case in linkEmit.test.ts now rather than a decline.
 
 **And two bugs that had been there all along, which only a module this size could show.** The corpus
 went to 15 invalid when the clash declines stopped hiding these files, and the invariant — *a
@@ -3599,7 +3599,7 @@ of it emitted.
 | blocked by an import | 297 | 0 |
 | blocked by a name two files share | — | 109 |
 
-The nine cross-file shapes in `linkEmit.test.ts` all agreed on the first run — a function, a struct, a
+The nine cross-file shapes in linkEmit.test.ts all agreed on the first run — a function, a struct, a
 method, a constant, a string, an enum matched in a file that never imported its type, a diamond, a
 three-deep chain, and a `../` path — which says the hard part was never the linking. Both ways it can
 fail are asserted by name too: a file the caller did not supply and a clash both produce a module

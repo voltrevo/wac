@@ -3428,7 +3428,7 @@ export string typeOfExpr(C c, Expr e) {
       // **Branches that differ only in nullability unify to the nullable one**, which is their common
       // type: `c ? a : b` for a `P` and a `P?` is a `P?`. Answering unknown instead made
       // `P r = c ? a : b;` silent — unknown is silent everywhere in this checker — while `P r = b;`
-      // beside it was reported, and that was the largest group in `sweep.test.ts`'s miss queue. The
+      // beside it was reported, and that was the largest group in sweep.test.ts's miss queue. The
       // reference types it the same way, which is why its complaint is *cannot assign nullable to
       // non-null* at the declaration and says nothing about the arms.
       //
@@ -7949,7 +7949,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // themselves, which this allows too. `spec/spec/casts.md` says nothing about a cast to the same
   // type at all, so there is no authority to settle it: matching the reference for funcrefs alone
   // would copy an inconsistency, and matching it for all four would refuse three programs both
-  // compilers accept today. It is the `cast as` row in `sweep.test.ts`'s miss queue, and it stays
+  // compilers accept today. It is the `cast as` row in sweep.test.ts's miss queue, and it stays
   // there rather than being closed by picking a side.
   if (to == typeNone() || !isValueType(to) || isPackedName(to)) { return; }
   string from = castOperandType(c, operand);

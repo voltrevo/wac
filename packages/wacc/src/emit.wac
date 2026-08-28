@@ -3949,7 +3949,7 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
   // Settling has already walked every function by here, so an ambiguous name is known — and `keyAt`
   // records which one, so the message can name it rather than leaving a graph to bisect.
   if (f!.env.ambiguous) {
-    // `blockedOf` already has the words, and `linkEmit.test.ts` pins them — "the name `enc`, which more
+    // `blockedOf` already has the words, and linkEmit.test.ts pins them — "the name `enc`, which more
     // than one file declares". Writing a second sentence for the same fact here is how two messages for
     // one condition start, so this asks it. The fallback names the recorded name, because a decline with
     // no reason is the thing being fixed.
@@ -4429,7 +4429,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
  * **With the same per-file trees the real build gets.** The counters and this table are lined up by
  * index alone, so the two compiles have to enumerate the same points in the same order — and until
  * 2026-08-27 one of them was handed the graph and the other a concatenation, which is two different
- * walks agreeing by luck. `harness/covTableParity.test.ts` is the check that would have caught it.
+ * walks agreeing by luck. harness/covTableParity.test.ts is the check that would have caught it.
  */
 string covTableOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                   string[] filePaths, bool traced,
@@ -11909,7 +11909,7 @@ export string emitBlocked(u8[] src) {
  * Why the **emit** path gave up on one source — the single-file half of `emitDeclineLinked`.
  *
  * The pair existed at file-set level (`blockedFiles` beside `emitDeclineFiles`) and only the
- * speculative half existed here, so `packages/wacc/test/specEmit.test.ts` — the census of what wacc
+ * speculative half existed here, so packages/wacc/test/specEmit.test.ts — the census of what wacc
  * cannot emit across the spec — had no way to ask the emitter itself. One row of its table reads
  * `a type this emitter names only while emitting`, which is `blockedOf` saying it can see that types
  * grew and not which. `issues/lang/0170a`, `issues/lang/0271a`.

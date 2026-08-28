@@ -7,7 +7,7 @@
 // The reference truncates instead: `1073741824 as! i31ref as i32` comes back as -1073741824, and
 // `-1073741825` as 1073741823. That is `issues/lang/0085`, and until it is fixed the two compilers
 // answer differently on purpose — which is exactly why these two programs are *not* in
-// `generateEmit.ts`. A differential sweep can only report a mismatch; a mismatch that is expected
+// generateEmit.ts. A differential sweep can only report a mismatch; a mismatch that is expected
 // would have to be excused every run, and an excuse is the thing that hides the next real one.
 //
 // So the assertion here is against the *specification* rather than against the other implementation.
