@@ -164,9 +164,10 @@ table and from the denominator. On a two-file project outside this repository th
 `issues/system/0264c` is where the two implementations' disagreement is tracked.
 
 **What is still not the command**: the older, lower-level entry points, which remain because the
-compiler needs an API and not only a CLI. `native.ts` builds, tools/check.ts checks with the
-*reference* compiler, `harness/referenceRun.ts` runs. They take different flags, answer different exit
-codes, and resolve a project differently — reaching for one of those is what GitHub issue 22 was
+compiler needs an API and not only a CLI. `native.ts` builds and `harness/ladderRun.ts` runs one
+export of a file with a wacc the ladder built — for the rung-5 self-host tests, which need a
+compiler that is not the one under test. They take different flags, answer different exit codes,
+and resolve a project differently — reaching for one of those is what GitHub issue 22 was
 originally about. Reach for the built command unless you are working on the compiler itself. And note
 that **`wac task check` is this repository's own TypeScript check**, not `wac check`.
 

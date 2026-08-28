@@ -42,6 +42,19 @@
 // The driver cannot print for itself. `Cli.write` needs `packages/platform`, whose lambdas the
 // reference has never parsed, so a program used for a two-compiler differential cannot use a
 // capability at all — which is why the printing has to be the *host's*, on both sides.
+//
+// ## The other compiler is the ladder, since 2026-08-28
+//
+// Everything below that says "the reference" meant the TypeScript compiler in `compiler/`, which
+// answered through `harness/referenceRun.ts`. It is deleted. The second implementation is
+// `harness/ladderRun.ts` now: five rungs whose lowest is hand-written wasm assembly text,
+// compiling each other up to wac-L5, which compiles wacc.
+//
+// The rung's argument is unchanged and is the reason this is not `wac run` — *"two derivations of
+// one compiler agree perfectly when both are wrong, which is the one failure the rung exists to
+// catch."* Nothing in the ladder is wacc, so the two sides are as independent as they were, and
+// this side is now the chain that actually bootstraps the compiler rather than one kept alive to
+// be asked questions.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
@@ -70,7 +83,7 @@ const string DRIVER = ".cache/_bootdrive.wac";
  * hash with properties.
  *
  * **It has no `main`, which is what makes one run enough.** `wac <module.wasm> <export>` calls the
- * named export and prints what it returned, in full — the same contract `harness/referenceRun.ts`
+ * named export and prints what it returned, in full — the same contract `harness/ladderRun.ts`
  * has on the other side. A module *with* a `main` never reaches that path, because the arguments go
  * to `main` instead, and `main`'s answer is an exit status: eight bits. That is why this used to be
  * compiled four times, once per byte of the fold, and it is 3/4 of what the rung cost.
@@ -101,9 +114,9 @@ string driverSource() {
  * have to be asked of `selfdrive.wac` itself. That is two entries, so two processes; the several
  * exports of each are one.
  */
-i32[] referenceAnswers(Cli cli, string file, string exports, i32 want, i32[] okOut) {
+i32[] ladderAnswers(Cli cli, string file, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", file, exports),
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/ladderRun.ts", file, exports),
                     u8[0]()).wait();
   if (!r.ran() || r.status != 0) { return i32[want](); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
@@ -149,15 +162,15 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   // a driver that accepted the program it is supposed to reject proves nothing about either
   // compiler. Both are asked of the reference because it is the side that answers in full.
   i32[] ok = i32[1]();
-  i32[] canaries = referenceAnswers(cli, SELFDRIVE, "dumpSum,badErrorCount", 2, ok);
-  t.eqI32(ok[0], 1, "the reference ran the driver and answered both canaries");
+  i32[] canaries = ladderAnswers(cli, SELFDRIVE, "dumpSum,badErrorCount", 2, ok);
+  t.eqI32(ok[0], 1, "the ladder's wacc ran the driver and answered both canaries");
   if (ok[0] != 1) { return t.report(); }
-  t.isTrue(canaries[0] != 0, "the reference's own dump checksum is not 0 — the driver ran something");
+  t.isTrue(canaries[0] != 0, "the ladder's own dump checksum is not 0 — the driver ran something");
   t.isTrue(canaries[1] != 0,
            "the program that must be rejected was rejected — the driver proves something");
 
-  i32[] fold = referenceAnswers(cli, DRIVER, "fold", 1, ok);
-  t.eqI32(ok[0], 1, "the reference answered the fold");
+  i32[] fold = ladderAnswers(cli, DRIVER, "fold", 1, ok);
+  t.eqI32(ok[0], 1, "the ladder's wacc answered the fold");
   i32 theirs = fold[0];
 
   // Ours: one compile, and the fold read back whole.

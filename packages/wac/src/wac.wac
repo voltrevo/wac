@@ -1435,6 +1435,20 @@ export i32 main(Core core, Cli cli) {
   }
   string entry = normalisePath(pos[0]);
 
+  // **A second path is refused rather than dropped.** `wac test a_test.wac b_test.wac` ran only the
+  // first and reported `2 passed` over it, and `wac check ok.wac broken.wac` printed "no
+  // diagnostics" and exited 0 while never opening the second file. A caller building a list of
+  // files gets a green run covering a fraction of them, which reads exactly like a real one — the
+  // failure mode where silence and success are the same output.
+  //
+  // Only these four. `run` takes its trailing positionals as the program's own arguments, and
+  // `bindgen` takes an output path as the second, so both are refusing something they mean.
+  if ((cmd == "test" || cmd == "check" || cmd == "build" || cmd == "audit") && pos.len() > 1) {
+    core.warn("wac " + cmd + ": takes one path, given " + itoa(pos.len()) + " — `" + pos[0]
+              + "` and `" + pos[1] + "`. Run it once per path, or name a directory.");
+    return 2;
+  }
+
   // **The command is checked before the entry is read.** This test used to sit after the graph was
   // gathered and the diagnostics printed, so a line with two mistakes in it was answered about the
   // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the

@@ -29,6 +29,19 @@
 // **The driver lives under `.cache/`**, which the corpus walk does not enter. Beside `selfdrive.wac`
 // it would be found by the next `loadCorpus` and compiled as a stale second copy of itself; that
 // cost an hour in `bootstrapemit_test.wac` and reads as the emitter having lost a shift.
+//
+// ## The other compiler is the ladder, since 2026-08-28
+//
+// Everything below that says "the reference" meant the TypeScript compiler in `compiler/`, which
+// answered through `harness/referenceRun.ts`. It is deleted. The second implementation is
+// `harness/ladderRun.ts` now: five rungs whose lowest is hand-written wasm assembly text,
+// compiling each other up to wac-L5, which compiles wacc.
+//
+// The rung's argument is unchanged and is the reason this is not `wac run` — *"two derivations of
+// one compiler agree perfectly when both are wrong, which is the one failure the rung exists to
+// catch."* Nothing in the ladder is wacc, so the two sides are as independent as they were, and
+// this side is now the chain that actually bootstraps the compiler rather than one kept alive to
+// be asked questions.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
@@ -92,9 +105,9 @@ string driverFor(string text) {
  * The driver carries the target file as a string literal and imports the compiler, so the reference
  * compiles all of that once per process. Three questions asked separately were three of those.
  */
-i32[] referenceAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
+i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, exports),
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/ladderRun.ts", DRIVER, exports),
                     u8[0]()).wait();
   if (!r.ran() || r.status != 0) { return i32[want](); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
@@ -138,8 +151,8 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
 
     // **The canaries, per target, from the side that answers in full.** A stage that declined the
     // whole file would emit an empty module and agree with the other about nothing in particular.
-    i32[] said = referenceAnswers(cli, "blockedLen,emitLen,fold", 3, ok);
-    t.eqI32(ok[0], 1, "the reference ran the driver for " + want[k] + " and answered all three");
+    i32[] said = ladderAnswers(cli, "blockedLen,emitLen,fold", 3, ok);
+    t.eqI32(ok[0], 1, "the ladder's wacc ran the driver for " + want[k] + " and answered all three");
     if (ok[0] != 1) { continue; }
     t.eqI32(said[0], 0,
             want[k] + " is no longer emitted whole, so this compares two partial modules");

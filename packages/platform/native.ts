@@ -180,7 +180,8 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
   //     reference:   `@/src/lib.wac` needs a project: no `wac.json5` above main.wac
   //
   // GitHub issue 22 finding 4 read that as two loaders diverging. It is one loader, asked the smaller
-  // of its two questions by everything except `harness/referenceRun.ts` and `referenceCheck.ts`.
+  // of its two questions by every caller that does not want the roots — which was everything except
+  // the two reference runners, and both of those are deleted.
   const { files, roots } = await wacFilesWithRoots(entry);
   // The directory relative keys are measured from. The walk resolved `@/` against `Deno.cwd()`, so a
   // compiler handed a different base would file the same file under a second key.

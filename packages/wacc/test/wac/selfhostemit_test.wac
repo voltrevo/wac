@@ -63,6 +63,19 @@
 // One compile and one reference process is 10s, measured — and a self-host differential that runs on
 // every push is worth more than a fuzz sweep that does, which is the trade: `packages/gzip`'s 2,700
 // corrupted streams took the heavy slot this gave up, and kept a 24-case sample in the regular lane.
+//
+// ## The other compiler is the ladder, since 2026-08-28
+//
+// Everything below that says "the reference" meant the TypeScript compiler in `compiler/`, which
+// answered through `harness/referenceRun.ts`. It is deleted. The second implementation is
+// `harness/ladderRun.ts` now: five rungs whose lowest is hand-written wasm assembly text,
+// compiling each other up to wac-L5, which compiles wacc.
+//
+// The rung's argument is unchanged and is the reason this is not `wac run` — *"two derivations of
+// one compiler agree perfectly when both are wrong, which is the one failure the rung exists to
+// catch."* Nothing in the ladder is wacc, so the two sides are as independent as they were, and
+// this side is now the chain that actually bootstraps the compiler rather than one kept alive to
+// be asked questions.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
@@ -150,7 +163,7 @@ const string STAGE_A = ".cache/_selfhost_stageA.txt";
  *
  * The driver carries every one of wacc's sources as string literals, so its checksum moves whenever
  * any of them does — one number covering the whole input. The other half is the *reference*, which is
- * `compiler/` and `harness/referenceRun.ts`: its newest modification time, by the rule
+ * `compiler/` and `harness/ladderRun.ts`: its newest modification time, by the rule
  * `tools/seedFresh.test.ts` uses for the seed. Both halves matter and neither implies the other.
  *
  * The binary is in there too, and it is the half a source walk cannot see: stage B is emitted by the
@@ -159,7 +172,7 @@ const string STAGE_A = ".cache/_selfhost_stageA.txt";
  */
 string stageAKey(Cli cli, u8[] driver) {
   i64 newest = 0 as i64;
-  Stat run = cli.stat("harness/referenceRun.ts").wait();
+  Stat run = cli.stat("harness/ladderRun.ts").wait();
   if (run.exists) { newest = run.modifiedMillis; }
   Stat bin = cli.stat(cli.cwd().wait() + "/native/v8/target/release/wac").wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
@@ -216,9 +229,9 @@ void writeStageA(Cli cli, string key, i32[] said) {
  * process — and this test asks it three things. Asking for them together is the difference between
  * one of those compiles and three.
  */
-i32[] referenceAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
+i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, exports),
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/ladderRun.ts", DRIVER, exports),
                     u8[0]()).wait();
   if (!r.ran() || r.status != 0) { return i32[want](); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
@@ -282,10 +295,10 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
   string key = stageAKey(cli, driver.toBytes());
   i32[] said = cachedStageA(cli, key, 3, ok);
   if (ok[0] != 1) {
-    said = referenceAnswers(cli, "blockedLen,wholeLen,fold", 3, ok);
+    said = ladderAnswers(cli, "blockedLen,wholeLen,fold", 3, ok);
     if (ok[0] == 1) { writeStageA(cli, key, said); }
   }
-  t.eqI32(ok[0], 1, "the reference ran the driver and answered all three");
+  t.eqI32(ok[0], 1, "the ladder's wacc ran the driver and answered all three");
   if (ok[0] != 1) { cli.remove(DRIVER, false).wait(); return t.report(); }
   i32 blocked = said[0];
   t.eqI32(blocked, 0,

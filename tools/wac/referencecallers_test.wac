@@ -27,7 +27,6 @@
 //
 //   - it is bootstrap work           → add it to `bootstrap()`, and say what it builds
 //   - it is a differential oracle    → add it to `oracle()`; the reference is wacc's second opinion
-//   - it is the playground           → add it to `site()`, and see `issues/lang/0279a`
 //   - it is none of those            → it is what the rule is about, and wacc is the compiler to use
 //
 // A **missing** entry is the good direction and the whole point: delete the line.
@@ -73,8 +72,6 @@ string[] oracle() {
     // A wapy round-trip differential, rendering with `compiler/wapyPrint.ts`. It replaced the
     // reference's own copy of the same test on 2026-08-27 and goes when the reference does.
     "packages/wacc/test/wapyRoundTrip.test.ts",
-    "harness/referenceCheck.ts",
-    "harness/referenceRun.ts",
     "packages/wacc/test/reference.ts",
     "packages/wacc/test/referencePrint.ts",
     // The **printer**, not the compiler: it renders every tracked `.wac` file to wapy so that wacc
@@ -86,31 +83,6 @@ string[] oracle() {
   );
 }
 
-/**
- * **The playground**, which compiles in the reader's browser.
- *
- * It prefers wacc and falls back to the reference for `.wapy`, because until 2026-08-27 the
- * reference was wapy's only implementation. `packages/wacc/src/wapyparse.wac` changed that for
- * *parsing*; the fallback stays until wacc's **emitter** can take a wapy file, which is
- * `issues/lang/0279a` — it links source text, and a `.wapy` file's text is not wac.
- *
- * `site/src/editor/Bootstrap.tsx` is the four-stage demo and is bootstrap work that happens to live
- * here: the reference compiles stage A, and A, B and C are wacc.
- */
-string[] site() {
-  return string[](
-    "site/src/editor/Bootstrap.tsx",
-    "site/src/editor/InlineDemo.tsx",
-    "site/src/editor/OutputPanel.tsx",
-    "site/src/editor/run.worker.ts",
-    "site/src/editor/wac-compile.ts",
-    "site/src/editor/wac-language.ts",
-    "site/src/editor/wac-lint.ts",
-    "site/src/editor/wacc-compile.ts",
-    "site/tools/site.test.ts",
-    "site/tools/siteDeadline.ts",
-  );
-}
 
 /**
  * **Repository tooling**, and the group with the weakest claim.
@@ -129,14 +101,16 @@ string[] tooling() {
     "tools/fuzz.ts",
     "tools/fuzzBoundary.ts",
     "tools/mutate.ts",
-    "tools/mutate/operators.ts",
-    "tools/syncBootstrap.ts"
+    "tools/mutate/operators.ts"
   );
 }
 
 string[] allowed() {
   Vec<string> out = Vec.create();
-  string[][] groups = string[][](bootstrap(), oracle(), site(), tooling());
+  // **`site()` is gone rather than empty.** The playground compiled with the reference as a
+  // fallback, which is `issues/system/0146` — a published deploy that quietly used it because
+  // the wacc asset was missing and nothing said so. There is one compiler in the browser now.
+  string[][] groups = string[][](bootstrap(), oracle(), tooling());
   for (i32 g = 0; g < groups.len(); g++) {
     for (i32 i = 0; i < groups[g].len(); i++) { out.push(groups[g][i]); }
   }
