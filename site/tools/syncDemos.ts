@@ -96,9 +96,11 @@ const DEMOS: Demo[] = [
 
 const sizes: { file: string; size: string }[] = [];
 
-const mono = // The repository root. Run from there — these shell out to `deno task`, which needs the
-// root's deno.json, and they read `packages/` and `MAP.md`. It used to be a sibling
-// checkout of the packages repository; the merge made it the tree this file is in.
+const mono = // The repository root. Run from there — the build below is spawned with a path relative
+// to it, and it reads `packages/` and `MAP.md`. This said "these shell out to `deno
+// task`, which needs the root's deno.json" until 2026-08-28; the registry moved and the
+// spawn no longer goes through it. It used to be a sibling checkout of the packages
+// repository; the merge made it the tree this file is in.
 // **Defaulting to this file's own root rather than to `.`**, because the cwd is not the
 // caller's promise: `tools/syncBootstrap.ts` had the same shape and took the website's
 // deploy down when a workflow step ran it with `working-directory: site`.
@@ -107,9 +109,28 @@ const out = new URL("../public/", import.meta.url).pathname;
 
 for (const demo of DEMOS) {
   const dest = `${out}${demo.file}`;
+  // **The program the task names, not the task.** `wac task app:build` would need the `wac` binary,
+  // and the one place this script has to work is the one place there isn't one: `pages.yml` checks
+  // out a bare tree, installs Deno and Node, and builds nothing native. Since 2026-08-27 that made
+  // the deploy fail on every push — `deno task` no longer resolves, because the registry moved from
+  // `deno.json` to `tasks.json5` and the runner became a subcommand of the binary.
+  //
+  // Bootstrapping one in CI was the alternative and is the wrong trade here. `./bootstrap.sh` can do
+  // it from nothing — `--host wasmtime` needs only cargo — but it is a Rust build plus a fixed-point
+  // loop that relinks up to four times, on every deploy, to produce a compiler this step does not
+  // use: `app:build` is `deno run … packages/platform/build.ts`, which compiles through
+  // `harness/waccBuild.ts` — wacc as a wasm module under Deno. No native binary appears anywhere in
+  // that chain.
+  //
+  // So this spawns the task's *body* directly. It is a duplicate of one line of `tasks.json5` and
+  // `tools/wac/tasknames_test.wac` is what keeps the two in step.
   const args = [
-    "task",
-    "app:build",
+    "run",
+    "--allow-read",
+    "--allow-write",
+    "--allow-run",
+    "--allow-env",
+    "packages/platform/build.ts",
     demo.entry,
     "--target",
     "browser",

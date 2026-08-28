@@ -214,6 +214,62 @@ export string test_nothing_current_tells_you_to_run_a_live_task_through_deno(Cor
   return t.report();
 }
 
+/**
+ * The task name a spawn *assembles*, or "" — `new Deno.Command("deno", { args: ["task", "x"] })`.
+ *
+ * The check above reads prose, and a spawn is not prose. `site/tools/syncDemos.ts` spawned `"deno"`
+ * with `["task", "app:build", …]` and the phrase `deno task` never appeared in the file, so it was
+ * invisible here — while every push failed the Pages deploy with *Task not found: app:build*. The
+ * operator found it from the workflow log, which is the only place it could be seen.
+ *
+ * Deliberately shallow: `"deno"` on one line and `"task"` as the first array element on a later one.
+ * A real parse of TypeScript is not worth it, and the shape is stable because it is the shape
+ * `Deno.Command` forces.
+ */
+string spawnedTaskName(string text) {
+  i32 at = text.indexOf("Deno.Command(\"deno\"");
+  if (at < 0) { return ""; }
+  i32 args = text.indexOf("\"task\"");
+  if (args < 0) { return ""; }
+  // The name is the next quoted string after `"task"`, on the same or the following line.
+  i32 i = args + 6;
+  while (i < text.len() && text.slice(i, i + 1) != "\"") { i = i + 1; }
+  i = i + 1;
+  i32 start = i;
+  while (i < text.len() && text.slice(i, i + 1) != "\"") { i = i + 1; }
+  return i > start ? text.slice(start, i) : "";
+}
+
+/**
+ * Nothing spawns the old runner, however the command line is put together.
+ *
+ * Separate from the prose check because it fails differently: prose sends a *reader* to a dead
+ * command, and this sends *CI* to one. The second is worse — it is the case nobody sees until
+ * something outside the repository says so.
+ */
+export string test_nothing_spawns_a_task_through_deno(Core core, Cli cli) {
+  T t = T.create();
+  string[] files = sourceFiles(core, cli, kinds(), string[]());
+  string wrong = "";
+  i32 looked = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    string path = files[i];
+    if (path.len() < 3 || path.slice(path.len() - 3, path.len()) != ".ts") { continue; }
+    if (path == "tools/wac/tasknames_test.wac") { continue; }
+    looked = looked + 1;
+    string name = spawnedTaskName(readAll(cli, path));
+    if (name == "") { continue; }
+    wrong = wrong + "\n  " + path + ": spawns `deno` with `[\"task\", \"" + name + "\"]`";
+  }
+  t.eqStr(wrong, "",
+          "`deno task` is not a command any more, so this spawn fails wherever it runs." +
+          "\n  Spawn the checkout's binary with `[\"task\", …]`, as `tools/coverageAll.ts` does," +
+          "\n  or spawn the task's body directly when the caller cannot have a binary — which is" +
+          "\n  what `site/tools/syncDemos.ts` does, because `pages.yml` builds nothing native.");
+  t.isTrue(looked > 50, "only " + itoa(looked) + " TypeScript files scanned — the walk has moved");
+  return t.report();
+}
+
 export string test_the_scope_rule_is_the_one_the_header_describes(Core core, Cli cli) {
   T t = T.create();
   // The boundary is the whole judgement in this file, so it is stated as cases rather than left to
