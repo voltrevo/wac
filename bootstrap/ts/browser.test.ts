@@ -1,3 +1,5 @@
+// test-lane: exclusive — drives headless Chromium, and loses the race under a loaded machine
+//
 // **The ladder, in a browser.**
 //
 // The third acceptance criterion, as a test rather than a claim. A page fetches the five rung

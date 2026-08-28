@@ -1,6 +1,6 @@
 // `deno run -A ts/run.ts <file.l0>` — assemble and call `main`, printing what it answers.
 //
-// The short loop while writing .wax by hand. `bootstrap/ts/assemble_test.ts` is the one that has to pass;
+// The short loop while writing .wax by hand. `bootstrap/ts/assemble.test.ts` is the one that has to pass;
 // this is the one that tells you why it does not.
 
 import { assemble } from "../js/assemble.js";

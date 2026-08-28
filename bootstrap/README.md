@@ -138,7 +138,7 @@ what each is measured to cost.
 implement and the cheapest to live without, so putting them in L4 would mean implementing
 monomorphisation in L3's compiler as well — paying for them twice, at the rung where code costs most
 to write. The tax for leaving them out is a growable vector hand-written per element type: 25 lines
-each, perhaps five of them, measured in `bootstrap/ts/l4_test.ts`.
+each, perhaps five of them, measured in `bootstrap/ts/l4.test.ts`.
 
 ## Two rules that make it a ladder rather than five unrelated languages
 
@@ -150,7 +150,7 @@ compiler is the previous compiler plus features, ported upward rather than rewri
 makes the ladder converge on wac instead of wandering.
 
 **And the ladder runs under two hosts.** `ts/` drives every rung through Deno; `rust-ladder/`
-drives the same rungs through V8 embedded in Rust, and `bootstrap/ts/hosts_agree_test.ts` checks the wac-L0
+drives the same rungs through V8 embedded in Rust, and `bootstrap/ts/hosts_agree.test.ts` checks the wac-L0
 they produce is identical. That is a different claim from the two assemblers agreeing: that
 differential covers *reading* a format, this one covers *running* five compilers, where the
 differences an engine can introduce are the interesting ones. The one line of JavaScript in the

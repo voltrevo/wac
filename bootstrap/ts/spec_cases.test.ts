@@ -1,6 +1,6 @@
 // **Every case in wac's `spec/cases`, through the wacc that wac-L5 built.**
 //
-// `ladder_test.ts` proves the ladder closes on one program. This is the same question asked 252
+// `bootstrap/ts/ladder.test.ts` proves the ladder closes on one program. This is the same question asked 252
 // times, and the cases are adversarial: each is the smallest program that showed some
 // implementation getting the language wrong, reduced until nothing could be removed. Six of the
 // bugs found here were found by this file and by nothing else — a default `match` arm written

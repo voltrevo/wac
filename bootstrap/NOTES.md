@@ -85,7 +85,7 @@ three.
 
 ## What L1 actually is
 
-Enough of a Lisp to write programs in, and it is tested by running 26 of them (`bootstrap/ts/l1_test.ts`):
+Enough of a Lisp to write programs in, and it is tested by running 26 of them (`bootstrap/ts/l1.test.ts`):
 
 - fixnums, symbols interned into one list, pairs, and a one-bit tag telling immediates from objects;
 - a reader for atoms, negative numbers and nested lists;
@@ -149,7 +149,7 @@ than a necessary one, and now it is.
 
 ## What the second rung proved, and what it cost
 
-`bootstrap/ts/l2_test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
+`bootstrap/ts/l2.test.ts` runs ten wx programs through the whole ladder — nothing stubbed, no step skipped.
 `(fib 20)` answers 6765; a `while` inside a `while` counts to 12; `store8`/`load8` move bytes.
 
 Four bugs, and three of them say something.

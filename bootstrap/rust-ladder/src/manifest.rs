@@ -12,7 +12,7 @@
 //! export list, exactly as `native.ts` reads it from the compile result.
 //!
 //! **The format is wac's, and this is a copy of it**, which is a thing that can drift. The check
-//! for that is a differential: `bootstrap/ts/manifest_test.ts` compares what this writes against what
+//! for that is a differential: `bootstrap/ts/manifest.test.ts` compares what this writes against what
 //! `native.ts` writes for the same program, so a change to the format fails here rather than
 //! somewhere downstream of a bootstrap.
 
