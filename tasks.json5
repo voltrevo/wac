@@ -108,7 +108,9 @@
   "serve": "deno run -A packages/server/host/serve.ts",
   "app:build": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/build.ts",
   "check": "deno run -A tools/checkTypes.ts",
-  "validate": "deno run -A tools/validate.ts",
+  // `validate` was tools/validate.ts: compile with the reference, then check the wasm loads.
+  // `wac check <entry.wac>` gives the diagnostics and `wac validate <module.wasm>` the second
+  // half, so the task was a wrapper over two subcommands that ship.
   "verify:fmt": "deno run -A packages/fmt/tools/sweep.ts",
   "shell:fuzz": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac",
 }

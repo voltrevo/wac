@@ -50,7 +50,6 @@ string[] bootstrap() {
   return string[](
     // Asks the reference to *parse* wacc's graph, which is the bootstrap's precondition and 320ms
     // rather than the bootstrap's three minutes. `tools/wac/waccdeps_test.wac` is the cheap proxy.
-    "harness/bootstrapParses.test.ts",
     "harness/wacBind.ts",              // binds a module; `from: "reference"` is the bootstrap's ask
     "harness/wacFiles.ts",             // the import walk, which needs a parser to be correct
     // **The one that exists to retire the reference.** The bootstrap ladder builds wacc from five
@@ -75,7 +74,6 @@ string[] oracle() {
     // reference's own copy of the same test on 2026-08-27 and goes when the reference does.
     "packages/wacc/test/wapyRoundTrip.test.ts",
     "harness/referenceCheck.ts",
-    "harness/referenceCompile.ts",
     "harness/referenceRun.ts",
     "packages/wacc/test/reference.ts",
     "packages/wacc/test/referencePrint.ts",

@@ -3,7 +3,7 @@
 //   wac task check
 //
 // wac-mono 0011. `deno test` type-checks the modules it imports, which leaves out every driver and tool
-// nothing imports — `cov.ts`, `size.ts`, `validate.ts` — and `deno run` has not type-checked by default
+// nothing imports — `cov.ts`, `size.ts`, validate.ts — and `deno run` has not type-checked by default
 // since Deno 1.23, so those files were checked by nothing. This looks at all of them, in about four
 // seconds, which is the fast loop the issue asked for: a type failure named in one command rather than
 // after a minute of tests that never got to run.

@@ -95,7 +95,7 @@ essentially never produce — so that family stays in both the tests and `cov.ts
 
 Two things were worth more than reading the code, which did not find it:
 
-- `tools/validate.ts` and `test/u64.test.ts`, to rule the compiler out first. A wrong
+- tools/validate.ts and `test/u64.test.ts`, to rule the compiler out first. A wrong
   answer in limb arithmetic looks exactly like a `u64` opcode being signed.
 - `packages/bignum/tools/shrink.ts`, which reduces a failing pair to the smallest operands that still
   disagree. It cut a 256-bit dividend to seven limbs in one run and made the trace

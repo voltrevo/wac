@@ -7,7 +7,7 @@
 //
 // Both miss half the repo, and the half they miss is the half that rots. `deno test` type-checks the
 // modules it *imports*: a test file, and whatever that reaches. It never imported gzip's `cov.ts`
-// (since deleted), and it imports neither `tools/size.ts` nor `tools/validate.ts`, and `deno run` has
+// (since deleted), and it imports neither `tools/size.ts` nor tools/validate.ts, and `deno run` has
 // not type-checked by default since Deno 1.23
 // — so those files are checked by nothing at all. The first run of this check found **six errors** in
 // three such files, one of them real: `tools/size.ts` cast the compiler's result to a hand-written

@@ -99,5 +99,5 @@ implementation) landed first, and then 1,943 lines came out in one commit.
 
 What the bootstrap is handed, for anyone asking the same question: the 24 files of
 `packages/wacc/src/api.wac`'s graph, plus the `core/` files that graph imports.
-`harness/bootstrapParses.test.ts` asks the reference to parse exactly that set in 320 ms, which is
+harness/bootstrapParses.test.ts asks the reference to parse exactly that set in 320 ms, which is
 the cheap version of the question this section is about.

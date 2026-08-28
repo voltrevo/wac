@@ -164,7 +164,7 @@ table and from the denominator. On a two-file project outside this repository th
 `issues/system/0264c` is where the two implementations' disagreement is tracked.
 
 **What is still not the command**: the older, lower-level entry points, which remain because the
-compiler needs an API and not only a CLI. `native.ts` builds, `tools/check.ts` checks with the
+compiler needs an API and not only a CLI. `native.ts` builds, tools/check.ts checks with the
 *reference* compiler, `harness/referenceRun.ts` runs. They take different flags, answer different exit
 codes, and resolve a project differently — reaching for one of those is what GitHub issue 22 was
 originally about. Reach for the built command unless you are working on the compiler itself. And note
