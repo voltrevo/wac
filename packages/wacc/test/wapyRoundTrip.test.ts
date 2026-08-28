@@ -35,7 +35,6 @@
 // round trip reads the printer's output the same wrong way the printer wrote it, and agrees.
 
 import { waccApi } from "../../../harness/waccBuild.ts";
-import { wapyOf } from "../../../compiler/wapyPrint.ts";
 
 const ROOT = new URL("../../../", import.meta.url).pathname;
 
@@ -53,14 +52,26 @@ const ROOT = new URL("../../../", import.meta.url).pathname;
  * and prints without checking, so it surfaces as a string whose value is the text `u0000`.
  */
 const KNOWN_BAD: Record<string, string> = {
-  "spec/cases/0237-parentheses-are-the-escape-from-the-type-argument-reading.wac":
-    "issues/lang/0280a — the printer drops parentheses `§wacc-type-args-commit` needs",
-  "packages/crypto/test/wac/bcryptpbkdf_test.wac": "issues/lang/0277a — a NUL rendered as `\\u0000`",
-  "packages/fs/src/image.wac": "issues/lang/0277a — a NUL rendered as `\\u0000`",
-  "packages/fs/src/proc.wac": "issues/lang/0277a — a NUL rendered as `\\u0000`",
-  "packages/fs/test/wac/cov_probe.wac": "issues/lang/0277a — a NUL rendered as `\\u0000`",
-  "packages/ssh/test/cov_exercise.wac": "issues/lang/0277a — a NUL rendered as `\\u0000`",
+  // **JSX text is re-emitted verbatim, and JSX has no escape.** A text run holding `<` or `/`
+  // re-lexes as markup when the rendering is read back, so the tree gains an element the source
+  // did not have. Not fixable by quoting — the surface has nowhere to put a quote.
+  "spec/cases/0124-jsx-text-children.wac": "jsx text containing markup characters",
+  "spec/cases/0130-jsx-text-is-not-wac-source.wac": "jsx text containing markup characters",
+  "spec/cases/0135-a-jsx-fragment-is-a-node.wac": "jsx text containing markup characters",
+  "packages/platform/src/frame.wac": "jsx text containing markup characters",
+  "packages/platform/test/wac/scheduled_test.wac": "jsx text containing markup characters",
+  "packages/wac/src/grants.wac": "jsx text containing markup characters",
+  // A method chain carrying written type arguments *and* an inline lambda in the same expression.
+  "spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac":
+    "a type-argument chain with an inline lambda",
 };
+
+// **The six entries this replaces were the TypeScript printer's bugs, and are fixed.**
+// `issues/lang/0280a` was dropped parentheses — `packages/wacc/src/wapyprint.wac` brackets every
+// compound subexpression, so the class cannot occur. `issues/lang/0277a` was a NUL rendered as
+// `\u0000` by `JSON.stringify`; the wac printer emits a literal's raw source span, so a `\0`
+// stays what it was written as. Both issues stay open for what else they name.
+
 /**
  * `@line:col`, and the three operator words — what the two surfaces are entitled to disagree about.
  *
@@ -101,6 +112,7 @@ Deno.test("[§wac-wapy-roundtrip-5vd2qnw] wapy round trip: the printer's output 
   const api = await waccApi() as unknown as {
     dump: (src: Uint8Array) => string;
     dumpWapy: (src: Uint8Array) => string;
+    wapyOf: (src: Uint8Array) => string;
   };
   const enc = new TextEncoder();
 
@@ -118,15 +130,15 @@ Deno.test("[§wac-wapy-roundtrip-5vd2qnw] wapy round trip: the printer's output 
     } catch {
       continue;
     }
-    // A file the *printer* cannot render is not this test's subject: it says so and moves on, the
-    // way the reference's round trip did. What is being tested is the pair, over what the
-    // printer claims to handle.
+    // **No file is skipped for being unrenderable.** The reference's printer kept an `unhandled`
+    // list and this walk stepped over anything on it; `packages/wacc/src/wapyprint.wac` is a
+    // `match` over every AST enum, so a variant it does not handle is a compile error in that file
+    // rather than a silent omission here.
     let wapy: string;
     try {
-      const r = wapyOf(src, f);
-      if (r.unhandled.length > 0) continue;
-      wapy = r.text;
-    } catch {
+      wapy = api.wapyOf(enc.encode(src));
+    } catch (e) {
+      broke.push(`${f} — the printer refused it: ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
 

@@ -1,0 +1,912 @@
+// wac rendered as wapy — the other surface of the same language.
+//
+// `spec/spec/wapy.md` gives the correspondence and this implements it. It is the direction wacc did
+// not have: `wapyparse.wac` reads wapy and nothing wrote it, so `.wapy` was a surface you could
+// compile and not produce.
+//
+// ## Why it exists, which is not "for symmetry"
+//
+// `packages/wacc/test/wapyRoundTrip.test.ts` renders every tracked `.wac` file to wapy and reads it
+// back, comparing the two trees. That test's own header says why it is not circular:
+//
+// > A printer that emitted a spelling no reader outside this pair accepts, and a reader that
+// > accepted it, agree with each other perfectly.
+//
+// It was written against `compiler/wapyPrint.ts`, which is deleted with the TypeScript reference.
+// The comparison stays honest here for the same reason it did there: this is written from
+// `spec/spec/wapy.md`, and so was `wapyparse.wac`. Two independent readings of one document, not a
+// printer and its own reader.
+//
+// It found `issues/lang/0277a` and `issues/lang/0280a` on its first run against the old printer.
+//
+// ## Parentheses: all of them, and that is deliberate
+//
+// The reference's printer carried wac's precedence table and emitted the fewest parentheses it
+// could. That is where `issues/lang/0280a` lives — *"the wapy printer drops parentheses the type
+// argument rule needs"* — and it is a whole class of bug: every omitted bracket is a claim about
+// precedence that has to be right.
+//
+// This brackets every compound subexpression instead. The round trip compares **trees**, so a
+// redundant bracket changes nothing it looks at, and the claim being made drops from "I know the
+// precedence of every operator pair" to "a bracketed expression is that expression". The output is
+// not the prettiest wapy anyone could write; it is wapy that says what the tree says.
+//
+// ## What is not carried across
+//
+// Comments. The reference's printer had a comment layer — scanning them out of the token stream and
+// re-emitting `//` as `#` — which the round trip cannot see, because it strips positions and
+// compares trees. A wapy renderer for a *reader* would want them; this one is for the comparison.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
+  Stmt, StmtKind, Case, Arm,
+  Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
+import { tokenStride } from "./lex.wac";
+
+/** Everything the printer needs: the AST's token table and the source behind it. */
+export struct Wp {
+  Buf out;
+  u8[] src;
+  i32[] toks;
+  i32 tokCount;
+
+  Wp create(u8[] src, i32[] toks, i32 tokCount) {
+    return Wp(Buf.withCapacity(4096), src, toks, tokCount);
+  }
+
+  void s(this, string text) { this.out.pushAll(text.toBytes()); }
+  void nl(this) { this.out.push(10); }
+
+  /** Four spaces per level, which is what `spec/spec/wapy.md` writes and the parser measures. */
+  void pad(this, i32 depth) {
+    for (i32 i = 0; i < depth * 4; i++) { this.out.push(' '); }
+  }
+
+  /**
+   * A token's raw source span.
+   *
+   * Every literal goes through here rather than being canonicalised: a wapy file is wac's own
+   * lexical syntax apart from the words in the table, so `0xFF`, `1_000` and `'a'` are already
+   * what this surface spells them. `-1` is a token the parser recorded an error for and has no
+   * name to use.
+   */
+  void tok(this, i32 t) {
+    if (t < 0 || t >= this.tokCount) { this.out.push('?'); return; }
+    i32 start = this.toks[t * tokenStride() + 1];
+    i32 len = this.toks[t * tokenStride() + 2];
+    for (i32 i = 0; i < len; i++) { this.out.push(this.src[start + i]); }
+  }
+
+  /** Whether a token's text is exactly `want`. */
+  bool tokIs(this, i32 t, string want) {
+    if (t < 0 || t >= this.tokCount) { return false; }
+    i32 start = this.toks[t * tokenStride() + 1];
+    i32 len = this.toks[t * tokenStride() + 2];
+    u8[] w = want.toBytes();
+    if (len != w.len()) { return false; }
+    for (i32 i = 0; i < len; i++) {
+      if (this.src[start + i] != w[i]) { return false; }
+    }
+    return true;
+  }
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────────────────────
+//
+// `Vec<i32>` becomes `Vec[i32]`, and a nullable is `T | None` at the top of an annotation and `T?`
+// inside one — `spec/spec/wapy.md`'s table, which gives both spellings for the same reason wac has
+// only one: `T | None` reads as a union and does not nest without brackets.
+
+void printTy(Wp w, Ty t, bool top) {
+  match (t.kind) {
+    case Prim(tok): { w.tok(tok); }
+    case Named(tok, typeArgs): {
+      w.tok(tok);
+      if (typeArgs.len() > 0) {
+        w.s("[");
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          if (i > 0) { w.s(", "); }
+          printTy(w, typeArgs[i], false);
+        }
+        w.s("]");
+      }
+    }
+    case Arr(elem): { printTy(w, elem, false); w.s("[]"); }
+    case Nullable(inner): {
+      printTy(w, inner, false);
+      w.s(top ? " | None" : "?");
+    }
+    case Funcref(ret, params): {
+      // wac's own spelling, which this surface keeps: the table respells words, not punctuation.
+      w.s("fn[");
+      printTy(w, ret, false);
+      w.s("(");
+      for (i32 i = 0; i < params.len(); i++) {
+        if (i > 0) { w.s(", "); }
+        printTy(w, params[i], false);
+      }
+      w.s(")]");
+    }
+  }
+}
+
+/**
+ * A type where an *expression* is being written, which keeps wac's angle brackets.
+ *
+ * `spec/spec/wapy.md`'s table gives both rows: `Vec<i32>` in a type is `Vec[i32]`, and `Vec<i32>(0)`
+ * in an expression is `Vec<i32>(0)`. Writing the type spelling here makes `Box[i32](3)` — which
+ * parses, as an *index* of `Box` by `i32` applied to `3`, and is the difference between a round trip
+ * that fails and one that fails quietly.
+ */
+void printTyInExpr(Wp w, Ty t) {
+  match (t.kind) {
+    case Named(tok, typeArgs): {
+      w.tok(tok);
+      if (typeArgs.len() > 0) {
+        w.s("<");
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          if (i > 0) { w.s(", "); }
+          printTyInExpr(w, typeArgs[i]);
+        }
+        w.s(">");
+      }
+    }
+    // **Recursing, not delegating.** `Pending<i64>?[n]()` is an `ArrNew` whose element is a
+    // *nullable generic*, so handing the inner type to `printTy` puts the angle brackets back to
+    // square ones one level in and the parser reads an index again.
+    case Nullable(inner): { printTyInExpr(w, inner); w.s("?"); }
+    case Arr(elem): { printTyInExpr(w, elem); w.s("[]"); }
+    else: { printTy(w, t, false); }
+  }
+}
+
+// ── Expressions ──────────────────────────────────────────────────────────────────────────────
+
+/** A subexpression, bracketed unless it is already a single token or a bracketed form. */
+void printOperand(Wp w, Expr e) {
+  if (isAtom(e)) { printExpr(w, e); return; }
+  w.s("(");
+  printExpr(w, e);
+  w.s(")");
+}
+
+/**
+ * Whether `e` needs no brackets in any position.
+ *
+ * A literal, a name and a postfix chain each end where they begin. Everything else is bracketed —
+ * see the header: the claim being made is "a bracketed expression is that expression", not a
+ * precedence table.
+ */
+bool isAtom(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return true; }
+    case FloatLit(tok): { return true; }
+    case StrLit(tok): { return true; }
+    case BoolLit(value): { return true; }
+    case NullLit: { return true; }
+    case Ident(tok): { return true; }
+    case TypeName(qualifier): { return true; }
+    case Call(callee, args, typeArgs): { return true; }
+    case Index(arr, index): { return true; }
+    case Member(obj, nameTok): { return true; }
+    case Construct(ctype, args, named): { return true; }
+    case ArrNew(elem, size, fill, elements): { return true; }
+    else: { return false; }
+  }
+}
+
+/** Whether a JSX child is written as itself rather than inside braces. */
+bool isJsxLiteralChild(Expr e) {
+  match (e.kind) {
+    case JsxText(startOff, endOff): { return true; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return true; }
+    else: { return false; }
+  }
+}
+
+void printExpr(Wp w, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { w.tok(tok); }
+    case FloatLit(tok): { w.tok(tok); }
+    case StrLit(tok): { w.tok(tok); }
+    case BoolLit(value): { w.s(value ? "True" : "False"); }
+    case NullLit: { w.s("None"); }
+    case Ident(tok): { w.tok(tok); }
+
+    case Unary(op, operand): {
+      // `!a` is `not a`; the arithmetic ones keep their punctuation.
+      if (w.tokIs(op, "!")) { w.s("not "); } else { w.tok(op); }
+      printOperand(w, operand);
+    }
+
+    case Binary(op, left, right): {
+      printOperand(w, left);
+      w.s(" ");
+      if (w.tokIs(op, "&&")) { w.s("and"); }
+      else if (w.tokIs(op, "||")) { w.s("or"); }
+      else { w.tok(op); }
+      w.s(" ");
+      printOperand(w, right);
+    }
+
+    case Cast(op, operand, target): {
+      printOperand(w, operand);
+      w.s(" ");
+      w.tok(op);
+      w.s(" ");
+      printTy(w, target, false);
+    }
+
+    case Is(left, target, other, negated): {
+      printOperand(w, left);
+      w.s(negated ? " is not " : " is ");
+      // Three forms, and the third is the one a printer forgets: `x is null` has neither a type
+      // nor a value on the right, and is the null *keyword* — `None` here.
+      if (target is not null) { printTy(w, target!, false); }
+      else if (other is not null) { printOperand(w, other!); }
+      else { w.s("None"); }
+    }
+
+    case Ternary(cond, then, els): {
+      // `c ? a : b` is `a if c else b`, right-associative.
+      printOperand(w, then);
+      w.s(" if ");
+      printOperand(w, cond);
+      w.s(" else ");
+      printOperand(w, els);
+    }
+
+    case Call(callee, args, typeArgs): {
+      // **The base is bracketed even though the whole postfix chain is an atom.** `a.b` ends where
+      // it begins, so it needs no brackets *around* it — but its object still does when it is a
+      // cast or an operator expression. `(a as! Some).v` written as `a as! Some.v` binds the `.v`
+      // to `Some`, which is `issues/lang/0280a` exactly: the reference's printer dropped the same
+      // pair.
+      printOperand(w, callee);
+      // A type argument on a *call* keeps wac's angle brackets — the table's `Vec<i32>(0)` row.
+      if (typeArgs.len() > 0) {
+        w.s("<");
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          if (i > 0) { w.s(", "); }
+          // Nested, and still in expression position: `first<Box<i32>, i32>(…)` keeps angle
+          // brackets all the way down. `printTy` here writes `Box[i32]` inside the `<…>`.
+          printTyInExpr(w, typeArgs[i]);
+        }
+        w.s(">");
+      }
+      // **An argument is bracketed like any other compound.** `g((a < b), c > e)` written as
+      // `g(a < b, c > e)` re-lexes as the type-argument list `g<a, c>` — which is what
+      // `spec/cases/0237` is named for: parentheses are the escape from that reading.
+      w.s("(");
+      for (i32 i = 0; i < args.len(); i++) {
+        if (i > 0) { w.s(", "); }
+        printOperand(w, args[i]);
+      }
+      w.s(")");
+    }
+
+    case Index(arr, index): {
+      printOperand(w, arr);
+      w.s("[");
+      printExpr(w, index);
+      w.s("]");
+    }
+
+    case Member(obj, nameTok): {
+      printOperand(w, obj);
+      w.s(".");
+      w.tok(nameTok);
+    }
+
+    case Unwrap(operand): { printOperand(w, operand); w.s("!"); }
+
+    case Construct(ctype, args, named): {
+      printTyInExpr(w, ctype);
+      w.s("(");
+      i32 n = 0;
+      for (i32 i = 0; i < args.len(); i++) {
+        if (n > 0) { w.s(", "); }
+        printOperand(w, args[i]);
+        n = n + 1;
+      }
+      // A field initialiser is `name=value` here and `name: value` in wac.
+      for (i32 i = 0; i < named.len(); i++) {
+        if (n > 0) { w.s(", "); }
+        w.tok(named[i].nameTok);
+        w.s("=");
+        printExpr(w, named[i].value);
+        n = n + 1;
+      }
+      w.s(")");
+    }
+
+    case TypeName(qualifier): { printTyInExpr(w, qualifier); }
+
+    case Incr(target, op, prefix): {
+      if (prefix) { w.tok(op); printLvalue(w, target); }
+      else { printLvalue(w, target); w.tok(op); }
+    }
+
+    case ArrNew(elem, size, fill, elements): {
+      printTyInExpr(w, elem);
+      w.s("[");
+      if (size is not null) { printExpr(w, size!); }
+      w.s("](");
+      if (fill is not null) { w.s("fill="); printExpr(w, fill!); }
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (i > 0 || (fill is not null)) { w.s(", "); }
+        printExpr(w, elements[i]);
+      }
+      w.s(")");
+    }
+
+    case Lambda(params, body): {
+      // **wac's parameter spelling, not wapy's.** A lambda is an expression, and
+      // `spec/spec/wapy.md` says expressions are wac's unchanged — so it is `(i32 a)` here rather
+      // than `(a: i32)`. Written the wapy way, the parser reads `a` as the *type* and has no name.
+      w.s("(");
+      for (i32 i = 0; i < params.len(); i++) {
+        if (i > 0) { w.s(", "); }
+        if (params[i].isConst) { w.s("const "); }
+        printTy(w, params[i].type, false);
+        w.s(" ");
+        w.tok(params[i].nameTok);
+      }
+      w.s(") => ");
+      // A lambda body is an expression when it is one statement returning it; otherwise wac's
+      // braces, which this surface keeps because wapy has no indented expression.
+      w.s("{ ");
+      for (i32 i = 0; i < body.len(); i++) {
+        if (i > 0) { w.s(" "); }
+        printInlineStmt(w, body[i]);
+      }
+      w.s(" }");
+    }
+
+    case MatchExpr(subject, arms): {
+      w.s("match ");
+      printOperand(w, subject);
+      w.s(" { ");
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (i > 0) { w.s(", "); }
+        printArmInline(w, arms[i]);
+      }
+      w.s(" }");
+    }
+
+    case Jsx(tagTok, closeTok, attrs, kids): {
+      // JSX is wac's syntax and has no wapy respelling; emitted as written.
+      //
+      // **Self-closing when there is no closing tag.** `closeTok` is -1 for `<div id={7}/>`, and
+      // `w.tok(-1)` writes `?` — so `</?>` went out, the parser recovered into a ternary, and the
+      // tree differed for a reason that had nothing to do with JSX.
+      // A fragment has no tag: `<></>` is `tagTok == -1`, and `w.tok(-1)` would write `<?>`.
+      w.s("<");
+      if (tagTok >= 0) { w.tok(tagTok); }
+      for (i32 i = 0; i < attrs.len(); i++) {
+        w.s(" ");
+        w.tok(attrs[i].nameTok);
+        w.s("={");
+        printExpr(w, attrs[i].value);
+        w.s("}");
+      }
+      if (closeTok < 0) { w.s("/>"); return; }
+      w.s(">");
+      // **A child that is an expression wears its braces.** Text and a nested element are written
+      // as themselves; anything else — `{kid}` — is an expression, and printed bare it lexes back
+      // as JSX *text* whose characters happen to spell an identifier.
+      for (i32 i = 0; i < kids.len(); i++) {
+        if (isJsxLiteralChild(kids[i])) { printExpr(w, kids[i]); continue; }
+        w.s("{");
+        printExpr(w, kids[i]);
+        w.s("}");
+      }
+      w.s("</");
+      if (closeTok >= 0) { w.tok(closeTok); }
+      w.s(">");
+    }
+
+    case JsxText(startOff, endOff): {
+      for (i32 i = startOff; i < endOff && i < w.src.len(); i++) { w.out.push(w.src[i]); }
+    }
+  }
+}
+
+void printLvalue(Wp w, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { w.tok(tok); }
+    case LField(base, nameTok): { printLvalue(w, base); w.s("."); w.tok(nameTok); }
+    case LIndex(base, index): { printLvalue(w, base); w.s("["); printExpr(w, index); w.s("]"); }
+    case LUnwrap(base): { printLvalue(w, base); w.s("!"); }
+  }
+}
+
+// ── Statements ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A statement inside a lambda body, in **wac's** syntax.
+ *
+ * A lambda is an expression and wapy has no indented expression, so its body keeps wac's braces
+ * and semicolons — which means its statements keep wac's spelling too. `() => 42` is stored as a
+ * one-statement body returning it, so `{ return 42; }` is the same tree as the arrow form.
+ *
+ * The kinds here are the ones a lambda body actually holds. A block-bearing statement inside one
+ * is not reachable from any file in this repository, and `pass;` for it would be a silent lie —
+ * so it renders as something that does not compile, which fails loudly if a file ever has one.
+ */
+void printInlineStmt(Wp w, Stmt s) {
+  match (s.kind) {
+    case Return(value): {
+      w.s("return");
+      if (value is not null) { w.s(" "); printExpr(w, value!); }
+      w.s(";");
+    }
+    case ExprStmt(expr): { printExpr(w, expr); w.s(";"); }
+    case Var(type, nameTok, init, isConst): {
+      if (isConst) { w.s("const "); }
+      printTy(w, type, false);
+      w.s(" ");
+      w.tok(nameTok);
+      w.s(" = ");
+      printExpr(w, init);
+      w.s(";");
+    }
+    case Assign(target, op, rhs): {
+      printLvalue(w, target); w.s(" "); w.tok(op); w.s(" "); printExpr(w, rhs); w.s(";");
+    }
+    case IncrStmt(target, op): { printLvalue(w, target); w.tok(op); w.s(";"); }
+    case Break: { w.s("break;"); }
+    case Continue: { w.s("continue;"); }
+    case Trap(value): {
+      w.s("trap");
+      if (value is not null) { w.s(" "); printExpr(w, value!); }
+      w.s(";");
+    }
+    // **A block-bearing statement, in wac's braces.** A lambda body cannot be indented — wapy has
+    // no indented expression — so a `for` inside one keeps wac's layout along with wac's spelling.
+    case If(cond, then, els): {
+      w.s("if ("); printExpr(w, cond); w.s(") ");
+      printInlineBlock(w, then);
+      if (els.len() > 0) { w.s(" else "); printInlineBlock(w, els); }
+    }
+    case While(cond, body): {
+      w.s("while ("); printExpr(w, cond); w.s(") "); printInlineBlock(w, body);
+    }
+    case DoWhile(body, cond): {
+      w.s("do "); printInlineBlock(w, body); w.s(" while ("); printExpr(w, cond); w.s(");");
+    }
+    case For(init, cond, update, body): {
+      w.s("for (");
+      if (init is not null) { printInlineStmt(w, init!); } else { w.s(";"); }
+      w.s(" ");
+      if (cond is not null) { printExpr(w, cond!); }
+      w.s("; ");
+      if (update is not null) { printClause(w, update!); }
+      w.s(") ");
+      printInlineBlock(w, body);
+    }
+    case Block(body): { printInlineBlock(w, body); }
+    case Switch(subject, cases): {
+      w.s("switch ("); printExpr(w, subject); w.s(") { ");
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is not null) { w.s("case "); printExpr(w, cases[i].value!); }
+        else { w.s("default"); }
+        w.s(": ");
+        for (i32 k = 0; k < cases[i].body.len(); k++) {
+          if (k > 0) { w.s(" "); }
+          printInlineStmt(w, cases[i].body[k]);
+        }
+        w.s(" ");
+      }
+      w.s("}");
+    }
+    case Match(subject, arms): {
+      w.s("match ("); printExpr(w, subject); w.s(") { ");
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (arms[i].variantTok < 0) { w.s("else"); }
+        else {
+          w.s("case "); w.tok(arms[i].variantTok);
+          if (arms[i].bindingToks.len() > 0) {
+            w.s("(");
+            for (i32 k = 0; k < arms[i].bindingToks.len(); k++) {
+              if (k > 0) { w.s(", "); }
+              w.tok(arms[i].bindingToks[k]);
+            }
+            w.s(")");
+          }
+        }
+        w.s(": ");
+        for (i32 k = 0; k < arms[i].body.len(); k++) {
+          if (k > 0) { w.s(" "); }
+          printInlineStmt(w, arms[i].body[k]);
+        }
+        w.s(" ");
+      }
+      w.s("}");
+    }
+  }
+}
+
+/** `{ … }`, wac's block, for a statement inside a lambda. */
+void printInlineBlock(Wp w, Stmt[] body) {
+  w.s("{ ");
+  for (i32 i = 0; i < body.len(); i++) {
+    if (i > 0) { w.s(" "); }
+    printInlineStmt(w, body[i]);
+  }
+  w.s(" }");
+}
+
+void printArmInline(Wp w, Arm a) {
+  // **`else:` carries no `case`**, in either surface. `variantTok` is -1 exactly for an else arm —
+  // the sentinel `elseTok` exists beside it so that a position is a position rather than a floor at
+  // 1:1 (`issues/lang/0148`).
+  if (a.variantTok < 0) { w.s("else"); } else { w.s("case "); w.tok(a.variantTok); }
+  if (a.bindingToks.len() > 0) {
+    w.s("(");
+    for (i32 i = 0; i < a.bindingToks.len(); i++) {
+      if (i > 0) { w.s(", "); }
+      w.tok(a.bindingToks[i]);
+    }
+    w.s(")");
+  }
+  w.s(": ");
+  if (a.value is not null) { printExpr(w, a.value!); } else { w.s("pass"); }
+}
+
+// ── Statements ───────────────────────────────────────────────────────────────────────────────
+//
+// A block is `INDENT , { statement } , DEDENT` — leading whitespace rather than tokens — and an
+// empty one is `pass`, which is what makes a body that has no statements writable at all.
+
+void printBlock(Wp w, Stmt[] body, i32 depth) {
+  if (body.len() == 0) { w.pad(depth); w.s("pass"); w.nl(); return; }
+  for (i32 i = 0; i < body.len(); i++) { printStmt(w, body[i], depth); }
+}
+
+/**
+ * Whether this `for` is the counted loop `range` spells.
+ *
+ * `for (i32 i = a; i < b; i++)` is `for i in range(a, b)`, and `i += s` gives the third argument.
+ * Anything else keeps wac's three clauses, which this surface also has — so the test is narrow on
+ * purpose: a loop that does not match falls through to a form that always works.
+ */
+bool isCounted(Wp w, Stmt? init, Expr? cond, Stmt? update) {
+  if (init is null) { return false; }
+  if (cond is null) { return false; }
+  if (update is null) { return false; }
+  match (init!.kind) {
+    case Var(type, nameTok, i2, isConst): {
+      if (isConst) { return false; }
+      match (cond!.kind) {
+        case Binary(op, left, right): {
+          if (!w.tokIs(op, "<")) { return false; }
+          match (left.kind) {
+            case Ident(t): {
+              if (!sameTokText(w, t, nameTok)) { return false; }
+              match (update!.kind) {
+                case IncrStmt(target, op2): { return w.tokIs(op2, "++"); }
+                case Assign(target, op2, rhs): { return w.tokIs(op2, "+="); }
+                else: { return false; }
+              }
+            }
+            else: { return false; }
+          }
+        }
+        else: { return false; }
+      }
+    }
+    else: { return false; }
+  }
+}
+
+/** Whether two token indices have the same text — the loop variable, named twice. */
+bool sameTokText(Wp w, i32 a, i32 b) {
+  if (a < 0 || b < 0 || a >= w.tokCount || b >= w.tokCount) { return false; }
+  i32 sa = w.toks[a * tokenStride() + 1];
+  i32 la = w.toks[a * tokenStride() + 2];
+  i32 sb = w.toks[b * tokenStride() + 1];
+  i32 lb = w.toks[b * tokenStride() + 2];
+  if (la != lb) { return false; }
+  for (i32 i = 0; i < la; i++) {
+    if (w.src[sa + i] != w.src[sb + i]) { return false; }
+  }
+  return true;
+}
+
+void printStmt(Wp w, Stmt s, i32 depth) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): {
+      w.pad(depth);
+      if (isConst) { w.s("const "); }
+      w.tok(nameTok);
+      w.s(": ");
+      printTy(w, type, true);
+      w.s(" = ");
+      printExpr(w, init);
+      w.nl();
+    }
+    case Assign(target, op, rhs): {
+      w.pad(depth);
+      printLvalue(w, target);
+      w.s(" ");
+      w.tok(op);
+      w.s(" ");
+      printExpr(w, rhs);
+      w.nl();
+    }
+    case IncrStmt(target, op): {
+      w.pad(depth); printLvalue(w, target); w.tok(op); w.nl();
+    }
+    case If(cond, then, els): {
+      w.pad(depth); w.s("if "); printExpr(w, cond); w.s(":"); w.nl();
+      printBlock(w, then, depth + 1);
+      // `elif` is not emitted: an `else` holding one `if` is the same tree either way, and the
+      // chain rule (`spec/spec/wapy.md`: no `elif` without an `if`) is easier to be right about
+      // when every `else` is an `else`.
+      if (els.len() > 0) {
+        w.pad(depth); w.s("else:"); w.nl();
+        printBlock(w, els, depth + 1);
+      }
+    }
+    case While(cond, body): {
+      w.pad(depth); w.s("while "); printExpr(w, cond); w.s(":"); w.nl();
+      printBlock(w, body, depth + 1);
+    }
+    case DoWhile(body, cond): {
+      w.pad(depth); w.s("do:"); w.nl();
+      printBlock(w, body, depth + 1);
+      w.pad(depth); w.s("while "); printExpr(w, cond); w.nl();
+    }
+    case For(init, cond, update, body): {
+      w.pad(depth);
+      if (isCounted(w, init, cond, update)) {
+        printCounted(w, init!, cond!, update!);
+      } else {
+        w.s("for ");
+        if (init is not null) { printClause(w, init!); }
+        w.s("; ");
+        if (cond is not null) { printExpr(w, cond!); }
+        w.s("; ");
+        if (update is not null) { printClause(w, update!); }
+      }
+      w.s(":"); w.nl();
+      printBlock(w, body, depth + 1);
+    }
+    case Switch(subject, cases): {
+      w.pad(depth); w.s("switch "); printExpr(w, subject); w.s(":"); w.nl();
+      for (i32 i = 0; i < cases.len(); i++) {
+        w.pad(depth + 1);
+        // A `switch` case with no value is `default` in wac and `else` here.
+        if (cases[i].value is not null) { w.s("case "); printExpr(w, cases[i].value!); }
+        else { w.s("else"); }
+        w.s(":"); w.nl();
+        printBlock(w, cases[i].body, depth + 2);
+      }
+    }
+    case Match(subject, arms): {
+      w.pad(depth); w.s("match "); printExpr(w, subject); w.s(":"); w.nl();
+      for (i32 i = 0; i < arms.len(); i++) {
+        w.pad(depth + 1);
+        if (arms[i].variantTok < 0) { w.s("else"); }
+        else { w.s("case "); w.tok(arms[i].variantTok); }
+        if (arms[i].bindingToks.len() > 0) {
+          w.s("(");
+          for (i32 k = 0; k < arms[i].bindingToks.len(); k++) {
+            if (k > 0) { w.s(", "); }
+            w.tok(arms[i].bindingToks[k]);
+          }
+          w.s(")");
+        }
+        w.s(":"); w.nl();
+        printBlock(w, arms[i].body, depth + 2);
+      }
+    }
+    case Return(value): {
+      w.pad(depth); w.s("return");
+      if (value is not null) { w.s(" "); printExpr(w, value!); }
+      w.nl();
+    }
+    case Break: { w.pad(depth); w.s("break"); w.nl(); }
+    case Continue: { w.pad(depth); w.s("continue"); w.nl(); }
+    case Trap(value): {
+      w.pad(depth); w.s("trap(");
+      if (value is not null) { printExpr(w, value!); }
+      w.s(")"); w.nl();
+    }
+    case Block(body): {
+      w.pad(depth); w.s("scope:"); w.nl();
+      printBlock(w, body, depth + 1);
+    }
+    case ExprStmt(expr): { w.pad(depth); printExpr(w, expr); w.nl(); }
+  }
+}
+
+/** `for i in range(a, b)` or `range(a, b, s)`, given a loop `isCounted` accepted. */
+void printCounted(Wp w, Stmt init, Expr cond, Stmt update) {
+  match (init.kind) {
+    case Var(type, nameTok, start, isConst): {
+      w.s("for ");
+      w.tok(nameTok);
+      // The annotation is only needed when the variable is not an `i32`, but writing it always
+      // says what the reader would otherwise have to know the default for.
+      w.s(": ");
+      printTy(w, type, true);
+      w.s(" in range(");
+      printExpr(w, start);
+      w.s(", ");
+      match (cond.kind) {
+        case Binary(op, left, right): { printExpr(w, right); }
+        else: { w.s("?"); }
+      }
+      match (update.kind) {
+        case Assign(target, op, rhs): { w.s(", "); printExpr(w, rhs); }
+        else: { }
+      }
+      w.s(")");
+    }
+    else: { w.s("for ?"); }
+  }
+}
+
+/** An init or update clause of a three-clause `for`, which has no newline of its own. */
+void printClause(Wp w, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): {
+      if (isConst) { w.s("const "); }
+      w.tok(nameTok); w.s(": "); printTy(w, type, true); w.s(" = "); printExpr(w, init);
+    }
+    case Assign(target, op, rhs): {
+      printLvalue(w, target); w.s(" "); w.tok(op); w.s(" "); printExpr(w, rhs);
+    }
+    case IncrStmt(target, op): { printLvalue(w, target); w.tok(op); }
+    case ExprStmt(expr): { printExpr(w, expr); }
+    else: { w.s("pass"); }
+  }
+}
+
+// ── Declarations ─────────────────────────────────────────────────────────────────────────────
+//
+// `export` and the rest are decorators on the line above, which is the one place wapy's layout
+// differs from wac's by more than punctuation.
+
+void printDecl(Wp w, Decl d) {
+  match (d.kind) {
+    case Import(pathTok, prefixTok, items): {
+      w.s("from ");
+      // Exactly one of the two is set: `core` is bare here and quoted in wac, which is one module
+      // system spelled the way each surface spells every other specifier.
+      if (pathTok >= 0) { w.tok(pathTok); } else { w.tok(prefixTok); }
+      w.s(" import ");
+      for (i32 i = 0; i < items.len(); i++) {
+        if (i > 0) { w.s(", "); }
+        w.tok(items[i].nameTok);
+        if (!sameTokText(w, items[i].nameTok, items[i].aliasTok)) {
+          w.s(" as ");
+          w.tok(items[i].aliasTok);
+        }
+      }
+      w.nl();
+    }
+
+    case ConstDecl(nameTok, type, init, exported): {
+      if (exported) { w.s("@export"); w.nl(); }
+      w.s("const ");
+      w.tok(nameTok);
+      w.s(": ");
+      printTy(w, type, true);
+      w.s(" = ");
+      printExpr(w, init);
+      w.nl();
+    }
+
+    case Func(nameTok, returnType, params, body, exported, typeParams): {
+      if (exported) { w.s("@export"); w.nl(); }
+      w.s("def ");
+      w.tok(nameTok);
+      printTypeParams(w, typeParams);
+      w.s("(");
+      printParams(w, params, false);
+      w.s(") -> ");
+      printTy(w, returnType, true);
+      w.s(":"); w.nl();
+      printBlock(w, body, 1);
+    }
+
+    case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      if (exported) { w.s("@export"); w.nl(); }
+      if (isConst) { w.s("@const"); w.nl(); }
+      w.s("class ");
+      w.tok(nameTok);
+      printTypeParams(w, typeParams);
+      if (parentTok >= 0) { w.s("("); w.tok(parentTok); w.s(")"); }
+      w.s(":"); w.nl();
+      if (fields.len() == 0 && methods.len() == 0) { w.pad(1); w.s("pass"); w.nl(); }
+      for (i32 i = 0; i < fields.len(); i++) {
+        w.pad(1);
+        if (fields[i].isConst) { w.s("const "); }
+        w.tok(fields[i].nameTok);
+        w.s(": ");
+        printTy(w, fields[i].type, true);
+        w.nl();
+      }
+      for (i32 i = 0; i < methods.len(); i++) { printMethod(w, methods[i]); }
+    }
+
+    case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      if (exported) { w.s("@export"); w.nl(); }
+      w.s("class ");
+      w.tok(nameTok);
+      printTypeParams(w, typeParams);
+      w.s("(enum):"); w.nl();
+      if (variants.len() == 0 && methods.len() == 0) { w.pad(1); w.s("pass"); w.nl(); }
+      for (i32 i = 0; i < variants.len(); i++) {
+        w.pad(1);
+        w.tok(variants[i].nameTok);
+        if (variants[i].fields.len() > 0) {
+          w.s("(");
+          printParams(w, variants[i].fields, false);
+          w.s(")");
+        }
+        w.nl();
+      }
+      for (i32 i = 0; i < methods.len(); i++) { printMethod(w, methods[i]); }
+    }
+  }
+}
+
+void printTypeParams(Wp w, i32[] params) {
+  if (params.len() == 0) { return; }
+  w.s("[");
+  for (i32 i = 0; i < params.len(); i++) {
+    if (i > 0) { w.s(", "); }
+    w.tok(params[i]);
+  }
+  w.s("]");
+}
+
+/**
+ * A method, whose receiver is the shape wac has and wapy spells differently.
+ *
+ * wac declares `this` or `const this` as the first parameter and wapy writes the same word — the
+ * two surfaces agreed on `this` in 2026-08-27, and the spec records why the sixth respelling was
+ * withdrawn: `self` was the only one where both spellings are legal wac identifiers, so it made a
+ * wac local named `self` unrenderable. A static method simply has no receiver.
+ */
+void printMethod(Wp w, Method m) {
+  if (m.isOverride) { w.pad(1); w.s("@override"); w.nl(); }
+  w.pad(1);
+  w.s("def ");
+  w.tok(m.nameTok);
+  w.s("(");
+  if (m.hasThis) {
+    if (m.thisConst) { w.s("const "); }
+    w.s("this");
+    if (m.params.len() > 0) { w.s(", "); }
+  }
+  printParams(w, m.params, false);
+  w.s(") -> ");
+  printTy(w, m.returnType, true);
+  w.s(":"); w.nl();
+  printBlock(w, m.body, 2);
+}
+
+export string printWapy(Wp w, Program prog) {
+  for (i32 i = 0; i < prog.decls.len(); i++) {
+    if (i > 0) { w.nl(); }
+    printDecl(w, prog.decls[i]);
+  }
+  return w.out.toStr();
+}
+
+void printParams(Wp w, Param[] params, bool skipFirst) {
+  i32 n = 0;
+  for (i32 i = skipFirst ? 1 : 0; i < params.len(); i++) {
+    if (n > 0) { w.s(", "); }
+    if (params[i].isConst) { w.s("const "); }
+    w.tok(params[i].nameTok);
+    w.s(": ");
+    printTy(w, params[i].type, true);
+    n = n + 1;
+  }
+}

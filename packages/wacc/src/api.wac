@@ -26,11 +26,26 @@ import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
+import { Wp, printWapy } from "./wapyprint.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
   return dumpAs("x.wac", src);
+}
+
+/**
+ * A wac source rendered as **wapy** — the direction wacc did not have.
+ *
+ * `dumpWapy` above reads wapy and this writes it, so a `.wac` file can be turned into the other
+ * surface and read back. That round trip is what `packages/wacc/test/wapyRoundTrip.test.ts` does
+ * over every tracked file, and it is not circular: `wapyprint.wac` and `wapyparse.wac` are both
+ * written from `spec/spec/wapy.md` rather than from each other.
+ */
+export string wapyOf(u8[] src) {
+  Frontend fe = frontendOf("x.wac", src);
+  Wp w = Wp.create(fe.src, fe.lexed.tokens, fe.lexed.tokenCount);
+  return printWapy(w, fe.prog);
 }
 
 /**
