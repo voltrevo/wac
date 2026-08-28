@@ -182,10 +182,22 @@ survives the deletion even though the ability to re-run it does not.
 
 ## Order
 
-1. `bootstrap.sh`, against the repositories as they stand — it is the piece everything else needs
-   and it can be written and tested before anything moves.
-2. `wac self install` / `wac self uninstall`, the task deleted, the circular advice repaired.
-3. The move: wacboot's history into wac.
-4. `compiler/` deleted, with the last agreed hashes pinned in the commit.
+1. **The move**: wacboot's history into wac, under `bootstrap/`.
+2. **`bootstrap.sh`**, which needs the merged layout to exist.
+3. **`wac self install` / `wac self uninstall`**, the task deleted, the circular advice repaired.
+4. **`compiler/` deleted**, with the last agreed hashes pinned in the commit.
 
-Steps 1 and 2 are independent of the move and do not need it to have happened.
+**This is not the order first written here, and the first one was wrong.** It had `bootstrap.sh`
+first, on the claim that it and the install rename were independent of the move. Neither is:
+
+- `bootstrap.sh` builds the ladder from inside a *wac* clone, and the ladder is in wacboot. Written
+  before the move it would be written against `../wac` — a layout that is about to stop existing —
+  and a script tested against the wrong layout is not tested.
+- `wac self install` becomes install-only, with the build half moving to `bootstrap.sh`. Deleting
+  `wac task wac:install` before that script exists would leave no way to build the thing at all.
+
+The rename of `uninstall` and the repair of the circular advice really are independent, but they are
+small and belong with the rest of step 3 rather than alone in front of it.
+
+**`bootstrap/` is the destination**, matching the script's name. Chosen rather than specified; it
+holds the rungs, the assembler, the flattener, the hosts and the ladder's own tests.
