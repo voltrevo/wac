@@ -115,12 +115,20 @@ for (const demo of DEMOS) {
   // the deploy fail on every push — `deno task` no longer resolves, because the registry moved from
   // `deno.json` to `tasks.json5` and the runner became a subcommand of the binary.
   //
-  // Bootstrapping one in CI was the alternative and is the wrong trade here. `./bootstrap.sh` can do
-  // it from nothing — `--host wasmtime` needs only cargo — but it is a Rust build plus a fixed-point
-  // loop that relinks up to four times, on every deploy, to produce a compiler this step does not
-  // use: `app:build` is `deno run … packages/platform/build.ts`, which compiles through
+  // **Not because bootstrapping one would be expensive — because nothing here wants one.**
+  // `app:build` is `deno run … packages/platform/build.ts`, which compiles through
   // `harness/waccBuild.ts` — wacc as a wasm module under Deno. No native binary appears anywhere in
-  // that chain.
+  // that chain, so a step that produced one would be work with no consumer.
+  //
+  // This said the opposite for one commit, and the correction is worth keeping because the numbers
+  // are the other way round. `./bootstrap.sh` builds from nothing, and a fixed-point round is **10
+  // seconds** — the run that produced this checkout's binary converged on *round 1 of at most 4*.
+  // What costs minutes is `cargo build` of the V8 crate, and that is only the `--host v8` and
+  // `--host wasmtime` paths. `--host deno` and `--host nodejs` need neither cargo nor a C++
+  // toolchain, which is exactly the CI case; they are unfinished rather than slow, and the blocker
+  // `bootstrap.sh` states — that `packages/platform/host/` must be plain JavaScript "before it can
+  // go in a single file without a bundler" — is about shipping one file, which CI does not need,
+  // since CI has Deno and Deno runs TypeScript.
   //
   // So this spawns the task's *body* directly. It is a duplicate of one line of `tasks.json5` and
   // `tools/wac/tasknames_test.wac` is what keeps the two in step.
