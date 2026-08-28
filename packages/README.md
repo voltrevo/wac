@@ -153,7 +153,7 @@ wac task app:build <entry.wac> --target node -o wc  # ...for Node instead of Den
 wac task app:build <entry.wac> --target browser -o page/index.html  # ...or a browser page
 wac task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
 wac task map             # regenerate MAP.md; the suite fails if it is stale
-wac task coverage        # branch coverage of every package, from its wac-native tests
+wac task coverage:all        # branch coverage of every package, from its wac-native tests
 wac task coverage:abi
 wac task coverage:bls
 wac task coverage:bignum # ...and the host-driven exercises, per package
@@ -316,7 +316,7 @@ no worrying about how `-0.0` or NaN survive the trip.
 `wac task coverage:<package>` reports branch coverage for the nineteen packages that have one, driven
 by a `cov.ts` in the package itself. **Coverage needs an exercise, and an exercise only measures the
 code it drives**, so each package supplies its own; `harness/wacCoverage.ts` is the shared half. The
-repo-level `wac task coverage` covers gzip only, which is
+repo-level `wac task coverage:gzip` covers gzip only, which is
 [0002](../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
 
 **The hazard to know about: `cov.ts` is a second workload written by hand, so it drifts from the test

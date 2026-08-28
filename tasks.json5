@@ -34,7 +34,8 @@
   "wac:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts build",
 
   // The coverage ratchets, one per package plus the runner over all of them.
-  "coverage": "deno run -A tools/coverage.ts",
+  // `coverage` was `tools/coverage.ts` and covered gzip only — `issues/system/0002`.
+  // `coverage:gzip` is that job through the wac binary, and is one of the thirty-six.
   "coverage:all": "deno run -A tools/coverageAll.ts",
   "coverage:bls": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/bls/test/cov_ledger.wac",
   "coverage:abi": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/abi/test/cov_ledger.wac",

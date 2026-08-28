@@ -4,7 +4,7 @@
 //   wac task coverage:bytes --verbose
 //
 // Driven from the package's own wac tests, which are the thing that exercises `Buf` directly.
-// `tools/coverage.ts` also reports on `buf.wac`, but only the branches gzip happens to reach — which
+// tools/coverage.ts also reports on `buf.wac`, but only the branches gzip happens to reach — which
 // is why it shows 67.7% for a type with twelve test cases.
 //
 // ## The trapping cases are exports, not calls — `issues/system/0221`

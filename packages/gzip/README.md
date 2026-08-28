@@ -273,7 +273,7 @@ bytes.
 
 ```sh
 wac task coverage:gzip [--verbose]   # this package, including the hand-built streams
-wac task coverage [--verbose]        # every package, from its wac-native tests
+wac task coverage:all [--verbose]        # every package, from its wac-native tests
 ```
 
 wac gained opt-in branch-coverage instrumentation
@@ -306,7 +306,7 @@ ones the tests assert on so the report describes a workload that is actually che
 Two caveats on the number:
 
 - It measures what `cov.ts` exercises, which mirrors the shapes the test suite drives
-  rather than being the suite. `wac task coverage` gets closer for packages whose tests
+  rather than being the suite. `wac task coverage:gzip` gets closer for packages whose tests
   are wac-native, since there the tests *are* the exercise; gzip's are host-side, so it
   does not. Until counters are collected during the real test run, a branch reached with
   no assertion behind it is a gap no number here can show — which is why closing the last

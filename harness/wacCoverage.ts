@@ -1,6 +1,6 @@
 // Branch coverage for one package, driven by that package's own exercises.
 //
-// `tools/coverage.ts` measures gzip: it hardcodes gzip's entry points and drives them
+// tools/coverage.ts measures gzip: it hardcodes gzip's entry points and drives them
 // with gzip's corpus. That is not a criticism of it — coverage without an exercise
 // measures nothing, so the exercise has to come from whoever knows the package. This
 // is the shared half, so each package can supply only its own half.
