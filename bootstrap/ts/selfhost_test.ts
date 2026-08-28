@@ -14,7 +14,7 @@ const HERE = new URL(".", import.meta.url).pathname;
 
 async function corpusIsHere(): Promise<boolean> {
   try {
-    await Deno.stat(`${HERE}../../wac/packages/wacc/src/api.wac`);
+    await Deno.stat(`${HERE}../../packages/wacc/src/api.wac`);
     return true;
   } catch {
     return false;

@@ -12,7 +12,7 @@ import { flatten, l5ToL0 } from "./l5.ts";
 import { assemble } from "../js/assemble.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
-const WAC = `${HERE}../../wac`;
+const WAC = `${HERE}../..`;
 
 // **The source wacc is made of, keyed the way it spells its own imports.** print.wac reaches
 // `../../bytes/src/buf.wac`, so the keys have to be repo-relative rather than bare filenames or

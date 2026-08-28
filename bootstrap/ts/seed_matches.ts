@@ -13,7 +13,7 @@
 
 const HERE = new URL(".", import.meta.url).pathname;
 const BIN = `${HERE}../rust-ladder/target/release/ladder`;
-const WAC = `${HERE}../../wac`;
+const WAC = `${HERE}../..`;
 const ENTRY = "packages/wac/src/wac.wac";
 const GRANTS = ["--allow-read", "--allow-write", "--allow-env", "--allow-net"];
 

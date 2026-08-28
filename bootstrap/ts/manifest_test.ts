@@ -14,7 +14,7 @@
 
 const HERE = new URL(".", import.meta.url).pathname;
 const BIN = `${HERE}../rust-ladder/target/release/ladder`;
-const WAC = `${HERE}../../wac`;
+const WAC = `${HERE}../..`;
 const API = `${WAC}/packages/wacc/src/api.wac`;
 const NATIVE = `${WAC}/packages/platform/native.ts`;
 

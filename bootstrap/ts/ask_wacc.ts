@@ -11,7 +11,7 @@ import { assemble } from "../js/assemble.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const l0 = await l5ToL0(
-  await flatten(`${HERE}../../wac/packages/wacc/src/api.wac`) + "\n" +
+  await flatten(`${HERE}../../packages/wacc/src/api.wac`) + "\n" +
     await Deno.readTextFile(`${HERE}../drivers/spec_cases.wac`),
 );
 const inst = await WebAssembly.instantiate(

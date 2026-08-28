@@ -12,7 +12,7 @@ const HERE = new URL(".", import.meta.url).pathname;
 
 async function corpusIsHere(): Promise<boolean> {
   try {
-    await Deno.stat(`${HERE}../../wac/spec/cases`);
+    await Deno.stat(`${HERE}../../spec/cases`);
     return true;
   } catch {
     return false;

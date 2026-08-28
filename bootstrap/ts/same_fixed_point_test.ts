@@ -17,7 +17,7 @@ const HERE = new URL(".", import.meta.url).pathname;
 
 async function referenceIsHere(): Promise<boolean> {
   try {
-    await Deno.stat(`${HERE}../../wac/compiler/wacCompile.ts`);
+    await Deno.stat(`${HERE}../../compiler/wacCompile.ts`);
     return true;
   } catch {
     return false;

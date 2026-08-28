@@ -1,6 +1,6 @@
 // Point wac-L5 at real wac and see how far each entry point gets.
 //
-//   deno run -A ts/against_real_wac.ts ../wac/core ../wac/packages/wacc/src
+//   deno run -A bootstrap/ts/against_real_wac.ts core packages/wacc/src
 //
 // This is the only honest gauge of how far L5 is, and it is deliberately not a test: the number is
 // expected to be wrong for a long time, and a test that fails every day is a test nobody reads.

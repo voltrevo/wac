@@ -14,8 +14,8 @@ import { assemble } from "../js/assemble.js";
 export type Tally = { total: number; ok: number; wrong: string[] };
 
 const HERE = new URL(".", import.meta.url).pathname;
-const dir = Deno.args[0] ?? `${HERE}../../wac/spec/cases`;
-const api = `${HERE}../../wac/packages/wacc/src/api.wac`;
+const dir = Deno.args[0] ?? `${HERE}../../spec/cases`;
+const api = `${HERE}../../packages/wacc/src/api.wac`;
 
 const l0 = await l5ToL0(await flatten(api) + "\n" + await Deno.readTextFile(`${HERE}../drivers/spec_cases.wac`));
 const refusals = (l0.match(/^!!/gm) ?? []).length;
@@ -48,11 +48,11 @@ function split(src: string): { path: string; text: string }[] {
 // only lists its own files. Passing more than the entry needs is explicitly fine.
 const core: { path: string; text: string }[] = [];
 try {
-  for (const f of Deno.readDirSync(`${HERE}../../wac/core`)) {
+  for (const f of Deno.readDirSync(`${HERE}../../core`)) {
     if (f.isFile && f.name.endsWith(".wac")) {
       core.push({
         path: `core/${f.name}`,
-        text: await Deno.readTextFile(`${HERE}../../wac/core/${f.name}`),
+        text: await Deno.readTextFile(`${HERE}../../core/${f.name}`),
       });
     }
   }

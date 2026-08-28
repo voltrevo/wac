@@ -666,7 +666,7 @@ Deno.test({
   name: "the flattener renames nothing in wacc's own graph",
   ignore: !(await (async () => {
     try {
-      await Deno.stat(`${new URL("..", import.meta.url).pathname}../wac/packages/wacc/src/api.wac`);
+      await Deno.stat(`${new URL("..", import.meta.url).pathname}../packages/wacc/src/api.wac`);
       return true;
     } catch {
       return false;
@@ -678,7 +678,7 @@ Deno.test({
     const { files } = await import("../hosts/deno.js");
     const collided: string[] = [];
     await flatten(
-      `${root}../wac/packages/wacc/src/api.wac`,
+      `${root}../packages/wacc/src/api.wac`,
       files,
       (what: string) => collided.push(what),
     );

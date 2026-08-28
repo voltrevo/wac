@@ -21,7 +21,7 @@ import { l5ToL0 } from "./l5.ts";
 const HERE = new URL(".", import.meta.url).pathname;
 const BIN = `${HERE}../rust-ladder/target/release/ladder`;
 const NODE_HOST = `${HERE}../hosts/node.js`;
-const API = `${HERE}../../wac/packages/wacc/src/api.wac`;
+const API = `${HERE}../../packages/wacc/src/api.wac`;
 
 async function have(path: string): Promise<boolean> {
   try {

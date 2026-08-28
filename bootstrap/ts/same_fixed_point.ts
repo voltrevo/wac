@@ -10,10 +10,10 @@
 
 import { flatten, l5ToL0 } from "./l5.ts";
 import { assemble } from "../js/assemble.js";
-import { wacCompile } from "../../wac/compiler/wacCompile.ts";
+import { wacCompile } from "../../compiler/wacCompile.ts";
 
 const HERE = new URL(".", import.meta.url).pathname;
-const WAC = `${HERE}../../wac`;
+const WAC = `${HERE}../..`;
 const ROOT = await Deno.realPath(WAC);
 const enc = new TextEncoder();
 
