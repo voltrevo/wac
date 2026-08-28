@@ -37,7 +37,7 @@ are tests. `deno.json`'s `"wac/": "./compiler/"` mapping goes with it.
 
 ---
 
-## `bootstrap.sh` — **agreed**
+## `bootstrap.sh` — **done for `--host rust`**
 
 One script at the repo root. Not three native entry points: `npm run build`, `deno task build` and
 `cargo build --release` were considered and rejected, because cargo cannot express *build the
@@ -54,8 +54,16 @@ sequences the same three steps in the open, with V8 built once, and needs no `bu
   unwritable `.bashrc` aborted an install *after* the binary, cache, `env` and `install.json5` were
   in place, reported failure over a working installation, and re-running could not help.
   `--no-profile` stays, so a container with no writable profile can still install.
-- **Runs the fixed-point check before installing**, with no flag to skip it. Installing a subtly
-  wrong compiler is the worst outcome available here and the check costs about a second.
+- **Checks the compiler it built before installing**, with no flag to skip it, because installing a
+  subtly wrong compiler is the worst outcome available here.
+
+  **It is a weaker check than this section first promised, and the difference is worth stating.**
+  What it does: the new binary parses and type-checks wacc's own source — twenty-four files, the
+  largest input there is — and must report no diagnostics. 853 ms. What it does *not* do is compare
+  `W1` against `X1`: that needs wacc built twice and the bytes compared, and the Rust ladder has no
+  mode for it — `bootstrap/ts/selfhost.ts` does it through a driver, in TypeScript. So the suite
+  makes the fixed-point claim and the script makes the weaker one. Giving the ladder a self-check
+  mode would let the script make it too, and is the obvious next thing here.
 - **Works with no clone.** Piped from curl it checks for git, shallow-clones to a temp directory,
   and removes it on the way out.
 
@@ -72,7 +80,7 @@ visible rather than silent.
 
 ---
 
-## `wac self install` / `wac self uninstall` — **agreed**
+## `wac self install` / `wac self uninstall` — **done**
 
 Today install is a *task* (`wac task wac:install`) and uninstall is already a subcommand. Both
 become `self` subcommands, and the task is deleted.
@@ -87,9 +95,13 @@ install` would land on that fault line and take the name wacpkg will want.
 already am". That is the better meaning and it is what the three-host story needs, since each host
 has already built its artefact by the time install runs. The build half moves into `bootstrap.sh`.
 
-**The running program learns its own path** — a small widening of the capability surface, added
-straightforwardly rather than as a design note. `Cli`/`Core` gains it; the native host answers from
-`current_exe`, the JavaScript hosts from their own entry path.
+**It takes `--from PATH`, and the capability is deferred.** The plan was for the running program to
+learn its own path — agreed as a straightforward addition. On writing it the cost turned out larger
+than "straightforward": `Cli` lives in `std/platform.wac`, whose text is carried inside
+`packages/wacc/src/coretext.wac`, so adding a field changes the compiler's bytes and the seed's —
+and that file also carries a live ASCII-only hazard (`issues/lang/0253a`). That is a lot of blast
+radius for a convenience whose only caller, `bootstrap.sh`, already knows the path because it just
+built the file. Deferred rather than decided against; `--from` is what ships.
 
 ### The circular advice, which is a live bug — **agreed**
 
