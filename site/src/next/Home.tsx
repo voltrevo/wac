@@ -44,7 +44,7 @@ stage A        wacc, built by wac-L5
 stage B        wacc, built by stage A
 stage C        wacc, as stage B compiles it
 
-B == C         24 sources, 1,814 KB, identical`;
+B == C         25 sources, 1,820 KB, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
