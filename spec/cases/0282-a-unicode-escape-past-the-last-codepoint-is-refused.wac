@@ -1,0 +1,5 @@
+// expect: refused
+// spec:  §wac-str-uesc-bounds-q7nw2fk
+// why: the bounds are `string.fromCodepoint`'s, which traps above 10FFFF
+// from: design/lang/0013 D2
+export i32 f() { return "\u{110000}".len(); }

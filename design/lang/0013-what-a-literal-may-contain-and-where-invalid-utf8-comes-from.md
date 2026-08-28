@@ -264,7 +264,7 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | Step | State |
 | ---- | ----- |
 | 1 — `\'` and `\"` | **done**, 2026-08-28 — `codes_test.wac` holds both directions and both controls |
-| 2 — `\u{…}` | not started |
+| 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
 | 3 — the category rule | not started |
 | 4 — `u8` truncation | not started |
 | 5 — `isUtf8` / `toUtf8` | not started |

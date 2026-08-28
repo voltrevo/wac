@@ -315,6 +315,10 @@ Escapes are the string form's, with its own delimiter in place of the string's:
 `design/lang/0013` D1. `'\"'` is an error, as `"\'"` is: each is a second
 spelling of a character that needs no escaping where it sits.
 
+`\u{H…H}` is accepted here too, and denotes the codepoint rather than its UTF-8
+encoding — a character literal *is* an integer. `[§wac-charlit-uesc-w3mk7qj]`
+`'\u{1F600}'` is `128512`, the same value as `'😀'`.
+
 `[§wac-charlit-empty-m8qf5np]` `''` is a compile error.
 `[§wac-charlit-multi-w2nk7dr]` `'ab'` is a compile error.
 

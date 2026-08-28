@@ -54,14 +54,17 @@ i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
 string[] lexWhat() {
   return string[](
     "a string with no closing quote",
-    "an escape that is not one at all");
+    "an escape that is not one at all",
+    "a Unicode escape naming no codepoint");
 }
 string[] lexSrc() {
   return string[](
     "export i32 f() { string s = \"oops; return 0; }",
-    "export i32 f() { string s = \"a\\qb\"; return 0; }");
+    "export i32 f() { string s = \"a\\qb\"; return 0; }",
+    "export i32 f() { string s = \"\\u{110000}\"; return 0; }");
 }
-i32[] lexCode() { return i32[](2, 3); }   // errUnterminatedString, errUnknownEscape
+// errUnterminatedString, errUnknownEscape, errBadUnicodeEscape
+i32[] lexCode() { return i32[](2, 3, 8); }
 
 string[] parseWhat() {
   return string[]("a type name where a type must be", "nothing where an expression must be");
@@ -191,5 +194,53 @@ export string test_each_literal_form_escapes_its_own_delimiter_and_only_its_own(
           -1, "a double quote escaped inside a string still is one");
   t.eqI32(firstCode(dumpErrors("export i32 f() { return '\\''; }".toBytes())), -1,
           "a single quote escaped inside a character literal still is one");
+  return t.report();
+}
+
+/**
+ * `\u{H…H}` spells any character, and its bounds are `string.fromCodepoint`'s.
+ *
+ * `design/lang/0013` D2. One escape that can spell any character, validated so it cannot produce
+ * invalid UTF-8 — which is what step 3 leans on, since forbidding raw control characters is only
+ * reasonable once every character has a spelling.
+ *
+ * **The bounds are deliberately the runtime's**, `§wac-str-fromcp-trap-h6qw2np`: a negative value,
+ * one above `0x10FFFF`, or a surrogate in `0xD800..0xDFFF` traps there and is refused here. One rule
+ * rather than two that drift, and a literal cannot express what the equivalent call would refuse.
+ *
+ * **Both directions, and the boundaries on both sides of each edge.** A rule stated as "at most
+ * 10FFFF, not a surrogate" is three edges, and a test that only names the bad side passes against an
+ * implementation that refuses everything. `D7FF` and `E000` sit either side of the surrogate block;
+ * `10FFFF` is the top and `110000` is one past it.
+ *
+ * Values are checked by `charlit_test`-style execution elsewhere; what this file owns is the code.
+ */
+export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
+  T t = T.create();
+
+  string[] refused = string[](
+    "\\u{110000}",     // one past the top
+    "\\u{D800}",       // the first surrogate
+    "\\u{DFFF}",       // the last surrogate
+    "\\u{}",           // no digits
+    "\\u{1234567}",    // seven, and seven cannot be in range
+    "\\u{XY}",         // not hex
+    "\\u41");          // no braces at all
+  for (i32 i = 0; i < refused.len(); i++) {
+    string src = "export i32 f() { string s = \"" + refused[i] + "\"; return 0; }";
+    t.eqI32(firstCode(dumpErrors(src.toBytes())), 8, "refused: " + refused[i]);
+  }
+
+  string[] taken = string[](
+    "\\u{0}",          // the bottom
+    "\\u{7F}",         // one byte
+    "\\u{D7FF}",       // just below the surrogates
+    "\\u{E000}",       // just above them
+    "\\u{10FFFF}",     // the top
+    "\\u{10ffff}");    // and lowercase hex is the same value
+  for (i32 i = 0; i < taken.len(); i++) {
+    string src = "export i32 f() { string s = \"" + taken[i] + "\"; return 0; }";
+    t.eqI32(firstCode(dumpErrors(src.toBytes())), 0 - 1, "taken: " + taken[i]);
+  }
   return t.report();
 }

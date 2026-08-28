@@ -11,7 +11,8 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
-import { escapeValue, isStringEscape, lex, Lexed, tokenStride } from "./lex.wac";
+import { escapeValue, isStringEscape, lex, Lexed, tokenStride, unicodeEscapeEnd,
+         unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -13640,12 +13641,28 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
 export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   i32 start = lexed.tokens[tok * tokenStride() + 1];
   i32 len = lexed.tokens[tok * tokenStride() + 2];
+  // **Sized by the span, which is always enough.** `\\u{1F600}` is nine source bytes and four
+  // encoded ones, and every other escape shrinks too; no escape encodes to more bytes than it is
+  // written with, so the literal's own length bounds the result.
   u8[] out = u8[len]();
   i32 n = 0;
   i32 i = start + 1;
   i32 end = start + len - 1;
   while (i < end) {
     if (src[i] == 92 && i + 1 < end) {
+      // **`\\u{…}` is the one escape that is not one byte.** It denotes a character, so it encodes
+      // as UTF-8 here — which is what keeps a literal valid UTF-8 by construction, `design/lang/0013`
+      // D2 and D4. The lexer has already refused a malformed one, so a negative answer here cannot
+      // reach a module; it decodes as the plain `u` rather than trapping, because this runs on
+      // sources that may already carry a diagnostic and a second failure would bury the first.
+      if (src[i + 1] == 'u') {
+        i32 cp = unicodeEscapeValue(src, i + 1, end);
+        if (cp >= 0) {
+          n = n + utf8Into(out, n, cp);
+          i = unicodeEscapeEnd(src, i + 1, end);
+          continue;
+        }
+      }
       out[n] = escapeValue(src[i + 1]);
       n = n + 1;
       i = i + 2;
@@ -13669,6 +13686,11 @@ bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
     if (src[i] != 92) { i = i + 1; continue; }
     if (i + 1 >= end) { return false; }
     i32 c = src[i + 1];
+    if (c == 'u') {
+      if (unicodeEscapeValue(src, i + 1, end) < 0) { return false; }
+      i = unicodeEscapeEnd(src, i + 1, end);
+      continue;
+    }
     if (!isStringEscape(c)) { return false; }
     i = i + 2;
   }

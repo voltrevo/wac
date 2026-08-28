@@ -17,7 +17,31 @@ string emoji = "hello 😀";
 string escaped = "line1\nline2";
 ```
 
-Escape sequences: `\n`, `\t`, `\r`, `\\`, `\"`, `\0`.
+Escape sequences: `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, and `\u{H…H}`.
+
+### `\u{H…H}`
+
+One to six hex digits, naming a Unicode scalar. In a string it encodes as UTF-8;
+in a character literal it *is* the integer, so `'\u{1F600}'` is `128512`.
+
+```wac
+export i32 letterFromEscape() { return "\u{41}".toBytes()[0]; }
+export i32 emojiEscapeLen()   { return "\u{1F600}".len(); }
+```
+
+`[§wac-str-uesc-j4kq8mv]` `letterFromEscape()` returns `65` and
+`emojiEscapeLen()` returns `4`.
+
+**Its bounds are `string.fromCodepoint`'s**, below: a value above `0x10FFFF` or a
+surrogate in `0xD800..0xDFFF` is a compile error, exactly as it traps there. One
+rule rather than two that can drift apart — a literal cannot express what the
+equivalent call would refuse.
+
+`[§wac-str-uesc-bounds-q7nw2fk]` `"\u{110000}"`, `"\u{D800}"`, `"\u{}"` and a
+seven-digit escape are compile errors. `"\u{10FFFF}"` is not.
+
+This is the escape that makes every character spellable, which is what lets a
+literal forbid the raw control characters without losing any of them.
 
 `[§wac-str-literal-k8fn2qp]` `s.len()` is `5`.
 `[§wac-str-emoji-m4jw7rk]` `emoji.len()` is `10` (byte length, not char count).

@@ -1,0 +1,7 @@
+// expect: answers f = 1
+// spec:  §wac-charlit-uesc-w3mk7qj
+// why: a character literal is an integer, so the escape denotes the codepoint and not its encoding
+// from: design/lang/0013 D2
+export i32 f() {
+  return '\u{1F600}' == 128512 && '\u{1F600}' == '😀' && '\u{41}' == 'A' ? 1 : 0;
+}

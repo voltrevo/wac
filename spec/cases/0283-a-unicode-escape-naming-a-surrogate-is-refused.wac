@@ -1,0 +1,5 @@
+// expect: refused
+// spec:  §wac-str-uesc-bounds-q7nw2fk
+// why: a surrogate is not a scalar value, and encoding one would make the literal invalid UTF-8
+// from: design/lang/0013 D2
+export i32 f() { return "\u{D800}".len(); }

@@ -19,7 +19,8 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
-import { escapeValue, tokenStride } from "./lex.wac";
+import { escapeValue, tokenStride, unicodeEscapeEnd, unicodeEscapeValue,
+         utf8Into } from "./lex.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
 export struct Pr {
@@ -106,8 +107,24 @@ export struct Pr {
     while (i < end) {
       i32 c = this.src[i];
       if (c == '\\' && i + 1 < end) {
-        i32 e = this.src[i + 1];
+        i32 escAt = i + 1;
+        i32 e = this.src[escAt];
         i += 2;
+        // **Decoded and re-escaped, like every other escape here.** This printer's contract above is
+        // "unescape and then re-escape by the same rule, which makes the comparison exact", so
+        // `"\\u{41}"` and `"A"` must print alike — they are the same string, and a printer that made
+        // them differ would report a difference the compiled modules do not have. `\\u{…}` is the one
+        // escape that is not one byte, so it goes through the same UTF-8 encoder the emitter uses.
+        if (e == 'u') {
+          i32 cp = unicodeEscapeValue(this.src, escAt, end);
+          if (cp >= 0) {
+            u8[] enc = u8[4]();
+            i32 got = utf8Into(enc, 0, cp);
+            for (i32 k = 0; k < got; k++) { this.escByte(enc[k]); }
+            i = unicodeEscapeEnd(this.src, escAt, end);
+            continue;
+          }
+        }
         // `escapeValue` answers for an unknown escape too, keeping the character — which is what
         // this printer wants: the lexer has already reported the spelling, and printing something
         // else here would make one mistake read as two.
@@ -142,7 +159,15 @@ i32 charLitValue(u8[] s, i32 start, i32 len) {
   if (len > 1 && s[end - 1] == '\'') { end = end - 1; }
   i32 i = start + 1;
   if (i >= end) { return 0; }
-  if (s[i] == '\\' && i + 1 < end) { return escapeValue(s[i + 1]); }
+  if (s[i] == '\\' && i + 1 < end) {
+    // `'\\u{1F600}'` *is* the integer 128512 — a character literal is a codepoint, so unlike in a
+    // string there is no encoding step. `design/lang/0013` D2.
+    if (s[i + 1] == 'u') {
+      i32 cp = unicodeEscapeValue(s, i + 1, end);
+      if (cp >= 0) { return cp; }
+    }
+    return escapeValue(s[i + 1]);
+  }
   // A literal character, decoded from UTF-8 so a non-ASCII one gives its codepoint.
   i32 c = s[i];
   if (c < 0x80) { return c; }

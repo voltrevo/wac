@@ -1,0 +1,9 @@
+// expect: answers f = 69
+// spec:  §wac-str-uesc-j4kq8mv
+// why: `\u{H...H}` encodes as UTF-8 in a string — one byte for ASCII, four for an emoji
+// from: design/lang/0013 D2
+export i32 f() {
+  i32 a = "\u{41}".toBytes()[0];      // 65, the letter A
+  i32 n = "\u{1F600}".len();          // 4, the emoji's UTF-8 length
+  return a + n;
+}

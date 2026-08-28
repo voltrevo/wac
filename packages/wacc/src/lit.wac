@@ -19,6 +19,8 @@
 // makes the whole of this ordinary arithmetic. `10^350` is seventy-three limbs; a literal with eight
 // hundred digits is under two hundred. Nothing here allocates per digit.
 
+import { escapeValue, unicodeEscapeValue } from "./lex.wac";
+
 /** How many limbs a big integer is using — its length with the leading zeros dropped. */
 i32 bigLen(i32[] a, i32 n) {
   i32 k = n;
@@ -276,20 +278,22 @@ export f64 floatLit(string s) {
 /**
  * The scalar a character literal denotes: an escape, or the UTF-8 sequence spelled between quotes.
  *
- * The escapes are the ones the language writes — and `\'`, which no string literal needs and every
- * character literal of a quote does.
+ * **This was the seventh copy of the escape table**, and the one that decides what a program
+ * *computes* — `print.wac` only prints and `emit.wac` only handles strings. It listed all seven
+ * escapes including `\"`, which `design/lang/0013` D1 has since removed, and it knew nothing of
+ * `\u{…}`: `'\u{1F600}'` came out as `117`, the letter `u`, with no diagnostic anywhere because the
+ * lexer had accepted the literal and this is a different file. Found by running the feature rather
+ * than by reading, which is the only way a seventh copy gets found.
  */
 export i64 charValue(u8[] a) {
   if (a[1] == 92) {
-    i32 e = a[2];
-    if (e == 110) { return 10; }    // \n
-    if (e == 116) { return 9; }     // \t
-    if (e == 114) { return 13; }    // \r
-    if (e == 48) { return 0; }      // \0
-    if (e == 92) { return 92; }
-    if (e == 39) { return 39; }
-    if (e == 34) { return 34; }
-    return e as i64;
+    // `\u{…}` denotes the codepoint itself here rather than UTF-8 bytes: a character literal *is*
+    // an integer, so `'\u{1F600}'` is 128512. `design/lang/0013` D2.
+    if (a[2] == 'u') {
+      i32 cp = unicodeEscapeValue(a, 2, a.len());
+      if (cp >= 0) { return cp as i64; }
+    }
+    return escapeValue(a[2]) as i64;
   }
   // Otherwise a UTF-8 sequence, decoded from its lead byte exactly as `str_idx` decodes one.
   i32 b0 = a[1];
