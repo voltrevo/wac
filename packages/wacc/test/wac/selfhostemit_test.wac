@@ -162,9 +162,15 @@ const string STAGE_A = ".cache/_selfhost_stageA.txt";
  * What produced stage A's answers: the driver, and the compiler that runs it.
  *
  * The driver carries every one of wacc's sources as string literals, so its checksum moves whenever
- * any of them does — one number covering the whole input. The other half is the *reference*, which is
- * `compiler/` and `harness/ladderRun.ts`: its newest modification time, by the rule
- * `tools/seedFresh.test.ts` uses for the seed. Both halves matter and neither implies the other.
+ * any of them does — one number covering the whole input. The other half is the compiler that runs
+ * it: `harness/ladderRun.ts` and the ladder under `bootstrap/`, by their newest modification time,
+ * which is the rule `tools/seedFresh.test.ts` uses for the seed. Both halves matter and neither
+ * implies the other.
+ *
+ * **It walked compiler/ until 2026-08-28**, which was the right directory while the reference
+ * produced stage A. When that directory went the walk answered "cannot say" and the cache quietly
+ * stopped being used — a test that got slower and said nothing about it, which is the shape this
+ * key exists to prevent, pointed at itself.
  *
  * The binary is in there too, and it is the half a source walk cannot see: stage B is emitted by the
  * seed inside `wac` and *run* by its runtime, so a rebuilt host can change this test's answer with
@@ -176,12 +182,16 @@ string stageAKey(Cli cli, u8[] driver) {
   if (run.exists) { newest = run.modifiedMillis; }
   Stat bin = cli.stat(cli.cwd().wait() + "/native/v8/target/release/wac").wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
-  string[]? names = cli.readDir("compiler").wait();
-  if (names is null) { return ""; }
-  string[] here = names!;
-  for (i32 i = 0; i < here.len(); i++) {
-    Stat f = cli.stat("compiler/" + here[i]).wait();
-    if (f.exists && f.modifiedMillis > newest) { newest = f.modifiedMillis; }
+  // The rungs and the JavaScript that drives them: what wac-L5 is built out of.
+  string[] dirs = string[]("bootstrap/boot", "bootstrap/js", "bootstrap/drivers");
+  for (i32 d = 0; d < dirs.len(); d++) {
+    string[]? names = cli.readDir(dirs[d]).wait();
+    if (names is null) { return ""; }
+    string[] here = names!;
+    for (i32 i = 0; i < here.len(); i++) {
+      Stat f = cli.stat(dirs[d] + "/" + here[i]).wait();
+      if (f.exists && f.modifiedMillis > newest) { newest = f.modifiedMillis; }
+    }
   }
   // An empty key is "cannot say", and a cache that cannot say is not read or written.
   if (newest == (0 as i64)) { return ""; }

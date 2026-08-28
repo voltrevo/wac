@@ -533,7 +533,7 @@ string[] rootedPaths(string text) {
   // repository's roots had to learn about it separately and this one did not. A backticked `core/…`
   // path had therefore never been checked: `core/`'s own coverage driver was deleted with four live
   // references to it still in the tree, and this test stayed green until `core/` was added here.
-  string[] roots = string[]("packages/", "tools/", "harness/", "compiler/", "spec/", "design/",
+  string[] roots = string[]("packages/", "tools/", "harness/", "bootstrap/", "spec/", "design/",
                             "issues/", "native/", "site/", "core/", "docs/");
   string[] out = string[512](fill: "");
   i32 n = 0;

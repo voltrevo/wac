@@ -172,7 +172,7 @@ wac-L5 does not emit bindgen. The first compiler in the chain is the one that ha
 without help, so `bootstrap/drivers/spec_cases.wac` is concatenated onto its source and every value crosses
 as an i32. Four million V8 calls for a 1.6 MB answer.
 
-**The manifest is written, and checked rather than trusted.** `bootstrap/rust-ladder/src/manifest.rs`
+**The manifest is written, and checked rather than trusted.** bootstrap/rust-ladder/src/manifest.rs
 assembles the `wac.manifest` section — everything in it is answered by wacc (`exportSigsFiles`) or
 read off the module's own export list, which is where `native.ts` reads the `bind` table from too.
 `bootstrap/ts/manifest.test.ts` builds one program both ways and compares the two manifests byte for byte,

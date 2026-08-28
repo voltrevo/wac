@@ -693,7 +693,7 @@ export string coreFile(string path) {
 /**
  * Does this specifier name a module inside the compiler rather than a file on disk?
  *
- * The wac twin of `isBuiltinSpecifier` in compiler/wacCore.ts, and the two must agree: a built-in
+ * The wac twin of `isBuiltinSpecifier` in `compiler/wacCore.ts`, and the two must agree: a built-in
  * one resolver knows about and the other does not is a module the graph reads and the linker cannot
  * find. Both are generated from the same list, which is the point of generating them.
  */

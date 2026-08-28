@@ -55,22 +55,10 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
     }
   }
 
-  // **The omission is the point of the directory.** `jsx.wac` goes to wacc and not to the
-  // reference, so the reference's embedding must not contain `Node` — a generator that wrote one
-  // text into both would pass every check above and delete a documented difference.
-  FileResult ref = cli.readFile("compiler/wacCore.ts").wait();
-  t.isTrue(ref.ok, "the reference embedding is there");
-  if (ref.ok) {
-    string text = string.fromBytes(ref.bytes);
-    t.isTrue(contains(text, "export enum Read"), "and it carries Read");
-    t.isFalse(contains(text, "export enum Node"), "and not Node — the reference has no JSX frontend");
-    // And the ninth omission, which is a whole tree rather than one declaration: the reference
-    // carries no `std` at all, because `platform.wac` uses lambdas and this frontend has none. It
-    // must still *know* the name, so that `std/platform.wac` is refused with the reason instead of
-    // reported as an unknown module.
-    t.isFalse(contains(text, "export struct Cli"), "and no std — the reference has no lambdas");
-    t.isTrue(contains(text, "STD_ABSENT"), "but it knows the name, so it can refuse it by name");
-  }
+  // **The omission was the point of the directory**, and there is one embedding now. `jsx.wac` went
+  // to wacc and not to the reference, so the reference's copy had to *not* contain `Node` — a
+  // generator writing one text into both would have passed every check above while deleting a
+  // documented difference. The reference is deleted, so the difference has nowhere to be.
   FileResult wacc = cli.readFile("packages/wacc/src/coretext.wac").wait();
   t.isTrue(wacc.ok, "wacc's embedding is there");
   if (wacc.ok) {
