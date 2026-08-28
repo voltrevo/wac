@@ -35,7 +35,7 @@ Four implementations against one, which is what made the reading unambiguous bef
 
 | | `NET` | `ENV` |
 |---|---|---|
-| `packages/platform/src/platform.wac` | 4 | 8 |
+| packages/platform/src/platform.wac | 4 | 8 |
 | `packages/platform/host/ops.ts` | 4 | 8 |
 | `packages/wacc/src/manifest.wac` | 4 | 8 |
 | `native/src/main.rs` (wasmtime) | 4 | 8 |
@@ -69,14 +69,14 @@ them by name at both sites.
 And `wacland` grew a second half to stage 6 — a `--canenv` child arm and `childEnv`, asking with
 `GRANT_ENV` and `GRANT_NONE` and requiring the granted one to read `WACLAND_PROBE` — so the encoding
 is now exercised at a bit the two encodings disagreed about.
-`packages/platform/test/native.test.ts` asserts both halves and runs the same program on the Deno
+packages/platform/test/native.test.ts asserts both halves and runs the same program on the Deno
 host and the wasmtime host, comparing transcripts.
 
 ## What this did not settle
 
 **The new stage does not run on the V8 host**, which is the host the bug was on.
-`packages/platform/test/native.test.ts` builds `CRATE = "native"` — wasmtime — and
-`packages/platform/test/v8host.test.ts` runs `boxsh` with only `read` and `write`. Neither drives
+packages/platform/test/native.test.ts builds `CRATE = "native"` — wasmtime — and
+packages/platform/test/v8host.test.ts runs `boxsh` with only `read` and `write`. Neither drives
 `wacland`.
 
 Driving it by hand does not work yet either: built with `buildNative` and run as

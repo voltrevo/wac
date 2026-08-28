@@ -57,7 +57,7 @@ guessed that the conversion back used the signed instruction; it does not.
 
 ## Why nothing caught it
 
-`packages/wacc/test/emitSweep.test.ts` compared an answer to an answer. When **wacc** trapped the
+packages/wacc/test/emitSweep.test.ts compared an answer to an answer. When **wacc** trapped the
 result became `threw: …` and mismatched, which is caught; when the **reference** trapped the cell was
 skipped whole — `trapped++; continue;` — so a program where the reference refuses at runtime and wacc
 quietly answers was outside the comparison. The count was printed as `54 trap` and read as agreement.

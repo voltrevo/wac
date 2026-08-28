@@ -13,7 +13,7 @@
 answered and gone, so a server killed immediately after a session ends can be killed **in the middle of
 it** — and the next boot finds the world as it was before that session.
 
-Found while writing the step-4 test in `packages/ssh/test/server.test.ts`. A session built
+Found while writing the step-4 test in packages/ssh/test/server.test.ts. A session built
 `/etc/passwd` and two users' `authorized_keys`, the client exited 0, the harness stopped the server, and
 the next server booted an image with no users in it. Adding **one more round trip** before stopping —
 any command at all — made it pass, every time. The test keeps that second connection and says why, which
@@ -64,8 +64,8 @@ one after each connection is the whole cost twice. The loop still saves when the
 which is the case the old line was really for: a client that hung up *mid-command* has changed
 whatever it changed, and nothing inside the session got as far as writing.
 
-**Both workarounds are gone**, and that is the test. `packages/ssh/test/server.test.ts` and
-`packages/platform/test/arrival_users.test.ts` each carried an extra round trip with a comment saying
+**Both workarounds are gone**, and that is the test. packages/ssh/test/server.test.ts and
+packages/platform/test/arrival_users.test.ts each carried an extra round trip with a comment saying
 it was load-bearing; both now stop the server the moment the writing session returns, and each asserts
 on **the image file itself** with nothing running — which proves more than the old assertion did,
 since it reads what survived rather than what the writing server still remembered.

@@ -95,7 +95,7 @@ away and nobody is waiting for the output.
 
 ## The reproduction is deterministic now
 
-`packages/ssh/test/server.test.ts`, "a client that closes its stdin does not interrupt the command
+packages/ssh/test/server.test.ts, "a client that closes its stdin does not interrupt the command
 that is running — 0133": a 200,000-iteration shell loop, then `^D`, then the writer closed. The loop
 takes about a second and a half, so the EOF cannot arrive at the prompt instead — which is the case
 that always passed. It asserts `done=0 ran=200000` rather than merely "something printed", so a

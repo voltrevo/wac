@@ -46,7 +46,7 @@ higher percentage**, because the points that were hard to reach are the ones tha
 `packages/fs` under wacc reports a *better* number while measuring 439 fewer decisions than it did
 the day before, and nothing in the output says so.
 
-Four entries in `packages/fs/cov.ts` do say so, indirectly, and they are the only reason this was
+Four entries in packages/fs/cov.ts do say so, indirectly, and they are the only reason this was
 found: the ledger has categories whose rule matches an uncovered `case` arm, and under wacc they
 report `matches no uncovered point — delete it or fix it`. That message reads as "your ledger is
 stale". It is not: the ledger is right and the instrument stopped looking.
@@ -152,7 +152,7 @@ key includes the kind.
 
 Its first point, `gzip.wac:139`, needed no exemption and is now **driven**: 5 000 bytes over an
 alphabet of 246 leave the dynamic container at 5 002 against stored's 5 023, so compression fails to
-shrink anything and is still the better answer. `packages/gzip/test/gzip_best.test.ts` asserts the
+shrink anything and is still the better answer. packages/gzip/test/gzip_best.test.ts asserts the
 guarantee that arm implements — *output is never larger than stored*, which `gzip.wac` states in
 prose and nothing had ever checked.
 

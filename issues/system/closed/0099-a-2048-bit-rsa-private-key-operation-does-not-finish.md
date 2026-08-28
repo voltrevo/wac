@@ -8,7 +8,7 @@
 
 ## Reproduction
 
-`packages/tls/test/rsa_server_interop.test.ts` originally generated its fixture with
+packages/tls/test/rsa_server_interop.test.ts originally generated its fixture with
 `openssl req -x509 -newkey rsa:2048`. Our TLS server has to sign one CertificateVerify with
 that key, which is one `modPowSecret` over a 2048-bit modulus.
 
@@ -87,7 +87,7 @@ than a crash, and it cost this issue its diagnosis. Both TLS interop drivers now
 
 ## Now
 
-`packages/tls/test/rsa_server_interop.test.ts` runs **both** sizes against OpenSSL, since 1024 alone
+packages/tls/test/rsa_server_interop.test.ts runs **both** sizes against OpenSSL, since 1024 alone
 is what hid this:
 
     tls: OpenSSL completes a handshake with our server's 1024-bit RSA certificate ... ok (344ms)

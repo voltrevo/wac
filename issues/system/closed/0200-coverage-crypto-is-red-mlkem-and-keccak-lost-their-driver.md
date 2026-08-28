@@ -74,7 +74,7 @@ this stays red without stopping anybody, which is how it survived three gate run
 
 ## 127 was mostly not the package — 2026-08-18, agent-c
 
-The number this issue quotes was measured by a loop in `packages/crypto/cov.ts` that filtered on the
+The number this issue quotes was measured by a loop in packages/crypto/cov.ts that filtered on the
 package prefix alone, while the table beside it — `report()` in `harness/wacCoverage.ts` — excludes test
 files, "because a coverage report is about the package". So the two disagreed, and the list was the one
 that was wrong:

@@ -18,7 +18,7 @@ in a third file that mentions neither declaration.
 What was missing is that nobody asked. `buildLinked` checked `env.full` on either side of the emit and
 never `env.ambiguous`, so it returned the bare module with an empty `blocked` — and `wac build` wrote an
 eight-byte file and reported success. It now reports the decline, in the words `blockedOf` already has and
-`packages/wacc/test/linkEmit.test.ts` already pins: *the name `Case`, which more than one file declares*.
+packages/wacc/test/linkEmit.test.ts already pins: *the name `Case`, which more than one file declares*.
 
 So the silence is gone at every layer:
 
@@ -180,7 +180,7 @@ dropping the no-argument exports it has just declared in the manifest.
 
 ## The lane splits a directory, which changes the blast radius
 
-`tools/runTests.ts` splits a directory of more than twelve test files into chunks, each building its own
+tools/runTests.ts splits a directory of more than twelve test files into chunks, each building its own
 aggregate — so two colliding names only meet when they land in the same chunk. In this case one of them is
 `ast.wac`'s, reached by every test that uses wacc's API, so every chunk holding the offending file breaks
 and the other chunks do not. Before the `0155` fix that meant 60 failures from a whole-directory run and

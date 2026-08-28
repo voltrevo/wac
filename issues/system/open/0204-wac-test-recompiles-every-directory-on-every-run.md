@@ -7,8 +7,8 @@
 - **Symptom:** no error
 
 **Both halves have landed and each has a canaried test**: `wac test`'s per-directory and lone-file
-module cache (agent-c, 2026-08-19, `tools/wac/testmodcache_test.wac`) and `wac build`'s artefact cache
-(agent-a, 2026-08-24, `tools/wac/buildcache_test.wac`), measured at 4 192 ms → 245 ms on `box.wac`.
+module cache (agent-c, 2026-08-19, tools/wac/testmodcache_test.wac) and `wac build`'s artefact cache
+(agent-a, 2026-08-24, tools/wac/buildcache_test.wac), measured at 4 192 ms → 245 ms on `box.wac`.
 This stays open for one reason: **the section headed "`wac build` is deliberately *not* cached"
 below is a decision this repository recorded and I then reversed.** The hazard it named was real and
 arrived exactly as written — see the two sections at the end — and the fix is `--no-cache` plus a hit
@@ -31,7 +31,7 @@ pays full price every time.
 
 ## Why it is worth a number rather than a guess
 
-`tools/runTests.ts` now prints where the suite's time goes, and the answer was not what anyone
+tools/runTests.ts now prints where the suite's time goes, and the answer was not what anyone
 assumed:
 
 ```
@@ -301,7 +301,7 @@ An environment variable rather than a host function, deliberately. Reading it ne
 compiler already holds for `$WAC_HOME`; a host function would have to be written three times — native,
 Deno, browser — for a value that is *information* rather than authority. The caller's value wins if one
 is already set, which is how a test forces a miss.
-`tools/wac/compilerid_test.wac` pins all three properties, canaried by taking the `set_var` out: *"the
+tools/wac/compilerid_test.wac pins all three properties, canaried by taking the `set_var` out: *"the
 payload was not told which compiler is running it — got `(unset)`"*.
 
 ### And the shape of the cache itself, now that the ingredients are in hand
@@ -363,7 +363,7 @@ compiler made it is the stale hit, so its absence is a permanent miss rather tha
 ### The test, and the claim byte equality alone cannot make
 
 A fresh compile is deterministic, so *"cold and warm agree"* is equally true of a cache that stores and
-never reads — the test would have passed on a cache that saved nothing. `tools/wac/buildcache_test.wac`
+never reads — the test would have passed on a cache that saved nothing. tools/wac/buildcache_test.wac
 closes that by **poisoning**: after a build, the single entry is overwritten with a recognisable string
 and the build run again, which must hand back the marker. The only way to produce it is to have read
 the cache.

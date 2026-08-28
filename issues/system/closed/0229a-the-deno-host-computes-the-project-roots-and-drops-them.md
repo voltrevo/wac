@@ -15,7 +15,7 @@ one of them, through the command `docs/your-own-project.md` tells a reader to ru
     wacc (the default)   wacc cannot compile main.wac yet — an import of a file that was not supplied
     reference            `@/src/lib.wac` needs a project: no `wac.json5` above main.wac
 
-Both compilers, in different words, from any depth. And through `tools/emitgen.ts`, which is the
+Both compilers, in different words, from any depth. And through tools/emitgen.ts, which is the
 author's own reproduction:
 
     src/rot13_test.wac: `@/src/rot13.wac` needs a project: no `wac.json5` above src/rot13_test.wac
@@ -65,9 +65,9 @@ runtime surface was complete; nothing called it. So this is wiring, not new mech
   compiler routes get `{ roots, base }`. `nativeWire` too: it is where the manifest's struct and
   signature tables come from, so a type declared in a file reached only through `@/` would otherwise be
   missing from the boundary of a module that compiled.
-- `harness/referenceCompile.ts` (new) — `compileEntry(entry, options)`, one function doing the walk and
+- harness/referenceCompile.ts (new) — `compileEntry(entry, options)`, one function doing the walk and
   the compile together, because the alternative was the same four-line edit at seven call sites and
-  that is how the omission spread. `tools/emitgen.ts`, `check.ts`, `validate.ts`, `coverage.ts` and
+  that is how the omission spread. tools/emitgen.ts, `check.ts`, `validate.ts`, `coverage.ts` and
   `bindcheck.ts` call it and can no longer omit an argument they do not know exists.
 - `packages/wacc/src/api.wac` — `describeFilesIn` and `diagnoseFilesIn`, the two members of the family
   that were missing, three lines each beside `buildFilesIn`.

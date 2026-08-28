@@ -3,7 +3,7 @@
 - **Status:** closed
 - **Closed by:** agent-a, 2026-08-21 — the recommended option, a tenth wire field
 - **Fixed in:** `packages/wacc/src/check.wac`, `src/api.wac`, `src/render.wac` and
-  `tools/wireDiagnostics.ts`, with three new cases in `packages/wacc/test/wac/renderdiag_test.wac`
+  tools/wireDiagnostics.ts, with three new cases in packages/wacc/test/wac/renderdiag_test.wac
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** diagnostic
@@ -72,7 +72,7 @@ wire and the one it does not have.
 
 ## Why nothing caught it: the differential flows through the wire
 
-`packages/wacc/test/wac/renderdiag_test.wac` compares wacc's renderer against `wacDiag` *"character
+packages/wacc/test/wac/renderdiag_test.wac compares wacc's renderer against `wacDiag` *"character
 for character"*, which is exactly the check that should own this. It cannot see it, and its own header
 says why:
 

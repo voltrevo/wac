@@ -9,7 +9,7 @@
 
 ## What happens
 
-`packages/wacc/test/corpusMutate.test.ts` rung 3 breaks each corpus file one way and requires the
+packages/wacc/test/corpusMutate.test.ts rung 3 breaks each corpus file one way and requires the
 checker to report at least 97% of them. Which way a file is broken is
 
 ```ts
@@ -20,7 +20,7 @@ over a corpus that `packages/wacc/test/corpus.ts` sorts by path. So the mutation
 function of **its index in an alphabetical list** — and inserting one file anywhere shifts every
 alphabetically-later file onto a different mutation.
 
-Measured, by adding a single trivial `packages/aaa/src/probe.wac` that sorts before everything:
+Measured, by adding a single trivial packages/aaa/src/probe.wac that sorts before everything:
 
 | | broken | reported | misses |
 |---|---:|---:|---|

@@ -43,7 +43,7 @@ What the rule *does* protect is real, and a named re-export keeps all of it:
 ## What it costs today, measured
 
 `wac-mono` has integer formatting in four places: `packages/fmt/src/itoa.wac` (the natural home, and its
-own comment says so), `packages/box/src/lib/num.wac`, `packages/sh/src/program.wac`, and
+own comment says so), packages/box/src/lib/num.wac, packages/sh/src/program.wac, and
 `packages/wactest`'s `itoa64.wac`/`utoa64.wac`. Two of the copies had bugs the others did not — one
 printed `"-"` for i32's minimum, one silently ignored a leading `-` in `atoi`.
 

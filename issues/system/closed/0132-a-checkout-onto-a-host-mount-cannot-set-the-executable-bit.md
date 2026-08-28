@@ -68,7 +68,7 @@ wrote, so a caller can see it rather than discovering it from `git status`.
 
 **Adding the capability is a decision about the surface, not a patch.** A new `Cli` member has to be
 implemented on all four hosts — Deno, Node, browser and the wasmtime one in `native/` — and it lands in
-`packages/platform/test/conformance.test.ts`'s two-host ledger, currently 31 of 38 opcodes compared.
+packages/platform/test/conformance.test.ts's two-host ledger, currently 31 of 38 opcodes compared.
 Some of that is not obvious: a browser's OPFS has no mode bits at all, so the browser host has to answer
 something, and answering `FAULT_UNSUPPORTED` there means the *capability* is present and the *backing*
 refuses — which is a distinction the fault vocabulary can express (0117 added the word) and which the
@@ -131,6 +131,6 @@ Both halves have real-git oracles rather than a claim:
 ### Still not done
 
 No two-host comparison of `SET_EXECUTABLE`; it is a `gap` entry in
-`packages/platform/test/conformance.test.ts` with the reason. The mask arithmetic exists three times
+packages/platform/test/conformance.test.ts with the reason. The mask arithmetic exists three times
 — Deno, Node, Rust — and only the Deno copy is exercised, so a wrong mask in the other two would not
 be caught. That is worth a `native_hostfs` case next time one is added.

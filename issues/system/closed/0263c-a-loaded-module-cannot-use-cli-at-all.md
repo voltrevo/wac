@@ -52,7 +52,7 @@ differs is the work here.
 
 `issues/system/0257c`'s last row. `covdump` cannot move out of `native/v8/src/main.rs` until this is
 fixed: the command's whole job is to run a module *with its declared world* and read the counters
-afterwards, and `tools/wac/covdump_test.wac`'s
+afterwards, and tools/wac/covdump_test.wac's
 `test_covdump_builds_a_world_so_a_grant_is_refused_rather_than_absent` is the case that catches it —
 a module built `--allow-read` must print `READ OK`, and through `Cli.load` it prints nothing at all
 because `main` traps before it logs.
@@ -218,4 +218,4 @@ existing differential caught it. `load_test.wac` was green before the change; I 
 ## What it unblocks
 
 `issues/system/0257c`'s last row. `covdump` can move now: `packages/wac/src/counters.wac` is written and
-`tools/wac/covdump_test.wac`'s world case is what will say so.
+tools/wac/covdump_test.wac's world case is what will say so.

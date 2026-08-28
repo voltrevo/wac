@@ -367,7 +367,7 @@ is the whole of what the reference was still for.
 
 ### Done — 2026-08-28
 
-`compiler/` is deleted: 32 files, 35,352 lines, with `bootstrap/ts/same_fixed_point.ts` and its
+`compiler/` is deleted: 32 files, 35,352 lines, with bootstrap/ts/same_fixed_point.ts and its
 test. `deno.json` has no `imports` block, because the `wac/` mapping was the only entry in it.
 
 **The from-nothing path is verified rather than assumed.** `bash tools/seed.sh --bootstrap` builds
@@ -378,7 +378,7 @@ What broke on deletion and what it became:
 
 | what | why it pointed there | now |
 |---|---|---|
-| `tools/wac/referencecallers_test.wac` | it policed which files could reach the reference | deleted with the thing it policed |
+| tools/wac/referencecallers_test.wac | it policed which files could reach the reference | deleted with the thing it policed |
 | `tools/genCore.ts` | generated `core`'s declarations into *both* compilers so they could not drift | one output |
 | `tools/wac/genCore_test.wac` | asserted the omission that made two embeddings worth having | that difference has nowhere to be |
 | `selfhostemit_test`'s cache key | walked `compiler/` to date stage A | walks `bootstrap/`; it had gone quiet and the test just got slower |

@@ -11,7 +11,7 @@
 ## What
 
 `namesLinked` answers "what each emitted function is called, in the order the module emits them", and
-`packages/wacc/test/names.test.ts`'s *rung 4: every exported function is where `namesFiles` says it
+packages/wacc/test/names.test.ts's *rung 4: every exported function is where `namesFiles` says it
 is* checks that claim by looking up each export's index in the list. With a lambda anywhere in the
 program the two disagree from the first entry:
 

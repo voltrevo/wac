@@ -44,7 +44,7 @@ over load 8, and refuses a repeat inside twenty minutes. **All four passed, and 
 anyway.** So the thresholds are not sufficient, and the interesting question is which of these it is:
 
 - **another agent's non-suite work.** Counted: `takeSuiteSlot` has exactly one caller,
-  `tools/runTests.ts`, and **37 other `deno task` entries build programs and run them** — every
+  tools/runTests.ts, and **37 other `deno task` entries build programs and run them** — every
   `mutate*`, `corpus:*`, `coverage:*`, `bench*`, `size` and `shell:fuzz`. A mutation sweep stages
   and compiles per mutant; `corpus:backings` builds three shells and runs 829 scripts through each.
   None of them is visible to the gate, in either direction: they do not wait for a suite and a suite
@@ -167,7 +167,7 @@ oom_kill 25          # unchanged across the run
 not separate "fewer workers" from "nobody else was there". It is worth writing down as a workaround
 that got a push through, not as a finding about worker counts.
 
-It also runs against an argument already in `tools/runTests.ts`, which should be read before anyone
+It also runs against an argument already in tools/runTests.ts, which should be read before anyone
 acts on this: **four is kinder to the other agents than two**, because the run finishes sooner and
 the window during which it holds three gigabytes is shorter. A single 548s run that happened not to
 overlap anybody refutes none of that.
@@ -178,7 +178,7 @@ The same comment names what would actually settle it, and it is this issue's fir
 > — and that is 0031, which wants a token every heavy runner takes.
 
 0031 is closed and that token only ever arrived for suites: `takeSuiteSlot` has one caller,
-`tools/runTests.ts`, while every `mutate`, `corpus:*`, `coverage:*` and `bench` task builds and runs
+tools/runTests.ts, while every `mutate`, `corpus:*`, `coverage:*` and `bench` task builds and runs
 programs without asking anyone. That is the shape every kill today has had — all four refusals pass,
 the run starts, and something arrives during the five to eleven minutes that follow.
 
@@ -249,7 +249,7 @@ package, peak RSS of the process tree:
     packages/box   with --no-check      2965 MB
 
 No difference beyond noise, and in the wrong direction. Turning it off would buy nothing and cost
-the checks. `tools/runTests.ts`'s own comment is right: the peak is the built binaries a test file
+the checks. tools/runTests.ts's own comment is right: the peak is the built binaries a test file
 spawns, not the checker.
 
 **4. Up to 20 deno-family processes exist at once** during `packages/box`, against a `DENO_JOBS` cap
@@ -421,7 +421,7 @@ They pass alone in 2m26s. Under the gate they run five to ten minutes and then f
 suite needs will keep admitting runs that cannot fit, which is exactly what happened three times
 today with every one of its three checks satisfied.
 
-And the table in `tools/runTests.ts` — the one that justifies `jobs = 4`, from issue 0075 — records a
+And the table in tools/runTests.ts — the one that justifies `jobs = 4`, from issue 0075 — records a
 **peak of 5,735 MB and a rise of 2.5–3.3 GB**, with the note that *"memory barely moves"* between one
 worker and four. Today's rise is roughly double the top of that range. Either the suite has grown
 past its own measurement or the measurement was taken differently (that sweep sampled

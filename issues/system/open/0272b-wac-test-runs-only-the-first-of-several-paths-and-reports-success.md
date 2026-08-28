@@ -74,5 +74,5 @@ takes one path` — is also defensible and is a smaller change; what is not defe
 answer, which is to take one and say nothing.
 
 **A guard would be cheap either way**: a test that passes two paths whose test counts differ and
-asserts the total is the sum. `tools/wac/testcli_test.wac` is where the other `wac test` behaviours
+asserts the total is the sum. tools/wac/testcli_test.wac is where the other `wac test` behaviours
 are held.

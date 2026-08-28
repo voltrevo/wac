@@ -27,7 +27,7 @@ Actual: it compiles to three literal bytes and `/{2}/` matches `a{2}b` at 1..4.
 
 ## How it was found
 
-Porting `packages/regex/test/regex.test.ts` to wac (`issues/system/0161`). The host-side version has
+Porting packages/regex/test/regex.test.ts to wac (`issues/system/0161`). The host-side version has
 
 ```ts
 // And things that look similar but are in the subset.

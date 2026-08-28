@@ -25,7 +25,7 @@ This is only reachable since `wc` started streaming (0061): before, an input tha
 before it could be miscounted, and a trap is a better wrong answer than a negative one.
 
 wac has `i64`, so the fix is the declarations plus a 64-bit formatter — and that is the awkward part.
-`itoa64` exists **twice**, in `packages/box/src/lib/num.wac` and `packages/wactest/src/itoa64.wac`,
+`itoa64` exists **twice**, in packages/box/src/lib/num.wac and `packages/wactest/src/itoa64.wac`,
 and `packages/sh` can use neither: `box` depends on `sh`, and `wactest` is for tests. A third copy
 would be the wrong answer to a question that already has two answers.
 
@@ -53,7 +53,7 @@ It used to answer `-1306078398`.
 
 The `itoa64` question this issue raised — two copies, and `packages/sh` able to use neither — turned out
 to be four copies of integer formatting, two of them with bugs the others did not have. `packages/fmt`
-owns `itoa`, `itoa64`, `utoa64` and `atoi` now; `packages/box/src/lib/num.wac` is deleted and its
+owns `itoa`, `itoa64`, `utoa64` and `atoi` now; packages/box/src/lib/num.wac is deleted and its
 nineteen importers repointed; `packages/sh`'s own pair is gone, which fixed a separate wrong answer —
 its `itoa` printed `"-"` for i32's minimum, so `echo $((-2147483648))` gave a bare minus sign where bash
 gives the number.

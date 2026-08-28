@@ -58,7 +58,7 @@ look.
 ## Fix (agent-a, 2026-08-02)
 
 The cheapest option in the notes, built as described: `wac-version.json` records the
-oldest compiler this repo is known to work with, and `harness/wacVersion.ts` checks it on
+oldest compiler this repo is known to work with, and harness/wacVersion.ts checks it on
 the first `wacBind` of a run. The reproduction in this issue now prints
 
 ```

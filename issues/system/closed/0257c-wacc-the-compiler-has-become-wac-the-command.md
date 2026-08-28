@@ -122,7 +122,7 @@ caps want to be `Vec`s — `funcs`, `funcReturns`, `funcParamAt`, `funcParamCoun
 arrays with a hand-rolled cursor, and `withoutIgnored` and the test walk have already been through
 this conversion. Filed separately.
 
-**What landed anyway**, because it is independently right: `packages/wacpkg/example/fetch.wac` is
+**What landed anyway**, because it is independently right: packages/wacpkg/example/fetch.wac is
 `packages/wacpkg/src/fetch.wac`, and its `main` is a wrapper around `fetchAll(core, cli, dir, wacHome)`
 — the shape step 4 needs, and the move `issues/system/0258c` recommended waiting for a better reason
 to make. This was the better reason.
@@ -225,7 +225,7 @@ rather than on whichever binary happened to carry the module.
     seed/             wacc.wasm, sh.wasm, update.wasm -> wacc.wasm
     seed              one payload, no `payload()`, and nothing to forget building
 
-**What verified it was an existing test.** `tools/wac/sh_test.wac` spawns whichever binary is on this
+**What verified it was an existing test.** tools/wac/sh_test.wac spawns whichever binary is on this
 machine and checks `wac sh` sealed and granted — the front page's own two pipelines, plus that a
 refused write says *not granted* rather than a filesystem error. It passed against the payload and
 passes against the program, which is the whole claim. `commandparity_test.wac` is green over its 34
@@ -287,7 +287,7 @@ Verified by doing what `covdump` does, from a wac program: `cli.load` then
 `cli.call(h, "__cov_len", 0)` answers 4, matching `covdump`'s own "4 counter(s)", and
 `cli.call(h, "__cov_get", 2)` answers ok. On any host, which is the point.
 
-So the three commands are ordinary work now rather than blocked work. `tools/wac/covdump_test.wac`
+So the three commands are ordinary work now rather than blocked work. tools/wac/covdump_test.wac
 carries the regression test, with a canary that a plain build does *not* declare counter exports — so
 the fix cannot be "list these three always".
 
@@ -326,7 +326,7 @@ written.
 Written, measured, reverted. The command itself is thirty lines against `packages/wac/src/counters.wac`
 and its five shapes all answered correctly by hand — the table, a named export, a sweep (`twice:3`
 takes the true branch three times where one call takes it once), a bad case count exiting 2, and a
-mistyped name reported *after* the counters. Then `tools/wac/covdump_test.wac` failed on the case that
+mistyped name reported *after* the counters. Then tools/wac/covdump_test.wac failed on the case that
 exists for this: a module built `--allow-read` must print `READ OK`, and through `Cli.load` it printed
 nothing, because `main` traps before it logs.
 

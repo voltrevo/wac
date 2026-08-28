@@ -91,7 +91,7 @@ Both decisions left open here are taken, and in the direction the issue argued f
 diagnostics rather than the bare words "did not compile". The layers are wanted; a report
 that measures nothing and exits 0 is worse than one that fails.
 
-**The suite reaches them**, via `packages/tor/test/entries.test.ts` — one test per entry,
+**The suite reaches them**, via packages/tor/test/entries.test.ts — one test per entry,
 compile only. That is the part that stops this recurring, and it is the same argument the
 issue makes about the tools: the syntax error was never the failure, the silence was.
 

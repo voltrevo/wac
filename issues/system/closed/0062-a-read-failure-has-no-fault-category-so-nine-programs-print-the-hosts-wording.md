@@ -25,7 +25,7 @@ wc: missing: No such file or directory (os error 2): readfile '/tmp/x/missing'
 ```
 
 Same for `cat`, `head`, `tail`, `sort`, `uniq`, `rev`, `nl` and `grep` — every program in
-`packages/sh/src/program.wac` that opens a file — and the text differs by runtime: Node says
+packages/sh/src/program.wac that opens a file — and the text differs by runtime: Node says
 `ENOENT: no such file or directory, open '…'` for the same fault.
 
 ## Notes

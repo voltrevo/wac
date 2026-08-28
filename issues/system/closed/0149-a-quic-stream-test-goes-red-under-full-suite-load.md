@@ -9,7 +9,7 @@
 
 ## What
 
-`packages/quic/test/stream.test.ts` — "an acknowledgement the server accepts, proven by the
+packages/quic/test/stream.test.ts — "an acknowledgement the server accepts, proven by the
 connection outliving it" — failed once in a full-suite run:
 
 ```

@@ -66,12 +66,12 @@ a suite stopped to free a core, a hung run, `push.sh` hitting its own ceiling. N
 no amount of `finally` in the test would help — the test is not executing when it happens.
 
 Two of them really did remove after their assertions, and those are fixed here:
-compiler/wacCompile.test.ts's `bindgenModule` and `packages/gzip/test/inflate.test.ts`'s FNAME
+compiler/wacCompile.test.ts's `bindgenModule` and packages/gzip/test/inflate.test.ts's FNAME
 case, both now `try`/`finally`.
 
 ## Fixed here, part two: the sweep
 
-`tools/runTests.ts` removes `/tmp/wac-*` older than a day at the start of every `deno task test`.
+tools/runTests.ts removes `/tmp/wac-*` older than a day at the start of every `deno task test`.
 A day is far longer than any suite, so the newest thing it can touch is from yesterday and nothing
 another agent is *using* matches; `/tmp/wac-doc-warnings` is excluded by name because it is a tally
 `docCheck.ts` keeps across a run's processes. It prints one line when it removes anything, because a
@@ -203,7 +203,7 @@ stages with `git add -A` — which is how everything here gets committed. One in
 temporary directory is in the history.
 
 The fix is one word: put it under `.cache/`, which is already gitignored and already the place for
-generated things. `packages/wacc/test/lambda.test.ts` does that now.
+generated things. packages/wacc/test/lambda.test.ts does that now.
 
 So whatever rule this issue settles on, it wants a sentence about *where* as well as *who removes it*:
 a test that must write inside the repo writes under `.cache/`.

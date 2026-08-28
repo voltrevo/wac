@@ -9,7 +9,7 @@
 
 ## What
 
-`packages/tor/test/network_tor.test.ts`'s second case — "an onion service published on that network, and
+packages/tor/test/network_tor.test.ts's second case — "an onion service published on that network, and
 a page fetched from it" — fails intermittently with:
 
 ```
@@ -90,7 +90,7 @@ harness already knows it is a test.
 
 *Corrected 2026-08-07, later:* the first version read `/proc/loadavg` directly and never worked.
 Deno gates `/proc` behind `--allow-all` rather than `--allow-read`, and `Deno.loadavg()` behind
-`--allow-sys`, and `tools/runTests.ts` grants neither — so it silently degraded to `load unknown`,
+`--allow-sys`, and tools/runTests.ts grants neither — so it silently degraded to `load unknown`,
 which is what a real failure message said. It goes through `cat` now, since `--allow-run` is granted.
 A diagnostic that fails silently is worse than none, and this one failed silently at exactly the
 moment it existed for.

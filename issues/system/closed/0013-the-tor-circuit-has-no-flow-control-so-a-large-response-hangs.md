@@ -10,7 +10,7 @@
 
 Tor windows both circuits and streams. A sender may put 1000 cells on a circuit and 500 on
 any one stream before it must stop and wait for a RELAY_SENDME crediting it more.
-`packages/tor/host/circuit.ts` receives SENDMEs and discards them, and never sends any.
+packages/tor/host/circuit.ts receives SENDMEs and discards them, and never sends any.
 
 Below 500 data cells — about 249KB — nothing goes wrong, which is why the directory fetch
 that this was built against works. Above it the exit stops sending and `readToEnd` waits

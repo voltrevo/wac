@@ -93,7 +93,7 @@ is the opposite of what the flag asks. The corpus contains `seq 1 100000 | grep 
 ## 2026-08-07, later: the blocker is cleared, and the drift got worse
 
 **The split is done.** `packages/sh/test/corpus.ts` holds the corpus and `needsProgram`;
-`packages/box/test/corpus.test.ts` runs the 256 of 673 scripts that name one of the eleven through
+packages/box/test/corpus.test.ts runs the 256 of 673 scripts that name one of the eleven through
 `packages/box/src/bin/sh.wac` against bash, on output *and* exit status. `tools/corpusThrough.ts`
 imports the corpus instead of scraping it out of the test file with a regular expression.
 
@@ -141,7 +141,7 @@ they go a few at a time, and the machinery for that is in place:
 
 - `packages/sh/test/corpus.ts` has `DELETED` and `usesDeleted`. Every script list in
   `differential.test.ts` is filtered through it, including the `cd`-wrapped ones built at run time.
-- `packages/box/test/corpus.test.ts` runs every script naming any of the eleven, so nothing is lost as
+- packages/box/test/corpus.test.ts runs every script naming any of the eleven, so nothing is lost as
   names move over.
 - `packages/box/test/programs.test.ts` holds the error-wording cases for the ones already gone.
 
@@ -177,7 +177,7 @@ mean the last one cannot simply be followed by "and now sshd uses box".
 - **wac-mono 0109** is closed: applets take an `Fs`, so a session's commands read the session's
   filesystem.
 
-`sshd` now wires `boxRun`, and `packages/ssh/test/server.test.ts` runs `seq | sort -nr | head` and
+`sshd` now wires `boxRun`, and packages/ssh/test/server.test.ts runs `seq | sort -nr | head` and
 `sha256sum` over an image through OpenSSH's own client. So the six programs left in `packages/sh` —
 `cat`, `wc`, `head`, `sort`, `grep`, `seq` — have no consumer that needs them: the shell's own
 differential is the only thing left holding them, and `corpus.ts`'s `DELETED` list is how they go.
@@ -208,13 +208,13 @@ about — passes 6/6 once four hand-written groups stop using `cat` and `seq` as
 | `test/unnameable.test.ts` | a file whose name is not valid UTF-8 says which side is at fault | the diagnostic belongs to whatever *opens* the file |
 | `test/node_shell.test.ts` | the shell on Node answers what bash answers | host-touching scripts, which are the program ones |
 | `test/spawn.test.ts` (4) | `$WACPATH`, and 0110's still-open standard input | needs a producer that ignores its input and a stage after it |
-| `packages/fs/test/synth.test.ts` | `/dev` and `/proc` | reads them |
+| packages/fs/test/synth.test.ts | `/dev` and `/proc` | reads them |
 
 Every one of those observes a **filesystem** through a **command**, and this package will have no
 commands. So the deletion's real precondition is not in `packages/sh` at all:
 
 **Step 0 is moving the image shells up a package.** `packages/box/src/bin/sealedsh.wac` already is
-`packages/sh/src/sealed.wac` with the sixty applets; `imaged.wac` has no counterpart and wants one
+packages/sh/src/sealed.wac with the sixty applets; `imaged.wac` has no counterpart and wants one
 (it is thirty lines — boot an image, wire `boxRun`, save on the way out). Then `backings`, `sealed`,
 `imaged`, `unnameable`, `node_shell` and `fs`'s `synth` move to `packages/box/test`, where the shell
 they build has commands, and `packages/sh/src/{sealed,imaged}.wac` are deleted rather than left as
@@ -248,7 +248,7 @@ found` and loops forever. Nothing in the corpus uses it. Filed separately as **0
 The step this issue could not see until it was tried was **moving the image shells up a package**, and
 that is what made the rest mechanical:
 
-- `packages/box/src/bin/imaged.wac` is new — `packages/sh/src/imaged.wac` with the applets wired in —
+- `packages/box/src/bin/imaged.wac` is new — packages/sh/src/imaged.wac with the applets wired in —
   and `packages/sh/src/{sealed,imaged}.wac` are deleted rather than left as shells with builtins only.
 - `backings`, `sealed` (now `session`), `imaged`, `unnameable`, `node_shell` and `packages/fs`'s `synth`
   moved to `packages/box/test`, where the shell they build has commands. 0110's still-open-stdin case
@@ -268,7 +268,7 @@ complained, and never printed `b`. Eight applets did it — `cat` twice, once in
 and `lib/input.wac`'s own comment described it as "a difference worth naming rather than a difference
 worth pretending about". Every operand case anyone had written names one file, or two that both exist;
 the one script in `backingsprocess_test.wac` that names three found it the moment it ran against these applets.
-Fixed, with `packages/box/test/operand_errors.test.ts` as the sweep, against the real tools.
+Fixed, with packages/box/test/operand_errors.test.ts as the sweep, against the real tools.
 
 **Two more wordings.** `tac` says "failed to open 'x' for reading" and `split` says "cannot open 'x' for
 reading" — five distinct sentences now in `cannotOpen`, each read off the tool.

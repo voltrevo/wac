@@ -41,7 +41,7 @@ becomes a security one.
 `packages/abi`. Schema-driven, as this issue asked: a descriptor is an `i32[]` in prefix order and one walk
 serves every signature, which is `packages/ssz`'s shape for containers.
 
-**`npm:ethers@6` is the oracle**, and it is reachable from this container. `tools/vendor.ts` encodes thirty
+**`npm:ethers@6` is the oracle**, and it is reachable from this container. tools/vendor.ts encodes thirty
 cases and records both the bytes ethers produced *and* a rendering of the values as ethers decodes them; the
 corpus is committed, so the suite needs no network and cannot start passing because a download failed. Both
 directions are checked, because an encoder and a decoder wrong in opposite ways agree perfectly:

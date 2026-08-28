@@ -9,7 +9,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer
 
-`packages/wacc/test/specEmit.test.ts` compiles every single-file program in the spec's own suite with
+packages/wacc/test/specEmit.test.ts compiles every single-file program in the spec's own suite with
 both compilers and compares the answers. Five of them emit a module that the engine then refuses:
 
     §wac-raw-truncf-nan-w9fk2xq   truncFloatNaN           fixed, 2026-08-13

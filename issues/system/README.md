@@ -117,7 +117,7 @@ those who already suspect the suite.
 **The tag is the dangerous half**, and this is not a licence to leave it. "Known flaky" is how a real
 regression gets waved through, so:
 
-- it names an **open** issue, and `tools/flaky.test.ts` fails the suite when the issue is closed and the
+- it names an **open** issue, and tools/flaky.test.ts fails the suite when the issue is closed and the
   tag is not — the tag and the issue come off together;
 - that test also prints the tagged tests on every green run, because a list nobody sees is how three
   flaky tests became normal;

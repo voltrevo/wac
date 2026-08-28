@@ -71,7 +71,7 @@ Two costs, and they are not the same problem:
 [0005](0005-mutation-testing-found-54-untested-behaviours.md) lists surviving mutants by package —
 `fmt` 4, `std` 3, `json` 3, `url` 2, `bignum` 2, `wactest` 1 — and that table is from **2026-08-01**.
 Every package in it is a low-level one, which is not a coincidence: they are the ones this cost falls
-hardest on. `packages/std/test/wac/hash_test.wac` was written since, and its header says it was
+hardest on. packages/std/test/wac/hash_test.wac was written since, and its header says it was
 written *for* two of those mutants, so at least some of the table is stale — and nobody can cheaply
 say which, which is the same shape as
 [0101](../closed/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md): a measurement
@@ -132,7 +132,7 @@ Measured while trying to make `issues/system/0161` step 2 verifiable, which need
 runnable more than once an hour.
 
 `testCommand` builds one `deno test` with `--no-check --fail-fast` and no **`--parallel`**. The
-repository's own entry point does pass it: `tools/runTests.ts` runs everything in a parallel pass and
+repository's own entry point does pass it: tools/runTests.ts runs everything in a parallel pass and
 puts the files that cannot share a machine into a lane of their own. So the whole repository's suite
 takes 4m30s while one *scope* — a subset — takes longer.
 

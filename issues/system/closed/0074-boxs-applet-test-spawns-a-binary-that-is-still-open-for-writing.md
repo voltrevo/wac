@@ -110,7 +110,7 @@ not the mechanism.
 while the machine was at 8–14 with another agent running a chutney testnet. So the rate is load
 dependent and the instrumented runs were too quiet to catch it.
 
-**What is left behind:** `harness/spawnProbe.ts`, imported by `box.test.ts` for its side effect. It
+**What is left behind:** harness/spawnProbe.ts, imported by `box.test.ts` for its side effect. It
 wraps `Deno.Command` and, on `ETXTBSY` only, prints every process holding that path open together with
 its `fdinfo` flags — which says whether the holder has it for writing. It costs nothing until it fires.
 

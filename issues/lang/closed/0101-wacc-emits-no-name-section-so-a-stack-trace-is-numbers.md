@@ -69,7 +69,7 @@ The last was the **start function**, unnamed in the 96 modules of this repositor
 is `__wac_start`, and it is wac's own name rather than the reference's: the reference emits no start
 section at all, having no module-level constants to initialise.
 
-**The guard is "every index has a name", not a list of the blocks** — `packages/wacc/test/names.test.ts`,
+**The guard is "every index has a name", not a list of the blocks** — packages/wacc/test/names.test.ts,
 over every module the corpus compiles, 176,034 functions across 364 modules. The list is what was
 wrong twice: each block is named where it is emitted, so a block added later is named nowhere, and a
 test written as a list would have been extended by the same person who forgot the block.

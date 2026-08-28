@@ -42,7 +42,7 @@ export string itoa(i32 n) {
  * those same bits read as unsigned are exactly its magnitude, which is what `utoa64` wants. Two's
  * complement does the work.
  *
- * Moved here from `packages/box/src/lib/num.wac`, which had a third copy of it — with the special case
+ * Moved here from packages/box/src/lib/num.wac, which had a third copy of it — with the special case
  * spelled out as a literal — because a program that counts bytes needs this and `box` sits above the
  * things that count. `packages/wactest` still has its own pair; see the note at the end of this file.
  */

@@ -225,11 +225,11 @@ export async function scan(base = "."): Promise<Scan> {
    * This is what makes a cross-file hit mean something. wac has no re-export: a file that calls a name
    * declared elsewhere must import it, by that name or an alias. Without the check, any file mentioning
    * the word counted — and the header already records what that cost: `bitwriter.wac` has a local
-   * `i32 masked = …`, which hid an exported `masked` in another file, and `packages/zstd/src/castrepro.wac`
+   * `i32 masked = …`, which hid an exported `masked` in another file, and packages/zstd/src/castrepro.wac
    * kept two of its three exports alive the same way. Those are false *negatives*, the direction that
    * matters for a check whose job is to find things nothing uses.
    *
-   * Only the module path is recorded, not resolved: an import in `packages/a/src/x.wac` of
+   * Only the module path is recorded, not resolved: an import in packages/a/src/x.wac of
    * `"../../b/src/y.wac"` is matched by suffix against the declaring file, which is enough to separate
    * "imports this name from this file" from "happens to use the word".
    */

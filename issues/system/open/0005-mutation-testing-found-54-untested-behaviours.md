@@ -92,7 +92,7 @@ the case for asking rather than assuming.
 
 Two of its twelve are already answered, by different routes:
 
-- **`extreme/std/hash/hashI32` and `hashI64` were fixed.** `packages/std/test/wac/hash_test.wac`
+- **`extreme/std/hash/hashI32` and `hashI64` were fixed.** packages/std/test/wac/hash_test.wac
   exists *because of these two mutants* and says so in its first paragraph — it tests distribution,
   which is what the functions are for, since `Map` answers correctly under any hash and so its tests
   can never notice one going wrong.
@@ -260,7 +260,7 @@ anything, and stop if it fails. That is the check whose absence made all of this
 
 agent-b is right, and it invalidated a result I had reported as a good one. My crypto
 sweeps — "232/232 killed" and then "255/255 killed" after the field refactor — were run
-with the old permissions, and `packages/crypto/test/keccak.test.ts` reads `Deno.env` to
+with the old permissions, and packages/crypto/test/keccak.test.ts reads `Deno.env` to
 find OpenSSL 3.5. Without `--allow-env` the whole crypto suite failed before any mutation
 mattered, so every mutant scored killed. Worse, I had convinced myself the control
 mutants would catch exactly this: they would have, but `--operators` runs generate none,
@@ -598,7 +598,7 @@ so much as a property of `Map`: it answers correctly under any hash, and `map_te
 purpose with a `badHash` that does exactly this. What a constant hash costs is time, not answers, and
 nothing measured time.
 
-`packages/std/test/wac/hash_test.wac` now asks the question the functions exist for — distribution:
+packages/std/test/wac/hash_test.wac now asks the question the functions exist for — distribution:
 
 - **injective over a sample** — 1024 consecutive keys, 1024 distinct hashes (the finaliser is a bijection,
   so this is exact rather than a bound);
@@ -619,7 +619,7 @@ function under test is no oracle.
 Both are the same guard in the two containers: the range trap in `JsonArray.get` and `JsonObject.at`.
 Removing either lets nothing through — every index the guard rejects is rejected a line later, by WasmGC's
 own array bounds check outside the allocation and by the null-assertion on a slot that has never been
-written between `n` and the capacity. `packages/json/test/bounds.test.ts` already drives both routes
+written between `n` and the capacity. packages/json/test/bounds.test.ts already drives both routes
 (`arrayPastEnd` is deliberately *inside* the allocation), and it cannot distinguish them: what a host can
 observe is that the call trapped, not which instruction trapped.
 
@@ -774,7 +774,7 @@ What the survivors were is more useful than the numbers, because they were not a
   two hashes are what settles that; the refusal now has to name both.
 - **One reachable guard, tested.** `fromI64`'s negative check is on an exported function, so a caller can
   reach it — and without it a negative encodes as the empty string, which is RLP's spelling of *zero*. Not
-  a malformed encoding: a valid encoding of a different number. `packages/rlp/test/traps.test.ts`.
+  a malformed encoding: a valid encoding of a different number. packages/rlp/test/traps.test.ts.
 - **Two unreachable guards, documented.** `header`'s and `wordOf`'s. Both private, every call site passes a
   length, and both would answer a plausible number rather than stopping if deleted.
 
@@ -836,7 +836,7 @@ from `strerror`. Both fixed, both now in the corpus.
 ## 2026-08-12: the table above cannot be re-measured cheaply, and that is its own issue
 
 The per-package counts here are from 2026-08-01. Trying to re-check the `std` rows found out why
-nobody has: one mutant in `packages/std/src/hash.wac` spent ten minutes without running, still
+nobody has: one mutant in packages/std/src/hash.wac spent ten minutes without running, still
 measuring a baseline of 553s, because a mutant's test scope is every package that depends on the
 file it edits and `std` is under everything. That package's own tests take 3.4 seconds.
 
@@ -844,7 +844,7 @@ Filed as [0139](0139-mutation-testing-cannot-reach-a-low-level-package-in-practi
 timings and the cheapest first step — order the owning package's tests first, so `--fail-fast` stops
 at the tests written for the mutated function rather than walking `bignum, bls, box…` first.
 
-Some of this table is certainly stale in the good direction: `packages/std/test/wac/hash_test.wac`
+Some of this table is certainly stale in the good direction: packages/std/test/wac/hash_test.wac
 exists now and its header says it was written *for* `hashI32` and `hashI64` returning 0, which are
 two of the three `std` rows. What nobody can say cheaply is which of the rest survived, and a list
 that cannot be re-measured is the shape 0101 warns about — a measurement that has become a memory.

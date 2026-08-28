@@ -17,8 +17,8 @@ that far.
 
 ## The three
 
-`authTagLength` on a computed algorithm name — `packages/tls/test/record_wac.test.ts`, then
-again in `packages/crypto/test/aes_wac.test.ts`:
+`authTagLength` on a computed algorithm name — packages/tls/test/record_wac.test.ts, then
+again in packages/crypto/test/aes_wac.test.ts:
 
 ```ts
 createCipheriv(`aes-${bits(key)}-gcm`, key, iv, { authTagLength: 16 })
@@ -28,7 +28,7 @@ createCipheriv(`aes-${bits(key)}-gcm`, key, iv, { authTagLength: 16 })
 The option only exists on the overloads keyed by a *literal* algorithm name. Spell the name out
 per case; both files now do, with a comment.
 
-A type argument on an overloaded function — `packages/crypto/test/rsa_wac.test.ts`:
+A type argument on an overloaded function — packages/crypto/test/rsa_wac.test.ts:
 
 ```ts
 const keys = new Map<number, ReturnType<typeof generateKeyPairSync<"rsa">>>();
@@ -61,8 +61,8 @@ That trade is fine once and is not a substitute for whatever the answer above tu
 
 ## Note, 2026-08-03 (agent-a)
 
-No live instance: `packages/tls/test/record_wac.test.ts` and
-`packages/crypto/test/aes_wac.test.ts` both type-check today.
+No live instance: packages/tls/test/record_wac.test.ts and
+packages/crypto/test/aes_wac.test.ts both type-check today.
 
 The first of the remedies above — "run `deno task test` before pushing" — has a mechanism now.
 `tools/push.sh` refuses a dirty tree, runs the suite, and pushes only if it passed, merging and
@@ -83,7 +83,7 @@ only if it passed, and merges and retries when someone got there first. Every pu
 **`deno task check`** answers "one fast command": 301 files in about a second warm, four cold.
 
 **But `deno test` only type-checks what it imports**, and `deno run` has not type-checked by default since
-Deno 1.23. So every driver nothing imports — `packages/*/cov.ts`, `tools/size.ts`, `tools/validate.ts` —
+Deno 1.23. So every driver nothing imports — `packages/*/cov.ts`, `tools/size.ts`, tools/validate.ts —
 was checked by *nothing at all*. The first run of `deno check` over everything found **six errors in three
 such files**, and one of them was real rather than cosmetic:
 
@@ -95,9 +95,9 @@ TS2339: Property 'diagnostics' does not exist on type 'Compiled'   tools/size.ts
 `CompileResult` carries `diagnostics` on both arms — so `warm.diagnostics ?? []` was reading a property the
 cast had thrown away, and the "did not compile" branch printed no diagnostics whatever. Its own comment
 says *"three of these four layers were broken for some time and this is what said so"*: the thing that said
-so had stopped saying it, silently, and nothing could have noticed. `packages/tor/test/entries.test.ts` had
+so had stopped saying it, silently, and nothing could have noticed. packages/tor/test/entries.test.ts had
 a second copy of the same stale shape; both use `CompileResult` now, and the two remaining errors were a
-`BufferSource` mismatch in `validate.ts` and two `unknown` returns in `packages/gzip/cov.ts`.
+`BufferSource` mismatch in `validate.ts` and two `unknown` returns in packages/gzip/cov.ts.
 
 **`tools/typecheck.test.ts` is the same walk as a test**, so the suite fails when the task would. That is
 the part that stops this recurring: a task nobody runs is a task nobody runs, and this issue is about a

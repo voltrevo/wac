@@ -31,7 +31,7 @@ map: differential_weak_hash ... FAILED
 FAILED | 29 passed | 8 failed
 ```
 
-Eight tests notice. The line is executed by `packages/std/test/wac/map_test.wac`, which builds
+Eight tests notice. The line is executed by packages/std/test/wac/map_test.wac, which builds
 `Map.create(hashI32, i32Eq)` in four separate cases.
 
 ## Why this matters more than a wrong number

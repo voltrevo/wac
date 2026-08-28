@@ -43,7 +43,7 @@ spells a number. `Item` is an enum — `Bytes(u8[])` or `List(Item[])` — which
 
 **Ethereum's own `RLPTests` are the oracle, and they were reachable**: both files fetched through the
 proxy and are committed in `test/vendor` at commit `7693364b`, the last one to touch `RLPTests`. 11 KB, so
-committed rather than cached — `harness/fixtures.ts` puts the line at roughly a hundred.
+committed rather than cached — harness/fixtures.ts puts the line at roughly a hundred.
 
 The comparison is against the fixture **bytes**, never a round trip, which is what this issue asked for:
 

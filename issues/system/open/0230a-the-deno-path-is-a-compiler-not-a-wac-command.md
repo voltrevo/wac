@@ -27,10 +27,10 @@ each, different spellings, different flags, different exit codes:
 | subcommand | the Deno-side thing that does it | how you invoke it |
 |---|---|---|
 | `build` | `packages/platform/native.ts` | `deno run … native.ts entry.wac -o stem` |
-| `check` | `tools/check.ts`, harness/referenceCheck.ts | `deno run -A tools/check.ts entry.wac` |
+| `check` | tools/check.ts, harness/referenceCheck.ts | `deno run -A tools/check.ts entry.wac` |
 | `run` | harness/referenceRun.ts | `deno run -A harness/referenceRun.ts entry.wac` |
 | `test` | `harness/wacTestRun.ts` | not documented for an outsider |
-| `bindgen` | `tools/emitgen.ts` | `deno task bindgen entry.wac out.gen.ts` |
+| `bindgen` | tools/emitgen.ts | `deno task bindgen entry.wac out.gen.ts` |
 | `update` | — | nothing |
 | run a `.wasm` | `packages/platform/host/driver.ts` | via a built application |
 
@@ -59,7 +59,7 @@ So the question is not "should the Deno path be better" — yes — but **what i
 
 **1. One dispatcher in TypeScript, hosts underneath.** A `wac.ts` parsing the same arguments as the
 binary and dispatching to the existing pieces, with the project resolver behind one function (which
-`harness/referenceCompile.ts` now is for the reference side). Cheapest to reach a working command;
+harness/referenceCompile.ts now is for the reference side). Cheapest to reach a working command;
 leaves two argument parsers to keep in step, which is the thing the issue is complaining about, one
 level up.
 
@@ -169,7 +169,7 @@ artefacts, module and manifest both**, on `example/wc.wac` and `example/wacc.wac
 header records it too. Its own trap is the one I then walked into independently — two different `-o`
 stems, because the output name is inside the manifest, and the artefacts came out one byte apart.
 
-And the test that compared them, `packages/wacc/test/nativeBinary.test.ts`, was **deleted, on the
+And the test that compared them, packages/wacc/test/nativeBinary.test.ts, was **deleted, on the
 operator's call**, with the reason stated in 0214: *"Deno-driven testing is being removed, not kept on as
 the oracle that validates what replaces it."* `CLAUDE.md` says the same thing generally — a differential
 that exists to prove the old thing still agrees with the new one goes when the old thing stops being
@@ -621,7 +621,7 @@ sweep that asks age.
 
 ### Criterion 1 was broken for a day, by the change that made criterion 3 true
 
-`issues/system/0257c` moved the command out of `packages/wacc/example/wacc.wac`, listed this page and
+`issues/system/0257c` moved the command out of packages/wacc/example/wacc.wac, listed this page and
 `docs/your-own-project.md` among what it touches, and repointed everything except the documentation. So
 the single documented Cargo-free way to *have* the command named a deleted file, and the reader's first
 command failed. Fixed today, along with the same dead path in `native/README.md`, `native/v8/README.md`
@@ -737,7 +737,7 @@ An empty stamp made the artefact **unrunnable by every host, including the one t
 blank in the other direction — *"a host that does not say its version cannot refuse for it"* — and
 could never be reached, because the conflated test had already rejected the file. Split into
 `hasAppMark` (presence) and `builtBy` (content), with the same tolerance added the other way: only two
-versions that both exist can differ. `tools/wac/app_test.wac` has the case, canaried.
+versions that both exist can differ. tools/wac/app_test.wac has the case, canaried.
 
 So a hosted-built app runs everywhere as of today, and the stamp above would make the bytes match too.
 

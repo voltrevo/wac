@@ -21,9 +21,9 @@ was never measured".
 
 | test file | attributable |
 | --------- | ------------ |
-| `packages/ssh/test/transport.test.ts` | yes — `wacBind` |
-| `packages/ssh/test/server.test.ts` | no — builds a binary, drives real OpenSSH |
-| `packages/ssh/test/cli.test.ts` | no — same |
+| packages/ssh/test/transport.test.ts | yes — `wacBind` |
+| packages/ssh/test/server.test.ts | no — builds a binary, drives real OpenSSH |
+| packages/ssh/test/cli.test.ts | no — same |
 | `packages/sh/test/differential.test.ts` | no — builds a binary, runs ~500 scripts through bash |
 | `packages/sh/test/spawn.test.ts` | no — builds a binary and a worker bundle |
 

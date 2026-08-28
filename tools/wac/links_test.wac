@@ -594,7 +594,7 @@ string[][] gone() {
     string[]("packages/bls/tools/genfips-experiment.py", "packages/bls/test/wac/fips.wac"),
     string[]("CLAUDE.md", "atoms/wac/"),
     // **One deletion, 2026-08-21: the suite orchestrator moved from TypeScript to wac.**
-    // `tools/runTests.ts`, `tools/killedLane.ts` and its test became `tools/runTests.wac`,
+    // tools/runTests.ts, tools/killedLane.ts and its test became `tools/runTests.wac`,
     // `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`. Every sentence below is either an
     // issue recording what the old runner did on a particular day — which is not a claim about
     // today and must not be rewritten to name a file that did not exist when it was written — or

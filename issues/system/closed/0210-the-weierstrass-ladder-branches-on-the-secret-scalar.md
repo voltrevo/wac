@@ -31,7 +31,7 @@ the difference costs.
 
 ## Measured, by this repository's own instrument
 
-`harness/ctTrace.ts` records every branch and every memory index, per source line. Two valid P-256
+harness/ctTrace.ts records every branch and every memory index, per source line. Two valid P-256
 private keys through `p256PublicKey`:
 
     events: 1,974,551 and 2,097,151 (the second overflows the journal)

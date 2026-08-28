@@ -51,7 +51,7 @@ converted a large part of the suite, so the interesting number is what the *rema
 
 **The third row was missing when this was first written, and the number above it was too kind.** The
 first split asked only whether a file spawns a child or drives a browser, so
-`packages/quic/test/stream.test.ts` counted as convertible — and its oracle is `Deno.QuicEndpoint`,
+packages/quic/test/stream.test.ts counted as convertible — and its oracle is `Deno.QuicEndpoint`,
 an in-process QUIC server. wac has UDP and no QUIC peer, so there is nothing on the other end of that
 socket to be. Sixteen files are in that position, mostly `quic` and `webrtc`.
 

@@ -63,7 +63,7 @@ holds a request/reply queue pair per child, and serves it while the child runs.
 2. `serveFs` is honoured rather than dropped: a child spawned with it false must **not** be served,
    which is the sealing property `packages/box/src/bin/sealedsh.wac` depends on and the reason this
    is a flag rather than always-on.
-3. A case in `packages/platform/test/v8host.test.ts` beside *"the spawning shell answers the same on
+3. A case in packages/platform/test/v8host.test.ts beside *"the spawning shell answers the same on
    Deno and on the Rust host"*, comparing an image round-trip across the two hosts.
 
 ## Notes
@@ -108,7 +108,7 @@ request, and the child having gone is the only thing that says there will not be
 
 ## The test, and why it compares what it does
 
-`packages/platform/test/v8host.test.ts`, *"an image survives a process and is readable by a spawned
+packages/platform/test/v8host.test.ts, *"an image survives a process and is readable by a spawned
 child — 0157"*. Two processes on purpose: one writes and exits, the next reads what the first left,
 so what is compared is a file on disk rather than anything held in memory. It fails against the host
 without this fix.

@@ -38,7 +38,7 @@ seed in between — `graph.wac` is a test file, so the only thing that changed i
 
 ## The reproduction's file was deleted — 2026-08-19, agent-b
 
-`packages/wacc/test/wac/manifest_test.wac` is gone. It compared the manifest `packages/platform/native.ts`
+packages/wacc/test/wac/manifest_test.wac is gone. It compared the manifest `packages/platform/native.ts`
 derives against the one `manifest.wac` derives, and the Deno side stopped being a producer once the two
 were re-measured as byte-identical (`tools/seed.sh`, `issues/system/0214`).
 

@@ -245,7 +245,7 @@ removed it because 31 bits truncate silently.
 
 ### The failing case already exists
 
-No new test is needed to drive this. `KNOWN_UNEMITTABLE` in `packages/wacc/test/specEmit.test.ts` holds
+No new test is needed to drive this. `KNOWN_UNEMITTABLE` in packages/wacc/test/specEmit.test.ts holds
 the four tags, so a working implementation makes that test fail with *"emit now — take them out"*. That
 is the canary and the acceptance check in one, and it is already in the suite.
 

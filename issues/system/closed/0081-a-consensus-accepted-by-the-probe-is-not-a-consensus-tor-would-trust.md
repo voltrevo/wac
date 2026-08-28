@@ -63,7 +63,7 @@ strict check as a later refinement rather than a prerequisite. What must not hap
 
 ## Resolution — both routes, and the expensive one arrived free
 
-**The node route is in `packages/tor/test/consensusgen_wac.test.ts`.** The host recovers the
+**The node route is in packages/tor/test/consensusgen_wac.test.ts.** The host recovers the
 `directory-signature` payload with the signing key and the wac side compares it against its own digest,
 the same shape as `authcert_wac.test.ts` and `vote_wac.test.ts`. So the generator is pinned to *which
 key signed which bytes* — the thing a parse verdict could never say.

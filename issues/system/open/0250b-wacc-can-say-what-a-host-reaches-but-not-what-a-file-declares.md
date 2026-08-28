@@ -6,7 +6,7 @@
 - **Kind:** missing feature
 - **Symptom:** not implemented
 
-`tools/docSignatures.test.ts` — *every wac name a README quotes exists, and every signature it prints
+tools/docSignatures.test.ts — *every wac name a README quotes exists, and every signature it prints
 is the real one* — walks the reference compiler's AST and collects, in its own words at line 102,
 **"every name a wac declaration introduces: functions, types, variants, fields, methods."**
 

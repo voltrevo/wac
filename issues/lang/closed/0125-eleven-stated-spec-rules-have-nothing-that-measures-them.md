@@ -60,7 +60,7 @@ Two ways to add them, and the choice matters:
   the case where a reader of the prose sees it, and it is counted by `site/src/next/Checked.tsx` —
   worth checking whether anything asserts the total before the number moves.
 - **A `spec/cases` entry** runs against both compilers via compiler/wacCases.test.ts and
-  `packages/wacc/test/cases.test.ts`, and can be `// only: wacc` where the reference is not to grow
+  packages/wacc/test/cases.test.ts, and can be `// only: wacc` where the reference is not to grow
   a rule. Nothing needs that here; all eleven are shared.
 
 ## Widening the sweep found a real bug — 2026-08-14

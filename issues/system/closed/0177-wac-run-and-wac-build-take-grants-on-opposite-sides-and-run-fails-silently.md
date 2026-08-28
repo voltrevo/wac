@@ -81,7 +81,7 @@ out sealed without a word — the loud failure was, oddly, load-bearing.
 that genuinely wants the string can still be given it. The check is `run`'s and not the parser's —
 `test` sorts flags from targets in any position already — and it stops at the first `--`.
 
-`tools/grantPlacement.test.ts` is the four cases: a grant before `build`'s entry compiles and reaches
+tools/grantPlacement.test.ts is the four cases: a grant before `build`'s entry compiles and reaches
 the manifest, a grant after `run`'s entry is refused without the program running, and after `--` the
 same string arrives as `argv[0]` with no grant. The probe program returns 7 when its first argument is
 the flag, which is what tells a passed-through flag from a granted one.

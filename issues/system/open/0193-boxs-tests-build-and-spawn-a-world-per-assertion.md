@@ -28,7 +28,7 @@ Heaviest files: `box` 59 s, `fuzz` 46 s, `backings` 32 s, `sealed` 20 s, `corpus
 
 1. **Freeze the differentials into vectors.** The corpus runs bash *and* our shell once per script,
    946 times, twice per suite (`packages/sh` 14 s, `packages/box` 24 s). All 946 expectations are
-   **11 KB** — 5 KB of stdout, 6 KB of stderr, largest single output 0.1 KB. `tools/shVectors.ts`
+   **11 KB** — 5 KB of stdout, 6 KB of stderr, largest single output 0.1 KB. tools/shVectors.ts
    captures them with the oracle's version in the header; the replay is a wac test. Ten cases stay live
    as a drift canary.
 2. **Move the tests with no external oracle in-process** — about 60 of ~128. `Shell` with
@@ -105,7 +105,7 @@ about filesystems is mostly running scripts that never open one. Worth a corpus 
 `fuzz.test.ts` ran four seeds × thirty scripts × two stdin shapes × two shells: **480 processes, 38 s**,
 every suite run, to ask what bash does about scripts that are fixed by their seed.
 
-* `tools/shellFuzz.ts` is `tools/wac/shfuzz.wac`. The port is exact and was **checked rather than
+* tools/shellFuzz.ts is `tools/wac/shfuzz.wac`. The port is exact and was **checked rather than
   assumed**: both grew a `--print` mode and were diffed byte for byte over **1,400 scripts and seven
   seeds**. The first attempt drifted — a `r.pick` inside an array literal is evaluated before the pick
   that chooses between its elements — and seed 1 agreed for ten scripts before it showed.
@@ -269,7 +269,7 @@ its caveats are in `0204`. The *spawn* half of this issue is untouched.
 Checked rather than assumed, after finding next door that a claimed issue can describe work that has
 since landed (`issues/system/0183`).
 
-    1. freeze the differentials into vectors   `tools/shVectors.ts` does not exist — not started
+    1. freeze the differentials into vectors   tools/shVectors.ts does not exist — not started
     2. move the oracle-less tests in-process   `packages/box/test/wac/inprocess_test.wac` exists,
                                                3 tests. The keystone landed; the ~60 it was to carry
                                                did not follow it

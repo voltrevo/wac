@@ -97,7 +97,7 @@ moved is how hard it is to hit, which is the least useful thing to have improved
 
 Two things the platform change does contribute:
 
-- **`CALL_SLOTS` is now exported from `packages/platform/src/platform.wac`**, so a program can derive its
+- **`CALL_SLOTS` is now exported from packages/platform/src/platform.wac**, so a program can derive its
   limits instead of transcribing the number — `socks.wac` does that as of the same commit
   (`MAX_CLIENTS = CALL_SLOTS / 4`), and `packages/platform/test/wac/slots_test.wac` fails if the wac constant
   and `layout.ts` ever disagree. Whatever budget this issue settles on can be written against that

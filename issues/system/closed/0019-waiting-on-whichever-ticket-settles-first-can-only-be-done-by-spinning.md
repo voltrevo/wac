@@ -8,7 +8,7 @@
 
 ## The disagreement in the source
 
-Two comments in `packages/platform/src/platform.wac` cannot both be current.
+Two comments in packages/platform/src/platform.wac cannot both be current.
 
 `Pending`, added by `platform: capabilities answer with a ticket`:
 

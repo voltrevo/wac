@@ -41,7 +41,7 @@ compiles the compiler twice through `Cli.exec` into a temporary directory. Under
     FAIL test_the_compiler_builds_itself_to_a_fixed_point — 1 failed:
       a working directory: Not granted to this application: expected true
 
-`tools/runTests.ts`'s native lane passed exactly that, so the fix was to widen the lane to
+tools/runTests.ts's native lane passed exactly that, so the fix was to widen the lane to
 `--allow-read --allow-write --allow-run`. That is not a security regression — the Deno lane beside it
 runs with `-A` — but it *is* the wrong shape: every test in the suite now holds every grant because
 one of them needs three.

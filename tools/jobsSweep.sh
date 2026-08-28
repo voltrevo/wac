@@ -6,7 +6,7 @@
 # killed while the table printed timings as though they were data. Status is the exit code here,
 # and a run that did not pass prints no number at all.
 #
-# Those runs died because of 0077, not because of anything this measures: a `tools/test.ts` was
+# Those runs died because of 0077, not because of anything this measures: a tools/test.ts was
 # being collected as a test module by the suite it launched, so each run re-entered the suite
 # without bound. Hence the marker below.
 cd "$(git rev-parse --show-toplevel)"

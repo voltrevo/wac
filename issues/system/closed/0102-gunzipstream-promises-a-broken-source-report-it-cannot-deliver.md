@@ -26,7 +26,7 @@ your data compressed" — is real and worth drawing, and `gunzipStream` cannot d
 trap, and the caller cannot tell a disk error from a corrupt archive, which is the diagnosis-of-the-wrong-
 thing that `fill`'s own comment says it exists to avoid.
 
-Recorded in `packages/gzip/cov.ts` as an argument rather than a construction, which is the weaker of the two
+Recorded in packages/gzip/cov.ts as an argument rather than a construction, which is the weaker of the two
 claims that list makes.
 
 ## The decision this needs
@@ -72,6 +72,6 @@ on a source failure only** — corruption keeps trapping — and every read site
 refactor of the decode loop, not a line, and it should be done for a reason better than closing an
 argument about an unreachable branch.
 
-`packages/gzip/cov.ts` loses its entry for line 786, which was the weakest claim in that list: it
+packages/gzip/cov.ts loses its entry for line 786, which was the weakest claim in that list: it
 excluded the line "as an argument rather than a construction". There is no branch there now to argue
 about.

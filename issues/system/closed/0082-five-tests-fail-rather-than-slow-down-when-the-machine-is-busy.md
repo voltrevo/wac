@@ -11,10 +11,10 @@ Under load these five fail, and they pass on a targeted re-run seconds later:
 
 | test | file |
 | --- | --- |
-| `chunked bodies` | `packages/http/test/http.test.ts` |
-| `malformed chunked bodies` | `packages/http/test/http.test.ts` |
-| `fuzz: neither parser accepts what the other refuses` | `packages/http/test/fuzz.test.ts` |
-| `fuzz: a second seed` | `packages/http/test/fuzz.test.ts` |
+| `chunked bodies` | packages/http/test/http.test.ts |
+| `malformed chunked bodies` | packages/http/test/http.test.ts |
+| `fuzz: neither parser accepts what the other refuses` | packages/http/test/fuzz.test.ts |
+| `fuzz: a second seed` | packages/http/test/fuzz.test.ts |
 | `an endless producer stops at the cap rather than filling memory` | `packages/box/test/shell.test.ts` |
 
 Observed at load average **6.7** on five cores, with another agent working. The full suite reported
@@ -93,7 +93,7 @@ Removing the window *entirely* was the first attempt and it works, but `http.tes
 **40s**: some shapes leave node's server holding a half-closed socket until one of its own timeouts. The
 window is what avoids that, which is why it stays as a hurry-up rather than a decision.
 
-`packages/http/test/oracle_clock.test.ts` is the regression test, and it is the interesting part: it runs
+packages/http/test/oracle_clock.test.ts is the regression test, and it is the interesting part: it runs
 the same cases with the window at 60 ms and at **zero** and requires identical outcomes, because a machine
 too slow for the window to help is the same machine as one where the window is switched off. It also
 checks that all three outcomes appear in the batch, so it cannot pass while exercising one path. Its first
@@ -435,7 +435,7 @@ Done, for the three that are still open members of this class:
 | test | file |
 | --- | --- |
 | `[flaky 0082] every script agrees with bash on output and exit status` | `packages/sh/test/differential.test.ts` |
-| `[flaky 0082] run a command on a real OpenSSH server and read its output` | `packages/ssh/test/transport.test.ts` |
+| `[flaky 0082] run a command on a real OpenSSH server and read its output` | packages/ssh/test/transport.test.ts |
 | `[flaky 0082] an endless producer stops at the cap rather than filling memory` | `packages/box/test/shell.test.ts` |
 
 In the *name*, so the explanation arrives in the line the runner prints, at the moment somebody is deciding
@@ -445,7 +445,7 @@ the state this issue's reporter reached after an hour.
 **Deliberately not tagged: the four that were fixed.** Tagging a test that is no longer flaky is how a real
 regression gets waved through, and it is the failure mode of this whole practice.
 
-`tools/flaky.test.ts` is what keeps it from becoming one:
+tools/flaky.test.ts is what keeps it from becoming one:
 
 - every `[flaky NNNN]` must name an issue in `issues/open/`. **When this issue is closed and the tags are
   not, the suite fails and names the lines to edit** — so the tag and the issue come off together.
@@ -490,7 +490,7 @@ everything rather than nothing. Neither mistake failed anything — the suite pa
 before, and said nothing either way.
 
 **The tag stays on the ssh test for now.** One clean gate run is not evidence that a once-in-eight flake is
-gone; a week of them is. `tools/flaky.test.ts` will make somebody take it off when 0082 closes.
+gone; a week of them is. tools/flaky.test.ts will make somebody take it off when 0082 closes.
 
 ### A mechanism, found by enumeration rather than by waiting (agent-a, 2026-08-06)
 
@@ -569,7 +569,7 @@ is the only one that starts from rest. So the strongest condition I can reproduc
 load ~1.8", and that is now clean four times where it used to wedge three times in four.
 
 It is not proof. A once-in-fifty failure needs a week of green gates, not forty runs. The tag stays on the
-test, and `tools/flaky.test.ts` will make somebody take it off when this issue closes.
+test, and tools/flaky.test.ts will make somebody take it off when this issue closes.
 
 ### Reproducible on demand, under the scheduler (agent-a, 2026-08-06)
 
@@ -641,7 +641,7 @@ particular way. A busy machine spread them out; an idle one packed them together
 of instrumentation found the *state* and never the cause — the state was reachable, but only by luck, and
 luck cannot be bisected.
 
-**The tags come off**: `[flaky 0082]` is removed from the three tests, and `tools/flaky.test.ts` would have
+**The tags come off**: `[flaky 0082]` is removed from the three tests, and tools/flaky.test.ts would have
 failed the suite otherwise, which is what it exists for.
 
 ### The other members, and their honest status

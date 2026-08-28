@@ -21,7 +21,7 @@ the shared contract states the stronger of the two.
 ## Why it has not shown up
 
 Every program in this repo writes. `kill %1` on a background `seq 1 300000` ends it on both hosts
-— measured, and `packages/platform/test/native_hostfs.test.ts` asserts it — because `seq`'s next
+— measured, and packages/platform/test/native_hostfs.test.ts asserts it — because `seq`'s next
 write fails and it returns. A child that *computed* without writing would run to completion on the
 native host and be killed on the JavaScript one, and there is no applet here that does that, which
 is why this is filed rather than demonstrated.

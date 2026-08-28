@@ -4,7 +4,7 @@
 // what is different about doing it from wac.
 //
 // **The numbers are stated where the constants are, not referenced.** This header used to send the
-// reader to those two files and to `tools/killedLane.ts` for *why* 5500 MB, why swap is not a
+// reader to those two files and to tools/killedLane.ts for *why* 5500 MB, why swap is not a
 // threshold, and why the gate refuses rather than queueing — and by 2026-08-24 `killedLane.ts` had
 // been deleted and `suiteGate.ts` rewritten down to the sixty lines that announce a heavy runner, so
 // the argument for the one number that stops every push on a busy machine was reachable only through
@@ -65,7 +65,7 @@ i32 cooldownMin() { return 20; }
  *
  * **Measured, on an idle machine, 2026-08-13** — `issues/system/0142`, the commit that raised this
  * from 3000. The table is here rather than referenced because the last time it was referenced it was
- * lost: this file's header used to send the reader to `tools/suiteGate.ts` and `tools/killedLane.ts`
+ * lost: this file's header used to send the reader to `tools/suiteGate.ts` and tools/killedLane.ts
  * for the argument, and the first no longer carries it while the second no longer exists.
  *
  *     jobs   wall      peak      rise   result

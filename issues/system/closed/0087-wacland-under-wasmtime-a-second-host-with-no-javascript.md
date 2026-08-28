@@ -158,7 +158,7 @@ Cheap now, and the same shape of change this project keeps paying for when it is
 
 **Items 1 and 2 of the six are done, and a wac program prints through a Rust host with no JavaScript in
 it.** `native/`, ~300 lines, and
-`packages/platform/test/native.test.ts` runs the same program on both hosts and compares.
+packages/platform/test/native.test.ts runs the same program on both hosts and compares.
 
 What the ABI turned out to be, since this is the part that decided the shape:
 
@@ -253,7 +253,7 @@ it answers *absent* rather than reading the real environment), `pushChild`/`popC
 that redirects argv, stdin, output and the working directory, and `openInput`/`openOutput`/
 `outputError`/`closeFeed`.
 
-**The evidence.** `packages/platform/test/native_shell.test.ts` runs the first 25 of `packages/sh`'s
+**The evidence.** packages/platform/test/native_shell.test.ts runs the first 25 of `packages/sh`'s
 differential corpus through both hosts and compares bytes and status; `deno task corpus:hosts` runs all
 817. A hand run of the first 250 agreed on every one. The corpus is imported rather than copied, so
 these hosts are compared on the cases somebody wrote because bash caught us out, not on scripts chosen
@@ -278,7 +278,7 @@ function for that reason.
 ## Progress — 2026-08-08 (fourth tick), agent-a — **the arrival test passes**
 
 **An image written by the Deno host is the same system under wasmtime, and back again.**
-`packages/platform/test/arrival.test.ts`, and it is design/0001's own criterion rather than a proxy
+packages/platform/test/arrival.test.ts, and it is design/0001's own criterion rather than a proxy
 for it.
 
 - a session on the JavaScript host makes `/home/ada`, writes files and an `/etc/passwd`;
@@ -318,7 +318,7 @@ exercised by nothing at all yet.
 
 The previous tick's canary said the native filesystem capabilities were exercised by nothing. This was
 that hunt: `packages/box/src/bin/sh.wac` — `wacsh`, the shell over the **real** filesystem — run on
-both hosts against GNU coreutils. `packages/platform/test/native_hostfs.test.ts`.
+both hosts against GNU coreutils. packages/platform/test/native_hostfs.test.ts.
 
 **Finding one: every path was resolved against the wrong directory.** `pushChild` says that between it
 and `popChild` "every path is taken relative to `cwd`". The native host answered the frame's directory
@@ -385,7 +385,7 @@ Item 6's remaining half.
 ## Progress — 2026-08-08 (seventh tick), agent-a — a hunt over the capability layer
 
 Every runnable program in `packages/platform/example/` on both hosts, compared:
-`packages/platform/test/native_examples.test.ts`. These are the programs written to demonstrate the
+packages/platform/test/native_examples.test.ts. These are the programs written to demonstrate the
 *capabilities* — one idea each — where the other native tests drive the boundary through the shell,
 which is a lot of code above a little of it.
 
@@ -420,7 +420,7 @@ then the thing the network was for:
 
 **`packages/ssh`'s `sshd` runs under wasmtime, and a real OpenSSH client logs into it.** The arrival
 test's last two words — *users and system services* — are met in
-`packages/platform/test/arrival_users.test.ts`: the JavaScript host writes an image with `/etc/passwd`,
+packages/platform/test/arrival_users.test.ts: the JavaScript host writes an image with `/etc/passwd`,
 two homes, two `authorized_keys` and two private files with owners and modes; the host with no
 JavaScript in it serves that same file; `ssh(1)` logs in as ada and as grace; each lands in their own
 home with their own `$USER`; each reads their own secret; and ada gets `Permission denied` on grace's.
@@ -472,7 +472,7 @@ assumption that the interface and the transport are separable survived its first
 that shares neither.
 
 **What it was for.** design/0001's arrival test passes in full —
-`packages/platform/test/arrival.test.ts` and `arrival_users.test.ts`: the same image in one JavaScript
+packages/platform/test/arrival.test.ts and `arrival_users.test.ts`: the same image in one JavaScript
 host and one that is not, with the same users, files, installed programs, shell behaviour and system
 services, and a real OpenSSH client logging in as two users on the host that did not write the world.
 

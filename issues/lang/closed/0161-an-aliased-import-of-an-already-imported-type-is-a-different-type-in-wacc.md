@@ -153,7 +153,7 @@ used. Two call sites in a green package had no arity or argument checking at all
 by dropping the redundant plain imports — the file's own convention is the `srv*` prefix
 (`srvClose`, `srvData`, `srvEof`, `srvChanFailure`, `srvHash`), so the plain names were the anomaly.
 
-`tools/wac/importtwice_test.wac` now refuses the shape tree-wide, and it is canaried against the real
+tools/wac/importtwice_test.wac now refuses the shape tree-wide, and it is canaried against the real
 case rather than only a synthetic one: with `probe.wac` reverted it reports both names and the file and
 line, and with the fix it is green. Two instances in 700-odd files, so the tree has no appetite for
 this and the guard costs nothing.
@@ -247,7 +247,7 @@ quietly left: the emitter always built one declaration, so it cannot fail for th
 guards the failure mode the *fix* could introduce — a checker that canonicalises where the emitter
 does not, which arrives as a missing export rather than a diagnostic.
 
-`tools/wac/importtwice_test.wac`, added earlier today to refuse the shape tree-wide while it was
+tools/wac/importtwice_test.wac, added earlier today to refuse the shape tree-wide while it was
 broken, is **deleted**: it forbade a construct the spec requires. The rename in
 `packages/ssh/test/wac/probe.wac` stays, because the file's own convention is the `srv*` prefix and
 the plain spellings were the anomaly there regardless.

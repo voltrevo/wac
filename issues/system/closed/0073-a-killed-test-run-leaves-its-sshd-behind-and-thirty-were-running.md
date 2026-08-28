@@ -18,7 +18,7 @@ container being stopped — and the `sshd` it started stays up for ever.
 
 ## Notes
 
-`packages/ssh/test/server.ts` starts a real `sshd` as its oracle and both callers stop it in a
+packages/ssh/test/server.ts starts a real `sshd` as its oracle and both callers stop it in a
 `finally`, which is right and is not enough: `finally` does not run when the process is killed, and a
 `deno test` that outruns a timeout is killed. Every such run leaks one daemon, its port and its
 `/tmp/<hex>` directory of host keys. Thirty had accumulated by 2026-08-05 (I killed them; two live
@@ -60,7 +60,7 @@ against real processes — an orphan made by a double fork, and a live child of 
    one day that this permission silently disabled** — see 0077, whose nesting check had the same hole.
 2. **sshd rewrites its own argv.** `ps` shows a listener as
    `sshd: /usr/sbin/sshd -D -f /tmp/…/sshd_config [listener] 0 of 10-100 startups`, so a pattern anchored at
-   the binary path matched nothing. `packages/ssh/test/server.test.ts` now asserts the pattern against that
+   the binary path matched nothing. packages/ssh/test/server.test.ts now asserts the pattern against that
    exact string, and against three things it must *not* match, including the machine's own
    `/etc/ssh/sshd_config` daemon.
 3. **The test's own orphan-maker hung for two minutes.** `sh -c 'sleep 120 … &'` with a piped stdout waits

@@ -11,7 +11,7 @@
 it refused an unrelated push of mine, and the remedy that works — run it again — is the habit a
 flake teaches and the one that hides the next real failure.
 
-`packages/ssh/test/server.test.ts`, *"the server announces the port it is actually listening
+packages/ssh/test/server.test.ts, *"the server announces the port it is actually listening
 on"* (added in d37e9ff), failed once in a full parallel run:
 
 ```

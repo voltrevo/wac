@@ -1,6 +1,6 @@
 // The gate's presence notes, what it is allowed to delete, and the bytes it writes.
 //
-// `tools/suiteGate.test.ts` and `tools/killedLane.test.ts` in wac, for `tools/wac/suitegate.wac`.
+// `tools/suiteGate.test.ts` and tools/killedLane.test.ts in wac, for `tools/wac/suitegate.wac`.
 // The first two cases are that file's, kept because what they are about has not changed: the sweep
 // is a claim over a whole `/tmp` prefix, and it once deleted the heavy lane's own stamp — a bare
 // timestamp parses as JSON, a number is valid JSON, so the note had no `pid`, the liveness check

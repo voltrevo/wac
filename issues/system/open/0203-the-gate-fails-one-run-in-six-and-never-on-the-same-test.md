@@ -137,9 +137,9 @@ immediately afterwards:
 | file | what it said |
 |---|---|
 | `packages/platform/test/reqbuf.test.ts` | `a slot still holds a request buffer: 0:0` |
-| `packages/platform/test/native_examples.test.ts` | nine parse errors at `platform.wac:287` — see `0128` |
-| `packages/wacc/test/bindgenWac.test.ts` | — |
-| `packages/tls/test/client.test.ts` | — |
+| packages/platform/test/native_examples.test.ts | nine parse errors at `platform.wac:287` — see `0128` |
+| packages/wacc/test/bindgenWac.test.ts | — |
+| packages/tls/test/client.test.ts | — |
 | `packages/raster/test/live.test.ts` | — |
 
 **The five have five different causes, and calling them flakiness was wrong.** I filed this issue saying

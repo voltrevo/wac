@@ -59,7 +59,7 @@ connect said: Connection refused (os error 111)
 
 ## Notes
 
-Found while moving `packages/webrtc/test/stun.test.ts` to wac (`issues/system/0161`). That test
+Found while moving packages/webrtc/test/stun.test.ts to wac (`issues/system/0161`). That test
 dials a local coturn, and there is nothing to poll for readiness — UDP has no handshake, so a socket
 that is listening and one that is not both accept a `sendTo` silently, and the exchange *is* the
 readiness check. With no way to bound the receive, a server that has not bound yet parks the test
@@ -77,8 +77,8 @@ thread and completes it — the same three lines `Cap::Recv` has. Nothing in `pl
 and the alternative (a socket read timeout) is the one `waitAny`'s documentation argues against:
 "there is no `recvWithin`", because a deadline belongs to the wait.
 
-The probe above now prints the same three lines under both hosts. `packages/quic/test/program.test.ts`,
-`packages/platform/test/echod.test.ts` and `packages/tor`'s `relaycircuit_test.wac` are the datagram
+The probe above now prints the same three lines under both hosts. packages/quic/test/program.test.ts,
+packages/platform/test/echod.test.ts and `packages/tor`'s `relaycircuit_test.wac` are the datagram
 users and all still pass, which is what says the *arriving* case still works — the thread is new, and
 a fix that only ever answers "timed out" would satisfy the probe alone.
 

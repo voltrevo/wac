@@ -55,7 +55,7 @@ whichever tree they belong to, continuing that sequence.
 
 ## What changed besides paths
 
-**The compiler pin is gone** — `wac-version.json`, `tools/wacPin.ts` and `harness/wacVersion.ts`.
+**The compiler pin is gone** — `wac-version.json`, tools/wacPin.ts and harness/wacVersion.ts.
 Its job was checking that a *sibling* checkout was new enough, and it located that checkout by
 looking for `/atoms/wac/` in a path. In one repository the compiler is whatever is in the tree, so
 the check had nothing left to do; it would have kept running and silently passed, which is the

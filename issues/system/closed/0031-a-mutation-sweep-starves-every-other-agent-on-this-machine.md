@@ -67,7 +67,7 @@ I annotated this issue twice today with process trees showing `deno test --paral
 then ten levels deep at load 103 and 122, and attributed them to a mutation sweep in another agent's
 checkout. **Both attributions were wrong in the way that matters, and the second was wrong outright.**
 
-The cause was not a sweep and not `mutate.ts`. `tools/test.ts` — the wrapper that caps the worker count
+The cause was not a sweep and not `mutate.ts`. tools/test.ts — the wrapper that caps the worker count
 — was collected *as a test module* by the suite it launches, because `deno test` imports bare
 `test.{ts,js,mjs,mts}` as well as `*_test.ts` and `*.test.ts`. Every generation of the suite executed its
 top level and started another generation, about a hundred seconds apart, unbounded. The first tree I saw

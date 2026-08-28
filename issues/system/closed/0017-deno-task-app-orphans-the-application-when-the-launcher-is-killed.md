@@ -7,7 +7,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer
 
-`packages/platform/app.ts` builds the program and then runs it as a child:
+packages/platform/app.ts builds the program and then runs it as a child:
 
 ```ts
 const cmd = new Deno.Command(built, { args: appArgs, ...stdio });
@@ -66,7 +66,7 @@ deno run --allow-read --allow-net --allow-env /tmp/wac-app-… -p 46385 127.0.0.
 That is `packages/ssh`'s client test, one leaked launcher-plus-application pair per run of
 `deno test -A packages/ssh/`. They hold their ports and their memory indefinitely.
 
-`packages/ssh/test/cli.test.ts` and one call in `server.test.ts` now build the client once with
+packages/ssh/test/cli.test.ts and one call in `server.test.ts` now build the client once with
 `platform/build.ts` and run the binary directly, which is the same workaround `server.test.ts`
 already used for the sshd binary and `packages/sh`'s differential suite used before that.
 Measured after the change: zero long-lived `wac-app-` processes before a full ssh run and zero

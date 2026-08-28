@@ -56,7 +56,7 @@ transcript beside it would take these four lines for a pass.
 
 ## Where to start
 
-`packages/platform/test/v8host.test.ts` does exercise `spawnSelf` — its `SPAWNING_ENTRY` runs
+packages/platform/test/v8host.test.ts does exercise `spawnSelf` — its `SPAWNING_ENTRY` runs
 `seq 1 3` and a pipeline through `packages/box/src/bin/sh.wac`, and the output comes back and matches
 Deno's. So spawning and reading a child's output *works* on this host for that program.
 

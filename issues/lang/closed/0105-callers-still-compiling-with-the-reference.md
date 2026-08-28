@@ -65,10 +65,10 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 | caller | what it uses the compiler for | move? |
 |---|---|---|
 | `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
-| `tools/coverage.ts` | the same, as a command | with the above |
+| tools/coverage.ts | the same, as a command | with the above |
 | `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **done** — wacc by default, `WAC_TEST_FROM=reference` back |
 | `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **done** — and it had to be, since it measures what a build ships |
-| `harness/ctTrace.ts` | `{ ctTrace: true }` | **done** — wacc by default, `WAC_CT_FROM=reference` back |
+| harness/ctTrace.ts | `{ ctTrace: true }` | **done** — wacc by default, `WAC_CT_FROM=reference` back |
 | `tools/fuzzBoundary.ts` | the reference's own bindgen | **no, deliberately** — see below |
 | `site/src/snippets.ts` | compiles snippets for the site | blocked by `0103` — the glue is TypeScript |
 
@@ -111,11 +111,11 @@ Every remaining caller now has a reason rather than a queue position:
 
 | caller | why it still calls the reference |
 | --- | --- |
-| `harness/ctTrace.ts` | **done, 2026-08-12** — wacc has trace mode now, and it found one thing the reference records that wacc did not: `and-rhs` |
+| harness/ctTrace.ts | **done, 2026-08-12** — wacc has trace mode now, and it found one thing the reference records that wacc did not: `and-rhs` |
 | `tools/fuzzBoundary.ts` | it fuzzes **the reference's** bindgen on purpose; pointing both sides at one generator leaves the marshalling with a single witness |
 | packages/wacc/tools/specCases.ts | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
 | `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
-| `tools/coverage.ts` | **done, 2026-08-12** — wacc by default, `WAC_COV_FROM=reference` back; see below |
+| tools/coverage.ts | **done, 2026-08-12** — wacc by default, `WAC_COV_FROM=reference` back; see below |
 | `tools/programs.test.ts` | **done** — it guards what a build does, so it has to ask the compiler a build uses |
 | `site/src/snippets.ts`, `site/tools/*` | the glue is TypeScript the page has to load — see below, and it is now the *only* non-bootstrap use of the reference left |
 | `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
@@ -132,7 +132,7 @@ It is marked in the source.
 
 ## The gap, closed 2026-08-12
 
-`harness/ctTrace.ts` wanted `{ ctTrace: true }` and wacc had no equivalent — the one item here that
+harness/ctTrace.ts wanted `{ ctTrace: true }` and wacc had no equivalent — the one item here that
 was a *feature* rather than a port. wacc has it now: `emitFilesTraced` and `traceTableFiles`, the
 same journal read through the same three accessors, with `WAC_CT_FROM=reference` to go back.
 

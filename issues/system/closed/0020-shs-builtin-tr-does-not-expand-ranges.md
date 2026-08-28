@@ -8,7 +8,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer
 
-`packages/sh/src/program.wac`'s builtin `tr` compares each input byte against the bytes of the
+packages/sh/src/program.wac's builtin `tr` compares each input byte against the bytes of the
 first set literally. So `a-z` is the three-character set `{a, -, z}` rather than the range, and
 the commonest use of `tr` in existence silently does almost nothing.
 
@@ -58,7 +58,7 @@ unrelated to the bug.
 
 ## Fixed
 
-`expandSet` in `packages/sh/src/program.wac`, and a 256-entry table rather than a scan per byte
+`expandSet` in packages/sh/src/program.wac, and a 256-entry table rather than a scan per byte
 now that the sets are large enough for that to matter. Seventeen `tr` scripts went into
 `test/differential.test.ts`, so the corpus exercises ranges rather than only literal sets.
 

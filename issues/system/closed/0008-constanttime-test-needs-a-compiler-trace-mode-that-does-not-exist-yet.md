@@ -65,7 +65,7 @@ answer and is `0001`; it is not something to invent while the suite is red for e
 
 Two changes, and the first is the one that matters:
 
-**`harness/ctTrace.ts` no longer imports the compiler's types.** It imported
+**harness/ctTrace.ts no longer imports the compiler's types.** It imported
 `CoveragePoint`, so it was tied to the compiler's exact union of point kinds, and adding
 `"index"` to that union broke type-checking in every checkout without it. A structural
 `TracePoint` and string comparisons work against a compiler that has the feature and one

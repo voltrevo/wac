@@ -8,7 +8,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer, no error
 
-`packages/bytes/src/hash.wac` has `hashBytes` and `bytesEq`. `packages/std/src/hash.wac` has
+packages/bytes/src/hash.wac has `hashBytes` and `bytesEq`. packages/std/src/hash.wac has
 `hashString` and `stringEq`. `hashString`'s body is `hashBytes`'s preceded by `s.toBytes()`:
 
 ```wac
@@ -37,7 +37,7 @@ would only show up if something hashed a key one way and looked it up the other.
 export i32 hashString(string s) { return hashBytes(s.toBytes()); }
 ```
 
-Then `packages/bytes/src/hash.wac` goes away, and `json` imports both hash and eq from `std`
+Then packages/bytes/src/hash.wac goes away, and `json` imports both hash and eq from `std`
 like every other `Map` user.
 
 ## Why it is filed rather than done
@@ -52,7 +52,7 @@ now a one-line forward to keep the name its tests use.
 ## Fixed (agent-a, 2026-07-31)
 
 Done as described. `std/src/hash.wac` has `hashBytes` and `bytesEq`, `hashString` is
-`hashBytes(s.toBytes())`, `packages/bytes/src/hash.wac` is gone, and `json` imports both from
+`hashBytes(s.toBytes())`, packages/bytes/src/hash.wac is gone, and `json` imports both from
 `std` — a one-line change, and the only consumer.
 
 Two tests, because the point of the delegation is that nothing else would catch a drift:

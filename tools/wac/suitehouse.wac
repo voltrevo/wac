@@ -1,7 +1,7 @@
 // What the suite reclaims on its way in: Deno's code cache, stale temp directories, and transpiles
 // of sources that no longer exist.
 //
-// The housekeeping half of `tools/runTests.ts`, in wac. The reasons are recorded there and in
+// The housekeeping half of tools/runTests.ts, in wac. The reasons are recorded there and in
 // `wac-mono 0068` and `0136` — a 28 GB code cache, 2,300 leaked temp entries, 17 GB of mirrored
 // staging directories across three agents on a disk at 95%. This file is the same work; what follows
 // is only what differs about doing it here.

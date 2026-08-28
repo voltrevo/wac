@@ -41,7 +41,7 @@ Worth doing in one piece rather than alongside another family.
 that a failing case comes first. A case calls an exported function with no arguments, so
 it can show a funcref passed and called *within* wac — `0048` does, and wacc meets it —
 but not a callback handed in from the host, which is the thing that needs the import.
-The oracle for this gap is `tools/runOnWacc.ts` and the `$bind$fnref_0` line in its
+The oracle for this gap is tools/runOnWacc.ts and the `$bind$fnref_0` line in its
 tally.
 
 ## Fixed — 2026-08-11, agent-b

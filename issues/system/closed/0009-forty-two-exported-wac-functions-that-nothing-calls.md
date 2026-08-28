@@ -38,12 +38,12 @@ What is left, all in packages I am not working in:
 |---|---:|
 | `packages/gzip/src/gzip.wac` | 5 |
 | `packages/json/bench/lookup.wac` | 4 |
-| `packages/std/src/hash.wac` | 4 |
-| `packages/gzip/bench/pushcost.wac` | 3 |
+| packages/std/src/hash.wac | 4 |
+| packages/gzip/bench/pushcost.wac | 3 |
 | `packages/gzip/src/inflate.wac` | 3 |
 | `packages/json/src/json.wac` | 3 |
 | `packages/wacc/src/lex.wac` | 3 |
-| `packages/zstd/src/castrepro.wac` | 3 |
+| packages/zstd/src/castrepro.wac | 3 |
 | `packages/fmt/src/ftoa.wac` | 2 |
 | `packages/stream/src/transform.wac` | 2 |
 | `packages/wacc/src/kinds.wac` | 2 |
@@ -126,14 +126,14 @@ that the answer is to fix the tool.
 | `packages/tor/src/relay.wac` | 7 |
 | `packages/tor/src/cell.wac` | 5 |
 | `packages/bls/src/fp12.wac` | 3 |
-| `packages/gzip/bench/pushcost.wac` | 3 |
+| packages/gzip/bench/pushcost.wac | 3 |
 | `packages/gzip/src/gzip.wac` | 3 |
 | `packages/wacc/src/lex.wac` | 3 |
 | `packages/bls/src/fp.wac` | 2 |
 | `packages/bls/src/fp2.wac` | 2 |
 | `packages/fmt/src/ftoa.wac` | 2 |
 | `packages/wacc/src/kinds.wac` | 2 |
-| `packages/zstd/src/castrepro.wac` | 2 |
+| packages/zstd/src/castrepro.wac | 2 |
 | `packages/gzip/src/inflate.wac` | 1 |
 | `packages/json/bench/lookup.wac` | 1 |
 | `packages/url/src/percent.wac` | 1 |
@@ -150,7 +150,7 @@ Seven of the 37 were **false positives** — live code called dead — and nine 
 
 ### The check was wrong in a fourth and fifth way, and now cannot be wrong in them silently
 
-- **A bound module's function taken as a value.** `packages/gzip/cov.ts` writes
+- **A bound module's function taken as a value.** packages/gzip/cov.ts writes
   `const inflate = inf.mod.inflate as (d: Uint8Array) => Uint8Array` and then calls the local, so
   `.inflate(` never appears in the file. `inflate` — the entry point of the whole decompressor, driven
   through eighty calls in that file — was reported dead, along with `gzipStored`, `gzipFixed`,
@@ -290,7 +290,7 @@ file" from "happens to use the word". Three more real ones appeared immediately:
 - `packages/http/src/request.wac`'s **`ERR_NONE`**, hidden by `packages/json/src/parse.wac`'s `ERR_NONE`
   which *is* used. It cannot have a caller at all: `Parsed` is an enum — `Ok(request)`, `Bad(code)`,
   `Incomplete` — so success is a variant and no code ever means "no error". Deleted.
-- **`wrap` and `masked`** in `packages/zstd/src/castrepro.wac`, hidden by same-named locals elsewhere. That
+- **`wrap` and `masked`** in packages/zstd/src/castrepro.wac, hidden by same-named locals elsewhere. That
   file is three lines of `as~` casts committed with a zstd change on 2 August, referenced by nothing and
   mentioned nowhere — a compiler-bug reproduction left in `src/`. Deleted whole, which takes `wrapI` with
   it.
@@ -405,7 +405,7 @@ wrote*, with no consumer and no test, in a package whose README says it handles 
 parser nothing drives cannot be wrong in a way anything notices — `packages/fs`'s image reader had
 three defects the day its first exercise ran.
 
-Given a consumer rather than deleted, because the oracle was free: `packages/git/test/tag.test.ts`
+Given a consumer rather than deleted, because the oracle was free: packages/git/test/tag.test.ts
 has git create the objects, `git cat-file tag` hand over the exact bytes, and `git rev-parse` /
 `git for-each-ref` say what they mean. Which is what the tool wanted — TypeScript in the package
 that drives it counts as a caller, and now something does.

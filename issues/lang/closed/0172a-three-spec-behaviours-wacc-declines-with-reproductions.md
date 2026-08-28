@@ -11,14 +11,14 @@
 
 ## Why these three are together
 
-`packages/wacc/test/specEmit.test.ts` now records which of the reference's accepted spec programs wacc
+packages/wacc/test/specEmit.test.ts now records which of the reference's accepted spec programs wacc
 **declines**, rather than counting them (`issues/lang/0170a`). There are ten. Six are a nullable
 primitive — `issues/lang/0171a` — and these are the other four, covering three distinct causes.
 
 They are filed together because they were found by one measurement and each is a few lines, not because
 they share a cause. Split this issue if two people take two of them.
 
-Each reproduction below is **minimised from the spec case, then checked both ways**: `tools/check.ts`
+Each reproduction below is **minimised from the spec case, then checked both ways**: tools/check.ts
 (the reference) accepts it, and `wac build` declines it. The spec programs they came from are larger, so
 these are new reductions rather than copies.
 

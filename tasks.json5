@@ -34,7 +34,7 @@
   "wac:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts build",
 
   // The coverage ratchets, one per package plus the runner over all of them.
-  // `coverage` was `tools/coverage.ts` and covered gzip only — `issues/system/0002`.
+  // `coverage` was tools/coverage.ts and covered gzip only — `issues/system/0002`.
   // `coverage:gzip` is that job through the wac binary, and is one of the thirty-six.
   "coverage:all": "deno run -A tools/coverageAll.ts",
   "coverage:bls": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/bls/test/cov_ledger.wac",
@@ -92,7 +92,7 @@
   "corpus:stderr": "deno run -A tools/corpusStderr.ts",
 
   // Everything else.
-  // `bindgen` was `tools/emitgen.ts`, which generated the glue with the TypeScript compiler.
+  // `bindgen` was tools/emitgen.ts, which generated the glue with the TypeScript compiler.
   // `wac bindgen` is the same job through wacc, and is a subcommand rather than a task —
   // reachable by anyone who has the command, which a Deno program under `tools/` is not.
   "bindgen": "./native/v8/target/release/wac bindgen",

@@ -52,7 +52,7 @@ Counted across the tree:
       need something the native runner cannot supply: 100  (95 funcref, 5 data)
 
 A hundred, spread thinly, is enough that **22 of the 23 eligible wrappers contain at least one**. The
-twenty-third is `packages/crypto/test/mlkem_wac.test.ts`, where all five tests take `u8[] vectors` and
+twenty-third is packages/crypto/test/mlkem_wac.test.ts, where all five tests take `u8[] vectors` and
 none runs at all.
 
 So grants are a red herring here. A test that needs `--allow-write` under a read-only run *fails*
@@ -203,7 +203,7 @@ written next to the path that had the grant.
 
 Fixed: one exported `WAC_LANE_GRANTS`, used by `wacShare` and by `nativeShare` — which passed **no**
 grants at all, invisible only because its population is zero. `tools/mutate/grants.test.ts` reads the
-lane's list out of `tools/runTests.ts` and fails when the two disagree, which is the drift that caused
+lane's list out of tools/runTests.ts and fails when the two disagree, which is the drift that caused
 this; it also fails loudly if its own anchor stops matching, since a silent zero there would be the same
 fault one level up.
 

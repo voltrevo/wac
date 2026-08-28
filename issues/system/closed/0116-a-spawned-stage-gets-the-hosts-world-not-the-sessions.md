@@ -56,7 +56,7 @@ The two lines in the reproduction now answer `inimage` and "No such file or dire
 ### What it unblocked
 
 - **design/0001 step 3's criterion**, which this cost: `seq 1 200000 | ps` over ssh on an image lists
-  the session, `seq` and `ps`. `packages/ssh/test/server.test.ts`.
+  the session, `seq` and `ps`. packages/ssh/test/server.test.ts.
 - **Sealed sessions spawn.** `sealedsh`, `imaged` and `sshd -i` are all `externalSpawnable` now, so a
   pipeline streams instead of running a stage at a time. `imaged`'s "a redirection lands in the image"
   is a property of the code rather than of which grants it was built with.
@@ -156,7 +156,7 @@ the streaming path had nowhere else to go.
 **Done, 2026-08-08.** `Fs.openOut`/`writeOut`/`closeOut`, mount-dispatched like every other
 operation: append into the inode for a memory mount, and for a host mount delegate to
 `cli.openOutput`, which is what the shell was doing directly. `streamPipeline` uses them, so `>`
-means one thing and this issue's fix does not have to remember it. `packages/fs/test/stream.test.ts`.
+means one thing and this issue's fix does not have to remember it. packages/fs/test/stream.test.ts.
 
 There is one thing to know when this issue *is* fixed: a spawned stage writes to its parent through a
 queue, and the parent relays into the file, so the file is still the parent's filesystem's. That is

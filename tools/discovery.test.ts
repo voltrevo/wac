@@ -3,7 +3,7 @@
 // `deno test` with no paths walks the working directory and imports every file matching
 // `*_test.{ts,tsx,mts,js,mjs,jsx}`, `*.test.{…}` **or bare `test.{ts,js,mjs,mts}`** — and importing a
 // module runs its top level. That last pattern is the one nobody remembers, and it cost a host reboot:
-// `tools/test.ts`, a wrapper whose top level spawns `deno test --parallel`, was collected by the very
+// tools/test.ts, a wrapper whose top level spawns `deno test --parallel`, was collected by the very
 // suite it launches. Each generation reached the file after about a hundred seconds and started another
 // generation; it was seventeen deep at load 122 on a machine three agents share, and unbounded.
 //

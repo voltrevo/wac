@@ -39,7 +39,7 @@ compiler/wacSpec.test.ts, and the tour tests this exact function — `rem(-7.0, 
 line below its definition. The tour is in wacc's corpus for *checking* and *emitting*, so wacc compiles
 it into a module that validates and computes the wrong answer, and no test asks what it computes.
 
-That gap is now closed: `packages/wacc/test/tour.test.ts` calls the tour's functions under wacc and
+That gap is now closed: packages/wacc/test/tour.test.ts calls the tour's functions under wacc and
 under the reference and compares, with this bug in a `KNOWN_DIFFERENT` map. **When `%` is fixed the
 test fails**, saying `rem agrees with the reference now — take it out of KNOWN_DIFFERENT`, which is
 `specEmit.test.ts`'s rule and is what stops a fixed bug going on looking open.
@@ -93,7 +93,7 @@ between them"*. So the change is bounded, and these are the lines it touches:
 complete expression walk, and an incomplete one names a function index that does not exist — silent
 and catastrophic, where always-emit costs a hundred bytes and is correct by construction.
 
-**The oracle is already in place.** `packages/wacc/test/tour.test.ts` compares `rem` against the
+**The oracle is already in place.** packages/wacc/test/tour.test.ts compares `rem` against the
 reference on four inputs, with this issue in `KNOWN_DIFFERENT` — so a wrong transcription shows as a
 wrong *answer* rather than as nothing, and a right one fails the test with "take it out of
 KNOWN_DIFFERENT". The index arithmetic going wrong shows up as invalid modules across `corpusEmit`,

@@ -19,7 +19,7 @@ $ LC_ALL=C     wc -w < f           1      <- what the corpus differential's bash
 $ LC_ALL=C.UTF-8 wc -w < f         2      <- the ambient environment, and what box now answers
 ```
 
-`packages/box/test/corpus.test.ts` runs every script twice — once through bash, once through a
+packages/box/test/corpus.test.ts runs every script twice — once through bash, once through a
 shell built from the applets — with `env: { LC_ALL: "C", … }, clearEnv: true`. Since
 [0143](0143-box-wc-counts-words-by-ascii-whitespace-only.md), `box`'s `wc -w` splits
 words and judges printability by **code point**, which matches `wc(1)` under this machine's ambient
@@ -66,7 +66,7 @@ locale to compare against while `LC_ALL` was `C.UTF-8`, and every fixture ASCII,
 
 ## Closed 2026-08-12 — moved, and the corpus says nothing else moved with it
 
-`LC_ALL=C.UTF-8` in `packages/box/test/corpus.test.ts` and the five `tools/corpus*.ts` runners.
+`LC_ALL=C.UTF-8` in packages/box/test/corpus.test.ts and the five `tools/corpus*.ts` runners.
 
 ```
 $ deno test packages/box/test/corpus.test.ts     ok, 23s

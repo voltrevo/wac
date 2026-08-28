@@ -1290,7 +1290,7 @@ is the evidence for that: its report was four gaps and only one of them was a fa
 
 ## One trap for whoever does this, measured
 
-**Do not compare the two instruments on generic code.** `packages/std/src/map.wac` reads `56/56` from its
+**Do not compare the two instruments on generic code.** packages/std/src/map.wac reads `56/56` from its
 driver and `138/392` from `wac test --coverage`, and the driver is the one answering the useful question.
 `Map<K, V>` is monomorphised, so the binary counts every instantiation's copy of each branch separately —
 seven instantiations of a 56-point file is 392 points, and exercising one of them fully leaves the rest

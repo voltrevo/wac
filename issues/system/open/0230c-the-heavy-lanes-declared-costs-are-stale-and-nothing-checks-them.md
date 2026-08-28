@@ -40,7 +40,7 @@ longer hold:
 ## What is not the cause
 
 - **Not the new runner.** The wac orchestrator hands the six files to one `wac test` exactly as
-  `tools/runTests.ts` did, and the file above was measured on its own, outside any runner.
+  tools/runTests.ts did, and the file above was measured on its own, outside any runner.
 - **Not contention.** The 9m20s figure is CPU time.
 - **Probably not a regression in the tests themselves**, though this is the part that is *not*
   measured: the likely cause is the corpus these files walk. They are "the whole corpus emitted

@@ -50,7 +50,7 @@ Either way the four copies should become one.
 ## Closed, 2026-08-05 (agent-a): hold the port until the bind
 
 One allocator, `harness/port.ts`. Five copies, not four — the fifth was the same shape in
-`packages/platform/test/node_net.test.ts`, and three more that *looked* like it are fine and were left
+packages/platform/test/node_net.test.ts, and three more that *looked* like it are fine and were left
 alone: `aliasing`, `listen` and `timeout` bind a listener and accept on it, so nothing can take it.
 
 **The idea is to hold, not to guess.** `holdPort()` returns a port with its listener still open, and the
@@ -65,7 +65,7 @@ const child = new Deno.Command(bin, { args }).spawn();
 
 While it is held, no other process's probe can succeed — the kernel is the registry, and a held listener
 is how you ask it. That makes a cross-process collision impossible for as long as the hold lasts, which
-matters most in `packages/ssh/test/server.ts`, where two `ssh-keygen` runs and a config write happened
+matters most in packages/ssh/test/server.ts, where two `ssh-keygen` runs and a config write happened
 between the old allocation and sshd's bind. Hundreds of milliseconds of open window, now one `spawn`.
 
 `withPort` wraps allocate-release-start and retries on `AddrInUse`, so the residual window costs a second
@@ -92,5 +92,5 @@ paragraph is where to start.
 
 **The worker cap stays at 4**, deliberately. 0075's ceiling was this bug, so five is now available, and
 the measurement says it is not worth taking: 56s against 59s, on five cores shared with two other agents.
-A 5% gain for every core on the machine is a bad trade, and the number in `tools/runTests.ts` should be
+A 5% gain for every core on the machine is a bad trade, and the number in tools/runTests.ts should be
 the one that leaves room rather than the one that wins a benchmark.

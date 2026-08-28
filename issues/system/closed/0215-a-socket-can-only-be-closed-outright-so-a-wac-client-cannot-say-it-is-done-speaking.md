@@ -35,7 +35,7 @@ one — needs the end to arrive while it is still running, and killing it instea
 never speaks."* That is exactly the socket case, with the same example program. The
 capability was added for children and the socket half was not.
 
-Found porting `packages/platform/test/pipeline.test.ts` to wac (`issues/system/0161`). Its
+Found porting packages/platform/test/pipeline.test.ts to wac (`issues/system/0161`). Its
 second test — `inetd` accepting a connection and handing it to a `wc` child — connects,
 writes, calls `conn.closeWrite()`, then reads the reply. The comment there says why:
 *"`wc` writes nothing before EOF, so without this the exchange would return empty."* The

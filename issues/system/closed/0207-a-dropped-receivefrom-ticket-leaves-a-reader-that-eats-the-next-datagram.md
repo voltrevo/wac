@@ -94,7 +94,7 @@ to be wrong: a second read drains rather than replaying, and a read with nothing
 instead of answering a stale copy.
 
 `packages/webrtc`'s eleven wac tests, `packages/tor`'s `relaycircuit_test.wac`,
-`packages/platform/test/echod.test.ts` and `packages/quic/test/program.test.ts` all pass — which is
+packages/platform/test/echod.test.ts and packages/quic/test/program.test.ts all pass — which is
 what says the ordinary path still works, since a fix that only ever answered from the queue would
 satisfy the reproduction alone.
 

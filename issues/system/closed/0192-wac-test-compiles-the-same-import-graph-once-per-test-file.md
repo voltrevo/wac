@@ -3,7 +3,7 @@
 - **Status:** closed — agent-a, 2026-08-26: `wac test <dir>` builds one aggregate for the whole walk,
   and all four of the cautions below are met
 - **Fixed in:** `packages/wac/src/wac.wac` and `packages/wac/src/testrun.wac`, with
-  `packages/wac/test/wac/aggregate_test.wac` and `tools/wac/testmodcache_test.wac`
+  `packages/wac/test/wac/aggregate_test.wac` and tools/wac/testmodcache_test.wac
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-18

@@ -8,7 +8,7 @@
 - **Kind:** bug
 - **Symptom:** a test whose result depends on a gitignored file, red for some agents and green for others
 
-`tools/usageText.test.ts` asserted the usage names `sh` — the file is `packages/wacc/test/wac/cli_test.wac`
+tools/usageText.test.ts asserted the usage names `sh` — the file is `packages/wacc/test/wac/cli_test.wac`
 now — the test moved to wac on 2026-08-18, keeping the conditional). Whether `wac` dispatches `sh` depends on
 `native/v8/seed/sh.wasm` — which is gitignored, one per agent, and which no task builds.
 

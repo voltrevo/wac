@@ -193,7 +193,7 @@ directory" reads as their mistake. So:
 - **`sh` says it**: `cat`, `wc`, `rm` and the rest print `cannot be named on this host`, and `rm -f` does
   *not* swallow it, because a file that is still there afterwards is not absent.
 - Tested twice: the refinement in `packages/platform/test/unnameable.test.ts`, and what a person sees in
-  `packages/sh/test/unnameable.test.ts`. Neither is a differential case, and that is the point — bash
+  packages/sh/test/unnameable.test.ts. Neither is a differential case, and that is the point — bash
   handles these names perfectly, so comparing against it would only restate the gap. `packages/sh/README.md`
   records the divergence.
 
@@ -249,7 +249,7 @@ numbers — a fault number is meaningless without them — and each caller is no
 fallback for the message a struct carries.
 
 Verified: the 614-script corpus, the 57-script two-backings comparison, all of `packages/platform`, and
-`packages/box` — 79 + 28 passing, with four new cases in `packages/sh/test/unnameable.test.ts` for what
+`packages/box` — 79 + 28 passing, with four new cases in packages/sh/test/unnameable.test.ts for what
 `stat` used to get wrong and two in `packages/platform/test/unnameable.test.ts` for the mapper's narrowness
 and the wire layout.
 

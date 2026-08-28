@@ -15,7 +15,7 @@ are gone, and so were the three before them:
 
 | set | subjects | fate |
 | --- | --- | --- |
-| original | `packages/quic/test/varint_wac.test.ts`, and two others | deleted with the first forty-four wrappers |
+| original | packages/quic/test/varint_wac.test.ts, and two others | deleted with the first forty-four wrappers |
 | mine, an hour later | gzip's huffman, bytes' buf, std's map | deleted with the next batch, within the hour |
 
 So the file reads a path that does not exist and both of its comparisons fail with `NotFound` — a
@@ -26,7 +26,7 @@ failure about the filesystem wearing a message about profiles.
 **A fourth set of names** breaks on the next batch. Two sets in one afternoon is the measurement.
 
 **Finding them instead** — "the first single-registration wrapper per package, in sorted order" — picks
-subjects that are not subjects. It chose `packages/crypto/test/aead_wac.test.ts`, and three of its five
+subjects that are not subjects. It chose packages/crypto/test/aead_wac.test.ts, and three of its five
 tests need a host oracle and are skipped under `wac test`, so the test reported:
 
 ```
@@ -41,7 +41,7 @@ it noise.
 ## And then the one verified subject failed too
 
 I ran every remaining single-registration wrapper's entry under `wac test` and kept the ones that
-skipped nothing. `packages/crypto/test/kdf_wac.test.ts` was the only survivor of 24. It fails as well:
+skipped nothing. packages/crypto/test/kdf_wac.test.ts was the only survivor of 24. It fails as well:
 
 ```
 kdf_wac.test.ts: the native profile names 4 test(s), the Deno one 6.

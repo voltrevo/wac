@@ -116,7 +116,7 @@ RLP a slot value is stored in. The storage root is never supplied by a test — 
 proof, which is the whole point of composing them.
 
 **The endpoint vector**, in `test/vendor/getproof.json`: `eth_getProof` from **anvil v1.7.1**, whose tries
-are `alloy-trie` in Rust. `tools/vendor-getproof.ts` builds the state it asks about and regenerates the
+are `alloy-trie` in Rust. tools/vendor-getproof.ts builds the state it asks about and regenerates the
 file; the file is committed, so the suite needs no client. Three cases — an account with three slots set
 and one never written, an account that does not exist, and a funded account with no storage — covering
 inclusion and absence in both tries and the composition of the two.

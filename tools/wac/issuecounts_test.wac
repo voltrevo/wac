@@ -1,0 +1,115 @@
+// Each issue tree's INDEX.md states how many issues there are and how many are closed.
+//
+//     wac test --allow-read --allow-run tools/wac/issuecounts_test.wac
+//
+// `issues/lang/INDEX.md` and `issues/system/INDEX.md` end with a line like `221 issues, 188
+// closed.`, and it is the first thing a reader sees about the size of the backlog. It is typed by
+// hand, next to a row that is also typed by hand, in a file edited every time an issue is opened or
+// closed — which is the shape of a number that goes stale without anyone noticing.
+//
+// ## It was checked in the reference's test suite, and that is gone
+//
+// compiler/wacSpec.test.ts asserted this, a whole suite away from the thing it was about, and
+// `tools/push.sh` still records why that mattered: *"a pure prose edit routinely breaks it on
+// purpose"* — the gate could not skip the suite for a documentation-only change, because closing an
+// issue is a documentation-only change that this check is entitled to fail on.
+//
+// That file went with the TypeScript compiler on 2026-08-28 and took the only copy of this check
+// with it. Nothing noticed, because the counts happened to be right that day. The rule is a
+// property of `issues/`, so it lives beside `issues/` now rather than inside a compiler's tests.
+//
+// ## Counted from the directory, not from the table
+//
+// The rows in INDEX.md are as hand-written as the total, so counting them would compare one typed
+// number against another. `git ls-files` is the population: a file in `open/` is an open issue and a
+// file in `closed/` is a closed one, which is the convention each tree's README states and the only
+// thing here that is not somebody's typing.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { startsWith, trimmed } from "../../packages/wactest/src/strings.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+
+/** How many tracked `.md` files sit directly under `dir`. */
+i32 countIn(string[] tracked, string dir) {
+  i32 n = 0;
+  for (i32 i = 0; i < tracked.len(); i++) {
+    string p = tracked[i];
+    if (!startsWith(p, dir)) { continue; }
+    string rest = p.slice(dir.len(), p.len());
+    // Directly under it: no further separator, and a markdown file.
+    if (rest.indexOf("/") >= 0) { continue; }
+    if (rest.len() < 3 || rest.slice(rest.len() - 3, rest.len()) != ".md") { continue; }
+    n = n + 1;
+  }
+  return n;
+}
+
+/** The `N issues, M closed.` trailer, as its two numbers; `-1` for either when it is not there. */
+void statedCounts(string index, i32[] out) {
+  out[0] = 0 - 1;
+  out[1] = 0 - 1;
+  string[] lines = nonEmptyLines(index);
+  for (i32 i = 0; i < lines.len(); i++) {
+    string l = trimmed(lines[i]);
+    i32 at = l.indexOf(" issues, ");
+    if (at <= 0) { continue; }
+    i32 shut = l.indexOf(" closed");
+    if (shut < at) { continue; }
+    out[0] = atoiAt(l, 0, at);
+    out[1] = atoiAt(l, at + 9, shut);
+    return;
+  }
+}
+
+/** The decimal number in `s[from, to)`, or -1 if it is not one. */
+i32 atoiAt(string s, i32 from, i32 to) {
+  if (to <= from) { return 0 - 1; }
+  u8[] b = s.toBytes();
+  i32 v = 0;
+  for (i32 i = from; i < to; i++) {
+    if (b[i] < '0' || b[i] > '9') { return 0 - 1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+export string test_each_issue_trees_index_states_the_number_of_issues_it_has(Core core, Cli cli) {
+  T t = T.create();
+
+  Exec ls = cli.exec("git", string[]("ls-files", "issues"), u8[0]()).wait();
+  t.isTrue(ls.ran() && ls.status == 0, "git ls-files issues failed");
+  if (!ls.ran() || ls.status != 0) { return t.report(); }
+  string[] tracked = nonEmptyLines(string.fromBytes(ls.stdout));
+
+  string[] trees = string[]("lang", "system");
+  for (i32 k = 0; k < trees.len(); k++) {
+    string tree = trees[k];
+    i32 open = countIn(tracked, "issues/" + tree + "/open/");
+    i32 closed = countIn(tracked, "issues/" + tree + "/closed/");
+
+    // A floor first: a walk that found nothing would agree with an INDEX.md it had also failed to
+    // read, and two zeroes match.
+    t.isTrue(open + closed >= 50,
+             tree + ": only " + itoa(open + closed) + " issue files found — did the walk resolve?");
+
+    FileResult f = cli.readFile("issues/" + tree + "/INDEX.md").wait();
+    t.isTrue(f.ok, "issues/" + tree + "/INDEX.md is readable — " + f.error);
+    if (!f.ok) { continue; }
+
+    i32[] said = i32[2]();
+    statedCounts(string.fromBytes(f.bytes), said);
+    t.isTrue(said[0] >= 0,
+             tree + ": INDEX.md states no `N issues, M closed.` line — has the wording changed?");
+    if (said[0] < 0) { continue; }
+
+    t.eqI32(said[0], open + closed,
+            "issues/" + tree + "/INDEX.md says " + itoa(said[0]) + " issues; there are "
+              + itoa(open + closed));
+    t.eqI32(said[1], closed,
+            "issues/" + tree + "/INDEX.md says " + itoa(said[1]) + " closed; there are "
+              + itoa(closed));
+  }
+  return t.report();
+}

@@ -23,7 +23,7 @@ the rest goes to standard output, the two streams disagree about whether anythin
 
 ## Where it came from
 
-`tools/shellFuzz.ts`, and it is the *only* divergence three seeds find: seed 1 disagrees on two
+tools/shellFuzz.ts, and it is the *only* divergence three seeds find: seed 1 disagrees on two
 scripts and seed 29 on one, and all three are this. It has been there for as long as `local` has —
 0114's fix changed the other disagreement on seed 29 and left this untouched.
 
@@ -60,7 +60,7 @@ shell is real, and bash does not apply it here — `local` is not a special buil
 abort for the others either without `set -o posix`. So there is nothing to fix in the shell, and the
 "rule with edges" this issue proposed would have made it *diverge*.
 
-**What the fuzzer was actually reporting.** `tools/shellFuzz.ts` compares `out + err` after stripping
+**What the fuzzer was actually reporting.** tools/shellFuzz.ts compares `out + err` after stripping
 each shell's diagnostic prefix, and the prefix pattern was
 `/^(?:\S*bash|environment|ba-c): line \d+: /gm`. Under `m`, `^` matches at a line start — and
 `printf '%s|'` leaves no newline, so standard output and the diagnostic share a line:

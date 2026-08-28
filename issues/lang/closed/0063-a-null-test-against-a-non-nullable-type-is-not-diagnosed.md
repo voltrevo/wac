@@ -72,7 +72,7 @@ It found five instances in one package in one migration:
 Generic code that may be instantiated with a nullable `T` would be the reason to allow it. It
 does not arise here: wac monomorphises, so nullability is known per instantiation, and every
 legitimate null test in this repo is already on an explicitly nullable declaration. In
-`packages/std/src/map.wac` the slot is declared `MapEntry<K, V>? e` and the check is honest. All
+packages/std/src/map.wac the slot is declared `MapEntry<K, V>? e` and the check is honest. All
 79 `is null` uses across wac-mono's `src` are of that shape.
 
 If a case does exist, `T?` where `T` is already nullable would be the thing to define rather than

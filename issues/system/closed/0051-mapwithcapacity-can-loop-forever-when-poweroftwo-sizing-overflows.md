@@ -8,7 +8,7 @@
 - **Kind:** bug
 - **Symptom:** trap
 
-`packages/std/src/map.wac` computes its requested slot count and rounds it up to a power of two using wrapping `i32` arithmetic. For a sufficiently large positive capacity hint, the doubling loop overflows to a negative value and then to zero, after which its condition remains true forever.
+packages/std/src/map.wac computes its requested slot count and rounds it up to a power of two using wrapping `i32` arithmetic. For a sufficiently large positive capacity hint, the doubling loop overflows to a negative value and then to zero, after which its condition remains true forever.
 
 Filed from inspection; **reproduced here, then fixed**.
 

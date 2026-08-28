@@ -73,7 +73,7 @@ than being smuggled in beside a recall fix.
 
 ## Notes
 
-`packages/wacc/test/missed.ts` prints the programs behind any row of `mutateCheck`'s table:
+packages/wacc/test/missed.ts prints the programs behind any row of `mutateCheck`'s table:
 
     deno run -A --unstable-net packages/wacc/test/missed.ts "undefined variable"
 

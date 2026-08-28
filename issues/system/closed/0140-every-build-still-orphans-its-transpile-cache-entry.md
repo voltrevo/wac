@@ -26,7 +26,7 @@ took on 2026-08-05 (23 GB, 25,482 of 25,490 orphaned) and again the same evening
 
 ## What is different this time
 
-The sweep is no longer by hand. `tools/runTests.ts` drops unreachable entries at the start of every
+The sweep is no longer by hand. tools/runTests.ts drops unreachable entries at the start of every
 full run, beside the temp sweep and the code-cache guard, so nobody has to notice. That is the
 "cheaper variant" 0068 named and it bounds the damage to one run's worth.
 
@@ -99,7 +99,7 @@ All three of the decisions above went as recommended:
 `gen/file/tmp` — 261 entries before, 261 after — where every build used to leave about a megabyte
 behind for ever.
 
-`tools/runTests.ts` still drops unreachable entries at the start of a full run, and
+tools/runTests.ts still drops unreachable entries at the start of a full run, and
 `tools/prune-deno-cache.sh` still exists for a machine too full to start one. Both are now mops for
 a floor that no longer leaks; the entries they find will be from builds that predate this, or from
 `tools/mutate.ts`, which stages its own copies and is the next place to look if this regrows.
@@ -125,7 +125,7 @@ mirror goes and a live one's stays; it fails with the removal taken out.
 orphaned entries totalling 1 MB, and *every one of them is under `/tmp`* — `/tmp/<hash>.ts`,
 `wac-bindgen-*/gen.ts`, `wac-inflight-*`, and a handful of per-test server fixtures. No staging
 mirror is among them. Those are transient sources belonging to tools and tests rather than to the
-build cache, they cost about a megabyte a run rather than gigabytes, and `tools/runTests.ts` sweeps
+build cache, they cost about a megabyte a run rather than gigabytes, and tools/runTests.ts sweeps
 them at the start of every run.
 
 So the mop stays and is now a backstop rather than the mechanism, which is what this issue asked for.

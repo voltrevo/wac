@@ -5,7 +5,7 @@
 
 ## What
 
-`deno task coverage:crypto` exits 1. It had done for some time — `packages/crypto/cov.ts` last changed on
+`deno task coverage:crypto` exits 1. It had done for some time — packages/crypto/cov.ts last changed on
 2 August, `packages/crypto/src/` as recently as yesterday — and nothing runs it, so nothing said so.
 
 Two of the reasons are now fixed:

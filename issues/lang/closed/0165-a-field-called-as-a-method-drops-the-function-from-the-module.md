@@ -80,7 +80,7 @@ The second is the dangerous half. `packages/wacc/test/wac/` has emit tests that 
 *exports*; none asserts that every `export` in the source appears in the module, which is the
 invariant this breaks and a cheap thing to check for the whole corpus.
 
-Found while porting `packages/fmt/cov.ts` to wac (`issues/system/0161`), where the symptom was a
+Found while porting packages/fmt/cov.ts to wac (`issues/system/0161`), where the symptom was a
 coverage report claiming the counter table and the counter dump described different modules.
 
 ## Fixed

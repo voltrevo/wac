@@ -32,7 +32,7 @@ file has since been **deleted** — the operator's call, and the right one. Its 
 runner up against the Deno harness, or re-asserted a fixpoint that `tools/seed.sh` already refuses a
 seed for. Deno-driven testing is being removed, not kept on as the oracle that validates what replaces
 it. `wac sh` was the one thing it covered that nothing else did, and that moved to
-`tools/wac/sh_test.wac`, against the binary we already have rather than a freshly built one.
+tools/wac/sh_test.wac, against the binary we already have rather than a freshly built one.
 
 **What survives is section 1**, which was never about the test: the two build pipelines differ and
 nobody has decided whether that is a bug. That is the issue now, and the title says so.
@@ -142,7 +142,7 @@ The opt-in is for disk — each run rebuilds the crate and writes 67 MB — and 
 keep it out of the gate. But nothing else runs it either, so "opt-in" has meant "never", and three
 independent defects accumulated in one file without a single red run to show for it.
 
-`packages/wacc/test/wac/binary_test.wac` is opt-in for the same reason (105 MB) and was **also**
+packages/wacc/test/wac/binary_test.wac is opt-in for the same reason (105 MB) and was **also**
 green only because nobody ran it; it passes, but that was luck rather than evidence. Whatever is done
 here, the class needs an answer: an opt-in test that is never opted into is a test that has been
 deleted without anybody deciding to.

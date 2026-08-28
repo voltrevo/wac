@@ -161,7 +161,7 @@ for attempt in 1 2 3; do
   #     == running the suite (attempt 1) ==
   #
   # It then spent the suite on a tree with conflict markers in it. The argument is kept by the
-  # structure rather than by a second pull: the compiler is `compiler/` in this repo now, so the
+  # structure rather than by a second pull: the compiler is `packages/wacc` in this repo now, so the
   # merge at the bottom of this loop — which stops and asks for hands when it conflicts — is the
   # one that brings a pin bump in, and it is already inside the loop.
 
@@ -481,8 +481,9 @@ for attempt in 1 2 3; do
   # compile, so editing one is editing code and the ratchets run.
   #
   # It skips **this check and nothing else**. The suite has already run by the time we get here, and it
-  # must: a pure prose edit routinely breaks it on purpose, because compiler/wacSpec.test.ts asserts
-  # `N issues, M closed.` against the files in `issues/*/`. Skipping the suite on this predicate would
+  # must: a pure prose edit routinely breaks it on purpose, because
+  # `tools/wac/issuecounts_test.wac` asserts `N issues, M closed.` against the files in `issues/*/`.
+  # Skipping the suite on this predicate would
   # be wrong; skipping a branch-coverage measurement of code nobody touched is not.
   if "$WAC" run --allow-read --allow-run tools/docsOnly.wac -- origin/master "$tested" 2>&1; then
     echo "== skipping the coverage ratchets: documentation only =="

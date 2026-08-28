@@ -70,7 +70,7 @@ argument types do not match the callee rather than emitting it — that would ha
 compile error at the line — and `platform.wac`'s parameter could be named `onValue`, which does not fix
 the bug but takes the whole repository out of its way.
 
-Found while porting `packages/tor/test/dird.test.ts` to wac; it cost an afternoon of bisecting a file
+Found while porting packages/tor/test/dird.test.ts to wac; it cost an afternoon of bisecting a file
 that had nothing to do with it. Distinct from [0159](../closed/0159-arithmetic-on-a-string-operand-silently-deletes-the-function.md),
 which needs no lambda and no collision.
 

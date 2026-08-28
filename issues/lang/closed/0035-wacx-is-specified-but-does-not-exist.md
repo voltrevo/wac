@@ -36,7 +36,7 @@ Three of the four commands already exist, hand-rolled, in `wac-mono`:
 
 | documented | what exists there |
 |---|---|
-| `wacx check` | `tools/check.ts` — compile, print diagnostics, exit 1 |
+| `wacx check` | tools/check.ts — compile, print diagnostics, exit 1 |
 | `wacx run` | `harness/wacTestRun.ts` — instantiate and call an export |
 | `wacx bindgen` | `harness/wacBind.ts` — compile, bindgen, write, import |
 | `wacx compile` | nobody has needed a bare `.wasm` yet |

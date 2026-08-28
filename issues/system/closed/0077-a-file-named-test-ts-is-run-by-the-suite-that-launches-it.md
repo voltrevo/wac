@@ -10,7 +10,7 @@
 
 Filed as 0076 and renumbered the same hour: agent-b pushed *their* 0076 — an app worker running `main`
 once per case — while this was being written, and they got there first. The slug is unchanged. Commit
-`a1f5683` and the comments it added to `tools/runTests.ts`, `tools/suiteGuard.ts`,
+`a1f5683` and the comments it added to tools/runTests.ts, `tools/suiteGuard.ts`,
 `tools/discovery.test.ts` and 0031 all say 0076; they mean this file. Fixed in the sources below rather
 than left to mislead, but the commit message cannot be changed.
 
@@ -30,12 +30,12 @@ $ ps -o pid,ppid,etimes -p $(pgrep -d, -f "deno test --parallel")
 
 ## Why
 
-`tools/test.ts` was a wrapper: it capped `DENO_JOBS` and then spawned `deno test --parallel …`. It was
+tools/test.ts was a wrapper: it capped `DENO_JOBS` and then spawned `deno test --parallel …`. It was
 added for good reasons ([0075](0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md)).
 
 `deno test` with no paths walks the working directory and imports every file matching
 `*_test.{ts,tsx,mts,js,mjs,jsx}`, `*.test.{…}` **or bare `test.{ts,js,mjs,mts}`**. That third pattern is
-the one nobody remembers. So the suite imported `tools/test.ts`, and importing a module runs its top
+the one nobody remembers. So the suite imported tools/test.ts, and importing a module runs its top
 level, and its top level launches a suite.
 
 Confirmed rather than reasoned about, in a scratch directory with two files:
@@ -72,7 +72,7 @@ before checking `/proc/<pid>/cwd` and finding my own workspace. That correction 
 
 ## The fix
 
-1. **`tools/test.ts` → `tools/runTests.ts`**, and `deno.json`'s task with it. A wrapper's name must not
+1. **tools/test.ts → tools/runTests.ts**, and `deno.json`'s task with it. A wrapper's name must not
    be one the runner collects.
 2. **`tools/discovery.test.ts`** asserts the property: every file in the repo that `deno test` will
    import declares a test, either directly or through `wacTestRun`, which registers one per exported

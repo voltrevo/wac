@@ -37,7 +37,7 @@ and the glue bindgen writes for a capability parameter unwraps the argument:
   ((v) => v === null ? null : v.$ref)(a0), ((v) => v === null ? null : v.$ref)(a1)))
 ```
 
-`packages/fmt/cov.ts` calls the export with no arguments, because a coverage driver has no world to
+packages/fmt/cov.ts calls the export with no arguments, because a coverage driver has no world to
 give: it instruments a module and calls its tests, and nothing in that path builds a `Core` or a `Cli`.
 `undefined.$ref` is the first thing that happens.
 
@@ -101,8 +101,8 @@ have no `coverage:*` task, so only `crypto` shows it.
 That makes the second option above — skip and name — worth more than it looks. A red task is not a
 measurement, and the packages being converted are the ones with the most oracle-driven tests.
 
-`coverage:std` was also red and is a different bug, fixed rather than filed: `packages/std/cov.ts`
-still named `packages/std/test/traps.wac`, which moved to `test/wac/traps_test.wac` on 2026-08-16
+`coverage:std` was also red and is a different bug, fixed rather than filed: packages/std/cov.ts
+still named packages/std/test/traps.wac, which moved to `test/wac/traps_test.wac` on 2026-08-16
 when std's trap tests were converted. It had been failing with `NotFound` since, which is a day of a
 coverage task being red for a reason nobody was looking at — **the same commit that moves a test has
 to grep for its old path**, and `cov.ts` is not somewhere the link guard reaches, since the path is
@@ -115,7 +115,7 @@ Both named crashes are gone, and the mechanism is the first of the two options r
     deno task coverage:fmt      exit 0, no TypeError, no `$ref`
     deno task coverage:crypto   exit 0, no TypeError, no `$ref`
 
-**`packages/fmt/cov.ts` no longer exists.** The driver the issue names was replaced by
+**packages/fmt/cov.ts no longer exists.** The driver the issue names was replaced by
 `tools/wac/covledger.wac`, whose entry point is
 `measure(Core core, Cli cli, string entry, string[] grants, string[] exports)` — it takes a world and
 the grants, which is exactly *"the driver builds a world, the way `harness/wacTestRun.ts` already does

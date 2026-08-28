@@ -9,7 +9,7 @@
 ## What
 
 `packages/webrtc`'s DTLS **server** role completes a handshake with `openssl s_client -dtls1_2`:
-`packages/webrtc/test/dtlsserver.test.ts` runs the cookie exchange, sends ServerHello, Certificate,
+packages/webrtc/test/dtlsserver.test.ts runs the cookie exchange, sends ServerHello, Certificate,
 a signed ServerKeyExchange and ServerHelloDone, verifies the client's Finished against its own
 transcript and sends one back. That test passes.
 

@@ -32,12 +32,12 @@ gitignored and per-agent, which is why this varies between checkouts and why it 
 machine and not another.
 
 The only thing in the repository that ever built a binary *with* a shell was `buildSeeded()` in
-`packages/wacc/test/nativeBinary.test.ts`, which wrote `packages/box/example/boxsh.wac` to `sh.wasm`
+packages/wacc/test/nativeBinary.test.ts, which wrote `packages/box/example/boxsh.wac` to `sh.wasm`
 beside the compiler before calling cargo. That file was deleted on 2026-08-19, so nothing does it now.
 
 ## How it was found
 
-`tools/wac/sh_test.wac` — which replaced that file's `wac sh` case, deliberately testing the binary we
+tools/wac/sh_test.wac — which replaced that file's `wac sh` case, deliberately testing the binary we
 already have rather than a freshly built one. It passed when written, against a binary that happened
 to carry a shell, and failed after the next `deno task seed`. The test now skips with this number
 named rather than going red, since the configuration is legal.
@@ -79,7 +79,7 @@ wacc reproduces itself; putting them in the loop would pay for two extra compile
 goes from about 13s to **34s**. That is the price of the command being the same command everywhere,
 and CLAUDE.md now quotes the new number.
 
-The skip in `tools/wac/sh_test.wac` is gone with the reason for it — if `sh` disappears again that
+The skip in tools/wac/sh_test.wac is gone with the reason for it — if `sh` disappears again that
 file should go red, which is exactly what the skip was preventing. `wac update` reaches the fetcher
 and answers `wacfetch: wac.json5 could not be read, so . is not a project` instead of the compiler's
 usage line, and `mappedspec_test.wac`'s `test_update_caches_where_the_compiler_looks` passes.

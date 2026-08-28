@@ -37,7 +37,7 @@ grep -c 'packages/gzip' tools/coverage.ts
 grep -c 'packages/crc32\|packages/gzip' tools/mutate.ts
 ```
 
-`tools/coverage.ts` hardcodes its entry points — `packages/gzip/src/gzip.wac`,
+tools/coverage.ts hardcodes its entry points — `packages/gzip/src/gzip.wac`,
 `inflate.wac`, `crc32.wac` — and drives them with gzip's own exercises, including
 `buildCorpus` from gzip's fuzz corpus. There is no discovery step.
 
@@ -76,25 +76,25 @@ interface other packages would have to meet.
 
 Option 2 is largely done, by agent-b in 0e1dd85: `harness/wacCoverage.ts` holds the
 shared half, and each package supplies a `cov.ts` with its own exercise. I have added
-`packages/crypto/cov.ts` on that convention (215/215 branch points) and wired
+packages/crypto/cov.ts on that convention (215/215 branch points) and wired
 `coverage:crypto` into `deno.json` and the root README.
 
 Where the coverage half now stands:
 
 | package | measured | by |
 |---|---|---|
-| bytes   | yes | `packages/bytes/cov.ts` |
-| crypto  | yes | `packages/crypto/cov.ts` |
-| fmt     | yes | `packages/fmt/cov.ts` |
-| json    | yes | `packages/json/cov.ts` |
-| gzip    | yes | `tools/coverage.ts`, still the hardcoded original (superseded below) |
+| bytes   | yes | packages/bytes/cov.ts |
+| crypto  | yes | packages/crypto/cov.ts |
+| fmt     | yes | packages/fmt/cov.ts |
+| json    | yes | packages/json/cov.ts |
+| gzip    | yes | tools/coverage.ts, still the hardcoded original (superseded below) |
 | wacc    | no  | — |
 | wactest | no  | — |
 
 So the remaining coverage work is `wacc` and `wactest`, plus the cheap half of option 1
 that is still outstanding: `deno task coverage` still prints a table headed `all` while
 measuring only gzip, which is the misleading line this issue is actually about. Moving
-gzip onto its own `cov.ts` would retire `tools/coverage.ts` and take the wrong label
+gzip onto its own `cov.ts` would retire tools/coverage.ts and take the wrong label
 with it.
 
 The `mutate` half is untouched — every mutation in `tools/mutate.ts` is still in
@@ -109,7 +109,7 @@ wactest, label and mutate parts all remain.
 ## Progress — 2026-07-31, agent-c (second pass)
 
 The coverage half is done, and not the way the note above guessed. agent-a generalised
-`tools/coverage.ts` in 990dc8c instead of retiring it: discovery is by directory now, and
+tools/coverage.ts in 990dc8c instead of retiring it: discovery is by directory now, and
 each package's *wac-native* tests are the exercise. That is a better answer than either
 option this issue offered, and the reasoning in that commit is the part worth keeping —
 wac issue 0024 (branch coverage never instrumented `match` arms) survived undetected
@@ -117,7 +117,7 @@ because the only measured package contained no `match`, so the fix is to stop ha
 measured set at all rather than to enumerate a better one.
 
 I had started down the option-2 path and deleted the tool in favour of a
-`packages/gzip/cov.ts`. That was wrong once 990dc8c existed, and the deletion is reverted.
+packages/gzip/cov.ts. That was wrong once 990dc8c existed, and the deletion is reverted.
 gzip keeps a `cov.ts` because it was the one package without one, but the two tools now
 measure different things and neither subsumes the other:
 

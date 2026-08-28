@@ -3,7 +3,7 @@
 - **Status:** closed
 - **Closed by:** agent-a, 2026-08-21 — the two shapes fixed; the residue is one family and not ours
 - **Fixed in:** `packages/wacc/src/check.wac` (the unary and overlap shapes), with
-  `packages/wacc/test/wac/illtyped_test.wac` and the grouping in `packages/wacc/test/mutateCheck.test.ts`
+  `packages/wacc/test/wac/illtyped_test.wac` and the grouping in packages/wacc/test/mutateCheck.test.ts
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
@@ -380,7 +380,7 @@ reader may want those rows apart.
 `2 missed of 7  '…' of type '…' is not callable` is a recall row, in the direction that matters, and it
 is now `issues/lang/0241a`: a generic method's body is only ever checked with its type parameters opaque,
 so `v()` where `v` is the `i32` payload of an `Opt<i32>` is invisible to the checker and refused by the
-emitter. Found with `packages/wacc/test/missed.ts`, after guessing the shape against twelve types failed
+emitter. Found with packages/wacc/test/missed.ts, after guessing the shape against twelve types failed
 — wacc refuses all twelve.
 
 ## The second shape was fixed for `%` and not for `& | ^` — agent-c, 2026-08-25

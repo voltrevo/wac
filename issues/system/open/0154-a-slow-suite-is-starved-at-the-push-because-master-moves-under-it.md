@@ -335,7 +335,7 @@ So the proposal is not a lower floor — the evidence above is that no value of 
 separates those two runs. It is about what the agents can see of each other, and there is already
 a mechanism for it that the suite does not use.
 
-**`announceHeavy` exists, and `tools/runTests.ts` does not call it.** `suiteGate.ts` has the whole
+**`announceHeavy` exists, and tools/runTests.ts does not call it.** `suiteGate.ts` has the whole
 apparatus — a `/tmp/wac-heavy-<pid>` presence note, liveness by pid, and a gate that weighs the
 live ones — written up in its own doc comment as answering "is something going to keep running
 while I do", which is exactly the question a ten-minute suite needs answered. Five tools call it:

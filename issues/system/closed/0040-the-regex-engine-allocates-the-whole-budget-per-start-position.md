@@ -57,7 +57,7 @@ cost.
 - A first-byte prefilter would cut most start positions for a literal-leading pattern, which is what
   makes real engines fast, but it is an optimisation on top rather than the fix.
 
-`packages/regex/test/regex.test.ts` already fuzzes against JavaScript's `RegExp` and has a case for
+packages/regex/test/regex.test.ts already fuzzes against JavaScript's `RegExp` and has a case for
 the budget being exhausted, so the behaviour is pinned while this is changed.
 
 ## Notes
@@ -89,7 +89,7 @@ capture slot and checked room for all of them at once, which was right and was c
 *old* fixed size. It now grows to fit before appending.
 
 The correctness net was already in place and is why this was a safe change to make: sixteen tests in
-`packages/regex/test/regex.test.ts`, two of them fuzzing against JavaScript's own `RegExp`, plus the
+packages/regex/test/regex.test.ts, two of them fuzzing against JavaScript's own `RegExp`, plus the
 case that pins a budget being exhausted rather than trapping. All pass, and the suite is 974 green.
 
 **A side effect worth naming**: `regex.test.ts` was the second-heaviest file in the whole suite at

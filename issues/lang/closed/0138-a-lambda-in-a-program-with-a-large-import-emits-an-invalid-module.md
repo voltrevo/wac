@@ -48,7 +48,7 @@ being wrong rather than a body being wrong.
 ## What it is not
 
 - **Not capture.** A non-capturing lambda fails too, differently.
-- **Not lambdas alone.** Every lambda test in `packages/wacc/test/lambda.test.ts` passes, and
+- **Not lambdas alone.** Every lambda test in packages/wacc/test/lambda.test.ts passes, and
   `spec/cases/0188`–`0193` all answer correctly. It takes a lambda *and* a module of some size.
 - **Not a regression against existing code.** No file in this repository writes a lambda, so rung 4
   (412 files), rung 5 (self-host, byte-identical) and the whole suite are green. This is an
@@ -140,7 +140,7 @@ validate: the first named `Socket.fromLoopback` and `reasonOf`, the second a wra
 **Verified where it was found.** `deno task app:native` on a program that captures a local builds, and
 the binary prints `6` under wasmtime — the first closure to run outside V8.
 
-`packages/wacc/test/lambda.test.ts` has the regression: a lambda in a module that also imports
+packages/wacc/test/lambda.test.ts has the regression: a lambda in a module that also imports
 `packages/std`, so the string builtins are present. Canaried by removing the `index` advance, which
 fails it. Every other test in that file compiles one small file, which is exactly why none of them
 caught this.

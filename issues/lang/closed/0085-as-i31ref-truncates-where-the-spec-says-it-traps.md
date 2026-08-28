@@ -36,7 +36,7 @@ instead.
 
 Found by `packages/wacc`, which implements the checked form; the two compilers therefore disagree on
 these programs on purpose. The pair is *not* in wacc's differential sweep for that reason — they are
-in `packages/wacc/test/i31Trap.test.ts`, asserted against the specification rather than against this
+in packages/wacc/test/i31Trap.test.ts, asserted against the specification rather than against this
 compiler, and that test is the thing that should start failing when this is fixed.
 
 ## Resolution

@@ -76,7 +76,7 @@ cheapest way to see it: it prints the plan per mutant without baselines or runs.
 Two other files failed in the same pass and are **not** this bug — worth saying so that whoever
 takes this does not go looking for one cause:
 
-- `packages/wacc/test/tour.test.ts` — *"wacc computes the tour's answers, and the reference is the
+- packages/wacc/test/tour.test.ts — *"wacc computes the tour's answers, and the reference is the
   oracle"* fails at `harness/wacProfile.ts:174`, inside the test rather than at compile.
 - `packages/platform/test/wac/runtimes_test.wac` — *"an application builds to one executable file and runs
   repeatedly"*, 16 passed 1 failed. An instrumented build is a different artifact, and this asserts
@@ -117,7 +117,7 @@ The parse is now `parseCovTable` in `harness/waccBuild.ts`, exported rather than
 index means nothing without that table, so a second copy would put attribution wrong everywhere
 while every count stayed plausible.
 
-**One of the two files I excluded above was this bug after all.** `packages/wacc/test/tour.test.ts`
+**One of the two files I excluded above was this bug after all.** packages/wacc/test/tour.test.ts
 passes now — its subject was compiled by the reference under profiling, and the test's own name says
 the reference is the *oracle*, which is what made the failure look like a disagreement rather than a
 build. Eight of the nine files that failed under `WAC_PROFILE` are fixed. The ninth,
@@ -125,7 +125,7 @@ build. Eight of the nine files that failed under `WAC_PROFILE` are fixed. The ni
 repeatedly"*, is genuinely the other cause: an instrumented build is a different artifact and that
 test asserts on the artifact. Worth a look by whoever owns it; it is not this.
 
-`harness/profileCompiler.test.ts` holds it, with a companion test asserting the reference still
+harness/profileCompiler.test.ts holds it, with a companion test asserting the reference still
 *refuses* the subject — otherwise the day it gains `u32.leadingZeros` the check keeps passing and
 stops testing anything, satisfied by the bug it was written for.
 

@@ -96,7 +96,7 @@ twelve programs in `program.wac` go through it; `run`, `runStreaming`, `dispatch
 `gather` carry it. `Shell.create` builds `Fs.onHost(cli)`, so `wacsh` is exactly what it was — the corpus's
 751 scripts still agree with bash, which is the assertion for a change of this shape.
 
-**`packages/sh/src/sealed.wac`** is the payoff and the demonstration: the same shell handed
+**packages/sh/src/sealed.wac** is the payoff and the demonstration: the same shell handed
 `Fs.inMemory()`. One line of difference.
 
 ```
@@ -108,7 +108,7 @@ $ sealed -c 'cat /etc/passwd'                     cat: /etc/passwd: No such file
 The part worth more than the tests: it is **built with no filesystem grants at all**. `buildApp(…, {})`
 means the world has no `fs`, so the program could not reach the host if it tried — the seal is the
 capability world's, and the mount table is what makes the session *usable* rather than merely harmless.
-`packages/sh/test/sealed.test.ts` asserts the host directory is byte-identical afterwards, and that the
+packages/sh/test/sealed.test.ts asserts the host directory is byte-identical afterwards, and that the
 shebang asks for neither `--allow-read` nor `--allow-write`.
 
 **What is still not sealed, and it is named in the program's own header rather than left to be found.**
@@ -129,7 +129,7 @@ script that redirects or spawns would diverge for reasons that are not VFS bugs.
 ## Closed, 2026-08-05 (agent-a): both backings answer the same thing
 
 The "done when" above asked for a shell on an in-memory VFS passing the same scripts it passes on the host.
-`packages/sh/test/backingsprocess_test.wac` is that, and it goes one step further than the criterion:
+packages/sh/test/backingsprocess_test.wac is that, and it goes one step further than the criterion:
 
 - **57 filesystem scripts, run through `wacsh` (host mount) and `sealed` (memory), byte-identical output and
   identical statuses.** Creating, reading, truncating, appending, nested directories, listings, removal

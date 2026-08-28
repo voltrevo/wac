@@ -20,13 +20,13 @@ is older than its sources, and `CLAUDE.md` tells you to run the task after touch
 | `packages/platform/test/wac/native_shell_test.wac` | another — its lane note says *"and it builds the Rust host"* |
 | `packages/platform/test/wac/native_examples_test.wac` | another, from 2026-08-19 |
 | `tools/corpusHosts.ts` | another |
-| `tools/wac/runcli_test.wac` | probes `cargo --version` instead |
+| tools/wac/runcli_test.wac | probes `cargo --version` instead |
 
 Nine files run `target/release/wacland`; the other four assume it is there.
 
 **Moving two of them to wac on 2026-08-19 did not reduce the count and was not meant to.** They
 were `Deno.Command("cargo", …)` and are now `cli.exec("/bin/sh", …)` around the same command, with
-the memoisation that `harness/nativeHost.ts` gave them replaced by a per-file `find -newer` — so
+the memoisation that harness/nativeHost.ts gave them replaced by a per-file `find -newer` — so
 the duplication this issue is about now spans two languages, which makes it slightly worse rather
 than better. The fix below is unchanged by that; it is one more reason to want it.
 
@@ -56,7 +56,7 @@ two input lists now, canaried both ways: touching `native/src` fires the wasmtim
 one silent.
 
 **Absent is not a finding** in the new check, and that is the difference from the V8 host: `wacland` is
-gitignored and built on demand by `harness/nativeHost.ts`, so a checkout that has never run a two-host
+gitignored and built on demand by harness/nativeHost.ts, so a checkout that has never run a two-host
 test legitimately has none. What the check refuses is a stale one lying about a feature.
 
 None of that gives the build an owner, which is what this issue is for. It does mean the next stale one
@@ -165,7 +165,7 @@ which answer `""` or the reason, and every caller became a `stat`:
 | `packages/platform/test/wac/arrival_test.wac` | asks |
 | `tools/corpusHosts.ts` | asks, and *fails* rather than skipping — a corpus comparison with one host missing has nothing to compare |
 
-`harness/nativeHost.ts` is **deleted**. It was the TypeScript twin, 60 lines with a memo and a walk, and
+harness/nativeHost.ts is **deleted**. It was the TypeScript twin, 60 lines with a memo and a walk, and
 it had **no importers at all** — the move of those tests to wac left it behind, and three comments
 citing it as "the rule" were the only thing keeping it alive. Those now name the implementation that
 exists.

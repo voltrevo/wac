@@ -10,7 +10,7 @@
 
 ## Reproduction
 
-`wac-mono`'s `tools/coverage.ts` instruments exactly two entry points:
+`wac-mono`'s tools/coverage.ts instruments exactly two entry points:
 
 ```
 packages/gzip/src/gzip.wac

@@ -24,7 +24,7 @@ b
 ```
 
 Same bytes on each stream, same exit status. Only the interleaving differs, and only when the two streams
-are merged. `packages/box/test/operand_errors.test.ts` states which invocations are which and compares
+are merged. packages/box/test/operand_errors.test.ts states which invocations are which and compares
 the streams separately for the ones listed here.
 
 Affected: `cut`, `nl`, `fold` (every `Reader`-based applet), `wc`, and `tac`.
@@ -103,5 +103,5 @@ then refuses to be read, which is a path nobody had walked:
   that fix because a read only fails on inputs nobody had tried.
 - the message had no filename in it at all: `nextChunk` knew the tool but not the operand.
 
-Twenty-nine invocations in `packages/box/test/operand_errors.test.ts` now, missing and directory both,
+Twenty-nine invocations in packages/box/test/operand_errors.test.ts now, missing and directory both,
 against the real tools.

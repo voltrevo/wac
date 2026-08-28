@@ -51,7 +51,7 @@ produced.
 
 ## Fixed
 
-`tools/runTests.ts`'s native lane now passes `--allow-read --allow-write --allow-run` rather than
+tools/runTests.ts's native lane now passes `--allow-read --allow-write --allow-run` rather than
 `--allow-read` alone, and the six `exec` tests pass in it. Not a widening of what the suite already
 holds — the Deno pass beside it runs with `-A`.
 

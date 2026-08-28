@@ -45,7 +45,7 @@ and pinned in `packages/sh/test/differential.test.ts` (17 scripts) and `packages
 (16 cases).
 
 Then tested where it belongs. A translation exercised only through two callers is tested for the cases
-those callers happen to reach, so `packages/regex/test/basic.test.ts` compares it against `/bin/grep`
+those callers happen to reach, so packages/regex/test/basic.test.ts compares it against `/bin/grep`
 directly — 780 hand-listed pattern/subject pairs and 3,600 generated ones. That found three more rules the
 hand cases had missed, every one of which compiled and matched and was wrong:
 

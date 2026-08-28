@@ -21,7 +21,7 @@ state survives it: assignments, `cd`, `set`, a function definition. This shell r
 process — one after another for a builtin or a compound, or as real children where it can spawn — and a
 stage that is a plain assignment writes straight into the parent.
 
-Found by `tools/shellFuzz.ts` on seed 29, in `for v0 in 1 2; do v=b | cat; done; …; echo [$v]`.
+Found by tools/shellFuzz.ts on seed 29, in `for v0 in 1 2; do v=b | cat; done; …; echo [$v]`.
 
 ## Why this is filed rather than fixed
 
@@ -69,7 +69,7 @@ losing its variables is the boundary that has to be got right rather than assume
 
 **What I would choose, since this is a decision:** bash's semantics. The reason is the oracle rather
 than taste — 821 corpus scripts are checked against bash script for script, and a divergence here is a
-latent corpus failure waiting for the next fuzz seed to land on it. It was `tools/shellFuzz.ts` seed
+latent corpus failure waiting for the next fuzz seed to land on it. It was tools/shellFuzz.ts seed
 29 that found this one, and nothing stops seed 30 from finding it again in a shape that is harder to
 read. The "more useful than bash" behaviour is also the one that makes a script silently
 non-portable, which is the trade this repository usually declines.
@@ -107,7 +107,7 @@ assignment leak in both directions, the one-stage boundary, `echo x | read v`, a
 stage, and two `cd`-then-subshell cases — all compared with bash, which is what makes them
 regressions rather than opinions.
 
-Verified: `packages/sh` (30), `packages/box` (122), and `tools/shellFuzz.ts` on the seed that found
+Verified: `packages/sh` (30), `packages/box` (122), and tools/shellFuzz.ts on the seed that found
 it — seed 29 went from **298** of 300 agreeing to **299**, the remaining one being an unrelated
 divergence about `local` outside a function, filed as 0130. Seeds 1 and 30 are unchanged at 248/250
 and 250/250, and their disagreements are that same `local` case.

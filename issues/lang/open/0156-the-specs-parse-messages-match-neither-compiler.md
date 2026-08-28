@@ -28,7 +28,7 @@ whole of this issue, and it is why nobody noticed.
 ## Why nobody noticed
 
 The differentials that cover parse errors compare **by position, not by text**, and say so:
-`packages/wacc/test/parse_errors.test.ts` — *"Compared by count and position, not by message: the wac
+packages/wacc/test/parse_errors.test.ts — *"Compared by count and position, not by message: the wac
 side reports numeric codes and the reference reports English"*. That is a good decision for comparing two
 compilers; it also means the spec's stated wording is checked by nothing at all for these clauses. Two
 neighbouring cases found the same way on 2026-08-18 were real and are fixed:

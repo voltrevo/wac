@@ -181,7 +181,7 @@ compiles in under half a second and then spends nine on a two-megabyte corpus, w
 under any runner.
 
 For comparison, a Deno run of one `.test.ts` that passes is **0.21s** end to end
-(`packages/quic/test/packet.test.ts`, `packages/webrtc/test/timers.test.ts`, both measured). So the
+(packages/quic/test/packet.test.ts, packages/webrtc/test/timers.test.ts, both measured). So the
 native lane's floor for a trivial entry is the same as Deno's startup, and the two paths have the
 same cost model: a fixed startup of about a fifth of a second, then whatever the tests take.
 
@@ -206,7 +206,7 @@ needs optimising; running fifteen entries when one would do is.
 
 **Method, since a timing claim is only as good as its command:** `time` around each invocation, exit
 status checked separately rather than inferred from output — the first Deno figure I took was 0.118s
-and was a *failed* run, because `packages/quic/test/packet.test.ts` needs more than `--allow-read`
+and was a *failed* run, because packages/quic/test/packet.test.ts needs more than `--allow-read`
 and the failure was hidden by a redirect.
 
 ## Resolved — it was the grants, and the tell was in the test count
@@ -247,7 +247,7 @@ a package, and pass the same grants the suite's lane passes, or the numbers are 
 
 `wasmHash` is the tool's baseline — "does this file compile *before* any mutation" — and it calls
 `wacCompile`, the **reference**. The reference has not parsed a lambda since they landed in
-`packages/platform/src/platform.wac`, which `CLAUDE.md` already records for the seed path. So every file
+packages/platform/src/platform.wac, which `CLAUDE.md` already records for the seed path. So every file
 whose import graph reaches the capability layer fails that baseline.
 
 Measured by compiling each `packages/*/src/*.wac` through the reference over its own import graph, the
@@ -284,7 +284,7 @@ hour ago produced nothing at all:
 Three pieces, each of which was its own small silence:
 
 - **`testDirs` narrows for those mutants** and `testCommand` builds a `wac test` when every directory in
-  the scope is one of them, with the four grants `tools/runTests.ts` gives its own lane — a test skipped
+  the scope is one of them, with the four grants tools/runTests.ts gives its own lane — a test skipped
   for want of a grant is a test that did not run, and this tool reads a green run as a survivor.
 - **The binary is staged as a symlink.** `stageProject` excludes `target/` — 567 MB of build output
   nothing read, until wac tests started driving the binary: `packages/gzip`'s fuzz test asks for

@@ -96,7 +96,7 @@ nothing currently compares the shell's answer against GNU for a shadowed name �
 invisible"*, and did not add one because it would assert the divergence.
 
 The repository's answer to that shape is a **shrink-only** list — `KNOWN_UNEMITTABLE` in
-`packages/wacc/test/specEmit.test.ts`, canaried both ways. `packages/box/test/wac/shadowed_test.wac`
+packages/wacc/test/specEmit.test.ts, canaried both ways. `packages/box/test/wac/shadowed_test.wac`
 uses it here and picks nothing:
 
 - the shadowed set is **derived** — `builtinNames()` intersected with `packages/box/src/applets/` —

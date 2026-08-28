@@ -18,7 +18,7 @@ every guard against an attacker-controlled size.
 
 ## The case that found it
 
-`packages/gzip/test/wac/inflate_test.wac`, moved from `packages/gzip/test/inflate.test.ts` under
+`packages/gzip/test/wac/inflate_test.wac`, moved from packages/gzip/test/inflate.test.ts under
 `issues/system/0161`. `gunzipBytes` reads ISIZE from the trailer and uses it to size the output buffer
 in one allocation. The trailer is attacker-controlled, so `maxSizeHint()` caps the hint at 64 MiB and
 the buffer grows normally past that.

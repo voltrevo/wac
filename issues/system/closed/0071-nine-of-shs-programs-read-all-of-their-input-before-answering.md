@@ -22,7 +22,7 @@ must — that is what sorting is — and should say so rather than trap.
 
 ## Notes
 
-Six call `fed.rest()` in `packages/sh/src/program.wac`: `sort`, `uniq`, `tr`, `grep`, `nl` and `rev`.
+Six call `fed.rest()` in packages/sh/src/program.wac: `sort`, `uniq`, `tr`, `grep`, `nl` and `rev`.
 `head`, `tail`, `wc` and `cat` have streaming paths, and `cat`'s is the model — one `Feed` per input,
 whether it came from a file or from standard input, so there is one implementation and the file path is
 bounded by the file rather than by the sum of them.

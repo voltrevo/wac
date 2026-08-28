@@ -44,7 +44,7 @@ something that has already happened, and the wasm thread was blocked for the who
 slot does not hold up the others."* `packages/platform/host/call.ts`'s `submit` returns a ticket as
 soon as the request is published.
 
-Nothing in `packages/platform/src/platform.wac` says which of the two is the contract. `exec`'s
+Nothing in packages/platform/src/platform.wac says which of the two is the contract. `exec`'s
 documentation says "run a program on the host, to completion, and hand back what it said", which is
 about the *answer* rather than about when the call returns.
 

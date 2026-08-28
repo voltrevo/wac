@@ -36,7 +36,7 @@ not converge.
 
 ## What it is not
 
-Not `issues/system/0082`, which covered `packages/http/test/fuzz.test.ts` and four others, and whose
+Not `issues/system/0082`, which covered packages/http/test/fuzz.test.ts and four others, and whose
 mechanism was a worker-readiness deadline. This is a different file and the failure is a wrong
 *answer* rather than a timeout — `answer for 12 is 326 bytes, wanted 924`.
 

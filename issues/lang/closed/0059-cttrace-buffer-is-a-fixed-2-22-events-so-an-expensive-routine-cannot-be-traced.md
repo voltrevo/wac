@@ -21,7 +21,7 @@ that it did not measure anything.
 
 ## Reproduction
 
-`packages/crypto/src/bcryptpbkdf.wac` in wac-mono, traced by `packages/crypto/ct.ts`:
+`packages/crypto/src/bcryptpbkdf.wac` in wac-mono, traced by packages/crypto/ct.ts:
 
 ```
 | `bcryptPbkdf` | >4,194,304 | not measured — trace exceeds the compiler's event buffer |
@@ -56,7 +56,7 @@ instrumented build:
 is why it should be the caller's choice rather than a larger fixed constant.
 
 Worth considering separately: the caller currently learns it lost data only from a `truncated`
-flag, and `harness/ctTrace.ts` and `packages/crypto/ct.ts` both had to invent their own handling.
+flag, and harness/ctTrace.ts and packages/crypto/ct.ts both had to invent their own handling.
 Whatever the buffer size, a routine reporting how many events it *would* have written would let a
 caller size the next run instead of doubling blindly.
 
@@ -74,7 +74,7 @@ whether or not there was room to record it — so a caller sizes the next run in
 blindly. It is outside the pair region by construction: an append needs `cur + 3 < len`, so nothing
 writes past `len - 2`.
 
-Together they close the reproduction. `packages/crypto/ct.ts` now retraces any routine that overflows,
+Together they close the reproduction. packages/crypto/ct.ts now retraces any routine that overflows,
 and the row that read *"not measured"* reads:
 
     | `bcryptPbkdf` | 8,177,000 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |

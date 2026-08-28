@@ -5,7 +5,7 @@
 - **Kind:** decision
 - **Symptom:** none — a name that misleads a reader about what a file is for
 
-The operator, on `packages/wac/example/wac.wac`:
+The operator, on packages/wac/example/wac.wac:
 
 > a point on style: `wac.wac` is the primary reason for the wac package, so it's not an example
 
@@ -58,7 +58,7 @@ the right call, and it did not resolve the way this issue expected.
 `tools/seed.sh` builds one payload where it built three. So **nothing compiles `boxsh.wac` into the
 released binary any more.** The complaint here was that "a file compiled into the released binary is
 not an example of anything" — and it is no longer compiled into it. What still builds it is
-`tools/wac/frontpage_test.wac`, which uses it to check that the website's own transcript reproduces,
+tools/wac/frontpage_test.wac, which uses it to check that the website's own transcript reproduces,
 and that is exactly what `example/` is for.
 
 `fetch.wac` had already moved to `packages/wacpkg/src/`, for the better reason this issue said to wait

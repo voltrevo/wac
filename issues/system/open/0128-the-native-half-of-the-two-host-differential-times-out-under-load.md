@@ -8,7 +8,7 @@
 
 ## Reproduction
 
-Under a full suite on a loaded machine, `packages/platform/test/native_shell.test.ts`:
+Under a full suite on a loaded machine, packages/platform/test/native_shell.test.ts:
 
 ```
 the same sealed system answers the same on a JavaScript host and one that is not
@@ -99,7 +99,7 @@ which is the same 3 ms per KB. `Module::from_file` compiles with cranelift on **
 
 So each of those scripts spent 1.7 seconds before running a byte, on an idle machine, and the file
 spent half a minute of its 1m38s doing nothing but compiling the same module twenty times. The bound
-each script runs under is `DEFAULT_SECONDS`, sixty — not ten, which is `tools/shellFuzz.ts` and a
+each script runs under is `DEFAULT_SECONDS`, sixty — not ten, which is tools/shellFuzz.ts and a
 different harness. Sixty is a lot of headroom for 1.7 seconds; it is much less for 1.7 seconds
 multiplied by whatever the machine is doing at three times the core count, which is the condition
 this issue was filed under.
@@ -193,7 +193,7 @@ morning — routes 829/829, stderr 810/829 with its nineteen pinned differences,
 sampled scripts — skipped none, so the loss is real and rare, and a retry would recover it rather
 than fix anything.
 
-**`tools/shellFuzz.ts` was the one that had the defect**, and it is fixed: it recorded "a bound
+**tools/shellFuzz.ts was the one that had the defect**, and it is fixed: it recorded "a bound
 fired, so there is no answer here to compare" and then printed the two answers *without that
 sentence*, so a script that finishes instantly by hand read as a disagreement. It asks again at
 three times the bound now, the same shape `harness/bounded.ts` gives the two-host differentials.
@@ -217,7 +217,7 @@ that either works in seconds or is broken.
 
 ## 2026-08-15: this test no longer runs on a push, which changes what this issue is
 
-`packages/platform/test/native_shell.test.ts` declared itself **heavy** — 989 MB and 66s, and it
+packages/platform/test/native_shell.test.ts declared itself **heavy** — 989 MB and 66s, and it
 builds the Rust host with cargo before it builds a shell on both. So `deno task test` skips it, and
 this issue can no longer redden anybody's push. It still runs in `deno task test:heavy`, whenever a
 target names it, and via `test:changed` when `packages/platform` changed.

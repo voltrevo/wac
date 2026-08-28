@@ -8,7 +8,7 @@
 
 ## What is missing
 
-`packages/tor/host/directory.ts` parses a microdescriptor consensus and hands back the
+packages/tor/host/directory.ts parses a microdescriptor consensus and hands back the
 relays in it. It does not check who wrote it.
 
 A real Tor client verifies that a majority of the directory authorities signed the

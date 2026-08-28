@@ -158,7 +158,7 @@ applet, and that is what the missing environment had been blamed for.
 so the invocation `native/v8/build.rs` documents works on a fresh checkout instead of failing on a
 gitignored path nobody was told to make.
 
-The test is `packages/platform/test/v8host.test.ts`, *"the spawning shell answers the same on Deno
+The test is packages/platform/test/v8host.test.ts, *"the spawning shell answers the same on Deno
 and on the Rust host — 0148"*. It compares `packages/box/src/bin/sh.wac` — the `spawnSelf` shell —
 across both hosts, where the test beside it uses `packages/box/example/boxsh.wac` and reaches only
 `pushChild`. **That is why this survived two days of green suites**, and the new test fails against
@@ -203,7 +203,7 @@ the child appears to run the embedded seed's `main` rather than resolving the ap
 1. `./imaged i.wacimg -c 'seq 1 5 | sort -nr | head -1'` answers `5`, built either way.
 2. A test that spawns **through the V8 native host** — `app:native` plus the `wac` binary is the
    cheap pair, per the section above, and covers `app:wacbin` too since that embeds the same host.
-   `packages/platform/test/v8host.test.ts` covers the host being *handed* a program and never one
+   packages/platform/test/v8host.test.ts covers the host being *handed* a program and never one
    that spawns.
 3. A decision on the environment dependency above, or an issue of its own for it.
 

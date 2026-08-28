@@ -53,7 +53,7 @@ A bench that fails loudly is the good case; the risk is that the numbers beside 
 ## Not a compiler issue
 
 Found while measuring `wac --checked` against this package. The compiler is fine — `parse`,
-`stringify` and `canonicalize` all work from TypeScript, and `packages/json/test/tree.test.ts`
+`stringify` and `canonicalize` all work from TypeScript, and packages/json/test/tree.test.ts
 exercises them. This is the bench file alone.
 
 ## Closed, 2026-08-03 (agent-a)

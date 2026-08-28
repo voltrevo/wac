@@ -102,7 +102,7 @@ Two in `harness/` are worth naming rather than counting:
   leftover.** It runs every wac test that needs nothing from the host under Deno *as well*, which is
   `CLAUDE.md`'s "the browser is not scaffolding — kernel+wasmtime AND Deno/Node/browser, both". A wac
   suite that only ever ran under the wac binary would stop noticing the day the two disagreed.
-- **`harness/covTableParity.test.ts` compares the two compilers' coverage tables** point kind by point
+- **harness/covTableParity.test.ts compares the two compilers' coverage tables** point kind by point
   kind. The reference is half of that differential, so translating it deletes the comparison — the same
   argument `jsxBoundary.test.ts` turns on.
 
@@ -426,7 +426,7 @@ to the capability and to `binary.ts`, and to none of the seams between. `issues/
 `Deno.env.get` needs no permission; `cli.env` does. A lane with `--allow-run` and no `--allow-env`
 found nothing on `PATH`, warned that the second oracle was not running, and passed — twenty-four
 comparisons replaced by a green tick. The port separates "could not look" from "is not there" and
-fails on the first, and `tools/runTests.ts` now grants `--allow-env`. That is the concrete cost of
+fails on the first, and tools/runTests.ts now grants `--allow-env`. That is the concrete cost of
 `issues/system/0173`: it is not only that a lane must over-grant, it is that under-granting is
 silent.
 
@@ -481,17 +481,17 @@ and each is now written where the next person to touch that code will read it.
 
 **Blocked on something that has to be built first.**
 
-- `tools/designClaims.test.ts` needs three numbers from `packages/sh/test/corpus.ts` — 842 scripts,
+- tools/designClaims.test.ts needs three numbers from `packages/sh/test/corpus.ts` — 842 scripts,
   109 of them multi-line, interleaved with 265 comments that explain why each case exists. No cheap
   data format survives all three, so it moves when `packages/sh`'s own tests do.
-- `tools/docSignatures.test.ts` is portable — `bindTypesFiles` exposes struct fields and method
+- tools/docSignatures.test.ts is portable — `bindTypesFiles` exposes struct fields and method
   signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
   and it is a change in what is claimed, so it wants the side-by-side treatment.
 ~~- `packages/crypto/test/wac/constanttime_test.wac` needs the compiler's trace mode, through
-`harness/ctTrace.ts` … so the work is a `wac tracedump` beside `covdump` rather than anything in the
+harness/ctTrace.ts … so the work is a `wac tracedump` beside `covdump` rather than anything in the
 compiler.~~ **Done on 2026-08-19, and the item is now two entries below its own resolution** — see
 *"`crypto/constanttime.test.ts` stays — but not for the reason written here"* further down, which is
-where the argument lives and is more detailed than this was. `harness/ctTrace.ts` no longer exists.
+where the argument lives and is more detailed than this was. harness/ctTrace.ts no longer exists.
 
 Worth keeping the wrong half, because the prediction failed in a way this list can repeat: **the tool
 that got built was not `tracedump`.** Getting the journal *out* is the obvious shape and the wrong one —
@@ -537,7 +537,7 @@ The verifiable facts, and they are the only ones worth planning against:
 
 - **182 `.test.ts` files call `wacBind`.**
 - **Ten of them defined `assertTraps`, and all ten are converted** — that grep now finds nothing.
-  But it was never the whole set: `packages/tls/test/keyschedule.test.ts` asserted traps with a
+  But it was never the whole set: packages/tls/test/keyschedule.test.ts asserted traps with a
   three-line local `traps(f)` closure and no helper to grep for. Its header said it stayed because
   "a trap unwinds the module rather than returning, so wac cannot assert one", which is the same
   belief the other ten were written under. Converted too — its two cases went into the existing
@@ -596,7 +596,7 @@ The verifiable facts, and they are the only ones worth planning against:
 
   - **Two files that look easy and are not.** `specAccept` and `specCheck` read `specCorpus.ts`,
     which extracts programs by *reading* compiler/wacSpec.test.ts — the exact thing
-    `tools/specCases.ts` exists to avoid, and which its own header records as having produced three
+    tools/specCases.ts exists to avoid, and which its own header records as having produced three
     disagreeing answers. Pointing them at the generated `specCases.json` instead would merge two
     corpora, which is a decision about coverage rather than a translation.
 
@@ -699,7 +699,7 @@ trap behaviour. It is still the right feature — those ten include the framing 
 TLS that accepts connections from strangers — but the tier it belongs to is small, and the large tier
 is the one nobody can count without reading.
 
-**One is done, as the shape for the rest.** `packages/gzip/test/crc32_incremental.test.ts` became
+**One is done, as the shape for the rest.** packages/gzip/test/crc32_incremental.test.ts became
 `test/wac/crc32_incremental_test.wac` plus a nine-line wrapper. It built an array, called two
 functions and compared two integers; the TypeScript was doing nothing the language cannot. The gzip
 suite is 87 tests before and after.
@@ -827,7 +827,7 @@ side never read.
 
 **Six copies of one JSON reader is the cost of doing this file by file.** After five conversions the
 same `strOf`/`numOf`/`objectOf`/`arrayOf` existed three times, so they are in
-`packages/tor/test/wac/jsonfile.wac` now and every fixture module imports them. They all **trap** on
+packages/tor/test/wac/jsonfile.wac now and every fixture module imports them. They all **trap** on
 an unexpected shape rather than defaulting: a regenerated vector that lost a field is not a test
 failure to interpret, and a zero substituted for a missing number reads as tor's answer.
 
@@ -861,7 +861,7 @@ it spawns a process, opens a socket or wants `node:crypto` — that tier is wait
 decision below.
 
 **Write the wac test, then watch it fail.** Mutate the thing under test and confirm the new file goes
-red for the reason it exists. This is the step that pays: `packages/json/test/bounds.test.ts`
+red for the reason it exists. This is the step that pays: packages/json/test/bounds.test.ts
 converted cleanly and *neither* form could distinguish the guard it claimed to be about — removing
 both explicit bounds checks left it green, because `items[i]!` traps on the null slot anyway.
 `packages/std`'s did keep its discrimination, and only canarying told them apart.
@@ -887,7 +887,7 @@ you, and the package's own suite plus `deno task docs`.
 
 ## The order, and why it is not the obvious one
 
-**1. The suite runs `wac test`.** Done — `tools/runTests.ts`. This had to be first and I twice wrote
+**1. The suite runs `wac test`.** Done — tools/runTests.ts. This had to be first and I twice wrote
 that deleting wrappers was "free". It is not: `runTests.ts` ran `deno test` and nothing else, so the
 wrappers *are* how 83 wac test files enter the suite. Deleting them first removes the tests.
 
@@ -1043,7 +1043,7 @@ Two things this cost, both worth knowing before doing the running half:
   the same way the runner asks it.
 - **`all` is a subset, not an equal.** A wrapper's Deno profile accumulates every point instrumented
   in that process; the native run knows the entry's closure alone.
-  `packages/tls/test/fuzz_wac.test.ts` is 8151 points through Deno and 1077 natively, with zero
+  packages/tls/test/fuzz_wac.test.ts is 8151 points through Deno and 1077 natively, with zero
   points the Deno side lacks. Over a scope that is 23,749 lines against 23,710, because other
   wrappers contribute the same lines. Subset is the safe direction — a line the profile has never
   heard of **widens** to the whole scope, where a line it knows can be narrowed — and
@@ -1180,7 +1180,7 @@ wac one and would lose the half it exists to compare.
 
 Seventeen packages have no `.test.ts` left; the native lane is **152 files, 142 ok, 10 needing a host
 oracle**. `ssz` is the first fixture-driven package to go over, and what it needed was
-`harness/fixtures.ts` in wac.
+harness/fixtures.ts in wac.
 
 **`packages/wactest/src/fixtures.wac`** is that loader, and it keeps the contract the TypeScript one
 states verbatim — *a fixture that cannot be produced is an error, never a skip*. It reads
@@ -1272,7 +1272,7 @@ a **host** for a subject: pixels read back out of chromium, a `TransformStream` 
 Moving either would mean not testing the thing it exists for.
 
 **Two names in this paragraph were wrong by 2026-08-19 and are corrected here.**
-`packages/raster/test/hosts.test.ts` no longer exists. And `packages/server/test/live.test.ts`
+packages/raster/test/hosts.test.ts no longer exists. And packages/server/test/live.test.ts
 **moved** — the sentence that kept it said "three independent HTTP clients against a real socket", and
 that is an argument for keeping the *clients*, which is what happened: `fetch` and Node's `http` are
 still their own runtimes, one script each, because being somebody else's implementation is the whole
@@ -1588,12 +1588,12 @@ and this one asks the first. Canaried by handing the variable back — the tunne
 instead of reporting it is unset.
 
 **And the declared-environment helper moved on its third caller.** It was
-`packages/git/test/wac/env_probe.wac`; `packages/http` wanted it and `daemon.wac` had already grown a
+packages/git/test/wac/env_probe.wac; `packages/http` wanted it and `daemon.wac` had already grown a
 second copy of the quoting, so `quoted`, `withEnv`, `withHome` and `withoutEnv` are now
 `packages/wactest/src/childenv.wac` and the six `packages/git` files import it from there. `shQuoted`
 lost its prefix in the move — one name for one thing.
 
-**`packages/server/test/live.test.ts` stays.** This paragraph said `packages/http/test/interop.test.ts`
+**packages/server/test/live.test.ts stays.** This paragraph said packages/http/test/interop.test.ts
 did too, for the same reason, and that half was wrong — see the correction after it. The reason,
 worth writing down so nobody re-derives it: `packages/server`'s wac surface
 is `serve(u8[] input, i64 nowMillis) -> Served` — a function from bytes to bytes. The *connection*
@@ -1761,7 +1761,7 @@ next file in the lane running whatever payload it built — a `wc`, if that is w
 which is minutes. So the port would make the file worse, and it is opt-in either way.
 
 **`crypto/constanttime.test.ts` stays — but not for the reason written here.** What this said was:
-`harness/ctTrace.ts` instantiates and traces a wasm module, wac has no capability to instantiate wasm,
+harness/ctTrace.ts instantiates and traces a wasm module, wac has no capability to instantiate wasm,
 so it is the one shape on this list a wac program cannot express at all.
 
 **The premise is wrong**, and the same way the three above were. wac the *language* cannot instantiate
@@ -1777,7 +1777,7 @@ per slot. Parsing 20 MB of text per run in wac, twice per comparison, is the wro
 is fine for the hundreds of events `cttrace_test.wac` reads and wrong for a million.
 
 **Built, and it moved — later the same day.** `wac build --trace` and `wac ctcompare [--all]` are the
-two commands, `spec/cli/wac.md` states their contract, `tools/wac/ctcompare_test.wac` holds them to it,
+two commands, `spec/cli/wac.md` states their contract, tools/wac/ctcompare_test.wac holds them to it,
 and `packages/crypto/test/wac/constanttime_test.wac` is the port. It reproduces all three existing
 measurements: AES at `aes.wac` 113–116 and 149, every one an index and no branch to find; p256's
 ladder at `weierstrass.wac:120`; x25519 uniform over 1.6 million events. Two things it taught:
@@ -1791,7 +1791,7 @@ ladder at `weierstrass.wac:120`; x25519 uniform over 1.6 million events. Two thi
     cost a measurement before it was noticed.
 
 **`packages/crypto` has no TypeScript left but its oracles — 2026-08-19.** `ct.ts` and
-`harness/ctTrace.ts` are gone, 422 lines, replaced by `packages/crypto/tools/ct.wac`. The two things
+harness/ctTrace.ts are gone, 422 lines, replaced by `packages/crypto/tools/ct.wac`. The two things
 that entry said it would take were built: `--trace-slots N` on `wac build`, and `wac tracestat`, which
 prints `events <n> wanted <w> slots <c>` so an overflowing run says exactly how large the next one has
 to be rather than leaving a caller to double and retry. One bcrypt hash is 8.2 million events against
@@ -1839,7 +1839,7 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
 
   - Each package's exercises become a wac program whose `main` calls the probe's exports — the same
     shape the trace drivers took. That part is mechanical.
-  - **The ledgers are not.** `packages/crypto/cov.ts` is 1,100 lines and most of it is a reasoned list
+  - **The ledgers are not.** packages/crypto/cov.ts is 1,100 lines and most of it is a reasoned list
     of points that *cannot* be reached and why, one entry at a time; gzip's had its own. All five have
     moved — `issues/system/0222` — and the content moved with them rather than being regenerated.
   - `tools/coverageAll.ts` greps the output for `branch point(s) uncovered`, `no longer holds` and
@@ -1912,7 +1912,7 @@ The other eight that do *not* use the reference, and what each is actually waiti
 | --- | --- |
 | `bindHelpers` (178) | **done.** The walker was already there: `test/wac/wasm_probe.wac` had the LEB reader and the section loop for four other tests, and what was missing was the type section — so this grew `exportArities` beside them rather than a second parser. It reports `ok: false` with the tag it did not know rather than guessing, which the canary check needed: skipping the rec-group byte turns every arity into `-1`, and a walker that guessed would have reported the wrong helper. |
 | `bindgen` (392) | **stays.** I wrote "portable, not blocked" here without opening it, which is the third time in one day I have classified a file by its imports instead of its assertions. Its cases are JavaScript expressions against the *generated API* — `p.y = 10` writing through a reference, `c.Circle_r` being a getter rather than a method, a wrapper handed straight back into the module and returning as another wrapper. Moving them would put the JavaScript in a script and leave wac comparing printed strings, which deletes the claim. Same category as `jsxBoundary`. |
-| `ctTrace` (195) | **moved.** Its subject is the *compiler's* half, not `harness/ctTrace.ts` — the header said so and I did not read it. The blocker looked like `WebAssembly.instantiate`, and was not: a traced module reuses `__cov_init`/`__cov_len`/`__cov_get` and only changes what the array means, so `wac covdump` — written for `coverage_test.wac` — already prints the journal. What changed is that a run is a module rather than a call: `covdump` runs `main`, so each argument is its own module differing in one constant. The cost of that wrapper is one extra `entry` event, which the ordering test now states rather than filters. **And it was 86s in the suite until the journal was sized:** `covdump` prints every slot in index order, which is right for a coverage build and ruinous for a trace one — the default 2^22 journal is 40.8 MB of text and about four seconds a run, ten runs of it, for programs that record three events. The tests now ask for 4096 slots and the file is 5.5s. The TypeScript never paid it, because it read the live prefix through `__cov_get` rather than serialising the array, so **this is a cost the port introduced rather than one it inherited** — worth knowing for the next consumer that moves from reading exports to reading a dump. The live-only reader it wanted arrived the same day from the other direction: `wac tracestat` prints `events <n> wanted <w> slots <c>`, which is what `packages/crypto/tools/ct.wac` uses, and a consumer that needs the *default* size should ask it rather than `covdump`. What is still `covdump`'s alone is the journal's *contents in order*, which is what this file compares. |
+| `ctTrace` (195) | **moved.** Its subject is the *compiler's* half, not harness/ctTrace.ts — the header said so and I did not read it. The blocker looked like `WebAssembly.instantiate`, and was not: a traced module reuses `__cov_init`/`__cov_len`/`__cov_get` and only changes what the array means, so `wac covdump` — written for `coverage_test.wac` — already prints the journal. What changed is that a run is a module rather than a call: `covdump` runs `main`, so each argument is its own module differing in one constant. The cost of that wrapper is one extra `entry` event, which the ordering test now states rather than filters. **And it was 86s in the suite until the journal was sized:** `covdump` prints every slot in index order, which is right for a coverage build and ruinous for a trace one — the default 2^22 journal is 40.8 MB of text and about four seconds a run, ten runs of it, for programs that record three events. The tests now ask for 4096 slots and the file is 5.5s. The TypeScript never paid it, because it read the live prefix through `__cov_get` rather than serialising the array, so **this is a cost the port introduced rather than one it inherited** — worth knowing for the next consumer that moves from reading exports to reading a dump. The live-only reader it wanted arrived the same day from the other direction: `wac tracestat` prints `events <n> wanted <w> slots <c>`, which is what `packages/crypto/tools/ct.wac` uses, and a consumer that needs the *default* size should ask it rather than `covdump`. What is still `covdump`'s alone is the journal's *contents in order*, which is what this file compares. |
 | `specCheck` (68), `specAccept` (66) | **deleted 2026-08-19**, and the "may be" above was checked rather than acted on. Three things had to hold and all three were measured: every one of the 109 tags `specRejections()` finds is in the recorded corpus, and every one of the 266 `specAcceptances()` tags — both zero-missing; the recording holds 525 cases against their 109 and 266; and it cannot rot, because `specmulti_test.wac` hashes `wacSpec.test.ts` and fails when the corpus's recorded `sha256` no longer matches. That last one is the point: a wider corpus that could go stale would not have been a replacement, and I had it down as a real risk until I found the guard. `specCorpus.ts` itself stays — `reference.ts` still reads it. |
 | `jsBindgen` (113), `jsxBoundary` (97) | JavaScript is half the differential. Stay. |
 | `nativeBinary` (510) | see above. |
@@ -2057,7 +2057,7 @@ alone deliberately, pending that decision.
 
 ## The orchestrator itself moved — 2026-08-21, agent-c
 
-`deno task test` is now a wac program. `tools/runTests.ts`, `tools/killedLane.ts` and its test are
+`deno task test` is now a wac program. tools/runTests.ts, tools/killedLane.ts and its test are
 deleted; `tools/runTests.wac`, `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac` replace them,
 and `tools/wac/suitegate_test.wac` covers the gate.
 

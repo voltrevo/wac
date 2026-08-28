@@ -100,7 +100,7 @@ needs the numbers as well as a verdict over them — `measure` and `report`, bot
 byte-identical.
 
 `packages/gzip` is the first package on it: **449 of 452 points, the same three left, the same figures
-the TypeScript reported**, in a 5.4s run. `packages/gzip/cov.ts` and `packages/gzip/test/streams.ts`
+the TypeScript reported**, in a 5.4s run. packages/gzip/cov.ts and packages/gzip/test/streams.ts
 are deleted — the second because gzip's `cov.ts` was the last thing importing it, so the stream builder
 exists once again instead of twice with nothing comparing the two.
 
@@ -173,7 +173,7 @@ Two constraints the remaining three will hit:
    counters and reports the rest as simply unreached. What needs a `Cli` *and* might trap has to be last,
    and say so.
 
-`packages/zstd/cov.ts` is deleted, and with it `test/frames.ts` and `test/reference.ts` — it was the last
+packages/zstd/cov.ts is deleted, and with it `test/frames.ts` and `test/reference.ts` — it was the last
 importer of both. `test/writer.ts` stays: `test/oracle.ts` uses it, and it is deliberately a second
 reading of RFC 8878 rather than the decoder's, so it is a structured fuzzer rather than an oracle.
 
@@ -239,7 +239,7 @@ claims — "no input reaches it" against "reachable with the right scalar" — r
 lived in, because `UNREACHED` had no such field and calling all 28 unreachable would have buried thirteen
 gaps among the exemptions.
 
-`packages/crypto/cov.ts` is deleted, and `test/rsaOracle.ts` with it — the driver was its only importer.
+packages/crypto/cov.ts is deleted, and `test/rsaOracle.ts` with it — the driver was its only importer.
 
 ## Done: `ssh`, the one with no ledger — and it did not go red — 2026-08-20
 

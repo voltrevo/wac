@@ -408,8 +408,8 @@ Having found one stale bound, the others were worth checking rather than assumin
 | enumeration | bound | verdict |
 |---|---|---|
 | `packages/wacc/test/corpus.ts` | three fixed subdirs, one level | **stale — fixed above** |
-| `tools/docSignatures.test.ts` | recursive, `src/` only | sound, and the comment says why: an example or a test may name something it declares itself |
-| `tools/coverage.ts` | `packages/*/test/wac/*_test.wac` | sound — it emits a coverage task *per package*, and `core/` and `tools/` are not packages |
+| tools/docSignatures.test.ts | recursive, `src/` only | sound, and the comment says why: an example or a test may name something it declares itself |
+| tools/coverage.ts | `packages/*/test/wac/*_test.wac` | sound — it emits a coverage task *per package*, and `core/` and `tools/` are not packages |
 | `tools/wac/map.wac` | package names, not files | sound — MAP.md is a map of packages |
 | `tools/wac/programs.wac` | recursive, skips `/test/` and `/size/` | sound, stated |
 | `packages/wacc/tools/runOnWacc.ts` | `packages/*/test` exists | coarse, but it is a manual tool |

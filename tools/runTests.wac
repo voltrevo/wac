@@ -1,7 +1,7 @@
 // The suite, orchestrated in wac, with no JavaScript in the path except the `deno test` children it
 // starts.
 //
-// **This replaced `tools/runTests.ts` on 2026-08-21, which is deleted.** Everything the suite does
+// **This replaced tools/runTests.ts on 2026-08-21, which is deleted.** Everything the suite does
 // is here or in `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`; `wac task test` runs
 // this and `wac task test:heavy` runs its other mode.
 //
@@ -49,7 +49,7 @@
 //
 // ## What replacing the TypeScript actually costs
 //
-// `tools/runTests.ts` and `tools/killedLane.ts` (and its test) can go: nothing else imports them.
+// tools/runTests.ts and tools/killedLane.ts (and its test) can go: nothing else imports them.
 // **`tools/suiteGate.ts` and `tools/suiteGuard.ts` cannot yet** — eight other TypeScript tools call
 // `announceHeavy` (`corpus*`, `coverageAll`, `mutate`) and four read `SUITE_ENV`, so deleting them
 // means porting those too. Until then the lock protocol has two implementations, in two languages,

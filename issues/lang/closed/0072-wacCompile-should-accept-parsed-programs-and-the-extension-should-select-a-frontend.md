@@ -9,7 +9,7 @@
 - **Symptom:** not implemented
 
 Two changes, one small and one smaller, both from wac now having a second frontend
-(`tools/wapy.ts` and `tools/wapyRead.ts` — a Python-flavoured surface that parses into the same
+(tools/wapy.ts and tools/wapyRead.ts — a Python-flavoured surface that parses into the same
 AST).
 
 ## 1. Nothing enforces the `.wac` extension
@@ -43,7 +43,7 @@ for (const [path, src] of files) {
 Everything after works from `Map<string, Program>` and does not care where a program came from.
 So a caller with a program already in hand — anyone with a second frontend — has no way to
 supply it, and has to reach past `wacCompile` and run phases 3 to 5 itself. That is what
-`tools/wapyLoad.ts` does today, and it duplicates the phase order, which will drift.
+tools/wapyLoad.ts does today, and it duplicates the phase order, which will drift.
 
 Suggested shape, in rough order of preference:
 
@@ -112,10 +112,10 @@ function frontendFor(path: string) {
 
 `readGraph` keeps returning sources; `wacCompile` gets `{ parse: (p, s) => frontendFor(p)(p, s) }`.
 Import discovery already lexes, so it needs the frontend too — or, more simply, it can read the
-imports off the parsed program, which is what `tools/wapyLoad.ts` does and is one line shorter.
+imports off the parsed program, which is what tools/wapyLoad.ts does and is one line shorter.
 
 That is the whole thing. After it, `wacx run foo.wapy` works, `deno task app` works, wac-mono's
-harness works, and `tools/wapyLoad.ts` loses its fifteen lines of phase orchestration.
+harness works, and tools/wapyLoad.ts loses its fifteen lines of phase orchestration.
 
 ## Why positions are not part of this
 
@@ -132,7 +132,7 @@ So the request is only for the seam, not for anything to be carried through it.
 
 The frontend and the round trip are in `tools/`, and nothing in `atoms/wac/` was touched.
 `deno test -A tools/wapyRoundTrip.test.ts` checks that wac → wapy → AST is identical to
-wac → AST across all 155 files of wac-mono; `tools/wapyLoad.test.ts` covers mixed graphs in
+wac → AST across all 155 files of wac-mono; tools/wapyLoad.test.ts covers mixed graphs in
 both directions.
 
 ## Resolution
@@ -153,8 +153,8 @@ works for both, and cannot be fooled by an `import` inside a comment — the bug
 version existed to avoid in the first place.
 
 The frontend also moved into `atoms/wac/`, since the earlier note that "nothing in `atoms/wac/`
-was touched" described a constraint that no longer applies. `tools/wapyRead.ts`,
-`tools/wapyLoad.ts` and their tests are gone; the frontend is `wapyLex.ts` + `wapyParse.ts`, the
+was touched" described a constraint that no longer applies. tools/wapyRead.ts,
+tools/wapyLoad.ts and their tests are gone; the frontend is `wapyLex.ts` + `wapyParse.ts`, the
 printer is `wapyPrint.ts`, and the surface is specified in `spec/spec/wapy.md`.
 
 One thing the sketch got wrong: it described `wapyRead` as a frontend. It was a transliterator —

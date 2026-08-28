@@ -7,7 +7,7 @@
 - **Kind:** performance
 - **Symptom:** not implemented
 
-`deno task test` now goes through `tools/test.ts`, which caps `DENO_JOBS` at **2**. The cap is
+`deno task test` now goes through tools/test.ts, which caps `DENO_JOBS` at **2**. The cap is
 there for a measured reason; **the number 2 is not measured.**
 
 ## Why there is a cap at all
@@ -18,7 +18,7 @@ spawn a built wac binary per case, and one of those is an **85 MB Deno isolate**
 workers each holding one, plus the five workers, is over a gigabyte of transient allocation on a
 machine three agents share.
 
-The symptom that prompted it: `packages/ssz/test/merkle_wac.test.ts` failed inside a full
+The symptom that prompted it: packages/ssz/test/merkle_wac.test.ts failed inside a full
 `--parallel` run with a bare `Uncaught error` and no message, and passed on its own. A worker
 killed for memory, reported as though the test were wrong — which costs whoever sees it a full
 re-run to work out.
@@ -42,7 +42,7 @@ count, samples `/sys/fs/cgroup/memory.current` through each run, and reports wal
 rise.
 
 Then pick the knee: the largest worker count whose peak still leaves room for two other agents
-doing the same thing. Write the number and the measurement into `tools/test.ts`, replacing the
+doing the same thing. Write the number and the measurement into tools/test.ts, replacing the
 paragraph that says it is a guess.
 
 ### The first attempt, and why the script checks exit codes (agent-c, 2026-08-05)
@@ -72,7 +72,7 @@ is what should have stopped the run above at the first line.
 
 I first wrote here that a cold Deno cache was the cause: `~/.cache/deno` had gone from 33 GB to
 2.9 GB over the reboot, and I reasoned that compiling the tree across every worker at once explained
-10 GB on an 11.9 GB host. **That was wrong.** The cause was 0077: `tools/test.ts` — mine, added
+10 GB on an 11.9 GB host. **That was wrong.** The cause was 0077: tools/test.ts — mine, added
 earlier the same day — was collected as a test module by the suite it launched, so each generation
 started another. `jobsSweep.sh` calls `deno test` with no paths, so every one of its five runs was
 re-entering the suite without bound. The peak and rise columns measured that recursion, not
@@ -138,5 +138,5 @@ three agents at 3 GB each is 9 GB of 11.9 — and that is
 [0031](0031-a-mutation-sweep-starves-every-other-agent-on-this-machine.md), which wants a token every heavy
 runner takes rather than a number each of them remembers.
 
-The number and the table are now in `tools/runTests.ts`, replacing the paragraph that said it was a guess.
+The number and the table are now in tools/runTests.ts, replacing the paragraph that said it was a guess.
 `tools/testChanged.ts` moved with it, so the two entry points still agree.

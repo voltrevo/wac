@@ -35,7 +35,7 @@ source was `anyref`, so a struct-to-struct downcast emitted nothing and the modu
 validate; those programs were declined. With that fixed, seven more of the spec's programs emit and
 this is the one whose *answer* is wrong.
 
-`packages/wacc/test/specEmit.test.ts` names it as its one known difference. The entry should go when
+packages/wacc/test/specEmit.test.ts names it as its one known difference. The entry should go when
 this closes, and it is the only one — the rung's contract is still that every other answer agrees.
 
 ## Also visible now, and probably related
@@ -95,7 +95,7 @@ case had not been declined: it types every expression the way the emitter will, 
     narrowed method   0         →  42
 
 `spec/cases/0141` holds both, with the plain `Shape` beside each so the narrowing is shown ending.
-`packages/wacc/test/specEmit.test.ts` is back to **365 of 365 answers agreeing** with the reference,
+packages/wacc/test/specEmit.test.ts is back to **365 of 365 answers agreeing** with the reference,
 and its `KNOWN_DIFFERENT` set — added this morning for this one difference — is empty again. The
 check that an entry which stops differing must be removed is what made it say so.
 

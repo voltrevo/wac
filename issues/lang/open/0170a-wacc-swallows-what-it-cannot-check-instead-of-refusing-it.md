@@ -366,7 +366,7 @@ Recorded here rather than attempted at the end of a session with unpushed work i
 
 ## The instrument had the same disease, and it is fixed — 2026-08-20
 
-`packages/wacc/test/specEmit.test.ts` asserted two things at 100% and `console.log`ged the third. Its
+packages/wacc/test/specEmit.test.ts asserted two things at 100% and `console.log`ged the third. Its
 loop called `blocked()` — wacc's **decline** mechanism — got back an explicit reason, dropped it, and
 `continue`d *before* the counter, so a declined program could not spoil the answer count either. Every
 spec behaviour wacc cannot produce was a number in a log line nothing could fail on. Same silence as
@@ -574,7 +574,7 @@ prints each decline by file and reason. Baseline: **0 of 17**, in seconds. It re
 `core.warn` and passes, because an instrument that reports by failing is a red test for whoever runs it
 next — and in this toolchain a probe that reports by failing a build installs itself as the seed.
 
-**2. `packages/wacc/test/emitSweep.test.ts` now asserts its decline count is zero.** That sweep runs
+**2. packages/wacc/test/emitSweep.test.ts now asserts its decline count is zero.** That sweep runs
 4501 generated programs through both compilers and compares answers, and it had `declined++` as a bare
 number in a `console.log`. Every one of those is a program the reference **just accepted** — the check
 is three lines below `r.ok` — so "declining is honest and measured elsewhere" was doing a lot of work
@@ -1001,7 +1001,7 @@ behind it. Re-running that census is worth doing and has not been done here.
 
 ### And the same for the spec census — agent-a, same day
 
-`packages/wacc/test/specEmit.test.ts` had the other half of the problem: `blocked()` was the only
+packages/wacc/test/specEmit.test.ts had the other half of the problem: `blocked()` was the only
 decline instrument bound to it, and the single-source pair to `emitDeclineFiles` did not exist. So the
 census of what wacc cannot emit across the spec could not ask the emitter — the ten reasons tabulated
 above were all the speculative walk's, which is why one of them is the catch-all.
