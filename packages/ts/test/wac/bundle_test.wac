@@ -1,0 +1,85 @@
+// Flattening the bridge's module graph into one file.
+//
+//     wac test --allow-read packages/ts/test/wac/bundle_test.wac
+//
+// `design/system/0009` step 4. The measurement that matters is whether the graph *can* be
+// flattened without renaming — the bundler refuses a top-level name collision rather than merging
+// two bindings silently, so a failure here is a worklist and not a wrong answer.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Bundled, bundle } from "../../src/bundle.wac";
+import { Stripped, strip } from "../../src/strip.wac";
+
+string[] bridge() {
+  return string[](
+    "packages/platform/host/deno.ts", "packages/platform/host/provider.ts",
+    "packages/platform/host/children.ts", "packages/platform/host/call.ts",
+    "packages/platform/host/marshal.ts", "packages/platform/host/faults.ts",
+    "packages/platform/host/respond.ts", "packages/platform/host/layout.ts",
+    "packages/platform/host/entry.ts", "packages/platform/host/queue.ts",
+    "packages/platform/host/child.ts", "packages/platform/host/schedule.ts",
+    "packages/platform/host/driver.ts", "packages/platform/host/childLife.ts",
+    "packages/platform/host/ops.ts", "packages/platform/host/entropy.ts",
+    "packages/platform/host/childWasm.ts"
+  );
+}
+
+export string test_the_bridge_flattens(Core core, Cli cli) {
+  T t = T.create();
+  string[] paths = bridge();
+  u8[][] texts = u8[][paths.len()](fill: u8[0]());
+  for (i32 i = 0; i < paths.len(); i++) {
+    FileResult f = cli.readFile(paths[i]).wait();
+    if (!f.ok) { t.isTrue(false, "cannot read " + paths[i]); return t.report(); }
+    Stripped s = strip(f.bytes);
+    if (s.error != "") { t.isTrue(false, paths[i] + ": " + s.error); return t.report(); }
+    texts[i] = s.out;
+  }
+  Bundled b = bundle(paths, texts, "packages/platform/host/deno.ts");
+
+  // **The bridge does not flatten yet, and this asserts the refusal rather than the bundle.**
+  // Six top-level names collide across the 17 files, on four distinct names — `CHUNK`, `EMPTY`,
+  // `enc` and `join`. Renaming them is what a bundler does, and doing it *safely* needs scope
+  // analysis, which is measured rather than assumed: `CHUNK` and `EMPTY` appear 15 times as object
+  // keys or shorthand properties, where a token rename would produce a different object, and `enc`
+  // is redeclared in three nested scopes, where renaming the outer one would capture the inner.
+  //
+  // So the honest state is a refusal that names both files, and this holds it to that. When
+  // renaming lands, this case becomes the bundle and the message below is what it replaces.
+  t.isTrue(b.error != "", "it refuses rather than merging two bindings silently");
+  t.isTrue(b.error.indexOf("packages/platform/host/") >= 0, "and names a file the reader can open");
+  core.log("   the bridge has 6 top-level collisions on 4 names; the first is:");
+  core.log("   " + b.error);
+  return t.report();
+}
+
+export string test_it_refuses_a_collision_rather_than_merging() {
+  T t = T.create();
+  // Two modules, each with a top-level `helper`. Flattening them would make one binding out of two
+  // different functions — the failure a bundler must not have.
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import { x } from \"./b.ts\";\nfunction helper() { return 1; }\n".toBytes();
+  texts[1] = "export const x = 1;\nfunction helper() { return 2; }\n".toBytes();
+  Bundled b = bundle(paths, texts, "a.ts");
+  t.isTrue(b.error.indexOf("helper") >= 0, "it names the colliding declaration");
+  t.isTrue(b.error.indexOf("a.ts") >= 0 && b.error.indexOf("b.ts") >= 0, "and both files");
+  return t.report();
+}
+
+export string test_dependencies_come_first() {
+  T t = T.create();
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import { base } from \"./b.ts\";\nconst top = base + 1;\n".toBytes();
+  texts[1] = "export const base = 1;\n".toBytes();
+  Bundled b = bundle(paths, texts, "a.ts");
+  t.eqStr(b.error, "", "it bundles");
+  if (b.error != "") { return t.report(); }
+  string out = string.fromBytes(b.out);
+  t.isTrue(out.indexOf("base = 1") < out.indexOf("top ="), "the dependency is emitted first");
+  t.isTrue(out.indexOf("import") < 0, "and the import is gone");
+  return t.report();
+}

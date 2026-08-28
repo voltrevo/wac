@@ -1,0 +1,291 @@
+// Flattening a module graph into one file.
+//
+// `design/system/0009` step 4, and the other half of what `bootstrap.sh --host deno|nodejs` needs:
+// the bridge is 22 files and a single-file host must be one.
+//
+// ## What it takes and what it does not
+//
+// A **file set** — paths and their already-stripped contents — and an entry, which is the shape
+// `bootstrap/js/flatten.js` uses for wac modules and the shape the ladder's hosts already provide.
+// It reads nothing: the host does the reading, exactly as `bootstrap/drivers/` already works.
+//
+// The graph is emitted in dependency order with `import` statements deleted and the `export` keyword
+// removed from declarations. That is sound only because every name in the result is distinct, so
+// **a collision is refused rather than renamed** — see `design/system/0009` D4 and the note on
+// renaming below.
+//
+// ## The subset, and why refusing the rest is honest
+//
+// Measured across `packages/platform/host/`, the bridge uses two forms: `import { a, b as c } from
+// "…"` and `export` on a declaration. No namespace import, no default export, no re-export, no
+// side-effect import. Each of those needs machinery — a namespace object, a binding this cannot
+// name, an ordering rule — and writing that machinery untested against nothing is how a transform
+// grows code nobody has run. They are errors that say which construct and where, and the day one
+// appears is the day it is worth implementing.
+
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  Lexed, kEof, kIdent, kPunct, kStr,
+  kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
+} from "./lex.wac";
+
+/** The bundle, or the first thing that stopped it. */
+export struct Bundled {
+  u8[] out;
+  string error;
+}
+
+/** One `import { … } from "…"` — where it is, what it names, and what it resolves to. */
+struct Import {
+  /** Byte range of the whole statement, which is deleted. */
+  i32 from;
+  i32 to;
+  /** The specifier as written, e.g. `./call.ts`. */
+  string spec;
+  /** `a as b` pairs, flattened: names[2k] is the exported name, names[2k+1] the local one. */
+  string[] names;
+}
+
+/**
+ * Bundle `entry` out of a file set.
+ *
+ * `paths[i]` holds `texts[i]`, already stripped of types. Paths are compared as written, so the
+ * caller normalises them — the host knows what a path means and this does not.
+ */
+export Bundled bundle(string[] paths, u8[][] texts, string entry) {
+  i32 at = indexOf(paths, entry);
+  if (at < 0) { return Bundled(u8[0](), "the entry " + entry + " is not in the file set"); }
+
+  // Dependency order, by depth-first post-order: a module is emitted after everything it imports.
+  Vec<i32> order = Vec.create();
+  Vec<i32> state = Vec.create();          // 0 unseen, 1 in progress, 2 emitted
+  for (i32 i = 0; i < paths.len(); i++) { state.push(0); }
+
+  string err = visit(paths, texts, at, order, state);
+  if (err != "") { return Bundled(u8[0](), err); }
+
+  // **Every top-level name, so a collision is found before anything is written.**
+  Vec<string> seen = Vec.create();
+  Vec<string> owner = Vec.create();
+  for (i32 k = 0; k < order.len(); k++) {
+    i32 m = order.get(k);
+    string[] names = topLevelNames(texts[m]);
+    for (i32 j = 0; j < names.len(); j++) {
+      i32 prev = indexOfVec(seen, names[j]);
+      if (prev >= 0) {
+        return Bundled(u8[0](),
+          "`" + names[j] + "` is declared at the top level of both " + owner.get(prev)
+          + " and " + paths[m] + ". Flattening would make them one binding; renaming is what a "
+          + "bundler does here and this does not do it yet.");
+      }
+      seen.push(names[j]);
+      owner.push(paths[m]);
+    }
+  }
+
+  // Emit.
+  // `i32`, not `u8`: indexing a `u8[]` answers an `i32` and writing one back is accepted, so the
+  // accumulator that sits between them is the one place a `u8` would have to be converted twice.
+  Vec<i32> out = Vec.create();
+  for (i32 k = 0; k < order.len(); k++) {
+    i32 m = order.get(k);
+    pushString(out, "// ── " + paths[m] + "\n");
+    string one = moduleBody(paths, texts, m);
+    u8[] b = one.toBytes();
+    for (i32 i = 0; i < b.len(); i++) { out.push(b[i]); }
+    out.push('\n');
+  }
+  u8[] bytes = u8[out.len()]();
+  for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i); }
+  return Bundled(bytes, "");
+}
+
+/** Depth-first, marking as it goes so a cycle is reported rather than followed. */
+string visit(string[] paths, u8[][] texts, i32 m, Vec<i32> order, Vec<i32> state) {
+  if (state.get(m) == 2) { return ""; }
+  if (state.get(m) == 1) {
+    return "a cycle in the module graph, through " + paths[m]
+         + " — flattening cannot order a cycle, and nothing in the bridge has one";
+  }
+  state.set(m, 1);
+  Import[] imports = importsIn(texts[m]);
+  for (i32 i = 0; i < imports.len(); i++) {
+    string want = resolve(paths[m], imports[i].spec);
+    i32 to = indexOf(paths, want);
+    if (to < 0) {
+      return paths[m] + " imports \"" + imports[i].spec + "\", which resolves to " + want
+           + " and is not in the file set";
+    }
+    string err = visit(paths, texts, to, order, state);
+    if (err != "") { return err; }
+  }
+  state.set(m, 2);
+  order.push(m);
+  return "";
+}
+
+/**
+ * One module's text with its `import` statements deleted and its `export` keywords removed.
+ *
+ * Both become spaces rather than disappearing, for `design/system/0009` D1's reason one level up:
+ * a bundle whose lines still line up with the file they came from can be read against it.
+ */
+string moduleBody(string[] paths, u8[][] texts, i32 m) {
+  u8[] src = texts[m];
+  u8[] out = u8[src.len()]();
+  for (i32 i = 0; i < src.len(); i++) { out[i] = src[i]; }
+
+  Import[] imports = importsIn(src);
+  for (i32 i = 0; i < imports.len(); i++) {
+    blank(out, imports[i].from, imports[i].to);
+    // A renamed import needs a binding: `import { a as b }` means `b` is another name for `a`, and
+    // with both modules in one file the rename is all that is left of it.
+    for (i32 k = 0; k + 1 < imports[i].names.len(); k = k + 2) {
+      if (imports[i].names[k] != imports[i].names[k + 1]) {
+        // Written where the import was, which is above every use of it in this module.
+        string bind = "const " + imports[i].names[k + 1] + " = " + imports[i].names[k] + ";";
+        writeOver(out, imports[i].from, bind);
+      }
+    }
+  }
+
+  Lexed l = lex(src);
+  for (i32 i = 0; i < tokenCount(l) - 1; i++) {
+    if (kindAt(l, i) != kIdent()) { continue; }
+    if (textAt(src, l, i) != "export") { continue; }
+    if (i > 0 && kindAt(l, i - 1) == kPunct() && textAt(src, l, i - 1) == ".") { continue; }
+    blank(out, startAt(l, i), startAt(l, i) + lenAt(l, i));
+  }
+  return string.fromBytes(out);
+}
+
+/** Every `import { … } from "…"` in a module. */
+Import[] importsIn(u8[] src) {
+  Lexed l = lex(src);
+  Vec<Import> out = Vec.create();
+  i32 n = tokenCount(l);
+  i32 i = 0;
+  while (i < n - 1) {
+    if (kindAt(l, i) != kIdent() || textAt(src, l, i) != "import") { i = i + 1; continue; }
+    i32 from = startAt(l, i);
+    Vec<string> names = Vec.create();
+    string spec = "";
+    i32 k = i + 1;
+    bool ok = false;
+    if (k < n && kindAt(l, k) == kPunct() && textAt(src, l, k) == "{") {
+      k = k + 1;
+      while (k < n && !(kindAt(l, k) == kPunct() && textAt(src, l, k) == "}")) {
+        if (kindAt(l, k) == kIdent()) {
+          string first = textAt(src, l, k);
+          string local = first;
+          if (k + 2 < n && kindAt(l, k + 1) == kIdent() && textAt(src, l, k + 1) == "as"
+              && kindAt(l, k + 2) == kIdent()) {
+            local = textAt(src, l, k + 2);
+            k = k + 2;
+          }
+          names.push(first);
+          names.push(local);
+        }
+        k = k + 1;
+      }
+      k = k + 1;                                   // past `}`
+      if (k < n && kindAt(l, k) == kIdent() && textAt(src, l, k) == "from") { k = k + 1; }
+      if (k < n && kindAt(l, k) == kStr()) {
+        string q = textAt(src, l, k);
+        spec = q.slice(1, q.len() - 1);
+        ok = true;
+      }
+    }
+    if (!ok) { i = i + 1; continue; }
+    i32 to = startAt(l, k) + lenAt(l, k);
+    if (k + 1 < n && kindAt(l, k + 1) == kPunct() && textAt(src, l, k + 1) == ";") {
+      to = startAt(l, k + 1) + 1;
+    }
+    out.push(Import(from, to, spec, names.toArray()));
+    i = k + 1;
+  }
+  return out.toArray();
+}
+
+/**
+ * Every name a module declares at the top level.
+ *
+ * Depth zero only: a `const` inside a function is that function's business. This is what the
+ * collision check reads, so a name missed here is a name that could be silently merged.
+ */
+string[] topLevelNames(u8[] src) {
+  Lexed l = lex(src);
+  Vec<string> out = Vec.create();
+  i32 depth = 0;
+  i32 n = tokenCount(l);
+  for (i32 i = 0; i < n - 1; i++) {
+    if (kindAt(l, i) == kPunct()) {
+      string t = textAt(src, l, i);
+      if (t == "{" || t == "(" || t == "[") { depth = depth + 1; }
+      else if (t == "}" || t == ")" || t == "]") { depth = depth - 1; }
+      continue;
+    }
+    if (depth != 0 || kindAt(l, i) != kIdent()) { continue; }
+    string w = textAt(src, l, i);
+    if (w != "const" && w != "let" && w != "var" && w != "function" && w != "class") { continue; }
+    i32 j = i + 1;
+    // `export async function f` and `function *g` put a word between.
+    while (j < n && kindAt(l, j) == kPunct() && textAt(src, l, j) == "*") { j = j + 1; }
+    if (j < n && kindAt(l, j) == kIdent()) {
+      string name = textAt(src, l, j);
+      if (name != "async") { out.push(name); }
+    }
+  }
+  return out.toArray();
+}
+
+// ── Small helpers ─────────────────────────────────────────────────────────────
+
+/** `dir(from) + spec`, normalised — enough for the relative specifiers a bundle uses. */
+string resolve(string from, string spec) {
+  if (spec.len() < 2 || spec.slice(0, 1) != ".") { return spec; }
+  i32 cut = -1;
+  for (i32 i = 0; i < from.len(); i++) { if (from.slice(i, i + 1) == "/") { cut = i; } }
+  string dir = cut < 0 ? "" : from.slice(0, cut);
+  string rest = spec;
+  while (rest.len() >= 3 && rest.slice(0, 3) == "../") {
+    i32 up = -1;
+    for (i32 i = 0; i < dir.len(); i++) { if (dir.slice(i, i + 1) == "/") { up = i; } }
+    dir = up < 0 ? "" : dir.slice(0, up);
+    rest = rest.slice(3, rest.len());
+  }
+  if (rest.len() >= 2 && rest.slice(0, 2) == "./") { rest = rest.slice(2, rest.len()); }
+  return dir == "" ? rest : dir + "/" + rest;
+}
+
+i32 indexOf(string[] xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == want) { return i; } }
+  return -1;
+}
+
+i32 indexOfVec(Vec<string> xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs.get(i) == want) { return i; } }
+  return -1;
+}
+
+/** Spaces, keeping line breaks — the bundle's lines stay the module's lines. */
+void blank(u8[] out, i32 from, i32 to) {
+  for (i32 i = from; i < to && i < out.len(); i++) {
+    if (out[i] != '\n' && out[i] != '\r') { out[i] = ' '; }
+  }
+}
+
+/** Write `what` over `out` at `at`, for the binding a renamed import leaves behind. */
+void writeOver(u8[] out, i32 at, string what) {
+  u8[] b = what.toBytes();
+  for (i32 i = 0; i < b.len() && at + i < out.len(); i++) {
+    if (out[at + i] == '\n') { return; }
+    out[at + i] = b[i];
+  }
+}
+
+void pushString(Vec<i32> out, string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { out.push(b[i]); }
+}
