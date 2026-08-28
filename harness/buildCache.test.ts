@@ -11,10 +11,10 @@
 
 import {
   cached,
-  compilerKeyParts,
   contentKey,
   filesParts,
   harnessKeyParts,
+  waccKeyParts,
   sweepStage,
 } from "./buildCache.ts";
 import { appKeyParts } from "../packages/platform/build.ts";
@@ -55,16 +55,20 @@ Deno.test("a file map is flattened in a fixed order", async () => {
   assertEquals(changed.join(",") === forward.join(","), false, "a changed file changes the parts");
 });
 
+// **The compiler half of this named `compiler/*.ts` until 2026-08-28**, and this test is the reason
+// to keep asserting the un-null: when that directory was deleted the key could no longer be
+// computed, `compilerKeyParts` answered null for every caller, and the build cache was off
+// everywhere with nothing printed. Null is a legitimate answer — it means "do not cache" — which is
+// exactly why it has to be asserted against rather than trusted.
 Deno.test("the compiler and the harness are part of every key", async () => {
-  const compiler = await compilerKeyParts();
+  const wacc = await waccKeyParts();
   const harness = await harnessKeyParts();
-  // Null is legitimate — it means "do not cache" — but in this checkout the sibling compiler is
-  // right there, and a null here would silently turn the cache off for everyone.
-  assertEquals(compiler === null, false, "the wac compiler's sources were found");
+  assertEquals(wacc === null, false, "the wac compiler's sources were found");
   assertEquals(harness === null, false, "the harness's own sources were found");
-  assertEquals(compiler!.includes(Deno.version.deno), true, "the Deno version is in the key");
-  const joined = compiler!.join("\n");
-  assertEquals(joined.includes("wacCompile"), true, "the compiler's own source is in the key");
+  assertEquals(harness!.includes(Deno.version.deno), true, "the Deno version is in the key");
+  const joined = wacc!.join("\n");
+  assertEquals(joined.includes("waccEmit") || joined.includes("emit"), true,
+    "the compiler's own source is in the key");
   assertEquals(harness!.join("\n").includes("wacBind"), true, "this harness is in the key");
 });
 

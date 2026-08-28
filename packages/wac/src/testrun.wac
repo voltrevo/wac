@@ -356,6 +356,65 @@ export string[] testFilesIn(Fs fs, string dir) {
   return out.toArray();
 }
 
+/**
+ * Every test file named by `paths`, with directories expanded and duplicates dropped.
+ *
+ * **`wac test` documents the plural** — `wac test [path…]`, "every `test*` export under each path" —
+ * and until 2026-08-28 it ran the first path and reported that file's count as the answer for all of
+ * them (`issues/system/0272b`). It was then made to *refuse* a second path, which is the smaller
+ * change and turns a silent wrong answer into a loud one; what it does not do is give the plural
+ * form back to the caller that needs it. `tools/runTests.wac` chunks a large directory into lists of
+ * twelve files and hands each list to one `wac test`, so under the refusal 29 of the gate's 58
+ * chunks exited 2 having run nothing — every large directory in the repository, silently absent from
+ * the lane's counts.
+ *
+ * **Deduplicated, because a caller may name a directory and a file inside it.** The same file twice
+ * in the aggregate is a duplicate import of the same module and every test in it runs twice.
+ */
+export string[] testTargets(Fs fs, string[] paths) {
+  Vec<string> out = Vec.create();
+  for (i32 p = 0; p < paths.len(); p++) {
+    string one = paths[p];
+    if (fs.stat(one).isDir) {
+      string[] under = testFilesIn(fs, one);
+      for (i32 i = 0; i < under.len(); i++) { pushOnce(out, under[i]); }
+    } else {
+      pushOnce(out, one);
+    }
+  }
+  return out.toArray();
+}
+
+/**
+ * The deepest directory every one of `paths` is at or below, or "" when there is none.
+ *
+ * `beside` needs such a directory to put the aggregate in, and one target supplies it directly —
+ * it *is* the directory that was walked. Several targets do not, so it is computed: the common
+ * prefix of the paths, cut back to the last separator so it names a directory rather than half a
+ * file name. Two trees with nothing above them but the root give "", which the caller refuses.
+ */
+export string commonDir(string[] paths) {
+  if (paths.len() == 0) { return ""; }
+  string pre = paths[0];
+  for (i32 i = 1; i < paths.len(); i++) {
+    string other = paths[i];
+    i32 n = pre.len() < other.len() ? pre.len() : other.len();
+    i32 k = 0;
+    while (k < n && pre.slice(k, k + 1) == other.slice(k, k + 1)) { k = k + 1; }
+    pre = pre.slice(0, k);
+  }
+  i32 cut = pre.len();
+  while (cut > 0 && pre.slice(cut - 1, cut) != "/") { cut = cut - 1; }
+  if (cut <= 1) { return ""; }
+  return pre.slice(0, cut - 1);
+}
+
+/** Append unless it is already there. Linear, over a list this is the length of a directory. */
+void pushOnce(Vec<string> out, string path) {
+  for (i32 i = 0; i < out.len(); i++) { if (out.get(i) == path) { return; } }
+  out.push(path);
+}
+
 /** One level of the walk, appending into `out`. */
 void walkTests(Fs fs, string dir, Vec<string> out) {
   string[]? listed = fs.readDir(dir);

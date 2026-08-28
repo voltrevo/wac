@@ -453,11 +453,17 @@ string[] runArgs(string[] targets, string[] ignore) {
  * The words are `native/v8/src/main.rs`'s, where the codes are decided. 4 and 5 are the ones worth
  * naming: neither prints anything a reader would recognise as a failure, and both make this lane
  * exit non-zero.
+ *
+ * **2 is here because it happened.** `wac test` refused a list of paths for two days, which is the
+ * shape every chunk of a large directory has — so 29 of 58 chunks in one gate run exited 2 having
+ * run nothing, and the only thing this lane could say about it was that it had no word for the code.
+ * A usage mistake the runner itself made, reported as an unknown number. `issues/system/0272b`.
  */
 string statusWord(i32 code) {
   if (code == 3) { return "a test failed"; }
   if (code == 4) { return "a test wants a host oracle this run has not got"; }
   if (code == 5) { return "no test matched, which for a whole directory is a discovery problem"; }
+  if (code == 2) { return "the arguments were refused — this runner built them, so this is its bug"; }
   if (code == 1) { return "it did not get as far as running tests"; }
   return "an exit code this runner has no word for";
 }

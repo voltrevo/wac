@@ -35,7 +35,7 @@
 import { ROOT } from "./programs.ts";
 import { wacFilesWithRoots } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
-import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
+import { cached, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
 import {
   type CovPoint,
   parseCovTable,
@@ -90,9 +90,8 @@ async function bindKey(
   g: Graph,
   opts: BindOpts,
 ): Promise<string | null> {
-  const compiler = await compilerKeyParts();
   const harness = await harnessKeyParts();
-  if (compiler === null || harness === null) return null;
+  if (harness === null) return null;
   // **Which compiler emitted the code used to be part of the key**, because `WAC_WASM_FROM` and
   // `WAC_BIND_FROM` could each pick the reference and a run served the other one's build would
   // report a green suite that never ran a byte of what it named. There is one compiler now, so
@@ -117,7 +116,7 @@ async function bindKey(
     `base ${g.base}`,
   ];
   return await contentKey(
-    ["bind 2", entry, ...wacc, ...compiler, ...harness, ...resolution, ...filesParts(g.files)],
+    ["bind 2", entry, ...wacc, ...harness, ...resolution, ...filesParts(g.files)],
   );
 }
 

@@ -52,24 +52,6 @@ export function filesParts(files: Map<string, string>): string[] {
   return [...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).flat();
 }
 
-/**
- * Where the wac compiler is, from the import map rather than hardcoded.
- *
- * `deno.json` maps `wac/` to `./compiler/`, so this is the directory holding the compiler. It was
- * derived rather than hardcoded when the compiler lived in a sibling checkout, and stays derived
- * because the map is still the one place that says where it is.
- */
-function compilerRoot(): string | null {
-  try {
-    const url = import.meta.resolve("wac/wacCompile.ts");
-    if (!url.startsWith("file://")) return null;
-    const path = decodeURIComponent(new URL(url).pathname);
-    return path.slice(0, path.lastIndexOf("/"));
-  } catch {
-    return null;
-  }
-}
-
 export async function hashDir(dir: string, suffix: string): Promise<string[]> {
   const parts: string[] = [];
   const names: string[] = [];
@@ -83,37 +65,18 @@ export async function hashDir(dir: string, suffix: string): Promise<string[]> {
   return parts;
 }
 
-let compilerParts: string[] | null | undefined;
-
-/**
- * The compiler's own sources, as key material. Null when they cannot be found.
- *
- * Null disables caching in every caller. A compiler that cannot be identified is exactly the case
- * where a stale artifact does the most damage — the developer is editing the compiler — so the
- * unanswerable question is answered with "do not cache" rather than "assume unchanged".
- */
-export async function compilerKeyParts(): Promise<string[] | null> {
-  if (compilerParts !== undefined) return compilerParts;
-  const root = compilerRoot();
-  if (root === null) {
-    compilerParts = null;
-    return null;
-  }
-  try {
-    compilerParts = [Deno.version.deno, ...await hashDir(root, ".ts")];
-  } catch {
-    compilerParts = null;
-  }
-  return compilerParts;
-}
-
 let waccParts: string[] | null | undefined;
 
 /**
- * The **wac** compiler's own sources, which `compilerKeyParts` does not cover.
+ * The compiler's own sources — `packages/wacc/src`, which is the whole of the compiler.
  *
- * `compilerKeyParts` hashes `compiler/*.ts` — the *reference*. Anything built by `wacc` depends on
- * `packages/wacc/src` as well, and on more than it looks: `coretext.wac` there is the generated
+ * **There was a second half of this until 2026-08-28.** `compilerKeyParts` hashed `compiler/*.ts`,
+ * the TypeScript reference, and every key in this file was the two together. The reference is
+ * deleted, so that function resolved a module that is not there and answered `null` — which this
+ * file spells "do not cache" — and every build cache in the repository was off, silently, for every
+ * caller. A key that cannot be computed looks exactly like a cache that is working.
+ *
+ * It covers more than it looks: `coretext.wac` there is the generated
  * embedding of `std/platform.wac` and `core/*.wac`, so **a capability added to `Cli` changes no file
  * a build walks and no file this key covered**. A module compiled against the old `Cli` was served
  * for the new one, its import count no longer matched its manifest, and instantiating it from that
@@ -135,12 +98,18 @@ export async function waccKeyParts(): Promise<string[] | null> {
 
 let harnessParts: string[] | null | undefined;
 
-/** This harness's own sources: it decides what is generated and how. */
+/**
+ * This harness's own sources: it decides what is generated and how.
+ *
+ * **And the Deno version**, which was in `compilerKeyParts` until that went. It belongs here rather
+ * than there: it is the runtime that bundles, transpiles and drives the compiler, so an upgrade
+ * changes what every key here stands for even when no source under this directory moved.
+ */
 export async function harnessKeyParts(): Promise<string[] | null> {
   if (harnessParts !== undefined) return harnessParts;
   const here = decodeURIComponent(new URL(".", import.meta.url).pathname);
   try {
-    harnessParts = await hashDir(here.replace(/\/$/, ""), ".ts");
+    harnessParts = [Deno.version.deno, ...await hashDir(here.replace(/\/$/, ""), ".ts")];
   } catch {
     harnessParts = null;
   }

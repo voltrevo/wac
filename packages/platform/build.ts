@@ -22,7 +22,6 @@ import { wacFilesWithRoots } from "../../harness/wacFiles.ts";
 import "../../harness/wacProfile.ts";
 import {
   cached,
-  compilerKeyParts,
   hashDir,
   contentKey,
   filesParts,
@@ -362,9 +361,8 @@ export async function appKeyParts(
   coverage = false,
   optimize = false,
 ): Promise<string[] | null> {
-  const compiler = await compilerKeyParts();
   const harness = await harnessKeyParts();
-  if (compiler === null || harness === null) return null;
+  if (harness === null) return null;
   let host: string[];
   try {
     const dir = decodeURIComponent(new URL("./host/", import.meta.url).pathname);
@@ -407,7 +405,6 @@ export async function appKeyParts(
     // An optimised build is a different artefact from the same source in exactly the same way, and
     // the binaryen version is part of it: a different optimiser is different bytes.
     optimize ? "wasm-opt:binaryen@131.0.0:O3" : "as-emitted",
-    ...compiler,
     ...harness,
     ...host,
     ...filesParts(files),

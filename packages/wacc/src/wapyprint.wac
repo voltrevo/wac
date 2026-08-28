@@ -97,7 +97,7 @@ export struct Wp {
 // inside one — `spec/spec/wapy.md`'s table, which gives both spellings for the same reason wac has
 // only one: `T | None` reads as a union and does not nest without brackets.
 
-void printTy(Wp w, Ty t, bool top) {
+void wapyPrintTy(Wp w, Ty t, bool top) {
   match (t.kind) {
     case Prim(tok): { w.tok(tok); }
     case Named(tok, typeArgs): {
@@ -106,24 +106,24 @@ void printTy(Wp w, Ty t, bool top) {
         w.s("[");
         for (i32 i = 0; i < typeArgs.len(); i++) {
           if (i > 0) { w.s(", "); }
-          printTy(w, typeArgs[i], false);
+          wapyPrintTy(w, typeArgs[i], false);
         }
         w.s("]");
       }
     }
-    case Arr(elem): { printTy(w, elem, false); w.s("[]"); }
+    case Arr(elem): { wapyPrintTy(w, elem, false); w.s("[]"); }
     case Nullable(inner): {
-      printTy(w, inner, false);
+      wapyPrintTy(w, inner, false);
       w.s(top ? " | None" : "?");
     }
     case Funcref(ret, params): {
       // wac's own spelling, which this surface keeps: the table respells words, not punctuation.
       w.s("fn[");
-      printTy(w, ret, false);
+      wapyPrintTy(w, ret, false);
       w.s("(");
       for (i32 i = 0; i < params.len(); i++) {
         if (i > 0) { w.s(", "); }
-        printTy(w, params[i], false);
+        wapyPrintTy(w, params[i], false);
       }
       w.s(")]");
     }
@@ -152,11 +152,11 @@ void printTyInExpr(Wp w, Ty t) {
       }
     }
     // **Recursing, not delegating.** `Pending<i64>?[n]()` is an `ArrNew` whose element is a
-    // *nullable generic*, so handing the inner type to `printTy` puts the angle brackets back to
+    // *nullable generic*, so handing the inner type to `wapyPrintTy` puts the angle brackets back to
     // square ones one level in and the parser reads an index again.
     case Nullable(inner): { printTyInExpr(w, inner); w.s("?"); }
     case Arr(elem): { printTyInExpr(w, elem); w.s("[]"); }
-    else: { printTy(w, t, false); }
+    else: { wapyPrintTy(w, t, false); }
   }
 }
 
@@ -164,9 +164,9 @@ void printTyInExpr(Wp w, Ty t) {
 
 /** A subexpression, bracketed unless it is already a single token or a bracketed form. */
 void printOperand(Wp w, Expr e) {
-  if (isAtom(e)) { printExpr(w, e); return; }
+  if (isAtom(e)) { wapyPrintExpr(w, e); return; }
   w.s("(");
-  printExpr(w, e);
+  wapyPrintExpr(w, e);
   w.s(")");
 }
 
@@ -204,7 +204,7 @@ bool isJsxLiteralChild(Expr e) {
   }
 }
 
-void printExpr(Wp w, Expr e) {
+void wapyPrintExpr(Wp w, Expr e) {
   match (e.kind) {
     case IntLit(tok): { w.tok(tok); }
     case FloatLit(tok): { w.tok(tok); }
@@ -234,7 +234,7 @@ void printExpr(Wp w, Expr e) {
       w.s(" ");
       w.tok(op);
       w.s(" ");
-      printTy(w, target, false);
+      wapyPrintTy(w, target, false);
     }
 
     case Is(left, target, other, negated): {
@@ -242,7 +242,7 @@ void printExpr(Wp w, Expr e) {
       w.s(negated ? " is not " : " is ");
       // Three forms, and the third is the one a printer forgets: `x is null` has neither a type
       // nor a value on the right, and is the null *keyword* — `None` here.
-      if (target is not null) { printTy(w, target!, false); }
+      if (target is not null) { wapyPrintTy(w, target!, false); }
       else if (other is not null) { printOperand(w, other!); }
       else { w.s("None"); }
     }
@@ -269,7 +269,7 @@ void printExpr(Wp w, Expr e) {
         for (i32 i = 0; i < typeArgs.len(); i++) {
           if (i > 0) { w.s(", "); }
           // Nested, and still in expression position: `first<Box<i32>, i32>(…)` keeps angle
-          // brackets all the way down. `printTy` here writes `Box[i32]` inside the `<…>`.
+          // brackets all the way down. `wapyPrintTy` here writes `Box[i32]` inside the `<…>`.
           printTyInExpr(w, typeArgs[i]);
         }
         w.s(">");
@@ -288,7 +288,7 @@ void printExpr(Wp w, Expr e) {
     case Index(arr, index): {
       printOperand(w, arr);
       w.s("[");
-      printExpr(w, index);
+      wapyPrintExpr(w, index);
       w.s("]");
     }
 
@@ -314,7 +314,7 @@ void printExpr(Wp w, Expr e) {
         if (n > 0) { w.s(", "); }
         w.tok(named[i].nameTok);
         w.s("=");
-        printExpr(w, named[i].value);
+        wapyPrintExpr(w, named[i].value);
         n = n + 1;
       }
       w.s(")");
@@ -323,19 +323,19 @@ void printExpr(Wp w, Expr e) {
     case TypeName(qualifier): { printTyInExpr(w, qualifier); }
 
     case Incr(target, op, prefix): {
-      if (prefix) { w.tok(op); printLvalue(w, target); }
-      else { printLvalue(w, target); w.tok(op); }
+      if (prefix) { w.tok(op); wapyPrintLvalue(w, target); }
+      else { wapyPrintLvalue(w, target); w.tok(op); }
     }
 
     case ArrNew(elem, size, fill, elements): {
       printTyInExpr(w, elem);
       w.s("[");
-      if (size is not null) { printExpr(w, size!); }
+      if (size is not null) { wapyPrintExpr(w, size!); }
       w.s("](");
-      if (fill is not null) { w.s("fill="); printExpr(w, fill!); }
+      if (fill is not null) { w.s("fill="); wapyPrintExpr(w, fill!); }
       for (i32 i = 0; i < elements.len(); i++) {
         if (i > 0 || (fill is not null)) { w.s(", "); }
-        printExpr(w, elements[i]);
+        wapyPrintExpr(w, elements[i]);
       }
       w.s(")");
     }
@@ -348,7 +348,7 @@ void printExpr(Wp w, Expr e) {
       for (i32 i = 0; i < params.len(); i++) {
         if (i > 0) { w.s(", "); }
         if (params[i].isConst) { w.s("const "); }
-        printTy(w, params[i].type, false);
+        wapyPrintTy(w, params[i].type, false);
         w.s(" ");
         w.tok(params[i].nameTok);
       }
@@ -387,7 +387,7 @@ void printExpr(Wp w, Expr e) {
         w.s(" ");
         w.tok(attrs[i].nameTok);
         w.s("={");
-        printExpr(w, attrs[i].value);
+        wapyPrintExpr(w, attrs[i].value);
         w.s("}");
       }
       if (closeTok < 0) { w.s("/>"); return; }
@@ -396,9 +396,9 @@ void printExpr(Wp w, Expr e) {
       // as themselves; anything else — `{kid}` — is an expression, and printed bare it lexes back
       // as JSX *text* whose characters happen to spell an identifier.
       for (i32 i = 0; i < kids.len(); i++) {
-        if (isJsxLiteralChild(kids[i])) { printExpr(w, kids[i]); continue; }
+        if (isJsxLiteralChild(kids[i])) { wapyPrintExpr(w, kids[i]); continue; }
         w.s("{");
-        printExpr(w, kids[i]);
+        wapyPrintExpr(w, kids[i]);
         w.s("}");
       }
       w.s("</");
@@ -412,12 +412,12 @@ void printExpr(Wp w, Expr e) {
   }
 }
 
-void printLvalue(Wp w, Lvalue lv) {
+void wapyPrintLvalue(Wp w, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): { w.tok(tok); }
-    case LField(base, nameTok): { printLvalue(w, base); w.s("."); w.tok(nameTok); }
-    case LIndex(base, index): { printLvalue(w, base); w.s("["); printExpr(w, index); w.s("]"); }
-    case LUnwrap(base): { printLvalue(w, base); w.s("!"); }
+    case LField(base, nameTok): { wapyPrintLvalue(w, base); w.s("."); w.tok(nameTok); }
+    case LIndex(base, index): { wapyPrintLvalue(w, base); w.s("["); wapyPrintExpr(w, index); w.s("]"); }
+    case LUnwrap(base): { wapyPrintLvalue(w, base); w.s("!"); }
   }
 }
 
@@ -438,48 +438,48 @@ void printInlineStmt(Wp w, Stmt s) {
   match (s.kind) {
     case Return(value): {
       w.s("return");
-      if (value is not null) { w.s(" "); printExpr(w, value!); }
+      if (value is not null) { w.s(" "); wapyPrintExpr(w, value!); }
       w.s(";");
     }
-    case ExprStmt(expr): { printExpr(w, expr); w.s(";"); }
+    case ExprStmt(expr): { wapyPrintExpr(w, expr); w.s(";"); }
     case Var(type, nameTok, init, isConst): {
       if (isConst) { w.s("const "); }
-      printTy(w, type, false);
+      wapyPrintTy(w, type, false);
       w.s(" ");
       w.tok(nameTok);
       w.s(" = ");
-      printExpr(w, init);
+      wapyPrintExpr(w, init);
       w.s(";");
     }
     case Assign(target, op, rhs): {
-      printLvalue(w, target); w.s(" "); w.tok(op); w.s(" "); printExpr(w, rhs); w.s(";");
+      wapyPrintLvalue(w, target); w.s(" "); w.tok(op); w.s(" "); wapyPrintExpr(w, rhs); w.s(";");
     }
-    case IncrStmt(target, op): { printLvalue(w, target); w.tok(op); w.s(";"); }
+    case IncrStmt(target, op): { wapyPrintLvalue(w, target); w.tok(op); w.s(";"); }
     case Break: { w.s("break;"); }
     case Continue: { w.s("continue;"); }
     case Trap(value): {
       w.s("trap");
-      if (value is not null) { w.s(" "); printExpr(w, value!); }
+      if (value is not null) { w.s(" "); wapyPrintExpr(w, value!); }
       w.s(";");
     }
     // **A block-bearing statement, in wac's braces.** A lambda body cannot be indented — wapy has
     // no indented expression — so a `for` inside one keeps wac's layout along with wac's spelling.
     case If(cond, then, els): {
-      w.s("if ("); printExpr(w, cond); w.s(") ");
+      w.s("if ("); wapyPrintExpr(w, cond); w.s(") ");
       printInlineBlock(w, then);
       if (els.len() > 0) { w.s(" else "); printInlineBlock(w, els); }
     }
     case While(cond, body): {
-      w.s("while ("); printExpr(w, cond); w.s(") "); printInlineBlock(w, body);
+      w.s("while ("); wapyPrintExpr(w, cond); w.s(") "); printInlineBlock(w, body);
     }
     case DoWhile(body, cond): {
-      w.s("do "); printInlineBlock(w, body); w.s(" while ("); printExpr(w, cond); w.s(");");
+      w.s("do "); printInlineBlock(w, body); w.s(" while ("); wapyPrintExpr(w, cond); w.s(");");
     }
     case For(init, cond, update, body): {
       w.s("for (");
       if (init is not null) { printInlineStmt(w, init!); } else { w.s(";"); }
       w.s(" ");
-      if (cond is not null) { printExpr(w, cond!); }
+      if (cond is not null) { wapyPrintExpr(w, cond!); }
       w.s("; ");
       if (update is not null) { printClause(w, update!); }
       w.s(") ");
@@ -487,9 +487,9 @@ void printInlineStmt(Wp w, Stmt s) {
     }
     case Block(body): { printInlineBlock(w, body); }
     case Switch(subject, cases): {
-      w.s("switch ("); printExpr(w, subject); w.s(") { ");
+      w.s("switch ("); wapyPrintExpr(w, subject); w.s(") { ");
       for (i32 i = 0; i < cases.len(); i++) {
-        if (cases[i].value is not null) { w.s("case "); printExpr(w, cases[i].value!); }
+        if (cases[i].value is not null) { w.s("case "); wapyPrintExpr(w, cases[i].value!); }
         else { w.s("default"); }
         w.s(": ");
         for (i32 k = 0; k < cases[i].body.len(); k++) {
@@ -501,7 +501,7 @@ void printInlineStmt(Wp w, Stmt s) {
       w.s("}");
     }
     case Match(subject, arms): {
-      w.s("match ("); printExpr(w, subject); w.s(") { ");
+      w.s("match ("); wapyPrintExpr(w, subject); w.s(") { ");
       for (i32 i = 0; i < arms.len(); i++) {
         if (arms[i].variantTok < 0) { w.s("else"); }
         else {
@@ -551,7 +551,7 @@ void printArmInline(Wp w, Arm a) {
     w.s(")");
   }
   w.s(": ");
-  if (a.value is not null) { printExpr(w, a.value!); } else { w.s("pass"); }
+  if (a.value is not null) { wapyPrintExpr(w, a.value!); } else { w.s("pass"); }
 }
 
 // ── Statements ───────────────────────────────────────────────────────────────────────────────
@@ -561,7 +561,7 @@ void printArmInline(Wp w, Arm a) {
 
 void printBlock(Wp w, Stmt[] body, i32 depth) {
   if (body.len() == 0) { w.pad(depth); w.s("pass"); w.nl(); return; }
-  for (i32 i = 0; i < body.len(); i++) { printStmt(w, body[i], depth); }
+  for (i32 i = 0; i < body.len(); i++) { wapyPrintStmt(w, body[i], depth); }
 }
 
 /**
@@ -614,32 +614,32 @@ bool sameTokText(Wp w, i32 a, i32 b) {
   return true;
 }
 
-void printStmt(Wp w, Stmt s, i32 depth) {
+void wapyPrintStmt(Wp w, Stmt s, i32 depth) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
       w.pad(depth);
       if (isConst) { w.s("const "); }
       w.tok(nameTok);
       w.s(": ");
-      printTy(w, type, true);
+      wapyPrintTy(w, type, true);
       w.s(" = ");
-      printExpr(w, init);
+      wapyPrintExpr(w, init);
       w.nl();
     }
     case Assign(target, op, rhs): {
       w.pad(depth);
-      printLvalue(w, target);
+      wapyPrintLvalue(w, target);
       w.s(" ");
       w.tok(op);
       w.s(" ");
-      printExpr(w, rhs);
+      wapyPrintExpr(w, rhs);
       w.nl();
     }
     case IncrStmt(target, op): {
-      w.pad(depth); printLvalue(w, target); w.tok(op); w.nl();
+      w.pad(depth); wapyPrintLvalue(w, target); w.tok(op); w.nl();
     }
     case If(cond, then, els): {
-      w.pad(depth); w.s("if "); printExpr(w, cond); w.s(":"); w.nl();
+      w.pad(depth); w.s("if "); wapyPrintExpr(w, cond); w.s(":"); w.nl();
       printBlock(w, then, depth + 1);
       // `elif` is not emitted: an `else` holding one `if` is the same tree either way, and the
       // chain rule (`spec/spec/wapy.md`: no `elif` without an `if`) is easier to be right about
@@ -650,13 +650,13 @@ void printStmt(Wp w, Stmt s, i32 depth) {
       }
     }
     case While(cond, body): {
-      w.pad(depth); w.s("while "); printExpr(w, cond); w.s(":"); w.nl();
+      w.pad(depth); w.s("while "); wapyPrintExpr(w, cond); w.s(":"); w.nl();
       printBlock(w, body, depth + 1);
     }
     case DoWhile(body, cond): {
       w.pad(depth); w.s("do:"); w.nl();
       printBlock(w, body, depth + 1);
-      w.pad(depth); w.s("while "); printExpr(w, cond); w.nl();
+      w.pad(depth); w.s("while "); wapyPrintExpr(w, cond); w.nl();
     }
     case For(init, cond, update, body): {
       w.pad(depth);
@@ -666,7 +666,7 @@ void printStmt(Wp w, Stmt s, i32 depth) {
         w.s("for ");
         if (init is not null) { printClause(w, init!); }
         w.s("; ");
-        if (cond is not null) { printExpr(w, cond!); }
+        if (cond is not null) { wapyPrintExpr(w, cond!); }
         w.s("; ");
         if (update is not null) { printClause(w, update!); }
       }
@@ -674,18 +674,18 @@ void printStmt(Wp w, Stmt s, i32 depth) {
       printBlock(w, body, depth + 1);
     }
     case Switch(subject, cases): {
-      w.pad(depth); w.s("switch "); printExpr(w, subject); w.s(":"); w.nl();
+      w.pad(depth); w.s("switch "); wapyPrintExpr(w, subject); w.s(":"); w.nl();
       for (i32 i = 0; i < cases.len(); i++) {
         w.pad(depth + 1);
         // A `switch` case with no value is `default` in wac and `else` here.
-        if (cases[i].value is not null) { w.s("case "); printExpr(w, cases[i].value!); }
+        if (cases[i].value is not null) { w.s("case "); wapyPrintExpr(w, cases[i].value!); }
         else { w.s("else"); }
         w.s(":"); w.nl();
         printBlock(w, cases[i].body, depth + 2);
       }
     }
     case Match(subject, arms): {
-      w.pad(depth); w.s("match "); printExpr(w, subject); w.s(":"); w.nl();
+      w.pad(depth); w.s("match "); wapyPrintExpr(w, subject); w.s(":"); w.nl();
       for (i32 i = 0; i < arms.len(); i++) {
         w.pad(depth + 1);
         if (arms[i].variantTok < 0) { w.s("else"); }
@@ -704,21 +704,21 @@ void printStmt(Wp w, Stmt s, i32 depth) {
     }
     case Return(value): {
       w.pad(depth); w.s("return");
-      if (value is not null) { w.s(" "); printExpr(w, value!); }
+      if (value is not null) { w.s(" "); wapyPrintExpr(w, value!); }
       w.nl();
     }
     case Break: { w.pad(depth); w.s("break"); w.nl(); }
     case Continue: { w.pad(depth); w.s("continue"); w.nl(); }
     case Trap(value): {
       w.pad(depth); w.s("trap(");
-      if (value is not null) { printExpr(w, value!); }
+      if (value is not null) { wapyPrintExpr(w, value!); }
       w.s(")"); w.nl();
     }
     case Block(body): {
       w.pad(depth); w.s("scope:"); w.nl();
       printBlock(w, body, depth + 1);
     }
-    case ExprStmt(expr): { w.pad(depth); printExpr(w, expr); w.nl(); }
+    case ExprStmt(expr): { w.pad(depth); wapyPrintExpr(w, expr); w.nl(); }
   }
 }
 
@@ -731,16 +731,16 @@ void printCounted(Wp w, Stmt init, Expr cond, Stmt update) {
       // The annotation is only needed when the variable is not an `i32`, but writing it always
       // says what the reader would otherwise have to know the default for.
       w.s(": ");
-      printTy(w, type, true);
+      wapyPrintTy(w, type, true);
       w.s(" in range(");
-      printExpr(w, start);
+      wapyPrintExpr(w, start);
       w.s(", ");
       match (cond.kind) {
-        case Binary(op, left, right): { printExpr(w, right); }
+        case Binary(op, left, right): { wapyPrintExpr(w, right); }
         else: { w.s("?"); }
       }
       match (update.kind) {
-        case Assign(target, op, rhs): { w.s(", "); printExpr(w, rhs); }
+        case Assign(target, op, rhs): { w.s(", "); wapyPrintExpr(w, rhs); }
         else: { }
       }
       w.s(")");
@@ -754,13 +754,13 @@ void printClause(Wp w, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
       if (isConst) { w.s("const "); }
-      w.tok(nameTok); w.s(": "); printTy(w, type, true); w.s(" = "); printExpr(w, init);
+      w.tok(nameTok); w.s(": "); wapyPrintTy(w, type, true); w.s(" = "); wapyPrintExpr(w, init);
     }
     case Assign(target, op, rhs): {
-      printLvalue(w, target); w.s(" "); w.tok(op); w.s(" "); printExpr(w, rhs);
+      wapyPrintLvalue(w, target); w.s(" "); w.tok(op); w.s(" "); wapyPrintExpr(w, rhs);
     }
-    case IncrStmt(target, op): { printLvalue(w, target); w.tok(op); }
-    case ExprStmt(expr): { printExpr(w, expr); }
+    case IncrStmt(target, op): { wapyPrintLvalue(w, target); w.tok(op); }
+    case ExprStmt(expr): { wapyPrintExpr(w, expr); }
     else: { w.s("pass"); }
   }
 }
@@ -770,7 +770,7 @@ void printClause(Wp w, Stmt s) {
 // `export` and the rest are decorators on the line above, which is the one place wapy's layout
 // differs from wac's by more than punctuation.
 
-void printDecl(Wp w, Decl d) {
+void wapyPrintDecl(Wp w, Decl d) {
   match (d.kind) {
     case Import(pathTok, prefixTok, items): {
       w.s("from ");
@@ -794,9 +794,9 @@ void printDecl(Wp w, Decl d) {
       w.s("const ");
       w.tok(nameTok);
       w.s(": ");
-      printTy(w, type, true);
+      wapyPrintTy(w, type, true);
       w.s(" = ");
-      printExpr(w, init);
+      wapyPrintExpr(w, init);
       w.nl();
     }
 
@@ -804,11 +804,11 @@ void printDecl(Wp w, Decl d) {
       if (exported) { w.s("@export"); w.nl(); }
       w.s("def ");
       w.tok(nameTok);
-      printTypeParams(w, typeParams);
+      wapyPrintTypeParams(w, typeParams);
       w.s("(");
-      printParams(w, params, false);
+      wapyPrintParams(w, params, false);
       w.s(") -> ");
-      printTy(w, returnType, true);
+      wapyPrintTy(w, returnType, true);
       w.s(":"); w.nl();
       printBlock(w, body, 1);
     }
@@ -818,7 +818,7 @@ void printDecl(Wp w, Decl d) {
       if (isConst) { w.s("@const"); w.nl(); }
       w.s("class ");
       w.tok(nameTok);
-      printTypeParams(w, typeParams);
+      wapyPrintTypeParams(w, typeParams);
       if (parentTok >= 0) { w.s("("); w.tok(parentTok); w.s(")"); }
       w.s(":"); w.nl();
       if (fields.len() == 0 && methods.len() == 0) { w.pad(1); w.s("pass"); w.nl(); }
@@ -827,7 +827,7 @@ void printDecl(Wp w, Decl d) {
         if (fields[i].isConst) { w.s("const "); }
         w.tok(fields[i].nameTok);
         w.s(": ");
-        printTy(w, fields[i].type, true);
+        wapyPrintTy(w, fields[i].type, true);
         w.nl();
       }
       for (i32 i = 0; i < methods.len(); i++) { printMethod(w, methods[i]); }
@@ -837,7 +837,7 @@ void printDecl(Wp w, Decl d) {
       if (exported) { w.s("@export"); w.nl(); }
       w.s("class ");
       w.tok(nameTok);
-      printTypeParams(w, typeParams);
+      wapyPrintTypeParams(w, typeParams);
       w.s("(enum):"); w.nl();
       if (variants.len() == 0 && methods.len() == 0) { w.pad(1); w.s("pass"); w.nl(); }
       for (i32 i = 0; i < variants.len(); i++) {
@@ -845,7 +845,7 @@ void printDecl(Wp w, Decl d) {
         w.tok(variants[i].nameTok);
         if (variants[i].fields.len() > 0) {
           w.s("(");
-          printParams(w, variants[i].fields, false);
+          wapyPrintParams(w, variants[i].fields, false);
           w.s(")");
         }
         w.nl();
@@ -855,7 +855,7 @@ void printDecl(Wp w, Decl d) {
   }
 }
 
-void printTypeParams(Wp w, i32[] params) {
+void wapyPrintTypeParams(Wp w, i32[] params) {
   if (params.len() == 0) { return; }
   w.s("[");
   for (i32 i = 0; i < params.len(); i++) {
@@ -884,9 +884,9 @@ void printMethod(Wp w, Method m) {
     w.s("this");
     if (m.params.len() > 0) { w.s(", "); }
   }
-  printParams(w, m.params, false);
+  wapyPrintParams(w, m.params, false);
   w.s(") -> ");
-  printTy(w, m.returnType, true);
+  wapyPrintTy(w, m.returnType, true);
   w.s(":"); w.nl();
   printBlock(w, m.body, 2);
 }
@@ -894,19 +894,19 @@ void printMethod(Wp w, Method m) {
 export string printWapy(Wp w, Program prog) {
   for (i32 i = 0; i < prog.decls.len(); i++) {
     if (i > 0) { w.nl(); }
-    printDecl(w, prog.decls[i]);
+    wapyPrintDecl(w, prog.decls[i]);
   }
   return w.out.toStr();
 }
 
-void printParams(Wp w, Param[] params, bool skipFirst) {
+void wapyPrintParams(Wp w, Param[] params, bool skipFirst) {
   i32 n = 0;
   for (i32 i = skipFirst ? 1 : 0; i < params.len(); i++) {
     if (n > 0) { w.s(", "); }
     if (params[i].isConst) { w.s("const "); }
     w.tok(params[i].nameTok);
     w.s(": ");
-    printTy(w, params[i].type, true);
+    wapyPrintTy(w, params[i].type, true);
     n = n + 1;
   }
 }

@@ -14,7 +14,7 @@
 
 import {
   cached as cacheFile,
-  compilerKeyParts,
+  harnessKeyParts,
   contentKey,
   filesParts,
   waccKeyParts,
@@ -297,11 +297,14 @@ async function compileKey(
   roots: Map<string, string> | undefined,
   base: string | undefined,
 ): Promise<string | null> {
-  const compiler = await compilerKeyParts();
-  if (compiler === null) return null;
-  // **And wacc's own sources**, because wacc is what compiles this. `compilerKeyParts` covers the
-  // reference only, and `coretext.wac` under here is the embedding of `std/platform.wac` — so a
+  // **The harness, because it drives the build**, and wacc's own sources, because wacc is what
+  // compiles this — `coretext.wac` under there is the embedding of `std/platform.wac`, so a
   // capability added to `Cli` changed nothing this key could see. `issues/system/0241c`.
+  //
+  // This was `compilerKeyParts()` until 2026-08-28, which hashed the deleted TypeScript reference
+  // and so answered null for every build: the key could not be computed and nothing was cached.
+  const harness = await harnessKeyParts();
+  if (harness === null) return null;
   const wacc = await waccKeyParts();
   if (wacc === null) return null;
   return await contentKey([
@@ -319,7 +322,7 @@ async function compileKey(
       .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([p, r]) => `root ${p} ${r}`),
     `base ${base ?? ""}`,
-    ...compiler,
+    ...harness,
     ...wacc,
     ...filesParts(files),
   ]);

@@ -59,7 +59,7 @@ Deno.test("a bundle failure that mentions npm carries the advice, and names the 
   // **The offline answer, which is the half that matters most.** Somebody with no network cannot act
   // on `deno cache`, and the binary needs no bundler — so a message that stops at the prefetch is
   // telling them to wait for something they may not be able to get.
-  if (!msg.includes("seed.sh --bootstrap")) throw new Error(`no offline route:\n${msg}`);
+  if (!msg.includes("./bootstrap.sh")) throw new Error(`no offline route:\n${msg}`);
 });
 
 Deno.test("a failure that is not the fetch is left alone", () => {
@@ -69,7 +69,7 @@ Deno.test("a failure that is not the fetch is left alone", () => {
   const msg = bundleFailure(said, "@esbuild/linux-arm64");
   if (!msg.includes(said)) throw new Error("the bundler's stderr was dropped");
   if (msg.includes("deno cache")) throw new Error(`advice on an unrelated failure:\n${msg}`);
-  if (msg.includes("seed.sh")) throw new Error(`advice on an unrelated failure:\n${msg}`);
+  if (msg.includes("bootstrap.sh")) throw new Error(`advice on an unrelated failure:\n${msg}`);
 });
 
 Deno.test("the two branches really are different, which is what makes the pair mean something", () => {

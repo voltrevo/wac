@@ -223,3 +223,60 @@ export string test_validate_takes_a_batch_and_names_only_what_it_rejected(Core c
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * Several paths run every one of them, and a repeated file runs once.
+ *
+ * `issues/system/0272b`: `wac test a_test.wac b_test.wac` ran the *first* path and printed that
+ * file's own count, which is the shape a green run has — so a caller handing it a list read a
+ * fraction as the whole. It was then made to refuse the list, which is loud and therefore better,
+ * but `tools/runTests.wac` chunks a large directory into lists of twelve and hands each list to one
+ * run: under the refusal 29 of the gate's 58 chunks exited 2 having run nothing, and every large
+ * directory in this repository was absent from the lane's counts while the lane reported a total.
+ *
+ * **Two files with different counts, and the assertion is the sum.** Equal counts would pass against
+ * an implementation that ran either one of them twice, and against one that ran the first alone if
+ * the numbers happened to match. 2 and 3 make 5, which no single file here can answer.
+ *
+ * **And the same file named twice**, because a caller may pass a directory and a path inside it. A
+ * duplicate is a duplicate import of one module in the generated aggregate, and every test in it
+ * would run twice — a count that is too high, which reads like more coverage rather than less.
+ */
+export string test_several_paths_run_all_of_them_and_a_repeat_runs_once(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "testcli-several");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+
+  Change a = cli.writeFile(dir + "/a_test.wac",
+    ("export string test_a1() { return \"\"; }\n" +
+     "export string test_a2() { return \"\"; }\n").toBytes()).wait();
+  t.isTrue(a.ok(), "could not write a_test.wac — " + a.message);
+  Change b = cli.writeFile(dir + "/b_test.wac",
+    ("export string test_b1() { return \"\"; }\n" +
+     "export string test_b2() { return \"\"; }\n" +
+     "export string test_b3() { return \"\"; }\n").toBytes()).wait();
+  t.isTrue(b.ok(), "could not write b_test.wac — " + b.message);
+
+  Exec both = wac(cli, string[]("test", dir + "/a_test.wac", dir + "/b_test.wac"));
+  string out = said(both);
+  t.eqI32(both.status, 0, "two paths did not run — " + out);
+  t.isTrue(contains(out, "a_test.wac"), "the first path is not named in the report — " + out);
+  t.isTrue(contains(out, "b_test.wac"), "the second path is not named in the report — " + out);
+  // The report is per file — `── <path>` then that file's own count — so the sum is asserted as its
+  // two halves. Stronger than a total would be: a total of 5 is also what one file of 5 answers.
+  t.isTrue(contains(out, "2 passed, 0 failed"), "a_test.wac's two tests did not run — " + out);
+  t.isTrue(contains(out, "3 passed, 0 failed"), "b_test.wac's three tests did not run — " + out);
+  t.eqStr(summaryOf(out), "2 files: 2 ok", "two paths did not report as two files — " + out);
+
+  // The directory and a file under it. Five is still the answer: `b_test.wac` is in both.
+  Exec dup = wac(cli, string[]("test", dir, dir + "/b_test.wac"));
+  string dupOut = said(dup);
+  t.eqI32(dup.status, 0, "a directory plus a file under it did not run — " + dupOut);
+  t.eqStr(summaryOf(dupOut), "2 files: 2 ok",
+          "the repeated file ran twice — " + dupOut);
+  t.eqI32(countLinesStarting(dupOut, "── "), 2,
+          "a file named twice is reported twice — " + dupOut);
+  cli.remove(dir, true).wait();
+  return t.report();
+}

@@ -53,7 +53,7 @@ import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFl
 import { appRun, writeApp } from "./app.wac";
 import { aggregatePath, aggregateSource, beside, flagValue, importable, noTrailingSlash, runTests,
          sigsWithCounters,
-         testFilesIn, unknownTestFlag, withoutIgnored } from "./testrun.wac";
+         commonDir, testTargets, unknownTestFlag, withoutIgnored } from "./testrun.wac";
 import { renderDiagnostics } from "../../wacc/src/render.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/path.wac";
@@ -1443,7 +1443,12 @@ export i32 main(Core core, Cli cli) {
   //
   // Only these four. `run` takes its trailing positionals as the program's own arguments, and
   // `bindgen` takes an output path as the second, so both are refusing something they mean.
-  if ((cmd == "test" || cmd == "check" || cmd == "build" || cmd == "audit") && pos.len() > 1) {
+  // **`test` is not in this list, and that is the point of `issues/system/0272b`.** It documents the
+  // plural — `wac test [path…]` — and a caller that has one exists: `tools/runTests.wac` chunks a
+  // large directory into lists of twelve and hands each list to one run. Refusing the list made the
+  // old silent wrong answer loud, which was worth doing, but the answer it should give is every path.
+  // `testTargets` is where the list becomes a walk.
+  if ((cmd == "check" || cmd == "build" || cmd == "audit") && pos.len() > 1) {
     core.warn("wac " + cmd + ": takes one path, given " + itoa(pos.len()) + " — `" + pos[0]
               + "` and `" + pos[1] + "`. Run it once per path, or name a directory.");
     return 2;
@@ -1498,7 +1503,8 @@ export i32 main(Core core, Cli cli) {
   // caller building a target list and an ignore list from one source must get the same answer for a
   // file as for the directory holding it; the alternative is an exclusion that works or not depending
   // on how the caller happened to spell the target.
-  if (cmd == "test" && !fs.stat(entry).isDir
+  bool severalOrDir = cmd == "test" && (pos.len() > 1 || fs.stat(entry).isDir);
+  if (cmd == "test" && !severalOrDir
       && withoutIgnored(string[](entry), flagValue(cli, argc, "--ignore")).len() == 0) {
     // The walk's own spelling for a run that excluded everything, in the one-file shape: `0 ok`
     // rather than nothing at all, because "excluded" and "no tests here" are different answers and
@@ -1506,8 +1512,10 @@ export i32 main(Core core, Cli cli) {
     core.log("1 file: 0 ok, 1 not run (--ignore)");
     return 0;
   }
-  if (cmd == "test" && fs.stat(entry).isDir) {
-    string[] found = testFilesIn(fs, entry);
+  if (severalOrDir) {
+    string[] asked = string[pos.len()](fill: "");
+    for (i32 i = 0; i < pos.len(); i++) { asked[i] = normalisePath(pos[i]); }
+    string[] found = testTargets(fs, asked);
     walked = withoutIgnored(found, flagValue(cli, argc, "--ignore"));
     ignoredCount = found.len() - walked.len();
     if (walked.len() == 0) {
@@ -1517,7 +1525,9 @@ export i32 main(Core core, Cli cli) {
       if (ignoredCount > 0) {
         core.warn("wac: --ignore excluded all " + itoa(ignoredCount) + " test file(s) under " + entry);
       } else {
-        core.warn("wac: no tests under " + entry + " — a test file is named `*_test.wac` and exports "
+        core.warn("wac: no tests under "
+                  + (pos.len() == 1 ? entry : itoa(pos.len()) + " path(s), the first being " + entry)
+                  + " — a test file is named `*_test.wac` and exports "
                   + "`test*()` answering a string, empty for a pass");
       }
       return 1;
@@ -1545,7 +1555,16 @@ export i32 main(Core core, Cli cli) {
     string up = "../";
     string[] imports = importable(cli, walked);
     if (imports.len() == 0) {
-      string dir = noTrailingSlash(entry);
+      // **`beside` needs one directory, and several paths do not name one.** One target *is* the
+      // directory that was walked; several have to be asked for the deepest directory they are all
+      // at or below. Two unrelated trees have none, and that is refused rather than guessed at —
+      // picking the first would emit `../` imports from a place the caller did not name.
+      string dir = pos.len() == 1 ? noTrailingSlash(entry) : commonDir(walked);
+      if (dir == "") {
+        core.warn("wac test: several paths outside this project with no directory above them all — "
+                  + "the aggregate has nowhere to go. Run one path, or a directory holding them.");
+        return 1;
+      }
       imports = beside(dir, walked);
       up = "";
       aggregate = dir + "/" + baseName(aggregatePath(core, cli));

@@ -1,7 +1,10 @@
 # 0272b — `wac test` runs only the first of several paths, and reports success
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/wac/src/wac.wac`, `packages/wac/src/testrun.wac` — `testTargets`
+  expands and deduplicates every path; `commonDir` gives `beside` a directory when there is more
+  than one. Guarded by `packages/wac/test/wac/testcli_test.wac`.
+- **Claimed by:** agent-b (2026-08-28)
 - **Reported by:** agent-b
 - **Date:** 2026-08-26
 - **Kind:** bug
@@ -68,10 +71,23 @@ line per file with an `N files: N ok` summary. So the multi-path form is the onl
 difference in *output shape* is the tell: the working form names each file, the broken one prints a
 bare count that looks exactly like a single file's.
 
-**Whether the fix is to accept the list or to refuse it** is worth a moment's thought rather than
-assumed. Accepting it matches the documentation and is what a caller wants. Refusing it — `wac test
-takes one path` — is also defensible and is a smaller change; what is not defensible is the current
-answer, which is to take one and say nothing.
+**Whether the fix is to accept the list or to refuse it** was worth a moment's thought rather than
+assuming. Accepting it matches the documentation and is what a caller wants. Refusing it — `wac test
+takes one path` — is also defensible and is a smaller change; what is not defensible is the answer
+this was filed about, which is to take one and say nothing.
+
+**Refusing it landed first, and the caller it had was invisible until the gate ran.**
+`tools/runTests.wac` chunks a directory of more than twelve test files into lists and hands each
+list to one `wac test` — so the refusal turned 29 of the gate's 58 chunks into `exited 2 with no
+failure of its own`, and every large directory in this repository (`packages/wacc`, `tor`, `crypto`,
+`quic`, …) ran nothing while the lane still printed a total. That is the same class of answer this
+issue is about, one layer up, and it is what decided the question: the runner needs the plural form,
+so `wac test` gives it. The refusal stays for `check`, `build` and `audit`, where a second path has
+no meaning.
+
+Worth saying plainly: those chunks never worked. Under the old behaviour each ran the *first* file
+of its twelve and printed that file's count, which is why nobody noticed — the numbers looked like
+a run. The refusal did not break the lane; it made a lane that was already broken say so.
 
 **A guard would be cheap either way**: a test that passes two paths whose test counts differ and
 asserts the total is the sum. tools/wac/testcli_test.wac is where the other `wac test` behaviours
