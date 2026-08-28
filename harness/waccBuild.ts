@@ -43,6 +43,16 @@ import { buildWaccAsset, ladderKeyParts } from "./waccFromLadder.ts";
  * `0231a` records as its remaining risk.
  */
 export type WaccApi = {
+  /**
+   * The import walk's three rules, which a host needs because every entry point here takes a
+   * closure it had to gather itself. `harness/wacFiles.ts` had them from the TypeScript reference,
+   * with a note on why they were the compiler's own rather than a copy.
+   */
+  importSpecsFor: (path: string, src: Uint8Array) => string[];
+  isBuiltinSpecifier: (spec: string) => boolean;
+  isProjectSpecifier: (spec: string) => boolean;
+  resolveSpecifierAt: (from: string, spec: string, root: string, base: string) => string;
+
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;

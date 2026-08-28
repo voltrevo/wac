@@ -23,7 +23,7 @@ import { coreSource, isBuiltinSpec } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
-import { Res, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
+import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
@@ -468,6 +468,42 @@ export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
 export string lambdaReportFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
   return lambdaReportLinked(paths, sources, res, entry);
+}
+
+// ── The import walk, for a host that has to gather a graph ──────────────────────────────────
+//
+// **A host cannot hand `emitFiles` a closure it has no way to compute.** Every entry point above
+// takes `paths` and `sources` already gathered, and the gathering needs three rules that belong to
+// the language: which specifiers name a file at all, where a specifier resolves from, and which
+// specifiers a source has. `harness/wacFiles.ts` had all three from the TypeScript reference, with
+// a note saying why they were the compiler's own and not a copy — *"what it cost was the
+// possibility of a program the harness gathers under one key and the compiler files under
+// another"*. That reasoning is the reason these are exported rather than reimplemented.
+
+/**
+ * The import specifiers in `src`, read by whichever frontend `path` names.
+ *
+ * **The path matters.** wapy spells an import `from "./m.wac" import a, b`, so a walk that scanned
+ * for wac's spelling alone stops at the first `.wapy` file and the edges beyond it do not exist.
+ */
+export string[] importSpecsFor(string path, u8[] src) {
+  return importSpecsOf(path, src);
+}
+
+/** Whether `spec` names something the linker carries rather than a file to read. */
+export bool isBuiltinSpecifier(string spec) { return isBuiltinSpec(spec); }
+
+/** Whether `spec` is a `@/` — resolved against its file's project root rather than its directory. */
+export bool isProjectSpecifier(string spec) { return isProjectSpec(spec); }
+
+/**
+ * `spec` as a key, for a file at `fromPath` whose project root is `root`.
+ *
+ * `root` may be empty for a file in no project, in which case a `@/` answers `""` — which is a
+ * refusal rather than a fallback, and is `design/lang/0009` D7.
+ */
+export string resolveSpecifierAt(string fromPath, string spec, string root, string base) {
+  return resolveFromAt(fromPath, spec, root, base);
 }
 
 /** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */

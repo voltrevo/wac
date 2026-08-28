@@ -1,4 +1,25 @@
-import { isBuiltinSpecifier } from "wac/wacCore.ts";
+import { waccApi } from "./waccBuild.ts";
+
+// **wacc, at module load, so the helpers below can stay synchronous.** `resolveFrom` and
+// `wacFilesIn` have callers that are not async — `packages/wacc/test/corpus.ts` walks a queue with
+// one — and making them async to reach an `await` would ripple. Building wacc costs four seconds
+// once and is cached on disk; every importer of this file already pays it through `wacBind`.
+const api = await waccApi();
+
+/** Whether `spec` names something the linker carries rather than a file to read. */
+function isBuiltinSpecifier(spec: string): boolean {
+  return api.isBuiltinSpecifier(spec);
+}
+
+/** Whether `spec` is a `@/`, resolved against its file's project root. */
+function isProjectSpecifier(spec: string): boolean {
+  return api.isProjectSpecifier(spec);
+}
+
+/** `spec` as a key, for a file at `from` whose project root is `root`. */
+function resolveSpecifier(from: string, spec: string, root: string | undefined, base: string): string {
+  return api.resolveSpecifierAt(from, spec, root ?? "", base);
+}
 // wacFiles — read a .wac entry file and everything it imports, transitively.
 //
 // wacCompile takes a path -> source map and does no I/O of its own, so someone
@@ -12,8 +33,7 @@ import { isBuiltinSpecifier } from "wac/wacCore.ts";
 // missing file rather than at the comment. Using the real lexer makes that class of
 // mistake impossible instead of merely unlikely.
 
-import { wacLex } from "wac/wacLex.ts";
-import { isProjectSpecifier, resolvePath, resolveSpecifier } from "wac/wacResolve.ts";
+
 
 /** Resolve `spec` relative to the directory of `fromPath`. */
 /**
@@ -37,10 +57,11 @@ export function resolveFrom(fromPath: string, spec: string): string {
   // two answers were identical keeping two bodies bought nothing. What it cost was the possibility
   // of a program the harness gathers under one key and the compiler files under another.
   //
-  // The direction is forced: the compiler must not import the harness. `design/lang/0009` asks for
-  // this consolidation *before* the manifest lookups land, on the grounds that two lines agreeing is
-  // not evidence that a provider table and a mapping table will.
-  return resolvePath(fromPath, spec);
+  // **The compiler saying it is wacc now**, and the argument is unchanged — it is the one that
+  // will file the program, so it is the one that must agree about the key. `resolveSpecifierAt`
+  // with no project root is what `resolvePath` was: a builtin answers itself, a `@/` answers `""`,
+  // and anything else is joined to the importing file's directory.
+  return api.resolveSpecifierAt(fromPath, spec, "", Deno.cwd());
 }
 
 /**
@@ -55,22 +76,70 @@ export function resolveFrom(fromPath: string, spec: string): string {
  * is what excludes it — a bare word after `from` is not a path.
  */
 export function importPaths(src: string): string[] {
-  const { tokens } = wacLex(src);
   const out: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].kind !== "import") continue;
+  // A `"…"` at each position, and `null` where the source is a comment or the inside of a string.
+  // Built once so the scan below can ask "is this token real" without re-deciding it.
+  const n = src.length;
+  let i = 0;
+  /** Tokens that matter here: `import`, `from`, `;`, and a string literal with its value. */
+  const toks: { kind: string; text: string }[] = [];
+  while (i < n) {
+    const c = src[i];
+    if (c === "/" && src[i + 1] === "/") {
+      while (i < n && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      let text = "";
+      while (j < n && src[j] !== '"') {
+        if (src[j] === "\\") { text += src[j + 1] ?? ""; j += 2; continue; }
+        text += src[j];
+        j++;
+      }
+      toks.push({ kind: "string", text });
+      i = j + 1;
+      continue;
+    }
+    // A character literal cannot hold a specifier, and its `\'` would otherwise open a string.
+    if (c === "'") {
+      let j = i + 1;
+      while (j < n && src[j] !== "'") j += src[j] === "\\" ? 2 : 1;
+      i = j + 1;
+      continue;
+    }
+    if (c === ";") { toks.push({ kind: ";", text: ";" }); i++; continue; }
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < n && /[A-Za-z0-9_]/.test(src[j])) j++;
+      toks.push({ kind: "ident", text: src.slice(i, j) });
+      i = j;
+      continue;
+    }
+    i++;
+  }
+
+  for (let k = 0; k < toks.length; k++) {
+    if (!(toks[k].kind === "ident" && toks[k].text === "import")) continue;
     // Scan to this import's `from`. Stopping at `;` keeps a malformed import from
     // consuming the one after it.
-    let j = i + 1;
+    //
     // `from` is contextual as of wac 2026-08-02: it lexes as an ordinary identifier so
     // that `slice(a, from, to)` can name its argument, and only an import clause can put
     // one here. Matched by text for that reason.
+    let j = k + 1;
     const isFrom = (t: { kind: string; text: string } | undefined) =>
       t !== undefined && t.kind === "ident" && t.text === "from";
-    while (j < tokens.length && !isFrom(tokens[j]) && tokens[j].kind !== ";") j++;
-    if (j < tokens.length && isFrom(tokens[j]) && tokens[j + 1]?.kind === "string") {
-      out.push(tokens[j + 1].text);
-      i = j + 1;
+    while (j < toks.length && !isFrom(toks[j]) && toks[j].kind !== ";") j++;
+    if (j < toks.length && isFrom(toks[j]) && toks[j + 1]?.kind === "string") {
+      out.push(toks[j + 1].text);
+      k = j + 1;
     }
   }
   return out;
