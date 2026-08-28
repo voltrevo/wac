@@ -1,0 +1,90 @@
+// The stripper against the files it exists for.
+//
+//     wac test --allow-read packages/ts/test/wac/corpus_test.wac
+//
+// `packages/platform/host/` is the reason `design/system/0009` exists: a JavaScript-hosted `wac`
+// needs that bridge as one JavaScript file, and it is TypeScript. Hand-written cases test what I
+// thought of; this tests what is actually there, which is the only number that decides whether the
+// transform is finished.
+//
+// **It reports rather than only failing.** A refusal names the file, the position and the
+// construct — `design/system/0009` D4 — so a run of this is a worklist rather than a verdict.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Stripped, strip } from "../../src/strip.wac";
+
+/** The bridge, in the order `wc -l` puts them: the biggest first, so a failure surfaces early. */
+string[] hostFiles() {
+  return string[](
+    "packages/platform/host/deno.ts",
+    "packages/platform/host/provider.ts",
+    "packages/platform/host/children.ts",
+    "packages/platform/host/call.ts",
+    "packages/platform/host/marshal.ts",
+    "packages/platform/host/faults.ts",
+    "packages/platform/host/respond.ts",
+    "packages/platform/host/layout.ts",
+    "packages/platform/host/entry.ts",
+    "packages/platform/host/queue.ts",
+    "packages/platform/host/child.ts",
+    "packages/platform/host/schedule.ts",
+    "packages/platform/host/driver.ts",
+    "packages/platform/host/childLife.ts",
+    "packages/platform/host/ops.ts",
+    "packages/platform/host/entropy.ts",
+    "packages/platform/host/childWasm.ts"
+  );
+}
+
+export string test_the_bridge_strips(Core core, Cli cli) {
+  T t = T.create();
+  string[] files = hostFiles();
+  i32 ok = 0;
+  i32 bytes = 0;
+  string failures = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult f = cli.readFile(files[i]).wait();
+    if (!f.ok) {
+      failures = failures + "\n  " + files[i] + ": cannot read — " + f.error;
+      continue;
+    }
+    Stripped s = strip(f.bytes);
+    if (s.error != "") {
+      failures = failures + "\n  " + files[i] + ":" + itoa(s.line) + ":" + itoa(s.col)
+               + ": " + s.error;
+      continue;
+    }
+    // D1: the output occupies the input's bytes, so every position still points at the source.
+    if (s.out.len() != f.bytes.len()) {
+      failures = failures + "\n  " + files[i] + ": output is " + itoa(s.out.len())
+               + " bytes against " + itoa(f.bytes.len()) + " in — positions have moved";
+      continue;
+    }
+    ok = ok + 1;
+    bytes = bytes + f.bytes.len();
+  }
+  core.log("   stripped " + itoa(ok) + " of " + itoa(files.len()) + " files, "
+           + itoa(bytes / 1024) + " KB");
+  t.eqStr(failures, "",
+          "these are the constructs left to handle, or the places the extent scan is wrong");
+  return t.report();
+}
+
+export string test_nothing_that_looks_like_a_type_survives(Core core, Cli cli) {
+  T t = T.create();
+  // A weak but load-bearing check: after stripping, no line may still end in a bare type
+  // annotation. It cannot prove correctness — only the differential in step 3 can — but it catches
+  // a whole class of "the extent scan stopped early" without needing an oracle.
+  FileResult f = cli.readFile("packages/platform/host/ops.ts").wait();
+  if (!f.ok) { t.isTrue(false, "cannot read ops.ts"); return t.report(); }
+  Stripped s = strip(f.bytes);
+  t.eqStr(s.error, "", "it strips");
+  if (s.error != "") { return t.report(); }
+  string out = string.fromBytes(s.out);
+  t.isTrue(out.indexOf("interface ") < 0, "no `interface` survives");
+  t.isTrue(out.indexOf(": number") < 0, "no `: number` survives");
+  t.isTrue(out.indexOf(": string") < 0, "no `: string` survives");
+  return t.report();
+}
