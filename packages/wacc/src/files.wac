@@ -17,13 +17,17 @@ import { lex, Lexed } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { stringLiteralBytes } from "./emit.wac";
-// Re-exported so the four callers that import them from here keep working; the rule itself
-// lives in a module `emit.wac` can also import, which is `issues/lang/0150`.
-import { resolveFrom as pathResolveFrom, resolveFromIn as pathResolveIn,
-         resolveFromAt as pathResolveAt,
-         normalisePath as pathNormalise } from "./path.wac";
-import { isBuiltinSpec as coreIsBuiltinSpec } from "./coretext.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
+
+// **What is no longer here: five forwarders.** `resolveFrom`, `resolveFromIn`, `resolveFromAt` and
+// `normalisePath` were re-exported from `path.wac`, and `isBuiltinSpec` from `coretext.wac`, each as
+// a wrapper whose body was one call — because wac has no re-export (`issues/lang/0073`) and this is
+// the only shape that spells one. Callers now import them from the file that declares them.
+//
+// The wrappers were free to write and not free to keep. Each made a *second* declaration of a name
+// the program already had, and the alias existed only so the wrapper could reach past itself to the
+// thing it wrapped. A module-private top-level name should be unique across a program — see this
+// package's README — and five of the eighteen names that were not were these.
 
 /**
  * The path each `import … from "…"` in `src` names, in source order — read as **wac**.
@@ -69,27 +73,3 @@ export string[] importSpecsOf(string path, u8[] src) {
   return out;
 }
 
-/** `path.wac`'s, re-exported: this is where four callers already look for it. */
-/**
- * Does this specifier name a module the compiler carries rather than a file on disk?
- *
- * Re-exported for the same reason `resolveFrom` is: a caller that walks imports off the disk has to
- * ask, and it should ask the one implementation rather than keep a list of prefixes that goes stale
- * the next time a tree is added. `design/lang/0009` D4 added the second one.
- */
-export bool isBuiltinSpec(string spec) { return coreIsBuiltinSpec(spec); }
-
-export string resolveFrom(string fromPath, string spec) { return pathResolveFrom(fromPath, spec); }
-
-/** `path.wac`'s, re-exported for the same reason. */
-export string normalisePath(string path) { return pathNormalise(path); }
-
-/** `resolveFrom` for a file whose project root is `root` — `design/lang/0009` D7, see `path.wac`. */
-export string resolveFromIn(string fromPath, string spec, string root) {
-  return pathResolveIn(fromPath, spec, root);
-}
-
-/** The same, with the directory relative keys are measured from — `path.wac`'s `relativeTo`. */
-export string resolveFromAt(string fromPath, string spec, string root, string base) {
-  return pathResolveAt(fromPath, spec, root, base);
-}

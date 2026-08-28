@@ -89,7 +89,7 @@ struct W {
   i32[] toks;
   i32 tokCount;
   WSeg[] segs;
-  /** Per segment, the base of its four synthetics — see `Built` — or -1. */
+  /** Per segment, the base of its four synthetics — see `WapyBuilt` — or -1. */
   i32[] pool;
   /** The appended `i32`, for `range()`'s induction variable and for error recovery. */
   i32 i32Tok;
@@ -384,7 +384,7 @@ bool isRangeLoop(u8[] src, i32[] toks, i32 from, i32 to) {
 
 
 /** The final array, the line map, and the synthetics — everything a `W` needs. */
-struct Built {
+struct WapyBuilt {
   u8[] src;
   i32[] toks;
   i32 tokCount;
@@ -398,19 +398,19 @@ struct Built {
 }
 
 /** Append one token to the flat builder. */
-void emit(WVec<i32> a, i32 kind, i32 start, i32 len, i32 line, i32 col) {
+void pushWapyToken(WVec<i32> a, i32 kind, i32 start, i32 len, i32 line, i32 col) {
   a.push(kind); a.push(start); a.push(len); a.push(line); a.push(col);
 }
 
 /** The four synthetics for one counted loop, pointing into `synthTail()`. */
 void emitPool(WVec<i32> a, i32 base, i32 line, i32 col) {
-  emit(a, kIdent(),  synthI32Off(base),    3, line, col);
-  emit(a, kLt(),     synthLtOff(base),     1, line, col);
-  emit(a, kInc(),    synthIncOff(base),    2, line, col);
-  emit(a, kPlusEq(), synthPlusEqOff(base), 2, line, col);
+  pushWapyToken(a, kIdent(),  synthI32Off(base),    3, line, col);
+  pushWapyToken(a, kLt(),     synthLtOff(base),     1, line, col);
+  pushWapyToken(a, kInc(),    synthIncOff(base),    2, line, col);
+  pushWapyToken(a, kPlusEq(), synthPlusEqOff(base), 2, line, col);
 }
 
-Built buildArray(u8[] src) {
+WapyBuilt buildArray(u8[] src) {
   WLexed wl = wapyLex(src);
   u8[] tb = synthTail().toBytes();
   i32 base = src.len();
@@ -432,18 +432,18 @@ Built buildArray(u8[] src) {
     i32 first = a.len() / tokenStride();
     i32 n = toksLen(r);
     for (i32 k = 0; k < n; k++) {
-      emit(a, kindAt(r, k), startAt(r, k), lenAt(r, k), lineAt(r, k), colAt(r, k));
+      pushWapyToken(a, kindAt(r, k), startAt(r, k), lenAt(r, k), lineAt(r, k), colAt(r, k));
     }
     // The `;` that bounds the line. Zero-width, just past the last token, so an underline of it is
     // the point after the statement rather than a character the reader did not write.
     i32 eo = n > 0 ? startAt(r, n - 1) + lenAt(r, n - 1) : 0;
     i32 el = n > 0 ? lineAt(r, n - 1) : ln.line;
     i32 ec = n > 0 ? colAt(r, n - 1) + lenAt(r, n - 1) : ln.indent;
-    emit(a, kSemi(), eo, 0, el, ec);
+    pushWapyToken(a, kSemi(), eo, 0, el, ec);
     segs.push(WSeg(first, n, ln.indent, ln.line));
   }
   i32 lastLine = wl.lines.len() > 0 ? wl.lines[wl.lines.len() - 1].line : 1;
-  emit(a, kEof(), base, 0, lastLine + 1, 1);
+  pushWapyToken(a, kEof(), base, 0, lastLine + 1, 1);
   // **The count includes the synthetics.** They sit past the `kEof`, so no parser walks into them —
   // one stops there — but the tree *refers* to them by index, and a count that excluded them made
   // every consumer treat those indices as out of range: the printer rendered the induction
@@ -467,7 +467,7 @@ Built buildArray(u8[] src) {
 
   i32[] flat = i32[a.len()](fill: 0);
   for (i32 i = 0; i < a.len(); i++) { flat[i] = a.get(i); }
-  return Built(src2, flat, a.len() / tokenStride(), segArr, pool, i32Tok,
+  return WapyBuilt(src2, flat, a.len() / tokenStride(), segArr, pool, i32Tok,
                wl.errors, wl.errorCount);
 }
 
@@ -481,7 +481,7 @@ Stmt[] stmtsIn(W w, i32 lo, i32 hi) {
   WVec<Stmt> out = WVec.create();
   i32 i = lo;
   while (i < hi) {
-    Res r = stmtAt(w, i, hi);
+    WapyRes r = stmtAt(w, i, hi);
     if (r.ok) { out.push(r.stmt); }
     i = r.next > i ? r.next : i + 1;
   }
@@ -489,7 +489,7 @@ Stmt[] stmtsIn(W w, i32 lo, i32 hi) {
 }
 
 /** A statement and the segment index after it, since several forms consume more than one line. */
-struct Res {
+struct WapyRes {
   Stmt stmt;
   i32 next;
   bool ok;
@@ -567,7 +567,7 @@ Stmt? varDeclIn(W w, i32 from, i32 to) {
  * its diagnostics have to be. Everything else is wac's own statement with the `;` already appended by
  * the builder, so it goes to `parseStatement`.
  */
-Res stmtAt(W w, i32 i, i32 hi) {
+WapyRes stmtAt(W w, i32 i, i32 hi) {
   i32 f = w.segs[i].first;
   i32 e = segEnd(w, i);
   i32 ln = w.segs[i].line;
@@ -575,12 +575,12 @@ Res stmtAt(W w, i32 i, i32 hi) {
   i32 k = f < e ? kindOf(w, f) : kEof();
   string word = f < e && k == kIdent() ? textOf(w, f) : "";
 
-  if (word == "pass" && e == f + 1) { return Res(Stmt(StmtKind.Break, ln, cl), i + 1, false); }
+  if (word == "pass" && e == f + 1) { return WapyRes(Stmt(StmtKind.Break, ln, cl), i + 1, false); }
 
   if (word == "scope") {
     i32 c = headColon(w, i);
     if (c != f + 1) { err(w, werrExpected(), ln, cl); }
-    return Res(Stmt(StmtKind.Block(blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
+    return WapyRes(Stmt(StmtKind.Block(blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
   }
 
   if (k == kIf()) { return takeIf(w, i, hi); }
@@ -588,7 +588,7 @@ Res stmtAt(W w, i32 i, i32 hi) {
   if (k == kWhile()) {
     i32 c = headColon(w, i);
     Expr cond = exprIn(w, f + 1, c < 0 ? e : c);
-    return Res(Stmt(StmtKind.While(cond, blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
+    return WapyRes(Stmt(StmtKind.While(cond, blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
   }
 
   if (k == kDo()) {
@@ -596,10 +596,10 @@ Res stmtAt(W w, i32 i, i32 hi) {
     i32 j = blockEnd(w, i);
     if (j >= hi || kindOf(w, w.segs[j].first) != kWhile()) {
       err(w, werrExpected(), ln, cl);
-      return Res(Stmt(StmtKind.Block(body), ln, cl), j, true);
+      return WapyRes(Stmt(StmtKind.Block(body), ln, cl), j, true);
     }
     Expr cond = exprIn(w, w.segs[j].first + 1, segEnd(w, j));
-    return Res(Stmt(StmtKind.DoWhile(body, cond), ln, cl), j + 1, true);
+    return WapyRes(Stmt(StmtKind.DoWhile(body, cond), ln, cl), j + 1, true);
   }
 
   if (k == kFor()) { return takeFor(w, i, hi); }
@@ -610,19 +610,19 @@ Res stmtAt(W w, i32 i, i32 hi) {
     Stmt? v = varDeclIn(w, f, e);
     if (v is null) {
       err(w, werrExpected(), ln, cl);
-      return Res(Stmt(StmtKind.Break, ln, cl), i + 1, false);
+      return WapyRes(Stmt(StmtKind.Break, ln, cl), i + 1, false);
     }
-    return Res(v!, i + 1, true);
+    return WapyRes(v!, i + 1, true);
   }
 
   // `trap()` here, `trap;` or `trap e;` in wac — the one statement whose *spelling* differs without
   // its structure differing, so `parseStatement` cannot be handed it unchanged.
   if (k == kTrap() && f + 1 < e && kindOf(w, f + 1) == kLparen()) {
     i32 close = mate(w, f + 1, e);
-    if (close == f + 2) { return Res(Stmt(StmtKind.Trap(null), ln, cl), i + 1, true); }
+    if (close == f + 2) { return WapyRes(Stmt(StmtKind.Trap(null), ln, cl), i + 1, true); }
     if (close > 0) {
       Expr v = exprIn(w, f + 2, close);
-      return Res(Stmt(StmtKind.Trap(v), ln, cl), i + 1, true);
+      return WapyRes(Stmt(StmtKind.Trap(v), ln, cl), i + 1, true);
     }
   }
 
@@ -642,11 +642,11 @@ Res stmtAt(W w, i32 i, i32 hi) {
   P p = at(w, f);
   Stmt s = parseStatement(p);
   drain(w, p);
-  return Res(s, i + 1, true);
+  return WapyRes(s, i + 1, true);
 }
 
 /** `if` with its `elif` and `else` chain — checked where it is written, never inherited. */
-Res takeIf(W w, i32 i, i32 hi) {
+WapyRes takeIf(W w, i32 i, i32 hi) {
   i32 f = w.segs[i].first;
   i32 e = segEnd(w, i);
   i32 ln = w.segs[i].line;
@@ -662,19 +662,19 @@ Res takeIf(W w, i32 i, i32 hi) {
     string jw = kindOf(w, jf) == kIdent() ? textOf(w, jf) : "";
     if (jw == "elif") {
       // An `elif` is wac's `else if`: a one-statement else block, which is what the printer emits.
-      Res inner = takeIf(w, j, hi);
+      WapyRes inner = takeIf(w, j, hi);
       Stmt[] one = Stmt[1](fill: inner.stmt);
       one[0] = inner.stmt;
-      return Res(Stmt(StmtKind.If(cond, then, one), ln, cl), inner.next, true);
+      return WapyRes(Stmt(StmtKind.If(cond, then, one), ln, cl), inner.next, true);
     }
     if (kindOf(w, jf) == kElse()) {
       i32 ec = headColon(w, j);
       if (ec != jf + 1) { err(w, werrExpected(), w.segs[j].line, w.segs[j].indent); }
       els = blockOf(w, j, hi);
-      return Res(Stmt(StmtKind.If(cond, then, els), ln, cl), blockEnd(w, j), true);
+      return WapyRes(Stmt(StmtKind.If(cond, then, els), ln, cl), blockEnd(w, j), true);
     }
   }
-  return Res(Stmt(StmtKind.If(cond, then, els), ln, cl), j, true);
+  return WapyRes(Stmt(StmtKind.If(cond, then, els), ln, cl), j, true);
 }
 
 /**
@@ -686,7 +686,7 @@ Res takeIf(W w, i32 i, i32 hi) {
  * cond; update:`, and those are wac's own statements with wac's own separators, so they are parsed by
  * `parseStatement` and `parseExpr` unchanged.
  */
-Res takeFor(W w, i32 i, i32 hi) {
+WapyRes takeFor(W w, i32 i, i32 hi) {
   i32 f = w.segs[i].first;
   i32 e = segEnd(w, i);
   i32 ln = w.segs[i].line;
@@ -707,14 +707,14 @@ Res takeFor(W w, i32 i, i32 hi) {
     i32 close = mate(w, open, to);
     if (close < 0) {
       err(w, werrBadRange(), ln, cl);
-      return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
+      return WapyRes(Stmt(StmtKind.Block(body), ln, cl), next, true);
     }
     WVec<i32> parts = WVec.create();
     commaParts(w, open + 1, close, parts);
     i32 nparts = parts.len() / 2;
     if (nparts < 2 || nparts > 3) {
       err(w, werrBadRange(), ln, cl);
-      return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
+      return WapyRes(Stmt(StmtKind.Block(body), ln, cl), next, true);
     }
     i32 pool = w.pool[i];
     Expr from = exprIn(w, parts.get(0), parts.get(1));
@@ -726,7 +726,7 @@ Res takeFor(W w, i32 i, i32 hi) {
     Stmt step = nparts == 2
       ? Stmt(StmtKind.IncrStmt(lv, pool + 2), ln, cl)
       : Stmt(StmtKind.Assign(lv, pool + 3, exprIn(w, parts.get(4), parts.get(5))), ln, cl);
-    return Res(Stmt(StmtKind.For(init, cond, step, body), ln, cl), next, true);
+    return WapyRes(Stmt(StmtKind.For(init, cond, step, body), ln, cl), next, true);
   }
 
   // `for init; cond; update:` — wac's three clauses, semicolons and all.
@@ -734,7 +734,7 @@ Res takeFor(W w, i32 i, i32 hi) {
   i32 s2 = s1 < 0 ? -1 : findTop(w, s1 + 1, to, kSemi());
   if (s1 < 0 || s2 < 0) {
     err(w, werrBadRange(), ln, cl);
-    return Res(Stmt(StmtKind.Block(body), ln, cl), next, true);
+    return WapyRes(Stmt(StmtKind.Block(body), ln, cl), next, true);
   }
   Stmt? init = null;
   if (s1 > f + 1) {
@@ -760,7 +760,7 @@ Res takeFor(W w, i32 i, i32 hi) {
     step = parseStatement(pu);
     drain(w, pu);
   }
-  return Res(Stmt(StmtKind.For(init, cond, step, body), ln, cl), next, true);
+  return WapyRes(Stmt(StmtKind.For(init, cond, step, body), ln, cl), next, true);
 }
 
 /**
@@ -770,7 +770,7 @@ Res takeFor(W w, i32 i, i32 hi) {
  * values, `match` destructures enum variants — and the keyword is preserved rather than
  * canonicalised. wapy writes the default arm `else`, where wac writes `default`.
  */
-Res takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
+WapyRes takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
   i32 f = w.segs[i].first;
   i32 e = segEnd(w, i);
   i32 ln = w.segs[i].line;
@@ -834,7 +834,7 @@ Res takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
   Stmt s = isSwitch
     ? Stmt(StmtKind.Switch(subject, cases.toArray()), ln, cl)
     : Stmt(StmtKind.Match(subject, arms.toArray()), ln, cl);
-  return Res(s, end, true);
+  return WapyRes(s, end, true);
 }
 
 // ── Declarations ──────────────────────────────────────────────────────────────
@@ -1157,7 +1157,7 @@ export struct WParsed {
  * every name to the wrong token, which is why both come back rather than only the tree.
  */
 export WParsed wapyParse(u8[] src) {
-  Built b = buildArray(src);
+  WapyBuilt b = buildArray(src);
   WVec<i32> errs = WVec.create();
   for (i32 i = 0; i < b.errorCount * 3; i++) { errs.push(b.errors[i]); }
   W w = W(b.src, b.toks, b.tokCount, b.segs, b.pool, b.i32Tok, errs);

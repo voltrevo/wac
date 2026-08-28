@@ -16,8 +16,8 @@
 // struct and enum, a function per export, and the aliases. That order is the TypeScript generator's
 // and is load-bearing — a helper used by a class has to exist before the class that calls it.
 
-import { splitTop } from "./manifest.wac";
-import { endsWith } from "./path.wac";
+import { orVoid, splitTop } from "./manifest.wac";
+import { endsWith, startsWith } from "./path.wac";
 import { field, linesOf } from "./text.wac";
 
 /** What one run needs to know: the wires, taken apart, and which language to write. */
@@ -59,10 +59,6 @@ bool isIdentChar(string ch) {
       || ch == "_";
 }
 
-bool startsWith(string s, string p) {
-  return s.len() >= p.len() && s.slice(0, p.len()) == p;
-}
-
 /** The scalars that cross as numbers, `bool` and `void` among them. */
 bool isScalar(string t) {
   return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64"
@@ -98,7 +94,7 @@ bool isRefArray(G g, string t) {
 }
 
 /** Whether a value of this type crosses as a reference, which is what may be null. */
-bool isRefType(G g, string t) {
+bool isRefBindType(G g, string t) {
   return t == "string" || endsWith(t, "[]") || typeIndex(g, t) >= 0 || callbackIndex(g, t) >= 0
       || outRefIndex(g, t) >= 0;
 }
@@ -232,7 +228,7 @@ string toWasm(G g, string t, string expr) {
   // **A `null` crosses as a `null`, whatever the spelling says.** Every reference this compiler emits
   // is the nullable wasm type, so a `T` and a `T?` are one type here and a converter that assumed
   // otherwise would read `.length` off nothing. A number cannot be null and is left alone.
-  if (conv == expr || !isRefType(g, inner)) { return conv; }
+  if (conv == expr || !isRefBindType(g, inner)) { return conv; }
   // Bound to a name first: the guard names the value twice, and the expression handed in is
   // sometimes a call — evaluating it in both arms collects a ticket twice.
   return "((v) => v === null ? null : " + toWasmInner(g, inner, "v") + ")(" + expr + ")";
@@ -524,8 +520,6 @@ string fieldName(string f) {
   return at < 0 ? f : f.slice(0, at);
 }
 
-string orVoid(string t) { return t == "" ? "void" : t; }
-
 // ── The module, as text ───────────────────────────────────────────────────────────────────────
 
 /**
@@ -591,7 +585,7 @@ void line(Out o, string s) {
   put(o, "\n");
 }
 
-string finish(Out o) {
+string outText(Out o) {
   u8[] exact = u8[o.n]();
   for (i32 i = 0; i < o.n; i++) { exact[i] = o.buf[i]; }
   return string.fromBytes(exact);
@@ -851,9 +845,9 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
     put(o, "export function __cov_get(i" + annRaw(g, "number") + ")" + annRaw(g, "number") + " {\n");
     put(o, "  return ($exports.__cov_get" + cf(g) + ")(i)" + (g.js ? "" : " as number") + ";\n");
     put(o, "}");
-    return finish(o);
+    return outText(o);
   }
-  return trimmed(finish(o));
+  return chomped(outText(o));
 }
 
 /**
@@ -862,7 +856,7 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
  * Everything above writes a line at a time, which is one character more than `join("\n")` produces.
  * Dropping it here keeps the difference in one place instead of making every branch remember.
  */
-string trimmed(string s) {
+string chomped(string s) {
   return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n" ? s.slice(0, s.len() - 1) : s;
 }
 

@@ -22,8 +22,8 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
 import { coreSource, isBuiltinSpec } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
-import { importSpecs, importSpecsOf, resolveFrom, resolveFromIn } from "./files.wac";
-import { Res, resolveVia } from "./path.wac";
+import { importSpecs, importSpecsOf } from "./files.wac";
+import { Res, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 

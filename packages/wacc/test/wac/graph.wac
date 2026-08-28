@@ -15,7 +15,9 @@
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
 import { Cli, FileResult } from "std/platform.wac";
-import { importSpecs, isBuiltinSpec, resolveFrom } from "../../src/files.wac";
+import { importSpecs } from "../../src/files.wac";
+import { resolveFrom } from "../../src/path.wac";
+import { isBuiltinSpec } from "../../src/coretext.wac";
 
 /** An entry and everything it reaches, in the order they were found. */
 export struct Graph {

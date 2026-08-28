@@ -35,7 +35,7 @@
 // in a program map is already in, and a second collapser that disagreed about `a/../..` would put
 // the manifest search and the import resolution in different directories for the same file. The
 // coupling is the right way round to notice — if it ever becomes wrong, the utility moves.
-import { normalisePath } from "../../wacc/src/files.wac";
+import { normalisePath } from "../../wacc/src/path.wac";
 
 /** The name a project is identified by. One place, so a caller cannot spell it differently. */
 export string MANIFEST_NAME() { return "wac.json5"; }

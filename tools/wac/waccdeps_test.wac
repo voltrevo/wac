@@ -43,7 +43,9 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Cli, Core, FileResult } from "std/platform.wac";
-import { importSpecs, isBuiltinSpec, resolveFrom } from "../../packages/wacc/src/files.wac";
+import { importSpecs } from "../../packages/wacc/src/files.wac";
+import { resolveFrom } from "../../packages/wacc/src/path.wac";
+import { isBuiltinSpec } from "../../packages/wacc/src/coretext.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** Whether `s` starts with `p`. */

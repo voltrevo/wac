@@ -214,7 +214,7 @@ struct Lexer {
 // The output arrays are pre-sized and written by index, so these take the Lexed
 // value and mutate it rather than returning a new one.
 
-void emit(Lexed out, i32 kind, i32 start, i32 len, i32 line, i32 col) {
+void pushToken(Lexed out, i32 kind, i32 start, i32 len, i32 line, i32 col) {
   i32 at = out.tokenCount * tokenStride();
   out.tokens[at] = kind;
   out.tokens[at + 1] = start;
@@ -291,7 +291,7 @@ void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
     }
   }
   if (!closed) { fail(out, errUnterminatedString(), startLine, startCol); }
-  emit(out, kString(), start, lx.pos - start, startLine, startCol);
+  pushToken(out, kString(), start, lx.pos - start, startLine, startCol);
 }
 
 /**
@@ -305,13 +305,13 @@ void lexChar(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
 
   if (lx.atEnd()) {
     fail(out, errUnterminatedChar(), startLine, startCol);
-    emit(out, kInt(), start, lx.pos - start, startLine, startCol);
+    pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
     return;
   }
   if (lx.peek(0) == '\'') {
     lx.advance();
     fail(out, errEmptyChar(), startLine, startCol);
-    emit(out, kInt(), start, lx.pos - start, startLine, startCol);
+    pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
     return;
   }
 
@@ -319,7 +319,7 @@ void lexChar(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
     lx.advance();
     if (lx.atEnd()) {
       fail(out, errUnterminatedChar(), startLine, startCol);
-      emit(out, kInt(), start, lx.pos - start, startLine, startCol);
+      pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
       return;
     }
     i32 esc = lx.advance();
@@ -345,7 +345,7 @@ void lexChar(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
     if (!lx.atEnd() && lx.peek(0) == '\'') { lx.advance(); }
     fail(out, errCharTooLong(), startLine, startCol);
   }
-  emit(out, kInt(), start, lx.pos - start, startLine, startCol);
+  pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
 }
 
 void lexNumber(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
@@ -355,7 +355,7 @@ void lexNumber(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
     lx.advance();
     lx.advance();
     while (!lx.atEnd() && (isHexDigit(lx.peek(0)) || lx.peek(0) == '_')) { lx.advance(); }
-    emit(out, kInt(), start, lx.pos - start, startLine, startCol);
+    pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
     return;
   }
 
@@ -368,11 +368,11 @@ void lexNumber(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
     lx.advance();
     while (!lx.atEnd() && (isDigit(lx.peek(0)) || lx.peek(0) == '_')) { lx.advance(); }
     takeExponent(lx);
-    emit(out, kFloat(), start, lx.pos - start, startLine, startCol);
+    pushToken(out, kFloat(), start, lx.pos - start, startLine, startCol);
   } else if (takeExponent(lx)) {
-    emit(out, kFloat(), start, lx.pos - start, startLine, startCol);
+    pushToken(out, kFloat(), start, lx.pos - start, startLine, startCol);
   } else {
-    emit(out, kInt(), start, lx.pos - start, startLine, startCol);
+    pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
   }
 }
 
@@ -695,7 +695,7 @@ export Lexed lex(u8[] src) {
       i32 c0 = lx.peek(0);
       if (c0 == '{') {
         lx.advance();
-        emit(out, kLbrace(), textStart, 1, textLine, textCol);
+        pushToken(out, kLbrace(), textStart, 1, textLine, textCol);
         md.push(cExpr(), mText(), 1);
         md.mode = mNormal();
         continue;
@@ -703,7 +703,7 @@ export Lexed lex(u8[] src) {
       if (c0 == '<' && startsTag(lx, 1)) {
         bool closing = lx.peek(1) == '/';
         lx.advance();
-        emit(out, kLt(), textStart, 1, textLine, textCol);
+        pushToken(out, kLt(), textStart, 1, textLine, textCol);
         md.push(cTag(), mText(), closing ? 2 : 0);
         md.mode = mTag();
         continue;
@@ -716,7 +716,7 @@ export Lexed lex(u8[] src) {
         if (c == '<' && startsTag(lx, 1)) { break; }
         lx.advance();
       }
-      emit(out, kJsxText(), textStart, lx.pos - textStart, textLine, textCol);
+      pushToken(out, kJsxText(), textStart, lx.pos - textStart, textLine, textCol);
       continue;
     }
 
@@ -739,7 +739,7 @@ export Lexed lex(u8[] src) {
       i32 len = lx.pos - start;
       i32 kind = identOrKeyword(lx, start, len);
       // The cast suffixes lengthen the span, so it is measured after.
-      emit(out, kind, start, lx.pos - start, startLine, startCol);
+      pushToken(out, kind, start, lx.pos - start, startLine, startCol);
     } else {
       i32 start = lx.pos;
       // Read before emitting: what the token *before* this one was is what says whether
@@ -751,13 +751,13 @@ export Lexed lex(u8[] src) {
       if (kind < 0) {
         fail(out, errUnexpectedChar(), startLine, startCol);
       } else {
-        emit(out, kind, start, lx.pos - start, startLine, startCol);
+        pushToken(out, kind, start, lx.pos - start, startLine, startCol);
         jsxAfterOperator(md, lx, kind, prevKind);
       }
     }
   }
 
-  emit(out, kEof(), n, 0, lx.line, lx.col);
+  pushToken(out, kEof(), n, 0, lx.line, lx.col);
   return out;
 }
 

@@ -249,3 +249,16 @@ export string resolveVia(Res res, string[] paths, string from, string spec) {
 export bool endsWith(string s, string p) {
   return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
 }
+
+/**
+ * Whether `s` starts with `p`, here for the same reason and by the same history as `endsWith`.
+ *
+ * There were two private copies, byte for byte identical, in `manifest.wac` and `bindgen.wac`. Two
+ * copies of a two-line function cost nothing to keep and nothing to write; what they cost is that a
+ * module-private name is no longer unique across the program, and the bootstrap's flattener — which
+ * concatenates every module into one — has to rename one of them to keep them apart. Cheaper to
+ * have one.
+ */
+export bool startsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(0, p.len()) == p;
+}

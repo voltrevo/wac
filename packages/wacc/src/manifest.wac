@@ -15,6 +15,12 @@
 // answers with (`bindTypesLinked`, `exportSigsLinked`) and the module's own export section. Nothing
 // in this file knows how a struct is bound or how callbacks are numbered; it rearranges what the
 // emitter said. A second copy of *that* would be the thing that drifts.
+//
+// **The one import**, and the file's first. The paragraph above about `numText` argues against
+// pointing the manifest writer at the *emitter*, which is a different thing from a leaf of string
+// arithmetic: `path.wac` declares no compiler machinery and `endsWith` already lives there for
+// exactly this reason. The private copy that was here was byte for byte `bindgen.wac`'s.
+import { startsWith } from "./path.wac";
 
 /**
  * The `$bind$` exports a module has, in the order it exports them.
@@ -148,10 +154,6 @@ export string[] bindExportsOf(u8[] wasm) {
   return exactlyN(out, n);
 }
 
-bool startsWith(string s, string p) {
-  return s.len() >= p.len() && s.slice(0, p.len()) == p;
-}
-
 string[] exactlyN(string[] xs, i32 n) {
   string[] out = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
@@ -279,8 +281,13 @@ string jsonStrings(string[ ] xs, i32 depth) {
   return out + pad(depth) + "]";
 }
 
-/** A type as the manifest spells it: an empty return is `void`. */
-string orVoid(string t) { return t == "" ? "void" : t; }
+/**
+ * A type as the manifest spells it: an empty return is `void`.
+ *
+ * Exported for `bindgen.wac`, which had a byte-identical private copy. It already imports
+ * `splitTop` from here, so this is one name across an edge that exists rather than a new one.
+ */
+export string orVoid(string t) { return t == "" ? "void" : t; }
 
 /**
  * The manifest for a module, given the compiler's own description of it.

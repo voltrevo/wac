@@ -55,8 +55,8 @@ import { aggregatePath, aggregateSource, beside, flagValue, importable, noTraili
          sigsWithCounters,
          testFilesIn, unknownTestFlag, withoutIgnored } from "./testrun.wac";
 import { renderDiagnostics } from "../../wacc/src/render.wac";
-import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/files.wac";
-import { Res } from "../../wacc/src/path.wac";
+import { importSpecs } from "../../wacc/src/files.wac";
+import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/path.wac";
 import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,

@@ -431,13 +431,13 @@ export string numText(i32 n) {
 }
 
 /** The line a token is on, which is what says which linked file it came from. */
-i32 tokenLine(Lexed lexed, i32 t) {
+i32 lexedLine(Lexed lexed, i32 t) {
   if (t < 0) { return 1; }
   return lexed.tokens[t * tokenStride() + 3];
 }
 
 /** The column a token starts at, which a coverage point needs to name a `case` arm. */
-i32 tokenCol(Lexed lexed, i32 t) {
+i32 lexedCol(Lexed lexed, i32 t) {
   if (t < 0) { return 1; }
   return lexed.tokens[t * tokenStride() + 4];
 }
@@ -527,20 +527,20 @@ string naturalLiteralType(Expr e) {
  * The match is structural and one-sided: the declaration is the pattern, the argument's type is the
  * subject, and a parameter that appears twice has to be given the same answer both times.
  */
-bool bindTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] tps, string[] out) {
+bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] tps, string[] out) {
   match (t.kind) {
     case Prim(tok): { return true; }
     case Arr(elem): {
       if (!isArrayType(actual)) { return false; }
-      return bindTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
+      return matchTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
     }
-    case Nullable(inner): { return bindTypeParams(env, src, lexed, inner, actual, tps, out); }
+    case Nullable(inner): { return matchTypeParams(env, src, lexed, inner, actual, tps, out); }
     case Funcref(ret, params): {
       if (!isFuncrefType(actual)) { return false; }
       if (sigParamCount(actual) != params.len()) { return false; }
-      if (!bindTypeParams(env, src, lexed, ret, sigReturn(actual), tps, out)) { return false; }
+      if (!matchTypeParams(env, src, lexed, ret, sigReturn(actual), tps, out)) { return false; }
       for (i32 i = 0; i < params.len(); i++) {
-        if (!bindTypeParams(env, src, lexed, params[i], sigParamAt(actual, i), tps, out)) {
+        if (!matchTypeParams(env, src, lexed, params[i], sigParamAt(actual, i), tps, out)) {
           return false;
         }
       }
@@ -557,9 +557,9 @@ bool bindTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] t
         return true;
       }
       if (typeArgs.len() == 0) { return true; }
-      if (!isInstance(actual) || templateOf(actual) != nm) { return false; }
+      if (!isInstance(actual) || templateNameOf(actual) != nm) { return false; }
       for (i32 i = 0; i < typeArgs.len(); i++) {
-        if (!bindTypeParams(env, src, lexed, typeArgs[i], typeArgAt(actual, i), tps, out)) {
+        if (!matchTypeParams(env, src, lexed, typeArgs[i], typeArgAt(actual, i), tps, out)) {
           return false;
         }
       }
@@ -646,7 +646,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
           // type is the answer — `ident(7)` is `ident<i32>` — which is the one place in this emitter
           // a literal's type comes from the literal.
           if (at == "") { at = naturalLiteralType(args[i]); }
-          if (!bindTypeParams(env, cs, cl, params[i].type, at, typeParams, bound)) { return ""; }
+          if (!matchTypeParams(env, cs, cl, params[i].type, at, typeParams, bound)) { return ""; }
         }
         string inst = raw + "<";
         for (i32 i = 0; i < bound.len(); i++) {
@@ -788,7 +788,7 @@ bool isInstance(string t) {
 }
 
 /** The template an instantiation is of: `Vec` from `Vec<i32>`. */
-string templateOf(string inst) {
+string templateNameOf(string inst) {
   i32 at = inst.indexOf("<");
   return at < 0 ? "" : inst.slice(0, at);
 }
@@ -804,7 +804,7 @@ string templateStatic(Env env, u8[] src, Lexed lexed, Expr obj, string want) {
   if (!isInstance(want)) { return ""; }
   match (obj.kind) {
     case Ident(tok): {
-      return tokenTextOf(src, lexed, tok) == templateOf(want) ? want : "";
+      return tokenTextOf(src, lexed, tok) == templateNameOf(want) ? want : "";
     }
     else: { return ""; }
   }
@@ -890,7 +890,7 @@ string methodInstance(Env env, u8[] src, Lexed lexed, string ownerInst, string m
  * The instance a method call names when its type arguments are **inferred from its arguments**.
  *
  * `design/lang/0010` criterion 2. The written case is `methodInstance`; this is the same name built
- * from `bindTypeParams` instead, which is exactly what `genericCallInstance` does for a free
+ * from `matchTypeParams` instead, which is exactly what `genericCallInstance` does for a free
  * function — a method's own letters are argument-directed in the same way, and the only reason they
  * were not is that no call to such a method could be emitted at all.
  *
@@ -902,7 +902,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
                               Expr[] args) {
   if (env.prog is null) { return ""; }
   if (ownerInst == "") { return ""; }
-  string tmpl = templateOf(ownerInst);
+  string tmpl = templateNameOf(ownerInst);
   if (tmpl == "") { return ""; }
   Program pg = env.prog!;
   // The template, its method and that method's parameter types are read against the file that
@@ -931,7 +931,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
             // that as a refusal is how the letter went unbound and the module was declined with *a
             // value of a type this emitter cannot write: U*.
             if (at == "") { continue; }
-            bindTypeParams(env, ms, ml, methods[m].params[i].type, at,
+            matchTypeParams(env, ms, ml, methods[m].params[i].type, at,
                            methods[m].typeParams, bound);
           }
           string of = ownerInst + "." + mname;
@@ -2452,7 +2452,7 @@ export struct Env {
    *
    * **On `Env` rather than a parameter, deliberately.** A declaration's file used to be recovered
    * from its line by `fileOf`, which works only because every line of one big string is unique. Per
-   * file, `tokenLine` answers the file's *own* line, and that arithmetic then names the wrong file —
+   * file, `lexedLine` answers the file's *own* line, and that arithmetic then names the wrong file —
    * a compiler that builds and traps. The call sites that need the answer are inside helpers like
    * `nameKeyOf` that take `(src, lexed)` and cannot know which file they are for; threading an index
    * through the 101 functions taking that pair, to reach five of them, is not a trade worth making.
@@ -3728,7 +3728,7 @@ string bindTypesOf(Front f) {
     // **An instance's methods are its template's**, written in terms of type parameters — so the
     // substitution has to be pushed for the signatures to come out as `Setting` rather than as `T`.
     // The owner is the instance key either way, which is what the module registered them under.
-    string tpl = isInstance(name) ? templateOf(name) : "";
+    string tpl = isInstance(name) ? templateNameOf(name) : "";
     Decl[] b1d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
     u8[] b1s = src; Lexed b1l = lexed; i32 b1f = env.curFile;
     for (i32 d = 0; d < b1d.len(); d++) {
@@ -5475,7 +5475,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       i32 mdot = mof.indexOf(".");
       string mowner = mof.slice(0, mdot);
       string mnm = mof.slice(mdot + 1, mof.len());
-      string mtmpl = templateOf(mowner);
+      string mtmpl = templateNameOf(mowner);
       Decl[] pd7 = decls;
       for (i32 md = 0; md < pd7.len(); md++) {
         env.curFile = env.declFile(md);
@@ -6240,7 +6240,7 @@ string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, 
     case Ident(tok): {
       // `Option.Some(3)` names a **template**, and which instance it is comes from the slot — the
       // same rule `Vec.create()` follows, because the instantiation is not in the call either way.
-      if (isInstance(want) && templateOf(want) == tokenTextOf(src, lexed, tok)) {
+      if (isInstance(want) && templateNameOf(want) == tokenTextOf(src, lexed, tok)) {
         string vw = want + "." + tokenTextOf(src, lexed, nameTok);
         return env.enumOf(vw) == want ? vw : "";
       }
@@ -6746,8 +6746,8 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     // **Every arm is a decision.** A `match` with five variants is five branches, and this compiler
     // recorded none of them — 125 in `packages/fs` alone. `issues/lang/0112`, and its point is the
     // one worth repeating: a construct that stops being instrumented makes the number go *up*.
-    covPoint(fb, env, "case", tokenLine(lexed, arms[a].variantTok),
-             tokenCol(lexed, arms[a].variantTok));
+    covPoint(fb, env, "case", lexedLine(lexed, arms[a].variantTok),
+             lexedCol(lexed, arms[a].variantTok));
     emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
     emitBody(fb, src, lexed, env, arms[a].body);
     retireFrom(env, saved);
@@ -6758,8 +6758,8 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   if (elseAt >= 0) {
     // An `else` arm is an arm: the reference records one and so does this, or a `match` with a
     // catch-all reports every branch but the one that catches.
-    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].elseTok),
-             tokenCol(lexed, arms[elseAt].elseTok));
+    covPoint(fb, env, "case", lexedLine(lexed, arms[elseAt].elseTok),
+             lexedCol(lexed, arms[elseAt].elseTok));
     emitBody(fb, src, lexed, env, arms[elseAt].body);
   }
   for (i32 i = 0; i < opened; i++) {
@@ -6834,16 +6834,16 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     i32 saved = env.localCount;
     // The expression form's arms are decisions too — the statement form's are recorded in
     // `emitMatchStmt`, and a `match` used for its value is the commoner of the two in this codebase.
-    covPoint(fb, env, "case", tokenLine(lexed, arms[a].variantTok),
-             tokenCol(lexed, arms[a].variantTok));
+    covPoint(fb, env, "case", lexedLine(lexed, arms[a].variantTok),
+             lexedCol(lexed, arms[a].variantTok));
     emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
     if (!(arms[a].value is null)) { emitExprAt(fb, src, lexed, env, arms[a].value!, rt); }
     retireFrom(env, saved);
     if (!tail) { fb.byte(5); }
   }
   if (elseAt >= 0 && !(arms[elseAt].value is null)) {
-    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].elseTok),
-             tokenCol(lexed, arms[elseAt].elseTok));
+    covPoint(fb, env, "case", lexedLine(lexed, arms[elseAt].elseTok),
+             lexedCol(lexed, arms[elseAt].elseTok));
     emitExprAt(fb, src, lexed, env, arms[elseAt].value!, rt);
   }
   for (i32 i = 0; i < opened; i++) {
@@ -7859,7 +7859,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // The instance the slot names, when the construction did not name one — the other half of
           // `issues/lang/0092`. Approving this without emitting it would leave a module that
           // validates and calls a function that is not there.
-          if (!env.isStructName(cname) && isInstance(want) && templateOf(want) == cname
+          if (!env.isStructName(cname) && isInstance(want) && templateNameOf(want) == cname
               && env.isStructName(want)) {
             cname = want;
           }
@@ -9016,8 +9016,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
       case ConstDecl(nameTok, type, init, exported): {
         env.walkCount = 0;
         env.assignedCount = 0;
-        env.walkFuncLine = tokenLine(lexed, nameTok);
-        env.walkFuncCol = tokenCol(lexed, nameTok);
+        env.walkFuncLine = lexedLine(lexed, nameTok);
+        env.walkFuncCol = lexedCol(lexed, nameTok);
         findLambdasExpr(env, src, lexed, init, typeOfTyName(env, src, lexed, type));
       }
       case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -9025,8 +9025,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         if (typeParams.len() == 0) {
           env.walkCount = 0;
           env.assignedCount = 0;
-          env.walkFuncLine = tokenLine(lexed, nameTok);
-          env.walkFuncCol = tokenCol(lexed, nameTok);
+          env.walkFuncLine = lexedLine(lexed, nameTok);
+          env.walkFuncCol = lexedCol(lexed, nameTok);
           i32 first = env.lambdaCount;
           for (i32 i = 0; i < params.len(); i++) {
             env.walkDeclare(tokenTextOf(src, lexed, params[i].nameTok),
@@ -9057,8 +9057,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
             env.assignedCount = 0;
-            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
-            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+            env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = lexedCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
             // **The receiver is a local called `this`**, and the walk has to know it or a lambda
             // reading `this.v` captures nothing: the hoisted function then has no receiver to read
@@ -9089,8 +9089,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
             env.assignedCount = 0;
-            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
-            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+            env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = lexedCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
             // **The receiver is a local called `this`**, and the walk has to know it or a lambda
             // reading `this.v` captures nothing: the hoisted function then has no receiver to read
@@ -9156,7 +9156,7 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
   if (dot <= 0) { return 0; }
   string ownerInst = of.slice(0, dot);
   string mname = of.slice(dot + 1, of.len());
-  string tmpl = templateOf(ownerInst);
+  string tmpl = templateNameOf(ownerInst);
   if (tmpl == "") { return 0; }
   Decl[] w2d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w2s = src; Lexed w2l = lexed; i32 w2f = env.curFile;
@@ -9248,7 +9248,7 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
   if (dot <= 0) { return; }
   string ownerInst = of.slice(0, dot);
   string mname = of.slice(dot + 1, of.len());
-  string tmpl = templateOf(ownerInst);
+  string tmpl = templateNameOf(ownerInst);
   if (tmpl == "") { return; }
   Decl[] w4d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w4s = src; Lexed w4l = lexed; i32 w4f = env.curFile;
@@ -9269,8 +9269,8 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
           env.curInst = env.instName[i];
           env.walkCount = 0;
           env.assignedCount = 0;
-          env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
-          env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+          env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
+          env.walkFuncCol = lexedCol(lexed, methods[m].nameTok);
           i32 mfirst = env.lambdaCount;
           if (methods[m].hasThis) { env.walkDeclare("this", ownerInst); }
           for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
@@ -9310,8 +9310,8 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
           env.walkCount = 0;
           env.assignedCount = 0;
-          env.walkFuncLine = tokenLine(lexed, nameTok);
-          env.walkFuncCol = tokenCol(lexed, nameTok);
+          env.walkFuncLine = lexedLine(lexed, nameTok);
+          env.walkFuncCol = lexedCol(lexed, nameTok);
           i32 first = env.lambdaCount;
           for (i32 i = 0; i < params.len(); i++) {
             env.walkDeclare(tokenTextOf(src, lexed, params[i].nameTok),
@@ -9333,8 +9333,8 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (methods[m].typeParams.len() > 0) { continue; }
             env.walkCount = 0;
             env.assignedCount = 0;
-            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
-            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+            env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = lexedCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
             // **The receiver is a local called `this`**, and the walk has to know it or a lambda
             // reading `this.v` captures nothing: the hoisted function then has no receiver to read
@@ -9363,8 +9363,8 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (methods[m].typeParams.len() > 0) { continue; }
             env.walkCount = 0;
             env.assignedCount = 0;
-            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
-            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+            env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = lexedCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
             // **The receiver is a local called `this`**, and the walk has to know it or a lambda
             // reading `this.v` captures nothing: the hoisted function then has no receiver to read
@@ -10714,7 +10714,7 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
                   i32 index, i32 declTypes, i32 nameTok) {
   emitFunctionOf(types, funcs, exports, code, src, lexed, env, prog, exportName,
                  typeOfTyName(env, src, lexed, returnType), params, body, receiver,
-                 index, declTypes, tokenLine(lexed, nameTok), tokenCol(lexed, nameTok));
+                 index, declTypes, lexedLine(lexed, nameTok), lexedCol(lexed, nameTok));
 }
 
 /**
@@ -11195,7 +11195,7 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case TypeName(tn): { return unsupportedValue(src, lexed, env, e); }
     case Construct(ctype, args, named): {
       string cn = typeOfTyName(env, src, lexed, ctype);
-      if (!env.isStructName(cn) && isInstance(want) && templateOf(want) == cn
+      if (!env.isStructName(cn) && isInstance(want) && templateNameOf(want) == cn
           && env.isStructName(want)) {
         return unsupportedConstructOf(src, lexed, env, want, args, named);
       }
@@ -11460,7 +11460,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // With the line, because a name is unresolved *somewhere* and the file may use it ten times
         // — `packages/git/src/repo.wac` says `Kind` in four places and only one of them was the
         // problem. `issues/lang/0097`'s reduction cost an hour for want of this.
-        return "unresolved name " + nm + " on line " + numText(tokenLine(lexed, tok));
+        return "unresolved name " + nm + " on line " + numText(lexedLine(lexed, tok));
       }
       // A constant is inlined, so whatever its initialiser needs, the *use site* needs. An array
       // constant would be allocated afresh at each use, which is a different program — declined until
@@ -12141,7 +12141,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
     if (dot <= 0) { return; }
     string ownerInst = of.slice(0, dot);
     string mname = of.slice(dot + 1, of.len());
-    string tmpl = templateOf(ownerInst);
+    string tmpl = templateNameOf(ownerInst);
     if (tmpl == "") { return; }
     Decl[] w6d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
     u8[] w6s = src; Lexed w6l = lexed; i32 w6f = env.curFile;
@@ -12224,7 +12224,7 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
   if (dot <= 0) { return; }
   string ownerInst = of.slice(0, dot);
   string mname = of.slice(dot + 1, of.len());
-  string tmpl = templateOf(ownerInst);
+  string tmpl = templateNameOf(ownerInst);
   if (tmpl == "") { return; }
   Decl[] w7d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w7s = src; Lexed w7l = lexed; i32 w7f = env.curFile;
@@ -12595,7 +12595,7 @@ i32 fileFor(Env env, Lexed lexed, i32 tok, i32 file) {
  *
  * `file` is the index of the file `prog` came from, or **-1 for the concatenated blob**, where a
  * declaration's file is still recovered from its line. The two cannot be mixed: with a per-file
- * `lexed`, `tokenLine` answers the file's own line, and `fileOf` would map line 5 of the third file
+ * `lexed`, `lexedLine` answers the file's own line, and `fileOf` would map line 5 of the third file
  * onto whatever file line 5 of the *blob* fell in.
  */
 /**
@@ -14261,7 +14261,7 @@ string bindTypeSpelling(Env env, string t, string templatePath) {
   // holds what the module *emits*, and a template emits nothing until it is instantiated — so there
   // is no entry to look a path up in. The caller has the declaration in hand and its line says which
   // file it came from.
-  string tpl = templateOf(t);
+  string tpl = templateNameOf(t);
   string out = templatePath == "" ? qualifiedName(env, tpl) : tpl + "__" + fileTagOf(templatePath);
   // The arguments, split at the commas that are not inside a nested instantiation.
   i32 depth = 0;
@@ -14376,7 +14376,7 @@ string templatePathOf(Env env, u8[] src, Lexed lexed, string tpl) {
  */
 string bindNameFor(Env env, u8[] src, Lexed lexed, string key) {
   if (!isInstance(key)) { return bindKeyOf(env, key); }
-  return bindNameOf(bindTypeSpelling(env, key, templatePathOf(env, src, lexed, templateOf(key))));
+  return bindNameOf(bindTypeSpelling(env, key, templatePathOf(env, src, lexed, templateNameOf(key))));
 }
 
 string bareVariantName(string key) {
@@ -14525,7 +14525,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
 
 /** The funcref types in the signatures of `owner`'s methods, an instance's substituted like its own. */
 i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, string owner) {
-  string tpl = isInstance(owner) ? templateOf(owner) : "";
+  string tpl = isInstance(owner) ? templateNameOf(owner) : "";
   Decl[] w18d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w18s = src; Lexed w18l = lexed; i32 w18f = env.curFile;
   for (i32 d = 0; d < w18d.len(); d++) {

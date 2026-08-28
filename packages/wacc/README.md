@@ -72,6 +72,31 @@ fixpoint compares wacc's output against *itself*, compiled both ways: no foreign
 implementation's incidental choices, no moving target, and nothing in it that is not the
 property being asserted.
 
+## One thing the bootstrap asks of this package
+
+**A module-private top-level name in `packages/wacc/src` must be unique across the package.**
+
+Nothing in wac requires this — a private name is private, and `rotl` is independently correct in
+`chacha20`, `keccak` and `xxh64`. It is a constraint this package accepts on behalf of the
+bootstrap ladder, which builds wacc by **concatenating** its eighteen modules into one file: the
+rung that compiles it is small enough not to resolve imports, so an import is a file to include.
+Two modules declaring one name are two declarations of it after concatenation.
+
+The ladder's flattener can rename one of them apart and does, because for a general program it must
+— 90 of the 309 entry points in this repository collide somewhere, and that is normal rather than a
+mistake. But renaming is the part of a flattener that can silently produce a *wrong* compiler, and
+the program it should least be doing on is the compiler itself. Keeping wacc's own graph free of
+collisions means the bootstrap's input never exercises it.
+
+Eighteen names did collide when this was first measured — five re-export wrappers in `files.wac`,
+byte-identical copies of `startsWith` and `orVoid`, and eleven cases of one name for two different
+functions. Where the two were the same function they were deduped; where they were different they
+were renamed apart.
+
+It is checked, not hoped for: `wacboot`'s `ts/l5_test.ts` asserts the flattener renames nothing in
+this graph, and names what it renamed when it fails. If you add a private helper whose name is
+already taken here, that is what will tell you.
+
 ## Two things the language forces, found before writing any code
 
 **Tokens should not carry their text** — though as of `ea22a8f`/`35e938c` they
