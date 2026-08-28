@@ -1,0 +1,211 @@
+// The keyword list in the spec is the keyword list the lexer has.
+//
+//     wac test --allow-read packages/wacc/test/wac/speckeywords_test.wac
+//
+// `spec/spec/grammar.md` prints the keywords in a fence, and `[§wac-grammar-keywords-h4mq7wn]`
+// says that block matches the lexer's set exactly — *"a test asserts that, because this block has
+// drifted from the implementation three times"*.
+//
+// That test was `compiler/wacSpec.test.ts`, and it compared the fence against the **reference's**
+// `KEYWORDS`, a `Set<string>` it could read directly. The reference is gone and wacc does not have
+// a set to read: `keywordKind` in `packages/wacc/src/lex.wac` is a chain of packed-integer
+// comparisons — `if (v == p2('i', 'f')) { return kIf(); }` — deliberately allocation-free, with no
+// list anywhere to enumerate. So the clause had a checker for one implementation of wac and none
+// for the other, which is the wrong way round now.
+//
+// ## Both directions, by two different means
+//
+// A spelling can go wrong in two ways and they are not symmetrical:
+//
+// - **In the spec but not the lexer** — the documented word does not reserve anything, so a reader
+//   who avoids it gains nothing and a reader who uses it as a name is fine. Caught by *lexing*: a
+//   keyword cannot be a variable name, so `i32 <word> = 0;` must fail to check.
+// - **In the lexer but not the spec** — worse, because it takes a name away with no warning
+//   anywhere. Cannot be caught by lexing, since there is nothing to ask about a word you have not
+//   thought of. Caught by *reading `lex.wac`* for its `pN('a', 'b', …)` spellings.
+//
+// Reading the source is the weaker instrument and is only used where nothing else reaches. It
+// depends on `keywordKind` continuing to spell its words in character literals; if that stops
+// being true the extraction finds nothing, which is why the count is asserted as a floor rather
+// than trusted.
+//
+// ## The three the extraction cannot see
+//
+// `as!`, `as~` and `as@` are in the fence and not in `keywordKind`. They are real, and they are
+// built one level up in `keywordFromIdent`, which lexes `as` and then looks at the next character.
+// They need no special case: the extraction not finding them is only a problem in the lexer-to-spec
+// direction, and they are in the spec. The lexing direction picks them up like any other word.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli, Exec, FileResult, Change } from "std/platform.wac";
+
+/** Words the spec says are *not* keywords, as a control on the lexing direction. */
+const string[] NOT_KEYWORDS = string[]("i32", "u8", "f64", "bool", "string", "count", "value");
+
+string read(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+bool has(string[] xs, i32 n, string want) {
+  for (i32 i = 0; i < n; i++) {
+    if (xs[i] == want) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The words in grammar.md's `### Keywords` fence, into `out`; answers how many.
+ *
+ * Whitespace-separated, because that is how the block is written — several to a line, wrapped to
+ * the column the rest of the document uses.
+ */
+i32 specKeywords(string text, string[] out) {
+  i32 head = text.indexOf("### Keywords");
+  if (head < 0) { return 0; }
+  string after = text.slice(head, text.len());
+  i32 open = after.indexOf("```");
+  if (open < 0) { return 0; }
+  string body = after.slice(open + 3, after.len());
+  i32 close = body.indexOf("```");
+  if (close < 0) { return 0; }
+  body = body.slice(0, close);
+
+  i32 n = 0;
+  string word = "";
+  for (i32 i = 0; i < body.len(); i++) {
+    string c = body.slice(i, i + 1);
+    if (c == " " || c == "\n" || c == "\t" || c == "\r") {
+      if (word != "" && n < out.len()) { out[n] = word; n = n + 1; }
+      word = "";
+    } else {
+      word = word + c;
+    }
+  }
+  if (word != "" && n < out.len()) { out[n] = word; n = n + 1; }
+  return n;
+}
+
+/**
+ * The words `keywordKind` compares against, into `out`; answers how many.
+ *
+ * Each is written `pN('a', 'b', …)`, so the spelling is the character literals in order. Scanning
+ * only `keywordKind`'s body keeps operator spellings and every other character literal in the file
+ * out of the answer.
+ */
+i32 lexerKeywords(string src, string[] out) {
+  i32 head = src.indexOf("i32 keywordKind(");
+  if (head < 0) { return 0; }
+  string body = src.slice(head, src.len());
+  i32 end = body.indexOf("\n}\n");
+  if (end >= 0) { body = body.slice(0, end); }
+
+  i32 n = 0;
+  string rest = body;
+  while (true) {
+    i32 at = rest.indexOf("p");
+    if (at < 0) { break; }
+    string tail = rest.slice(at, rest.len());
+    // `pN(` — a digit then an open paren, which is what tells a pack call from any other `p`.
+    if (tail.len() < 3) { break; }
+    string digit = tail.slice(1, 2);
+    if (tail.slice(2, 3) != "(" || digit < "2" || digit > "9") {
+      rest = rest.slice(at + 1, rest.len());
+      continue;
+    }
+    i32 shut = tail.indexOf(")");
+    if (shut < 0) { break; }
+    string args = tail.slice(3, shut);
+    rest = tail.slice(shut + 1, tail.len());
+
+    // The character literals in order: everything between a pair of single quotes.
+    string word = "";
+    bool inside = false;
+    for (i32 i = 0; i < args.len(); i++) {
+      string c = args.slice(i, i + 1);
+      if (c == "'") { inside = !inside; continue; }
+      if (inside) { word = word + c; }
+    }
+    if (word != "" && !has(out, n, word) && n < out.len()) { out[n] = word; n = n + 1; }
+  }
+  return n;
+}
+
+export string test_the_spec_keyword_fence_is_the_lexers_keyword_set(Core core, Cli cli) {
+  T t = T.create();
+
+  string[] spec = string[64](fill: "");
+  i32 nSpec = specKeywords(read(cli, "spec/spec/grammar.md"), spec);
+  // A floor, because a fence that stopped being found would report nothing and pass.
+  t.isTrue(nSpec >= 28, "grammar.md's keyword fence gave " + itoa(nSpec) + " words, expected 28+");
+
+  string[] lexer = string[64](fill: "");
+  i32 nLexer = lexerKeywords(read(cli, "packages/wacc/src/lex.wac"), lexer);
+  t.isTrue(nLexer >= 25, "keywordKind gave " + itoa(nLexer) + " spellings, expected 25+");
+  if (nSpec == 0 || nLexer == 0) { return t.report(); }
+
+  // ── In the lexer, and not in the spec ──────
+  for (i32 i = 0; i < nLexer; i++) {
+    t.isTrue(
+      has(spec, nSpec, lexer[i]),
+      "`" + lexer[i] + "` is a keyword in lex.wac and is not in grammar.md's fence — it takes the "
+        + "name away from every program with nothing telling anyone",
+    );
+  }
+
+  // ── In the spec, and not in the lexer ──────
+  //
+  // Asked of the compiler rather than of the source: a keyword cannot be a variable name, so a
+  // program declaring one must fail to check. That covers `as!`, `as~` and `as@`, which are built
+  // above `keywordKind` and are invisible to the extraction.
+  string dir = scratch(cli, "speckeywords");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  string wac = binaryPath(cli);
+  string[] leaked = string[16](fill: "");
+  i32 nLeaked = 0;
+
+  for (i32 i = 0; i < nSpec; i++) {
+    string kw = spec[i];
+    string path = dir + "/kw.wac";
+    cli.writeFile(path, ("export i32 f() { i32 " + kw + " = 0; return 0; }").toBytes()).wait();
+    Exec r = cli.exec(wac, string[]("check", path), u8[0]()).wait();
+    // A keyword makes this a parse error. An ordinary word compiles, and that is the failure.
+    if (r.ran() && r.status == 0 && nLeaked < leaked.len()) {
+      leaked[nLeaked] = kw;
+      nLeaked = nLeaked + 1;
+    }
+  }
+  t.isTrue(
+    nLeaked == 0,
+    "grammar.md lists " + itoa(nLeaked) + " word(s) as keywords that the lexer lets a program use "
+      + "as a variable name: " + (nLeaked > 0 ? leaked[0] : ""),
+  );
+
+  // ── The control ────────────────────────────
+  //
+  // Without this the loop above passes for a compiler that rejects everything, which is exactly
+  // the shape a broken `wac check` invocation has — a bad path, a missing grant, a typo in the
+  // subcommand. grammar.md says the type names are *not* keywords, so they must still compile.
+  i32 nWrong = 0;
+  for (i32 i = 0; i < NOT_KEYWORDS.len(); i++) {
+    string path = dir + "/ok.wac";
+    cli.writeFile(path, ("export i32 f() { i32 " + NOT_KEYWORDS[i] + " = 0; return 0; }").toBytes())
+      .wait();
+    Exec r = cli.exec(wac, string[]("check", path), u8[0]()).wait();
+    if (!r.ran() || r.status != 0) { nWrong = nWrong + 1; }
+  }
+  t.isTrue(
+    nWrong == 0,
+    itoa(nWrong) + " of the words grammar.md says are not keywords failed to check — the check "
+      + "above proves nothing if everything fails",
+  );
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
