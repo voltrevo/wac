@@ -917,6 +917,34 @@ Expr parseIsExpr(P p) {
     return Expr(ExprKind.Is(e, null, null, negated), line, col);
   }
 
+  // **`s is Shape.Circle` — a variant qualified by its enum.** `looksLikeTypeHere` says no, because
+  // a `.` after a name makes an expression everywhere else in the grammar; the right side then
+  // parsed as a member access and `is` compared *reference identity* against a freshly built
+  // variant, which is never the subject. So the qualified form — the spelling `spec/spec/enums.md`
+  // teaches, since it is how a variant is constructed — compiled clean and was always false.
+  //
+  // `[§enum-is-qualified-8jkq4wp]` says both spellings mean the same thing, and records this exact
+  // bug as found and fixed. It was fixed in the TypeScript reference, whose suite was the only
+  // thing holding the clause; wacc never had the fix and nothing could say so once that suite was
+  // deleted. `spec/cases/0262` is the case, and `issues/lang/0283b` is the writeup.
+  //
+  // **Three tokens exactly, and the fourth decides.** `Enum . Variant` with no `(` after it is the
+  // type test; with one it is `s is Shape.Circle(1.0)`, which the same clause says is an error, and
+  // which falls through to the value path below and is refused there. A further `.` is an ordinary
+  // member access and is left alone. Both names must be uppercase-initial — a lowercase first one
+  // is a variable by the naming convention, so `holder.field` stays a value comparison.
+  if (p.at1(kIdent()) && !startsLower(p.src, p.startAt(0), p.lenAt(0))
+      && p.kindAt(1) == kDot() && p.kindAt(2) == kIdent()
+      && !startsLower(p.src, p.startAt(2), p.lenAt(2))
+      && p.kindAt(3) != kLparen() && p.kindAt(3) != kDot()) {
+    p.advance();                       // the enum name
+    p.advance();                       // the dot
+    i32 vline = p.lineAt(0);
+    i32 vcol = p.colAt(0);
+    i32 v = p.advance();               // the variant, which is what names the type
+    return Expr(ExprKind.Is(e, tyNamed(v, Ty[](), vline, vcol), null, negated), line, col);
+  }
+
   if (looksLikeTypeHere(p)) {
     Ty t = parseType(p);
     // `s is Circle ? 1 : 0` — parseType ate the `?` as a nullable suffix when it is

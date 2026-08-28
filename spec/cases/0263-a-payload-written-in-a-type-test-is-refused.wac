@@ -1,0 +1,11 @@
+// expect: refused
+// spec:  §enum-is-qualified-8jkq4wp
+// why: a type test needs no payload, and writing one used to be silently false
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export bool f(Shape s) { return s is Shape.Circle(1.0); }

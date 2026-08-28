@@ -1,0 +1,18 @@
+// expect: answers f = 11
+// spec:  §enum-is-qualified-8jkq4wp
+// why: both spellings are the same test, for a variant with a payload as readily as one without
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export i32 f() {
+  Shape s = Shape.Circle(2.0);
+  i32 n = 0;
+  if (s is Circle)       { n = n + 1; }
+  if (s is Shape.Circle) { n = n + 10; }
+  if (s is Point)        { n = n + 100; }
+  return n;
+}

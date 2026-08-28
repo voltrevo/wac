@@ -1,0 +1,17 @@
+// expect: refused
+// spec:  §enum-match-nullable
+// why: `match requires a non-null value` — extending match to handle null as a case is deferred
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export f64 f(Shape? s) {
+  match (s) {
+    case Point:      return 0.0;
+    case Circle(r):  return r;
+    case Rect(w, h): return w * h;
+  }
+}

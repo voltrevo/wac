@@ -1,0 +1,14 @@
+// expect: answers f = 2
+// spec:  §enum-cross-file
+// why: an arm resolves a variant through the enum the subject is, not through the file's scope
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+// ---- k.wac ----
+export enum Kind { A, B }
+export struct Holder { Kind kind; }
+export Holder mk() { return Holder(Kind.B); }
+// ---- main.wac ----
+import { Holder, mk } from "./k.wac";
+export i32 f() {
+  Holder h = mk();
+  match (h.kind) { case A: return 1; case B: return 2; }
+}

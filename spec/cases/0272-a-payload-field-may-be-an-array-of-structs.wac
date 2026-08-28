@@ -1,0 +1,13 @@
+// expect: answers f = 7
+// spec:  §enum-arm-payload-struct-array
+// why: the variant structs are generated in the resolver, so `P[]` interned twice and failed validation
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+struct P { i32 v; }
+enum Holder { Some(P[] xs), None }
+export i32 f() {
+  P[] ps = P[](P(3), P(4));
+  match (Holder.Some(ps)) {
+    case Some(xs): return xs[0].v + xs[1].v;
+    case None:     return 0;
+  }
+}

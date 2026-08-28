@@ -1,0 +1,18 @@
+// expect: refused
+// spec:  §enum-match-else-unreachable
+// why: `else arm is unreachable — all variants are covered`, an error rather than dead code
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export f64 all(Shape s) {
+  match (s) {
+    case Point:      return 0.0;
+    case Circle(r):  return r;
+    case Rect(w, h): return w * h;
+    else:            return 1.0;
+  }
+}

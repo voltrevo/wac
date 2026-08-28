@@ -1,0 +1,15 @@
+// expect: answers f = 6
+// spec:  §enum-no-default
+// why: a literal, a fill, a nullable element and positional construction each supply a value
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum E { A(i32 x), B }
+struct S { E e; }
+i32 got(E e) { return match (e) { case A(x): x, case B: 1 }; }
+export i32 f() {
+  E[] a = E[](E.A(1), E.B);
+  E[] b = E[2](fill: E.B);
+  E?[] c = E?[2]();
+  S s = S(E.A(1));
+  return got(a[0]) + got(a[1]) + got(b[0]) + got(b[1])
+       + (c[0] is null ? 1 : 0) + got(s.e);
+}

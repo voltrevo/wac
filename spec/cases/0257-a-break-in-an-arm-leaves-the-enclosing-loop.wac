@@ -1,0 +1,17 @@
+// expect: answers f = 3
+// spec:  §enum-match-break-loop
+// why: arms have no fallthrough, so `break` in one can only mean the loop
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Step { Working, Done }
+export i32 f() {
+  i32 n = 0;
+  while (true) {
+    n = n + 1;
+    Step s = n < 3 ? Step.Working : Step.Done;
+    match (s) {
+      case Done:    break;
+      case Working: { }
+    }
+  }
+  return n;
+}

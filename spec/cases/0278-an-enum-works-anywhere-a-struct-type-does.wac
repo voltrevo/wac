@@ -1,0 +1,23 @@
+// expect: answers f = 1
+// spec:  §enum-array
+// why: a `Shape[]` of one Rect and two Points gives 1
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+i32 countRects(Shape[] shapes) {
+  i32 n = 0;
+  for (i32 i = 0; i < shapes.len(); i++) {
+    match (shapes[i]) {
+      case Rect: n++;
+      else:      { }
+    }
+  }
+  return n;
+}
+export i32 f() {
+  return countRects(Shape[](Shape.Rect(1.0, 1.0), Shape.Point, Shape.Point));
+}

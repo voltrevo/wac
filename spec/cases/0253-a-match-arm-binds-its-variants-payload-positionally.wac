@@ -1,0 +1,18 @@
+// expect: answers f = 12
+// spec:  §enum-match-basic
+// why: bindings are positional and take their types from the declaration
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+f64 area(Shape s) {
+  match (s) {
+    case Point:      return 0.0;
+    case Circle(r):  return 3.14159 * r * r;
+    case Rect(w, h): return w * h;
+  }
+}
+export i32 f() { return (area(Shape.Rect(3.0, 4.0))) as~ i32; }

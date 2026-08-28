@@ -1,10 +1,17 @@
 // A built artefact says which compiler made it.
 //
-// Two compilers build this repository — `WAC_APP_FROM` picks one — and their output differs by about
-// a fifth in size (`issues/lang/0107`). Until then nothing in either artefact recorded which one ran,
-// so "what built this page" was answered by whatever the environment happened to be when somebody
-// typed the command, and a page built before the default flipped was indistinguishable from one built
-// after. `issues/lang/0103`, criterion 2.
+// Two compilers built this repository until 2026-08-28 — `WAC_APP_FROM` picked one — and their
+// output differed by about a fifth in size (`issues/lang/0107`). Until the marker landed, nothing in
+// either artefact recorded which one ran, so "what built this page" was answered by whatever the
+// environment happened to be when somebody typed the command, and a page built before the default
+// flipped was indistinguishable from one built after. `issues/lang/0103`, criterion 2.
+//
+// **There is one compiler now, and the marker outlives the choice.** The reference is deleted and
+// `WAC_APP_FROM` selects nothing, so the half of this test that asserted the two names *differ* went
+// with it — a differential whose other side is gone proves nothing, and keeping it would have made
+// the retiree an oracle. What is still worth holding is that an artefact says what built it: a
+// module with no `producers` section is one built by something that does not stamp, and that is a
+// question somebody will ask about a `.wasm` found on a disk long after this paragraph.
 //
 // The marker is the standard `producers` custom section rather than anything invented here, so
 // `wasm-objdump` and every other tool that already reads it does.
@@ -89,12 +96,15 @@ string builtBy(T t, Cli cli, string label, string from) {
   return answer;
 }
 
-export string test_a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ(
-    Core core, Cli cli) {
-  // **Both, and different** — which is the property. A marker on one compiler only would make
-  // absence mean "the other one", and absence also means "built before this landed".
+export string test_a_built_module_names_the_compiler_that_made_it(Core core, Cli cli) {
   T t = T.create();
   t.eqStr(builtBy(t, cli, "default", ""), "wacc", "the default is wacc");
-  t.eqStr(builtBy(t, cli, "reference", "reference"), "wac-reference", "and the escape hatch says so");
+  // **And an unrecognised `WAC_APP_FROM` does not quietly build something else.** The variable used
+  // to select a compiler and now selects nothing; the risk in a setting that has stopped meaning
+  // anything is that it goes on being passed and is read as still working. `reference` is the value
+  // that used to do something, so it is the one to ask about — the answer must be the same artefact
+  // the default builds, stamped the same way, rather than a build that silently differs.
+  t.eqStr(builtBy(t, cli, "stale-setting", "reference"), "wacc",
+          "WAC_APP_FROM=reference selects nothing now, and must not change what is built");
   return t.report();
 }

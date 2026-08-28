@@ -1,0 +1,18 @@
+// expect: answers f = 1
+// spec:  §enum-match-ignore
+// why: `isRound(Shape.Circle(1.0))` is true — omitted parentheses ignore all, `_` ignores one
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+bool isRound(Shape s) {
+  match (s) {
+    case Circle:     return true;
+    case Rect(_, h): return h == 0.0;
+    case Point:      return false;
+  }
+}
+export i32 f() { return isRound(Shape.Circle(1.0)) ? 1 : 0; }

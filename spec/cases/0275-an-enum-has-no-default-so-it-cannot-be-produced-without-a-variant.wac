@@ -1,0 +1,9 @@
+// expect: refused
+// spec:  §enum-no-default
+// why: the base struct's only field is the tag, which does have a default — so this was silent, and a `match` on one trapped
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum E { A(i32 x), B }
+export i32 f() {
+  E[] a = E[2]();
+  return match (a[0]) { case A(x): x, case B: 0 };
+}

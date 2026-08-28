@@ -1,0 +1,18 @@
+// expect: answers f = 7
+// spec:  §enum-match-nopayload
+// why: `area(Shape.Point)` returns 0.0 — a payloadless variant needs no binding list
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+f64 area(Shape s) {
+  match (s) {
+    case Point:      return 0.0;
+    case Circle(r):  return 3.14159 * r * r;
+    case Rect(w, h): return w * h;
+  }
+}
+export i32 f() { return area(Shape.Point) == 0.0 ? 7 : 0; }

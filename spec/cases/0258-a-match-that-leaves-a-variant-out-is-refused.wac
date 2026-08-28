@@ -1,0 +1,16 @@
+// expect: refused
+// spec:  §enum-match-inexhaustive
+// why: `match does not cover 'Rect'` — catching the case you forgot is the point of the feature
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export f64 bad(Shape s) {
+  match (s) {
+    case Point:     return 0.0;
+    case Circle(r): return r;
+  }
+}

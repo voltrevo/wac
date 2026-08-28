@@ -1,0 +1,16 @@
+// expect: refused
+// spec:  §enum-narrow-collision
+// why: both would occupy the arm's scope, so it is a duplicate binding
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export f64 collide(Shape s) {
+  match (s) {
+    case Circle(s): return 1.0;
+    else:           return 0.0;
+  }
+}

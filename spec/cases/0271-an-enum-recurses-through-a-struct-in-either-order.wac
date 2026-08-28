@@ -1,0 +1,29 @@
+// expect: answers f = 5
+// spec:  §enum-recursive-via-struct
+// why: the payload names a struct whose field is a nullable array of the enum, and neither declaration precedes the other
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Val { Nil, Num(f64 v), Arr(ArrData a) }
+
+struct ArrData {
+  Val?[] items;
+  i32 count;
+  Val at(const this, i32 i) { return this.items[i]!; }
+}
+
+f64 total(Val v) {
+  match (v) {
+    case Nil:    return 0.0;
+    case Num(n): return n;
+    case Arr(a): {
+      f64 sum = 0.0;
+      for (i32 i = 0; i < a.count; i++) { sum = sum + total(a.at(i)); }
+      return sum;
+    }
+  }
+}
+export i32 f() {
+  Val?[] items = Val?[2]();
+  items[0] = Val.Num(2.0);
+  items[1] = Val.Num(3.0);
+  return total(Val.Arr(ArrData(items, 2))) as~ i32;
+}

@@ -1,0 +1,165 @@
+// Every `// test-lane:` marker sits in a tree the suite runner walks for markers.
+//
+//     wac test --allow-read --allow-run tools/wac/lanemarkers_test.wac
+//
+// ## The two lists, and why nothing compared them
+//
+// `tools/runTests.wac` reads lane markers out of `.test.ts` files under a fixed list of trees —
+// `tsRoots()` — and builds the Deno pass's `--ignore` list from what it finds. The pass itself runs
+// `deno test` over the *repository*, minus that ignore list and `site`. So the set of files that can
+// be excluded is decided by one list and the set of files that run by another, and the two are
+// written down in different places.
+//
+// A tree in the second and not the first is silent in both directions. The file runs; its marker is
+// read by nobody; nothing warns, because no code holds an opinion about a marker it never saw. The
+// failure arrives later, as a flake, in whatever the marker was trying to prevent.
+//
+// **`bootstrap` was missing until 2026-08-28.** `bootstrap/ts/browser.test.ts` opens with
+//
+//     // test-lane: exclusive — drives headless Chromium, and loses the race under a loaded machine
+//
+// and it lost the race under a loaded machine — it ran in the four-worker pass, the headless
+// Chromium build of the ladder ran out of virtual time at "building the ladder…", and the gate
+// failed on a test that had asked in writing not to be put there. `compiler` was in the same list
+// after being deleted, which is the identical mistake pointing the other way and costs nothing,
+// which is why it survived: a root that matches no files is indistinguishable from one that does.
+//
+// ## What this asserts, and what it deliberately does not
+//
+// The invariant is one direction only: **a marker must be somewhere the walk can see it.** The
+// other direction — every walked root must exist — is the cheap half, and it is checked too, because
+// a root naming a deleted directory is how the first half rots without anyone noticing.
+//
+// It does not check that the runner *honours* the marker once read; `tools/runTests.wac` owns that,
+// and asserting it here would need a suite run. This is the cheap question that would have caught
+// the expensive bug.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { startsWith } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * The roots `tools/runTests.wac`'s `tsRoots()` names, read out of it rather than copied.
+ *
+ * A copy would agree with the original on the day it was written and never again — and "the two
+ * lists disagreed" is the entire subject of this file, so keeping a third one would be a joke at
+ * its own expense. The line is a one-liner by construction:
+ *
+ *     string[] tsRoots() { return string[]("packages", "tools", "harness", "core", "bootstrap"); }
+ */
+string[] rootsFromRunner(T t, Cli cli) {
+  FileResult f = cli.readFile("tools/runTests.wac").wait();
+  t.isTrue(f.ok, "cannot read tools/runTests.wac — " + f.error);
+  if (!f.ok) { return string[0](fill: ""); }
+  string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (!startsWith(lines[i], "string[] tsRoots()")) { continue; }
+    return quotedIn(lines[i]);
+  }
+  t.fail("tools/runTests.wac has no `string[] tsRoots()` line — has it been renamed?");
+  return string[0](fill: "");
+}
+
+/** Every double-quoted run in `line`, in order. */
+string[] quotedIn(string line) {
+  i32 n = 0;
+  for (i32 i = 0; i < line.len(); i++) { if (line.slice(i, i + 1) == "\"") { n = n + 1; } }
+  string[] out = string[n / 2](fill: "");
+  i32 at = 0;
+  i32 from = 0 - 1;
+  for (i32 i = 0; i < line.len(); i++) {
+    if (line.slice(i, i + 1) != "\"") { continue; }
+    if (from < 0) { from = i + 1; continue; }
+    out[at] = line.slice(from, i);
+    at = at + 1;
+    from = 0 - 1;
+  }
+  return out;
+}
+
+/** The first path segment of `p`, which is the tree it is in. */
+string treeOf(string p) {
+  i32 slash = p.indexOf("/");
+  return slash < 0 ? p : p.slice(0, slash);
+}
+
+export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core core, Cli cli) {
+  T t = T.create();
+
+  string[] roots = rootsFromRunner(t, cli);
+  t.isTrue(roots.len() >= 3,
+           "only " + itoa(roots.len()) + " root(s) read from tsRoots() — did the line parse?");
+  if (roots.len() < 3) { return t.report(); }
+
+  // `site` is excluded from the Deno pass outright rather than by a marker — `--ignore=site` in the
+  // runner — so a marker there would be read by nobody and is not this test's business either.
+  string[] files = sourceFiles(core, cli, string[](".ts"), string[]("site", "node_modules"));
+  t.isTrue(files.len() > 50,
+           "only " + itoa(files.len()) + " .ts file(s) found — did the walk resolve?");
+
+  i32 markers = 0;
+  string stranded = "";
+  i32 n = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    string p = files[i];
+    if (p.len() < 8 || p.slice(p.len() - 8, p.len()) != ".test.ts") { continue; }
+    FileResult f = cli.readFile(p).wait();
+    if (!f.ok) { t.fail("cannot read " + p + " — " + f.error); continue; }
+    string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+    bool declares = false;
+    for (i32 k = 0; k < lines.len(); k++) {
+      if (startsWith(lines[k], "// test-lane:")) { declares = true; }
+    }
+    if (!declares) { continue; }
+    markers = markers + 1;
+    string tree = treeOf(p);
+    bool walked = false;
+    for (i32 r = 0; r < roots.len(); r++) { if (roots[r] == tree) { walked = true; } }
+    if (walked) { continue; }
+    stranded = stranded + (n == 0 ? "" : " | ") + p + " (tree `" + tree + "`)";
+    n = n + 1;
+  }
+
+  // **A floor on the evidence.** Zero markers found and zero stranded is the same output as a walk
+  // that read nothing, and this file exists because two lists agreeing by accident is not the same
+  // as two lists agreeing.
+  t.isTrue(markers >= 3,
+           "only " + itoa(markers) + " lane marker(s) found across the tree — did the scan match? "
+           + "The marker is `// test-lane:` at the start of a line.");
+
+  t.eqStr(stranded, "",
+          itoa(n) + " `.test.ts` file(s) declare a lane in a tree `tsRoots()` does not walk, so the "
+          + "declaration does nothing: " + stranded);
+  return t.report();
+}
+
+export string test_every_tree_the_runner_walks_for_markers_still_exists(Core core, Cli cli) {
+  T t = T.create();
+
+  string[] roots = rootsFromRunner(t, cli);
+  t.isTrue(roots.len() >= 3, "only " + itoa(roots.len()) + " root(s) read from tsRoots()");
+  if (roots.len() < 3) { return t.report(); }
+
+  // Against the tracked files rather than `stat`: a root that exists but holds no TypeScript is as
+  // useless to the walk as one that is not there, and `compiler` — which sat in this list for a day
+  // after being deleted — would have been caught by either. Tracked files answer both at once.
+  string[] files = sourceFiles(core, cli, string[](".ts"), string[]("node_modules"));
+  t.isTrue(files.len() > 50, "only " + itoa(files.len()) + " .ts file(s) found — did the walk resolve?");
+
+  string empty = "";
+  i32 n = 0;
+  for (i32 r = 0; r < roots.len(); r++) {
+    bool any = false;
+    for (i32 i = 0; i < files.len(); i++) { if (treeOf(files[i]) == roots[r]) { any = true; } }
+    if (any) { continue; }
+    empty = empty + (n == 0 ? "" : ", ") + roots[r];
+    n = n + 1;
+  }
+  t.eqStr(empty, "",
+          itoa(n) + " root(s) in `tsRoots()` hold no tracked TypeScript, so the walk reads nothing "
+          + "there: " + empty);
+  return t.report();
+}

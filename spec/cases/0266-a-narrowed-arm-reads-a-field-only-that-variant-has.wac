@@ -1,0 +1,18 @@
+// expect: answers f = 4
+// spec:  §enum-narrow-field
+// why: `widthOf(Shape.Circle(2.0))` returns 4.0 — `radius` exists on Circle alone
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+f64 widthOf(Shape s) {
+  match (s) {
+    case Rect:   return s.width;
+    case Circle: return s.radius * 2.0;
+    case Point:  return 0.0;
+  }
+}
+export i32 f() { return widthOf(Shape.Circle(2.0)) as~ i32; }

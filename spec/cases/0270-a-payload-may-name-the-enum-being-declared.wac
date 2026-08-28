@@ -1,0 +1,15 @@
+// expect: answers f = 3
+// spec:  §enum-recursive
+// why: `sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2)))` returns 3 — recursion is what makes trees work
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Tree {
+  Leaf(i32 value),
+  Node(Tree left, Tree right),
+}
+i32 sum(Tree t) {
+  match (t) {
+    case Leaf(v):    return v;
+    case Node(l, r): return sum(l) + sum(r);
+  }
+}
+export i32 f() { return sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2))); }

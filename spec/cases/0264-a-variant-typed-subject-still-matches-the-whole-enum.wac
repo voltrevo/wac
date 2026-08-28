@@ -1,0 +1,16 @@
+// expect: answers f = 12
+// spec:  §enum-match-variant-subject
+// why: a variant is an enum value, and the arms still cover the enum — including on a construction
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export i32 f() {
+  Circle c = Shape.Circle(2.5);
+  f64 a = match (c) { case Circle(r): r, case Point: 0.0, case Rect(w, h): w * h };
+  f64 b = match (Shape.Rect(3.0, 4.0)) { case Circle(r): r, case Point: 0.0, case Rect(w, h): w * h };
+  return (a * 4.0 + b - 10.0) as~ i32;
+}

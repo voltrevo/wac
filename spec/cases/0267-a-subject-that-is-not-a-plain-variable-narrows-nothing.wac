@@ -1,0 +1,16 @@
+// expect: refused
+// spec:  §enum-narrow-nonvariable
+// why: narrowing shadows a name, so an expression subject has nothing to narrow
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
+
+export f64 first(Shape[] shapes) {
+  match (shapes[0]) {
+    case Circle: return shapes[0].radius;
+    else:        return 0.0;
+  }
+}

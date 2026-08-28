@@ -1,0 +1,14 @@
+// expect: answers f = 12
+// spec:  §enum-name-identity
+// why: an enum is its type identity, not its name — two files' `Kind` are two types
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+// ---- a.wac ----
+export enum Kind { Same, Other }
+export i32 fromA(Kind k) { return match (k) { case Same: 10, case Other: 0 }; }
+// ---- b.wac ----
+export enum Kind { Same, Other }
+export i32 fromB(Kind k) { return match (k) { case Same: 2, case Other: 0 }; }
+// ---- main.wac ----
+import { Kind as KA, fromA } from "./a.wac";
+import { Kind as KB, fromB } from "./b.wac";
+export i32 f() { return fromA(KA.Same) + fromB(KB.Same); }

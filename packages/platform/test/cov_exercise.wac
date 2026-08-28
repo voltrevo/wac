@@ -127,7 +127,7 @@ import {
   test_a_child_serves_a_socket_it_cannot_see as pipe__a_child_serves_a_socket_it_cannot_see,
 } from "./wac/pipeline_test.wac";
 import {
-  test_a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ as prod__a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ,
+  test_a_built_module_names_the_compiler_that_made_it as prod__a_built_module_names_the_compiler_that_made_it,
 } from "./wac/producer_test.wac";
 import {
   test_the_wave_decays_rather_than_growing as ripp__the_wave_decays_rather_than_growing,
@@ -474,7 +474,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("error: FAILED pipeline_test test_a_child_serves_a_socket_it_cannot_see");
     bad = bad + 1;
   }
-  if (prod__a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ(core, cli).len() > 0) {
+  if (prod__a_built_module_names_the_compiler_that_made_it(core, cli).len() > 0) {
     core.warn("error: FAILED producer_test test_a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ");
     bad = bad + 1;
   }

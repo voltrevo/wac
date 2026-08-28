@@ -304,8 +304,9 @@ export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
     }
   }
 
-  // The `§wac-*` ones are the reference's to answer for, and compiler/wacSpec.test.ts already
-  // requires a test per tag there. Asking twice would report the same gap in two places.
+  // The `§wac-*` ones were the reference's to answer for, and its suite required a test per tag
+  // there. That suite is deleted; the tags stay filtered out here because the *other* test in this
+  // file is the one that asks about them, and asking twice would report one gap in two places.
   Strs mine = Strs.create();
   Strs mineWhere = Strs.create();
   for (i32 i = 0; i < claimed.len(); i++) {
@@ -325,9 +326,13 @@ export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
     FileResult f = cli.readFile(cases[i]).wait();
     if (f.ok) { namedByCase(string.fromBytes(f.bytes), named); }
   }
-  string[] dirs = string[]("packages/wacc/test", "compiler", "packages/wacc/test/wac",
+  // **`compiler` was here until 2026-08-28**, and taking it out is the whole of what its deletion
+  // cost this test — plus 26 `§enum-*` clauses whose only checker was inside it, which surfaced as
+  // this test failing and are now `spec/cases/0251`–`0279`. One of those cases found a live wacc
+  // bug the reference did not have: `issues/lang/0283b`.
+  string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac",
                            "tools/wac", "tools/mutate");
-  string[] suffixes = string[](".test.ts", ".test.ts", "_test.wac",
+  string[] suffixes = string[](".test.ts", "_test.wac",
                                "_test.wac", ".test.ts");
   i32[] contributed = i32[dirs.len()]();
   for (i32 d = 0; d < dirs.len(); d++) {

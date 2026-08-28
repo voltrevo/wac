@@ -302,7 +302,27 @@ void walkTs(Cli cli, string root, Names out) {
 }
 
 /** The roots holding TypeScript tests. `site` is excluded by `skipDir` and by name below. */
-string[] tsRoots() { return string[]("packages", "tools", "harness", "compiler", "core"); }
+/**
+ * The trees walked for `// test-lane:` markers in `.test.ts` files.
+ *
+ * **This list must cover everything the broad Deno pass discovers**, and that is the whole of its
+ * difficulty: the pass runs `deno test` over the repository minus an ignore list, while the ignore
+ * list is built from *this* walk. A tree that is run but not walked has its markers read by nobody,
+ * so a file in it declaring `exclusive` runs in the parallel pass anyway — with no error, because
+ * nothing compares the two lists.
+ *
+ * `bootstrap` was missing until 2026-08-28 and `compiler` was here after it was deleted, which is
+ * the same mistake pointing both ways. The cost was `bootstrap/ts/browser.test.ts`, whose marker
+ * says *"drives headless Chromium, and loses the race under a loaded machine"* — it lost the race
+ * under a loaded machine and failed the gate, having asked in writing not to be put there.
+ *
+ * `core` went at the same time and had never done anything: it holds no TypeScript and never has,
+ * so the walk read an empty tree. That is the shape a stale root has — matching no files is not an
+ * error, which is exactly why one sits here unnoticed until the day a real file lands in a tree
+ * nobody added. `tools/wac/lanemarkers_test.wac` holds both directions: every marker in a walked
+ * tree, and every walked tree holding TypeScript to walk.
+ */
+string[] tsRoots() { return string[]("packages", "tools", "harness", "bootstrap"); }
 
 /**
  * The wac driver the Deno pass must not discover.

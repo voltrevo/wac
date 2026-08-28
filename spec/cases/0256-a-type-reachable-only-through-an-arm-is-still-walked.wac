@@ -1,0 +1,20 @@
+// expect: answers f = 9
+// spec:  §enum-arm-walks-kubc3rt
+// why: five walks over statements had no `match` case, so an arm-only reference was invisible
+// from: spec/spec/enums.md, whose only checker was the reference's suite
+enum E { A, B }
+struct P { i32 v; }
+i32 twice(i32 x) { return x * 2; }
+export i32 f() {
+  E e = E.A;
+  match (e) {
+    case A: {
+      // A struct construct, an array type and a funcref, each reachable only from here.
+      P p = P(4);
+      i32[] xs = i32[](1, p.v);
+      fn[i32(i32)] g = twice;
+      return g(xs[1]) + xs[0];
+    }
+    case B: return 0;
+  }
+}
