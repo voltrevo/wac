@@ -13,8 +13,6 @@
 // A build with `--allow-read` in the shebang still refuses the application a filesystem
 // unless it is run with `--allow-read`.
 
-import { wacCompile } from "wac/wacCompile.ts";
-import { wacBindgen } from "wac/wacBindgen.ts";
 import { waccArtifacts } from "../../harness/waccBuild.ts";
 import { wacFilesWithRoots } from "../../harness/wacFiles.ts";
 // Imported for its side effect as much as for `COV_DUMP_DIR`'s twin: under `WAC_PROFILE` it wraps
@@ -383,10 +381,12 @@ export async function appKeyParts(
     // the harness, and neither changes when `packages/wacc` does — so every fix to wacc's emitter or
     // its generator was served the previous build, and an application rebuilt five times was the
     // same artifact each time.
-    if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-      host.push(...await hashDir("packages/wacc/src", ".wac"));
-      host.push(...await hashDir("packages/wacc/tools", ".ts"));
-    }
+    // Unconditional since 2026-08-28. It was guarded by `WAC_APP_FROM !== "reference"`, because
+    // under the reference wacc's sources were not an input and hashing them would have invalidated
+    // the cache for a change that could not affect the answer. There is no reference now, so wacc's
+    // sources are always an input.
+    host.push(...await hashDir("packages/wacc/src", ".wac"));
+    host.push(...await hashDir("packages/wacc/tools", ".ts"));
   } catch {
     return null;
   }
@@ -624,19 +624,22 @@ async function produceApp(
   // transcript; and `packages/ssh/src/sshd.wac` serves two users over a real socket. The
   // specification targets wacc (design/lang/0003) and this is the default that says so.
   //
-  // `WAC_APP_FROM=reference` is the way back, and it stays: the reference is the seed that builds
-  // wacc, so a wacc that cannot build itself still needs a compiler that can.
+  // **There is no way back, as of 2026-08-28.** `WAC_APP_FROM=reference` built the application with
+  // the TypeScript compiler instead, and that compiler is deleted — the ladder in `bootstrap/`
+  // builds wacc from source now, so the reference is no longer the seed that a wacc which cannot
+  // build itself falls back to. `bootstrap/MIGRATION.md` records what was given up with it.
   //
-  // Flipping this is what found the last six defects, every one of them a module the compiler was
-  // happy with and a program that did not run — `issues/lang/0106` lists them.
-  //
-  // Separate from `WAC_BIND_FROM` on purpose: binding a package for a test and building an
-  // application are different jobs, and this one arrived second.
+  // Flipping it is what found the last six defects, every one of them a module the compiler was
+  // happy with and a program that did not run — `issues/lang/0106` lists them. That differential is
+  // gone rather than replaced, which is the cost of the deletion and was accepted knowingly.
   let wasm: Uint8Array;
   let glue: string;
   let covLines: string[];
   let exportNames: string[];
-  if (Deno.env.get("WAC_APP_FROM") !== "reference") {
+  // **One compiler.** `WAC_APP_FROM=reference` chose the TypeScript one here until 2026-08-28, as a
+  // differential: build the same application both ways and compare. That compiler is gone, and a
+  // switch with one position is not a switch.
+  {
     const a = await waccArtifacts(files, entry, {
       coverage,
       optimize: optimize ? optimized : undefined,
@@ -645,24 +648,6 @@ async function produceApp(
     });
     ({ wasm, glue, covLines } = a);
     exportNames = a.exports;
-  } else {
-    const r = wacCompile(files, entry, { roots, base, ...(coverage ? { coverage: true } : {}) });
-    if (!r.ok) {
-      throw new Error(
-        `${entry} did not compile:\n` +
-          r.diagnostics.map((d) => `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n"),
-      );
-    }
-    // `file:line` per counter index, resolved here: the dump then carries lines rather than indices,
-    // so the reader needs no copy of this table and the two cannot disagree about what index 400 is.
-    covLines = coverage ? (r.compiled.coverage ?? []).map((p) => `${p.file}:${p.line}`) : [];
-    // Optimised before the glue is written, because the glue embeds the bytes — exports keep their
-    // names through `wasm-opt`, which is what makes that safe, and it was checked by running the
-    // result rather than by reading the specification.
-    if (optimize) r.compiled.wasm = await optimized(r.compiled.wasm);
-    wasm = r.compiled.wasm;
-    glue = wacBindgen(r.compiled);
-    exportNames = r.compiled.exports.map((e) => e.name);
   }
 
   // **A path that is a function of what is being built**, so Deno's transpile cache — keyed on the
