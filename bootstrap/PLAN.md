@@ -51,7 +51,7 @@ bootstrap reaches.
 
 ---
 
-## The port: TypeScript to JavaScript — **doing**
+## The port: TypeScript to JavaScript — **done**
 
 **Why.** TypeScript needs a TypeScript-aware runtime or a build step. Deno has one; Node does not
 without a loader, and a browser does not at all. Plain JavaScript runs in all three, and the Rust
@@ -80,6 +80,16 @@ browser then costs almost nothing — and it is the separation the ladder alread
 and its host.
 
 **Order.** Before the local fixes below, because a fix landed in TypeScript is a fix to be ported.
+
+**Done.** Nothing in `js/`, `hosts/` or `web/` reaches into `ts/` — the bootstrap path is JavaScript
+throughout, and `node hosts/node.js prog.wac` and `deno run -A hosts/deno.js prog.wac` each answer
+on their own. What remains in `ts/` is tests and instruments, which are Deno's and are not on the
+path a clone with no binary takes.
+
+Criterion 2 is now checked rather than claimed: `ts/hosts_agree_test.ts` has Deno, Node and Rust
+each build **wacc** — 659,236 bytes, the eighteen-module graph, not the 47-line probe the other
+test in that file uses — and compares the three byte for byte. Three seconds. It had been verified
+by hand and written into this document, which is where a claim goes to stop being true.
 
 ---
 

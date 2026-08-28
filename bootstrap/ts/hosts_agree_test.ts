@@ -21,6 +21,7 @@ import { l5ToL0 } from "./l5.ts";
 const HERE = new URL(".", import.meta.url).pathname;
 const BIN = `${HERE}../rust-ladder/target/release/ladder`;
 const NODE_HOST = `${HERE}../hosts/node.js`;
+const API = `${HERE}../../wac/packages/wacc/src/api.wac`;
 
 async function have(path: string): Promise<boolean> {
   try {
@@ -144,6 +145,67 @@ Deno.test({
         `they disagree at line ${at + 1} of ${a.length}/${b.length}:\n` +
           `  js:   ${a[at]}\n  rust: ${b[at]}`,
       );
+    }
+  },
+});
+
+// **Acceptance criterion 2, on the program it is actually about.**
+//
+// The test above compares a program chosen to exercise wac-L5's harder corners, which is the right
+// input for finding a disagreement. It is not the claim the criteria make: *each host builds wacc
+// from source by itself, and the three artefacts are identical*. A 47-line program agreeing proves
+// much less than a 37,873-line one — the flattener runs on an eighteen-module graph rather than a
+// single file, and wac-L5 emits half a megabyte rather than two kilobytes.
+//
+// That claim had been checked by hand and written into a document, which is where a claim goes to
+// stop being true. Four seconds for all three, so it is checked every run instead.
+//
+// Deno, Node and Rust; not the browser, which has no `-o` and no filesystem to write to. Criterion
+// 3 is `ts/browser_test.ts`.
+Deno.test({
+  name: "Deno, Node and Rust each build wacc alone, and the three are identical",
+  ignore: !(await have(BIN)) || !(await have(API)),
+  fn: async () => {
+    const dir = await Deno.makeTempDir();
+    try {
+      /** @type Record<string, Uint8Array> */
+      const built: Record<string, Uint8Array> = {
+        deno: await wasmFrom("deno", ["run", "-A", `${HERE}../hosts/deno.js`, API], `${dir}/d.wasm`),
+        rust: await wasmFrom(BIN, [API], `${dir}/r.wasm`),
+      };
+      if (await have(NODE_HOST)) {
+        built.node = await wasmFrom("node", [NODE_HOST, API], `${dir}/n.wasm`);
+      }
+
+      const names = Object.keys(built);
+      const first = built[names[0]];
+      // **Equal is not enough when the thing compared could be nothing.** Three hosts each writing
+      // an empty file agree perfectly, and `wasmFrom` only checks the exit status. So the artefact
+      // has to be a wasm module and has to be roughly the size wacc is — 659,236 bytes today, and
+      // the floor is loose because the number moves whenever wacc does.
+      if (first[0] !== 0x00 || first[1] !== 0x61 || first[2] !== 0x73 || first[3] !== 0x6d) {
+        throw new Error(`${names[0]} wrote something that is not a wasm module`);
+      }
+      if (first.length < 400_000) {
+        throw new Error(`${names[0]} wrote ${first.length} bytes, far too small to be wacc`);
+      }
+      for (const name of names.slice(1)) {
+        const other = built[name];
+        if (other.length !== first.length) {
+          throw new Error(
+            `${names[0]} built ${first.length} bytes of wacc and ${name} built ${other.length}`,
+          );
+        }
+        const at = first.findIndex((b, i) => b !== other[i]);
+        if (at !== -1) {
+          throw new Error(
+            `${names[0]} and ${name} differ at byte ${at} of ${first.length}: ` +
+              `${first[at]} against ${other[at]}`,
+          );
+        }
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
     }
   },
 });
