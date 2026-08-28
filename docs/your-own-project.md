@@ -10,9 +10,21 @@ follow unless you have a reason not to:
 
 ```sh
 git clone <this repo> wac && cd wac
-bash tools/seed.sh --bootstrap    # once, from a fresh clone: builds the compiler the binary carries
-./native/v8/target/release/wac task wac:install    # builds `wac` and puts it on PATH
+./bootstrap.sh                    # builds the compiler from source and puts `wac` on PATH
 ```
+
+Or with no clone at all:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh | sh
+```
+
+**There is no seed to fetch.** `bootstrap.sh` builds the compiler through a ladder of five rungs,
+the lowest of which is hand-written wasm assembly text — see `bootstrap/README.md`. It needs cargo
+and a C++ toolchain, checks for both before it starts, and reaches no network beyond the clone.
+
+The older route — `bash tools/seed.sh --bootstrap` then `wac task wac:install` — still works and
+builds the compiler with the TypeScript reference rather than from the ladder.
 
 **There is a second way as of 2026-08-26** — `wac task wac:install --target deno` — which needs
 neither Cargo nor Rust and installs the same command to the same place. It is second rather than

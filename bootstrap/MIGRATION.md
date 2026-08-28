@@ -226,9 +226,15 @@ The answer is a deletion rather than a third copy: every host drives wacc's own 
 through the byte-at-a-time driver, the way `drivers/spec_cases.wac` already drives everything else.
 
 **Done, and checked the only way worth checking.** `drv_seal` asks wacc; the Deno and Node hosts
-gained `--with-wacc`, and all three hosts now write the wac command **byte for byte identically** —
-1,797,342 bytes, manifest section and all. Rust 9s, Deno 14s, Node 17s. `manifest.rs` is now a
-second implementation with nothing to do, and goes next.
+gained `--with-wacc`, and all three hosts write the wac command **byte for byte identically** —
+1,797,342 bytes, manifest section and all. Rust 9s, Deno 14s, Node 17s.
+
+`manifest.rs` is deleted: 600 lines against 37 added, plus `bind_table` and the three methods whose
+only job was fetching the wires. And the deletion found a difference the byte comparison had not —
+`drv_seal` used the file set's *key* for the manifest's `entry`, where wac's own build records the
+path as written. The two coincide in every comparison I had run and do not in
+`ts/manifest.test.ts`, which compiles from an absolute temp path. Three names now, because they are
+three things.
 
 ## What a JavaScript-hosted `wac` still needs — **open, and larger than I said**
 
