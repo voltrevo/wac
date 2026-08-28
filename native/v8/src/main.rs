@@ -51,6 +51,11 @@ struct Grants {
 #[derive(Deserialize)]
 struct Manifest {
     entry: String,
+    /// **Nothing reads it, and removing it would be wrong.** The field is not optional in the
+    /// format, so requiring it here is what makes a manifest without one fail to parse rather than
+    /// load as a half-described program. The binary happens not to need the value because it runs
+    /// the module it carries rather than one named by a path.
+    #[allow(dead_code)]
     wasm: String,
     #[serde(default)]
     grants: Grants,

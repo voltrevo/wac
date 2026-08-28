@@ -843,6 +843,7 @@ string usage() {
        + "                and write the lock — the only command that reaches the network\n"
        // Printed by the host until 2026-08-26, appended after this block because the command lived
        // there. It is the program's now, so its line is too — `issues/system/0257c`.
+       + "       wac task [name] [-- args…]     run a task from tasks.json5, or list them\n"
        + "       wac self install --from PATH   put that command under $WAC_HOME and on PATH\n"
        + "       wac self uninstall [--keep-cache]   take it away again\n"
        // Appended by the host after this block until 2026-08-26, because `app` was the host's
