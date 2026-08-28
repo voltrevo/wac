@@ -67,5 +67,15 @@ i32 main() {
   // **Runs itself when asked to.** `?auto=1` is how a headless browser drives this without a
   // click, which is what makes the browser a test rather than a demonstration — see
   // `bootstrap/ts/browser.test.ts`. Without the parameter the page waits, so a person can edit first.
-  if (new URLSearchParams(location.search).has("auto")) go();
+  //
+  // It also **says when it has finished**, by posting the result back to whoever served it. A
+  // driver otherwise has to guess, and the only guess Chromium offers is a virtual-time budget
+  // that it spends while the page is busy rather than while the page is idle — so on a loaded
+  // machine the page was cut off mid-build and the run read as a broken ladder. `go()` swallows
+  // its own errors, so this reports the failure as reliably as the success.
+  if (new URLSearchParams(location.search).has("auto")) {
+    go().finally(() =>
+      fetch("/done", { method: "POST", body: `${out.dataset.status}\n${out.textContent}` })
+    );
+  }
 </script>
