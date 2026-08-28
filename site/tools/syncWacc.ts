@@ -1,26 +1,9 @@
-// wacc as a single file a page can import.
-//
-// The playground compiles whatever a reader types, and it has always done that with the *reference*
-// compiler, because a browser can import JavaScript and the reference is TypeScript this site's build
-// transpiles. So the playground cannot accept anything the reference does not have — JSX, components,
-// fragments, an omitted nullable field, the bit methods. The language's own spec examples do not
-// compile in the language's own playground. `issues/lang/0105`.
-//
-// This writes the other half: `public/wacc-api.js`, holding wacc's module as base64 and the bindings
-// for its API, in JavaScript, with no transpile step in between.
-//
-//   deno run -A site/tools/syncWacc.ts
-//
-// **The reference compiles wacc, and that is the only thing it is for** (`design/lang/0003`). What
-// generates the glue is *wacc's own* bindgen in its JavaScript mode — the mode exists for this — so
-// the artefact is the seed's output described by the compiler it seeds.
-//
-// Written into `public/`, which is gitignored: it is build output, like the demos `syncDemos.ts`
-// makes, and CI rebuilds it on every deploy.
-
-import { wacCompile } from "../../compiler/wacCompile.ts";
-import { wacFiles } from "../../harness/wacFiles.ts";
-import { waccApi } from "../../harness/waccBuild.ts";
+import { fileSet } from "../../bootstrap/js/flatten.js";
+import { files as ladderFiles } from "../../bootstrap/hosts/deno.js";
+import { boot } from "../../bootstrap/hosts/deno.js";
+import { flatten } from "../../bootstrap/js/flatten.js";
+import { assemble } from "../../bootstrap/js/assemble.js";
+import { wacc as driveWacc } from "../../bootstrap/js/wacc.js";
 import {
   generate,
   parseAliases,
@@ -30,30 +13,42 @@ import {
   parseSigs,
 } from "../../packages/wacc/tools/waccBindgen.ts";
 
+const ROOT = new URL("../..", import.meta.url).pathname;
 const ENTRY = "packages/wacc/src/api.wac";
 
-/** The compiler as one importable file: its module inline, its API bound. */
 export async function buildWaccAsset(): Promise<string> {
-  const files = await wacFiles(ENTRY);
-  const paths = [...files.keys()];
-  const sources = paths.map((p) => files.get(p)!);
+  // **The ladder builds wacc, and wacc describes itself.** This used to ask the TypeScript reference
+  // for the module and a reference-built wacc for the description, which is why the playground could
+  // not compile the language's own spec examples — `issues/lang/0105`. The reference is deleted; the
+  // ladder in `bootstrap/` builds wacc from five rungs of hand-written source, needing neither cargo
+  // nor a `wac` on the machine, which is what lets this run in the Pages workflow.
+  //
+  // **Round 0 cannot be the asset.** wac-L5 emits no bindgen, so a module it builds exports no
+  // `$bind$` helpers and the glue below would call functions that are not there. wacc *does* emit
+  // them, so round 0 compiles wacc again and round 1 is what ships. The driver is concatenated onto
+  // round 0 only, which is how it can be asked anything at all before a binding layer exists.
+  const driver = await Deno.readTextFile(`${ROOT}/bootstrap/drivers/spec_cases.wac`);
+  const l0 = await (await boot()).l5ToL0(
+    await flatten(`${ROOT}/${ENTRY}`, ladderFiles) + "\n" + driver,
+  );
+  const refused = (l0.match(/^!!/gm) ?? []).length;
+  if (refused > 0) throw new Error(`wac-L5 refused ${refused} thing(s) in wacc's own source`);
 
-  const r = wacCompile(files, ENTRY);
-  if (!r.ok) {
-    throw new Error(
-      `the seed could not compile wacc:\n` +
-        r.diagnostics.slice(0, 6).map((d) => `  ${d.file}:${d.line} ${d.message}`).join("\n"),
-    );
-  }
+  const round0 = driveWacc(
+    await WebAssembly.instantiate(
+      await WebAssembly.compile(assemble(l0).buffer as ArrayBuffer),
+      {},
+    ),
+  );
 
-  // The description comes from wacc rather than from the reference: the two agree on this interface —
-  // that is what `harness/wacBind.ts` relies on to run one compiler's code against the other's
-  // metadata — and asking wacc keeps the wire format in one place.
-  const api = await waccApi();
-  const wire = api.bindTypesFiles(paths, sources, ENTRY);
+  const graph = await fileSet(`${ROOT}/${ENTRY}`, ladderFiles);
+  const wasm = round0.emitFiles(graph.keys, graph.texts, graph.entry);
+  if (wasm.length === 0) throw new Error(`the ladder built nothing for ${ENTRY}`);
+
+  const wire = round0.bindTypes();
   return generate(
-    r.compiled.wasm,
-    parseSigs(api.exportSigsFiles(paths, sources, ENTRY)),
+    wasm,
+    parseSigs(round0.exportSigs()),
     parseBindTypes(wire),
     parseCallbacks(wire),
     parseOutRefs(wire),

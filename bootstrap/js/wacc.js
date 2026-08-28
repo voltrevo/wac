@@ -94,6 +94,23 @@ export function wacc(instance) {
       return take(e.drv_seal(grants), "drv_byteAt");
     },
 
+    /**
+     * wacc's own description of the interface it just emitted: `bindTypes` is the `S`/`E`/`M`/`C`/`A`
+     * lines for every type and callback a host can hold, `exportSigs` is `name\tret\tparams` per
+     * exported function.
+     *
+     * **Only the JavaScript hosts need these.** The Rust host had them and lost them when the
+     * manifest moved into wacc — it asks `drv_seal` for the whole answer now. The website's
+     * playground asset is generated rather than sealed, so it needs the parts.
+     */
+    bindTypes() {
+      return new TextDecoder().decode(take(e.drv_bindTypes(), "drv_textByte"));
+    },
+
+    exportSigs() {
+      return new TextDecoder().decode(take(e.drv_exportSigs(), "drv_textByte"));
+    },
+
     /** Why a linked build declined, or `""`. */
     decline() {
       return new TextDecoder().decode(take(e.drv_declineFiles(), "drv_declineByte"));
