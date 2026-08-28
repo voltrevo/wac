@@ -91,7 +91,10 @@
   "corpus:stderr": "deno run -A tools/corpusStderr.ts",
 
   // Everything else.
-  "bindgen": "deno run -A tools/emitgen.ts",
+  // `bindgen` was `tools/emitgen.ts`, which generated the glue with the TypeScript compiler.
+  // `wac bindgen` is the same job through wacc, and is a subcommand rather than a task —
+  // reachable by anyone who has the command, which a Deno program under `tools/` is not.
+  "bindgen": "./native/v8/target/release/wac bindgen",
   "flags:ignored": "deno run -A tools/ignoredFlags.ts",
   "size": "deno run -A tools/size.ts",
   "gen:core": "deno run -A tools/genCore.ts",
