@@ -1,0 +1,19 @@
+; The smallest thing worth checking: parameters, a local, arithmetic, a call.
+func $add -> i32
+  param i32 $a
+  param i32 $b
+  local.get $a
+  local.get $b
+  i32.add
+end
+
+func $main -> i32
+  local i32 $t
+  i32.const 40
+  i32.const 2
+  call $add
+  local.set $t
+  local.get $t
+end
+
+export "main" func $main

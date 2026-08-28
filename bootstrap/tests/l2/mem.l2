@@ -1,0 +1,15 @@
+(memory 1)
+(global cursor 1024)
+
+(fn push ((v i32)) i32
+  (do (store cursor v)
+      (set cursor (+ cursor 4))
+      v))
+
+(fn main () i32
+  (do (push 11)
+      (push 22)
+      (push 33)
+      (+ (load 1024) (+ (load 1028) (load 1032)))))
+
+(export main)

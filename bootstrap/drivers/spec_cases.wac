@@ -1,0 +1,232 @@
+// **The compiler wac-L5 built, with a way to feed it.**
+//
+// `drivers/emit_and_run.wac` embeds one program as a string literal, which is enough to prove the
+// ladder closes and no use at all for asking the same question 254 times: every source would mean
+// another whole rebuild. So this one takes the source in a byte at a time.
+//
+// Every export here is `drv_`-prefixed because this file is concatenated with wacc rather than
+// imported by it: `buildFiles` is a name wacc already exports, and the collision reaches you as a
+// duplicate export from the engine rather than as anything about the driver.
+//
+// A byte at a time in both directions, because a wasm GC array cannot cross into JavaScript and a
+// wac program has no way to reach linear memory. Everything on this boundary is an i32, which is
+// the whole of what wasm hands back without a binding layer — and the binding layer is what wacc
+// itself emits, three rungs above anything here.
+
+u8[] inbuf;
+u8[] built;
+u8[] declined;
+
+export i32 drv_alloc(i32 n) {
+  inbuf = u8[n]();
+  return n;
+}
+
+export i32 drv_setByte(i32 i, i32 b) {
+  inbuf[i] = b;
+  return 0;
+}
+
+/** Compile what was fed in. Answers the length of the module, or 0 if nothing was emitted. */
+export i32 drv_build() {
+  built = emit(inbuf);
+  return built.len();
+}
+
+export i32 drv_byteAt(i32 i) {
+  return built[i];
+}
+
+/** Why the module was not emitted in full, as text — `""` when nothing stopped it. */
+export i32 drv_decline() {
+  declined = blocked(inbuf).toBytes();
+  return declined.len();
+}
+
+export i32 drv_declineByte(i32 i) {
+  return declined[i];
+}
+
+// **Refusing is a different question from emitting.** `emit` neither parses for errors nor
+// type-checks — a program wac would reject still comes out the other side as a module, which is
+// why asking `emit` whether something was refused answered "no" sixty-one times. These are the
+// two phases that do the rejecting, and a case marked `refused` has to be refused by one of them.
+i32[] errs;
+
+export i32 drv_parseErrors() {
+  errs = dumpErrors(inbuf);
+  return errs.len();
+}
+
+export i32 drv_typeErrors() {
+  errs = dumpTypeErrors(inbuf);
+  return errs.len();
+}
+
+// **A case may be more than one file**, and anything about imports has to be: the format writes
+// `// ---- lib.wac ----` between them and names `main.wac` as the entry. `emit` takes one source
+// and cannot see an import at all, so a multi-file case fed to it is a program with a comment
+// where its library should be. This is the same compiler asked the question it can answer.
+//
+// The paths go in through the same byte-at-a-time boundary as the sources, because a wasm GC
+// string cannot cross either.
+
+string[] paths;
+string[] sources;
+i32 nfile = 0;
+u8[] namebuf;
+
+export i32 drv_files(i32 n) {
+  paths = string[n]();
+  sources = string[n]();
+  nfile = 0;
+  return 0;
+}
+
+export i32 drv_allocName(i32 n) {
+  namebuf = u8[n]();
+  return n;
+}
+
+export i32 drv_setNameByte(i32 i, i32 b) {
+  namebuf[i] = b;
+  return 0;
+}
+
+/** One file: its path from `namebuf` and its source from `inbuf`. */
+export i32 drv_pushFile() {
+  paths[nfile] = string.fromBytes(namebuf);
+  sources[nfile] = string.fromBytes(inbuf);
+  nfile = nfile + 1;
+  return 0;
+}
+
+/** Compile the file set, entry named by whatever is in `namebuf` now. */
+export i32 drv_buildFiles() {
+  built = emitFiles(paths, sources, string.fromBytes(namebuf));
+  return built.len();
+}
+
+// Which half of the link failed: whether the entry's source was found at all, and whether two
+// paths were taken for one file. Both answer "" when they are happy, so a length is enough.
+export i32 drv_entryLen() {
+  return sourceOf(paths, sources, string.fromBytes(namebuf)).len();
+}
+
+export i32 drv_twoKeys() {
+  return twoKeysForOneFile(paths).len();
+}
+
+export i32 drv_pathLen(i32 i) {
+  return paths[i].len();
+}
+
+// **What was here: eight probes into `linkFiles`, calling it directly.** They are gone because the
+// function they called is gone — wac's `2b6427bb`, *"Phase C14: the blob is gone — `linkFiles`
+// links trees and concatenates nothing"*, changed it from returning a concatenated source string to
+// returning a `bool` with three out-parameters. There is no blob left to ask about.
+//
+// Nothing called them: `ts/spec_cases.ts` names each export it drives and none of these was in the
+// list, so they had been dead since that commit. They were only noticed when wac-L5 learned to
+// compile this file far enough to reach them — a stale driver reads exactly like a compiler that
+// cannot parse, and the compiler got suspected first.
+//
+// If a probe into the linker's give-up paths is wanted again it wants writing against the shape
+// `linkFiles` has now, not repairing.
+
+// wacc carries core's source inside it — `import { Node } from "core"` is answered from
+// coretext.wac rather than from any file the caller supplies. When nine JSX cases all decline
+// with "a match on something that is not an enum", the question is whether that text arrives.
+u8[] coreBuf;
+
+export i32 drv_coreSource() {
+  coreBuf = coreSource().toBytes();
+  return coreBuf.len();
+}
+
+export i32 drv_coreByte(i32 i) {
+  return coreBuf[i];
+}
+
+// wacc's own predicates, callable one at a time. `.len()` on any array is declined as an untyped
+// call, and every path to typing it goes through one of these — so ask them directly rather than
+// inferring which from a decline three phases later.
+export i32 drv_isArrayName() {
+  return isArrayName(string.fromBytes(inbuf)) ? 1 : 0;
+}
+
+export i32 drv_isArrayType() {
+  return isArrayType(string.fromBytes(inbuf)) ? 1 : 0;
+}
+
+export i32 drv_endsWithBrackets() {
+  return endsWith(string.fromBytes(inbuf), "[]") ? 1 : 0;
+}
+
+// wacc's own rendering of what it made of a program — the fastest way to see a type it inferred
+// rather than deduce it from a decline three phases later.
+u8[] dumpBuf;
+
+export i32 drv_dump() {
+  dumpBuf = dump(inbuf).toBytes();
+  return dumpBuf.len();
+}
+
+export i32 drv_dumpByte(i32 i) {
+  return dumpBuf[i];
+}
+
+// A fresh Env, measured. Every local the emitter knows about lives in `locals`, and `addLocal`
+// gives up quietly when it is full — so an Env whose arrays came out the wrong size would make
+// every local invisible to `typeOfE` while leaving name-based lookups working, which is exactly
+// the shape of "every builtin method is an untyped call and every struct method is fine".
+export i32 drv_envLocals() {
+  Env e2 = Env.create();
+  return e2.locals.len();
+}
+
+export i32 drv_envLocalTypes() {
+  Env e2 = Env.create();
+  return e2.localTypes.len();
+}
+
+export i32 drv_envDeclNames() {
+  Env e2 = Env.create();
+  return e2.declNames.len();
+}
+
+export i32 drv_envFuncs() {
+  Env e2 = Env.create();
+  return e2.funcs.len();
+}
+
+// Why the *linked* build declined, which `blocked` cannot say: it takes one source and the
+// question is about a file set.
+export i32 drv_declineFiles() {
+  declined = blockedFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return declined.len();
+}
+
+// **What a host needs to write a manifest.** `exportSigsFiles` answers `name\tret\tparam,param`
+// per line and `bindTypesFiles` answers the `S`/`E`/`M` lines describing every struct a host can
+// hold. Both are wacc's own answers about a program, which is the point: a bootstrap that wants a
+// manifest should ask the compiler rather than carry a second opinion about what a program exports.
+u8[] textout;
+
+export i32 drv_exportSigs() {
+  textout = exportSigsFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return textout.len();
+}
+
+export i32 drv_bindTypes() {
+  textout = bindTypesFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return textout.len();
+}
+
+export i32 drv_textByte(i32 i) {
+  return textout[i];
+}
+
+i32 main() {
+  return 0;
+}

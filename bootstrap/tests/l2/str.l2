@@ -1,0 +1,10 @@
+(memory 1)
+
+(fn strlen ((s i32)) i32 (load s))
+(fn strbyte ((s i32) (i i32)) i32 (load8 (+ s (+ 4 i))))
+
+(fn main () i32
+  (+ (* 100 (strlen "hello"))
+     (+ (strbyte "hi" 0) (strbyte "hi" 1))))
+
+(export main)

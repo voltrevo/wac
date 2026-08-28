@@ -1,0 +1,11 @@
+struct Point {
+  i32 x;
+  i32 y;
+  i32 sum(this) { return this.x + this.y; }
+  i32 scaled(this, i32 k) { return this.sum() * k; }
+}
+
+i32 main() {
+  Point p = Point(3, 4);
+  return p.sum() * 100 + p.scaled(2);
+}

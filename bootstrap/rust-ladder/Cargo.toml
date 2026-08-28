@@ -1,0 +1,21 @@
+[package]
+name = "ladder"
+version = "0.1.0"
+edition = "2021"
+
+# **V8, and the assembler next door.** `rust/` has no dependencies on purpose — an assembler whose
+# job is to be auditable by reading should not begin by asking the reader to audit a dependency
+# tree — so the thing that needs an engine is a separate crate, and `rust/` stays what it was.
+#
+# The version is pinned because a wasm engine is the one dependency here whose behaviour *is* the
+# specification: a different V8 is a different answer to "does this module validate".
+[dependencies]
+v8 = "=152.1.0"
+wax = { path = "../rust" }
+
+[[bin]]
+name = "ladder"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3

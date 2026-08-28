@@ -1,0 +1,4056 @@
+// wac-L5 — a compiler for wac itself, written in wac-L4. See spec/l5.md.
+//
+// This is the rung that is *handed* its language: it has to accept whatever `packages/wacc/src`
+// happens to be written in, rather than whatever we chose. Stage 1 is the shape of real wac — its
+// declarations, its statements, its full precedence chain — over the i32 subset, so that the parts
+// that are only breadth (integer widths, casts, strings) and the one part that is depth (generics)
+// can each be added to something that already parses the language.
+//
+// It is written in wac-L4, so it has structs, arrays, `enum`/`match`, methods and GC. The tables
+// below are GC arrays rather than fixed addresses, which is the first thing on this ladder that has
+// been true of a compiler here.
+
+struct Tok { i32 kind; i32 start; i32 len; i32 val; }
+
+Tok[] toks;
+i32 ntok = 0;
+i32 tp = 0;
+i32 src = 0;
+i32 dst = 0;
+i32 dp = 0;
+i32 outbuf = 0;
+i32 labn = 0;
+
+// Token kinds.
+i32 K_EOF = 0;
+i32 K_INT = 1;
+i32 K_NAME = 2;
+i32 K_PUNCT = 3;
+i32 K_STR = 4;
+i32 K_FLOAT = 5;
+// **An integer literal too wide for a token's value.** A token carries an i32 and wacc writes
+// 4503599627370496 — two to the fifty-second, the mantissa step a float's bits are assembled
+// from. Wrapped to an i32 it is zero, and every double the compiler emitted came out denormal.
+// Like a float, this keeps its text and lets wac-L0 parse the number itself.
+i32 K_BIGINT = 6;
+
+// ---------------------------------------------------------------- emitting
+
+// **Every buffer has an end, and running past it should say so.** A parser that loses its place
+// emits until it falls out of memory, and what arrives is `memory access out of bounds` from an
+// address unrelated to the mistake — which has cost more of this project's debugging than any
+// actual bug. Refusing at the boundary turns that into a marker the assembler will name.
+i32 overflowed = 0;
+
+// **A buffer is a base and a bound together, and `to_buf` is the only way to move between them.**
+// This used to ask which buffer `dst` named by comparing the address against a list, and answer a
+// size written beside it:
+//
+//     i32 emit_room() {
+//       if (dst == realout) { return 12000000; }
+//       if (dst == TYPEBUF) { return 3000000; }
+//       if (dst == BODY) { return 1000000; }
+//       return 120000;
+//     }
+//
+// Two things go wrong with that and both did. The comparison can match the wrong entry — `outbuf`
+// is the destination a nested emit *returns* to and is set to the body scratch while a body is
+// being written, which granted twelve megabytes to a buffer holding one. And the sizes are a
+// second copy of the layout, so a region that moves leaves them stale with nothing to notice: the
+// scratch stack came to start exactly where `TYPEBUF` does and this list stayed consistent
+// throughout.
+//
+// Setting the two together makes the bound a property of the buffer rather than a guess about it,
+// and `layout_check` derives every size from the addresses rather than restating them here.
+i32 dstcap = 0;
+
+i32 to_buf(i32 base, i32 cap) {
+  dst = base;
+  dstcap = cap;
+  return 0;
+}
+
+// The three bounds, derived once by `layout_check` from the addresses themselves. Zero until then,
+// which is a bound that refuses everything rather than one that permits everything — an emit
+// before the layout is settled is a mistake, and this is the reading of it that says so.
+i32 outcap = 0;
+i32 bodycap = 0;
+i32 typecap = 0;
+
+i32 emit1(i32 b) {
+  // **Overflow ends the parse.** Dropping the bytes alone turns a runaway into a *hang*, which is
+  // strictly worse than the trap it replaced — so the cursor goes to the end of the token stream,
+  // and every loop above checks for it.
+  if (dp >= dstcap) { overflowed = 1; tp = ntok; return 0; }
+  store8(dst + dp, b);
+  dp = dp + 1;
+  return 0;
+}
+
+i32 emits(i32 s) {
+  i32 n = load(s);
+  i32 i = 0;
+  while (i < n) { emit1(load8(s + 4 + i)); i = i + 1; }
+  return 0;
+}
+
+i32 emitd(i32 n) {
+  if (n > 9) { emitd(n / 10); }
+  emit1(48 + n % 10);
+  return 0;
+}
+
+i32 emitn(i32 n) {
+  // The most negative i32 has no positive counterpart, so negating it overflows back to itself
+  // and every digit after that is `48 + a negative remainder` — which for -2147483648 prints the
+  // last digit as `(`. Splitting the last digit off first leaves a rest that does fit.
+  if (n >= 0) { return emitd(n); }
+  emit1(45);
+  i32 hi = 0 - (n / 10);
+  i32 lo = 0 - (n % 10);
+  if (hi > 0) { emitd(hi); }
+  emit1(48 + lo);
+  return 0;
+}
+
+i32 sp() { return emit1(32); }
+i32 nl() { return emit1(10); }
+i32 word(i32 s) { emits(s); return sp(); }
+i32 line(i32 s) { emits(s); return nl(); }
+i32 konst(i32 n) { word("i32.const"); emitn(n); return nl(); }
+i32 label(i32 n) { emits("$b"); return emitn(n); }
+i32 newlabel() { labn = labn + 1; return labn; }
+
+i32 emitname(i32 p, i32 n) {
+  i32 i = 0;
+  while (i < n) { emit1(load8(src + p + i)); i = i + 1; }
+  return 0;
+}
+
+// ---------------------------------------------------------------- source
+
+i32 at(i32 i) { return load8(src + i); }
+i32 isspace(i32 c) { return c == 32 | c == 10 | c == 13 | c == 9; }
+i32 isdigit(i32 c) { return c >= 48 & c <= 57; }
+i32 isalpha(i32 c) { return c == 95 | (c >= 97 & c <= 122) | (c >= 65 & c <= 90); }
+i32 isalnum(i32 c) { return isalpha(c) | isdigit(c); }
+i32 isxdigit(i32 c) {
+  return (c >= 48 & c <= 57) | (c >= 97 & c <= 102) | (c >= 65 & c <= 70);
+}
+i32 hexval(i32 c) {
+  if (c <= 57) { return c - 48; }
+  if (c >= 97) { return c - 87; }
+  return c - 55;
+}
+
+i32 texteq(i32 p, i32 n, i32 s) {
+  i32 r = 1;
+  if (n != load(s)) { r = 0; } else {
+    i32 i = 0;
+    while (i < n) {
+      if (at(p + i) != load8(s + 4 + i)) { r = 0; }
+      i = i + 1;
+    }
+  }
+  return r;
+}
+
+i32 samebytes(i32 a, i32 n, i32 b) {
+  i32 r = 1;
+  i32 i = 0;
+  while (i < n) {
+    if (at(a + i) != at(b + i)) { r = 0; }
+    i = i + 1;
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------- the lexer
+//
+// Punctuation packs its bytes into one word, so `<=` is 60 + 61*256 and a two-byte operator is one
+// integer compare. wac's three-byte operators are `<<=` and `>>=`, which nothing in `wacc/src`
+// uses, so they are not here yet — and the lexer says so rather than mis-reading them.
+
+i32 srclen = 0;
+
+i32 pack2(i32 a, i32 b) { return a + b * 256; }
+
+// Is the first hex digit in [p0, p1) greater than `top`? Eight hex digits fit an i32 only when the
+// first is 7 or less — `0x7fffffff` does and `0x80000000` does not.
+i32 hexdigit_over(i32 p0, i32 p1, i32 top) {
+  i32 i = p0;
+  while (i < p1) {
+    if (at(i) != 95) { return at(i) > top; }
+    i = i + 1;
+  }
+  return 0;
+}
+
+// Is the decimal literal in [p0, p1) greater than `limit`, which has the same number of digits?
+// Separators are skipped, so `4_294_967_296` compares as `4294967296`.
+i32 digits_over(i32 p0, i32 p1, i32 limit) {
+  i32 i = p0;
+  i32 k = 0;
+  i32 n = load(limit);
+  while (i < p1 & k < n) {
+    if (at(i) != 95) {
+      i32 a = at(i);
+      i32 b = load8(limit + 4 + k);
+      if (a > b) { return 1; }
+      if (a < b) { return 0; }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+
+i32 lex() {
+  toks = Tok[srclen + 4]();
+  ntok = 0;
+  i32 p = 0;
+  while (at(p) != 0) {
+    i32 c = at(p);
+    if (isspace(c)) { p = p + 1; } else {
+      if (c == 47 & at(p + 1) == 47) {
+        while (at(p) != 0 & at(p) != 10) { p = p + 1; }
+      } else {
+        // A `/* … */` comment, which wac uses for every doc comment in the tree.
+        if (c == 47 & at(p + 1) == 42) {
+          p = p + 2;
+          while (at(p) != 0 & (at(p) != 42 | at(p + 1) != 47)) { p = p + 1; }
+          if (at(p) != 0) { p = p + 2; }
+        } else {
+          if (isdigit(c)) {
+            i32 v = 0;
+            i32 s0 = p;
+            i32 big = 0;
+            i32 ndig = 0;
+            // `0x80` — a byte range, a mask, a UTF-8 lead. A lexer written in wac is full of them
+            // and there is no other way to write one. `_` separates digits in wac and means nothing.
+            if (c == 48 & (at(p + 1) == 120 | at(p + 1) == 88)) {
+              p = p + 2;
+              while (isxdigit(at(p)) | at(p) == 95) {
+                // Eight hex digits still fit: a mask written as `0xffffffff` means all the
+                // bits of a u32, which is an i32 here and wraps to the same value.
+                if (at(p) != 95) {
+                  ndig = ndig + 1;
+                  v = v * 16 + hexval(at(p));
+                }
+                p = p + 1;
+              }
+            } else {
+              while (isdigit(at(p)) | at(p) == 95) {
+                if (at(p) != 95) {
+                  ndig = ndig + 1;
+                  v = v * 10 + at(p) - 48;
+                }
+                p = p + 1;
+              }
+            }
+            // **A float keeps its text and not its value.** A token's value is an i32 and a double
+            // does not fit in one — but wac-L0 parses the decimal itself, so copying the source
+            // through is both simpler and exact.
+            i32 isf = 0;
+            if (at(p) == 46 & isdigit(at(p + 1))) {
+              isf = 1;
+              p = p + 1;
+              while (isdigit(at(p))) { p = p + 1; }
+            }
+            if (at(p) == 101 | at(p) == 69) {
+              if (isdigit(at(p + 1)) | ((at(p + 1) == 45 | at(p + 1) == 43) & isdigit(at(p + 2)))) {
+                isf = 1;
+                p = p + 1;
+                if (at(p) == 45 | at(p) == 43) { p = p + 1; }
+                while (isdigit(at(p))) { p = p + 1; }
+              }
+            }
+            // **An i32's range, not thirty-two bits.** `4294967295` is both the all-ones u32
+            // mask and a perfectly ordinary i64, and the two want different constants — wacc
+            // writes it against an i64 and got -1, which is the same bits and the wrong number.
+            // So a literal past an i32 keeps its text, and a narrow slot narrows it back: that
+            // way the mask still works and the number is still the number. The count of digits
+            // decides it, with the boundary case compared against the largest that fits.
+            if (c == 48 & (at(s0 + 1) == 120 | at(s0 + 1) == 88)) {
+              if (ndig > 8) { big = 1; }
+              if (ndig == 8 & hexdigit_over(s0 + 2, p, 55)) { big = 1; }
+            } else {
+              if (ndig > 10) { big = 1; }
+              if (ndig == 10 & digits_over(s0, p, "2147483647")) { big = 1; }
+            }
+            if (isf) {
+              toks[ntok] = Tok(K_FLOAT, s0, p - s0, 0);
+            } else {
+              if (big) {
+                toks[ntok] = Tok(K_BIGINT, s0, p - s0, 0);
+              } else {
+                toks[ntok] = Tok(K_INT, s0, p - s0, v);
+              }
+            }
+            ntok = ntok + 1;
+          } else {
+            // **A character literal is a number.** `'0'` and `'\n'` are how a lexer written in wac
+            // spells a byte; there is no character type, so this makes an INT and nothing
+            // downstream needs to know it was written with quotes.
+            if (c == 39) {
+              p = p + 1;
+              i32 cv = at(p);
+              if (cv == 92) {
+                p = p + 1;
+                i32 e = at(p);
+                cv = e;
+                if (e == 110) { cv = 10; }
+                if (e == 116) { cv = 9; }
+                if (e == 114) { cv = 13; }
+                if (e == 48) { cv = 0; }
+              }
+              p = p + 1;
+              i32 cs = p;
+              if (at(p) == 39) { p = p + 1; }
+              toks[ntok] = Tok(K_INT, cs, 1, cv);
+              ntok = ntok + 1;
+            } else {
+            if (c == 34) {
+              p = p + 1;
+              i32 s1 = p;
+              while (at(p) != 0 & at(p) != 34) {
+                if (at(p) == 92) { p = p + 1; }
+                p = p + 1;
+              }
+              toks[ntok] = Tok(K_STR, s1, p - s1, 0);
+              ntok = ntok + 1;
+              p = p + 1;
+            } else {
+              if (isalpha(c)) {
+                i32 s2 = p;
+                while (isalnum(at(p))) { p = p + 1; }
+                toks[ntok] = Tok(K_NAME, s2, p - s2, 0);
+                ntok = ntok + 1;
+              } else {
+                i32 d = at(p + 1);
+                i32 v2 = c;
+                i32 w = 1;
+                // The two-byte operators wac has: comparison, the logicals, the increments, and
+                // compound assignment.
+                if (d == 61 & (c == 61 | c == 33 | c == 60 | c == 62
+                             | c == 43 | c == 45 | c == 42 | c == 47 | c == 37)) {
+                  v2 = pack2(c, d);
+                  w = 2;
+                }
+                if (c == 38 & d == 38) { v2 = pack2(c, d); w = 2; }
+                if (c == 124 & d == 124) { v2 = pack2(c, d); w = 2; }
+                if (c == 43 & d == 43) { v2 = pack2(c, d); w = 2; }
+                if (c == 45 & d == 45) { v2 = pack2(c, d); w = 2; }
+                if (c == 60 & d == 60) { v2 = pack2(c, d); w = 2; }
+                if (c == 62 & d == 62) { v2 = pack2(c, d); w = 2; }
+                toks[ntok] = Tok(K_PUNCT, p, w, v2);
+                ntok = ntok + 1;
+                p = p + w;
+              }
+            }
+          }}
+        }
+      }
+    }
+  }
+  // Four of them, not one. Every reader here looks ahead — `aheadIs(3, ...)` is the deepest —
+  // and a slot that was never assigned holds a null reference rather than a zeroed struct, so
+  // reading one traps instead of answering "end of input". The array is sized `srclen + 4` for
+  // exactly this. A refusal on the last token is where it showed: the message wanted to name
+  // the tokens after the one it stopped on, and there were none.
+  i32 pad = 0;
+  while (pad < 4) { toks[ntok + pad] = Tok(K_EOF, p, 0, 0); pad = pad + 1; }
+  return 0;
+}
+
+// ---------------------------------------------------------------- the cursor
+
+i32 kind() { return toks[tp].kind; }
+i32 val() { return toks[tp].val; }
+i32 tstart() { return toks[tp].start; }
+i32 tlen() { return toks[tp].len; }
+// **The cursor stops at the end.** Every reader here looks ahead — `aheadIs(3, ...)` is the
+// deepest — and the lexer pads with four end markers so that is always a real token. Letting
+// `next` run past the last one puts the lookahead in unassigned slots, which for a struct array
+// are null references rather than zeroed structs, so reading one traps. Recovery walks the cursor
+// forward looking for somewhere to resume, which is exactly how it got there.
+i32 next() { if (tp < ntok) { tp = tp + 1; } return 0; }
+i32 ispunct(i32 v) { return (toks[tp].kind == K_PUNCT) & (toks[tp].val == v); }
+i32 aheadIs(i32 k, i32 v) { return (toks[tp + k].kind == K_PUNCT) & (toks[tp + k].val == v); }
+i32 isword(i32 s) { return (toks[tp].kind == K_NAME) & texteq(toks[tp].start, toks[tp].len, s); }
+i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
+// The refusal marker. It names the token it stopped on and the three after it, because
+// "unexpected token" on its own sends you back to the source to guess which one — and the
+// assembler that reads this line reports it verbatim, so the guess is the whole cost.
+// Anything below a space is dropped: the line format is one instruction per line.
+i32 emitsafe(i32 p, i32 n) {
+  i32 i = 0;
+  i32 cap = n;
+  if (cap > 24) { cap = 24; }
+  while (i < cap) {
+    i32 c = load8(src + p + i);
+    if (c >= 32) { emit1(c); }
+    i = i + 1;
+  }
+  return 0;
+}
+
+// **Which line the token is on.** A token carries a byte offset and never a line, and a refusal
+// that says *what* but not *where* is why two of the instruments in `ts/` exist: one finds the
+// enclosing function by scanning the output, the other binary-searches the input. Counting
+// newlines is a walk of the source per refusal, which is affordable precisely because a refusal
+// stops the file — see `oops` below.
+i32 line_of(i32 off) {
+  i32 n = 1;
+  i32 i = 0;
+  while (i < off & i < srclen) {
+    if (at(i) == 10) { n = n + 1; }
+    i = i + 1;
+  }
+  return n;
+}
+
+i32 oops() {
+  nrefusal = nrefusal + 1;
+  if (nrefusal > REFUSAL_LIMIT) {
+    tp = ntok;
+    return 0;
+  }
+  nl();
+  emits("!! wac-L5: line ");
+  emitn(line_of(tstart()));
+  emits(": unexpected token ");
+  emitsafe(tstart(), tlen());
+  i32 k = 1;
+  emits(" before");
+  while (k < 4) {
+    if (toks[tp + k].kind != K_EOF) {
+      sp();
+      emitsafe(toks[tp + k].start, toks[tp + k].len);
+    }
+    k = k + 1;
+  }
+  nl();
+
+  // **Then get past it.** A refusal that leaves the cursor where it was is re-reported by whatever
+  // loop called it, until the output buffer fills: one missing operator produced 19,417 refusals
+  // in check.wac, and a census over the corpus counted 2,972,653 sites from a handful of causes.
+  // The overflow then truncates the marker itself, which is where `!! wac-L5end` came from.
+  //
+  // So the token is consumed and the parser runs to the end of the statement or the block — the
+  // two places where a reader can pick the thread back up. That is worth more than stopping at the
+  // first: a run that names four missing constructs is four fixes, and a run that names one is one.
+  next();
+  i32 guard = 0;
+  while (kind() != K_EOF & guard < 4096) {
+    if (ispunct(59)) { next(); return 0; }
+    if (ispunct(125)) { return 0; }
+    next();
+    guard = guard + 1;
+  }
+  return 0;
+}
+
+// **A table that has run out is a refusal, not a trap.** `array element access out of bounds`
+// names nothing at all — not the table, not the line, not the program — and it is what a reader
+// gets today when a program outgrows a fixed table. This is the same failure with a sentence
+// attached, and it stops the file rather than writing past the end.
+//
+// The lexer's token array is sized from the source and cannot overflow, so it is not guarded.
+i32 full(i32 n, i32 cap, i32 what) {
+  if (n < cap) { return 0; }
+  if (tp < ntok) {
+    nl();
+    emits("!! wac-L5: ran out of room for ");
+    emits(what);
+    nl();
+  }
+  tp = ntok;
+  return 1;
+}
+
+// **A bound on how many are reported.** Synchronising ends the cascade from one bad token; this
+// ends it for a file that is not wac at all, where every recovery point is another refusal. Fifty
+// is far more than anyone reads and far less than a buffer holds.
+i32 nrefusal = 0;
+i32 REFUSAL_LIMIT = 50;
+
+i32 want(i32 v) { if (eat(v)) { return 0; } return oops(); }
+i32 eatword(i32 s) { if (isword(s)) { next(); return 1; } return 0; }
+
+// **`>>` closes two type-argument lists**, and `Vec<Vec<i32>>` ends with one token that has to be
+// consumed twice. The lexer is right to pack it — it is a shift everywhere else — so the token is
+// rewritten in place as the *second* `>` and left where it is. The next closer finds a plain one.
+i32 at_gt() { return ispunct(62) | ispunct(15934); }
+
+i32 eat_gt() {
+  if (ispunct(62)) { next(); return 1; }
+  if (ispunct(15934)) {
+    toks[tp] = Tok(K_PUNCT, toks[tp].start + 1, 1, 62);
+    return 1;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------- locals
+//
+// As in wac-L4: a declaration always takes a fresh slot and only the *name* is popped when a block
+// ends, so shadowing costs a slot and no renaming.
+
+struct Local { i32 nameptr; i32 namelen; i32 slot; i32 ty; }
+Local[] locs;
+i32 nloc = 0;
+i32 nslot = 0;
+i32[] slotty;
+
+i32 loc_add(i32 p, i32 n, i32 t) {
+  if (full(nloc, 16384, "locals") | full(nslot, 16384, "slots")) { return 0; }
+  locs[nloc] = Local(p, n, nslot, t);
+  // Slots are never popped and names are, and the function header — written after the body, because
+  // wasm wants locals declared before it — needs the types the name table has by then thrown away.
+  slotty[nslot] = t;
+  nloc = nloc + 1;
+  nslot = nslot + 1;
+  return nslot - 1;
+}
+
+i32 loc_at = -1;
+
+i32 loc_find(i32 p, i32 n) {
+  i32 i = nloc;
+  i32 found = 0 - 1;
+  loc_at = 0 - 1;
+  while (i > 0) {
+    i = i - 1;
+    if (found == 0 - 1) {
+      if (locs[i].namelen == n & samebytes(p, n, locs[i].nameptr)) {
+        found = locs[i].slot;
+        loc_at = i;
+      }
+    }
+  }
+  return found;
+}
+
+i32 loc_type(i32 slot) { return slotty[slot]; }
+
+i32 slotname(i32 s) { emits("$v"); return emitn(s); }
+
+// ---------------------------------------------------------------- globals
+
+struct Glo { i32 nameptr; i32 namelen; i32 ty; }
+Glo[] glos;
+i32 nglo = 0;
+
+i32 glo_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nglo) {
+    if (glos[i].namelen == n & samebytes(p, n, glos[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 gloname(i32 i) { emits("$g"); return emitn(i); }
+
+// ---------------------------------------------------------------- string literals
+
+struct Str { i32 off; i32 ptr; i32 len; }
+Str[] strs;
+i32 nstr = 0;
+i32 strnext = 1024;
+
+// wac's escapes, as bytes. Only the ones `wacc/src` uses; an unknown one is left as written, which
+// is wrong in a way the assembler will not catch and is therefore listed in the spec as a gap.
+i32 unescape(i32 c) {
+  if (c == 110) { return 10; }
+  if (c == 116) { return 9; }
+  if (c == 114) { return 13; }
+  if (c == 48) { return 0; }
+  return c;
+}
+
+i32 str_add(i32 p, i32 n) {
+  if (full(nstr, 65536, "string literals")) { return 0; }
+  strs[nstr] = Str(strnext, p, n);
+  nstr = nstr + 1;
+  strnext = strnext + 4 * ((4 + n + 3) / 4);
+  return strs[nstr - 1].off;
+}
+
+i32 hexd(i32 d) { if (d < 10) { return 48 + d; } return 87 + d; }
+i32 emithex(i32 b) {
+  emit1(92); emit1(120); emit1(hexd(b / 16)); return emit1(hexd(b % 16));
+}
+
+// **An escape is one byte, and it is never rescanned.** `"a\\b"` is three bytes and `"\\\\"` is
+// two, so the resolved character never becomes the start of another escape. Anything after the
+// backslash that is not one of the six stands for itself, which is what `\\"` and `\\\\` need
+// and is also what wac's lexer would already have refused.
+i32 escbyte(i32 c) {
+  if (c == 110) { return 10; }
+  if (c == 116) { return 9; }
+  if (c == 114) { return 13; }
+  if (c == 48) { return 0; }
+  return c;
+}
+
+// How long the literal is once its escapes are resolved. The length goes into the data segment
+// *before* the bytes do, so it cannot be counted while they are written.
+i32 str_declen(i32 p, i32 n) {
+  i32 i = 0;
+  i32 c = 0;
+  while (i < n) {
+    if (at(p + i) == 92 & i + 1 < n) { i = i + 2; } else { i = i + 1; }
+    c = c + 1;
+  }
+  return c;
+}
+
+i32 emit_strdata() {
+  i32 i = 0;
+  while (i < nstr) {
+    i32 p = strs[i].ptr;
+    i32 n = str_declen(strs[i].ptr, strs[i].len);
+    word("data"); emitn(strs[i].off); sp(); emit1(34);
+    emithex(n % 256); emithex(n / 256 % 256); emithex(n / 65536 % 256); emithex(n / 16777216);
+    i32 j = 0;
+    i32 raw = strs[i].len;
+    while (j < raw) {
+      if (at(p + j) == 92 & j + 1 < raw) {
+        emithex(escbyte(at(p + j + 1)));
+        j = j + 2;
+      } else {
+        emithex(at(p + j));
+        j = j + 1;
+      }
+    }
+    emit1(34); nl();
+    i = i + 1;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------- functions
+
+struct Fn { i32 nameptr; i32 namelen; i32 ret; i32 pstart; i32 np; }
+Fn[] fns;
+i32 nfn = 0;
+
+// **A generic free function.** `Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f)` — its letters
+// appear in its *return type*, before anything has bound them, so the whole declaration has to be
+// recognised before its return type is parsed or `U` is read as a struct nobody declared and an
+// `Option<U>` is instantiated over it.
+//
+// Recorded and skipped. Instantiating one means monomorphising a *function*, with the arguments
+// inferred rather than written, and that is not built — so calling one is refused by name rather
+// than compiled into something plausible.
+struct GFn { i32 nameptr; i32 namelen; }
+GFn[] gfns;
+i32 ngfn = 0;
+
+i32 gfn_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ngfn) {
+    if (gfns[i].namelen == n & samebytes(p, n, gfns[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 glo_type(i32 i) { return glos[i].ty; }
+
+i32 fn_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nfn) {
+    if (fns[i].namelen == n & samebytes(p, n, fns[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------- types
+//
+// Index 0 is `i32` and index 1 is `u8`, both reserved rather than assumed — the first struct to be
+// registered would otherwise take index 0, and every local of that type would emit as `i32`. That
+// was a real bug at wac-L4 and is written down here so it is not a second one.
+
+struct Ty { i32 kind; i32 nameptr; i32 namelen; i32 elem; i32 fstart; i32 nfields; }
+Ty[] types;
+i32 ntype = 0;
+
+struct Field { i32 nameptr; i32 namelen; i32 ty; }
+Field[] fields;
+i32 nfield = 0;
+
+// **A funcref's parameters get their own table.** They used to share the struct field table, and a
+// funcref written *inside* a struct's field list appends to it while the struct is halfway through
+// filling it — so `struct Op { fn[i32(i32)] f; }` took the funcref's parameter as its own field 0.
+// Two producers, one array, one of them nested inside the other's range.
+i32[] fparams;
+
+// The declared parameter types of every named function and method, so a call can widen an
+// argument the way an assignment to the same slot would. Recorded during the scanning pass,
+// where most named types do not exist yet — see `scan_params` for what that costs.
+i32[] fnparams;
+i32 nfnparam = 0;
+i32 nfparam = 0;
+
+// **The numeric lattice.** wasm has two integer value types and wac has eight names for them, which
+// differ in width and in signedness — and those two facts decide which instruction every operator
+// emits. `u32 / u32` is `i32.div_u` and `i32 / i32` is `i32.div_s`, and nothing else in the
+// compiler can tell them apart.
+i32 T_NUM = 0;
+i32 T_STRUCT = 2;
+i32 T_ARRAY = 3;
+i32 T_ENUM = 4;
+// A funcref: `fn[R(A, B)]`. Its parameters live in the field table and its result in `elem`, so it
+// reuses the two things a struct already needed.
+i32 T_FUNC = 5;
+
+// Reserved indices, in this order, so that `valtype(0)` is `i32` and the first struct cannot take
+// the slot.
+i32 TY_I32 = 0;
+i32 TY_U8 = 1;
+i32 TY_I64 = 2;
+i32 TY_U32 = 3;
+i32 TY_BOOL = 4;
+i32 TY_I8 = 5;
+i32 TY_U16 = 6;
+i32 TY_I16 = 7;
+i32 TY_U64 = 8;
+// **`void` is a type here**, so that a function's result is one thing the whole compiler agrees on
+// rather than a flag beside it. It is the only one that emits no value type at all.
+i32 TY_VOID = 9;
+i32 TY_F64 = 10;
+// f32 is here for the corpus rather than for the ladder, which never produces one. It is a
+// distinct wasm type, so every place that asks "is this a float" has to ask which float.
+i32 TY_F32 = 11;
+i32 NUMTYPES = 12;
+// **A bare `null` has no type of its own** — it takes one from whatever it is written against,
+// and until this it claimed to be an i32, which made `x == null ? null : x` a block of i32s
+// holding references. This is the placeholder it carries until a context names a real type.
+i32 TY_NULL = 12;
+
+// Is it held in an i64? Everything else this rung has fits an i32.
+i32 ty_wide(i32 t) { return t == TY_I64 | t == TY_U64; }
+i32 ty_float(i32 t) { return t == TY_F64 | t == TY_F32; }
+i32 ty_narrowfloat(i32 t) { return t == TY_F32; }
+i32 ty_signed(i32 t) { return (t == TY_U32 | t == TY_U8 | t == TY_U16 | t == TY_U64) == 0; }
+i32 ty_isnum(i32 t) { return t < NUMTYPES; }
+
+// The width a value is *stored* in when it is an array element or a struct field. wasm has i8 and
+// i16 as storage types and no others.
+i32 ty_packed(i32 t) {
+  if (ty_known(t) == 0) { return 0; }
+  if (t == TY_U8 | t == TY_I8) { return 8; }
+  if (t == TY_U16 | t == TY_I16) { return 16; }
+  return 0;
+}
+
+i32 ty_new(i32 kind, i32 p, i32 n, i32 elem) {
+  if (full(ntype, 16384, "types")) { return 0; }
+  types[ntype] = Ty(kind, p, n, elem, nfield, 0);
+  ntype = ntype + 1;
+  return ntype - 1;
+}
+
+i32 ty_named(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntype) {
+    if (types[i].namelen == n & n > 0 & samebytes(p, n, types[i].nameptr)) {
+      if (types[i].kind == T_STRUCT | types[i].kind == T_ENUM) { found = i; }
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 ty_array(i32 elem) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntype) {
+    if (types[i].kind == T_ARRAY & types[i].elem == elem & types[i].nfields == 0) { found = i; }
+    i = i + 1;
+  }
+  if (found == 0 - 1) { found = ty_new(T_ARRAY, 0, 0, elem); }
+  return found;
+}
+
+// `string` and `u8[]` are one wasm type — the distinction is wac-L5's and stops here. So the
+// string's entry is never declared and never named; `strbase` is what both are called.
+i32 tyname(i32 t) {
+  if (t == strty & strty != 0 - 1) { t = strbase; }
+  if (types[t].kind == T_ARRAY) { emits("$a"); } else {
+    if (types[t].kind == T_ENUM) { emits("$e"); } else {
+      if (types[t].kind == T_FUNC) { emits("$f"); } else { emits("$s"); }
+    }
+  }
+  return emitn(t);
+}
+
+i32 valtype(i32 t) {
+  if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_narrowfloat(t)) { emits("f32"); return 0; }
+  if (ty_float(t)) { emits("f64"); return 0; }
+  if (ty_wide(t)) { emits("i64"); return 0; }
+  i32 pk = ty_packed(t);
+  if (pk == 8) { emits("i8"); return 0; }
+  if (pk == 16) { emits("i16"); return 0; }
+  emits("i32");
+  return 0;
+}
+
+// The value type a local or a parameter of this type takes. A packed type has none — wasm has no i8
+// *value* — so it widens to i32, which is what reading one answers anyway.
+i32 slotvaltype(i32 t) {
+  if (t == TY_VOID) { return 0; }
+  if (ty_isnum(t) == 0) { word("refnull"); tyname(t); return 0; }
+  if (ty_narrowfloat(t)) { emits("f32"); return 0; }
+  if (ty_float(t)) { emits("f64"); return 0; }
+  if (ty_wide(t)) { emits("i64"); return 0; }
+  emits("i32");
+  return 0;
+}
+
+// `i32.` or `i64.`, which is the prefix on every arithmetic instruction.
+i32 opprefix(i32 t) {
+  if (ty_narrowfloat(t)) { emits("f32."); return 0; }
+  if (ty_float(t)) { emits("f64."); return 0; }
+  if (ty_wide(t)) { emits("i64."); return 0; }
+  emits("i32.");
+  return 0;
+}
+
+// The signed or unsigned form of an instruction that has both.
+i32 signedsuffix(i32 t) { if (ty_signed(t)) { emits("_s"); } else { emits("_u"); } return 0; }
+
+i32 binop(i32 t, i32 name) { opprefix(t); emits(name); return nl(); }
+
+// **The right operand, widened to the left's width.** `convert` is the whole of this and the
+// one callers use; this is its integer half.
+// `h >> 33` on a `u64` writes the shift amount
+// as a plain integer, and wasm wants both operands the same width — but the value is already on the
+// stack, so the conversion goes after it and applies to the top. wac's own rule is that a literal
+// takes the type of what it is used with, and this is that rule where it lands.
+i32 coerce(i32 t, i32 rt) {
+  if (ty_wide(t) & ty_wide(rt) == 0) {
+    emits("i64.extend_i32");
+    if (ty_signed(rt)) { emits("_s"); } else { emits("_u"); }
+    nl();
+  }
+  return 0;
+}
+
+// A `1` of the same width as what it will be added to. `++` on a sixty-four bit counter is the
+// case; wasm has no mixed-width add.
+i32 one_of(i32 t) {
+  if (ty_narrowfloat(t)) { word("f32.const"); emitn(1); return nl(); }
+  if (ty_float(t)) { word("f64.const"); emitn(1); return nl(); }
+  if (ty_wide(t)) { word("i64.const"); emitn(1); return nl(); }
+  return konst(1);
+}
+
+// The value on the stack, made into what its context asks for. Widening is the common case;
+// a float wanted where an integer was written is the other one. `coerce` is the half of this
+// that binary operators want, where a float and an integer mixed is a type error rather than
+// a conversion.
+i32 convert(i32 t, i32 rt) {
+  if (ty_float(t) & ty_isnum(rt) & ty_float(rt) == 0) {
+    opprefix(t); emits("convert");
+    if (ty_wide(rt)) { emits("_i64"); } else { emits("_i32"); }
+    if (ty_signed(rt)) { emits("_s"); } else { emits("_u"); }
+    return nl();
+  }
+  // **A narrow slot takes a wide value's low bits.** This exists for the literal above: a mask
+  // written as a number past an i32 arrives as an i64 and has to become the i32 it means. wac
+  // would reject a genuine i64 narrowing silently like this, and this rung does not check types
+  // at all — so what it costs is a diagnostic that was never going to be given.
+  if (ty_isnum(rt) & ty_wide(rt) & ty_isnum(t) & ty_wide(t) == 0 & ty_float(t) == 0) {
+    return line("i32.wrap_i64");
+  }
+  // One float width asked for where the other was written. Every literal in the language is an
+  // f64, so a program that uses f32 at all reaches this on its first assignment.
+  if (ty_narrowfloat(t) & rt == TY_F64) { return line("f32.demote_f64"); }
+  if (t == TY_F64 & ty_narrowfloat(rt)) { return line("f64.promote_f32"); }
+  return coerce(t, rt);
+}
+
+// The zero of a type. `none` and `nofunc` are two different bottoms — wasm's reference types are two
+// hierarchies that never meet — so a funcref's null is not the one everything else uses.
+// **Does this type have a default value?** wac says a sized array with no `fill:` needs one, and
+// what counts is narrow on purpose here: a number, a string, or a struct whose fields are all of
+// those. A struct holding another struct is left out rather than chased, because a struct that
+// holds itself has no default at all and telling the two apart needs the nullability this rung
+// throws away — `Node` and `Node?` are one type here.
+i32 has_default(i32 t) {
+  if (ty_isnum(t)) { return 1; }
+  if (t == strty & strty != 0 - 1) { return 1; }
+  if (types[t].kind == T_STRUCT) {
+    i32 i = 0;
+    i32 all = 1;
+    while (i < types[t].nfields) {
+      i32 ft = fields[types[t].fstart + i].ty;
+      if (ty_isnum(ft) == 0 & (ft != strty | strty == 0 - 1)) { all = 0; }
+      i = i + 1;
+    }
+    return all;
+  }
+  return 0;
+}
+
+i32 zero_of(i32 t) {
+  if (t == TY_VOID) { return 0; }
+  if (ty_narrowfloat(t)) { word("f32.const"); emitn(0); return nl(); }
+  if (ty_float(t)) { word("f64.const"); emitn(0); return nl(); }
+  if (ty_isnum(t)) {
+    if (ty_wide(t)) { word("i64.const"); emitn(0); return nl(); }
+    return konst(0);
+  }
+  // **A string's default is the empty string, not null.** `out[i] != ""` on a freshly sized
+  // `string[]` is how wacc asks whether a slot has been filled, and against a null it traps
+  // inside the comparison rather than answering.
+  if (t == strty & strty != 0 - 1) {
+    word("array.new_fixed"); tyname(t); line(" 0");
+    return 0;
+  }
+  if (types[t].kind == T_STRUCT & has_default(t)) {
+    i32 i = 0;
+    while (i < types[t].nfields) {
+      zero_of(fields[types[t].fstart + i].ty);
+      i = i + 1;
+    }
+    word("struct.new"); tyname(t); nl();
+    return 0;
+  }
+  if (types[t].kind == T_FUNC) { return line("ref.null nofunc"); }
+  return line("ref.null none");
+}
+
+// **A float has one ordering**, so `f64.lt` has no signed and unsigned form — the one place the
+// integer pattern does not carry over, and the only reason this is not `binop`.
+i32 binop_signed(i32 t, i32 name) {
+  opprefix(t);
+  emits(name);
+  if (ty_float(t) == 0) { signedsuffix(t); }
+  return nl();
+}
+
+// A type, read in full. `T?` is the same wasm type as `T`: every reference this emitter writes is
+// already nullable, and a nullable *primitive* is boxed in wac and is not — which is a gap, and the
+// spec says so rather than this pretending otherwise.
+// The primitive named at the cursor, or -1. One list, consulted by `parse_type` and by the
+// expression grammar, so that a type name means the same thing in both.
+// **`string` is a GC array of bytes**, and the same array type a `u8[]` is — so `.len()` and `[i]`
+// work on it without a second implementation, and a literal and a built string are one kind of
+// value. wac's `string` is immutable and this is not, which is a gap and not a difference anything
+// here can observe.
+i32 strty = -1;
+
+// **`string` is not `u8[]`,** though it is the same bytes and the same wasm type. The two
+// differ in one place and it is the place the corpus leans on: `b[i]` on a `u8[]` is the byte,
+// and `s[i]` on a `string` is the one-character string. So it gets its own entry, marked by
+// `nfields`, which an array does not otherwise use, and `ty_array` steps over it so that
+// `u8[]` written out still finds the plain one.
+i32 strbase = -1;
+
+i32 string_type() {
+  if (strty == 0 - 1) {
+    // The plain one first, so that `strbase` exists before anything can ask `tyname` for it.
+    strbase = ty_array(TY_U8);
+    strty = ty_new(T_ARRAY, 0, 0, TY_U8);
+    types[strty] = Ty(T_ARRAY, 0, 0, TY_U8, 0, 1);
+  }
+  return strty;
+}
+
+i32 usedstr = 0;
+i32 usedcat = 0;
+i32 usedslice = 0;
+i32 usedfromcp = 0;
+i32 usedindexof = 0;
+i32 usedtrim = 0;
+i32 usedcharat = 0;
+i32 usedeq = 0;
+i32 usedcmp = 0;
+
+i32 prim_type() {
+  if (isword("void")) { return TY_VOID; }
+  if (isword("f64")) { return TY_F64; }
+  if (isword("f32")) { return TY_F32; }
+  if (isword("i32")) { return TY_I32; }
+  if (isword("bool")) { return TY_BOOL; }
+  if (isword("i64")) { return TY_I64; }
+  if (isword("u32")) { return TY_U32; }
+  if (isword("u64")) { return TY_U64; }
+  if (isword("i8")) { return TY_I8; }
+  if (isword("u8")) { return TY_U8; }
+  if (isword("u16")) { return TY_U16; }
+  if (isword("i16")) { return TY_I16; }
+  return 0 - 1;
+}
+
+// `string` is a type name but not a primitive: it answers an array type, so it cannot come from the
+// same list as the ones that answer themselves.
+i32 is_string_word() { return isword("string"); }
+
+// `Vec<i32>` — or `Vec` with no arguments inside its own body, which means the instantiation being
+// expanded. A fresh type index is handed out per distinct argument list and the expansion happens
+// later, in rounds.
+i32 instantiate(i32 tm) {
+  if (ispunct(60) == 0) {
+    // A bare template name: inside its own expansion it means *this* instantiation, and at a
+    // declaration it means whatever the slot said.
+    if (cur_inst_ty != 0 - 1) { return cur_inst_ty; }
+    if (expect_ty != 0 - 1) { return expect_ty; }
+    return ty_new(T_STRUCT, tmpls[tm].nameptr, tmpls[tm].namelen, 0);
+  }
+  next();
+  i32 astart = niarg;
+  i32 na = 0;
+  while (at_gt() == 0 & kind() != K_EOF) {
+    iargs[niarg] = parse_type();
+    niarg = niarg + 1;
+    na = na + 1;
+    if (ispunct(44)) { next(); }
+  }
+  eat_gt();
+  i32 have = inst_find(tm, astart, na);
+  if (have != 0 - 1) {
+    niarg = astart;
+    return insts[have].ty;
+  }
+  i32 ty = ty_new(tmpls[tm].kind, tmpls[tm].nameptr, tmpls[tm].namelen, 0);
+  if (full(ninst, 16384, "instantiations")) { return 0; }
+  insts[ninst] = Inst(tm, ty, astart, na, 0, 0);
+  ninst = ninst + 1;
+  // **Not while a declaration is collecting its members.** Expanding runs `struct_decl` on the
+  // template, which appends *its* fields to the same `fields` array — in the middle of the range
+  // the enclosing declaration has already claimed. `struct H { Box<i32> b; i32 tag; }` came out as
+  // `struct refnull $a15 i32`, which is `Box<i32>`'s layout: H read its neighbour's fields as its
+  // own, silently, and emitted a structurally valid wrong type.
+  //
+  // Deferring costs nothing, because `expand_types` already loops to a fixpoint over every
+  // instantiation that has not been expanded — this only stops it happening at the one moment when
+  // a caller is holding a start index into an array the expansion writes to.
+  if (defer_expand == 0) { expand_one(ninst - 1); }
+  return ty;
+}
+
+// **Nonzero while a declaration is claiming a contiguous range of a shared array.** A counter
+// rather than a flag: `expand_types` reaches `struct_decl` through `expand_one`, so these nest.
+i32 defer_expand = 0;
+
+// `fn[R(A, B)]`. The result comes first in wac and last in wasm, which is the only thing to get
+// right here. Deduplicated by shape, so two parameters of the same funcref type are one wasm type.
+i32 parse_functype() {
+  next();
+  want(91);
+  i32 ret = parse_type();
+  want(40);
+  i32 fstart = nfparam;
+  i32 np = 0;
+  while (ispunct(41) == 0 & kind() != K_EOF) {
+    i32 pt2 = parse_type();
+    if (full(nfparam, 16384, "funcref parameters")) { return 0; }
+  fparams[nfparam] = pt2;
+    nfparam = nfparam + 1;
+    np = np + 1;
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  want(93);
+  // Same shape, same type — a funcref is structural, unlike a struct.
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntype) {
+    if (types[i].kind == T_FUNC & types[i].elem == ret & types[i].nfields == np) {
+      i32 k = 0;
+      i32 same = 1;
+      while (k < np) {
+        if (fparams[types[i].fstart + k] != fparams[fstart + k]) { same = 0; }
+        k = k + 1;
+      }
+      if (same) { found = i; }
+    }
+    i = i + 1;
+  }
+  if (found != 0 - 1) { nfparam = fstart; return found; }
+  i32 ft = ty_new(T_FUNC, 0, 0, ret);
+  types[ft] = Ty(T_FUNC, 0, 0, ret, fstart, np);
+  return ft;
+}
+
+i32 parse_type() {
+  i32 t = 0;
+  i32 pr = prim_type();
+  if (isword("fn")) { t = parse_functype(); } else {
+  if (is_string_word()) { next(); t = string_type(); } else {
+  if (pr != 0 - 1) { t = pr; next(); } else {
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    i32 sv = sub_find(p, n);
+    if (sv != 0 - 1) { t = sv; } else {
+      i32 tm = tmpl_find(p, n);
+      if (tm != 0 - 1) { t = instantiate(tm); } else {
+        t = ty_named(p, n);
+        if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+      }
+    }
+  }}}
+  // **`?` and `[]` in any order and any number.** `Expr?[]` is an array of nullable `Expr` and
+  // `Expr[]?` is a nullable array of `Expr` — the same wasm type here, because every reference this
+  // emits is already nullable, but two different spellings and only one of them parsed.
+  i32 going = 1;
+  // Set before the loop rather than at entry to the function, so a nested `parse_type` — a
+  // function type's parameters, a template's arguments — cannot leave its answer behind.
+  type_q = 0;
+  while (going) {
+    going = 0;
+    if (ispunct(63)) { next(); going = 1; type_q = 1; }
+    if (ispunct(91) & aheadIs(1, 93)) { next(); next(); t = ty_array(t); going = 1; type_q = 0; }
+  }
+  return t;
+}
+
+// **Whether the `?` this just ate was the last thing it ate.** `Expr?` says yes and `Expr?[]`
+// says no, because in the second the `?` is followed by a suffix and cannot be a ternary's.
+i32 type_q = 0;
+
+// The tokens that can begin an expression, which is how a `?` is told from a nullable marker.
+// `true`, `false` and `this` are names here, so K_NAME covers them.
+i32 starts_expr() {
+  i32 k = kind();
+  if (k == K_INT | k == K_FLOAT | k == K_STR | k == K_NAME) { return 1; }
+  return ispunct(40) | ispunct(33) | ispunct(126) | ispunct(45);
+}
+
+// A type, then a name, then `(` — which is how a *member function* begins inside a struct or an
+// enum body, and nothing else there does. Without this, the last variant before the first method
+// reads as that method's return type: `None` followed by `bool isSome(` is a name followed by a
+// name, and so is `bool isSome`.
+i32 looks_like_member() {
+  i32 i = tp;
+  if (toks[i].kind != K_NAME) { return 0; }
+  if (texteq(toks[i].start, toks[i].len, "const")) { return 1; }
+  if (texteq(toks[i].start, toks[i].len, "export")) { return 1; }
+  i32 e = skip_type(i);
+  if (e == 0 - 1) { return 0; }
+  if (toks[e].kind != K_NAME) { return 0; }
+  return toks[e + 1].kind == K_PUNCT & toks[e + 1].val == 40;
+}
+
+// Steps over `<…>`, counting `>>` as two closers — which is what `Vec<Vec<i32>>` ends with, because
+// the lexer packs it into a shift and is right to everywhere else.
+i32 skip_targs(i32 i) {
+  if ((toks[i].kind == K_PUNCT & toks[i].val == 60) == 0) { return i; }
+  i32 depth = 0;
+  while (1) {
+    if (toks[i].kind == K_EOF) { return i; }
+    if (toks[i].kind == K_PUNCT) {
+      if (toks[i].val == 60) { depth = depth + 1; }
+      if (toks[i].val == 62) { depth = depth - 1; }
+      if (toks[i].val == 15934) { depth = depth - 2; }
+    }
+    i = i + 1;
+    if (depth <= 0) { return i; }
+  }
+  return i;
+}
+
+// Steps over a whole type, whatever shape it has, and answers where it ends — or -1 if what is
+// there is not one. **One skipper, consulted by every lookahead**, because a type that `parse_type`
+// reads and a lookahead does not is a declaration that silently becomes an expression: `fn[i32(i32)]
+// g = add;` was exactly that until this existed.
+i32 skip_type(i32 i) {
+  if (toks[i].kind != K_NAME) { return 0 - 1; }
+  if (texteq(toks[i].start, toks[i].len, "fn")) {
+    i = i + 1;
+    if ((toks[i].kind == K_PUNCT & toks[i].val == 91) == 0) { return 0 - 1; }
+    i32 depth = 0;
+    while (1) {
+      if (toks[i].kind == K_EOF) { return 0 - 1; }
+      if (toks[i].kind == K_PUNCT) {
+        if (toks[i].val == 91) { depth = depth + 1; }
+        if (toks[i].val == 93) { depth = depth - 1; }
+      }
+      i = i + 1;
+      if (depth <= 0) { return i; }
+    }
+  }
+  i = i + 1;
+  i = skip_targs(i);
+  i32 more = 1;
+  while (more) {
+    more = 0;
+    if (toks[i].kind == K_PUNCT & toks[i].val == 63) { i = i + 1; more = 1; }
+    if (toks[i].kind == K_PUNCT & toks[i].val == 91
+        & toks[i + 1].kind == K_PUNCT & toks[i + 1].val == 93) { i = i + 2; more = 1; }
+  }
+  return i;
+}
+
+// A type, a name, and then `<` — which is a generic function and nothing else.
+i32 looks_like_generic_fn() {
+  i32 e = skip_type(tp);
+  if (e == 0 - 1) { return 0; }
+  if (toks[e].kind != K_NAME) { return 0; }
+  return toks[e + 1].kind == K_PUNCT & toks[e + 1].val == 60;
+}
+
+// Reads past a whole declaration, body and all, without parsing any of it.
+i32 skip_decl() {
+  while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
+  i32 depth = 1;
+  next();
+  while (depth > 0 & kind() != K_EOF) {
+    if (ispunct(123)) { depth = depth + 1; }
+    if (ispunct(125)) { depth = depth - 1; }
+    next();
+  }
+  return 0;
+}
+
+// A type followed by a name, which is how a declaration begins and nothing else does.
+i32 looks_like_decl() {
+  i32 e = skip_type(tp);
+  if (e == 0 - 1) { return 0; }
+  return toks[e].kind == K_NAME;
+}
+
+// ---------------------------------------------------------------- generics
+//
+// **Monomorphisation, by rewinding.** A generic declaration is not compiled where it is written; its
+// token index is recorded and its body is re-parsed once per instantiation, with the letters bound.
+// That is cheap here for a reason peculiar to this compiler: the parser's entire state is one
+// integer into the token array, so "read this declaration again, in another world" is an assignment.
+//
+// The rounds are a fixpoint, because expanding `Vec<i32>` can name `Option<i32>`, which did not
+// exist when the round started.
+
+struct Tmpl { i32 nameptr; i32 namelen; i32 kind; i32 tokAt; i32 pstart; i32 nparams; }
+Tmpl[] tmpls;
+i32 ntmpl = 0;
+
+struct TParam { i32 nameptr; i32 namelen; }
+TParam[] tparams;
+i32 ntparam = 0;
+
+struct Inst { i32 tmpl; i32 ty; i32 astart; i32 nargs; i32 expanded; i32 emitted; }
+Inst[] insts;
+i32 ninst = 0;
+
+i32[] iargs;
+i32 niarg = 0;
+
+struct Sub { i32 nameptr; i32 namelen; i32 ty; }
+Sub[] subs;
+i32 nsub = 0;
+
+// The instantiation being expanded, so that `Vec(…)` inside `Vec<T>`'s own body means this one.
+i32 cur_inst_ty = -1;
+// **The slot supplies the type argument.** `Box<i32> a = Box(7);` writes the arguments once, and
+// wac reads the second `Box` as `Box<i32>` from the declaration it is initialising. Without this a
+// bare template name has nothing to instantiate it with.
+i32 expect_ty = -1;
+// The enclosing function's return type, so `return Option.None;` knows which `Option` it means.
+i32 cur_ret = -1;
+// The enclosing loop's two labels, so `break` and `continue` know where to go. Saved and restored
+// around each loop rather than kept in a stack, because that is what nesting needs and no more.
+i32 loop_out = -1;
+i32 loop_in = -1;
+// When set, a declaration fills this type index instead of looking one up by name.
+i32 forced_ty = -1;
+
+// Innermost binding wins, which matters when a generic's body names another generic's letter.
+i32 sub_find(i32 p, i32 n) {
+  i32 i = nsub;
+  i32 found = 0 - 1;
+  while (i > 0) {
+    i = i - 1;
+    if (found == 0 - 1) {
+      if (subs[i].namelen == n & samebytes(p, n, subs[i].nameptr)) { found = subs[i].ty; }
+    }
+  }
+  return found;
+}
+
+i32 tmpl_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntmpl) {
+    if (tmpls[i].namelen == n & samebytes(p, n, tmpls[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 inst_find(i32 tm, i32 astart, i32 na) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ninst) {
+    if (insts[i].tmpl == tm & insts[i].nargs == na) {
+      i32 k = 0;
+      i32 same = 1;
+      while (k < na) {
+        if (iargs[insts[i].astart + k] != iargs[astart + k]) { same = 0; }
+        k = k + 1;
+      }
+      if (same) { found = i; }
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------- variants and methods
+
+struct Var { i32 nameptr; i32 namelen; i32 payload; i32 owner; }
+Var[] vars;
+i32 nvar = 0;
+
+struct Meth { i32 owner; i32 nameptr; i32 namelen; i32 ret; i32 pstart; i32 np; }
+Meth[] meths;
+i32 nmeth = 0;
+
+i32 var_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nvar) {
+    if (vars[i].namelen == n & samebytes(p, n, vars[i].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 var_tag(i32 v) { return v - types[vars[v].owner].fstart; }
+
+// A variant of *this* type, by name — which is what a qualified `Option.Some` asks for, and what
+// two enums sharing a variant name would otherwise get wrong.
+i32 var_owned(i32 owner, i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nvar) {
+    if (vars[i].owner == owner & vars[i].namelen == n & samebytes(p, n, vars[i].nameptr)) {
+      found = i;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 meth_find(i32 owner, i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nmeth) {
+    if (meths[i].owner == owner & meths[i].namelen == n & samebytes(p, n, meths[i].nameptr)) {
+      found = i;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+// `Vec_push`, written from two source names because wac-L4 has no way to build one.
+i32 mangled(i32 owner, i32 p, i32 n) {
+  emit1(36);
+  emitname(types[owner].nameptr, types[owner].namelen);
+  emit1(95);
+  // The owner's *type index*, so `Vec<i32>.push` and `Vec<string>.push` are two functions with two
+  // names. A template's own name is shared by every instantiation of it and cannot do this alone.
+  emitn(owner);
+  emit1(95);
+  return emitname(p, n);
+}
+
+// ---------------------------------------------------------------- expressions
+//
+// wac's precedence, loosest first: ternary, `||`, `&&`, `|`, `^`, `&`, equality, comparison,
+// shifts, additive, multiplicative, unary, postfix. Each level parses the one below and loops.
+
+// What the callee wants for argument `i`. The types live in four different tables depending on
+// what is being called, so the selector says which one to read rather than each caller copying
+// the argument loop.
+i32 A_NONE = 0;
+i32 A_PARAM = 1;
+i32 A_FIELD = 2;
+i32 A_FUNCREF = 3;
+i32 A_ELEM = 4;
+
+i32 argty(i32 src, i32 base, i32 i) {
+  if (src == A_PARAM) { return fnparams[base + i]; }
+  if (src == A_FIELD) { return fields[base + i].ty; }
+  if (src == A_FUNCREF) { return fparams[base + i]; }
+  if (src == A_ELEM) { return base; }
+  return TY_I32;
+}
+
+i32 args(i32 src, i32 base, i32 np) {
+  i32 n = 0;
+  while (ispunct(41) == 0 & kind() != K_EOF) {
+    // `fill: x` — a named argument, which wac has and which carries no meaning to the emitter
+    // beyond the value: the name is a readability device the callee's signature already fixes.
+    if (kind() == K_NAME & aheadIs(1, 58)) { next(); next(); }
+    // **The argument's slot is a wanted type, and `Vec.create()` needs one.** A bare template
+    // name takes its instantiation from `expect_ty` — that is how `Box<i32> b = Box.create();`
+    // works — and until now only a local's declaration and a `return` supplied it, so the same
+    // call was refused one level in: `Toks(WVec.create())` in wacc's `wapytok.wac`, where the
+    // wanted type is the field's. This already knows it; it just never said so.
+    //
+    // **`0 - 1` when the slot is not known**, rather than leaving whatever the enclosing statement
+    // set. `Box<i32> b = f(Thing.create());` would otherwise offer `Box<i32>` to an argument of
+    // `f`, which is a different slot entirely — a wrong answer where declining gives a refusal.
+    i32 savedE = expect_ty;
+    i32 want_ty = TY_I32;
+    if (src != A_NONE & (src == A_ELEM | n < np)) {
+      want_ty = argty(src, base, n);
+      expect_ty = want_ty;
+    } else {
+      expect_ty = 0 - 1;
+    }
+    convert(want_ty, expr());
+    expect_ty = savedE;
+    n = n + 1;
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  return n;
+}
+
+// `Point(a, b)`, and `T[n]()` / `T[](a, b)` for an array. wac writes a construction as a call, so
+// one token of lookahead past the name is what tells them apart.
+i32 construct(i32 t) {
+  // `Expr?[4]()` — the element is nullable. That is a spelling rather than a different type
+  // everywhere else on this rung, and here it is the whole answer: a nullable element's default
+  // *is* null, and a non-nullable one's is a fresh value. So the `?` is remembered exactly this
+  // far and thrown away again immediately after.
+  i32 elemNullable = 0;
+  if (ispunct(63)) { next(); elemNullable = 1; }
+  if (ispunct(91)) {
+    // `Param[][1024]()` — a thousand arrays of Param, so every `[...]` but the last names the
+    // element type of the one after it and only the last takes the arguments. A size on any
+    // but the last would have to be emitted before the level it belongs to, which one pass and
+    // no syntax tree cannot do — and no such type is written, so it is refused rather than
+    // silently mis-emitted.
+    i32 at = t;
+    i32 sized = 0;
+    while (ispunct(91)) {
+      if (sized) { oops(); return at; }
+      next();
+      if (ispunct(93) == 0) { expr(); sized = 1; }
+      want(93);
+      at = ty_array(at);
+    }
+    want(40);
+    if (sized) {
+      // **`T[n](fill: v)` fills.** It used to evaluate the fill and drop it, which left every
+      // element null — and an array of structs whose elements are all null is a program that
+      // validates, runs, and traps on the first read. `array.new` is the instruction for this
+      // and takes the value beneath the size, so the size goes into a slot while the fill is
+      // read and comes back out after it.
+      i32 hsize = slot_new(TY_I32);
+      word("local.set"); slotname(hsize); nl();
+      i32 nf = args(A_ELEM, types[at].elem, 0);
+      i32 k = 1;
+      while (k < nf) { line("drop"); k = k + 1; }
+      word("local.get"); slotname(hsize); nl();
+      if (nf == 0) {
+        i32 et2 = types[at].elem;
+        if (ty_isnum(et2) | elemNullable | has_default(et2) == 0) {
+          // A number zeroes, and a type with no default is a nullable reference, whose default
+          // *is* null — which is what array.new_default gives.
+          word("array.new_default"); tyname(at); nl();
+        } else {
+          // **Every element a distinct default.** `Point[10]()` is ten Points, not ten names for
+          // one, and writing through one must never show up in another — so this is a loop and
+          // not `array.new`, which would fill the array with a single reference. A string is the
+          // exception: it has no fields to write through, so one shared empty one would do, and
+          // it goes round the same loop because saying so twice is worse than the loop.
+          i32 held = slot_new(at);
+          i32 idx = slot_new(TY_I32);
+          word("array.new_default"); tyname(at); nl();
+          word("local.set"); slotname(held); nl();
+          konst(0);
+          word("local.set"); slotname(idx); nl();
+          i32 dl = newlabel();
+          i32 bl = newlabel();
+          word("block"); label(dl); sp(); line("->");
+          word("loop"); label(bl); sp(); line("->");
+          word("local.get"); slotname(idx); nl();
+          word("local.get"); slotname(hsize); nl();
+          line("i32.ge_s");
+          word("br_if"); label(dl); nl();
+          word("local.get"); slotname(held); nl();
+          word("local.get"); slotname(idx); nl();
+          zero_of(et2);
+          word("array.set"); tyname(at); nl();
+          word("local.get"); slotname(idx); nl();
+          konst(1);
+          line("i32.add");
+          word("local.set"); slotname(idx); nl();
+          word("br"); label(bl); nl();
+          line("end");
+          line("end");
+          word("local.get"); slotname(held); nl();
+        }
+      } else {
+        word("array.new"); tyname(at); nl();
+      }
+    } else {
+      // `T[](a, b, c)` — a literal, whose length is how many arguments it has.
+      i32 n2 = args(A_ELEM, types[at].elem, 0);
+      word("array.new_fixed"); tyname(at); sp(); emitn(n2); nl();
+    }
+    return at;
+  }
+  want(40);
+  args(A_FIELD, types[t].fstart, types[t].nfields);
+  word("struct.new"); tyname(t); nl();
+  return t;
+}
+
+// `.field`, `.len()`, `.method()`, and `[i]`.
+i32 postfix(i32 t) {
+  while (ispunct(46) | ispunct(91) | ispunct(33) | (ispunct(40) & types[t].kind == T_FUNC)) {
+    // **A funcref that arrived as a value, now being called.** It is already on the stack and
+    // `call_ref` wants it *after* the arguments, so it is parked in a slot while they are emitted.
+    if (ispunct(40) & types[t].kind == T_FUNC) {
+      i32 held = slot_new(t);
+      word("local.set"); slotname(held); nl();
+      next();
+      args(A_NONE, 0, 0);
+      word("local.get"); slotname(held); nl();
+      word("call_ref"); tyname(t); nl();
+      t = types[t].elem;
+    } else {
+    if (ispunct(33)) {
+      // `x!` — an assertion that a nullable is not null. Every reference here is already nullable,
+      // so this is a no-op on the value and a promise the engine will not check.
+      next();
+    } else {
+      if (ispunct(46)) {
+        next();
+        i32 p = tstart();
+        i32 n = tlen();
+        next();
+        if (types[t].kind == T_ARRAY & texteq(p, n, "len")) {
+          want(40); want(41);
+          line("array.len");
+          t = TY_I32;
+        } else {
+        // `s.toBytes()` is the identity: a `string` here *is* a `u8[]`, which is the whole reason
+        // one array type serves both.
+        if (t == strty & texteq(p, n, "toBytes")) {
+          want(40); want(41);
+          t = ty_array(TY_U8);
+        } else {
+        // `bytes.byte(i)` — the element, unsigned, which for a `u8[]` is what indexing means.
+        if (t == strty & texteq(p, n, "byte")) {
+          want(40);
+          expr();
+          want(41);
+          word("array.get_u"); tyname(t); nl();
+          t = TY_U8;
+        } else {
+        // **The bulk pair**, which wasm has as instructions: `dst.copyFrom(src, srcAt, dstAt, n)`
+        // is `array.copy`, whose operands are in a different order to the method's arguments —
+        // dst, dstAt, src, srcAt, n — so the four are held in slots and replayed. `fill(v, from,
+        // to)` is `array.fill`, which wants a count rather than an end.
+        if (types[t].kind == T_ARRAY & texteq(p, n, "copyFrom")) {
+          want(40);
+          i32 hsrc = slot_new(t);
+          expr();
+          word("local.set"); slotname(hsrc); nl();
+          want(44);
+          i32 hsat = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(hsat); nl();
+          want(44);
+          i32 hdat = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(hdat); nl();
+          want(44);
+          i32 hcnt = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(hcnt); nl();
+          want(41);
+          i32 hdst = slot_new(t);
+          word("local.set"); slotname(hdst); nl();
+          word("local.get"); slotname(hdst); nl();
+          word("local.get"); slotname(hdat); nl();
+          word("local.get"); slotname(hsrc); nl();
+          word("local.get"); slotname(hsat); nl();
+          word("local.get"); slotname(hcnt); nl();
+          word("array.copy"); tyname(t); sp(); tyname(t); nl();
+          t = TY_VOID;
+        } else {
+        if (types[t].kind == T_ARRAY & texteq(p, n, "fill")) {
+          want(40);
+          i32 fval = slot_new(types[t].elem);
+          expr();
+          word("local.set"); slotname(fval); nl();
+          want(44);
+          i32 ffrom = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(ffrom); nl();
+          want(44);
+          i32 fto = slot_new(TY_I32);
+          expr();
+          word("local.set"); slotname(fto); nl();
+          want(41);
+          i32 farr = slot_new(t);
+          word("local.set"); slotname(farr); nl();
+          word("local.get"); slotname(farr); nl();
+          word("local.get"); slotname(ffrom); nl();
+          word("local.get"); slotname(fval); nl();
+          word("local.get"); slotname(fto); nl();
+          word("local.get"); slotname(ffrom); nl();
+          line("i32.sub");
+          word("array.fill"); tyname(t); nl();
+          t = TY_VOID;
+        } else {
+        // `s.indexOf(needle)` is a byte offset or -1, and `s.trim()` drops ASCII whitespace
+        // from both ends. Both are searches rather than shapes, so both are runtime helpers.
+        if (t == strty & texteq(p, n, "indexOf")) {
+          want(40);
+          expr();
+          want(41);
+          usedindexof = 1;
+          line("call $__indexof");
+          t = TY_I32;
+        } else {
+        if (t == strty & texteq(p, n, "trim")) {
+          want(40); want(41);
+          usedtrim = 1;
+          line("call $__trim");
+        } else {
+        // `bytes.slice(a, b)` — the half-open range as a fresh array. Every use in the corpus is
+        // over the byte array, which is the one array type that already has a runtime helper, so
+        // this stays a single function rather than one per element type.
+        if (t == strty & texteq(p, n, "slice")) {
+          want(40);
+          expr(); want(44); expr();
+          want(41);
+          usedslice = 1;
+          line("call $__slice");
+        } else {
+        if (ty_float(t) & texteq(p, n, "toBits")) {
+          want(40); want(41);
+          if (ty_narrowfloat(t)) { line("i32.reinterpret_f32"); t = TY_U32; } else {
+            line("i64.reinterpret_f64");
+            t = TY_U64;
+          }
+        } else {
+          i32 mi = meth_find(t, p, n);
+          if (mi != 0 - 1 & ispunct(40)) {
+            next();
+            args(A_PARAM, meths[mi].pstart, meths[mi].np);
+            word("call"); mangled(t, p, n); nl();
+            t = meths[mi].ret;
+          } else {
+            i32 fi = field_index(t, p, n);
+            if (fi == 0 - 1) { oops(); } else {
+              i32 ft = fields[types[t].fstart + fi].ty;
+              if (ty_packed(ft) != 0) {
+                emits("struct.get"); signedsuffix(ft); sp(); tyname(t); sp(); emitn(fi); nl();
+              } else {
+                word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+              }
+              t = ft;
+            }
+          }
+        }}}}}}}}}
+      } else {
+        next();
+        expr();
+        want(93);
+        if (types[t].kind != T_ARRAY) { oops(); }
+        // `s[i]` on a string is the character, which is a string of one byte rather than the
+        // byte — `inst[i] == "<"` is how the corpus reads a character, and comparing a byte
+        // with a string would be a type error one rung down.
+        if (t == strty) {
+          usedcharat = 1;
+          line("call $__charat");
+        } else {
+        i32 et = types[t].elem;
+        if (ty_packed(et) != 0) {
+          emits("array.get"); signedsuffix(et); sp(); tyname(t); nl();
+        } else {
+          word("array.get"); tyname(t); nl();
+        }
+        t = et;
+        }
+      }
+    }}
+  }
+  return t;
+}
+
+// **A type index that is not one has no members.** After something fails to resolve, `0 - 1` is
+// carried as a type and reaches every lookup keyed by one — where `types[t]` is a read past the
+// end rather than an answer. Refusing to look is the answer that lets the refusal already
+// reported be the one a reader sees.
+i32 ty_known(i32 t) { return t >= 0 & t < ntype; }
+
+// **Not a `ty_kind` that answers a harmless default.** That was tried: an unknown type answering
+// `T_NUM` reads as "nothing special" to every branch keyed on a kind, and a parser that keeps
+// going on a type it does not have found a cycle between `primary` and `postfix` — 234 corpus
+// files went from one trap each to a stack overflow, which is a worse answer than the trap. A
+// lookup may decline to look; it may not invent what it found.
+
+i32 field_index(i32 t, i32 p, i32 n) {
+  if (ty_known(t) == 0) { return 0 - 1; }
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < types[t].nfields) {
+    i32 f = types[t].fstart + i;
+    if (fields[f].namelen == n & samebytes(p, n, fields[f].nameptr)) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 primary() {
+  if (kind() == K_STR) {
+    konst(str_add(tstart(), tlen()));
+    usedstr = 1;
+    line("call $__strlit");
+    next();
+    return postfix(string_type());
+  }
+  if (kind() == K_INT) { konst(val()); next(); return TY_I32; }
+  if (kind() == K_BIGINT) {
+    word("i64.const");
+    // Without the separators: `1_000_000` is a number to wac and not to the assembler.
+    i32 bi = 0;
+    while (bi < tlen()) {
+      if (load8(src + tstart() + bi) != 95) { emit1(load8(src + tstart() + bi)); }
+      bi = bi + 1;
+    }
+    nl();
+    next();
+    return postfix(TY_I64);
+  }
+  if (kind() == K_FLOAT) {
+    word("f64.const");
+    emitname(tstart(), tlen());
+    nl();
+    next();
+    return TY_F64;
+  }
+  if (ispunct(40)) { next(); i32 t0 = expr(); want(41); return postfix(t0); }
+  if (ispunct(45)) {
+    // Negation, at whatever width its operand turns out to be — so the zero has to be emitted
+    // after the operand's type is known, which means holding the operand in a slot.
+    next();
+    i32 nt2 = primary();
+    i32 held = slot_new(nt2);
+    word("local.set"); slotname(held); nl();
+    if (ty_float(nt2)) {
+      // `f64.neg` exists, so a float does not need the zero at all.
+      word("local.get"); slotname(held); nl();
+      line("f64.neg");
+      return nt2;
+    }
+    if (ty_wide(nt2)) { word("i64.const"); emitn(0); nl(); } else { konst(0); }
+    word("local.get"); slotname(held); nl();
+    binop(nt2, "sub");
+    return nt2;
+  }
+  if (ispunct(33)) { next(); i32 nt3 = primary(); opprefix(nt3); emits("eqz"); nl(); return TY_BOOL; }
+  if (ispunct(126)) {
+    next();
+    i32 nt4 = primary();
+    if (ty_wide(nt4)) { word("i64.const"); emitn(-1); nl(); } else { konst(-1); }
+    binop(nt4, "xor");
+    return nt4;
+  }
+  if (isword("true")) { next(); konst(1); return TY_BOOL; }
+  if (isword("false")) { next(); konst(0); return TY_BOOL; }
+  if (isword("null")) { next(); line("ref.null none"); return TY_NULL; }
+  if (isword("match")) { return match_expr(outbuf); }
+  // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
+  // else that begins an expression does.
+  // `string.fromBytes(b)` and `string.toBytes(s)` are both the identity, because a `string`
+  // here *is* a `u8[]`. `string.fromCodepoint(c)` is not: it is UTF-8, and the answer is one
+  // to four bytes depending on the codepoint.
+  if (isword("string") & aheadIs(1, 46)) {
+    next(); next();
+    i32 sp2 = tstart();
+    i32 sn2 = tlen();
+    next();
+    want(40);
+    expr();
+    want(41);
+    if (texteq(sp2, sn2, "fromCodepoint")) {
+      usedfromcp = 1;
+      line("call $__fromcp");
+    }
+    return postfix(string_type());
+  }
+  i32 pt = prim_type();
+  // `f64.fromBits(x)` — a static on a builtin type, which the construction path would read as a
+  // missing `(` and refuse. The bits stay and only what reads them differs.
+  if (pt != 0 - 1 & aheadIs(1, 46)) {
+    next(); next();
+    i32 bp = tstart();
+    i32 bn = tlen();
+    next();
+    if (ty_float(pt) & (texteq(bp, bn, "fromBits") | texteq(bp, bn, "toBits"))) {
+      want(40);
+      expr();
+      want(41);
+      i32 narrow = ty_narrowfloat(pt);
+      if (texteq(bp, bn, "fromBits")) {
+        if (narrow) { line("f32.reinterpret_i32"); return postfix(TY_F32); }
+        line("f64.reinterpret_i64");
+        return postfix(TY_F64);
+      }
+      if (narrow) { line("i32.reinterpret_f32"); return postfix(TY_U32); }
+      line("i64.reinterpret_f64");
+      return postfix(TY_U64);
+    }
+    oops();
+    return 0;
+  }
+  if (pt != 0 - 1) { next(); return postfix(construct(pt)); }
+  // `string.fromBytes(b)` is the identity, because a `string` here *is* a `u8[]` — the same reason
+  // `s.toBytes()` is. Checked before the construction path, which would read the `.` as a missing
+  // `(` and refuse.
+  if (is_string_word() & aheadIs(1, 46)) {
+    next(); next();
+    i32 mp3 = tstart();
+    i32 mn3 = tlen();
+    next();
+    if (texteq(mp3, mn3, "fromBytes")) {
+      want(40);
+      expr();
+      want(41);
+      return postfix(string_type());
+    }
+    oops();
+    return 0;
+  }
+  if (is_string_word()) { next(); return postfix(construct(string_type())); }
+  if (kind() == K_NAME) {
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    // **A bound letter, used as a type in an expression.** `T[0]()` inside `Vec<T>` is a
+    // construction of whatever `T` is — and only `parse_type` consulted the substitution, so the
+    // expression grammar read `T` as a name nobody had declared.
+    i32 sb = sub_find(p, n);
+    if (sb != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(sb)); }
+    i32 tmc = tmpl_find(p, n);
+    i32 st = ty_named(p, n);
+    // **A template's own name is not a type to look up.** Every instantiation of `Vec<T>` is
+    // registered in the type table under the bare name `Vec`, so `ty_named` answers with whichever
+    // one it finds first. That is right while there is one and wrong the moment there are two:
+    // inside `Vec<T>`'s own body, `Vec(...)` means *this* instantiation, and `instantiate` — which
+    // consults `cur_inst_ty` and then the slot — is the only thing that knows which that is.
+    //
+    // What it looked like: `WVec<T> create() { return WVec(T[](), 0); }` monomorphised for
+    // `WVec<i32>` emitted `func $WVec_128_create -> refnull $s128` whose body was `struct.new
+    // $s162` — the declared return type from one instantiation and the constructed value from the
+    // other. Nothing refused; the engine did, six hundred functions later.
+    if (tmc != 0 - 1) { st = 0 - 1; }
+    if (st != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(st)); }
+    if (tmc != 0 - 1) {
+      // `Option.Some(v)` — the enum names the variant. Which *instantiation* comes from the slot,
+      // which for a `return` is the function's declared return type.
+      if (ispunct(46)) {
+        i32 owner = expect_ty;
+        if (owner == 0 - 1) { owner = cur_inst_ty; }
+        next();
+        i32 vp2 = tstart();
+        i32 vn2 = tlen();
+        next();
+        i32 gm = meth_find(owner, vp2, vn2);
+        if (gm != 0 - 1 & ispunct(40)) {
+          next();
+          args(A_PARAM, meths[gm].pstart, meths[gm].np);
+          word("call"); mangled(owner, vp2, vn2); nl();
+          return postfix(meths[gm].ret);
+        }
+        i32 qv = var_owned(owner, vp2, vn2);
+        if (qv == 0 - 1) { oops(); return 0; }
+        return postfix(construct_variant(qv));
+      }
+      i32 ity = instantiate(tmc);
+      return postfix(construct(ity));
+    }
+    // `Type.name(...)` — a static method or a qualified variant, told apart by which table has it.
+    // A static method is one the source never gave a `this`, so nothing special happens at the call
+    // beyond not having a receiver to push.
+    if (st != 0 - 1 & ispunct(46)) {
+      next();
+      i32 vp3 = tstart();
+      i32 vn3 = tlen();
+      next();
+      i32 sm = meth_find(st, vp3, vn3);
+      if (sm != 0 - 1 & ispunct(40)) {
+        next();
+        args(A_PARAM, meths[sm].pstart, meths[sm].np);
+        word("call"); mangled(st, vp3, vn3); nl();
+        return postfix(meths[sm].ret);
+      }
+      i32 qv2 = var_owned(st, vp3, vn3);
+      if (qv2 == 0 - 1) { oops(); return 0; }
+      return postfix(construct_variant(qv2));
+    }
+    i32 vi = var_find(p, n);
+    if (vi != 0 - 1) { return postfix(construct_variant(vi)); }
+    // **The locals first.** A parameter of funcref type called as `f(x)` is not a call to a
+    // function named `f`, and checking the call shape before the name is bound emits one anyway.
+    i32 li = loc_find(p, n);
+    if (li != 0 - 1) {
+      // A call *through* a value: the arguments go first and the function last, which is what
+      // `call_ref` takes — and it names the signature rather than the function.
+      if (types[loc_type(li)].kind == T_FUNC & ispunct(40)) {
+        next();
+        args(A_FUNCREF, types[loc_type(li)].fstart, types[loc_type(li)].nfields);
+        word("local.get"); slotname(li); nl();
+        word("call_ref"); tyname(loc_type(li)); nl();
+        return postfix(types[loc_type(li)].elem);
+      }
+      word("local.get"); slotname(li); nl();
+      return postfix(loc_type(li));
+    }
+    i32 gi = glo_find(p, n);
+    if (gi != 0 - 1) {
+      if (types[glo_type(gi)].kind == T_FUNC & ispunct(40)) {
+        next();
+        args(A_FUNCREF, types[glo_type(gi)].fstart, types[glo_type(gi)].nfields);
+        word("global.get"); gloname(gi); nl();
+        word("call_ref"); tyname(glo_type(gi)); nl();
+        return postfix(types[glo_type(gi)].elem);
+      }
+      word("global.get"); gloname(gi); nl();
+      return postfix(glo_type(gi));
+    }
+    // A function's *name*, with no call after it, is the function as a value. Which funcref type it
+    // has comes from the slot, the same way a bare template name gets its arguments.
+    i32 fnv = fn_find(p, n);
+    if (fnv != 0 - 1 & ispunct(40) == 0) {
+      word("ref.func"); emit1(36); emitname(p, n); nl();
+      if (expect_ty != 0 - 1) { return postfix(expect_ty); }
+      return postfix(0);
+    }
+    if (ispunct(40)) {
+      // Refused rather than compiled into something plausible: a generic function's instantiation
+      // is not built, and a `call` to a name that was never emitted would be caught by the
+      // assembler with a worse message than this one.
+      if (gfn_find(p, n) != 0 - 1) { oops(); return 0; }
+      next();
+      i32 fi2 = fn_find(p, n);
+      if (fi2 == 0 - 1) { args(A_NONE, 0, 0); } else {
+        args(A_PARAM, fns[fi2].pstart, fns[fi2].np);
+      }
+      word("call"); emit1(36); emitname(p, n); nl();
+      i32 fi2 = fn_find(p, n);
+      i32 rt = 0;
+      if (fi2 != 0 - 1) { rt = fns[fi2].ret; }
+      return postfix(rt);
+    }
+    // A bare `Type.staticMethod(...)` reaches here as a name with no local: wac writes a static
+    // call that way, and stage 2 resolves it as `$Type_name`.
+    if (ispunct(46)) {
+      i32 ot = ty_named(p, n);
+      if (ot != 0 - 1) { return postfix(ot); }
+    }
+    oops();
+    return 0;
+  }
+  oops();
+  return 0;
+}
+
+// `x as i64`, `n as u32`. `as!` is a *checked* cast in wac and traps on overflow; stage 3 emits the
+
+// **The conversion that belongs in front of code already written.** A binary operator's left
+// operand is emitted before its right is even read, and wasm wants both the same width — so
+// when the *right* turns out to be the wider one, `0 - v` on an i64 being the case, the
+// instruction has to go where the left's code ended. The buffer is opened at that mark and the
+// instruction dropped in, which is cheaper than emitting every right operand to scratch on the
+// chance that this happens. The block forms have no choice but scratch; this one does.
+i32 insert_op(i32 mark, i32 s) {
+  i32 n = load(s) + 1;
+  if (dp + n >= dstcap) { overflowed = 1; tp = ntok; return 0; }
+  i32 i = dp;
+  while (i > mark) {
+    store8(dst + i + n - 1, load8(dst + i - 1));
+    i = i - 1;
+  }
+  dp = dp + n;
+  i32 back = dp;
+  dp = mark;
+  emits(s);
+  nl();
+  dp = back;
+  return 0;
+}
+
+// Both operands at one width, and the answer's type. `convert` moves the right, which is on
+// top; this moves the left, which is not.
+i32 balance(i32 mark, i32 lt, i32 rt) {
+  if (ty_isnum(lt) == 0 | ty_isnum(rt) == 0) { return lt; }
+  if (ty_float(lt) == 0 & ty_float(rt)) {
+    if (ty_wide(lt)) {
+      if (ty_signed(lt)) { insert_op(mark, "f64.convert_i64_s"); } else {
+        insert_op(mark, "f64.convert_i64_u");
+      }
+    } else {
+      if (ty_signed(lt)) { insert_op(mark, "f64.convert_i32_s"); } else {
+        insert_op(mark, "f64.convert_i32_u");
+      }
+    }
+    if (ty_narrowfloat(rt)) { insert_op(mark, "f32.demote_f64"); }
+    return rt;
+  }
+  if (ty_float(lt) == 0 & ty_float(rt) == 0 & ty_wide(rt) & ty_wide(lt) == 0) {
+    if (ty_signed(lt)) { insert_op(mark, "i64.extend_i32_s"); } else {
+      insert_op(mark, "i64.extend_i32_u");
+    }
+    return rt;
+  }
+  convert(lt, rt);
+  return lt;
+}
+
+// same conversion and does not check, which is a gap the spec names.
+i32 cast() {
+  i32 t = primary();
+  while (isword("as")) {
+    next();
+    // `as!` is checked, `as@` reinterprets and `as~` truncates; all three emit the same convenly `as!`
+    // is a gap — it should trap on overflow and does not.
+    eat(33);
+    eat(64);
+    eat(126);
+    i32 to = parse_type();
+    // **`x as T ? a : b` — the `?` belongs to the ternary, not to the type.** `parse_type` ate
+    // it as a nullable marker, the ternary then found no `?`, and a correct program was refused
+    // at the token after it. The ambiguity is real; wac resolves it toward the ternary and so
+    // does this, by the same test: the last thing the type ate was a `?` and what follows can
+    // start an expression. `x as T?` before `;`, `)` or an operator is untouched, because none
+    // of those begin one. See wac's `issues/lang/closed/0124`, which is the same bug there.
+    //
+    // Nothing undoes the nullability the way wac's `tyOfNullableInner` does: every reference
+    // wac-L5 emits is already nullable, so `T?` and `T` are one type here and there is nothing
+    // to take back but the token.
+    if (type_q & starts_expr()) { tp = tp - 1; }
+    if (ty_isnum(t) & ty_isnum(to)) {
+      // To and from a float, which is four instructions and no reinterpretation: an integer and a
+      // double share no bits worth keeping.
+      if (ty_float(to) & ty_float(t) == 0) {
+        opprefix(to); emits("convert");
+        if (ty_wide(t)) { emits("_i64"); } else { emits("_i32"); }
+        if (ty_signed(t)) { emits("_s"); } else { emits("_u"); }
+        nl();
+      }
+      if (ty_float(t) & ty_float(to) == 0) {
+        if (ty_wide(to)) { emits("i64.trunc"); } else { emits("i32.trunc"); }
+        if (ty_narrowfloat(t)) { emits("_f32"); } else { emits("_f64"); }
+        if (ty_signed(to)) { emits("_s"); } else { emits("_u"); }
+        nl();
+      }
+      // One float to the other, which is a real instruction rather than a reinterpretation.
+      if (ty_float(t) & ty_float(to) & ty_narrowfloat(t) != ty_narrowfloat(to)) {
+        if (ty_narrowfloat(to)) { line("f32.demote_f64"); } else { line("f64.promote_f32"); }
+      }
+      if (ty_float(to) | ty_float(t)) { t = to; } else {
+      if (ty_wide(to) & ty_wide(t) == 0) {
+        // `word` puts a space after what it writes, and an instruction's suffix is part of its
+        // name — so this is `emits` and not `word`, which is a one-character mistake that reads as
+        // an unknown instruction three rungs down.
+        emits("i64.extend_i32");
+        if (ty_signed(t)) { emits("_s"); } else { emits("_u"); }
+        nl();
+      }
+      if (ty_wide(to) == 0 & ty_wide(t)) { line("i32.wrap_i64"); }
+      // Everything else is a reinterpretation: `i32` and `u32` are one wasm type, and narrowing to
+      // `u8` is what the store does.
+      }
+    }
+    t = to;
+  }
+  return t;
+}
+
+i32 mul() {
+  i32 t = cast();
+  while (ispunct(42) | ispunct(47) | ispunct(37)) {
+    i32 op = val();
+    next();
+    i32 m_cast = dp; t = balance(m_cast, t, cast());
+    if (op == 42) { binop(t, "mul"); } else {
+      if (op == 47) { binop_signed(t, "div"); } else { binop_signed(t, "rem"); }
+    }
+  }
+  return t;
+}
+
+i32 add() {
+  i32 t = mul();
+  while (ispunct(43) | ispunct(45)) {
+    i32 op = val();
+    next();
+    i32 m_mul = dp; t = balance(m_mul, t, mul());
+    if (op == 43) {
+      if (t == strty & strty != 0 - 1) { usedcat = 1; line("call $__concat"); } else {
+        binop(t, "add");
+      }
+    } else { binop(t, "sub"); }
+  }
+  return t;
+}
+
+i32 shift() {
+  i32 t = add();
+  while (ispunct(15420) | ispunct(15934)) {
+    i32 op = val();
+    next();
+    // **`>>>` is `>>` followed by `>`,** because the lexer packs two of a punctuation character
+    // and no more. Taking the third here is cheaper than a third case in the lexer, and this is
+    // the only place three of them mean anything. The shift is then unsigned whatever the
+    // operand's type says, which is the whole point of writing it.
+    i32 logical = 0;
+    if (op == 15934 & ispunct(62)) { next(); logical = 1; }
+    i32 m_add = dp; t = balance(m_add, t, add());
+    if (op == 15420) { binop(t, "shl"); } else {
+      if (logical) { opprefix(t); emits("shr_u"); nl(); } else { binop_signed(t, "shr"); }
+    }
+  }
+  return t;
+}
+
+i32 rel() {
+  i32 t = shift();
+  while (ispunct(60) | ispunct(62) | ispunct(15676) | ispunct(15678)) {
+    i32 op = val();
+    next();
+    i32 m_shift = dp;
+    i32 rt = shift();
+    // **Strings order lexicographically**, which `ch >= "A"` in the corpus relies on. One
+    // helper answers the sign of the difference and the four operators are that sign against
+    // zero — the same shape the integer comparisons already have.
+    if (t == strty & rt == strty) {
+      usedcmp = 1;
+      line("call $__strcmp");
+      konst(0);
+      t = TY_I32;
+    } else {
+      t = balance(m_shift, t, rt);
+    }
+    if (op == 60) { binop_signed(t, "lt"); } else {
+      if (op == 62) { binop_signed(t, "gt"); } else {
+        if (op == 15676) { binop_signed(t, "le"); } else { binop_signed(t, "ge"); }
+      }
+    }
+    // A comparison answers a bool however wide its operands were.
+    t = TY_BOOL;
+  }
+  return t;
+}
+
+i32 equality() {
+  i32 t = rel();
+  // **`x is null`**, which is how wac spells it — 158 times in `packages/wacc/src` against three
+  // `== null`. Both compile to `ref.is_null`; `==` on two references would be `i32.eq`, which is a
+  // type error, so the spelling that reads best is also the only one that works.
+  while (isword("is")) {
+    next();
+    i32 negated = eatword("not");
+    // **`x is null` and `x is y` are different questions** with the same keyword: the first
+    // asks whether there is an object and the second whether it is *that* object. Reading
+    // `null` as just another right operand emitted a ref.is_null against the left and left the
+    // right unparsed, which is how one missing operator became nineteen thousand refusals.
+    if (isword("null")) {
+      next();
+      line("ref.is_null");
+    } else {
+      rel();
+      line("ref.eq");
+    }
+    if (negated) { line("i32.eqz"); }
+    t = TY_BOOL;
+  }
+  while (ispunct(15677) | ispunct(15649)) {
+    i32 op = val();
+    next();
+    // **Checked before the right operand is parsed**, not after — `rel()` would have consumed the
+    // `null` and emitted a `ref.null` for it, and then `ref.is_null` would test the wrong thing.
+    if (isword("null")) {
+      next();
+      line("ref.is_null");
+      if (op == 15649) { line("i32.eqz"); }
+      t = TY_BOOL;
+    } else {
+    i32 m_rel = dp; t = balance(m_rel, t, rel());
+    if (t == strty & strty != 0 - 1) {
+      // **Two strings compare by content.** `i32.eq` on two references answers whether they are the
+      // same object, which for a literal built fresh at every use is always false.
+      usedeq = 1;
+      line("call $__streq");
+      if (op == 15649) { line("i32.eqz"); }
+    } else {
+      if (op == 15677) { binop(t, "eq"); } else { binop(t, "ne"); }
+    }
+    t = TY_BOOL;
+    }
+  }
+  return t;
+}
+
+i32 bitand() {
+  i32 t = equality();
+  while (ispunct(38)) { next(); i32 m_equality = dp; t = balance(m_equality, t, equality()); binop(t, "and"); }
+  return t;
+}
+
+i32 bitxor() {
+  i32 t = bitand();
+  while (ispunct(94)) { next(); i32 m_bitand = dp; t = balance(m_bitand, t, bitand()); binop(t, "xor"); }
+  return t;
+}
+
+i32 bitor() {
+  i32 t = bitxor();
+  while (ispunct(124)) { next(); i32 m_bitxor = dp; t = balance(m_bitxor, t, bitxor()); binop(t, "or"); }
+  return t;
+}
+
+// **Short-circuit, so an `if` and not an `and`.** `a && b` must not evaluate `b` when `a` is false,
+// and wac programs rely on it — a guard followed by a dereference is the usual shape.
+i32 logand() {
+  i32 t = bitor();
+  while (ispunct(9766)) {
+    next();
+    i32 l = newlabel();
+    word("if"); label(l); sp(); word("->"); line("i32");
+    bitor();
+    line("i32.eqz");
+    line("i32.eqz");
+    line("else");
+    konst(0);
+    line("end");
+    t = 0;
+  }
+  return t;
+}
+
+i32 logor() {
+  i32 t = logand();
+  while (ispunct(31868)) {
+    next();
+    i32 l = newlabel();
+    word("if"); label(l); sp(); word("->"); line("i32");
+    konst(1);
+    line("else");
+    logand();
+    line("i32.eqz");
+    line("i32.eqz");
+    line("end");
+    t = 0;
+  }
+  return t;
+}
+
+// A variant: the tag, then the payload struct, then the enum struct — in field order, because wasm
+// takes a struct's fields in the order they are declared.
+i32 construct_variant(i32 vi) {
+  i32 owner = vars[vi].owner;
+  konst(var_tag(vi));
+  if (vars[vi].payload == 0 - 1) {
+    line("ref.null none");
+    if (ispunct(40)) { next(); want(41); }
+  } else {
+    want(40);
+    args(A_NONE, 0, 0);
+    word("struct.new"); tyname(vars[vi].payload); nl();
+  }
+  word("struct.new"); tyname(owner); nl();
+  return owner;
+}
+
+// **`match` is both an expression and a statement in wac**, and they differ by one token: an arm's
+// body is followed by `,` in the expression form and by `;` in the statement form. Both compile to
+// the same shape — the scrutinee in a slot, one block per arm, a tag compare and a branch — so the
+// only difference here is whether the arms leave a value.
+i32 match_body(i32 wantValue, i32 out) {
+  want(40);
+  i32 et = expr();
+  want(41);
+  i32 slot = slot_new(et);
+  word("local.set"); slotname(slot); nl();
+  i32 done = newlabel();
+  // The arms go to scratch, because the block's result type is one of theirs and none of them has
+  // been read yet.
+  i32 level = scrdepth;
+  i32 saved = scratch_begin();
+  i32 armty = TY_I32;
+  // Where the default arm's code sits in the scratch, so it can be moved to the end. See below.
+  i32 elseAt = 0 - 1;
+  i32 elseLen = 0;
+  want(123);
+  while (ispunct(125) == 0 & kind() != K_EOF) {
+    // **`else:` is an arm with no tag test.** It reads like a variant named `else` otherwise, and a
+    // `match` with a default is what wac writes whenever the interesting cases are a minority —
+    // which in a compiler over an AST is most of them.
+    if (isword("else")) {
+      next();
+      want(58);
+      elseAt = dp;
+      i32 emark = nloc;
+      if (wantValue) {
+        armty = expr();
+        if (ispunct(44)) { next(); }
+      } else {
+        if (ispunct(123)) { block(); } else { statement(); }
+      }
+      nloc = emark;
+      word("br"); label(done); nl();
+      elseLen = dp - elseAt;
+    } else {
+    eatword("case");
+    i32 vp = tstart();
+    i32 vn = tlen();
+    next();
+    i32 vi = var_find(vp, vn);
+    // Loudly: a `case` naming no variant would index the variant table at -1, and a GC array says
+    // so at runtime rather than reading whatever is next in memory — which is the one place this
+    // ladder's newest rung is better off than its oldest.
+    if (vi == 0 - 1) { oops(); return 0; }
+    i32 skip = newlabel();
+    word("block"); label(skip); sp(); line("->");
+    word("local.get"); slotname(slot); nl();
+    word("struct.get"); tyname(et); sp(); line("0");
+    konst(var_tag(vi));
+    line("i32.ne");
+    word("br_if"); label(skip); nl();
+
+    i32 mark = nloc;
+    if (ispunct(40)) {
+      next();
+      i32 pay = vars[vi].payload;
+      i32 k = 0;
+      while (ispunct(41) == 0) {
+        // `_` binds nothing, which wac uses whenever the payload is not read.
+        if (isword("_") == 0) {
+          i32 ft = fields[types[pay].fstart + k].ty;
+          word("local.get"); slotname(slot); nl();
+          word("struct.get"); tyname(et); sp(); line("1");
+          word("ref.cast"); word("ref"); tyname(pay); nl();
+          word("struct.get"); tyname(pay); sp(); emitn(k); nl();
+          word("local.set"); slotname(loc_add(tstart(), tlen(), ft)); nl();
+        }
+        k = k + 1;
+        next();
+        if (ispunct(44)) { next(); }
+      }
+      want(41);
+    }
+    want(58);
+    if (wantValue) {
+      armty = expr();
+      if (ispunct(44)) { next(); }
+    } else {
+      if (ispunct(123)) { block(); } else { statement(); }
+    }
+    nloc = mark;
+    word("br"); label(done); nl();
+    line("end");
+    }
+  }
+  want(125);
+  i32 armlen = scratch_end(out, saved);
+
+  word("block"); label(done); sp(); word("->");
+  if (wantValue) { slotvaltype(armty); nl(); } else { nl(); }
+  // **The default arm goes last however it was written.** It has no tag test, so wherever its code
+  // sits is where the match stops — and written before the cases it answers every one of them.
+  // wacc's own `typeOfE` writes `match (callee.kind) { else: ... case Member(obj, nameTok): ... }`,
+  // so every method call took the default and came back untyped: `.len()` on an array was declined
+  // as an untyped call in a compiler that had read the arm for it and jumped over it.
+  if (elseAt == 0 - 1) {
+    scratch_copy(level, armlen);
+  } else {
+    scratch_copy_range(level, 0, elseAt);
+    scratch_copy_range(level, elseAt + elseLen, armlen - elseAt - elseLen);
+    scratch_copy_range(level, elseAt, elseLen);
+  }
+  // A tag matching no arm falls out. wac's `match` is exhaustive and this rung does not check it,
+  // so the expression form has to leave *something* — and an unreachable default is the honest one.
+  if (wantValue) { zero_of(armty); }
+  line("end");
+  return armty;
+}
+
+i32 match_expr(i32 out) {
+  next();
+  return match_body(1, out);
+}
+
+i32 ternary() {
+  i32 t = logor();
+  if (ispunct(63)) {
+    next();
+    i32 l = newlabel();
+    // The block's result type is the arms' type, and neither arm has been read when the header
+    // has to be written — so the first one goes to scratch and the header is written in front of
+    // it, exactly as `match` does. Writing `i32` here instead was right for every arm that is a
+    // number and wrong for a reference, which is what `p.isPrim() ? Ty[]() : p.args()` is.
+    // *Both* arms go to scratch, not just the first: a bare `null` in either one has no type,
+    // so the header cannot be written until the other has been read. Two levels deep, which the
+    // scratch stack is built for.
+    i32 levelA = scrdepth;
+    i32 savedA = scratch_begin();
+    i32 t1 = expr();
+    i32 lenA = dp;
+    i32 levelB = scrdepth;
+    i32 savedB = scratch_begin();
+    want(58);
+    i32 t2 = ternary();
+    i32 lenB = scratch_end(outbuf, savedB);
+    scratch_end(outbuf, savedA);
+    i32 armty = t1;
+    if (t1 == TY_NULL) { armty = t2; }
+    if (t2 == TY_NULL) { armty = t1; }
+    if (ty_isnum(armty)) {
+      if (ty_isnum(t1) & ty_isnum(t2)) {
+        if (ty_wide(t2) | ty_float(t2)) { armty = t2; }
+      }
+    }
+    word("if"); label(l); sp(); word("->"); slotvaltype(armty); nl();
+    scratch_copy(levelA, lenA);
+    // Either arm may be narrower than the block: `wide ? 4294967295 : 2147483647` has one
+    // literal that fits an i32 and one that does not, and wasm wants both at the block's width.
+    convert(armty, t1);
+    line("else");
+    scratch_copy(levelB, lenB);
+    convert(armty, t2);
+    line("end");
+    // The two arms agree in wac, and where one is wider than the other — a plain integer
+    // against an i64 — the wider one is the answer.
+    t = armty;
+  }
+  return t;
+}
+
+i32 expr() { return ternary(); }
+
+// ---------------------------------------------------------------- statements
+
+i32 block() {
+  want(123);
+  i32 mark = nloc;
+  while (ispunct(125) == 0 & kind() != K_EOF) { statement(); }
+  want(125);
+  nloc = mark;
+  return 0;
+}
+
+// The parameter list of a declaration, recorded for its widths and skipped otherwise. This runs
+// in the scanning pass, before every named type exists, so a type counts as a primitive only when
+// it is exactly one token — `i64` is, `Node` and `u8[]` are not, and neither of those can want a
+// conversion. Leaves the cursor after the `)`.
+i32 scan_params() {
+  i32 st = nfnparam;
+  next();
+  while (ispunct(41) == 0 & kind() != K_EOF) {
+    if (isword("this")) { next(); } else {
+      i32 s0 = tp;
+      i32 pt = prim_type();
+      i32 e0 = skip_type(tp);
+      if (e0 != s0 + 1) { pt = 0 - 1; }
+      if (pt == 0 - 1) { pt = TY_I32; }
+      tp = e0;
+      next();
+      if (full(nfnparam, 16384, "parameters")) { return st; }
+      fnparams[nfnparam] = pt;
+      nfnparam = nfnparam + 1;
+    }
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  return st;
+}
+
+i32 declaration() {
+  eatword("const");
+  i32 t = parse_type();
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  i32 savedExpect = expect_ty;
+  expect_ty = t;
+  // The initialiser is widened to the declared type, exactly as an assignment to the same
+  // local would be. `i64 v = 300;` is the case: 300 is written as a plain integer and the
+  // slot is sixty-four bits wide.
+  if (ispunct(61)) { next(); convert(t, expr()); expect_ty = savedExpect; } else {
+    expect_ty = savedExpect;
+    zero_of(t);
+  }
+  want(59);
+  word("local.set"); slotname(loc_add(p, n, t)); nl();
+  return 0;
+}
+
+// Does the `.field` or `[i]` chain starting here end in `=`? Without knowing, there is no way to
+// decide whether to emit the base as a value or as the target of a store.
+i32 chain_is_store() {
+  i32 i = tp + 1;
+  i32 ans = 0;
+  i32 going = 1;
+  while (going) {
+    if (toks[i].kind == K_PUNCT & toks[i].val == 46) { i = i + 2; } else {
+      if (toks[i].kind == K_PUNCT & toks[i].val == 91) {
+        i32 depth = 1;
+        i = i + 1;
+        while (depth > 0 & kind() != K_EOF) {
+          if (toks[i].kind == K_PUNCT & toks[i].val == 91) { depth = depth + 1; }
+          if (toks[i].kind == K_PUNCT & toks[i].val == 93) { depth = depth - 1; }
+          i = i + 1;
+        }
+      } else {
+        if (toks[i].kind == K_PUNCT) {
+          i32 v = toks[i].val;
+          // Everything that writes: plain, compound, and the two increments.
+          if (v == 61 | v == 15659 | v == 15661 | v == 15658 | v == 15663
+              | v == 11051 | v == 11565) { ans = 1; }
+        }
+        going = 0;
+      }
+    }
+  }
+  return ans;
+}
+
+// Which write is at the cursor: 0 for none, 61 for `=`, the operator's byte for a compound, and
+// 11051/11565 for the increments.
+i32 write_op() {
+  if (ispunct(61)) { return 61; }
+  if (ispunct(15659)) { return 43; }
+  if (ispunct(15661)) { return 45; }
+  if (ispunct(15658)) { return 42; }
+  if (ispunct(15663)) { return 47; }
+  if (ispunct(11051)) { return 11051; }
+  if (ispunct(11565)) { return 11565; }
+  return 0;
+}
+
+// The new value, given the old one is already on the stack. `++` is `+= 1` with the 1 implied.
+i32 write_value(i32 op, i32 t) {
+  next();
+  if (op == 11051) { konst(1); binop(t, "add"); return 0; }
+  if (op == 11565) { konst(1); binop(t, "sub"); return 0; }
+  if (op == 61) { return 0; }
+  convert(t, expr());
+  if (op == 43) { binop(t, "add"); }
+  if (op == 45) { binop(t, "sub"); }
+  if (op == 42) { binop(t, "mul"); }
+  if (op == 47) { binop_signed(t, "div"); }
+  return 0;
+}
+
+// The base, then the value, then the store — so the walk stops one step short of the end and
+// remembers what it was about to do.
+//
+// **A compound write reads before it writes**, and wasm's `struct.set` wants the reference *before*
+// the value — so the base is parked in a slot, read through, combined, and pushed again. `this.pos++`
+// is three temporaries and no other shape works.
+i32 store_through() {
+  i32 t = primary_base();
+  while (kind() != K_EOF) {
+    if (ispunct(46)) {
+      next();
+      i32 fp = tstart();
+      i32 fn2 = tlen();
+      next();
+      i32 fi = field_index(t, fp, fn2);
+      if (fi == 0 - 1) { oops(); return 0; }
+      i32 ft = fields[types[t].fstart + fi].ty;
+      i32 wop = write_op();
+      if (wop != 0) {
+        if (wop == 61) {
+          next();
+          expr();
+          want(59);
+          word("struct.set"); tyname(t); sp(); emitn(fi); nl();
+          return 0;
+        }
+        // A compound: the base is on the stack once and is needed twice.
+        i32 base = slot_new(t);
+        i32 val = slot_new(ft);
+        word("local.tee"); slotname(base); nl();
+        word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+        write_value(wop, ft);
+        want(59);
+        word("local.set"); slotname(val); nl();
+        word("local.get"); slotname(base); nl();
+        word("local.get"); slotname(val); nl();
+        word("struct.set"); tyname(t); sp(); emitn(fi); nl();
+        return 0;
+      }
+      word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+      t = ft;
+    } else {
+      i32 arr = slot_new(t);
+      word("local.set"); slotname(arr); nl();
+      next();
+      i32 idx = slot_new(TY_I32);
+      expr();
+      word("local.set"); slotname(idx); nl();
+      want(93);
+      i32 et = types[t].elem;
+      i32 wop2 = write_op();
+      if (wop2 != 0) {
+        word("local.get"); slotname(arr); nl();
+        word("local.get"); slotname(idx); nl();
+        if (wop2 == 61) {
+          next();
+          expr();
+          want(59);
+          word("array.set"); tyname(t); nl();
+          return 0;
+        }
+        i32 val2 = slot_new(et);
+        word("local.get"); slotname(arr); nl();
+        word("local.get"); slotname(idx); nl();
+        word("array.get"); tyname(t); nl();
+        write_value(wop2, et);
+        want(59);
+        word("local.set"); slotname(val2); nl();
+        word("local.get"); slotname(val2); nl();
+        word("array.set"); tyname(t); nl();
+        return 0;
+      }
+      word("local.get"); slotname(arr); nl();
+      word("local.get"); slotname(idx); nl();
+      if (ty_packed(et) != 0) {
+        emits("array.get"); signedsuffix(et); sp(); tyname(t); nl();
+      } else {
+        word("array.get"); tyname(t); nl();
+      }
+      t = et;
+    }
+  }
+  return 0;
+}
+
+// A bare name, emitted without following its postfix — which is what a store target needs.
+i32 primary_base() {
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  i32 li = loc_find(p, n);
+  if (li != 0 - 1) { word("local.get"); slotname(li); nl(); return loc_type(li); }
+  i32 gi = glo_find(p, n);
+  if (gi != 0 - 1) { word("global.get"); gloname(gi); nl(); return glo_type(gi); }
+  oops();
+  return 0;
+}
+
+// `x = e`, `x += e`, `x++`. The compound forms read the target first, which is why they are here
+// rather than in the expression grammar: wac has no assignment expression.
+i32 assign_or_expr() {
+  i32 p = tstart();
+  i32 n = tlen();
+  if (kind() == K_NAME) {
+    i32 compound = 0;
+    if (aheadIs(1, 15659)) { compound = 43; }
+    if (aheadIs(1, 15661)) { compound = 45; }
+    if (aheadIs(1, 15658)) { compound = 42; }
+    if (aheadIs(1, 15663)) { compound = 47; }
+    i32 incr = 0;
+    if (aheadIs(1, 11051)) { incr = 43; }
+    if (aheadIs(1, 11565)) { incr = 45; }
+
+    if (aheadIs(1, 61) | compound != 0 | incr != 0) {
+      i32 li = loc_find(p, n);
+      i32 gi = glo_find(p, n);
+      i32 vt = TY_I32;
+      if (li != 0 - 1) { vt = loc_type(li); } else {
+        if (gi != 0 - 1) { vt = glo_type(gi); }
+      }
+      next();
+      next();
+      if (incr != 0) {
+        if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+          word("global.get"); gloname(gi); nl();
+        }
+        one_of(vt);
+        if (incr == 43) { binop(vt, "add"); } else { binop(vt, "sub"); }
+      } else {
+        if (compound != 0) {
+          if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+            word("global.get"); gloname(gi); nl();
+          }
+          convert(vt, expr());
+          if (compound == 43) { binop(vt, "add"); } else {
+            if (compound == 45) { binop(vt, "sub"); } else {
+              if (compound == 42) { binop(vt, "mul"); } else { binop_signed(vt, "div"); }
+            }
+          }
+        } else {
+          convert(vt, expr());
+        }
+      }
+      want(59);
+      if (li != 0 - 1) { word("local.set"); slotname(li); nl(); } else {
+        if (gi != 0 - 1) { word("global.set"); gloname(gi); nl(); } else { oops(); }
+      }
+      return 0;
+    }
+  }
+  if (kind() == K_NAME & (aheadIs(1, 46) | aheadIs(1, 91))) {
+    if (chain_is_store()) { return store_through(); }
+  }
+  i32 dt = expr();
+  want(59);
+  // A call whose result is a value has to be dropped; one that answers nothing must not be, and
+  // wasm counts the stack exactly enough to notice either mistake.
+  if (dt != TY_VOID) { line("drop"); }
+  return 0;
+}
+
+i32 if_statement() {
+  next();
+  want(40);
+  expr();
+  want(41);
+  i32 l = newlabel();
+  word("if"); label(l); sp(); line("->");
+  if (ispunct(123)) { block(); } else { statement(); }
+  if (isword("else")) {
+    next();
+    line("else");
+    if (ispunct(123)) { block(); } else { statement(); }
+  }
+  line("end");
+  return 0;
+}
+
+i32 while_statement() {
+  next();
+  i32 lo = newlabel();
+  i32 li = newlabel();
+  i32 so = loop_out;
+  i32 si = loop_in;
+  loop_out = lo;
+  loop_in = li;
+  word("block"); label(lo); sp(); line("->");
+  word("loop"); label(li); sp(); line("->");
+  want(40);
+  expr();
+  want(41);
+  line("i32.eqz");
+  word("br_if"); label(lo); nl();
+  if (ispunct(123)) { block(); } else { statement(); }
+  word("br"); label(li); nl();
+  line("end");
+  line("end");
+  loop_out = so;
+  loop_in = si;
+  return 0;
+}
+
+// `for (init; cond; step) body` is a block holding a `while`, which is what it means. The init's
+// declaration is scoped to the loop, so the name table is marked and restored around the whole
+// thing rather than around the body.
+i32 for_statement() {
+  next();
+  want(40);
+  i32 mark = nloc;
+  if (ispunct(59)) { next(); } else {
+    if (looks_like_decl()) { declaration(); } else { assign_or_expr(); }
+  }
+  i32 lo = newlabel();
+  i32 li = newlabel();
+  word("block"); label(lo); sp(); line("->");
+  word("loop"); label(li); sp(); line("->");
+  if (ispunct(59)) { konst(1); } else { expr(); }
+  want(59);
+  line("i32.eqz");
+  word("br_if"); label(lo); nl();
+
+  // The step is read before the body and emitted after it, so the token cursor has to go back —
+  // which is free here, because the parser's whole state is one integer into the token array.
+  i32 stepAt = tp;
+  while (ispunct(41) == 0 & kind() != K_EOF) { next(); }
+  want(41);
+  // **`continue` must run the step.** So the body sits inside a block of its own and `continue`
+  // branches to *its* end, which falls through to the step — branching to the loop directly would
+  // skip it and spin.
+  i32 lc = newlabel();
+  i32 so2 = loop_out;
+  i32 si2 = loop_in;
+  loop_out = lo;
+  loop_in = lc;
+  word("block"); label(lc); sp(); line("->");
+  if (ispunct(123)) { block(); } else { statement(); }
+  line("end");
+  loop_out = so2;
+  loop_in = si2;
+  i32 afterBody = tp;
+  tp = stepAt;
+  if (ispunct(41) == 0) { assign_or_expr_nosemi(); }
+  tp = afterBody;
+
+  word("br"); label(li); nl();
+  line("end");
+  line("end");
+  nloc = mark;
+  return 0;
+}
+
+// The step of a `for`, which is an assignment without its semicolon.
+i32 assign_or_expr_nosemi() {
+  i32 p = tstart();
+  i32 n = tlen();
+  i32 li = loc_find(p, n);
+  i32 gi = glo_find(p, n);
+  i32 vt2 = TY_I32;
+  if (li != 0 - 1) { vt2 = loc_type(li); } else {
+    if (gi != 0 - 1) { vt2 = glo_type(gi); }
+  }
+  if (aheadIs(1, 11051) | aheadIs(1, 11565)) {
+    i32 up = 43;
+    if (aheadIs(1, 11565)) { up = 45; }
+    next(); next();
+    if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+      word("global.get"); gloname(gi); nl();
+    }
+    one_of(vt2);
+    if (up == 43) { binop(vt2, "add"); } else { binop(vt2, "sub"); }
+  } else {
+    i32 compound = 0;
+    if (aheadIs(1, 15659)) { compound = 43; }
+    if (aheadIs(1, 15661)) { compound = 45; }
+    next(); next();
+    if (compound != 0) {
+      if (li != 0 - 1) { word("local.get"); slotname(li); nl(); } else {
+        word("global.get"); gloname(gi); nl();
+      }
+      convert(vt2, expr());
+      if (compound == 43) { binop(vt2, "add"); } else { binop(vt2, "sub"); }
+    } else {
+      convert(vt2, expr());
+    }
+  }
+  if (li != 0 - 1) { word("local.set"); slotname(li); nl(); } else {
+    word("global.set"); gloname(gi); nl();
+  }
+  return 0;
+}
+
+i32 statement() {
+  if (isword("return")) {
+    next();
+    i32 savedE = expect_ty;
+    expect_ty = cur_ret;
+    if (ispunct(59)) { zero_of(cur_ret); } else { convert(cur_ret, expr()); }
+    expect_ty = savedE;
+    want(59);
+    line("return");
+    return 0;
+  }
+  if (isword("trap")) { next(); want(59); line("unreachable"); return 0; }
+  if (isword("break")) {
+    next(); want(59);
+    if (loop_out == 0 - 1) { oops(); } else { word("br"); label(loop_out); nl(); }
+    return 0;
+  }
+  if (isword("continue")) {
+    next(); want(59);
+    if (loop_in == 0 - 1) { oops(); } else { word("br"); label(loop_in); nl(); }
+    return 0;
+  }
+  if (isword("match")) { next(); match_body(0, outbuf); return 0; }
+  if (isword("if")) { return if_statement(); }
+  if (isword("while")) { return while_statement(); }
+  if (isword("for")) { return for_statement(); }
+  if (ispunct(123)) { return block(); }
+  if (looks_like_decl()) { return declaration(); }
+  return assign_or_expr();
+}
+
+// ---------------------------------------------------------------- declarations
+
+// 64 pages is 4,194,304 bytes, so the last valid address is one below that — a scratch buffer
+// placed *at* the limit is out of bounds on its first byte.
+// With 512 pages there is room to stop crowding: a function body, the block scratch and the type
+// directives each get a megabyte, well above the source and the output the host places below.
+i32 BODY = 25165824;
+
+// **A scratch stack**, because a block's result type is written before its arms are parsed and only
+// the arms know it. Emit them here, learn the type, then write the header in front — the same trick
+// a function body already needed for its locals, one level down and nestable.
+i32 SCR = 26214400;
+// **A level per open block, and a ternary opens two** — it holds its first arm while reading its
+// second, because the block's result type is one of theirs. So `a ? x : b ? y : c ? z : w`, which
+// is how a multi-way choice is written, nests two levels per arm and reached the end of memory at
+// four of them. A level was a megabyte and there was room for three; an arm is one expression, so
+// 128 KiB is generous and there is room for twenty-four.
+i32 SCRLEVEL = 131072;
+i32 SCRLEVELS = 24;
+i32 scrdepth = 0;
+i32 scrsaved = 0;
+
+i32 scratch_begin() {
+  scrsaved = dp;
+  scrdepth = scrdepth + 1;
+  // Past the last level, say so and stop rather than writing into whatever is next. `overflowed`
+  // truncates the output and the marker at the end names the cause; running off the end of memory
+  // names nothing at all.
+  if (scrdepth > SCRLEVELS) {
+    overflowed = 1;
+    tp = ntok;
+    scrdepth = SCRLEVELS;
+  }
+  to_buf(SCR + (scrdepth - 1) * SCRLEVEL, SCRLEVEL);
+  dp = 0;
+  return scrsaved;
+}
+
+// Answers the length written; the caller copies it after emitting whatever had to come first.
+i32 scratch_end(i32 out, i32 saved) {
+  i32 n = dp;
+  scrdepth = scrdepth - 1;
+  if (scrdepth > 0) {
+    to_buf(SCR + (scrdepth - 1) * SCRLEVEL, SCRLEVEL);
+  } else {
+    to_buf(out, outcap);
+  }
+  dp = saved;
+  return n;
+}
+
+i32 scratch_copy_range(i32 level, i32 from, i32 n) {
+  i32 k = 0;
+  while (k < n) { emit1(load8(SCR + level * SCRLEVEL + from + k)); k = k + 1; }
+  return 0;
+}
+
+i32 scratch_copy(i32 level, i32 n) {
+  return scratch_copy_range(level, 0, n);
+}
+
+i32 mowner = -1;
+
+// **Whether the declaration being emitted said `export`.** Every function used to be exported,
+// which ignored the keyword and made every module-private name have to be globally unique — two
+// modules each with their own `orVoid` collided as soon as they were flattened together.
+i32 fn_exported = 0;
+
+i32 slot_new(i32 t) {
+  if (full(nslot, 16384, "slots")) { return 0; }
+  slotty[nslot] = t;
+  nslot = nslot + 1;
+  return nslot - 1;
+}
+
+i32 function(i32 out, i32 ret, i32 np, i32 nn) {
+  want(40);
+  nloc = 0;
+  nslot = 0;
+  while (ispunct(41) == 0 & kind() != K_EOF) {
+    eatword("const");
+    if (isword("this")) { loc_add(tstart(), tlen(), mowner); next(); } else {
+      i32 pt = parse_type();
+      loc_add(tstart(), tlen(), pt);
+      next();
+    }
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  i32 nparams = nslot;
+  i32 savedRet = cur_ret;
+  cur_ret = ret;
+
+  i32 outp = dp;
+  i32 savedout = outbuf;
+  outbuf = BODY;
+  to_buf(BODY, bodycap);
+  dp = 0;
+  block();
+  i32 blen = dp;
+  outbuf = savedout;
+
+  to_buf(out, outcap);
+  dp = outp;
+  word("func");
+  if (mowner == 0 - 1) { emit1(36); emitname(np, nn); } else { mangled(mowner, np, nn); }
+  sp(); word("->"); slotvaltype(ret); nl();
+  i32 i = 0;
+  while (i < nparams) {
+    word("param"); slotvaltype(slotty[i]); sp(); slotname(i); nl();
+    i = i + 1;
+  }
+  i32 j = nparams;
+  while (j < nslot) {
+    word("local"); slotvaltype(slotty[j]); sp(); slotname(j); nl();
+    j = j + 1;
+  }
+  i32 k = 0;
+  while (k < blen) { emit1(load8(BODY + k)); k = k + 1; }
+  zero_of(ret);
+  line("end");
+  // `main` is exported whether or not it says so: it is the entry point, and a program whose
+  // entry point cannot be called is not a program.
+  if (mowner == 0 - 1 & (fn_exported | texteq(np, nn, "main"))) {
+    word("export"); emit1(34); emitname(np, nn); emit1(34); sp();
+    word("func"); emit1(36); emitname(np, nn); nl();
+  }
+  nl();
+  return 0;
+}
+
+// The `type` directives, into their own buffer and appended at the end — wac-L0 takes directives in
+// any order, so an array type first named inside the last function needs no pre-pass.
+i32 TYPEBUF = 29360128;
+i32 typep = 0;
+
+// 512 pages. wac-L5's own memory, not the one it writes into the program it emits.
+i32 MEMBYTES = 33554432;
+
+// **The layout, derived and checked once, instead of believed in four places.**
+//
+// The output buffer's bound is the distance to whatever the host put above it, because the host
+// chooses where the output and the source go and this only learns the two addresses. Deriving it
+// means a host that moves either one gets a bound that moves with it, where the twelve-megabyte
+// constant this replaces would have stayed twelve megabytes and written into the source.
+//
+// The three fixed regions are checked rather than derived, since their addresses are written above
+// and an overlap is a mistake in the writing. It has happened: the scratch stack once began exactly
+// where `TYPEBUF` does, and every buffer still reported the size it was supposed to have. A wrong
+// answer here is the kind that arrives as a corrupted type section a thousand lines later.
+i32 layout_check(i32 out) {
+  outcap = BODY - out;
+  if (src > out & src - out < outcap) { outcap = src - out; }
+  bodycap = SCR - BODY;
+  typecap = MEMBYTES - TYPEBUF;
+
+  i32 bad = 0;
+  if (out >= BODY) { bad = 1; }
+  if (BODY >= SCR) { bad = 1; }
+  if (SCR + SCRLEVELS * SCRLEVEL > TYPEBUF) { bad = 1; }
+  if (TYPEBUF >= MEMBYTES) { bad = 1; }
+  if (outcap < 1) { bad = 1; }
+  if (bad) {
+    // Nothing can be emitted safely, so this says what happened and stops. The marker is the
+    // assembler's, and it names the compiler rather than the program.
+    to_buf(out, 4096);
+    dp = 0;
+    line("!! wac-L5: the buffer layout overlaps — the compiler is misconfigured, not the program");
+    tp = ntok;
+  }
+  return bad;
+}
+
+i32 emit_typedecls() {
+  i32 saved = dst;
+  i32 savedcap = dstcap;
+  i32 savedp = dp;
+  to_buf(TYPEBUF, typecap);
+  dp = typep;
+  i32 i = 0;
+  while (i < ntype) {
+    // `string` shares `u8[]`'s wasm type, so it has no declaration of its own to write.
+    if (i == strty) { i = i; } else {
+    if (types[i].kind == T_STRUCT) {
+      word("type"); tyname(i); sp(); word("struct");
+      i32 j = 0;
+      while (j < types[i].nfields) {
+        valtype(fields[types[i].fstart + j].ty);
+        sp();
+        j = j + 1;
+      }
+      nl();
+    }
+    if (types[i].kind == T_ARRAY) {
+      word("type"); tyname(i); sp(); word("array"); valtype(types[i].elem); nl();
+    }
+    if (types[i].kind == T_ENUM) {
+      word("type"); tyname(i); sp(); word("struct"); word("i32"); line("anyref");
+    }
+    if (types[i].kind == T_FUNC) {
+      word("type"); tyname(i); sp(); word("func");
+      i32 fp = 0;
+      while (fp < types[i].nfields) {
+        slotvaltype(fparams[types[i].fstart + fp]);
+        sp();
+        fp = fp + 1;
+      }
+      word("->");
+      slotvaltype(types[i].elem);
+      nl();
+    }
+    }
+    i = i + 1;
+  }
+  typep = dp;
+  to_buf(saved, savedcap);
+  dp = savedp;
+  return 0;
+}
+
+// `struct Name { T f; … methods }` — a field is a type and a name and a `;`, a method is a type and
+// a name and a `(`.
+// Records a generic declaration and answers 1, or answers 0 and leaves the cursor where it was.
+// The token index it keeps is of the `struct` or `enum` keyword, because that is where re-reading
+// has to start.
+i32 record_template(i32 kind) {
+  i32 at = tp;
+  next();
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  if (ispunct(60) == 0) { tp = at; return 0; }
+  next();
+  i32 pstart = ntparam;
+  i32 np = 0;
+  while (at_gt() == 0 & kind() != K_EOF) {
+    if (full(ntparam, 8192, "type parameters")) { return 0; }
+    tparams[ntparam] = TParam(tstart(), tlen());
+    ntparam = ntparam + 1;
+    np = np + 1;
+    next();
+    if (ispunct(44)) { next(); }
+  }
+  eat_gt();
+  // **Recorded once.** Both passes walk the declarations, and a template added twice gets two
+  // indices — after which `inst_find` matches on the wrong one and a program ends up with two
+  // `Option<i32>` types, one returned and the other expected, which the engine reports as a
+  // mismatch between two structs that look identical. The parameters just read are dropped again,
+  // because the first recording already has them.
+  if (tmpl_find(p, n) != 0 - 1) {
+    ntparam = pstart;
+  } else {
+    if (full(ntmpl, 4096, "templates")) { return 0; }
+    tmpls[ntmpl] = Tmpl(p, n, kind, at, pstart, np);
+    ntmpl = ntmpl + 1;
+  }
+  // Skip the body: it is read again, once per instantiation.
+  while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
+  i32 depth = 1;
+  next();
+  while (depth > 0) {
+    if (ispunct(123)) { depth = depth + 1; }
+    if (ispunct(125)) { depth = depth - 1; }
+    next();
+  }
+  return 1;
+}
+
+i32 struct_decl(i32 emitting, i32 out) {
+  next();
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  if (ispunct(60)) { next(); while (at_gt() == 0) { next(); } eat_gt(); }
+  i32 t = forced_ty;
+  if (t == 0 - 1) {
+    t = ty_named(p, n);
+    if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+  }
+  if (emitting == 0) { types[t] = Ty(T_STRUCT, p, n, 0, nfield, 0); }
+  want(123);
+  i32 count = 0;
+  // The collect pass owns `fields` from here to the closing brace; see `instantiate`. The emitting
+  // pass is left alone, because it compiles method bodies and those need their types to exist.
+  if (emitting == 0) { defer_expand = defer_expand + 1; }
+  while (ispunct(125) == 0 & kind() != K_EOF) {
+    eatword("const");
+    eatword("export");
+    i32 ft = parse_type();
+    i32 mp = tstart();
+    i32 mn = tlen();
+    next();
+    if (ispunct(40)) {
+      if (emitting) {
+        mowner = t;
+        function(out, ft, mp, mn);
+        mowner = 0 - 1;
+      } else {
+        i32 mps_mp = scan_params();
+        if (full(nmeth, 16384, "methods")) { defer_expand = defer_expand - 1; return 0; }
+        meths[nmeth] = Meth(t, mp, mn, ft, mps_mp, nfnparam - mps_mp);
+        nmeth = nmeth + 1;
+        while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
+        i32 depth = 1;
+        next();
+        while (depth > 0 & kind() != K_EOF) {
+          if (ispunct(123)) { depth = depth + 1; }
+          if (ispunct(125)) { depth = depth - 1; }
+          next();
+        }
+      }
+    } else {
+      if (emitting == 0) {
+        if (full(nfield, 65536, "fields")) { defer_expand = defer_expand - 1; return 0; }
+        fields[nfield] = Field(mp, mn, ft);
+        nfield = nfield + 1;
+        count = count + 1;
+      }
+      want(59);
+    }
+  }
+  if (emitting == 0) { defer_expand = defer_expand - 1; }
+  want(125);
+  if (emitting == 0) { types[t] = Ty(T_STRUCT, p, n, 0, types[t].fstart, count); }
+  return 0;
+}
+
+// `enum Name { A(T v), B, … methods }` — variants first, comma-separated, then methods.
+i32 enum_decl(i32 emitting, i32 out) {
+  next();
+  i32 p = tstart();
+  i32 n = tlen();
+  next();
+  if (ispunct(60)) { next(); while (at_gt() == 0) { next(); } eat_gt(); }
+  i32 t = forced_ty;
+  if (t == 0 - 1) {
+    t = ty_named(p, n);
+    if (t == 0 - 1) { t = ty_new(T_ENUM, p, n, 0); }
+  }
+  if (emitting == 0) { types[t] = Ty(T_ENUM, p, n, 0, nvar, 0); }
+  want(123);
+  i32 count = 0;
+  // The same claim `struct_decl` makes, over two arrays rather than one: the variants take a range
+  // of `vars` and each payload takes a range of `fields`.
+  if (emitting == 0) { defer_expand = defer_expand + 1; }
+  // A variant is a name; a method is a type *then* a name then `(`. One token of lookahead tells
+  // them apart, because a variant's name is either followed by `(`, `,` or `}`.
+  while (ispunct(125) == 0 & kind() != K_EOF) {
+    if (looks_like_member() == 0) {
+      i32 vp = tstart();
+      i32 vn = tlen();
+      next();
+      i32 payload = 0 - 1;
+      if (ispunct(40)) {
+        next();
+        if (emitting == 0) {
+          payload = ty_new(T_STRUCT, 0, 0, 0);
+          types[payload] = Ty(T_STRUCT, 0, 0, 0, nfield, 0);
+        }
+        i32 nf = 0;
+        while (ispunct(41) == 0) {
+          i32 ft2 = parse_type();
+          if (emitting == 0) {
+            if (full(nfield, 65536, "fields")) { defer_expand = defer_expand - 1; return 0; }
+            fields[nfield] = Field(tstart(), tlen(), ft2);
+            nfield = nfield + 1;
+          }
+          nf = nf + 1;
+          next();
+          if (ispunct(44)) { next(); }
+        }
+        want(41);
+        if (emitting == 0) {
+          types[payload] = Ty(T_STRUCT, 0, 0, 0, types[payload].fstart, nf);
+        }
+      }
+      if (emitting == 0) {
+        if (full(nvar, 8192, "enum variants")) { defer_expand = defer_expand - 1; return 0; }
+        vars[nvar] = Var(vp, vn, payload, t);
+        nvar = nvar + 1;
+        count = count + 1;
+      }
+      if (ispunct(44)) { next(); }
+    } else {
+      eatword("const");
+      eatword("export");
+      i32 mt = parse_type();
+      i32 mp2 = tstart();
+      i32 mn2 = tlen();
+      next();
+      if (emitting) {
+        mowner = t;
+        function(out, mt, mp2, mn2);
+        mowner = 0 - 1;
+      } else {
+        i32 mps_mp2 = scan_params();
+        if (full(nmeth, 16384, "methods")) { defer_expand = defer_expand - 1; return 0; }
+        meths[nmeth] = Meth(t, mp2, mn2, mt, mps_mp2, nfnparam - mps_mp2);
+        nmeth = nmeth + 1;
+        while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
+        i32 depth2 = 1;
+        next();
+        while (depth2 > 0 & kind() != K_EOF) {
+          if (ispunct(123)) { depth2 = depth2 + 1; }
+          if (ispunct(125)) { depth2 = depth2 - 1; }
+          next();
+        }
+      }
+    }
+  }
+  if (emitting == 0) { defer_expand = defer_expand - 1; }
+  want(125);
+  if (emitting == 0) { types[t] = Ty(T_ENUM, p, n, 0, types[t].fstart, count); }
+  return 0;
+}
+
+// One scan for every top-level name, so a call to something declared later resolves.
+i32 collect() {
+  tp = 0;
+  while (kind() != K_EOF) {
+    eatword("export");
+    if (isword("import")) { while (ispunct(59) == 0 & kind() != K_EOF) { next(); } next(); } else {
+    if (isword("struct")) {
+      if (record_template(T_STRUCT) == 0) { struct_decl(0, 0); }
+    } else {
+    if (isword("enum")) {
+      if (record_template(T_ENUM) == 0) { enum_decl(0, 0); }
+    } else {
+    if (looks_like_generic_fn()) {
+      i32 ge = skip_type(tp);
+      if (full(ngfn, 4096, "generic functions")) { return 0; }
+      gfns[ngfn] = GFn(toks[ge].start, toks[ge].len);
+      ngfn = ngfn + 1;
+      skip_decl();
+    } else {
+    i32 ret = parse_type();
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    if (ispunct(40)) {
+      i32 ps = scan_params();
+      if (full(nfn, 16384, "functions")) { return 0; }
+      fns[nfn] = Fn(p, n, ret, ps, nfnparam - ps);
+      nfn = nfn + 1;
+      while (ispunct(123) == 0 & kind() != K_EOF) { next(); }
+      i32 depth = 1;
+      next();
+      while (depth > 0 & kind() != K_EOF) {
+        if (ispunct(123)) { depth = depth + 1; }
+        if (ispunct(125)) { depth = depth - 1; }
+        next();
+      }
+    } else {
+      if (full(nglo, 8192, "globals")) { return 0; }
+      glos[nglo] = Glo(p, n, ret);
+      nglo = nglo + 1;
+      while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
+      next();
+    }}}}}
+  }
+  return 0;
+}
+
+// The two functions a string needs, emitted as text because they are the same every time. A literal
+// lives in linear memory as a length and its bytes — which is how every rung below writes one — and
+// this is what lifts it into a GC array.
+
+// One length's worth of `$__fromcp`. A continuation byte is `0x80 | six bits`, and the lead
+// byte's marker differs only in how many ones it starts with, so both come from arithmetic
+// rather than being written out four times.
+i32 fromcp_store(i32 at2, i32 idx, i32 shift, i32 mask, i32 orwith) {
+  line("local.get $r");
+  word("i32.const"); emitn(idx); nl();
+  line("local.get $c");
+  if (shift > 0) { word("i32.const"); emitn(shift); nl(); line("i32.shr_u"); }
+  word("i32.const"); emitn(mask); nl();
+  line("i32.and");
+  if (orwith > 0) { word("i32.const"); emitn(orwith); nl(); line("i32.or"); }
+  word("array.set"); tyname(at2); nl();
+  return 0;
+}
+
+i32 fromcp_case(i32 at2, i32 n) {
+  line("local.get $n");
+  word("i32.const"); emitn(n); nl();
+  line("i32.eq");
+  word("if"); emits("$uc"); emitn(n); sp(); line("->");
+  if (n == 1) { fromcp_store(at2, 0, 0, 127, 0); }
+  if (n == 2) {
+    fromcp_store(at2, 0, 6, 31, 192);
+    fromcp_store(at2, 1, 0, 63, 128);
+  }
+  if (n == 3) {
+    fromcp_store(at2, 0, 12, 15, 224);
+    fromcp_store(at2, 1, 6, 63, 128);
+    fromcp_store(at2, 2, 0, 63, 128);
+  }
+  if (n == 4) {
+    fromcp_store(at2, 0, 18, 7, 240);
+    fromcp_store(at2, 1, 12, 63, 128);
+    fromcp_store(at2, 2, 6, 63, 128);
+    fromcp_store(at2, 3, 0, 63, 128);
+  }
+  line("end");
+  return 0;
+}
+
+i32 emit_runtime() {
+  i32 at2 = string_type();
+  if (usedstr) {
+    word("func"); line("$__strlit -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    line("param i32 $off");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$s");
+    line("local i32 $i");
+    line("local i32 $n");
+    line("local.get $off");
+    line("i32.load 4 0");
+    line("local.set $n");
+    line("local.get $n");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $s");
+    line("block $d ->");
+    line("loop $l ->");
+    line("local.get $i");
+    line("local.get $n");
+    line("i32.ge_u");
+    line("br_if $d");
+    line("local.get $s");
+    line("local.get $i");
+    line("local.get $off");
+    line("local.get $i");
+    line("i32.add");
+    line("i32.load8_u 1 4");
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l");
+    line("end");
+    line("end");
+    line("local.get $s");
+    line("end");
+    nl();
+  }
+  if (usedeq) {
+    line("func $__streq -> i32");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    line("local i32 $i");
+    line("local.get $a");
+    line("array.len");
+    line("local.get $b");
+    line("array.len");
+    line("i32.ne");
+    line("if $q ->");
+    line("i32.const 0");
+    line("return");
+    line("else");
+    line("nop");
+    line("end");
+    line("block $qd ->");
+    line("loop $ql ->");
+    line("local.get $i");
+    line("local.get $a");
+    line("array.len");
+    line("i32.ge_u");
+    line("br_if $qd");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.get $b");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.ne");
+    line("if $qn ->");
+    line("i32.const 0");
+    line("return");
+    line("else");
+    line("nop");
+    line("end");
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $ql");
+    line("end");
+    line("end");
+    line("i32.const 1");
+    line("end");
+    nl();
+  }
+  if (usedfromcp) {
+    // UTF-8, written out rather than looped: the four cases differ in how many bytes they set
+    // and where the codepoint's bits land in each, so a loop would need the same four cases to
+    // decide the shift. `$n` is chosen by three comparisons before anything is allocated,
+    // because the array has to be the right size when it is made.
+    word("func"); line("$__fromcp -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    line("param i32 $c");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$r");
+    line("local i32 $n");
+    line("i32.const 1");
+    line("local.set $n");
+    line("local.get $c");
+    line("i32.const 128");
+    line("i32.ge_u");
+    line("if $u1 ->");
+    line("i32.const 2");
+    line("local.set $n");
+    line("end");
+    line("local.get $c");
+    line("i32.const 2048");
+    line("i32.ge_u");
+    line("if $u2 ->");
+    line("i32.const 3");
+    line("local.set $n");
+    line("end");
+    line("local.get $c");
+    line("i32.const 65536");
+    line("i32.ge_u");
+    line("if $u3 ->");
+    line("i32.const 4");
+    line("local.set $n");
+    line("end");
+    line("local.get $n");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $r");
+    fromcp_case(at2, 1);
+    fromcp_case(at2, 2);
+    fromcp_case(at2, 3);
+    fromcp_case(at2, 4);
+    line("local.get $r");
+    line("end");
+    nl();
+  }
+  // `trim` answers a range of its argument, which is what `slice` already builds.
+  if (usedtrim) { usedslice = 1; }
+  if (usedcmp) {
+    // The sign of a - b, comparing bytes and then lengths: the first difference decides, and
+    // when one is a prefix of the other the shorter one is the smaller.
+    word("func"); line("$__strcmp -> i32");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    line("local i32 $i");
+    line("local i32 $n");
+    line("local i32 $x");
+    line("local i32 $y");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $n");
+    line("local.get $b");
+    line("array.len");
+    line("local.get $n");
+    line("i32.lt_s");
+    line("if $c1 ->");
+    line("local.get $b");
+    line("array.len");
+    line("local.set $n");
+    line("end");
+    line("block $c2 ->");
+    line("loop $c3 ->");
+    line("local.get $i");
+    line("local.get $n");
+    line("i32.ge_s");
+    line("br_if $c2");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.set $x");
+    line("local.get $b");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.set $y");
+    line("local.get $x");
+    line("local.get $y");
+    line("i32.ne");
+    line("if $c4 ->");
+    line("local.get $x");
+    line("local.get $y");
+    line("i32.sub");
+    line("return");
+    line("end");
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $c3");
+    line("end");
+    line("end");
+    line("local.get $a");
+    line("array.len");
+    line("local.get $b");
+    line("array.len");
+    line("i32.sub");
+    line("end");
+    nl();
+  }
+  if (usedcharat) {
+    // One byte, as a string. `array.new_fixed` with a count of one is the whole of it: the
+    // element is read before the array exists, which is the order the instruction wants.
+    word("func"); line("$__charat -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    line("param i32 $i");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.new_fixed"); tyname(at2); line(" 1");
+    line("end");
+    nl();
+  }
+  if (usedindexof) {
+    // Naive substring search: every start offset, and at each one a walk of the needle. The
+    // inner loop leaves `$j` short of the needle's length on a mismatch, so the two ways out of
+    // it are told apart by comparing `$j` afterwards rather than by a flag.
+    word("func"); line("$__indexof -> i32");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    line("local i32 $i");
+    line("local i32 $j");
+    line("local i32 $an");
+    line("local i32 $bn");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $an");
+    line("local.get $b");
+    line("array.len");
+    line("local.set $bn");
+    line("block $x1 ->");
+    line("loop $y1 ->");
+    line("local.get $i");
+    line("local.get $bn");
+    line("i32.add");
+    line("local.get $an");
+    line("i32.gt_s");
+    line("br_if $x1");
+    line("i32.const 0");
+    line("local.set $j");
+    line("block $x2 ->");
+    line("loop $y2 ->");
+    line("local.get $j");
+    line("local.get $bn");
+    line("i32.ge_s");
+    line("br_if $x2");
+    line("local.get $a");
+    line("local.get $i");
+    line("local.get $j");
+    line("i32.add");
+    word("array.get_u"); tyname(at2); nl();
+    line("local.get $b");
+    line("local.get $j");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.ne");
+    line("br_if $x2");
+    line("local.get $j");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $j");
+    line("br $y2");
+    line("end");
+    line("end");
+    line("local.get $j");
+    line("local.get $bn");
+    line("i32.eq");
+    line("if $x3 ->");
+    line("local.get $i");
+    line("return");
+    line("end");
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $y1");
+    line("end");
+    line("end");
+    line("i32.const 0");
+    line("i32.const 1");
+    line("i32.sub");
+    line("end");
+    nl();
+  }
+  if (usedtrim) {
+    // Whitespace is everything at or below a space, which is what the corpus means by it and
+    // costs one comparison rather than a set.
+    word("func"); line("$__trim -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    line("local i32 $s");
+    line("local i32 $e");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $e");
+    line("block $t1 ->");
+    line("loop $t2 ->");
+    line("local.get $s");
+    line("local.get $e");
+    line("i32.ge_s");
+    line("br_if $t1");
+    line("local.get $a");
+    line("local.get $s");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.const 32");
+    line("i32.gt_u");
+    line("br_if $t1");
+    line("local.get $s");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $s");
+    line("br $t2");
+    line("end");
+    line("end");
+    line("block $t3 ->");
+    line("loop $t4 ->");
+    line("local.get $e");
+    line("local.get $s");
+    line("i32.le_s");
+    line("br_if $t3");
+    line("local.get $a");
+    line("local.get $e");
+    line("i32.const 1");
+    line("i32.sub");
+    word("array.get_u"); tyname(at2); nl();
+    line("i32.const 32");
+    line("i32.gt_u");
+    line("br_if $t3");
+    line("local.get $e");
+    line("i32.const 1");
+    line("i32.sub");
+    line("local.set $e");
+    line("br $t4");
+    line("end");
+    line("end");
+    line("local.get $a");
+    line("local.get $s");
+    line("local.get $e");
+    line("call $__slice");
+    line("end");
+    nl();
+  }
+  if (usedslice) {
+    word("func"); line("$__slice -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    line("param i32 $s");
+    line("param i32 $e");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$r");
+    line("local i32 $i");
+    line("local.get $e");
+    line("local.get $s");
+    line("i32.sub");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $r");
+    line("block $d1 ->");
+    line("loop $l1 ->");
+    line("local.get $s");
+    line("local.get $i");
+    line("i32.add");
+    line("local.get $e");
+    line("i32.ge_s");
+    line("br_if $d1");
+    line("local.get $r");
+    line("local.get $i");
+    line("local.get $a");
+    line("local.get $s");
+    line("local.get $i");
+    line("i32.add");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l1");
+    line("end");
+    line("end");
+    line("local.get $r");
+    line("end");
+    nl();
+  }
+  if (usedcat) {
+    word("func"); line("$__concat -> refnull"); dp = dp - 1; sp(); tyname(at2); nl();
+    word("param"); word("refnull"); tyname(at2); sp(); line("$a");
+    word("param"); word("refnull"); tyname(at2); sp(); line("$b");
+    word("local"); word("refnull"); tyname(at2); sp(); line("$r");
+    line("local i32 $i");
+    line("local i32 $an");
+    line("local.get $a");
+    line("array.len");
+    line("local.set $an");
+    line("local.get $an");
+    line("local.get $b");
+    line("array.len");
+    line("i32.add");
+    word("array.new_default"); tyname(at2); nl();
+    line("local.set $r");
+    line("block $d1 ->");
+    line("loop $l1 ->");
+    line("local.get $i");
+    line("local.get $an");
+    line("i32.ge_u");
+    line("br_if $d1");
+    line("local.get $r");
+    line("local.get $i");
+    line("local.get $a");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l1");
+    line("end");
+    line("end");
+    line("i32.const 0");
+    line("local.set $i");
+    line("block $d2 ->");
+    line("loop $l2 ->");
+    line("local.get $i");
+    line("local.get $b");
+    line("array.len");
+    line("i32.ge_u");
+    line("br_if $d2");
+    line("local.get $r");
+    line("local.get $an");
+    line("local.get $i");
+    line("i32.add");
+    line("local.get $b");
+    line("local.get $i");
+    word("array.get_u"); tyname(at2); nl();
+    word("array.set"); tyname(at2); nl();
+    line("local.get $i");
+    line("i32.const 1");
+    line("i32.add");
+    line("local.set $i");
+    line("br $l2");
+    line("end");
+    line("end");
+    line("local.get $r");
+    line("end");
+    nl();
+  }
+  return 0;
+}
+
+// Bind a template's letters to an instantiation's arguments, and answer how many were pushed.
+i32 push_subs(i32 ii) {
+  i32 tm = insts[ii].tmpl;
+  i32 k = 0;
+  while (k < tmpls[tm].nparams) {
+    subs[nsub] = Sub(tparams[tmpls[tm].pstart + k].nameptr,
+                     tparams[tmpls[tm].pstart + k].namelen,
+                     iargs[insts[ii].astart + k]);
+    nsub = nsub + 1;
+    k = k + 1;
+  }
+  return tmpls[tm].nparams;
+}
+
+// **Expanded where it is created, not in a later pass.** An instantiation is first named inside a
+// function body, which is long after any pass over the declarations could have run — so the moment
+// `Vec<i32>` is written down, its fields and its methods are read out of the template with `T`
+// bound, and the parser rewinds to do it.
+//
+// The entry is marked expanded *before* the body is read, so `Vec<T>` holding a `Vec<T>` finds the
+// entry that is already there rather than making a second one. That is what terminates it.
+i32 expand_one(i32 i) {
+  if (insts[i].expanded) { return 0; }
+  insts[i] = Inst(insts[i].tmpl, insts[i].ty, insts[i].astart, insts[i].nargs, 1, 0);
+  i32 pushed = push_subs(i);
+  i32 saved = tp;
+  i32 savedcur = cur_inst_ty;
+  i32 savedforced = forced_ty;
+  i32 savedexpect = expect_ty;
+  cur_inst_ty = insts[i].ty;
+  forced_ty = insts[i].ty;
+  expect_ty = 0 - 1;
+  tp = tmpls[insts[i].tmpl].tokAt;
+  if (tmpls[insts[i].tmpl].kind == T_ENUM) { enum_decl(0, 0); } else { struct_decl(0, 0); }
+  forced_ty = savedforced;
+  cur_inst_ty = savedcur;
+  expect_ty = savedexpect;
+  tp = saved;
+  nsub = nsub - pushed;
+  return 0;
+}
+
+i32 expand_types() {
+  i32 going = 1;
+  while (going) {
+    going = 0;
+    i32 i = 0;
+    while (i < ninst) {
+      if (insts[i].expanded == 0) { expand_one(i); going = 1; }
+      i = i + 1;
+    }
+  }
+  return 0;
+}
+
+// One specialised copy of every generic's methods, per instantiation. Runs after the types have
+// settled, because a method body can name an instantiation and its *type* has to exist by then.
+i32 emit_generic_methods(i32 out) {
+  i32 i = 0;
+  while (i < ninst) {
+    i32 pushed = push_subs(i);
+    i32 saved = tp;
+    i32 savedcur = cur_inst_ty;
+    cur_inst_ty = insts[i].ty;
+    forced_ty = insts[i].ty;
+    tp = tmpls[insts[i].tmpl].tokAt;
+    if (tmpls[insts[i].tmpl].kind == T_ENUM) { enum_decl(1, out); } else { struct_decl(1, out); }
+    forced_ty = 0 - 1;
+    cur_inst_ty = savedcur;
+    tp = saved;
+    nsub = nsub - pushed;
+    i = i + 1;
+  }
+  return 0;
+}
+
+// **Where a host writes the source and reads the output**, so that a host reads the addresses
+// rather than carrying its own copy of them — see PLAN.md, *One seam, declared by the module*.
+// `layout_check` then checks that the host used them, so the declaration and the check are the
+// two halves of one statement rather than two conventions that have to be kept in step.
+//
+// These are larger than the rungs below ask for because wac-L5 compiles wacc, whose flattened
+// source is 37,873 lines: the source has to fit under `BODY` and the output above it.
+i32 seam_src() { return 16777216; }
+i32 seam_out() { return 4194304; }
+
+i32 compile(i32 s, i32 out) {
+  src = s;
+  srclen = 0;
+  while (load8(src + srclen) != 0) { srclen = srclen + 1; }
+
+  // **The output buffer is bounded before anything can write to it**, because `collect` refuses
+  // and a refusal emits. With `dstcap` still zero every program came out carrying the overflow
+  // marker, since the first refusal during collection set `overflowed` and nothing clears it —
+  // the previous version instead answered a default 120000 for an unrecognised `dst`, so those
+  // bytes went to address 0 and were scribbled over whatever lives there. Neither is a buffer;
+  // this is. What collection emits is still discarded, by the `dp = 0` below.
+  if (layout_check(out)) { return dp; }
+  to_buf(out, outcap);
+  dp = 0;
+
+  types = Ty[16384]();
+  fields = Field[65536]();
+  fparams = i32[16384]();
+  fnparams = i32[16384]();
+  nfnparam = 0;
+  nfparam = 0;
+  vars = Var[8192]();
+  meths = Meth[16384]();
+  ntype = 0;
+  nfield = 0;
+  nvar = 0;
+  nmeth = 0;
+  typep = 0;
+  mowner = 0 - 1;
+  // Reserved, not assumed: the first struct registered would otherwise be index 0, and `valtype`
+  // reads a 0 as the number type.
+  i32 nt = 0;
+  while (nt < NUMTYPES) { ty_new(T_NUM, 0, 0, 0); nt = nt + 1; }
+  // Index TY_NULL, so that reading `types[TY_NULL]` answers rather than trapping. Nothing
+  // should ever name it: if one is emitted the assembler says so, which is the loud failure.
+  ty_new(T_STRUCT, 0, 0, 0);
+  locs = Local[16384]();
+  slotty = i32[16384]();
+  glos = Glo[8192]();
+  strs = Str[65536]();
+  fns = Fn[16384]();
+  gfns = GFn[4096]();
+  ngfn = 0;
+  nloc = 0;
+  nslot = 0;
+  nglo = 0;
+  nstr = 0;
+  nfn = 0;
+  strnext = 1024;
+  labn = 0;
+  strty = 0 - 1;
+  usedstr = 0;
+  usedcat = 0;
+  usedslice = 0;
+  usedfromcp = 0;
+  usedindexof = 0;
+  usedtrim = 0;
+  usedcharat = 0;
+  usedeq = 0;
+  usedcmp = 0;
+  tmpls = Tmpl[4096]();
+  tparams = TParam[8192]();
+  insts = Inst[16384]();
+  iargs = i32[65536]();
+  subs = Sub[2048]();
+  ntmpl = 0;
+  ntparam = 0;
+  ninst = 0;
+  niarg = 0;
+  nsub = 0;
+  cur_inst_ty = 0 - 1;
+  forced_ty = 0 - 1;
+  expect_ty = 0 - 1;
+  cur_ret = 0 - 1;
+  overflowed = 0;
+  nrefusal = 0;
+  loop_out = 0 - 1;
+  loop_in = 0 - 1;
+
+  lex();
+  collect();
+  // Every instantiation named anywhere in the program now has a type index; this fills them in.
+  expand_types();
+
+  tp = 0;
+  outbuf = out;
+  to_buf(out, outcap);
+  dp = 0;
+  line("memory 64");
+  word("export"); emit1(34); emits("memory"); emit1(34); sp(); line("memory");
+  nl();
+
+  i32 gi = 0;
+  while (gi < nglo) {
+    word("global"); gloname(gi); sp(); slotvaltype(glos[gi].ty); sp(); word("mut"); word("=");
+    emitn(0); nl();
+    gi = gi + 1;
+  }
+  nl();
+
+  while (kind() != K_EOF) {
+    fn_exported = eatword("export");
+    if (isword("import")) { while (ispunct(59) == 0 & kind() != K_EOF) { next(); } next(); } else {
+    if (isword("struct")) {
+      if (record_template(T_STRUCT) == 0) { struct_decl(1, out); }
+    } else {
+    if (isword("enum")) {
+      if (record_template(T_ENUM) == 0) { enum_decl(1, out); }
+    } else {
+    if (looks_like_generic_fn()) { skip_decl(); } else {
+    i32 ret = parse_type();
+    i32 p = tstart();
+    i32 n = tlen();
+    next();
+    if (ispunct(40)) {
+      mowner = 0 - 1;
+      function(out, ret, p, n);
+      fn_exported = 0;
+    } else {
+      // A global's initialiser is not run: wac's may be any expression and wasm's may not, so the
+      // global emits as zero and the program is expected to set it.
+      while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
+      next();
+    }}}}}
+  }
+  emit_generic_methods(out);
+  // A method body can name an instantiation that nothing else did, so the types settle once more.
+  expand_types();
+  if (overflowed) {
+    // The output is truncated and the marker cannot be trusted to be in the right place, so it says
+    // what happened rather than where.
+    to_buf(out, outcap);
+    // Leave a megabyte for the marker itself, so the thing that explains the truncation is not
+    // the thing that gets truncated.
+    if (dp > outcap - 1000000) { dp = outcap - 1000000; }
+    nl();
+    line("!! wac-L5: emitted more than the buffer holds — the parser lost its place");
+  }
+  emit_runtime();
+  emit_strdata();
+  emit_typedecls();
+  i32 ti = 0;
+  while (ti < typep) { emit1(load8(TYPEBUF + ti)); ti = ti + 1; }
+  return dp;
+}

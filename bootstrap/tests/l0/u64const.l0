@@ -1,0 +1,15 @@
+; wac has u64 and wasm does not: the bits are the same and only the reading differs, so the sign
+; bit written out as 9223372036854775808 is the same constant as -9223372036854775808. The answer
+; is 63 — the position of the only bit set.
+func $main -> i32
+local i64 $x
+i64.const 9223372036854775808
+local.set $x
+local.get $x
+i64.const 63
+i64.shr_u
+i32.wrap_i64
+i32.const 62
+i32.add
+end
+export "main" func $main

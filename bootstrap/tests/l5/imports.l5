@@ -1,0 +1,7 @@
+import { Point } from "lib/point.l5";
+import { scaled } from "lib/scale.l5";
+
+export i32 main() {
+  Point p = Point(3, 4);
+  return scaled(p, 6) + p.sum();
+}

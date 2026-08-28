@@ -1,0 +1,18 @@
+enum Shape {
+  Circle(i32 r);
+  Rect(i32 w, i32 h);
+  Empty;
+}
+
+i32 area(Shape s) {
+  match (s) {
+    case Circle(r): { return 3 * r * r; }
+    case Rect(w, h): { return w * h; }
+    case Empty: { return 0; }
+  }
+  return 0 - 1;
+}
+
+i32 main() {
+  return area(Circle(2)) * 10000 + area(Rect(3, 4)) * 100 + area(Empty);
+}

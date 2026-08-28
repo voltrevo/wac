@@ -1,0 +1,18 @@
+// Globals, memory and string literals — everything a compiler needs from its own language.
+i32 cursor = 4096;
+
+i32 push(i32 v) {
+  store(cursor, v);
+  cursor = cursor + 4;
+  return v;
+}
+
+i32 strlen(i32 s) { return load(s); }
+i32 strbyte(i32 s, i32 i) { return load8(s + 4 + i); }
+
+i32 main() {
+  push(11);
+  push(22);
+  i32 sum = load(4096) + load(4100);
+  return sum * 1000 + strlen("hello") * 100 + strbyte("hi", 1);
+}

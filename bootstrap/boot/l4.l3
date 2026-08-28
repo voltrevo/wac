@@ -1,0 +1,1331 @@
+// wac-1, compiled by a program written in wac-0. See spec/wac1.md.
+//
+// The first rung with types. wac-0 had one, so its compiler never had to know what an expression
+// was; here every expression answers a type index, because `p.x` has to know which struct to read
+// from and a local of struct type has to be declared `refnull $sN` rather than `i32`.
+//
+// Structs and arrays are **wasm GC**, not linear memory: no allocator, no layout arithmetic, no
+// free. The engine gives us `struct.new` and `array.new_default`, and that is most of what a rung
+// this size would otherwise have had to build.
+//
+// Memory, all fixed because wac-0 has no allocator:
+//
+//   262144   tokens, 16 bytes each
+//   786432   locals in scope, 16 bytes each
+//   851968   types, 24 bytes each
+//   917504   struct fields, 12 bytes each
+//   983040   function signatures, 12 bytes each
+//   1114112  string literals, 12 bytes each
+//   1179648  the type of each wasm slot, 4 bytes each
+//   1245184  enum variants, 16 bytes each
+//   1441792  methods, 16 bytes each
+//   1507328  globals, 16 bytes each
+//   1310720  the scratch a function body is emitted into
+//   1835008  the scratch every `type` directive is emitted into
+
+i32 TOK = 262144;
+i32 LOC = 786432;
+i32 TYPES = 851968;
+i32 FIELDS = 917504;
+i32 FUNCS = 983040;
+i32 STRS = 1114112;
+i32 SLOTTY = 1179648;
+i32 VARS = 1245184;
+i32 METH = 1441792;
+i32 GLO = 1507328;
+i32 BODY = 1310720;
+i32 TYPEBUF = 1835008;
+
+i32 dst = 0;
+i32 dp = 0;
+i32 ntok = 0;
+i32 tp = 0;
+i32 nloc = 0;
+i32 nslot = 0;
+i32 ntype = 0;
+i32 nfield = 0;
+i32 nfunc = 0;
+i32 nstr = 0;
+i32 strnext = 1024;
+i32 labn = 0;
+i32 src = 0;
+i32 typep = 0;
+i32 nvar = 0;
+i32 nmeth = 0;
+i32 mowner = 0;
+i32 nglo = 0;
+
+// Token kinds.
+i32 K_EOF = 0;
+i32 K_INT = 1;
+i32 K_NAME = 2;
+i32 K_PUNCT = 3;
+i32 K_STR = 4;
+
+// Type kinds.
+i32 T_I32 = 0;
+i32 T_STRUCT = 1;
+i32 T_ARRAY = 2;
+i32 T_ENUM = 3;
+// **`u8` is a storage type, not a value type.** wasm has no i8 value, so it is legal only as an
+// array element or a struct field, and reading one takes `array.get_u` and answers an i32. That is
+// what gives wac-L4 a byte string it can build and grow, which is what the rung above needs to make
+// a mangled name out of two others.
+i32 T_U8 = 4;
+
+// ---------------------------------------------------------------- emitting
+
+i32 emit1(i32 b) { store8(dst + dp, b); dp = dp + 1; return 0; }
+
+i32 emits(i32 s) {
+  i32 n = load(s);
+  i32 i = 0;
+  while (i < n) { emit1(load8(s + 4 + i)); i = i + 1; }
+  return 0;
+}
+
+i32 emitd(i32 n) {
+  if (n > 9) { emitd(n / 10); }
+  emit1(48 + n % 10);
+  return 0;
+}
+
+i32 emitn(i32 n) {
+  // The most negative i32 has no positive counterpart, so negating it overflows back to itself
+  // and every digit after that is `48 + a negative remainder` — which for -2147483648 prints the
+  // last digit as `(`. Splitting the last digit off first leaves a rest that does fit.
+  if (n >= 0) { return emitd(n); }
+  emit1(45);
+  i32 hi = 0 - (n / 10);
+  i32 lo = 0 - (n % 10);
+  if (hi > 0) { emitd(hi); }
+  emit1(48 + lo);
+  return 0;
+}
+
+i32 sp() { return emit1(32); }
+i32 nl() { return emit1(10); }
+i32 word(i32 s) { emits(s); return sp(); }
+i32 line(i32 s) { emits(s); return nl(); }
+i32 konst(i32 n) { word("i32.const"); emitn(n); return nl(); }
+i32 label(i32 n) { emits("$b"); return emitn(n); }
+i32 newlabel() { labn = labn + 1; return labn; }
+i32 emitname(i32 p, i32 n) {
+  i32 i = 0;
+  while (i < n) { emit1(load8(src + p + i)); i = i + 1; }
+  return 0;
+}
+
+// ---------------------------------------------------------------- source and lexer
+
+i32 at(i32 i) { return load8(src + i); }
+i32 isspace(i32 c) { return c == 32 | c == 10 | c == 13 | c == 9; }
+i32 isdigit(i32 c) { return c >= 48 & c <= 57; }
+i32 isalpha(i32 c) { return c == 95 | (c >= 97 & c <= 122) | (c >= 65 & c <= 90); }
+i32 isalnum(i32 c) { return isalpha(c) | isdigit(c); }
+
+i32 texteq(i32 p, i32 n, i32 s) {
+  i32 r = 1;
+  if (n != load(s)) { r = 0; } else {
+    i32 i = 0;
+    while (i < n) {
+      if (at(p + i) != load8(s + 4 + i)) { r = 0; }
+      i = i + 1;
+    }
+  }
+  return r;
+}
+
+i32 samebytes(i32 a, i32 n, i32 b) {
+  i32 r = 1;
+  i32 i = 0;
+  while (i < n) {
+    if (at(a + i) != at(b + i)) { r = 0; }
+    i = i + 1;
+  }
+  return r;
+}
+
+i32 tset(i32 i, i32 kind, i32 start, i32 n, i32 v) {
+  i32 base = TOK + i * 16;
+  store(base, kind);
+  store(base + 4, start);
+  store(base + 8, n);
+  store(base + 12, v);
+  return 0;
+}
+
+i32 tkind(i32 i) { return load(TOK + i * 16); }
+i32 tstart(i32 i) { return load(TOK + i * 16 + 4); }
+i32 tlen(i32 i) { return load(TOK + i * 16 + 8); }
+i32 tval(i32 i) { return load(TOK + i * 16 + 12); }
+
+i32 lex() {
+  i32 p = 0;
+  ntok = 0;
+  while (at(p) != 0) {
+    i32 c = at(p);
+    if (isspace(c)) { p = p + 1; } else {
+      if (c == 47 & at(p + 1) == 47) {
+        while (at(p) != 0 & at(p) != 10) { p = p + 1; }
+      } else {
+        if (isdigit(c)) {
+          i32 v = 0;
+          i32 s0 = p;
+          while (isdigit(at(p))) { v = v * 10 + at(p) - 48; p = p + 1; }
+          tset(ntok, K_INT, s0, p - s0, v);
+          ntok = ntok + 1;
+        } else {
+          if (c == 34) {
+            p = p + 1;
+            i32 s1 = p;
+            while (at(p) != 0 & at(p) != 34) { p = p + 1; }
+            tset(ntok, K_STR, s1, p - s1, 0);
+            ntok = ntok + 1;
+            p = p + 1;
+          } else {
+            if (isalpha(c)) {
+              i32 s2 = p;
+              while (isalnum(at(p))) { p = p + 1; }
+              tset(ntok, K_NAME, s2, p - s2, 0);
+              ntok = ntok + 1;
+            } else {
+              i32 d = at(p + 1);
+              i32 pack = c;
+              i32 w = 1;
+              if (d == 61 & (c == 61 | c == 33 | c == 60 | c == 62)) {
+                pack = c + d * 256;
+                w = 2;
+              }
+              tset(ntok, K_PUNCT, p, w, pack);
+              ntok = ntok + 1;
+              p = p + w;
+            }
+          }
+        }
+      }
+    }
+  }
+  tset(ntok, K_EOF, p, 0, 0);
+  return 0;
+}
+
+// ---------------------------------------------------------------- the cursor
+
+i32 kind() { return tkind(tp); }
+i32 val() { return tval(tp); }
+i32 next() { tp = tp + 1; return 0; }
+i32 ispunct(i32 v) { return (kind() == K_PUNCT) & (val() == v); }
+i32 isword(i32 s) { return (kind() == K_NAME) & texteq(tstart(tp), tlen(tp), s); }
+i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
+// **And it advances.** A refusal that leaves the cursor where it was turns a syntax error into a
+// loop, and the loop is what the caller sees — an out-of-bounds read a long way from the mistake,
+// rather than a marker line naming it. That is how this was found.
+i32 oops() { nl(); line("!! wac-1: unexpected token"); next(); return 0; }
+i32 want(i32 v) { if (eat(v)) { return 0; } return oops(); }
+
+// ---------------------------------------------------------------- types
+//
+// Index 0 is always `i32`. A struct or an array type is registered once, by name for a struct and
+// by element for an array, and the `type` directives are written into their own buffer — `.wax`
+// takes directives in any order, so they can be appended after every function and there is no
+// pre-pass to discover them.
+
+i32 ty_kind(i32 t) { return load(TYPES + t * 24); }
+i32 ty_nameptr(i32 t) { return load(TYPES + t * 24 + 4); }
+i32 ty_namelen(i32 t) { return load(TYPES + t * 24 + 8); }
+i32 ty_elem(i32 t) { return load(TYPES + t * 24 + 12); }
+i32 ty_fstart(i32 t) { return load(TYPES + t * 24 + 16); }
+i32 ty_nfields(i32 t) { return load(TYPES + t * 24 + 20); }
+
+i32 ty_new(i32 kind, i32 p, i32 n, i32 elem) {
+  i32 base = TYPES + ntype * 24;
+  store(base, kind);
+  store(base + 4, p);
+  store(base + 8, n);
+  store(base + 12, elem);
+  store(base + 16, nfield);
+  store(base + 20, 0);
+  ntype = ntype + 1;
+  return ntype - 1;
+}
+
+// Matches a struct or an enum: both are names a program writes where a type goes.
+i32 ty_findstruct(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntype) {
+    if ((ty_kind(i) == T_STRUCT | ty_kind(i) == T_ENUM) & ty_namelen(i) == n
+        & n > 0 & samebytes(p, n, ty_nameptr(i))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 ty_array(i32 elem) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ntype) {
+    if (ty_kind(i) == T_ARRAY & ty_elem(i) == elem) { found = i; }
+    i = i + 1;
+  }
+  if (found == 0 - 1) { found = ty_new(T_ARRAY, 0, 0, elem); }
+  return found;
+}
+
+// **An enum is one struct and a payload.** `struct $eN { i32 tag; anyref payload }`, with a
+// separate struct per variant holding its fields. That needs no subtyping — which `.wax` does not
+// have — and a `match` becomes an integer compare on the tag and a `ref.cast` inside the arm, both
+// of which the engine does.
+i32 var_nameptr(i32 v) { return load(VARS + v * 16); }
+i32 var_namelen(i32 v) { return load(VARS + v * 16 + 4); }
+i32 var_payload(i32 v) { return load(VARS + v * 16 + 8); }
+i32 var_owner(i32 v) { return load(VARS + v * 16 + 12); }
+
+i32 var_add(i32 p, i32 n, i32 payload, i32 owner) {
+  i32 base = VARS + nvar * 16;
+  store(base, p);
+  store(base + 4, n);
+  store(base + 8, payload);
+  store(base + 12, owner);
+  nvar = nvar + 1;
+  return nvar - 1;
+}
+
+// Variant names are global, as they are in the languages that spell them this way. Two enums with a
+// `None` apiece would collide, and a rung this size is allowed to say so by not having a rule.
+i32 var_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nvar) {
+    if (var_namelen(i) == n & samebytes(p, n, var_nameptr(i))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+// The tag is the variant's position within its own enum.
+i32 var_tag(i32 v) { return v - ty_fstart(var_owner(v)); }
+
+i32 fld_nameptr(i32 f) { return load(FIELDS + f * 12); }
+i32 fld_namelen(i32 f) { return load(FIELDS + f * 12 + 4); }
+i32 fld_type(i32 f) { return load(FIELDS + f * 12 + 8); }
+
+// A struct's own name is `$s<index>` and an array's `$a<index>`; nothing else needs a name, so
+// nothing else has one.
+i32 tyname(i32 t) {
+  if (ty_kind(t) == T_ARRAY) { emits("$a"); } else {
+    if (ty_kind(t) == T_ENUM) { emits("$e"); } else { emits("$s"); }
+  }
+  return emitn(t);
+}
+
+i32 valtype(i32 t) {
+  if (ty_kind(t) == T_I32) { emits("i32"); } else {
+    if (ty_kind(t) == T_U8) { emits("i8"); } else { word("refnull"); tyname(t); }
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------- locals and functions
+
+i32 loc_add(i32 p, i32 n, i32 t) {
+  i32 base = LOC + nloc * 16;
+  store(base, p);
+  store(base + 4, n);
+  store(base + 8, nslot);
+  store(base + 12, t);
+  // **Also here, where scope cannot reach it.** A block pops the name table on the way out, so by
+  // the time the function header is written every local declared inside one has gone — and the
+  // header is exactly where their types are needed. Slots are never popped, so this survives.
+  store(SLOTTY + nslot * 4, t);
+  nloc = nloc + 1;
+  nslot = nslot + 1;
+  return nslot - 1;
+}
+
+i32 loc_find(i32 p, i32 n) {
+  i32 i = nloc;
+  i32 found = 0 - 1;
+  while (i > 0) {
+    i = i - 1;
+    if (found == 0 - 1) {
+      i32 base = LOC + i * 16;
+      if (n == load(base + 4) & samebytes(p, n, load(base))) { found = i; }
+    }
+  }
+  return found;
+}
+
+// A slot with no name, for a value the compiler needs to hold and the program never mentions.
+i32 slot_new(i32 t) {
+  store(SLOTTY + nslot * 4, t);
+  nslot = nslot + 1;
+  return nslot - 1;
+}
+
+i32 loc_slot(i32 i) { return load(LOC + i * 16 + 8); }
+i32 loc_type(i32 i) { return load(LOC + i * 16 + 12); }
+i32 slotname(i32 s) { emits("$v"); return emitn(s); }
+
+i32 fn_add(i32 p, i32 n, i32 ret) {
+  i32 base = FUNCS + nfunc * 12;
+  store(base, p);
+  store(base + 4, n);
+  store(base + 8, ret);
+  nfunc = nfunc + 1;
+  return nfunc - 1;
+}
+
+i32 fn_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nfunc) {
+    i32 base = FUNCS + i * 12;
+    if (n == load(base + 4) & samebytes(p, n, load(base))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 fn_ret(i32 i) { return load(FUNCS + i * 12 + 8); }
+
+// **A method is a function whose name is its owner's and its own, joined.** No vtable and no
+// receiver type in the call — `p.sum()` resolves at compile time to `call $Point_sum`, because
+// wac-1 has no subtyping to make it ambiguous.
+i32 meth_add(i32 owner, i32 p, i32 n, i32 ret) {
+  i32 base = METH + nmeth * 16;
+  store(base, owner);
+  store(base + 4, p);
+  store(base + 8, n);
+  store(base + 12, ret);
+  nmeth = nmeth + 1;
+  return nmeth - 1;
+}
+
+i32 meth_find(i32 owner, i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nmeth) {
+    i32 base = METH + i * 16;
+    if (load(base) == owner & load(base + 8) == n & samebytes(p, n, load(base + 4))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 meth_ret(i32 i) { return load(METH + i * 16 + 12); }
+
+// **Module state.** A compiler needs somewhere to keep a cursor and a table, and wac-L4 is going to
+// be written in — so it needs globals as much as wac-L3 did. A reference global starts null: wasm
+// has no other value it could hold before the first instruction runs.
+i32 glo_add(i32 p, i32 n, i32 t) {
+  i32 base = GLO + nglo * 16;
+  store(base, p);
+  store(base + 4, n);
+  store(base + 8, nglo);
+  store(base + 12, t);
+  nglo = nglo + 1;
+  return nglo - 1;
+}
+
+i32 glo_find(i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < nglo) {
+    i32 base = GLO + i * 16;
+    if (load(base + 4) == n & samebytes(p, n, load(base))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 glo_type(i32 i) { return load(GLO + i * 16 + 12); }
+i32 gloname(i32 i) { emits("$g"); return emitn(i); }
+
+// `Point_sum`, written from the two source names rather than built as a string, because wac-1's
+// compiler has no way to make one.
+i32 mangled(i32 owner, i32 p, i32 n) {
+  emit1(36);
+  emitname(ty_nameptr(owner), ty_namelen(owner));
+  emit1(95);
+  return emitname(p, n);
+}
+
+// ---------------------------------------------------------------- string literals
+
+i32 str_add(i32 p, i32 n) {
+  i32 base = STRS + nstr * 12;
+  i32 off = strnext;
+  store(base, off);
+  store(base + 4, p);
+  store(base + 8, n);
+  nstr = nstr + 1;
+  strnext = strnext + 4 * ((4 + n + 3) / 4);
+  return off;
+}
+
+i32 hexd(i32 d) { if (d < 10) { return 48 + d; } return 87 + d; }
+i32 emithex(i32 b) {
+  emit1(92); emit1(120); emit1(hexd(b / 16)); return emit1(hexd(b % 16));
+}
+
+i32 emit_strdata() {
+  i32 i = 0;
+  while (i < nstr) {
+    i32 base = STRS + i * 12;
+    i32 p = load(base + 4);
+    i32 n = load(base + 8);
+    word("data"); emitn(load(base)); sp(); emit1(34);
+    emithex(n % 256); emithex(n / 256 % 256); emithex(n / 65536 % 256); emithex(n / 16777216);
+    i32 j = 0;
+    while (j < n) { emithex(at(p + j)); j = j + 1; }
+    emit1(34); nl();
+    i = i + 1;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------- reading a type
+//
+// `i32`, a struct's name, or either of those followed by `[]`. A struct named before its
+// declaration is registered as an empty one and filled in when the declaration arrives, which is
+// what lets two structs refer to each other.
+
+i32 parse_type() {
+  i32 t = 0;
+  if (isword("i32")) { next(); } else {
+  if (isword("u8")) { t = 1; next(); } else {
+    i32 p = tstart(tp);
+    i32 n = tlen(tp);
+    next();
+    t = ty_findstruct(p, n);
+    if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+  }}
+  while (ispunct(91)) { next(); want(93); t = ty_array(t); }
+  return t;
+}
+
+// Is the token run at the cursor a type followed by a name? That is the one place wac-1's grammar
+// needs to look ahead, and one token past the name is enough: `Point p` is a declaration and
+// `Point(` is a construction.
+i32 looks_like_decl() {
+  i32 i = tp;
+  if (tkind(i) != K_NAME) { return 0; }
+  i = i + 1;
+  while (tkind(i) == K_PUNCT & tval(i) == 91) { i = i + 2; }
+  return tkind(i) == K_NAME;
+}
+
+// ---------------------------------------------------------------- expressions
+//
+// Every one of these answers a type index. That is the whole difference from wac-0's compiler,
+// and it is what `p.x` and `xs[i]` need to emit the right instruction.
+
+i32 args_of(i32 nargs) {
+  i32 n = 0;
+  while (ispunct(41) == 0) {
+    expr();
+    n = n + 1;
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  return n;
+}
+
+// `Point(a, b)` — the fields in order, which is one `struct.new` and no field names to resolve.
+i32 construct_struct(i32 t) {
+  want(40);
+  args_of(0);
+  word("struct.new"); tyname(t); nl();
+  return t;
+}
+
+// `i32[5]()` — the *element* type, then the length in brackets, then empty parens. The length is an
+// expression, so `i32[n * 2]()` is as ordinary as `i32[5]()`; the parens are wac's spelling and
+// carry nothing.
+i32 array_construct(i32 base) {
+  want(91);
+  expr();
+  want(93);
+  want(40);
+  want(41);
+  i32 t = ty_array(base);
+  word("array.new_default"); tyname(t); nl();
+  return t;
+}
+
+i32 field_index(i32 t, i32 p, i32 n) {
+  i32 i = 0;
+  i32 found = 0 - 1;
+  while (i < ty_nfields(t)) {
+    i32 f = ty_fstart(t) + i;
+    if (fld_namelen(f) == n & samebytes(p, n, fld_nameptr(f))) { found = i; }
+    i = i + 1;
+  }
+  return found;
+}
+
+i32 builtin(i32 p, i32 n) {
+  if (texteq(p, n, "load")) { return 1; }
+  if (texteq(p, n, "store")) { return 2; }
+  if (texteq(p, n, "load8")) { return 3; }
+  if (texteq(p, n, "store8")) { return 4; }
+  // **`isnull`, not `x == null`.** `==` emits `i32.eq`, which is a type error on two references —
+  // wasm spells reference comparison `ref.eq` and null-testing `ref.is_null`, and they are not the
+  // same instruction. A rung with no type checker cannot notice the difference, so it does not get
+  // to offer the spelling that hides it.
+  if (texteq(p, n, "isnull")) { return 5; }
+  return 0;
+}
+
+i32 emit_builtin(i32 b) {
+  if (b == 1) { word("i32.load"); word("1"); line("0"); }
+  if (b == 3) { word("i32.load8_u"); word("1"); line("0"); }
+  if (b == 2) { word("i32.store"); word("1"); line("0"); konst(0); }
+  if (b == 4) { word("i32.store8"); word("1"); line("0"); konst(0); }
+  if (b == 5) { line("ref.is_null"); }
+  return 0;
+}
+
+// A name: a local, a struct being constructed, a builtin, or a call.
+i32 name_expr() {
+  i32 p = tstart(tp);
+  i32 n = tlen(tp);
+  i32 t = 0;
+  next();
+  i32 st = ty_findstruct(p, n);
+  if (st != 0 - 1) {
+    if (ispunct(40)) { return construct_struct(st); }
+    if (ispunct(91)) { return array_construct(st); }
+  }
+  // A variant name builds its enum: the tag, then the payload struct, then the enum struct. The tag
+  // goes first because that is the field order, and wasm takes a struct's fields in order.
+  i32 vi = var_find(p, n);
+  if (vi != 0 - 1) {
+    i32 owner = var_owner(vi);
+    konst(var_tag(vi));
+    if (var_payload(vi) == 0 - 1) {
+      line("ref.null none");
+      if (ispunct(40)) { next(); want(41); }
+    } else {
+      want(40);
+      args_of(0);
+      word("struct.new"); tyname(var_payload(vi)); nl();
+    }
+    word("struct.new"); tyname(owner); nl();
+    return owner;
+  }
+  if (ispunct(40)) {
+    next();
+    i32 bi = builtin(p, n);
+    args_of(0);
+    if (bi == 0) {
+      i32 f = fn_find(p, n);
+      word("call"); emit1(36); emitname(p, n); nl();
+      if (f != 0 - 1) { t = fn_ret(f); }
+    } else {
+      emit_builtin(bi);
+    }
+    return t;
+  }
+  i32 li = loc_find(p, n);
+  if (li != 0 - 1) {
+    word("local.get"); slotname(loc_slot(li)); nl();
+    return loc_type(li);
+  }
+  i32 gi = glo_find(p, n);
+  if (gi != 0 - 1) {
+    word("global.get"); gloname(gi); nl();
+    return glo_type(gi);
+  }
+  oops();
+  return 0;
+}
+
+// `.x` on a struct, `.len()` on an array, and `[i]` on an array — everything that follows a value.
+i32 postfix(i32 t) {
+  while (ispunct(46) | ispunct(91)) {
+    if (ispunct(46)) {
+      next();
+      i32 p = tstart(tp);
+      i32 n = tlen(tp);
+      next();
+      if (ty_kind(t) == T_ARRAY & texteq(p, n, "len")) {
+        want(40); want(41);
+        line("array.len");
+        t = 0;
+      } else {
+      i32 mi = meth_find(t, p, n);
+      if (mi != 0 - 1 & ispunct(40)) {
+        // The receiver is already on the stack, and it is the method's first parameter.
+        next();
+        args_of(0);
+        word("call"); mangled(t, p, n); nl();
+        t = meth_ret(mi);
+      } else {
+        i32 fi = field_index(t, p, n);
+        if (fi == 0 - 1) { oops(); } else {
+          i32 ft = fld_type(ty_fstart(t) + fi);
+          word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+          t = ft;
+        }
+      }}
+    } else {
+      next();
+      expr();
+      want(93);
+      if (ty_kind(t) != T_ARRAY) { oops(); }
+      i32 et = ty_elem(t);
+      if (ty_kind(et) == T_U8) { word("array.get_u"); tyname(t); nl(); t = 0; } else {
+        word("array.get"); tyname(t); nl();
+        t = et;
+      }
+    }
+  }
+  return t;
+}
+
+i32 primary() {
+  i32 t = 0;
+  if (kind() == K_STR) { konst(str_add(tstart(tp), tlen(tp))); next(); return 0; }
+  if (kind() == K_INT) { konst(val()); next(); return 0; }
+  if (ispunct(40)) { next(); t = expr(); want(41); return postfix(t); }
+  if (ispunct(45)) { next(); konst(0); t = primary(); line("i32.sub"); return 0; }
+  if (ispunct(33)) { next(); primary(); line("i32.eqz"); return 0; }
+  if (isword("null")) { next(); line("ref.null none"); return 0; }
+  // `i32[3]()` starts with a type, and nothing else that begins an expression does.
+  if (isword("i32")) { next(); return array_construct(0); }
+  if (isword("u8")) { next(); return array_construct(1); }
+  if (kind() == K_NAME) { return postfix(name_expr()); }
+  oops();
+  return 0;
+}
+
+i32 mul() {
+  i32 t = primary();
+  while (ispunct(42) | ispunct(47) | ispunct(37)) {
+    i32 op = val();
+    next();
+    primary();
+    if (op == 42) { line("i32.mul"); } else {
+      if (op == 47) { line("i32.div_s"); } else { line("i32.rem_s"); }
+    }
+    t = 0;
+  }
+  return t;
+}
+
+i32 add() {
+  i32 t = mul();
+  while (ispunct(43) | ispunct(45)) {
+    i32 op = val();
+    next();
+    mul();
+    if (op == 43) { line("i32.add"); } else { line("i32.sub"); }
+    t = 0;
+  }
+  return t;
+}
+
+i32 cmp() {
+  i32 t = add();
+  while (ispunct(60) | ispunct(62) | ispunct(15676) | ispunct(15678) | ispunct(15677) | ispunct(15649)) {
+    i32 op = val();
+    next();
+    add();
+    if (op == 60) { line("i32.lt_s"); } else {
+      if (op == 62) { line("i32.gt_s"); } else {
+        if (op == 15676) { line("i32.le_s"); } else {
+          if (op == 15678) { line("i32.ge_s"); } else {
+            if (op == 15677) { line("i32.eq"); } else { line("i32.ne"); }
+          }
+        }
+      }
+    }
+    t = 0;
+  }
+  return t;
+}
+
+// Below comparison, so `a == b & c == d` groups as two comparisons. wac-L3 has had these since it
+// had to compile this file; wac-L4 did not, and the first thing written in it needed them on its
+// third line.
+i32 bitand() {
+  i32 t = cmp();
+  while (ispunct(38)) { next(); cmp(); line("i32.and"); t = 0; }
+  return t;
+}
+
+i32 bitor() {
+  i32 t = bitand();
+  while (ispunct(124)) { next(); bitand(); line("i32.or"); t = 0; }
+  return t;
+}
+
+i32 expr() { return bitor(); }
+
+// ---------------------------------------------------------------- statements
+
+i32 block() {
+  want(123);
+  i32 mark = nloc;
+  while (ispunct(125) == 0) { statement(); }
+  want(125);
+  nloc = mark;
+  return 0;
+}
+
+i32 declaration() {
+  i32 t = parse_type();
+  i32 p = tstart(tp);
+  i32 n = tlen(tp);
+  next();
+  want(61);
+  expr();
+  want(59);
+  word("local.set"); slotname(loc_add(p, n, t)); nl();
+  return 0;
+}
+
+// An assignment target is a name, or a name with any number of `.field` and `[i]` after it. The
+// value goes last in wasm, so the target's *base* is emitted first, then the value, then the store —
+// which means the walk has to stop one step short and remember what it was about to do.
+i32 assign_or_expr() {
+  i32 p = tstart(tp);
+  i32 n = tlen(tp);
+  if (kind() == K_NAME & tkind(tp + 1) == K_PUNCT & tval(tp + 1) == 61) {
+    i32 li = loc_find(p, n);
+    next(); next();
+    expr();
+    want(59);
+    if (li != 0 - 1) {
+      word("local.set"); slotname(loc_slot(li)); nl();
+    } else {
+      i32 gi = glo_find(p, n);
+      if (gi == 0 - 1) { oops(); } else { word("global.set"); gloname(gi); nl(); }
+    }
+    return 0;
+  }
+  // A field or element assignment: emit the base, then look at what follows.
+  if (kind() == K_NAME & looks_like_store()) {
+    i32 t = name_expr();
+    while (1) {
+      if (ispunct(46)) {
+        next();
+        i32 fp = tstart(tp);
+        i32 fn = tlen(tp);
+        next();
+        i32 fi = field_index(t, fp, fn);
+        i32 ft = fld_type(ty_fstart(t) + fi);
+        if (ispunct(61)) {
+          next();
+          expr();
+          want(59);
+          word("struct.set"); tyname(t); sp(); emitn(fi); nl();
+          return 0;
+        }
+        word("struct.get"); tyname(t); sp(); emitn(fi); nl();
+        t = ft;
+      } else {
+        next();
+        expr();
+        want(93);
+        i32 et = ty_elem(t);
+        if (ispunct(61)) {
+          next();
+          expr();
+          want(59);
+          word("array.set"); tyname(t); nl();
+          return 0;
+        }
+        if (ty_kind(et) == T_U8) { word("array.get_u"); tyname(t); nl(); t = 0; } else {
+          word("array.get"); tyname(t); nl();
+          t = et;
+        }
+      }
+    }
+  }
+  expr();
+  want(59);
+  line("drop");
+  return 0;
+}
+
+// Does a `.field` or `[i]` chain starting here end in `=`? One scan of the tokens answers it, and
+// without it there is no way to know whether to emit the base as a value or as a store target.
+i32 looks_like_store() {
+  i32 i = tp + 1;
+  i32 depth = 0;
+  i32 ans = 0;
+  i32 going = 1;
+  while (going) {
+    i32 k = tkind(i);
+    i32 v = tval(i);
+    if (k == K_PUNCT & v == 46) { i = i + 2; } else {
+      if (k == K_PUNCT & v == 91) {
+        depth = 1;
+        i = i + 1;
+        while (depth > 0) {
+          if (tkind(i) == K_PUNCT & tval(i) == 91) { depth = depth + 1; }
+          if (tkind(i) == K_PUNCT & tval(i) == 93) { depth = depth - 1; }
+          i = i + 1;
+        }
+      } else {
+        if (k == K_PUNCT & v == 61) { ans = 1; }
+        going = 0;
+      }
+    }
+  }
+  return ans;
+}
+
+// `match (e) { case Circle(r): { … } case Empty: { … } }`
+//
+//   the scrutinee into a slot, then one block per arm:
+//     tag != this one?  branch past this arm
+//     bind the payload's fields to fresh locals
+//     the body
+//     branch to the end
+//
+// A statement rather than an expression, so an arm may `return` and none has to answer anything.
+// There is no exhaustiveness check: a value whose tag matches no arm falls out of the match, which
+// is the same thing wac-1 does everywhere it has no type checker.
+i32 match_statement() {
+  next();
+  want(40);
+  i32 et = expr();
+  want(41);
+  i32 slot = slot_new(et);
+  word("local.set"); slotname(slot); nl();
+  i32 done = newlabel();
+  word("block"); label(done); sp(); line("->");
+  want(123);
+  while (ispunct(125) == 0) {
+    next();
+    i32 vp = tstart(tp);
+    i32 vn = tlen(tp);
+    next();
+    i32 vi = var_find(vp, vn);
+    // **Loudly, not by luck.** A `case` naming no variant used to answer -1 and carry on: reading
+    // `VARS - 16` gives zeros, so the arm compared against a nonsense tag and cast to type 0 —
+    // which is `i32` and emits no `type` directive, so the assembler happened to refuse it. That is
+    // the fourth thing in this project that worked because of a coincidence, and the first one
+    // caught before it cost anything.
+    if (vi == 0 - 1) { oops(); }
+    i32 skip = newlabel();
+    word("block"); label(skip); sp(); line("->");
+    word("local.get"); slotname(slot); nl();
+    word("struct.get"); tyname(et); sp(); line("0");
+    konst(var_tag(vi));
+    line("i32.ne");
+    word("br_if"); label(skip); nl();
+
+    i32 mark = nloc;
+    if (ispunct(40)) {
+      next();
+      i32 pay = var_payload(vi);
+      i32 k = 0;
+      while (ispunct(41) == 0) {
+        i32 ft = fld_type(ty_fstart(pay) + k);
+        word("local.get"); slotname(slot); nl();
+        word("struct.get"); tyname(et); sp(); line("1");
+        word("ref.cast"); word("ref"); tyname(pay); nl();
+        word("struct.get"); tyname(pay); sp(); emitn(k); nl();
+        word("local.set"); slotname(loc_add(tstart(tp), tlen(tp), ft)); nl();
+        k = k + 1;
+        next();
+        if (ispunct(44)) { next(); }
+      }
+      want(41);
+    }
+    want(58);
+    block();
+    nloc = mark;
+    word("br"); label(done); nl();
+    line("end");
+  }
+  want(125);
+  line("end");
+  return 0;
+}
+
+i32 if_statement() {
+  next();
+  want(40);
+  expr();
+  want(41);
+  i32 l = newlabel();
+  word("if"); label(l); sp(); line("->");
+  block();
+  if (isword("else")) {
+    next();
+    line("else");
+    if (ispunct(123)) { block(); } else { statement(); }
+  }
+  line("end");
+  return 0;
+}
+
+i32 while_statement() {
+  next();
+  i32 lo = newlabel();
+  i32 li = newlabel();
+  word("block"); label(lo); sp(); line("->");
+  word("loop"); label(li); sp(); line("->");
+  want(40);
+  expr();
+  want(41);
+  line("i32.eqz");
+  word("br_if"); label(lo); nl();
+  block();
+  word("br"); label(li); nl();
+  line("end");
+  line("end");
+  return 0;
+}
+
+i32 statement() {
+  if (isword("return")) { next(); expr(); want(59); line("return"); return 0; }
+  if (isword("if")) { return if_statement(); }
+  if (isword("while")) { return while_statement(); }
+  if (isword("match")) { return match_statement(); }
+  if (ispunct(123)) { return block(); }
+  if (looks_like_decl()) { return declaration(); }
+  return assign_or_expr();
+}
+
+// ---------------------------------------------------------------- declarations
+
+// The `type` directives go into their own buffer and are appended at the end, because `.wax` takes
+// directives in any order — so an array type first named inside the last function needs no pre-pass.
+i32 emit_typedecls() {
+  i32 saved = dst;
+  i32 savedp = dp;
+  dst = TYPEBUF;
+  dp = typep;
+  i32 i = 0;
+  while (i < ntype) {
+    if (ty_kind(i) == T_STRUCT) {
+      word("type"); tyname(i); sp(); word("struct");
+      i32 j = 0;
+      while (j < ty_nfields(i)) {
+        valtype(fld_type(ty_fstart(i) + j));
+        sp();
+        j = j + 1;
+      }
+      nl();
+    }
+    if (ty_kind(i) == T_ARRAY) {
+      word("type"); tyname(i); sp(); word("array"); valtype(ty_elem(i)); nl();
+    }
+    if (ty_kind(i) == T_ENUM) {
+      word("type"); tyname(i); sp(); word("struct"); word("i32"); line("anyref");
+    }
+    i = i + 1;
+  }
+  typep = dp;
+  dst = saved;
+  dp = savedp;
+  return 0;
+}
+
+i32 struct_decl() {
+  next();
+  i32 p = tstart(tp);
+  i32 n = tlen(tp);
+  next();
+  i32 t = ty_findstruct(p, n);
+  if (t == 0 - 1) { t = ty_new(T_STRUCT, p, n, 0); }
+  store(TYPES + t * 24 + 16, nfield);
+  want(123);
+  i32 count = 0;
+  while (ispunct(125) == 0) {
+    i32 ft = parse_type();
+    i32 mp = tstart(tp);
+    i32 mn = tlen(tp);
+    next();
+    if (ispunct(40)) {
+      // A method: registered here, emitted in the second pass, and its body skipped now.
+      meth_add(t, mp, mn, ft);
+      while (ispunct(123) == 0) { next(); }
+      i32 depth = 1;
+      next();
+      while (depth > 0) {
+        if (ispunct(123)) { depth = depth + 1; }
+        if (ispunct(125)) { depth = depth - 1; }
+        next();
+      }
+    } else {
+      i32 base = FIELDS + nfield * 12;
+      store(base, mp);
+      store(base + 4, mn);
+      store(base + 8, ft);
+      nfield = nfield + 1;
+      count = count + 1;
+      want(59);
+    }
+  }
+  want(125);
+  store(TYPES + t * 24 + 20, count);
+  return 0;
+}
+
+// The second pass over a struct: the fields are already known, so this is here only to emit the
+// methods, whose bodies the first pass walked past.
+i32 struct_pass2(i32 out) {
+  next();
+  i32 p = tstart(tp);
+  i32 n = tlen(tp);
+  next();
+  i32 t = ty_findstruct(p, n);
+  want(123);
+  while (ispunct(125) == 0) {
+    i32 ft = parse_type();
+    i32 mp = tstart(tp);
+    i32 mn = tlen(tp);
+    next();
+    if (ispunct(40)) {
+      mowner = t;
+      function(out, ft, mp, mn);
+      mowner = 0 - 1;
+    } else {
+      want(59);
+    }
+  }
+  want(125);
+  return 0;
+}
+
+// `enum Shape { Circle(i32 r); Rect(i32 w, i32 h); Empty; }`
+//
+// Each variant gets a nameless struct for its payload — nameless because nothing writes it as a
+// type — and `Empty` gets none at all, which is a payload of `null`.
+i32 enum_decl() {
+  next();
+  i32 p = tstart(tp);
+  i32 n = tlen(tp);
+  next();
+  i32 t = ty_findstruct(p, n);
+  if (t == 0 - 1) { t = ty_new(T_ENUM, p, n, 0); }
+  store(TYPES + t * 24, T_ENUM);
+  store(TYPES + t * 24 + 16, nvar);
+  want(123);
+  i32 count = 0;
+  while (ispunct(125) == 0) {
+    i32 vp = tstart(tp);
+    i32 vn = tlen(tp);
+    next();
+    i32 payload = 0 - 1;
+    if (ispunct(40)) {
+      next();
+      payload = ty_new(T_STRUCT, 0, 0, 0);
+      store(TYPES + payload * 24 + 16, nfield);
+      i32 nf = 0;
+      while (ispunct(41) == 0) {
+        i32 ft = parse_type();
+        i32 base = FIELDS + nfield * 12;
+        store(base, tstart(tp));
+        store(base + 4, tlen(tp));
+        store(base + 8, ft);
+        nfield = nfield + 1;
+        nf = nf + 1;
+        next();
+        if (ispunct(44)) { next(); }
+      }
+      want(41);
+      store(TYPES + payload * 24 + 20, nf);
+    }
+    var_add(vp, vn, payload, t);
+    count = count + 1;
+    want(59);
+  }
+  want(125);
+  store(TYPES + t * 24 + 20, count);
+  return 0;
+}
+
+i32 function(i32 out, i32 ret, i32 np, i32 nn) {
+  want(40);
+  nloc = 0;
+  nslot = 0;
+  while (ispunct(41) == 0) {
+    if (isword("this")) {
+      loc_add(tstart(tp), tlen(tp), mowner);
+      next();
+    } else {
+      i32 pt = parse_type();
+      loc_add(tstart(tp), tlen(tp), pt);
+      next();
+    }
+    if (ispunct(44)) { next(); }
+  }
+  want(41);
+  i32 nparams = nslot;
+
+  i32 outp = dp;
+  dst = BODY;
+  dp = 0;
+  block();
+  i32 blen = dp;
+
+  dst = out;
+  dp = outp;
+  word("func");
+  if (mowner == 0 - 1) { emit1(36); emitname(np, nn); } else { mangled(mowner, np, nn); }
+  sp(); word("->"); valtype(ret); nl();
+  i32 i = 0;
+  while (i < nparams) {
+    word("param"); valtype(loc_type_at_slot(i)); sp(); slotname(i); nl();
+    i = i + 1;
+  }
+  i32 j = nparams;
+  while (j < nslot) {
+    word("local"); valtype(loc_type_at_slot(j)); sp(); slotname(j); nl();
+    j = j + 1;
+  }
+  i32 k = 0;
+  while (k < blen) { emit1(load8(BODY + k)); k = k + 1; }
+  // A body that ends without `return` still owes a value, and an unreachable default is cheaper
+  // than deciding whether the last statement was one.
+  if (ret == 0) { konst(0); } else { line("ref.null none"); }
+  line("end");
+  // A method is not exported: its name is not one a caller outside the module could have written.
+  if (mowner == 0 - 1) {
+    word("export"); emit1(34); emitname(np, nn); emit1(34); sp();
+    word("func"); emit1(36); emitname(np, nn); nl();
+  }
+  nl();
+  return 0;
+}
+
+i32 loc_type_at_slot(i32 s) { return load(SLOTTY + s * 4); }
+
+// One scan for every struct and every function signature, so a call to a function declared later
+// knows its return type and a field of a type declared later resolves.
+i32 collect() {
+  tp = 0;
+  while (kind() != K_EOF) {
+    if (isword("enum")) { enum_decl(); } else {
+    if (isword("struct")) { struct_decl(); } else {
+      i32 ret = parse_type();
+      i32 p = tstart(tp);
+      i32 n = tlen(tp);
+      next();
+      if (ispunct(40)) {
+        fn_add(p, n, ret);
+        i32 depth = 0;
+        while (ispunct(123) == 0) { next(); }
+        depth = 1;
+        next();
+        while (depth > 0) {
+          if (ispunct(123)) { depth = depth + 1; }
+          if (ispunct(125)) { depth = depth - 1; }
+          next();
+        }
+      } else {
+        glo_add(p, n, ret);
+        while (ispunct(59) == 0) { next(); }
+        next();
+      }
+    }}
+  }
+  return 0;
+}
+
+// Where a host writes the source and reads the output. Exported because every top-level function
+// here is. See PLAN.md, *One seam, declared by the module*.
+i32 seam_src() { return 2097152; }
+i32 seam_out() { return 1572864; }
+
+i32 compile(i32 s, i32 out) {
+  src = s;
+  labn = 0;
+  ntype = 0;
+  nvar = 0;
+  nmeth = 0;
+  nglo = 0;
+  mowner = 0 - 1;
+  // **Index 0 is `i32`, and it has to be taken rather than assumed.** Without this the first struct
+  // registered is index 0, every local of that type is declared `i32` because `valtype` reads a 0
+  // as the number type, and the module is refused for a type mismatch that the compiler believes
+  // cannot happen.
+  ty_new(T_I32, 0, 0, 0);
+  // Index 1 is `u8`, for the same reason index 0 is `i32`: a type nothing declares still needs a
+  // slot, or the first thing that does takes it.
+  ty_new(T_U8, 0, 0, 0);
+  nfield = 0;
+  nfunc = 0;
+  nstr = 0;
+  strnext = 1024;
+  typep = 0;
+  lex();
+  collect();
+
+  tp = 0;
+  dst = out;
+  dp = 0;
+  // **512 pages, not 64.** The program compiled by this is wac-L5's compiler, which holds a whole
+  // source file, its output, and three scratch buffers — and four megabytes between them is what
+  // stopped it reading `packages/wacc/src` at all.
+  line("memory 512");
+  word("export"); emit1(34); emits("memory"); emit1(34); sp(); line("memory");
+  nl();
+
+  while (kind() != K_EOF) {
+    if (isword("enum")) {
+      // Already collected, and an enum has no methods to emit.
+      while (ispunct(125) == 0) { next(); }
+      next();
+    } else {
+    if (isword("struct")) {
+      struct_pass2(out);
+    } else {
+      i32 ret = parse_type();
+      i32 p = tstart(tp);
+      i32 n = tlen(tp);
+      next();
+      if (ispunct(40)) {
+        mowner = 0 - 1;
+        function(out, ret, p, n);
+      } else {
+        i32 gi = glo_find(p, n);
+        word("global"); gloname(gi); sp(); valtype(ret); sp(); word("mut"); word("=");
+        // A reference global has no literal to read: wac-L0 answers null for one, and the `= 0` is
+        // there because the directive's shape asks for something and nothing else fits.
+        if (ty_kind(ret) == T_I32) {
+          if (ispunct(61)) {
+            next();
+            i32 neg = 0;
+            if (ispunct(45)) { next(); neg = 1; }
+            // **A literal, and nothing else.** wac-L4's globals are wasm's globals, whose
+            // initialiser is a constant expression — so `= 0 - 1` is not a smaller version of `=
+            // -1`, it is a different thing that this cannot emit. Saying so beats reading the `0`
+            // and leaving the `- 1` for whatever comes next to trip over, which is what it did
+            // three times.
+            if (kind() == K_INT) {
+              i32 v = val();
+              next();
+              if (neg) { emitn(0 - v); } else { emitn(v); }
+            } else {
+              emitn(0);
+              oops();
+            }
+          } else { emitn(0); }
+        } else {
+          while (ispunct(59) == 0) { next(); }
+          emitn(0);
+        }
+        nl(); nl();
+        want(59);
+      }
+    }}
+  }
+  emit_strdata();
+
+  // The type directives last, copied out of their own buffer.
+  emit_typedecls();
+  i32 i = 0;
+  while (i < typep) { emit1(load8(TYPEBUF + i)); i = i + 1; }
+  return dp;
+}

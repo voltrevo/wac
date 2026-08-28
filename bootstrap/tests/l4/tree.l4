@@ -1,0 +1,24 @@
+// A struct holding an array of itself, which is the shape that needs a recursive type group.
+struct Node { i32 value; Node[] kids; }
+
+i32 total(Node n) {
+  i32 sum = n.value;
+  if (n.kids.len() > 0) {
+    i32 i = 0;
+    while (i < n.kids.len()) {
+      sum = sum + total(n.kids[i]);
+      i = i + 1;
+    }
+  }
+  return sum;
+}
+
+i32 main() {
+  Node[] none = Node[0]();
+  Node a = Node(2, none);
+  Node b = Node(4, none);
+  Node[] two = Node[2]();
+  two[0] = a;
+  two[1] = b;
+  return total(Node(1, two));
+}
