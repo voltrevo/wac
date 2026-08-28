@@ -135,6 +135,17 @@ console.log(`W1 == W2  (our ladder is at its fixed point)     ${same(W1, W2)}`);
 console.log(`X1 == X2  (the reference is at its fixed point)  ${same(X1, X2)}`);
 console.log(`W1 == X1  (the two fixed points are the same)    ${same(W1, X1)}`);
 
+// **The evidence, in a form that outlives the reference.** `compiler/` is being deleted, and with
+// it the ability to compute `X1` at all. Printing the hash means the claim "these two agreed, on
+// this commit, on these bytes" survives as something checkable against a rebuild rather than as a
+// sentence somebody wrote.
+const sha = async (b: Uint8Array) =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", b as BufferSource))]
+    .map((n) => n.toString(16).padStart(2, "0")).join("");
+console.log();
+console.log(`W1  sha256 ${await sha(W1)}`);
+console.log(`X1  sha256 ${await sha(X1)}`);
+
 export const result = {
   sameFixedPoint: same(W1, X1),
   ourFixedPoint: same(W1, W2),

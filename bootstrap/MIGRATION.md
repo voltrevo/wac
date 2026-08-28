@@ -187,8 +187,35 @@ Deleting the TypeScript compiler removes three independent checks, all at once:
 3. **`WAC_APP_FROM=reference`** — build an application both ways and compare.
 
 Accepted rather than solved. The one thing asked of the removal commit: **pin what the two sides
-last agreed on** — the wacc hash and the app artefacts — so that "these were identical on this date"
-survives the deletion even though the ability to re-run it does not.
+last agreed on**, so that "these were identical on this date" survives the deletion even though the
+ability to re-run it does not.
+
+### The last agreed fixed point
+
+Measured on commit `246ed978`, against wacc's 23 source files and 40,241 lines:
+
+    W0  wacc built by wac-L5          696,449 bytes
+    X0  wacc built by the reference   932,512 bytes
+    W1  wacc built by W0              742,168 bytes
+    X1  wacc built by X0              742,168 bytes
+
+    W1 == W2   our ladder is at its fixed point      true
+    X1 == X2   the reference is at its fixed point   true
+    W1 == X1   the two fixed points are the same     true
+
+    sha256  3fef5aae8784f4cc96891a38b3426b7a26811b30ccd8de9983590f78c7fd1a2d
+
+`ts/same_fixed_point.ts` prints that hash now rather than only the verdict, so the claim is
+checkable against a rebuild rather than being a sentence somebody wrote. After `compiler/` goes,
+`X1` cannot be computed at all — the hash is what remains.
+
+**A discrepancy found while gathering it, worth knowing about.** Two paths in this bootstrap disagree
+about whether to *supply* the builtin modules as files. `same_fixed_point.ts` walks only relative
+imports, so wacc serves `core/` and `std/` from `coretext.wac` and W1 is 742,168 bytes. `fileSet` —
+and `file_set` in the Rust host — resolve them from disk and pass them in, and the same build is
+740,818. Both produce a working compiler and the ladder's `wac.wac` build matches wac's own byte for
+byte either way, so nothing is broken; but two file sets that differ by 1,350 bytes of compiler is a
+difference somebody should choose deliberately rather than inherit.
 
 ---
 
