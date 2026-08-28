@@ -214,8 +214,8 @@ only one it does not enforce.
 
 ## The assignment shape, counted — agent-c, 2026-08-25
 
-The paragraph above asked for this before the option could be priced. `tools/constLaundering.ts` is the
-measurement and the answer is **2**, over 376 package sources:
+The paragraph above asked for this before the option could be priced. The measurement was
+tools/constLaundering.ts and the answer is **2**, over 376 package sources:
 
     packages/crypto/src/blowfish.wac:44   i32[] s = this.s;    // in `f(const this, i32 x)`
     packages/crypto/src/blowfish.wac:56   i32[] p = this.p;    // in `encipher(const this, …)`

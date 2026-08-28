@@ -116,8 +116,9 @@ matters more than the annotations would cost.
    local or a const field. A checker doing this properly knows all of those, so the real number is
    this or higher — and the gap is worth re-measuring inside the checker rather than guessing at.
 
-   **The assignment shape is counted now: 2, and both are benign** — `tools/constLaundering.ts`,
-   2026-08-25. Both are in `packages/crypto/src/blowfish.wac`, both are `const this` aliased into a
+   **The assignment shape is counted now: 2, and both are benign** — measured 2026-08-25 by
+   tools/constLaundering.ts, which has since been deleted with the TypeScript compiler it lexed
+   with. The count is below rather than re-runnable. Both are in `packages/crypto/src/blowfish.wac`, both are `const this` aliased into a
    local array for a hot loop, and neither writes through it. So the shape a provenance-following rule
    would have to reason about occurs twice in the repository and costs a one-line rewrite each if the
    rule chose to refuse rather than allow a read-only alias. That was the open question in
