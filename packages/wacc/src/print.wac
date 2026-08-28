@@ -19,8 +19,8 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
-import { escapeValue, tokenStride, unicodeEscapeEnd, unicodeEscapeValue,
-         utf8Into } from "./lex.wac";
+import { blockValue, escapeValue, isBlockLiteral, tokenStride, unicodeEscapeEnd,
+         unicodeEscapeValue, utf8Into } from "./lex.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
 export struct Pr {
@@ -100,6 +100,17 @@ export struct Pr {
     i32 start = this.toks[t * tokenStride() + 1];
     i32 len = this.toks[t * tokenStride() + 2];
     this.out.push('"');
+    // **A block string opens with three quotes, and its margin is not in the value.** This printer
+    // canonicalises — unescape, then re-escape by one rule — so a block string has to arrive here
+    // as the bytes it *means* rather than as the bytes it is written with, or two spellings of one
+    // value would print differently and the comparison this exists for would report a difference
+    // the modules do not have. `design/lang/0013` D5, D6.
+    if (isBlockLiteral(this.src, start, len)) {
+      u8[] bytes = blockValue(this.src, start, len);
+      for (i32 k = 0; k < bytes.len(); k++) { this.escByte(bytes[k]); }
+      this.out.push('"');
+      return;
+    }
     // Skip the opening quote, and the closing one when the literal is terminated.
     i32 i = start + 1;
     i32 end = start + len;

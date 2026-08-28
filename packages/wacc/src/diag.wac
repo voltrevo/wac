@@ -43,6 +43,9 @@ export string lexMessage(i32 code) {
     return "a literal cannot hold this character raw — it is a control, a format or an "
          + "unassigned code point; write it as `\\u{...}`";
   }
+  if (code == 10) {
+    return "a block string opens with `\"\"\"` and a newline — the content starts on the next line";
+  }
   return "the lexer refused this";
 }
 

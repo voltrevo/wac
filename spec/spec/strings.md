@@ -19,6 +19,42 @@ string escaped = "line1\nline2";
 
 Escape sequences: `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, and `\u{H…H}`.
 
+### Block strings
+
+A literal opening with `"""` runs to the next `"""` and may hold newlines.
+
+```wac
+string usage = """
+    usage: wac build <entry.wac> -o <stem>
+           [--allow-read] [--allow-write]
+    """;
+```
+
+The opening mark is followed by a newline, unconditionally: content on that
+line would have no indentation to contribute to the margin below.
+
+Escapes are cooked exactly as in `"…"`, so every character stays expressible —
+the cost is that a backslash in the text is a trap, and `C:\new\table` is a
+newline and a tab. Trailing whitespace is kept, so no `\s`-style escape hatch is
+needed.
+
+**The margin is the least indentation of the content lines**, and it is removed
+from each. A blank line has no indentation and contributes nothing.
+
+**The closing mark decides one thing: whether the value ends in a newline.** On
+its own line it does; at the end of the last content line it does not. Its own
+indentation does not enter the margin — deliberately unlike Java, where moving
+the delimiter silently reindents the whole value.
+
+`[§wac-str-block-margin-p9qk4nv]` The example above is
+`"usage: wac build <entry.wac> -o <stem>\n       [--allow-read] [--allow-write]\n"`.
+`[§wac-str-block-close-m2jw8rt]` With the closing mark at the end of the last
+content line, the value has no trailing newline; with the mark indented less
+than the content, the content is still flush.
+
+A tab in the indentation is an error, as it is anywhere else in a literal — see
+below — so no block string can mean two things to two readers.
+
 ### What may appear raw
 
 A literal may hold any character **except** Unicode category C — `Cc` control,

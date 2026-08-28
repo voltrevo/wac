@@ -63,6 +63,7 @@ export i32 errEmptyChar()           { return 6; }
 export i32 errCharTooLong()         { return 7; }
 export i32 errBadUnicodeEscape()    { return 8; }
 export i32 errRawCharacter()        { return 9; }
+export i32 errBlockStringOpen()     { return 10; }
 
 // ── Character classification ──────────────────────────────────────────────────
 //
@@ -401,6 +402,112 @@ i32 hexValue(i32 c) {
 }
 
 /**
+ * Whether the literal at `start` opens with `"""`.
+ *
+ * The token kind is the same for both forms — a block string is a string — so the spelling is what
+ * distinguishes them, and it is read from the span rather than recorded, because the span is what
+ * every other consumer already has.
+ */
+export bool isBlockLiteral(u8[] src, i32 start, i32 len) {
+  return len >= 6 && src[start] == 34 && src[start + 1] == 34 && src[start + 2] == 34;
+}
+
+/**
+ * The least indentation of a block string's **content** lines, in bytes.
+ *
+ * `design/lang/0013` D5: the closing mark's own line does not participate. That is deliberately not
+ * Java, which takes the minimum over the content lines *and* the closing line — so moving the
+ * closing delimiter silently reindents the whole value. Two rules fall out of leaving it out rather
+ * than needing to be stated: a blank line cannot count toward the minimum, and a line indented less
+ * than the margin cannot occur, so there is no clamping rule to get wrong.
+ *
+ * **A tab in the indentation is refused rather than assigned a width**, so no block string can mean
+ * two things to two readers. Answered as -1, which the caller reports.
+ */
+i32 blockMargin(u8[] src, i32 from, i32 to) {
+  i32 margin = 0x7fffffff;
+  i32 i = from;
+  while (i < to) {
+    // One line: [i, eol).
+    i32 eol = i;
+    while (eol < to && src[eol] != 10) { eol = eol + 1; }
+    i32 sp = i;
+    while (sp < eol && src[sp] == 32) { sp = sp + 1; }
+    if (sp < eol && src[sp] == 9) { return 0 - 1; }
+    // A blank line contributes nothing — it has no indentation to speak of, and counting it would
+    // make the margin zero for any value with a paragraph break in it.
+    if (sp < eol && (sp - i) < margin) { margin = sp - i; }
+    i = eol + 1;
+  }
+  return margin == 0x7fffffff ? 0 : margin;
+}
+
+/**
+ * A block string's bytes: the margin removed from each content line, then the escapes resolved.
+ *
+ * The closing mark decides one thing and one thing only — whether the value ends in a newline
+ * (`design/lang/0013` D5). Put the mark on its own line and it does; put it at the end of the last
+ * content line and it does not. Nothing else about the value depends on where it sits.
+ *
+ * Trailing whitespace is kept — D6 — so no `\s`-style escape hatch is needed. The accepted cost is
+ * that an editor which trims on save silently changes a value.
+ */
+export u8[] blockValue(u8[] src, i32 start, i32 len) {
+  // Past the opening `"""` and its unconditional newline; before the closing `"""`.
+  i32 from = start + 3;
+  while (from < start + len && src[from] != 10) { from = from + 1; }
+  from = from + 1;
+  i32 to = start + len - 3;
+  if (to < from) { to = from; }
+
+  // The closing mark's own line is not content and does not set the margin. It is whatever sits
+  // between the last newline and the mark — spaces, by construction, since anything else would be
+  // content on that line.
+  i32 lastNl = to;
+  while (lastNl > from && src[lastNl - 1] != 10) { lastNl = lastNl - 1; }
+  i32 contentEnd = lastNl == from ? to : lastNl;
+
+  i32 margin = blockMargin(src, from, contentEnd);
+  if (margin < 0) { margin = 0; }          // a tab: reported by the caller, decoded as written
+
+  u8[] outBuf = u8[len](fill: 0);
+  i32 n = 0;
+  i32 i = from;
+  while (i < contentEnd) {
+    // Skip this line's margin, and no more than what is there — a blank line is shorter than it.
+    i32 eol = i;
+    while (eol < contentEnd && src[eol] != 10) { eol = eol + 1; }
+    i32 j = i + margin < eol ? i + margin : eol;
+    while (j < eol) {
+      if (src[j] == 92 && j + 1 < eol) {
+        if (src[j + 1] == 'u') {
+          i32 cp = unicodeEscapeValue(src, j + 1, eol);
+          if (cp >= 0) { n = n + utf8Into(outBuf, n, cp); j = unicodeEscapeEnd(src, j + 1, eol); continue; }
+        }
+        outBuf[n] = escapeValue(src[j + 1]);
+        n = n + 1;
+        j = j + 2;
+        continue;
+      }
+      outBuf[n] = src[j];
+      n = n + 1;
+      j = j + 1;
+    }
+    if (eol < contentEnd) { outBuf[n] = 10; n = n + 1; }
+    i = eol + 1;
+  }
+  // **The trailing newline is already in `contentEnd`**, and adding one here for a closing mark on
+  // its own line put a second one on every such value. `contentEnd` stops just *after* the last
+  // newline when the mark has a line to itself, and at the mark when it does not — so the loop
+  // above has already emitted exactly the right number, and D5's one job is decided by where
+  // `contentEnd` lands rather than by a rule of its own.
+
+  u8[] exact = u8[n]();
+  for (i32 k = 0; k < n; k++) { exact[k] = outBuf[k]; }
+  return exact;
+}
+
+/**
  * What an escape denotes — a byte in a string, a codepoint in a character literal.
  *
  * Total on purpose. A caller reaches this only for an escape one of the predicates above admitted,
@@ -472,6 +579,78 @@ void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
       }
       lx.advance();
     }
+  }
+  if (!closed) { fail(out, errUnterminatedString(), startLine, startCol); }
+  pushToken(out, kString(), start, lx.pos - start, startLine, startCol);
+}
+
+/**
+ * A block string — `"""`, a newline, the content, then the closing mark.
+ *
+ * `design/lang/0013` D5 and D6. The token is a `kString` like any other and its span is the whole
+ * literal, so everything downstream sees one kind of string; what differs is how the bytes are read
+ * back out, which `blockStringBytes` in `emit.wac` does.
+ *
+ * **The opening newline is unconditional.** `"""x` is an error rather than a literal beginning with
+ * `x`: the margin is computed from the content lines, and a first line that began on the opening
+ * mark's own line would have no indentation to contribute and would silently set the margin to
+ * zero. Requiring the newline removes the case rather than deciding it.
+ *
+ * Escapes are cooked exactly as in `"…"` — D6 — because D3 has just forbidden raw control
+ * characters and every character has to stay expressible. The accepted cost is that a backslash in
+ * the text is a trap: `C:\new\table` is a newline and a tab.
+ */
+void lexBlockString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
+  i32 start = lx.pos;
+  lx.advance(); lx.advance(); lx.advance();       // the opening `"""`
+
+  // **The newline first, and nothing but space before it.** Anything else is content that would sit
+  // outside the margin rule, so it is refused where it is written rather than mis-indented later.
+  while (!lx.atEnd() && (lx.peek(0) == ' ' || lx.peek(0) == 13)) { lx.advance(); }
+  if (lx.atEnd() || lx.peek(0) != '\n') {
+    fail(out, errBlockStringOpen(), startLine, startCol);
+  } else {
+    lx.advance();
+  }
+
+  bool closed = false;
+  while (!lx.atEnd() && !closed) {
+    if (lx.peek(0) == '"' && lx.peek(1) == '"' && lx.peek(2) == '"') {
+      lx.advance(); lx.advance(); lx.advance();
+      closed = true;
+      continue;
+    }
+    i32 c = lx.peek(0);
+    if (c == '\\') {
+      lx.advance();
+      if (lx.atEnd()) { break; }
+      i32 escAt = lx.pos;
+      i32 esc = lx.advance();
+      if (esc == 'u') {
+        if (unicodeEscapeValue(lx.src, escAt, lx.src.len()) < 0) {
+          fail(out, errBadUnicodeEscape(), startLine, startCol);
+        }
+        while (lx.pos < unicodeEscapeEnd(lx.src, escAt, lx.src.len())) { lx.advance(); }
+      } else if (!isStringEscape(esc)) {
+        fail(out, errUnknownEscape(), startLine, startCol);
+      }
+      continue;
+    }
+    // **D6 asks for a tab in the indentation to be refused, and D3 already refuses it.** A tab is
+    // `Cc`, so the rule below — any raw character in category C — catches it wherever it appears,
+    // indentation or content. A separate check gave *two* diagnostics for one tab, which is how it
+    // was found; D6's clause is a consequence of D3 rather than a rule of its own.
+    //
+    // **A newline is content here**, unlike in a `"…"`, which is the whole point of the form. Every
+    // other character answers to D3 exactly as it does in a one-line literal.
+    if (c != '\n') {
+      i32 b = lx.peek(0);
+      if (b < 128 || b >= 192) {
+        i32 cp = codepointAt(lx.src, lx.pos);
+        if (cp >= 0 && !isLiteralChar(cp)) { fail(out, errRawCharacter(), startLine, startCol); }
+      }
+    }
+    lx.advance();
   }
   if (!closed) { fail(out, errUnterminatedString(), startLine, startCol); }
   pushToken(out, kString(), start, lx.pos - start, startLine, startCol);
@@ -922,7 +1101,9 @@ export Lexed lex(u8[] src) {
     i32 startCol = lx.col;
     i32 c = lx.peek(0);
 
-    if (c == '"') {
+    if (c == '"' && lx.peek(1) == '"' && lx.peek(2) == '"') {
+      lexBlockString(lx, out, startLine, startCol);
+    } else if (c == '"') {
       lexString(lx, out, startLine, startCol);
     } else if (c == '\'') {
       lexChar(lx, out, startLine, startCol);
