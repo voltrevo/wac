@@ -4111,7 +4111,25 @@ void checkExpr(C c, Expr e) {
         // made it one in forty places in this file alone.
         bool strMix = nl != typeNone() && nr != typeNone() &&
                       (nl == "string") != (nr == "string");
-        if (lRef || rRef || strMix) {
+        // **A `bool` against a known something-else**, which is `strMix` one type along and was
+        // missing for the same reason. `b > y` for two *variables* is caught by the same-type rule
+        // further down; `(x < 2) > 0` never reaches it, because the literal branch below returns
+        // first — a literal takes the other operand's type without anything asking whether that
+        // type is one an integer literal may be. So it compiled, and ran with `true` standing in
+        // for `1`: `(x < 2) > 0` answered 1 and `(x < 2) > 5` answered false. Nothing in the
+        // language gives a `bool` a numeric value. `issues/lang/0272b`.
+        //
+        // Here rather than in the literal branch, and asked as the *family* rather than as `bool`
+        // under `>`: this rule already owns "these types cannot be compared" and already asks this
+        // shape for `string`. Putting it there instead would have double-reported `s > 1`, which
+        // `strMix` catches, and `(x < 2) + 1`, which the operand-kind rule above already refuses —
+        // the comparisons are the only operators that let a `bool` through.
+        //
+        // `naturalTypeOf` is what makes the literal visible: it fills in `1` as an integer, so the
+        // pair here is `bool` against `i32` rather than `bool` against nothing.
+        bool boolMix = nl != typeNone() && nr != typeNone() &&
+                       (nl == "bool") != (nr == "bool");
+        if (lRef || rRef || strMix || boolMix) {
           c.report(errNotComparable(), e.line, e.col);
           return;
         }

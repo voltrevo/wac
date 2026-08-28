@@ -56,7 +56,15 @@ string[] names() {
     // context to infer from. The rules were there and keyed on a type the operand does not have, so all
     // three reached the emitter, which declined the module with the reason *"null"*. The reference
     // refuses all three by name. `issues/lang/0249a`.
-    "a32 null is null", "a33 null is not null", "a34 null!");
+    "a32 null is null", "a33 null is not null", "a34 null!",
+    // A `bool` compared against an integer **literal**. `b > y` for two variables was refused and
+    // this was not: a literal takes the other operand's type without anything asking whether that
+    // type is one an integer literal may be, so it compiled and ran with `true` standing in for 1 —
+    // `(x < 2) > 0` answered 1 and `(x < 2) > 5` answered false. Both comparison spellings, because
+    // `>` and `==` are separate arms of the rule and only `>` was in the reproduction.
+    // `issues/lang/0272b`.
+    "a35 (x < 2) > 0 (bool vs literal)", "a36 (x < 2) == 1 (bool vs literal)",
+    "a37 0 > (x < 2) (the literal first)");
 }
 
 string[] programs() {
@@ -94,7 +102,10 @@ string[] programs() {
     "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2 }; return d; }\n",
     "export bool f() { return null is null; }\n",
     "export bool f() { return null is not null; }\n",
-    "export i32 f() { return null!; }\n");
+    "export i32 f() { return null!; }\n",
+    "export i32 f(i32 x) { return (x < 2) > 0 ? 1 : 0; }\n",
+    "export i32 f(i32 x) { return (x < 2) == 1 ? 1 : 0; }\n",
+    "export i32 f(i32 x) { return 0 > (x < 2) ? 1 : 0; }\n");
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
