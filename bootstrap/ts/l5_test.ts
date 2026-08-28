@@ -611,3 +611,50 @@ Deno.test("wac-L5's MEMBYTES is the memory wac-L4 gives it", async () => {
     throw new Error(`MEMBYTES is ${declared}, but wac-L4 gives wac-L5 ${pages} pages = ${actual}`);
   }
 });
+
+// **wacc's graph needs no renaming, and that is a constraint rather than an accident.**
+//
+// The ladder builds wacc by *concatenating* its eighteen modules: wac-L5 is too small to resolve
+// imports, so an import is a file to include. Two modules with one private name are then two
+// declarations of it, and the flattener renames one apart.
+//
+// It has to keep being able to do that — 90 of this repository's 309 corpus entry points collide
+// somewhere, and `rotl` in `chacha20`, `keccak` and `xxh64` are three correct implementations, not
+// a mistake. But renaming is the part of a flattener that can silently produce a *wrong* compiler,
+// and the one program it should least be doing it to is the compiler. So the rule is not "the
+// flattener refuses collisions" — it is "wacc's own graph has none", which is checked here.
+//
+// Eighteen names did collide when this was first measured. `packages/wacc/README.md` records what
+// they were and which were deduped rather than renamed; this is the check that section names.
+//
+// Skips without wac beside this repo.
+Deno.test({
+  name: "the flattener renames nothing in wacc's own graph",
+  ignore: !(await (async () => {
+    try {
+      await Deno.stat(`${new URL("..", import.meta.url).pathname}../wac/packages/wacc/src/api.wac`);
+      return true;
+    } catch {
+      return false;
+    }
+  })()),
+  fn: async () => {
+    const root = new URL("..", import.meta.url).pathname;
+    const { flatten } = await import("../js/flatten.js");
+    const { files } = await import("../hosts/deno.js");
+    const renamed: string[] = [];
+    await flatten(
+      `${root}../wac/packages/wacc/src/api.wac`,
+      files,
+      (mod: string, from: string, to: string) => renamed.push(`${from} in ${mod} -> ${to}`),
+    );
+    if (renamed.length > 0) {
+      throw new Error(
+        `wacc's graph has ${renamed.length} colliding name(s), which the flattener renamed:\n  ` +
+          renamed.sort().join("\n  ") +
+          `\nEither give one a distinct name or, if they are the same function, keep one and ` +
+          `import it. See packages/wacc/README.md, "One thing the bootstrap asks of this package".`,
+      );
+    }
+  },
+});

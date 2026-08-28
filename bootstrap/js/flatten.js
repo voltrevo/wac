@@ -36,9 +36,10 @@
  *
  * @param {string} entry
  * @param {Files} files
+ * @param {(mod: string, from: string, to: string) => void} [onRename] told about each rename
  * @returns {Promise<string>}
  */
-export async function flatten(entry, files) {
+export async function flatten(entry, files, onRename) {
   /** @type {Mod[]} */
   const mods = [];
   await gather(entry, new Set(), mods, files);
@@ -87,6 +88,16 @@ export async function flatten(entry, files) {
     for (const o of list) {
       if (o.mod === keeper) continue;
       renameIn(o.mod, name, `${name}_${o.mod}`);
+    }
+  }
+
+  // **What it renamed, if anybody asked.** Renaming is the part of a flattener that can quietly
+  // produce a *wrong* compiler, so it should be possible to see it happen. wacboot's own tests use
+  // this to assert that wacc's graph needs none of it — see `packages/wacc/README.md` in wac, which
+  // states that as a constraint on wacc's source and names this check as its enforcement.
+  if (onRename !== undefined) {
+    for (const [mod, m] of renames) {
+      for (const [from, to] of m) onRename(mod, from, to);
     }
   }
 

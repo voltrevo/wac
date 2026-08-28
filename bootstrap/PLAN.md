@@ -198,6 +198,47 @@ rather than by hoping.
 
 ---
 
+## Blocked — the ladder no longer builds wacc
+
+**`WVec.create()` in `packages/wacc/src/wapytok.wac`**, which arrived upstream on 2026-08-27 and
+wac-L5 refuses:
+
+    !! wac-L5: line 19390: unexpected token ( before ) ) ;
+
+    export Toks toksNew() { return Toks(WVec.create()); }
+
+A **static method on a generic template**, with the instantiation nowhere in the call. wacc's own
+`emit.wac` describes the shape: *"The instantiation is not in the call — it is in the slot the
+answer goes into, which is the language's own spelling: `Vec<i32> w = Vec.create();`"*. This is the
+harder variant of it: the slot is a struct field's type, reached through the `Toks(...)` constructor
+one level out, so the wanted type comes from the field of the struct being built.
+
+**This is the ladder growing to follow wacc, which was expected** — *"it is possible the ladder will
+grow in future so that wacc can use more features"* — and it is the first time it has happened
+since the fixed point was reached. It is not caused by the wacc edits above: the same refusal, at
+the same construct, is there with them stashed.
+
+What it blocks: the ladder building wacc at all, so every acceptance criterion downstream of it.
+Six tests, measured rather than guessed:
+
+    ts/hosts_agree_test.ts    Deno, Node and Rust each build wacc alone
+    ts/ladder_test.ts         the ladder compiles wacc, and that wacc compiles wac
+    ts/manifest_test.ts       the manifest matches the one wac's own build writes
+    ts/same_fixed_point_test  the ladder and wac's bootstrap reach the same wacc
+    ts/selfhost_test.ts       the wacc wac-L5 built builds wacc, and they agree
+    ts/spec_cases_test.ts     every spec case comes out as its expectation says
+
+229 of the other tests stay green, so the rungs themselves are unaffected — it is one construct in
+one file at the top of the ladder.
+
+**And one flake, which is not this.** `ts/browser_test.ts` fails in a full-suite run while the wac
+gate is running and passes on its own in a second. It drives headless Chromium with
+`--virtual-time-budget` and `--dump-dom`, and under contention the browser is slow to reach the
+point where the DOM is worth dumping. A test that fails when the machine is busy is a test that will
+cry wolf on a shared box; worth fixing, not yet filed.
+
+---
+
 ## Now — the rungs themselves
 
 Host-independent, so they can land before or during the port. Ordered by what each costs when it is
@@ -305,57 +346,58 @@ than it buys now that no host carries an address.
 
 ---
 
-## The flattener, and what it wants from wacc — **question**
+## The flattener, and what it wants from wacc — **done, and the conclusion was wrong**
 
-`flatten` will be about 190 lines of the portable core: resolving specifiers, ordering modules,
-undoing `import { x as y }`, and renaming the colliding private declarations of two modules. That
-is compiler behaviour outside the ladder — and under the acceptance criteria it now has to be
-written **twice**, in JavaScript and in Rust. Shrinking it is worth more than it was.
+This section proposed shrinking the flattener from 191 lines to ~114 by making it **refuse** a
+collision instead of renaming one apart, once wacc's source had none left. The wacc half is done.
+The flattener half is not, because the measurement that would have justified it was never taken and
+is the opposite of what the section assumed.
 
-**Measured, in wacc's 18-module graph, 1,095 top-level names:**
+**What was done to wacc.** Eighteen names were declared by more than one of its eighteen modules —
+not fifteen; the earlier count came from grepping the flattener's *output* for `name_module`, which
+invented `endsWith` and missed four, three of them in a `wapyparse.wac` that arrived in the
+meantime. Five were re-export wrappers in `files.wac` and are deleted, with six importers repointed
+(not three — each line also imported names that genuinely live there, so they split rather than
+move). Two were byte-identical copies: `startsWith` joins `endsWith` in `path.wac`, `orVoid` is
+exported from `manifest.wac` across an edge `bindgen.wac` already had. Eleven were one name for two
+different functions and are renamed to say which. wacc's graph now flattens by pure concatenation:
+no renames, and no aliased imports either.
 
-- **15 names declared by more than one module**, which are two different things.
-  - **Ten are one fact.** `files.wac` re-exports five functions from `path.wac` and `coretext.wac`
-    as pure identity forwarders — `export bool isBuiltinSpec(string s) { return
-    coreIsBuiltinSpec(s); }`. That is 5 collisions *and* all 5 aliases, since an alias exists only
-    so a wrapper can reach what it wraps. `path.wac`'s header says it was extracted *from*
-    `files.wac`, so these are compatibility leftovers. Exactly **three import lines in the whole
-    corpus** use them; `isBuiltinSpec`'s wrapper is imported by nobody.
-  - **Nine are copy-paste that has drifted.** `endsWith` has two *different* implementations, one
-    byte-wise in `check.wac` and one using `slice` in `bindgen.wac`. `orVoid` is byte-identical in
-    both its homes. Also `startsWith`, `trimmed`, `tokenLine`, `tokenCol`, `templateOf`,
-    `bindTypeParams`, `isRefType`.
-- **5 aliased imports**, all in `files.wac`, all part of the ten above.
+**Why the flattener keeps its renaming anyway.** Because collisions are not scar tissue. Measured
+across this repository: **90 of 309 entry points collide somewhere**, and the worst — `wac.wac`,
+the unified binary, whose graph is about forty packages — has **135**. They are things like `rotl`
+in `chacha20`, `keccak` and `xxh64`: three correct, independent implementations of one primitive.
+Demanding globally unique private names across unrelated packages is asking a program not to have
+modules. Refusing would turn 90 corpus programs that compile today into refusals.
 
-**The change to wacc is about 15 edits**: delete 5 forwarders, repoint 3 import lines, dedupe or
-rename 9 helpers, rename `lex.wac`'s private `emit`.
+The trade table below was built on the belief that a collision is a mistake somebody made. For one
+package written by one team it usually is; across a corpus it is the normal state, and the earlier
+reasoning never looked past wacc's own eighteen modules to find that out.
 
-**What it buys.** The 191 lines are `gather` 32, `resolve` 17 and `type Mod` 9 — irreducible host
-work — plus `flatten` 56 (collision policy), `topLevelDecls` 40 (detection), `unalias` 37
-(renaming).
+**What replaces it.** The flattener renames, as it did, and gained an optional `onRename` callback —
+so the thing that can quietly produce a wrong compiler can be watched. wacboot's `ts/l5_test.ts`
+asserts wacc's graph needs none of it, and `packages/wacc/README.md` states the constraint on wacc's
+side and names the check. The benefit the section wanted — a reintroduced collision is caught
+loudly, on the one program where renaming is most dangerous — is kept; the 77-line reduction is not.
 
-| | lines | if a collision is reintroduced |
-|---|---|---|
-| today: rename silently | 191 | handled, invisibly |
-| **detect and refuse** | **~114** | the build stops and says which name |
-| assume clean | ~74 | silently produces a wrong compiler |
+**Where the renaming is on the path at all.** Building wacc, and nothing else. `--with-wacc` hands
+wacc a *file set* and wacc resolves its own imports, so the unified binary's 135 collisions never
+meet the flattener. It is only the general "compile this program with the ladder" mode — the corpus
+census, `hosts/node.js prog.wac` — that flattens an arbitrary graph, and that is the mode refusing
+would have broken.
 
-**Take the middle.** Collision-freedom is not a property anyone keeps by accident, and the failure
-mode of *assume clean* is the worst outcome available: a compiler that builds and is subtly wrong.
-Detection costs 40 lines and turns a silent behaviour into a stated constraint with a check behind
-it. Two implementations of ~114 lines is a better trade than two of 191.
+**Not a risk, and worth recording as such:** the renaming is witnessed. If the flattener renamed
+something wrongly, `W0` would be a subtly wrong wacc and `W1 = W0(S)` would stop matching `X1`. The
+fixed-point differential covers it.
 
-**Not a risk, and worth recording as such:** the renaming is already witnessed. If the flattener
-renamed something wrongly, `W0` would be a subtly wrong wacc and `W1 = W0(S)` would stop matching
-`X1`. The fixed-point differential covers it.
-
-**Open because it is not ours alone:** the wacc edits are in a public repo shared with other agents,
-and they have to land *before* the flattener change or the build breaks in between.
-
-**If it goes ahead**, the constraint belongs in wacc's README — *a module-private name must be
-unique across a program* — with the flattener's refusal as its enforcement.
+| | lines | if a collision is reintroduced | **verdict** |
+|---|---|---|---|
+| today: rename silently | 191 | handled, invisibly | **kept, plus a callback and a test** |
+| detect and refuse | ~114 | the build stops and says which name | **rejected: breaks 90 of 309** |
+| assume clean | ~74 | silently produces a wrong compiler | rejected |
 
 ---
+
 
 ## What is worth keeping
 
