@@ -23,12 +23,18 @@
 // function that calls back into the module part-way through a transfer, and enums (whose variants
 // need a generator of their own).
 
-// **The reference on purpose.** This fuzzes the boundary the *reference's* bindgen writes; the
-// wacc side of the same question is `packages/wacc/test/bindgen.test.ts`, and pointing both at one
-// generator would leave the marshalling with one witness. Not a candidate for design/lang/0003's
+// **wacc's bindgen, since 2026-08-28.** This fuzzed the boundary the *reference's* bindgen wrote,
+// on the argument that the wacc side of the same question is `packages/wacc/test/bindgen.test.ts`
+// and pointing both at one generator would leave the marshalling with one witness. The reference is
+// deleted, so there is one implementation and the choice is between fuzzing it and fuzzing nothing.
+//
+// The generator is the part worth keeping, and its own rationale says why it is worth more than the
+// hand-written cases beside it: *"examples one picks test the cases one already thought of."* That
+// was written about the reference's marshalling and is exactly as true of wacc's.
+//
+// The paragraph below is kept for what it recorded. Not a candidate for design/lang/0003's
 // step 3 — see issues/lang/0105 for the ones that are.
-import { wacCompile } from "../compiler/wacCompile.ts";
-import { wacBindgen } from "../compiler/wacBindgen.ts";
+import { waccArtifacts } from "../harness/waccBuild.ts";
 import { Rng } from "./fuzz.ts";
 
 // ── Types the boundary can carry ──────────────────────────────────────────────
@@ -247,6 +253,7 @@ export async function fuzzBoundary(
   seed: number,
   verbose = false,
 ): Promise<BoundaryFailure[]> {
+  let declined = 0;
   const failures: BoundaryFailure[] = [];
 
   for (let c = 0; c < count; c++) {
@@ -267,17 +274,27 @@ export async function fuzzBoundary(
       .join("\n");
     const src = `${decls}\n${fns}\n`;
 
-    const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
-    if (!r.ok) {
-      failures.push({
-        seed: s, type: "(module)", src,
-        detail: `did not compile: ${r.diagnostics.map((d) => d.message).join("; ")}`,
+    let glue: string;
+    try {
+      const art = await waccArtifacts(new Map([["m.wac", src]]), "m.wac", {
+        roots: new Map(),
+        base: Deno.cwd(),
       });
+      glue = art.glue;
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      // **A declined signature is a skip, not a disagreement.** wacc's bindgen states what it will
+      // not bind and refuses the whole module when a generated type is outside it — `i16[]` and the
+      // other packed arrays, so far. The reference bound those, and reporting the difference as a
+      // failed crossing would bury the crossings that did happen. The reference's own skips came
+      // back as `__bindgenSkipped` and were counted the same way.
+      if (why.includes("bindgen declined")) { declined++; continue; }
+      failures.push({ seed: s, type: "(module)", src, detail: `did not compile: ${why}` });
       continue;
     }
 
     const path = await Deno.makeTempFile({ suffix: ".ts" });
-    await Deno.writeTextFile(path, wacBindgen(r.compiled));
+    await Deno.writeTextFile(path, glue);
     let mod: Record<string, unknown>;
     try {
       mod = await import(`file://${path}`) as Record<string, unknown>;
@@ -340,16 +357,20 @@ export async function fuzzBoundary(
         const bad = same(t, want, got);
         if (bad) { failures.push({ seed: s, type: wacType(t), src, detail: bad }); continue; }
 
-        // Identity alone never touches a setter or `toObject`, and both are generated
-        // code with their own conversions. Still no second implementation: what is
-        // written is what is expected back.
+        // Identity alone never touches a getter or a setter, and both are generated code with
+        // their own conversions. Still no second implementation: what is written is what is
+        // expected back.
+        //
+        // **Through the getters, where this read `$toObject()`.** That is the reference's
+        // whole-struct accessor and wacc's bindgen does not emit one — `issues/lang/0282b`. The
+        // per-field getter is the same conversion asked one field at a time, so what is covered is
+        // unchanged; what is not covered is a `$toObject` this compiler has not got.
         if (t.k === "struct") {
           const w = got as Wrapper;
-          const obj = (w.$toObject as () => Record<string, unknown>)();
           for (let f = 0; f < t.fields.length; f++) {
-            const badObj = same(t.fields[f], (want as Val[])[f], obj[`f${f}`]);
-            if (badObj) {
-              failures.push({ seed: s, type: wacType(t), src, detail: `toObject().f${f} ${badObj}` });
+            const badGet = same(t.fields[f], (want as Val[])[f], w[`f${f}`]);
+            if (badGet) {
+              failures.push({ seed: s, type: wacType(t), src, detail: `get .f${f} ${badGet}` });
             }
             const fresh = vg.value(t.fields[f]);
             try {
@@ -369,6 +390,9 @@ export async function fuzzBoundary(
     if (verbose) console.log(`seed ${s}: ${types.map(wacType).join(", ")}`);
   }
 
+  if (declined > 0) {
+    console.log(`${declined} module(s) skipped: wacc's bindgen declines a type they generated`);
+  }
   return failures;
 }
 
