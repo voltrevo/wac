@@ -65,8 +65,10 @@ Arguments arrive as `curl … | sh -s -- --host deno`, and `sh --host deno` sile
 else. Cleanup belongs in a `trap`, not a line at the end, or a failed build leaves a full clone in
 `/tmp`. And `-o` must be resolved to an absolute path *before* changing into the clone.
 
-**Open — which ref the curl path clones.** The script arrives from one URL and would clone HEAD;
-those can disagree. It should pin to the ref it was published at, and print the commit it built.
+**Which ref the curl path clones — agreed: `master`.** The script arrives from one URL and clones
+another, so the two can in principle disagree; pinning to a published ref is the eventual answer and
+`master` is the default for now. It prints the commit it built, which is what makes a disagreement
+visible rather than silent.
 
 ---
 
