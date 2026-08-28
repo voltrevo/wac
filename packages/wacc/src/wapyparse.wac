@@ -1146,6 +1146,20 @@ export struct WParsed {
   i32 tokCount;
   i32[] errors;
   i32 errorCount;
+  /**
+   * How many of `errors` are the **lexer's**, and they are the first that many.
+   *
+   * **Two code spaces in one array, so a caller has to be told where one ends.** `lexMessage` and
+   * `parseMessage` are separate tables — `diag.wac` says so — and until 2026-08-28 every error here
+   * went into the parse slot of `Frontend`, so a `.wapy` file's `unknown escape` was looked up among
+   * the parser's codes, found nothing, and printed *"the parser refused this"*. All seven lexer
+   * diagnostics arrived that way on that surface, against `[§wac-wapy-h3nq7fv]`'s *"same compiler"*.
+   * `issues/lang/0284b`.
+   *
+   * A count rather than a second array, because the merge below already puts the lexer's first and
+   * splitting them apart here would be a second place that has to agree about the order.
+   */
+  i32 lexErrorCount;
 }
 
 /**
@@ -1160,9 +1174,11 @@ export WParsed wapyParse(u8[] src) {
   WapyBuilt b = buildArray(src);
   WVec<i32> errs = WVec.create();
   for (i32 i = 0; i < b.errorCount * 3; i++) { errs.push(b.errors[i]); }
+  // Counted before the parser adds any, which is the only moment the boundary is knowable.
+  i32 lexErrors = b.errorCount;
   W w = W(b.src, b.toks, b.tokCount, b.segs, b.pool, b.i32Tok, errs);
   Decl[] decls = topLevel(w);
   i32[] flat = i32[w.errors.len()](fill: 0);
   for (i32 i = 0; i < w.errors.len(); i++) { flat[i] = w.errors.get(i); }
-  return WParsed(Program(decls), w.src, w.toks, w.tokCount, flat, w.errors.len() / 3);
+  return WParsed(Program(decls), w.src, w.toks, w.tokCount, flat, w.errors.len() / 3, lexErrors);
 }

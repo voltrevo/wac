@@ -329,3 +329,45 @@ that wants an owner rather than a drive-by.
 **Context for whoever takes it: the disk was at 98% when this was measured**, 3.8 GB free, with
 `/tmp` at 3.4 GB — of which 1.7 GB is `/tmp/claude-1001` (agent session scratch, correctly outside
 any of this) and 741 MB is the above.
+
+## It filled again on 2026-08-28, and the tests were not why
+
+Worth recording here because the symptom is identical and this is the page somebody will find, but
+the cause is not this issue's and nothing in this issue would have prevented it.
+
+    $ df -h /home/claude
+    /dev/mapper/ubuntu--vg-ubuntu--lv  155G  148G   58M 100%
+
+It surfaced as a **Rust compile error**, which is the misleading part:
+
+    error: linking with `cc` failed: exit status: 1
+      = note: /usr/bin/ld: final link failed: No space left on device
+    error: could not compile `wac` (bin "wac") due to 1 previous error
+
+`./bootstrap.sh` had already built wacc and written the seed; it was the 68 MB binary that could not
+be linked. Nothing was wrong with the code, and a reader who trusted the first line would go looking
+for one.
+
+`/tmp/wac-*` was not the problem this time — the sweeps in this issue are holding. What the space
+had gone to, measured:
+
+| | |
+|---|---|
+| visible from inside the container | ~30 GB of the 148 GB |
+| three agents' workspaces | 13 GB, most of it cargo `target/` |
+| one workspace's three target dirs | 2.3 GB — `native/v8`, `native`, `bootstrap/rust-ladder` |
+| one agent's session scratch | 1.8 GB — a stray cargo target and six copies of the 68 MB binary |
+| a stale clone nobody had removed | 1.5 GB |
+
+**Most of the disk is not visible from in here.** 148 GB is used and a container can see about 30 of
+it, so the largest part of any answer is host-side. What an agent can do is bounded, and it is worth
+knowing that before spending time hunting.
+
+What was safe to reclaim, and the rule that decides it: **name what refills it.** A cargo `target/`,
+a `.cache/`, `/tmp/wac-cwasm` and a spent scratchpad all refill from work already on the machine.
+`~/.cargo/registry` and `node_modules` refill *over the network*, through a proxy allowlist, which
+makes them a much worse trade than their size suggests. Another agent's directory is not yours
+whatever it holds.
+
+3.0 GB came back that way and the build went through. That is not much headroom for a machine where
+three agents each link a 68 MB binary, so this will happen again.

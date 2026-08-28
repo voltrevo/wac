@@ -49,8 +49,23 @@ export bool isWapyPath(string path) { return endsWith(path, ".wapy"); }
 export Frontend frontendOf(string path, u8[] src) {
   if (isWapyPath(path)) {
     WParsed wp = wapyParse(src);
-    return Frontend(wp.src, Lexed(wp.toks, wp.tokCount, i32[0](), 0), wp.program,
-                    wp.errors, wp.errorCount, string[0](fill: ""), i32[wp.errorCount](fill: 0));
+    // **The two lists go where the wac branch puts them**, which is the whole of the fix for
+    // `issues/lang/0284b`. `wapyParse` merges the lexer's errors in front of the parser's, so the
+    // split is a slice: the first `lexErrorCount` triples belong in the `Lexed`, where a caller
+    // renders them with `lexMessage`, and the rest in the parse slot.
+    //
+    // Handing the whole list to the parse slot — which is what this did until 2026-08-28 — meant a
+    // `.wapy` file's `unknown escape` was looked up among the parser's codes, which start at 20,
+    // and printed "the parser refused this". Every one of the seven lexer diagnostics arrived that
+    // way on that surface, while the wac branch two lines below had them right all along.
+    i32 lexN = wp.lexErrorCount;
+    i32[] lexErrs = i32[lexN * 3](fill: 0);
+    for (i32 i = 0; i < lexN * 3; i++) { lexErrs[i] = wp.errors[i]; }
+    i32 parseN = wp.errorCount - lexN;
+    i32[] parseErrs = i32[parseN * 3](fill: 0);
+    for (i32 i = 0; i < parseN * 3; i++) { parseErrs[i] = wp.errors[lexN * 3 + i]; }
+    return Frontend(wp.src, Lexed(wp.toks, wp.tokCount, lexErrs, lexN), wp.program,
+                    parseErrs, parseN, string[0](fill: ""), i32[parseN](fill: 0));
   }
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
