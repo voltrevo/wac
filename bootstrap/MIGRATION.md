@@ -211,7 +211,7 @@ The general shape: wacboot had no guards and wac has several, so the move ran th
 past checks it had never faced. **wac's task-name guard reads markdown and not `.rs`**, which is why
 `build.rs`'s stale line survived and the `.md` that quoted it did not.
 
-## The manifest, which no host should be writing — **agreed**
+## The manifest, which no host should be writing — **done**
 
 `bootstrap.sh --host deno|nodejs` looked blocked: the JavaScript hosts take `-o` and `--l0` only,
 with no `--with-wacc` and no manifest writer. The obvious reading is that they need one.
@@ -224,7 +224,30 @@ to police the drift between them.
 
 The answer is a deletion rather than a third copy: every host drives wacc's own two functions
 through the byte-at-a-time driver, the way `drivers/spec_cases.wac` already drives everything else.
-The JavaScript hosts then get the manifest for free, and `manifest.rs` can go.
+
+**Done, and checked the only way worth checking.** `drv_seal` asks wacc; the Deno and Node hosts
+gained `--with-wacc`, and all three hosts now write the wac command **byte for byte identically** —
+1,797,342 bytes, manifest section and all. Rust 9s, Deno 14s, Node 17s. `manifest.rs` is now a
+second implementation with nothing to do, and goes next.
+
+## What a JavaScript-hosted `wac` still needs — **open, and larger than I said**
+
+Building the *module* is done. Running it is not, and I gave a figure for this earlier that was
+wrong by an order of magnitude.
+
+A JS-hosted wac is a single file that instantiates the module and hands it the capabilities it
+asks for. That bridge is `packages/platform/host/` — not the two entry points I counted (359 + 315
+lines) but the whole of it: marshalling, the operation table, child processes, scheduling, the
+queue, faults, layout, the providers, and the per-runtime halves. **8,521 lines of TypeScript**,
+excluding the browser-only files and the tests.
+
+It cannot be shipped as TypeScript in one file without a bundler, which is the thing being removed,
+and Node cannot run TypeScript at all without a flag. So `--host deno` and `--host nodejs` need that
+bridge as plain JavaScript before `bootstrap.sh` can finish them, and that is a project rather than
+a step. Until then the script says so instead of pretending: it builds nothing and names the reason.
+
+**This does not block `--host rust`**, which is complete, nor deleting `compiler/`. It does block
+deleting `tools/install.ts`, which is currently the only thing that can build a JS-hosted command.
 
 ## Order
 

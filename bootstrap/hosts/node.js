@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { argv, exit } from "node:process";
 
 import { ladder } from "../js/ladder.js";
-import { flatten } from "../js/flatten.js";
+import { fileSet, flatten } from "../js/flatten.js";
+import { buildWithWacc, grantsOf } from "../js/wacc.js";
 import { assemble } from "../js/assemble.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -59,15 +60,42 @@ if (isMain) {
   const args = argv.slice(2);
   if (args.length < 1) {
     console.error("usage: node hosts/node.js <file.wac> [--l0 | -o <out.wasm>]");
+    console.error("         [--with-wacc <entry.wac>] [--allow-read|write|net|env|run]");
     console.error("  default   compile and run `main`");
     console.error("  --l0      print the wac-L0 instead");
     console.error("  -o FILE   write the wasm module");
+    console.error("  --with-wacc E   build wacc from <file.wac>, then compile E with *that*,");
+    console.error("            and seal it with the manifest wacc writes for it");
     exit(2);
   }
   const l = await boot();
+  const dashO = args.indexOf("-o");
+
+  // The twin of the Deno host's, and deliberately the same shape: `buildWithWacc` is the whole of
+  // it, so the difference between these two files stays "where the bytes come from".
+  const withWacc = args.indexOf("--with-wacc");
+  if (withWacc >= 0) {
+    if (dashO < 0) {
+      console.error("hosts/node.js: --with-wacc needs -o, since there is nothing to run");
+      exit(2);
+    }
+    const out = args[dashO + 1];
+    const base = out.replace(/\.wasm$/, "").split("/").pop();
+    const bytes = await buildWithWacc({
+      l5ToL0: (src) => l.l5ToL0(src),
+      assemble,
+      waccSource: await flattenFrom(args[0]) + "\n" +
+        await readFile(fileURLToPath(new URL("../drivers/spec_cases.wac", import.meta.url)), "utf8"),
+      target: await fileSet(args[withWacc + 1], files),
+      wasmName: `${base}.wasm`,
+      grants: grantsOf(args),
+    });
+    await writeFile(out, bytes);
+    exit(0);
+  }
+
   const source = await flattenFrom(args[0]);
   const l0 = await l.l5ToL0(source);
-  const dashO = args.indexOf("-o");
   if (dashO >= 0) {
     refuseIfRefused(l0);
     await writeFile(args[dashO + 1], assemble(l0));

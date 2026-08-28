@@ -176,9 +176,13 @@ build_rust() {
 build_js() {
   runner=$1
   say "building the wac command with $runner"
-  # TODO(bootstrap): the JavaScript hosts can build wacc but not yet the command — they have no
-  # `--with-wacc` and no manifest. See MIGRATION.md.
-  die "--host $host is not finished yet; use --host rust"
+  # The module is not the problem — `hosts/$runner.js --with-wacc` writes a wac command byte for
+  # byte identical to the Rust host's. What is missing is the half that *runs* it: a JavaScript
+  # file that instantiates the module and hands it its capabilities. That bridge is
+  # `packages/platform/host/`, 8,521 lines of TypeScript, and it has to be plain JavaScript before
+  # it can go in a single file without a bundler. See `bootstrap/MIGRATION.md`.
+  die "--host $host cannot finish yet: it can build the module, but the platform bridge it needs to
+    run is still TypeScript. Use --host rust." 
 }
 
 case "$host" in
