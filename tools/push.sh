@@ -121,6 +121,36 @@ if [ "${starved:-0}" -gt 0 ]; then
   echo "   losing the race is expected. The suite time spent so far is real and nobody read it."
 fi
 
+# **Merge what is already on the hub, before spending a suite on a tree that cannot land.**
+#
+# Attempt 1 pushed whatever this clone last knew and found out it was behind only by being rejected —
+# and a rejection costs a whole second suite. That is the right answer when somebody genuinely lands
+# during your run: there is nothing to do but merge and re-test. It is the wrong answer, and by far
+# the commoner one, when the clone was simply behind before the gate started. On 2026-08-28 that cost
+# 426 s to merge two commits that touch only `design/`, with no other agent running at all.
+#
+# **There used to be a pull here and its removal is why this needs saying.** The comment inside the
+# loop records it: `git -C ../wac pull`, from when the compiler was a sibling repository, left
+# pointing at *this* working tree after the repositories merged — and it treated a failed pull as a
+# note, so the gate printed `CONFLICT (content): Merge conflict in issues/system/INDEX.md`, called it
+# a note, and spent the suite on a tree with conflict markers in it.
+#
+# The lesson there is about the handling, not the position: a pull that cannot fail loudly has no
+# business before a suite. This one stops, exactly as the merge at the bottom of the loop does, and
+# for the same reason — a script that merges on your behalf must not also decide the conflict does
+# not matter.
+#
+# Before the seed check below rather than after, because a merge that brings somebody else's change
+# to `packages/wacc` ages the seed; the check that follows owns that question and now sees the merged
+# tree. `tested` is still captured *inside* the loop, so what gets pushed is still exactly what the
+# suite ran against.
+if ! git pull --no-rebase --no-edit --quiet origin master; then
+  echo "== merge needs hands before the suite: resolve, then run this again ==" >&2
+  echo "   Nothing ran. The pull above conflicts, and a suite on a tree with conflict markers in" >&2
+  echo "   it tests neither side — which this gate did for a while, and called a note." >&2
+  exit 1
+fi
+
 # **The seed is checked before the first attempt, not only after a merge.**
 #
 # The retry loop already rebuilds when a *merge* ages the seed, with the argument that a script which
