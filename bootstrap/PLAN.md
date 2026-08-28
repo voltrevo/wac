@@ -262,7 +262,7 @@ The end of memory is `MEMBYTES`, written in `l5.l4` and again as `memory 512` by
 settle a question in the rung above is the trade this ladder exists to avoid. So it is written
 twice and pinned by a test that reads both.
 
-### 5. One seam, declared by the module — **open, promoted**
+### 5. One seam, declared by the module — **done**
 
 Three conventions across the rungs:
 
@@ -271,10 +271,27 @@ Three conventions across the rungs:
     wac-L4   the same, same addresses
     wac-L5   the same, different addresses — 16777216 and 4194304
 
-This was last on the list when there were two hosts. With **four** — Rust, Node, Deno, browser —
-every magic number is written four times. The module should export its own buffer addresses as
-globals so a host reads them instead of knowing them; then a new host is a page of code with
+This was last on the list when there were two hosts. The module should export its own buffer
+addresses so a host reads them instead of knowing them; then a new host is a page of code with
 nothing to get wrong.
+
+**Correcting this entry: it was written twice, not four times.** The three JavaScript hosts share
+`js/ladder.js`, so the copies were there and in `rust-ladder/src/main.rs`. Two unchecked copies of a
+fact neither of them owns is still the defect; the count was wrong and the reason it counted was
+not.
+
+**Done.** Each rung exports `seam_src()` and `seam_out()` — wac-L1 `seam_at()` — and both hosts ask.
+Exported *functions* rather than globals: wac-L3 and wac-L4 already export every top-level function,
+so the rungs cost two lines each and nothing below them had to grow. An exported global would have
+needed the assembler and wac-L4 both taught a new form, to state the same fact.
+
+For wac-L5 the declaration and `layout_check` are now the two halves of one statement: the module
+says where it wants the source and the output, and then checks the host used them.
+
+**Two shapes remain and are written down rather than fixed.** wac-L1 is handed one address and
+answers another with the text running to a NUL; every rung above is handed two and answers a length.
+Unifying that means rewriting the seam of the one rung written by hand in wac-L0, which costs more
+than it buys now that no host carries an address.
 
 ---
 

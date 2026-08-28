@@ -22,15 +22,24 @@ import { assemble } from "./assemble.js";
 /** @typedef {{ l1: string, l2: string, l3: string, l4: string, l5: string }} Rungs */
 
 /**
- * Where a compiler rung expects its source and leaves its output, in its own linear memory.
+ * Where a rung wants its source and leaves its output, **asked of the rung**.
  *
- * Three shapes rather than one, which is a wart rather than a design — see PLAN.md, *One seam,
- * declared by the module*. wac-L1 answers an address and the text runs to a NUL; every rung above
- * it answers a length.
+ * These used to be three constants here, and again in `rust-ladder/src/main.rs`. A host that has to
+ * know an address it was never told is a host that can be wrong about it, and neither copy was
+ * checked against anything. Each rung now answers for its own, so a new host reads them and there
+ * is one statement of the fact rather than one per host.
+ *
+ * **Two shapes remain, which is a wart rather than a design.** wac-L1 is handed one address and
+ * answers another, with the text running to a NUL; every rung above it is handed two and answers a
+ * length. Unifying that means rewriting the seam of the one rung written by hand in wac-L0, and it
+ * buys a smaller reduction than it costs — so it is written down instead.
+ *
+ * @param {WebAssembly.Instance} inst
  */
-const SMALL = { src: 2097152, out: 1572864 };
-const L5 = { src: 16777216, out: 4194304 };
-const L1_AT = 8192;
+const seamOf = (inst) => ({
+  src: /** @type {() => number} */ (inst.exports.seam_src)(),
+  out: /** @type {() => number} */ (inst.exports.seam_out)(),
+});
 
 /**
  * @param {Rungs} rungs
@@ -66,11 +75,12 @@ export function ladder(rungs) {
     if (l1Mod === null) l1Mod = await compile(rungs.l1);
     const inst = await WebAssembly.instantiate(l1Mod, {});
     const memory = /** @type {WebAssembly.Memory} */ (inst.exports.memory);
+    const at = /** @type {() => number} */ (inst.exports.seam_at)();
     const bytes = new TextEncoder().encode(source);
-    new Uint8Array(memory.buffer).set(bytes, L1_AT);
-    new Uint8Array(memory.buffer)[L1_AT + bytes.length] = 0;
+    new Uint8Array(memory.buffer).set(bytes, at);
+    new Uint8Array(memory.buffer)[at + bytes.length] = 0;
 
-    const answer = /** @type {(at: number) => number} */ (inst.exports.run_at)(L1_AT);
+    const answer = /** @type {(at: number) => number} */ (inst.exports.run_at)(at);
 
     const out = new Uint8Array(memory.buffer);
     let end = answer;
@@ -79,15 +89,16 @@ export function ladder(rungs) {
   }
 
   /**
-   * Every rung above wac-L2 has the same seam: source at one address, `compile` answers a length.
+   * Every rung above wac-L2 has the same seam: source at one address, `compile` answers a length,
+   * and the rung says where both go.
    *
    * @param {WebAssembly.Module} mod
-   * @param {{ src: number, out: number }} seam
    * @param {string} program
    * @returns {Promise<string>}
    */
-  async function through(mod, seam, program) {
+  async function through(mod, program) {
     const inst = await WebAssembly.instantiate(mod, {});
+    const seam = seamOf(inst);
     const memory = /** @type {WebAssembly.Memory} */ (inst.exports.memory);
     const bytes = new TextEncoder().encode(program);
     const u8 = new Uint8Array(memory.buffer);
@@ -132,7 +143,7 @@ export function ladder(rungs) {
    * @returns {Promise<string>}
    */
   async function l3ToL0(program) {
-    return await through(await l3Compiler(), SMALL, program);
+    return await through(await l3Compiler(), program);
   }
 
   /**
@@ -140,7 +151,7 @@ export function ladder(rungs) {
    * @returns {Promise<string>}
    */
   async function l4ToL0(program) {
-    return await through(await l4Compiler(), SMALL, program);
+    return await through(await l4Compiler(), program);
   }
 
   /**
@@ -148,7 +159,7 @@ export function ladder(rungs) {
    * @returns {Promise<string>}
    */
   async function l5ToL0(program) {
-    return await through(await l5Compiler(), L5, program);
+    return await through(await l5Compiler(), program);
   }
 
   /**

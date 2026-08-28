@@ -1724,6 +1724,15 @@ data 1024 "(def fact (fn (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 6)\x00"
 ; `$run_at` is the entry the tests use: they write a program into the exported memory and say where
 ; it is, so a test is a string in a table rather than a rewrite of the data segment below. `$main`
 ; is the same thing pointed at that segment, kept so the module answers something on its own.
+; **Where a host should write the program**, so it reads the address rather than knowing it.
+; See PLAN.md, *One seam, declared by the module*. Every rung answers for its own seam; this one
+; takes a single address because it is handed the source and answers where the result begins,
+; where every rung above is handed two and answers a length.
+func $seam_at -> i32
+  i32.const 8192
+  return
+  end
+
 func $run_at -> i32
   param i32 $at
   local i32 $v
@@ -1800,5 +1809,6 @@ end
 
 export "main" func $main
 export "run_at" func $run_at
+export "seam_at" func $seam_at
 export "eval_at" func $eval_at
 export "memory" memory

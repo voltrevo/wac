@@ -1233,6 +1233,11 @@ i32 collect() {
   return 0;
 }
 
+// Where a host writes the source and reads the output. Exported because every top-level function
+// here is. See PLAN.md, *One seam, declared by the module*.
+i32 seam_src() { return 2097152; }
+i32 seam_out() { return 1572864; }
+
 i32 compile(i32 s, i32 out) {
   src = s;
   labn = 0;

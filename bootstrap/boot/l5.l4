@@ -3851,6 +3851,16 @@ i32 emit_generic_methods(i32 out) {
   return 0;
 }
 
+// **Where a host writes the source and reads the output**, so that a host reads the addresses
+// rather than carrying its own copy of them — see PLAN.md, *One seam, declared by the module*.
+// `layout_check` then checks that the host used them, so the declaration and the check are the
+// two halves of one statement rather than two conventions that have to be kept in step.
+//
+// These are larger than the rungs below ask for because wac-L5 compiles wacc, whose flattened
+// source is 37,873 lines: the source has to fit under `BODY` and the output above it.
+i32 seam_src() { return 16777216; }
+i32 seam_out() { return 4194304; }
+
 i32 compile(i32 s, i32 out) {
   src = s;
   srclen = 0;

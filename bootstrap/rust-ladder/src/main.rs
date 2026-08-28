@@ -23,14 +23,24 @@ mod flatten;
 mod manifest;
 mod wacc;
 
-/// Where a compiler rung expects its source and leaves its output, in its own linear memory.
+/// Where a rung wants its source and leaves its output, **asked of the rung**.
+///
+/// These used to be two constants here and three more in `js/ladder.js`. A host that has to know an
+/// address it was never told is a host that can be wrong about it, and neither copy was checked
+/// against anything. Each rung answers for its own now, so this reads them.
 struct Seam {
     src: usize,
     out: usize,
 }
 
-const SMALL: Seam = Seam { src: 2097152, out: 1572864 };
-const L5: Seam = Seam { src: 16777216, out: 4194304 };
+impl Seam {
+    fn of<'s>(scope: &mut v8::PinScope<'s, '_>, m: &Module<'s>) -> Seam {
+        Seam {
+            src: m.call(scope, "seam_src", &[]) as usize,
+            out: m.call(scope, "seam_out", &[]) as usize,
+        }
+    }
+}
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -122,15 +132,17 @@ fn assemble(text: &str) -> Vec<u8> {
 /// Run a wac-L1 program under the hand-written interpreter, and read the text it answers.
 fn l1_text(scope: &mut v8::PinScope, source: &str) -> String {
     let sx = Module::new(scope, assemble(&read("boot/l1.l0")));
-    const AT: usize = 8192;
-    sx.write(scope, AT, source.as_bytes());
-    let answer = sx.call(scope, "run_at", &[AT as i32]);
+    let at = sx.call(scope, "seam_at", &[]) as usize;
+    sx.write(scope, at, source.as_bytes());
+    let answer = sx.call(scope, "run_at", &[at as i32]);
     sx.read_cstr(scope, answer as usize)
 }
 
-/// Every rung above wac-L2 has the same seam: source at one address, `compile` answers a length.
-fn compile_with(scope: &mut v8::PinScope, compiler_l0: &str, seam: &Seam, program: &str) -> String {
+/// Every rung above wac-L2 has the same seam: source at one address, `compile` answers a length,
+/// and the rung says where both go.
+fn compile_with(scope: &mut v8::PinScope, compiler_l0: &str, program: &str) -> String {
     let m = Module::new(scope, assemble(compiler_l0));
+    let seam = Seam::of(scope, &m);
     m.write(scope, seam.src, program.as_bytes());
     let len = m.call(scope, "compile", &[seam.src as i32, seam.out as i32]);
     m.read_len(scope, seam.out, len as usize)
@@ -143,12 +155,12 @@ fn l2_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
 
 fn l3_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
     let c = l2_to_l0(scope, &read("boot/l3.l2"));
-    compile_with(scope, &c, &SMALL, program)
+    compile_with(scope, &c, program)
 }
 
 fn l4_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
     let c = l3_to_l0(scope, &read("boot/l4.l3"));
-    compile_with(scope, &c, &SMALL, program)
+    compile_with(scope, &c, program)
 }
 
 /// The wac-L5 compiler as wac-L0 text — every rung below it, run.
@@ -158,7 +170,7 @@ fn l5_compiler_l0(scope: &mut v8::PinScope) -> String {
 
 fn l5_to_l0(scope: &mut v8::PinScope, program: &str) -> String {
     let c = l5_compiler_l0(scope);
-    compile_with(scope, &c, &L5, program)
+    compile_with(scope, &c, program)
 }
 
 /// **The three phases, timed apart.** Building the ladder is paid once per process; compiling and
@@ -180,9 +192,10 @@ fn bench(scope: &mut v8::PinScope, path: &str, already_flat: bool) {
     let built = t0.elapsed();
 
     let t1 = std::time::Instant::now();
-    compiler.write(scope, L5.src, program.as_bytes());
-    let len = compiler.call(scope, "compile", &[L5.src as i32, L5.out as i32]);
-    let l0 = compiler.read_len(scope, L5.out, len as usize);
+    let seam = Seam::of(scope, &compiler);
+    compiler.write(scope, seam.src, program.as_bytes());
+    let len = compiler.call(scope, "compile", &[seam.src as i32, seam.out as i32]);
+    let l0 = compiler.read_len(scope, seam.out, len as usize);
     let compiled = t1.elapsed();
 
     let t2 = std::time::Instant::now();

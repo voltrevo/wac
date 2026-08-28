@@ -561,6 +561,14 @@
       (nl)
       0))
 
+(export seam_src)
+(export seam_out)
+
+// Where a host writes the source and reads the output. See PLAN.md, *One seam, declared by the
+// module* — a host reads these rather than carrying a copy of them.
+(fn seam_src () i32 (do 2097152))
+(fn seam_out () i32 (do 1572864))
+
 (export compile)
 
 (fn compile ((s i32) (out i32)) i32
