@@ -170,6 +170,21 @@ export function ladder(rungs) {
    * @returns {Promise<number>}
    */
   async function run(l0, entry = "main") {
+    // **A rung's refusal is reported as a refusal, not as an assembler error.** A rung that cannot
+    // compile something writes a `!!` line into its output and carries on, so what reached the
+    // assembler was a line beginning `!!` and what the test printed was *line 13: unknown
+    // instruction !!* — the assembler's complaint about a marker, naming neither the rung nor what
+    // it would not take. `issues/lang/0286b` was diagnosed through a scratch script for this reason.
+    //
+    // Here rather than in each `lNRun`, because all four go through this one function; and not in
+    // the tests that *expect* a refusal, which call `lNToL0` and read the markers themselves.
+    const bad = l0.split("\n").filter((x) => x.startsWith("!!"));
+    if (bad.length > 0) {
+      throw new Error(
+        `the rung refused ${bad.length} thing(s) and produced no module:\n  ` +
+          bad.slice(0, 5).join("\n  "),
+      );
+    }
     const inst = await WebAssembly.instantiate(await compile(l0), {});
     return /** @type {() => number} */ (inst.exports[entry])();
   }

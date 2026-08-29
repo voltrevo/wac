@@ -197,11 +197,24 @@ core to put them on, and taking one would slow the other two agents rather than 
     crypto        334s ->  195s -> 25s
     buildcache    105.7s        -> 6.6s
 
-**Item 2 is 95.6s off the suite's *work*, and how much of it is wall-clock is a separate question.**
-Four workers, and what a chunk costs only moves the run if that chunk was the one everything waited
-on. `packages/wac` was not obviously it, so the honest claim is the work figure — the next full gate
-prints the budget and will say. Recording it this way because a previous entry on this page claimed a
-wall-clock saving that a re-measurement took back.
+**Item 2 was 95.6s off the suite's *work*, and the wall-clock followed it.** Four workers, so what a
+chunk costs only moves the run if that chunk was the one everything waited on — which is why this was
+first recorded as a work figure and nothing more. The next full gate answered it:
+
+    lock wait      1s        suite   452s -> 340s
+    pull+seed     38s        total          537s
+    suite        340s
+    docs          17s
+    site           8s
+    ratchets     133s
+
+112s off the suite against 95.6s of work removed, so `packages/wac` *was* on the critical path and
+the rest is the day's load. The total did not fall as far because this run rebuilt the seed after a
+pull — 38s that a run with a fresh seed does not pay.
+
+Stated as a range rather than a single number on purpose: a previous entry on this page claimed a
+wall-clock saving that a re-measurement took back, and the difference between the two cases is that
+this one has a before *and* an after from the same instrument.
 
 Three changes: `ctcompare` bounded by the journal's cursor; `Cli.call` caching the export it resolves
 instead of building a `v8::String` per call; and then `issues/system/0274b`'s second half, where the

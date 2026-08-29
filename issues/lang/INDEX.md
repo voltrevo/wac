@@ -10,7 +10,6 @@ has been fixed and why.
 | [0282b](closed/0282b-waccs-bindgen-surfaces-unsigned-returns-as-signed.md) | wacc's bindgen emits neither `>>> 0` nor `asUintN`, so every `u32`/`u64` above the signed range reaches JS negative — `issues/lang/0039` in the other implementation | bug | wrong answer |
 | [0284b](closed/0284b-a-wapy-files-lexer-diagnostics-are-rendered-with-the-parsers-table.md) | a `.wapy` file's lexer errors are handed back in the parse slot, so all seven render as "the parser refused this" — the codes are right and the table is wrong | diagnostic | wrong answer |
 | [0285b](open/0285b-a-module-level-const-array-is-unreachable-because-wac-l5-cannot-compile-one.md) | wacc cannot hold a generated lookup table: a module-level `const` array is refused by wac-L5 and a plain global traps, so the ladder is what bounds it | missing feature | invalid wasm |
-| [0286b](open/0286b-a-trap-in-wacc-cannot-carry-a-message-because-wac-l5-has-no-trap-string.md) | `trap "…"` is in the spec and wac-L5 does not parse it, so the one place that cannot use a trap message is the compiler | missing feature — in the bootstrap ladder, not in wac | the whole build refuses |
 | [0287b](closed/0287b-wac-l5-drops-a-global-initialiser-and-answers-zero.md) | wac-L5 emits every global as zero and skips the initialiser, so `i32 G = 7; return G;` answers 0 — and the only two initialisers it ever compiles ask for 0 | bug — in the bootstrap ladder, not in wac | wrong answer, no diagnostic |
 | [0288b](closed/0288b-wac-l5-erases-anything-the-collect-pass-refused.md) | the emitting pass starts `dp = 0`, so a refusal from `collect` is counted and never printed — which is where `full()`'s three top-level capacity limits report from | bug — in the bootstrap ladder, not in wac | a refusal is counted and never printed |
 | [0283b](closed/0283b-a-qualified-variant-on-the-right-of-is-is-always-false.md) | `s is Shape.Circle` parsed as a member access, so the test was reference identity against a freshly built variant and never true — the clause's only checker lived in the deleted reference's suite | bug | wrong answer |
@@ -49,7 +48,7 @@ has been fixed and why.
 
 ## Closed
 
-230 issues, 201 closed.
+230 issues, 202 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

@@ -1,7 +1,11 @@
 # 0286b — a `trap` in wacc cannot carry a message, because wac-L5 has no `trap "…"`
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `bootstrap/boot/l5.l4` — wac-L5 parses the optional string after `trap` and
+  discards it. `packages/wacc/src/parse.wac` carries the first one. Tests
+  `bootstrap/ts/l5.test.ts` ("trap takes an optional message and this rung discards it") and
+  `packages/wacc/test/wac/parseconsumes_test.wac`.
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
 - **Kind:** missing feature — in the bootstrap ladder, not in wac
@@ -74,24 +78,41 @@ the message is not available to the compiler's own sources, which is a sentence 
 currently have and a reader hitting this would want.
 
 
-## The cheap option is not available, and the fixed point is why — agent-b, 2026-08-29
+## Fixed, and both of this issue's predictions about the build were wrong — agent-b, 2026-08-29
 
-The first thing anyone will reach for is **accept and ignore**: teach wac-L5's parser to take the
-string after `trap` and emit a plain `unreachable`, leaving the message to the real compiler. It is a
-few lines and it would let `packages/wacc` carry messages immediately.
+The change is the three tokens the issue's plan asked for. `bootstrap/boot/l5.l4`:
 
-It cannot work, and the reason is `design/lang/0009` D2 rather than anything about traps.
+```
+if (isword("trap")) { next(); if (kind() == K_STR) { next(); } want(59); line("unreachable"); return 0; }
+```
 
-The build settles by compiling `wacc` twice and requiring the two rounds to agree byte for byte.
-Round 1 is *wac-L5* compiling wacc's source. Round 2 is **round 1's wacc** compiling the same source.
-If wac-L5 drops the message and round-1's wacc implements it — which it does, because implementing it
-is wacc's own code and unaffected by which compiler built wacc — then round 2 emits the string
-constant and the store to `$trap$message` that round 1 omitted. The rounds differ, and
-`bootstrap.sh` refuses a build that never settles rather than installing one.
+`packages/wacc/src/parse.wac` now says what it always meant to:
 
-So the two ends have to agree: wac-L5 must emit the message the same way wacc does, or wacc's source
-must not contain one. That is the whole of why this is filed rather than done in ten minutes, and it
-is worth knowing before starting rather than after the fourth round of a build that will not settle.
+    FAIL test_probe — trapped: these tokens have already been parsed: parsing rewrites them, so lex again
 
-The same argument applies to any wac-L5 change that *silently* narrows a construct wacc's source
-uses. Refusing is safe; ignoring is not.
+**The first prediction — that this could not work at all.** The section that stood here argued the
+build would never settle: round 1 drops the message, round 2 emits it, the rounds differ, refused.
+The last step is wrong. `bootstrap.sh` iterates to `MAX_ROUNDS=4` and says why immediately above the
+loop — *a change to what the emitter emits is not in round 1 at all [...] Demanding agreement after
+one round refuses every legitimate emitter change.*
+
+**The second prediction — that it would settle at round 2.** It settles at round **1**, and the
+reason is `--with-wacc`. The ladder step is one invocation:
+
+    "$LADDER" packages/wacc/src/api.wac --with-wacc packages/wac/src/wac.wac $GRANTS -o "$seed"
+
+The wacc that wac-L5 builds is never the artefact. It is used, inside that same invocation, to
+compile the command — so the first thing written to `$seed` was emitted by *wacc*, and the message
+is in it from the start. The L5-built compiler is missing a message inside its own `parseProgram`,
+in a trap that does not fire during a successful compile, and nothing downstream is built from it.
+
+Both errors have one shape: reasoning about a build from what a bootstrap normally does rather than
+from what this script says it does. The script says both things in comments at the lines concerned.
+
+**Measured:** `./bootstrap.sh --no-install`, 36s, *fixed point after 1 round(s), 1845720 bytes* —
+87 more than before, and `grep -a` finds the message in the new artefact and not the old.
+
+**What is not fixed.** wac-L5 still discards the message, so a `trap "…"` compiled by *that rung*
+loses it. Nothing but wacc is compiled by that rung, and its own traps do not fire during a
+successful compile, so the cost is one intermediate — stated at the site rather than left to be
+discovered.

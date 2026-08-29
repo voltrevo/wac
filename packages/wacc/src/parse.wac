@@ -2453,14 +2453,12 @@ export Program parseProgram(P p) {
   // the point of the guard is that the wrong answer would arrive three phases later, as a type
   // error about something that is not wrong. `issues/lang/0278a`.
   //
-  // **Bare `trap;`, and the message is here rather than in it**, because `trap "…"` is a language
-  // feature the ladder cannot build: wac-L5 parses `trap` and then refuses the string, and every
-  // file `packages/wacc` reaches has to compile on rung 5. What a reader gets is the stack, which
-  // names this function. `issues/lang/0286b`.
-  //
-  // What it would have said: *these tokens have already been parsed — parsing rewrites them, so
-  // lex again.*
-  if (p.lx.parsed) { trap; }
+  // **The message is in the trap**, which it was not until 2026-08-29: wac-L5 parsed `trap` and then
+  // refused the string, and every file `packages/wacc` reaches has to compile on rung 5, so the
+  // compiler was the one program that could not use a construct it implements. It was a bare `trap;`
+  // with this sentence in the comment, which is worth less every time somebody hits it away from the
+  // source. `issues/lang/0286b`.
+  if (p.lx.parsed) { trap "these tokens have already been parsed: parsing rewrites them, so lex again"; }
   p.lx.parsed = true;
 
   DeclList decls = DeclList.create();

@@ -601,6 +601,20 @@ const programs: [string, string, number][] = [
       string t = "  hi  ".trim();
       return t.len() * 100 + t.byte(0) + "   ".trim().len();
     }`, 304],
+  // **`trap` takes an optional message here, and the message goes nowhere.** `issues/lang/0286b`:
+  // the spec gives `trap` a message, `$trap$message` hands it back, and wacc implements all of it —
+  // but every file wacc's import graph reaches has to compile on this rung, so until this parsed,
+  // the compiler was the one program that could not use the construct it implements.
+  //
+  // Both spellings, unreached, because what is being tested is the parse. A reached `trap` cannot
+  // return a value to compare, and the rung emits `unreachable` for either spelling, so the message
+  // is exactly as absent from the output as it was before.
+  ["trap takes an optional message and this rung discards it", `
+    i32 main() {
+      if (0) { trap; }
+      if (0) { trap "the ring is full"; }
+      return 7;
+    }`, 7],
 ];
 
 // wac compiles a whole program into one wasm module, so an import is a file to *include* rather
