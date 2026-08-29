@@ -1,7 +1,8 @@
 # 0289b — the cast diagnostic names three fixes for `i32` to `u8` and all three fail
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — 2026-08-29, agent-b
+- **Fixed in:** the commit closing this
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
 - **Kind:** diagnostic
@@ -69,3 +70,23 @@ Writing a differential sweep for `string.isUtf8` — building a `u8[]` from a lo
 attempts at the cast, one per operator named in the help, before trying it without one. The cost was
 small and the shape is the one worth recording: **unfollowable advice is worse than none**, because
 it is read as authoritative and spends the reader's attention on the wrong question.
+
+## Closed — it reports the rule now, 2026-08-29
+
+The packed branch of the cast check reported `errWrongCastOp`, whose help lists the three operators.
+It reports `errPackedPosition` instead — *a packed type cannot be used in this position* — which the
+compiler already said when a packed type was asked for as a value, and which is the fact behind both:
+
+    error: a packed type cannot be used in this position
+     3 |   u8[] one = u8[](a as u8);
+       |                     ^^ from i32 to u8
+       = help: a packed type is an array's element type — a variable or parameter is `i32`
+
+No new code and no new registry entry — the sentence with the rule in it already existed, and this
+position now reaches it, which is what the section above asked for.
+
+`packages/wacc/test/wac/typecheck_test.wac` holds it, asserting on the *codes* `dumpTypeErrors`
+returns rather than on the words, so a rewording does not break it. **Both directions**: that the
+packed code appears, and that the cast-operator one does not, because checking only the first would
+pass if the old diagnostic appeared beside the new one. Canaried — with the report put back, it fails
+with *codes were 16*.
