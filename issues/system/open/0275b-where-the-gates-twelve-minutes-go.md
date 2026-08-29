@@ -90,6 +90,24 @@ work over four workers rather than by any one file.
 top ten are 229s of it. The build cache works well — a wacc test is **1,990ms cold and 118ms warm** —
 so "the suite recompiles everything" is not the story it looks like.
 
+Timed one at a time, its 82 non-heavy files rank:
+
+    71.7s  commandparity_test.wac
+    27.6s  collide0234_test.wac
+    27.0s  latearray0271_test.wac
+    24.8s  manyfiles_test.wac
+    23.1s  bootstrapemit_test.wac
+           ...and a tail of 77 more
+
+One outlier at 2.6x the next and then nothing — so unlike `packages/crypto` and `packages/wac`,
+there is no second file to find here.
+
+**Those figures sum to 585s where the suite spends about 234s on the same files**, and the gap is not
+a contradiction: a chunk of twelve shares one `wac test` invocation and one aggregate compile, while
+timing a file alone pays that per file. It works out at roughly 4s of fixed cost per invocation,
+which is the number behind `chunkSize()` being 12 rather than 1 — and worth knowing before anyone
+reads a per-file timing as a per-file cost.
+
 Its biggest is `commandparity_test.wac` at **78s**, and that file already explains itself: three
 hosts each compile a 219-file program, up from 44 files when the command became one payload
 (`issues/system/0257c`). Nearly all of its cost is those compiles, which is `issues/lang/0153` —
