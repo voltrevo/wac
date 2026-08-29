@@ -280,21 +280,22 @@ ones:
    `wac app` makes a 74 KB file that needs `wac` on PATH; `build.ts --target deno` makes a
    self-contained one that needs only the runtime. Different products for different situations.
 
-### The decision, and what it costs
+### The decision
 
 **`packages/platform/build.ts` keeps the browser build and loses the rest**, then gets a name that
 says so. It is flagged in its own header rather than renamed yet, because renaming it while it still
-builds three targets would be a second wrong name.
+builds three targets would only be a second wrong name.
 
-Removing the `deno` and `node` targets costs two things, measured:
+What follows from removing the `deno` and `node` targets is **work, not an obstacle**, and an
+earlier draft of this section had that backwards — it listed the tests that use them as blockers.
+They are not. `buildApp`'s ~20 callers across 12 files in `packages/box/test/` build an application
+in order to test *box*; they get one from `wac app` instead, which is better, because it exercises
+the command that ships rather than a second builder beside it. And `node_shell.test.ts` exists to
+test the Node-hosted path, so it follows that path to wherever `bootstrap.sh --host nodejs` puts it.
 
-- **~20 `buildApp` calls across 12 files in `packages/box/test/`**, nearly all on the default target.
-  Each becomes a `wac app` invocation — mechanical, and arguably better, since it would test the
-  command that ships rather than a second builder standing beside it.
-- **`packages/box/test/node_shell.test.ts` passes `"node"` deliberately**: it is a test *of* the
-  Node-hosted path, so it needs a Node-hosted build to exist. That one moves to whatever
-  `bootstrap.sh --host nodejs` produces, not to `wac app`, and it is the reason this is a migration
-  rather than a deletion.
+A test is not a reason to keep the thing it tests. `CLAUDE.md` says so directly: *"If you find
+yourself proposing to keep something, say what would break, and check that it is not just a test you
+could edit."*
 
 ### What is redundant, and what is not
 

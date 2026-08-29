@@ -3,35 +3,25 @@
 // What is genuinely here is the **browser** build: a page must carry its own host, because there is
 // no PATH in a browser to find a `wac` on. Nothing else can build one and nothing else should.
 //
-// The `deno` and `node` targets are the part to remove. They make a *self-contained* command — the
-// bridge embedded, needing only the runtime — and once `bootstrap.sh --host deno` has given somebody
-// a `wac`, `wac app` makes a smaller artefact for the same job: a shell preamble that runs
-// `command -v wac` and execs `wac app-run "$0"`, caring not at all whether that `wac` is native,
-// Deno-hosted or Node-hosted.
+// **The `deno` and `node` targets go.** They make a *self-contained* command — the bridge embedded,
+// needing only the runtime — and once `bootstrap.sh --host deno` has given somebody a `wac`,
+// `wac app` makes a smaller artefact for the same job: a shell preamble that runs `command -v wac`
+// and execs `wac app-run "$0"`, caring not at all whether that `wac` is native, Deno-hosted or
+// Node-hosted.
 //
-// **Two things block the removal**, and they are the reason this is a note rather than a commit:
+// What follows from removing them is work, not an obstacle. `buildApp` has about twenty callers
+// across twelve files in `packages/box/test/`; those tests build an application in order to test
+// **box**, so they get one from `wac app` instead — which is better, because it exercises the
+// command that ships rather than a second builder standing beside it. And
+// `packages/box/test/node_shell.test.ts` exists to test the *Node-hosted path*, so it follows that
+// path to wherever `bootstrap.sh --host nodejs` puts it. A test is not a reason to keep the thing
+// it tests.
 //
-//   - `buildApp` has about twenty callers across twelve files in `packages/box/test/`, nearly all on
-//     the default target. Each would become a `wac app` invocation, which is mechanical and arguably
-//     better — it would test the command that ships rather than a second builder beside it.
-//   - `packages/box/test/node_shell.test.ts` passes `"node"` on purpose: it is a test *of* the
-//     Node-hosted path, so it needs a Node-hosted build to exist. That one has to move to whatever
-//     `bootstrap.sh --host nodejs` produces, not to `wac app`.
-//
-// **And one change is worth making whatever happens to the targets.** The bundling below shells out
-// to `deno bundle`, which fetches `@esbuild/<platform>` from npm on first use — the only reason a
+// **One change is worth making whatever happens to the targets.** The bundling below shells out to
+// `deno bundle`, which fetches `@esbuild/<platform>` from npm on first use — the only reason a
 // hosted build needs a network at all. `packages/ts` removes that. The coupling to expect is that
 // the sources generated here import through `import.meta.resolve`, so their specifiers are `file://`
 // URLs rather than relative paths, and the bundler treats anything non-relative as external.
-//
-// Build a wac application into one executable JavaScript file.
-//
-//   wac task app:build packages/platform/example/wc.wac -o wc
-//   ./wc --allow-read -- README.md
-//
-// The result is self-contained: the wasm is base64 inside it, the bindgen wrappers are
-// inside it, and so is the whole host — bridge, worker, capability providers. Nothing is
-// read from this repo at run time, so the file can be copied anywhere Deno exists.
 //
 // The shebang asks for the permissions the *launcher* needs, which are not the ones the
 // application gets. Deno must be allowed to read the file it is running and to spawn a
