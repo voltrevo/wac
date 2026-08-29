@@ -111,7 +111,34 @@ export string resolveFromAt(string fromPath, string spec, string root, string ba
     }
     return joined;
   }
+  if (isBareSpecifier(spec)) { return ""; }
   return resolveFromIn(fromPath, spec, root);
+}
+
+/**
+ * A specifier that is none of the three kinds the language defines — `issues/system/0234a`.
+ *
+ * `spec/spec/imports.md`: a path is relative (`./` or `../`), `@/` is the project root, and a bare
+ * name **may name a mapping** declared in the manifest. `[§wac-import-mapped-6np2rkq]` Nothing makes
+ * a bare name fall back to path arithmetic — but every caller did, joining it to the importing file's
+ * directory, which produces a file that is usually not there and *occasionally is*. That is the worse
+ * of the two failures: `dep/lib.wac` with a `src/dep/` directory compiled a file the manifest never
+ * named, exit 0, no diagnostic.
+ *
+ * **A mapping is resolved before this is reached**, by the caller that has a manifest to read — see
+ * the `isMappingCandidate` branch in `packages/wac/src/wac.wac` — so a bare specifier arriving here
+ * is one that named no mapping. The harness has no manifests at all, which is the same answer for a
+ * different reason.
+ *
+ * A leading `/` is absolute and not this: it is left to the joining below, which is what
+ * `resolveFromIn` has always done with one and what an absolute entry path needs.
+ */
+export bool isBareSpecifier(string spec) {
+  if (spec.len() == 0) { return false; }
+  string head = spec.slice(0, 1);
+  if (head == "." || head == "/") { return false; }
+  if (isProjectSpec(spec)) { return false; }
+  return !isBuiltinSpec(spec);
 }
 
 export string resolveFromIn(string fromPath, string spec, string root) {
@@ -126,6 +153,7 @@ export string resolveFromIn(string fromPath, string spec, string root) {
     if (root == "") { return ""; }
     return normalisePath(root + "/" + spec.slice(2, spec.len()));
   }
+  if (isBareSpecifier(spec)) { return ""; }
   i32 cut = -1;
   for (i32 i = 0; i < fromPath.len(); i++) {
     if (fromPath.slice(i, i + 1) == "/") { cut = i; }

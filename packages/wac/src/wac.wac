@@ -156,6 +156,26 @@ string noProject(string spec, string from) {
 }
 
 /**
+ * What `Sources.why` says for a bare specifier that names no mapping — `issues/system/0234a`.
+ *
+ * **`spec/spec/imports.md` defines three kinds and this is none of them.** A path is relative, `@/`
+ * is the project root, and a bare name may name a mapping declared in the manifest. A bare name that
+ * names no mapping names nothing — so the honest answer is to say so, and the two answers that were
+ * given before were both worse.
+ *
+ * The first was to join it to the importing file's directory, which is what every host did: for
+ * `dep/lib.wac` with a `dep/` mapping and a `src/dep/` directory that is a file *the manifest did not
+ * name*, compiled, exit 0, no diagnostic. The second was the message that arrives when the guess
+ * misses — `"No such file or directory: readfile 'src/dep/packages/json/src/json.wac'"`, GitHub
+ * issue 22, a path the author never wrote and cannot find in their own source.
+ */
+string noMapping(string spec, string from) {
+  return spec + " is not a path and names no mapping in " + MANIFEST_NAME() + ": " +
+         "an import is `./…`, `../…`, `@/…`, a built-in, or a name the manifest declares (from " +
+         from + ")";
+}
+
+/**
  * What `Sources.why` says for a bare `"std"` — D4, and `§wac-std-no-root-2vp6xmk`.
  *
  * **`std` is reserved but has no root module**, so this specifier is neither a file to read nor a
@@ -703,8 +723,14 @@ Sources gather(Fs fs, Cli cli, string entry) {
       // answered *"1 file(s), no diagnostics"* for a program that imports a name it cannot reach.
       // The other wrong answer is resolving it anyway — `@/src/a.wac` against nothing is
       // `src/a.wac`, a real-looking path relative to a directory nobody named.
+      // **Two ways to reach the empty answer and they are different mistakes.** `@/` with no
+      // project above it is the first; a bare specifier that named no mapping is the second, and
+      // saying *"needs a project"* for that one sends the reader to add a manifest they may already
+      // have. `issues/system/0234a`.
       if (next == "") {
-        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", noProject(specs[i], path));
+        string why = isMappingCandidate(specs[i]) ? noMapping(specs[i], path)
+                                                  : noProject(specs[i], path);
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", why);
       }
       // **A mapped subdirectory bounds its code, whatever form the specifier took.** Checked here
       // rather than in the `@/` branch because `@/outside/x.wac` and `../outside/x.wac` are the same
