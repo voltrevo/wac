@@ -380,6 +380,24 @@ i32 ispunct(i32 v) { return (toks[tp].kind == K_PUNCT) & (toks[tp].val == v); }
 i32 aheadIs(i32 k, i32 v) { return (toks[tp + k].kind == K_PUNCT) & (toks[tp + k].val == v); }
 i32 isword(i32 s) { return (toks[tp].kind == K_NAME) & texteq(toks[tp].start, toks[tp].len, s); }
 i32 eat(i32 v) { if (ispunct(v)) { next(); return 1; } return 0; }
+
+// **Whether the initialiser at the cursor is one this rung can honour, which means `= 0`.**
+//
+// A global emits as `(global … mut = 0)` and its initialiser is *not run* — the emit pass says why:
+// a wasm global takes a constant expression and wac's initialiser may be any expression. So the
+// value the program sees is zero whatever was written, and `i32 G = 7; return G;` answered **0**
+// with no diagnostic. `issues/lang/0287b`.
+//
+// `= 0` is the one that survives that, by asking for what it gets. It is also the only one anything
+// the ladder compiles uses — `selfhost.wac` and `spec_cases.wac` each write `i32 nfile = 0;` — so
+// refusing the rest costs nothing and removes a silent wrong answer. Everything else declares
+// without an initialiser and assigns in code, which is what the emit pass expects.
+i32 initialiser_is_zero() {
+  if (ispunct(61) == 0) { return 1; }
+  if (toks[tp + 1].kind != K_INT) { return 0; }
+  if (texteq(toks[tp + 1].start, toks[tp + 1].len, "0") == 0) { return 0; }
+  return aheadIs(2, 59);
+}
 // The refusal marker. It names the token it stopped on and the three after it, because
 // "unexpected token" on its own sends you back to the source to guess which one — and the
 // assembler that reads this line reports it verbatim, so the guess is the whole cost.
@@ -3337,6 +3355,9 @@ i32 collect() {
       if (full(nglo, 8192, "globals")) { return 0; }
       glos[nglo] = Glo(p, n, ret);
       nglo = nglo + 1;
+      // The initialiser is checked in the *emitting* pass rather than here — this one's output is
+      // thrown away by the `dp = 0` that starts the emit pass, so an `oops` raised here is counted
+      // and never printed.
       while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
       next();
     }}}}}
@@ -4029,9 +4050,14 @@ i32 compile(i32 s, i32 out) {
       fn_exported = 0;
     } else {
       // A global's initialiser is not run: wac's may be any expression and wasm's may not, so the
-      // global emits as zero and the program is expected to set it.
-      while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
-      next();
+      // global emits as zero and the program is expected to set it. **An initialiser asking for
+      // anything else is refused rather than dropped** — `i32 G = 7; return G;` answered 0 with no
+      // diagnostic until 2026-08-29. `issues/lang/0287b`, and `initialiser_is_zero` for why `= 0`
+      // is the one that stays.
+      if (initialiser_is_zero() == 0) { oops(); } else {
+        while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
+        next();
+      }
     }}}}}
   }
   emit_generic_methods(out);

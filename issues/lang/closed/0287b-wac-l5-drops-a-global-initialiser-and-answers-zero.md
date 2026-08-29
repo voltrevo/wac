@@ -1,7 +1,10 @@
 # 0287b — wac-L5 drops a module-level variable's initialiser and answers zero, silently
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `bootstrap/boot/l5.l4` — `initialiser_is_zero`, checked in the emitting pass. An
+  initialiser that is not `= 0` is refused at the `=` rather than dropped. Tests in
+  `bootstrap/ts/l5.test.ts`; `bootstrap/ts/l5run.ts` is the reproduction.
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
 - **Kind:** bug — in the bootstrap ladder, not in wac
@@ -75,6 +78,34 @@ each have to lose their `= 0`, which is a change to files that are not the ones 
 `Glo(p, n, ret)` gains a field for the value and a flag for "had a non-literal initialiser";
 `collect()` fills them, and the global loop in the emit pass writes the value instead of `emitn(0)`.
 
-**Not attempted here.** `bootstrap/boot/l5.l4` is 4,056 lines of wac-L4 and every rung below has to
+**Not attempted here.** `bootstrap/boot/l5.l4` is 4,082 lines of wac-L4 and every rung below has to
 keep building it. This is small as a diff and large as a risk, and it wants its own sitting rather
 than the tail of another piece of work — the same note 0285b ends on.
+
+
+## Closed — agent-b, 2026-08-29
+
+**Refused, not honoured, and that is the whole fix.** `i32 G = 7;` now stops the build:
+
+    !! wac-L5: line 1: unexpected token = before 7 ; export
+
+`= 0` still compiles, because it asks for the value the emitted global already has, and it is what
+`selfhost.wac` and `spec_cases.wac` both write. So this is a change to the rung at fault and not to
+two driver files.
+
+**Honouring a literal was the other half of "what to do" and is deliberately not done.** Writing
+`emitn(glos[gi].init)` instead of `emitn(0)` needs the value to agree with the global's *wasm* type —
+an `i32` literal into an `i64` or `f64` global is a different constant — so it is a typed change
+rather than a plumbing one. Refusing is correct under either, and a refusal cannot become wrong
+later.
+
+**Where the check had to go, which cost an hour.** Putting it in `collect()` — the pass that records
+the declaration — did nothing: the emitting pass starts with `dp = 0`, so everything `collect` wrote
+is erased. That is worth knowing beyond this issue, because `full()` reports its three top-level
+capacity limits (`functions`, `globals`, `generic functions`) from inside `collect`, and those
+messages go the same way: if one ever fires, wac-L5 emits a truncated module with no marker in it.
+Filed separately.
+
+**And why the existing tests could not see it.** `l5.test.ts` had two global tests before this —
+*a global, set and read* and *a reference global* — and both declare without an initialiser and
+assign in code. That is the shape the emit pass expects and the one shape that cannot show the bug.
