@@ -1,0 +1,85 @@
+// The whole interface: bytes in, bytes out.
+//
+//     export u8[] transform(u8[] archive)
+//
+// `design/system/0009`. A store-only zip of TypeScript goes in; one JavaScript file comes out. There
+// are no capabilities, no `Pending`, no scheduler and no marshalling — the host writes the input
+// into `$bind$mem`, calls `$bind$arr_u8_from_mem`, calls this, and reads the answer back the same
+// way. That is ten lines of JavaScript, and `packages/ts/host/run.js` is all of it.
+//
+// **Why this shape and not a driver.** A capability-less driver accumulates its input across
+// `drv_setByte` calls, which needs module-level state, and wac has none —
+// `bootstrap/drivers/selfcheck.wac` says so. The existing drivers get away with it because wac-L5
+// compiles them and wac-L5 is more permissive than the language; that escape is not available here,
+// because wac-L5 refuses `core/vec.wac`'s generics. One call taking one array needs no state at all.
+//
+// **Why not a narrow platform.** The alternative was a small host offering `readFile`, `writeFile`
+// and argv. Four of those six capabilities are `Pending<T>`, which drags in the ticket protocol and
+// most of what `call.ts` and `queue.ts` exist for. Bytes in and bytes out has none of that, and the
+// host is smaller than the interface it would have implemented.
+//
+// The entry is named by the archive: whichever member is called `entry` names the real one. That
+// keeps the interface to one argument, which is the point.
+
+import { Archive, Entry, read } from "./archive.wac";
+import { Bundled, bundle } from "./bundle.wac";
+import { Stripped, strip } from "./strip.wac";
+
+/**
+ * Strip and flatten an archive of TypeScript into one JavaScript file.
+ *
+ * On failure the answer is the diagnostic, as UTF-8, prefixed with `wac-ts: `. A host that cannot
+ * tell an error from a result would be a host that has to parse JavaScript to find out, so the
+ * prefix is the whole protocol — and it is a prefix no bundle can begin with, since every bundle
+ * begins with a comment naming its first module.
+ */
+export u8[] transform(u8[] archive) {
+  Archive a = read(archive);
+  if (a.error != "") { return fail("the archive: " + a.error); }
+  if (a.entries.len() == 0) { return fail("the archive is empty"); }
+
+  string entry = "";
+  i32 n = 0;
+  for (i32 i = 0; i < a.entries.len(); i++) {
+    if (a.entries[i].name == "entry") {
+      entry = string.fromBytes(a.entries[i].data);
+    } else {
+      n = n + 1;
+    }
+  }
+  if (entry == "") {
+    return fail("the archive has no `entry` member naming the file to start from");
+  }
+
+  string[] paths = string[n](fill: "");
+  u8[][] texts = u8[][n](fill: u8[0]());
+  i32 at = 0;
+  for (i32 i = 0; i < a.entries.len(); i++) {
+    if (a.entries[i].name == "entry") { continue; }
+    Stripped s = strip(a.entries[i].data);
+    if (s.error != "") {
+      return fail(a.entries[i].name + ":" + itoa32(s.line) + ":" + itoa32(s.col) + ": " + s.error);
+    }
+    paths[at] = a.entries[i].name;
+    texts[at] = s.out;
+    at = at + 1;
+  }
+
+  Bundled b = bundle(paths, texts, entry);
+  if (b.error != "") { return fail(b.error); }
+  return b.out;
+}
+
+/** A diagnostic, in the shape a host can recognise without parsing what it got. */
+u8[] fail(string why) { return ("wac-ts: " + why).toBytes(); }
+
+string itoa32(i32 v) {
+  if (v == 0) { return "0"; }
+  string s = "";
+  i32 k = v;
+  while (k > 0) {
+    s = string.fromCodepoint(48 + (k % 10)) + s;
+    k = k / 10;
+  }
+  return s;
+}

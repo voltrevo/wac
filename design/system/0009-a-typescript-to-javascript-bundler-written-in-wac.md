@@ -174,7 +174,38 @@ something else, with better tools, has already checked the things it cannot.
 | 2 — type erasure | **done** — `packages/ts/src/strip.wac`, all 22 bridge files |
 | 3 — differential | **done** — identical to `ts.transpileModule` on all 22 |
 | 4 — bundler | **done** — the bridge bundles to 214 KB and Deno parses it |
-| 5 — `--host deno`/`--host nodejs` finish | **blocked** — needs the narrow host below |
+| 5 — `--host deno`/`--host nodejs` finish | **unblocked** — see D10; the wiring remains |
+
+### D10 — the interface is `u8[] in, u8[] out`, and there is no narrow platform
+
+The correction above concluded that a narrow host offering `readFile`, `writeFile` and argv was
+required. It is not, and building it would have been a mistake: four of those six capabilities are
+`Pending<T>`, which drags in the ticket protocol and most of what `call.ts` and `queue.ts` exist for.
+
+The whole interface is one function:
+
+    export u8[] transform(u8[] archive)
+
+A wacc-built module already exports `$bind$mem`, `$bind$mem_ensure`, `$bind$arr_u8_from_mem`,
+`$bind$arr_u8_to_mem` and `$bind$arr_u8_len`. So a host writes the input into memory, builds a `u8[]`
+from it, calls one export, and reads the answer back — and **JavaScript holds the GC reference
+between calls**, so nothing has to accumulate inside the module. The module-state problem that
+blocked the driver shape does not arise.
+
+`packages/ts/host/run.js` is that host: about a hundred lines, plain JavaScript, no imports, and the
+same file runs under Deno and under Node. The file set arrives as a **store-only zip** — chosen for
+debugging rather than fidelity, since a bootstrap that goes wrong hands you an intermediate and
+`unzip -l` reads this one.
+
+Measured: the bridge's 17 files go in and 214 KB of JavaScript comes out, **byte-identical to the
+route through the `wac` binary**, identical between Node and Deno, and Deno parses it.
+
+### The byte-at-a-time boundary is not worth fixing
+
+The ladder's drivers move data one byte per call, which looks like waste: 2,086,160 bytes of wacc
+source, twice. Measured, 2,086,160 wasm calls take **8 ms** — 276M calls a second — so feed and take
+together cost about 14 ms against a Deno host build of fourteen *seconds*. Under 0.1%, and the
+`$bind$` helpers that would replace it are not emitted by wac-L5 anyway.
 
 ### D8 — a module is an IIFE, and nothing is renamed
 
