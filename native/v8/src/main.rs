@@ -454,6 +454,17 @@ struct HeldModule {
 /// Everything a dispatcher needs, reachable from a `fn` pointer that cannot close over anything.
 struct HostState {
     exports: v8::Global<v8::Object>,
+    /// The last export `Cli.call` resolved, as `(handle, name, function)`.
+    ///
+    /// **Because resolving is a V8 string per call.** `get_export` builds a fresh `v8::String` from
+    /// the name and does a property lookup, and a caller may take this path millions of times in a
+    /// row: `wac ctcompare` reads one journal slot per call, so `issues/system/0274b` was making 8.4
+    /// million short-lived strings for one comparison. One entry is enough — the loops that matter
+    /// call the same export over and over — and a miss costs what every call used to.
+    ///
+    /// Cleared when a module is unloaded, so a handle reused for a different module cannot answer
+    /// with the old one's function.
+    last_call: Option<(i32, String, v8::Global<v8::Function>)>,
     /// `caps[signature][slot]`, the same shape the wasmtime host uses.
     caps: Vec<Vec<Cap>>,
     /// The same table, spelled — so a capability this host cannot answer says *which* it was
@@ -1076,6 +1087,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
 
     HOST.with(|h| {
         *h.borrow_mut() = Some(HostState {
+            last_call: None,
             exports: v8::Global::new(scope, exports),
             caps,
             cap_names: names,
@@ -2881,6 +2893,10 @@ fn dispatch(
                 HOST.with(|h| {
                     if let Some(st) = h.borrow_mut().as_mut() {
                         st.loaded.remove(&n);
+                        // The cache names a function inside the module that is going away.
+                        if matches!(&st.last_call, Some((hh, _, _)) if *hh == n) {
+                            st.last_call = None;
+                        }
                     }
                 });
             }
@@ -3914,33 +3930,68 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
 /// traps. `issues/system/0240c`.
 fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
     // What to call it with, decided from the *module's* manifest — the closed set `Called` documents.
+    // **Decided without copying the signature.** This read `sig.params.clone()` and `sig.ret.clone()`
+    // and then asked questions of the copies — two allocations on a path a caller may take millions of
+    // times in a row. `wac ctcompare` calls `__cov_get` once per journal slot, so `issues/system/0274b`
+    // was paying for them 8.4 million times a comparison. The facts below are all that is wanted; the
+    // spellings are re-read from the manifest only on the paths that refuse.
     let plan = HOST.with(|h| {
         let b = h.borrow();
         let st = b.as_ref()?;
         let lm = st.loaded.get(&handle)?;
         let sig = lm.exports.iter().find(|e| e.name == name)?;
-        Some((sig.params.clone(), sig.ret.clone(), lm.world.len()))
+        let takes_int = sig.params.len() == 1 && sig.params[0] == "i32";
+        let world_arity =
+            if sig.params.iter().enumerate().all(|(i, t)| t == ["Core", "Cli"][i.min(1)])
+                && sig.params.len() <= 2
+                && !sig.params.is_empty()
+                && sig.params[0] == "Core"
+            {
+                sig.params.len()
+            } else {
+                0
+            };
+        // 0 nothing to read, 1 an `i32`, 2 a `string`, 3 something this cannot answer for.
+        let ret_kind: u8 = if sig.ret.is_empty() || sig.ret == "void" {
+            0
+        } else if sig.ret == "i32" {
+            1
+        } else if sig.ret == "string" {
+            2
+        } else {
+            3
+        };
+        Some((takes_int, world_arity, ret_kind, sig.params.is_empty(), lm.world.len()))
     });
-    let Some((params, ret, worlds)) = plan else {
+    let Some((takes_int, world_arity, ret_kind, no_params, worlds)) = plan else {
         return (2, format!("no export named {name}"), 0);
     };
-    let takes_int = params.len() == 1 && params[0] == "i32";
-    let world_arity = if params.iter().enumerate().all(|(i, t)| t == ["Core", "Cli"][i.min(1)])
-        && params.len() <= 2
-        && !params.is_empty()
-        && params[0] == "Core"
-    {
-        params.len()
-    } else {
-        0
+    // Only a refusal needs the words, and a refusal happens once.
+    let spelled = |joiner: &str| -> String {
+        HOST.with(|h| {
+            let b = h.borrow();
+            b.as_ref()
+                .and_then(|st| st.loaded.get(&handle))
+                .and_then(|lm| lm.exports.iter().find(|e| e.name == name))
+                .map(|s| s.params.join(joiner))
+                .unwrap_or_default()
+        })
     };
-    if !params.is_empty() && !takes_int && world_arity == 0 {
-        return (3, format!("cannot call {name}({})", params.join(", ")), 0);
+    if !no_params && !takes_int && world_arity == 0 {
+        return (3, format!("cannot call {name}({})", spelled(", ")), 0);
     }
     if world_arity > worlds {
-        return (3, format!("this module was built without {}", params.join(" and ")), 0);
+        return (3, format!("this module was built without {}", spelled(" and ")), 0);
     }
-    if !ret.is_empty() && ret != "void" && ret != "i32" && ret != "string" {
+    if ret_kind == 3 {
+        let ret = HOST.with(|h| {
+            let b = h.borrow();
+            b.as_ref()
+                .and_then(|st| st.loaded.get(&handle))
+                .and_then(|lm| lm.exports.iter().find(|e| e.name == name))
+                .map(|s| s.ret.clone())
+                .unwrap_or_default()
+        });
         return (3, format!("{name} answers {ret}"), 0);
     }
 
@@ -3958,7 +4009,10 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             // `PendingGlobals` is four `v8::Global`s, so a clone is four refcount bumps.
             pending: lm.ctx.pending.clone(),
         };
-        let world: Vec<v8::Global<v8::Value>> = lm.world.clone();
+        // Only when the callee takes one. `__cov_get(i32)` does not, and cloning a vector of
+        // `v8::Global`s per call to hand nothing to it is the same waste as the signature above.
+        let world: Vec<v8::Global<v8::Value>> =
+            if world_arity > 0 { lm.world.clone() } else { Vec::new() };
         let was = ModuleCtx {
             exports: st.exports.clone(),
             caps: std::mem::take(&mut st.caps),
@@ -3986,7 +4040,29 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
         let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
         if let Some(exports) = exports {
             let exports = v8::Local::new(scope, exports);
-            if let Some(f) = get_export(scope, exports, name) {
+            let cached = HOST.with(|h| {
+                let b = h.borrow();
+                b.as_ref().and_then(|st| match &st.last_call {
+                    Some((hh, nn, f)) if *hh == handle && nn == name => Some(f.clone()),
+                    _ => None,
+                })
+            });
+            let resolved = match cached {
+                Some(g) => Some(v8::Local::new(scope, g)),
+                None => {
+                    let f = get_export(scope, exports, name);
+                    if let Some(f) = f {
+                        let g = v8::Global::new(scope, f);
+                        HOST.with(|h| {
+                            if let Some(st) = h.borrow_mut().as_mut() {
+                                st.last_call = Some((handle, name.to_string(), g));
+                            }
+                        });
+                    }
+                    f
+                }
+            };
+            if let Some(f) = resolved {
                 found = true;
                 let mut argv: Vec<v8::Local<v8::Value>> = Vec::new();
                 if takes_int {
@@ -4024,7 +4100,7 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
         (1, why, 0)
     } else if !found {
         (2, format!("no export named {name}"), 0)
-    } else if ret == "string" {
+    } else if ret_kind == 2 {
         match answer {
             Some(g) => {
                 let v = v8::Local::new(scope, g);
@@ -4032,7 +4108,7 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             }
             None => (0, String::new(), 0),
         }
-    } else if ret == "i32" {
+    } else if ret_kind == 1 {
         let n = answer
             .map(|g| v8::Local::new(scope, g))
             .and_then(|v| v.to_int32(scope))
