@@ -443,3 +443,16 @@ Two artefacts of one program that differ by a custom section, one of them the ri
 comparison — the same shape as the seed-versus-bundle confusion in `issues/system/0230a`, measured the
 same day. If a size here disagrees with expectation by a lot, check which of the two was measured
 before believing it.
+
+
+## The floor is also a second of build time, every build — agent-b, 2026-08-29
+
+`issues/lang/0153` measured what this costs in the other currency. A hello-world that imports nothing
+builds in **53 ms** and is 2.6 KB; the same program with one `import … from "std/platform.wac"` builds
+in **1 100 ms** and is 241.3 KB. About 150 ms of that second is the front end — the rest is emitting
+the floor.
+
+So the bundling question this issue leaves open is not only about what a user downloads. The same
+bytes are emitted from source on every build, and `issues/system/0275b` traces the suite's largest
+chunk to exactly that: `commandparity_test.wac` makes 34 invocations across three hosts, whose entries
+import the platform, at about a second of emit each.
