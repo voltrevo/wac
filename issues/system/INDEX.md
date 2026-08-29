@@ -37,7 +37,7 @@ record of what has been fixed and why.
 | [0193](open/0193-boxs-tests-build-and-spawn-a-world-per-assertion.md) | box's tests build and spawn a world per assertion, and the differentials re-derive their oracle every run | performance | no error |
 | [0184](open/0184-a-run-programs-exit-status-cannot-tell-a-trap-from-an-answer-of-one.md) | a run program's exit status cannot tell a trap from an answer of 1 | missing feature | wrong answer |
 | [0183](open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md) | mutation scoring runs `deno test`, and twenty packages no longer have one | bug | no error |
-| [0178](open/0178-the-caret-goes-solid-after-a-click-and-the-test-that-waits-for-it-to-blink-gives-up.md) | the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up | bug | wrong answer |
+| [0178](closed/0178-the-caret-goes-solid-after-a-click-and-the-test-that-waits-for-it-to-blink-gives-up.md) | the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up | bug | wrong answer |
 | [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
 | [0165](open/0165-wac-cannot-run-a-host-program-and-the-best-oracles-are-host-programs.md) | wac cannot run a host program, and the strongest oracles this repository has are host programs | missing feature | not implemented |
@@ -69,7 +69,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-270 issues, 214 closed.
+270 issues, 215 closed.
 
 The count is checked against the directory by compiler/wacSpec.test.ts, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
