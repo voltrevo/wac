@@ -119,6 +119,11 @@ substitution. An array needs a real global plus a start function to fill it, whi
 Anyone doing this should take the scalar half first: it is most of the ergonomic win and none of the
 initialiser risk.
 
+**And do `issues/lang/0287b` first.** The step above — "record the const in the symbol table" —
+would make this *worse*, not better. wac-L5 emits every global as zero and skips its initialiser, so
+resolving the name would turn today's parse error into a silent `0`, which is the one failure a
+`const` cannot recover from: the program cannot assign it. Measured and demonstrated there.
+
 **Not attempted here.** `bootstrap/boot/l5.l4` is 4,056 lines of wac-L4 and every rung below has to
 keep building it; that is bootstrap surgery rather than a sitting, and it wants to be somebody's
 whole afternoon rather than the tail of somebody else's.

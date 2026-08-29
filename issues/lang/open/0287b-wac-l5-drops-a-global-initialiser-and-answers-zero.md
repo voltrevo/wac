@@ -1,0 +1,79 @@
+# 0287b — wac-L5 drops a module-level variable's initialiser and answers zero, silently
+
+- **Status:** open
+- **Claimed by:** (nobody yet — add yourself before working it)
+- **Reported by:** agent-b
+- **Date:** 2026-08-29
+- **Kind:** bug — in the bootstrap ladder, not in wac
+- **Symptom:** wrong answer, no diagnostic
+
+## Reproduction
+
+Two lines, through wac-L5 and run:
+
+```wac
+i32 G = 7;
+export i32 f() { return G; }
+```
+
+    f() = 0
+
+Not refused, not warned about — **zero**. The same program through `wacc` answers 7.
+
+To reproduce, put the source through `l5ToL0`, assemble it and call the export; `bootstrap/ts/l5.ts`
+and `bootstrap/js/assemble.js` are the two pieces, and `bootstrap/ts/spec_cases.ts` shows the shape.
+Note that a `spec/cases` entry will *not* reproduce it: those run through `wacc`, which is the
+compiler wac-L5 built rather than wac-L5 itself.
+
+## Why
+
+`bootstrap/boot/l5.l4` says so, in the emit pass's own comment:
+
+> A global's initialiser is not run: wac's may be any expression and wasm's may not, so the global
+> emits as zero and the program is expected to set it.
+
+Every global emits as `(global … mut = 0)` and the declaration's initialiser is skipped to the `;`.
+The reasoning is sound — a wasm global's initialiser must be a constant expression and wac's need
+not be — but the conclusion is a silent wrong answer rather than a refusal.
+
+## Why nothing has noticed, which is the good part
+
+Everything wac-L5 compiles was written around it, and the last step of that is a coincidence.
+
+- `packages/wacc/src` — **26 files, zero module-level variables**. The compiler does not use one.
+- `bootstrap/drivers` — **21 module-level variables, 19 with no initialiser**, which is the shape the
+  comment describes and which works: declare, then assign in code.
+- The other **two** are `selfhost.wac:17` and `spec_cases.wac:76`, and both are `i32 nfile = 0;`.
+
+So the only two initialisers in everything the ladder compiles ask for **zero**, which is the one
+value a dropped initialiser produces. The bug is invisible because the code that would show it wants
+the answer the bug gives.
+
+## What this changes about `issues/lang/0285b`
+
+0285b is *"a module-level `const` array is unusable, because wac-L5 cannot compile one"*, and its
+fix plan — mine, written earlier the same day — starts with "record the const in the symbol table".
+**That would make things worse.** A `const` today fails as a parse error at the *use* site, because
+`collect()` eats `export` but not `const`, so `parse_type()` swallows the `const` and records the
+global under the name `i32`. Fix the name and the const resolves — to this, a silent zero, which is
+the one thing a `const` cannot recover from since the program cannot assign it.
+
+So the order is: **this first, then 0285b.** `[§wac-const-…]` aside, a const whose value is dropped
+is not a missing feature, it is corruption.
+
+## What to do
+
+**Emit the initialiser when it is a literal, refuse when it is not.** A wasm global takes a constant
+expression, and an integer literal is one, so `i32 G = 7` can emit `= 7` and be correct. Anything
+else — a call, an arithmetic expression, an array construction — is what the comment is about, and
+should meet `oops()` at the `=` rather than be dropped.
+
+That keeps `i32 nfile = 0;` working in both drivers, which a blanket refusal would not: they would
+each have to lose their `= 0`, which is a change to files that are not the ones at fault.
+
+`Glo(p, n, ret)` gains a field for the value and a flag for "had a non-literal initialiser";
+`collect()` fills them, and the global loop in the emit pass writes the value instead of `emitn(0)`.
+
+**Not attempted here.** `bootstrap/boot/l5.l4` is 4,056 lines of wac-L4 and every rung below has to
+keep building it. This is small as a diff and large as a risk, and it wants its own sitting rather
+than the tail of another piece of work — the same note 0285b ends on.
