@@ -430,7 +430,14 @@ export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string ent
   return withManifestSection(b.wasm, manifestOf(b.wasm, types, sigs, entry, wasmName, grants));
 }
 
-/** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
+/**
+ * What each counter is: `index\tline\tcol\tkind\tfile` per line, in counter order.
+ *
+ * **The file is the fifth column and this comment omitted it** until 2026-08-29, which matters
+ * because the table is the only thing that says *which* file a counter belongs to — a reader
+ * writing a consumer against four columns gets line and column numbers with nothing to hang
+ * them on. `wac build` writes this straight to `<stem>.cov`; the rows are the artefact.
+ */
 export string covTableFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
   return covTableLinked(paths, sources, res, entry);

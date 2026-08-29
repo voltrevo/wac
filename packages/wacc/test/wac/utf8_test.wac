@@ -123,7 +123,8 @@ export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p
 }
 
 /**
- * Every case above again, asking for the repaired string rather than the verdict.
+ * Every case above again, asking for the repaired string rather than the verdict —
+ * `[§wac-str-toutf8-w7kd2mq]`.
  *
  * Same provenance: each expectation is what Python's `decode("utf-8", "replace")` produces, and the
  * walk that emits this was checked against that over every byte string of length 1, 2 and 3 and
@@ -169,7 +170,8 @@ export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq(Core core, Cli 
 }
 
 /**
- * One replacement per maximal subpart, which is the only part of the rule with a choice in it.
+ * One replacement per maximal subpart, which is the only part of the rule with a choice in it —
+ * `[§wac-str-toutf8-maximal-n3qv8jf]`.
  *
  * `E1 80` is as much of a well-formed three-byte sequence as is present, so it is one ill-formed
  * subsequence and takes one U+FFFD — and the byte after it is not consumed. A rule that replaced per
@@ -190,7 +192,8 @@ export string test_toutf8_replaces_a_subpart_once_and_keeps_what_follows_n3qv8jf
 }
 
 /**
- * The instance form, and the fact that makes it worth having: a string can already be ill-formed.
+ * The instance form, and the fact that makes it worth having: a string can already be ill-formed —
+ * `[§wac-str-toutf8-value-t6bz4hx]`.
  */
 export string test_toutf8_repairs_a_string_built_from_unchecked_bytes_t6bz4hx(Core core, Cli cli) {
   T t = T.create();
