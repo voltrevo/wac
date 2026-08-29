@@ -104,6 +104,24 @@ packages' work happens twice per gate. It is still not worth undoing — the exe
 module and the chunk is many files over four workers — but it is why a fix to a *test's* cost shows up
 twice, which is exactly what 0274b did here.
 
+### One thing was schedulable, and it was the dispatch order
+
+`tools/coverageAll.ts` pulled packages off an **alphabetically sorted** list, so the longest driver
+started around the halfway mark and every other worker finished waiting for it. A run's best possible
+wall is `max(longest driver, work / workers)`; measured back to back on 2026-08-29:
+
+    alphabetical    696s of work, longest 94s  ->  ideal 174s, actual 204s   (17% over)
+    longest-first   471s of work, longest 89s  ->  ideal 118s, actual 119s   ( 1% over)
+
+Compare the ratios rather than the walls — the second run had a third less work in it, so 204 against
+119 flatters it. What the change bought is the distance from each run's own bound: 30s to 1s. The
+order comes from a `.cache/` file of the previous run's times, so it corrects itself and a fresh
+checkout behaves exactly as before.
+
+**The suite already does this**, by a weaker proxy: `chunksOf` in `tools/runTests.wac` sorts chunks by
+file count, biggest first. Whether the proxy is good enough is worth asking again once the suite has
+been re-measured with crypto at 25s — every chunk figure on this page predates that.
+
 **And the phases still cannot overlap.** Running the ratchets beside the suite is the obvious 216s,
 but `nproc` is 5 and three agents share them; the suite already runs four workers. There is no idle
 core to put them on, and taking one would slow the other two agents rather than this gate.
@@ -128,8 +146,17 @@ they come from the suite's own footer and only a gate run produces them honestly
 ## What is left, in the order the numbers suggest
 
 1. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
-2. **Process starts** — `issues/system/0197`. A built app costs ~107ms to spawn against 15ms for the
-   native binary; `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s.
+2. **Process starts** — `issues/system/0197`, and **already being worked**, so read that before
+   starting anything here. A built app costs ~107ms to spawn against 15ms for the native binary;
+   `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s. `harness/buildApp.ts`
+   is the replacement builder, going through `wac app` at ~20ms, and `design/system/0009` is why
+   `packages/platform/build.ts` is losing its `deno` and `node` targets altogether.
+
+   Two of that issue's three "shapes worth measuring" are answered and can be skipped: the cache
+   flags in the shebang are *not* the money (107ms → 90ms) and both have a written reason — a
+   `v8_code_cache_v2` that reached 28 GB and a transpile cache that reached 23 GB, neither of which
+   evicts. The live one is the third, the artefact's size, since start cost is ~50ms fixed plus
+   ~43ms a megabyte.
 3. **Crypto's own speed**, which is now a smaller number than it looked: the chunk is 25s and the
    ratchet driver 24s. `issues/system/0209` is one piece of it.
 
