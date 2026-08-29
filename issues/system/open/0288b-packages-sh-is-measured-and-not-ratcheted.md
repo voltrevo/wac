@@ -46,6 +46,25 @@ not reach, each with a sentence saying what would reach it"* — which is the th
 Left alone rather than reworded, because the number is right under its own stated derivation and the
 fix is to give sh a ledger rather than to fix a sentence about not having one.
 
+## Where the 1,036 are
+
+    | packages/sh/src/arith.wac   |  180 |  135 | 75.0 |     45 uncovered
+    | packages/sh/src/exec.wac    | 1946 | 1081 | 55.5 |    865 uncovered
+    | packages/sh/src/lex.wac     |  419 |  351 | 83.8 |     68
+    | packages/sh/src/parse.wac   |  340 |  309 | 90.9 |     31
+    | packages/sh/src/printf.wac  |  164 |  153 | 93.3 |     11
+    | packages/sh/src/refusal.wac |   19 |    3 | 15.8 |     16
+
+**865 of the 1,036 are in one file.** So this is not a thousand sentences; it is `exec.wac`, plus a
+long tail that four files share. `parse.wac` and `printf.wac` are already above 90% and would need a
+handful of entries between them.
+
+And `refusal.wac` — 3 of 19 — is the file whose *name* matches the explanation `packages/sh/cov.ts`
+already gives for why this package is hard to cover: the interesting branches are the refusals, every
+place a peer, a file or a script can be wrong, which a differential against bash cannot reach because
+the two agree on what works and disagree on what this declines to do. That is one rule covering
+sixteen points, and it is written already — in prose, in the wrong file, where nothing can check it.
+
 ## What it would take, sized
 
 1036 points is the reason this is filed rather than done. The ledger is not one entry per point —
