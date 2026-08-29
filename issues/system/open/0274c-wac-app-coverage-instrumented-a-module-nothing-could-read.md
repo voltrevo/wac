@@ -75,12 +75,28 @@ Three decisions, which is why it is an issue rather than a patch:
    app is somebody else's program; something has to decide when the counters are read and where they
    go, and the answer cannot be an environment variable a sealed program is not granted to read.
 
-A fourth question is worth asking before any of it: whether `unknownFlag` should be per-command at
-all. Making it so would have caught this by construction, and would also catch `--js` on `build` and
-`--trace-slots` on `check`, which are the same shape and equally inert. It was not done here because
-that function is also read at `wac.wac:402` to decide whether a build is *cacheable*, so narrowing it
-changes caching for every command at the same time — a second, unrelated behaviour change riding on a
-diagnostic fix.
+**The fourth question is answered.** It was whether `unknownFlag` should be per-command at all —
+making it so would catch this by construction, and would also catch `--js` on `build` and
+`--trace-slots` on `check`, which are the same shape and equally inert. It was done on 2026-08-29,
+and the survey it needed found the problem was larger than this issue said:
+
+- There were **three** flag lists, not one. `unknownFlag` (shared by `build` and `app`),
+  `unknownFlagBefore` (`run`, in `runprog.wac`) and `unknownTestFlag` (`test`, in `testrun.wac`).
+- **Nine commands validated nothing at all.** `wac check --nonsense x.wac` exited **0**; so did
+  `compile`, `bindgen` and `audit` on any flag they do not read.
+
+There is one `flagsFor(cmd)` table now, shaped like `forCommand` in `grants.wac` because both answer a
+per-command question about the command line, and a table beside a shared list is how the two drift.
+`flagStop` holds the other half — where a command's own arguments end and the tail it passes on
+begins, which is `run`'s entry, `sh`'s `-c`, `task`'s `--` and `app-run`'s file. The two superseded
+functions are deleted, and `tools/wac/testflagrows_test.wac` reads the table's arm rather than parsing
+a function body, which is a better subject: it is where a flag is *declared* rather than one of the
+places one was checked.
+
+The caveat that made it look expensive turned out to be small. `unknownFlag` is also read at
+`wac.wac:402` to decide whether a build is cacheable, so narrowing it changes caching too — but the
+command is in scope there, so the per-command answer is simply the more correct input to the same
+decision.
 
 ## Notes
 

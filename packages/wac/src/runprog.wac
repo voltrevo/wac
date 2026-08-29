@@ -21,27 +21,6 @@ import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";
 
-/**
- * The first thing before the entry that looks like a flag and is not one, or "".
- *
- * `unknownFlag`'s twin for `run`, and separate because `run` is the one command with a *tail*: past
- * the entry the arguments are the program's, and `--` is one of them. Scanning the whole line rejected
- * `wac run p.wac -- --allow-read` with "unknown flag '--'" on the JavaScript hosts while the native
- * binary handed the string over as the program asked — found by running the same four command lines
- * through all three, which is what `commandparity_test.wac` now does for this command.
- */
-export string unknownFlagBefore(Cli cli, i32 argc, string entry) {
-  for (i32 i = 1; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
-    if (a == entry) { return ""; }
-    if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
-    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--allow-run") {
-      return a;
-    }
-  }
-  return "";
-}
 
 /**
  * Everything after the entry, verbatim, as the argument vector the program receives.

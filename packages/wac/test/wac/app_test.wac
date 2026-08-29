@@ -331,7 +331,9 @@ export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
   t.isTrue(whyDir == "", whyDir);
   if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
 
-  string[] flags = string[]("--coverage", "--trace", "--js");
+  // The three that reach the shared compile and change what it emits. `--js` is refused too, but by
+  // the generic message: it is `bindgen`'s flag, so pointing at `wac build` would be a wrong hint.
+  string[] flags = string[]("--coverage", "--trace", "--trace-slots");
   for (i32 i = 0; i < flags.len(); i++) {
     Exec made = cli.exec(binaryPath(cli),
                          string[]("app", dir + "/hello.wac", flags[i], "-o", dir + "/thing"),
@@ -349,7 +351,15 @@ export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
     t.isTrue(!f.ok, flags[i] + " wrote an executable despite refusing");
   }
 
-  // The canary: the same build without the flag succeeds, so the three refusals above are about the
+  // A flag belonging to a *third* command gets the ordinary refusal, naming what `app` does take.
+  Exec js = cli.exec(binaryPath(cli),
+                     string[]("app", dir + "/hello.wac", "--js", "-o", dir + "/thing"),
+                     u8[0]()).wait();
+  t.eqI32(js.status, 2, "--js was accepted: " + string.fromBytes(js.stderr));
+  t.isTrue(contains(string.fromBytes(js.stderr), "--allow-read"),
+           "the refusal does not say what `app` takes: " + string.fromBytes(js.stderr));
+
+  // The canary: the same build without the flag succeeds, so the refusals above are about the
   // flag rather than about the entry, the directory or the binary.
   Exec fine = build(cli, dir + "/hello.wac", "", dir + "/thing");
   t.eqI32(fine.status, 0, "the same build without a flag failed: " + string.fromBytes(fine.stderr));
