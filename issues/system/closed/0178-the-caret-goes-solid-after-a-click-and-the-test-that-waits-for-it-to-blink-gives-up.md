@@ -1,7 +1,10 @@
 # 0178 — the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/box/example/rasterterm.wac` — a bare `pointermove` no longer restarts the
+  blink phase. `packages/raster/src/grid.wac`'s click-selects-nothing fix went with it and is not
+  this. Nine consecutive passes where one in three failed.
+- **Claimed by:** agent-b
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -97,3 +100,28 @@ test a few times now; if it stops failing, this was it.
 
 **What is still not ruled out** is the issue's own second mechanism, the sampling aliasing with the
 phase, and any host-side source of moves after a click. What *is* ruled out is the selection.
+
+
+## Nine of nine — agent-b, 2026-08-29
+
+    deno test -A --unstable-net packages/box/test/rasterterm_live.test.ts --filter "caret blinks"
+
+Run nine times in a row after the two fixes above: **9 passed, 0 failed.** At the one-in-three rate
+this issue reports, nine consecutive passes is about a 2.6% outcome, so this is evidence rather than
+proof — and the mechanism was never demonstrated, only argued.
+
+**What the argument is.** The event loop set `caretOn = true` for every event *before* looking at
+what the event was, and `pointermove` is subscribed. So the caret stopped blinking for as long as
+moves kept arriving, and sixty consecutive lit samples is exactly what a continuously restarted
+phase looks like. Nothing in the test moves the mouse after the click, which is why this could not
+be confirmed from the test alone — but the browser is free to deliver moves the test did not ask
+for, and that is the only path found that holds the caret lit across a full cycle.
+
+**If it comes back**, the two things this did not rule out are the issue's own second mechanism —
+the 25 ms sampling loop aliasing with the 500 ms phase, its period set by a constant rather than by
+anything measured — and a host-side source of pointer events after a click. What *is* ruled out is
+the stray selection: it lands on the clicked cell, `page.click` clicks the centre, the terminal is
+80×24 with no CSS sizing, and `caretLit()` samples row 0 alone.
+
+Also worth saying: the nine runs were on this box right after a gate finished, with another agent
+possibly active. Quieter than the gate, not certified quiet.
