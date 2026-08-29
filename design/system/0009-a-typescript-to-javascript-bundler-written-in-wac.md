@@ -722,3 +722,46 @@ because `issues/system/0279c` is precisely about comparisons that are credited a
 program once per host and trusting that the two builds differ only in the host. Under this shape the
 artefact is held constant, which is what found six of the nine divergences on 2026-08-29 — every one
 by hand, because no test could do it.
+
+### The `workerOnly` group is tied to `issues/system/0161`, not to this note
+
+`harness/appRun.ts` is the biggest thing standing between this migration and `build.ts`'s removal:
+four files call `buildApp` with `workerOnly`, and `appRun` is one of them, reached by eighteen more.
+
+Its own header says what it is for:
+
+> Run a wac application in this process, instead of spawning it. […] building the executable and
+> spawning it […] pays for a whole second Deno process
+
+So it exists to avoid **Deno process startup**, and it buys that by building a worker bundle and
+running it in-process through `spawnChild` with a `blobWorker`. That is the one artefact `wac app`
+cannot produce, which is why the group is stuck.
+
+**The cost it avoids has changed.** Measured on the native binary — five runs of `wac <module.wasm>`,
+spawn to exit, including the program's own work:
+
+    286ms for five  →  57ms each
+
+A test that spawns the binary now pays about a sixteenth of a second. Against that, `appRun` carries
+a worker pool, an injectable `WorkerLike`, and a lifetime rule about when a worker returns to the
+pool — reaching eighteen files.
+
+**So the obvious question is whether `appRun` still earns its keep — and for its largest consumer it
+plainly does.** `packages/sh/test/differential.test.ts` runs **554 cases** against bash. At 57ms a
+spawn that is about 32 seconds; in process it is six. The optimisation is not marginal there, it is
+the difference between a file somebody runs and one they avoid.
+
+**Which places the real answer somewhere else.** `appRun` exists because these are *TypeScript* tests:
+to run a wac program inside a Deno process you need the JavaScript bridge and a worker, and a worker
+bundle is what `build.ts` alone can make. A wac test has no such problem — `wac test` runs a module in
+its own process for nothing.
+
+So the `workerOnly` group is not waiting on a builder at all. It is waiting on
+`issues/system/0161` — *moving the suite off Deno* — and `differential.test.ts` is exactly the kind of
+file that issue is about. Converting it to wac removes the need for a worker bundle rather than
+finding another way to make one.
+
+**What that means for the removal.** `build.ts`'s deno target cannot go while any TypeScript test
+needs an in-process wac program. That is a real dependency and it is not this note's to discharge:
+recorded here so the next person does not spend the time I did looking for a way to build a worker
+bundle without `build.ts`.
