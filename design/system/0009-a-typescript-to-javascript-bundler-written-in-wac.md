@@ -257,6 +257,40 @@ equal. `readonly fault: number;` survived every test here until Deno was asked t
 and refused. A JavaScript parser asked about JavaScript is the only question that catches a
 leftover, and it is also the real acceptance test: a JS-hosted `wac` *is* that file.
 
+## Where this ends: `packages/platform/build.ts` should not exist
+
+942 lines, and what it is is **the JavaScript-hosted app builder** — the thing that turns a wac entry
+into one runnable file for Deno, Node or a browser. `wac app` in `packages/wac/src/app.wac` is the
+*native* one. Two producers of one artefact, which this repository already forbids, and the only
+reason for the split was that the hosted one needed a bundler and the language did not have one.
+
+It does now.
+
+### What it does, and where each part goes
+
+| build.ts does | already exists as |
+| --- | --- |
+| compile the entry through `waccArtifacts` | `wac build` |
+| compose the worker, launcher and childwasm sources | nothing — ~200 lines to port |
+| bundle them (`deno bundle`, hence npm) | `packages/ts/src/bundle.wac` |
+| emit shebang + launcher, or a browser page | `wac app` does the native half |
+
+### Why the wac side is easier than it looks
+
+For the **binary**, `wac app --target deno` would call `bundle()` directly — both are wac, so there
+is no wasm boundary and no host at all. For the **bootstrap**, `run.js` calls `transform.wasm`. Same
+wac code, two entry points, and the tiny interface exists only for the second.
+
+That also removes the npm dependency for everyone rather than only for the bootstrap:
+`--target deno` currently shells out to `deno bundle`, which fetches `@esbuild/<platform>` on first
+use, and that is the single thing making a hosted build need a network.
+
+### What has to move first
+
+`buildApp` has seven callers in `packages/box/test/` plus `site/tools/syncDemos.ts`, and three
+`packages/ethrpc/example/*.wac` headers name `wac task app:build`. None of them is an obstacle —
+they are the reason to do it once rather than twice.
+
 ## Open
 
 **What the narrow host offers, exactly.** `readFile`, `writeFile` and argv is the minimum that runs
