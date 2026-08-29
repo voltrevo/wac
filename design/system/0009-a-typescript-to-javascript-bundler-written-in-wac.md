@@ -60,19 +60,38 @@ runs wac programs.
 `packages/wacc/src/wapy*.wac` is 2,701 lines and is a *second language frontend* — lexer, parser,
 printer, rewrite. A TypeScript stripper and a module flattener are smaller than either.
 
-## How it runs: as a driver, needing no capabilities
+## How it runs — and the claim here was wrong
 
-`bootstrap/drivers/` already holds four wac programs the ladder runs, and **they get no capabilities
-at all**. The host reads the files, feeds text in a byte at a time through `drv_alloc`/`drv_setByte`,
-calls an export, and takes bytes back through `drv_byteAt`. `bootstrap/hosts/deno.js` is 107 lines
-and says so in its own header: *"where the strings come from, and nothing else."*
+This said the transform would run as a capability-less driver, like the four in
+`bootstrap/drivers/`, and that **no new host machinery was required**. That is false, and the
+correction is the most useful thing on this page.
 
-A text-to-text transform fits that boundary unchanged. **No new host machinery is required.**
+A driver's boundary is byte-addressed — the host calls `drv_alloc`, then `drv_setByte` once per
+byte, then an export — because a wasm GC array cannot cross into JavaScript. **That requires the
+module to hold state between calls, and wac has no module-level mutable variable.**
+`bootstrap/drivers/selfcheck.wac` says so in its own header: *"wac has no mutable module-level
+variable, so a boundary that fills a buffer across several calls cannot be written in wac."*
 
-This is worth stating because the alternative reading — that a JavaScript-hosted `wac` needs a
-narrow capability layer first — is what makes the job look large. It does not. The 466 lines of
-`packages/platform/host/marshal.ts` exist to carry **211 distinct type strings** across the boundary
-for a `Cli` of 41 fields, with children, sockets and scheduling. A transform needs none of it.
+The existing drivers do it anyway because they are compiled by **wac-L5**, which is more permissive
+than the language. That escape is not available here: pointed at `packages/ts`, wac-L5 refuses 31
+things, all of them `core/vec.wac`'s generics and `Option<T>`. Rewriting the transform in the
+wac-L5 subset would mean no `Vec`, no generics and no methods — worse code, to fit a rung whose
+whole design is "the minimum that compiles wacc".
+
+So the transform has to be a **program with capabilities** — read a file, write a file, take argv —
+rather than a capability-less driver. `packages/ts/src/main.wac` already is one; what is missing is
+a host small enough to run it before the real `wac` exists.
+
+### Which makes the narrow host required, not optional
+
+An earlier version of this note listed "is a narrow `wac` worth having in its own right?" as an open
+question, and answered that nothing here needed it. That was the same mistake. It is the blocker.
+
+The good news is unchanged and is why this is a step rather than a project: the cost of
+`packages/platform/host/` is **generality, not capability**. `marshal.ts` is 466 lines because it
+carries 211 distinct type strings for a `Cli` of 41 fields, with children, sockets and scheduling. A
+host that offers `readFile`, `writeFile` and argv needs none of it, and `bootstrap/hosts/deno.js` —
+107 lines — already reads files, parses a command line and prints.
 
 ## The decisions
 
@@ -155,7 +174,7 @@ something else, with better tools, has already checked the things it cannot.
 | 2 — type erasure | **done** — `packages/ts/src/strip.wac`, all 22 bridge files |
 | 3 — differential | **done** — identical to `ts.transpileModule` on all 22 |
 | 4 — bundler | **done** — the bridge bundles to 214 KB and Deno parses it |
-| 5 — `--host deno`/`--host nodejs` finish | not started |
+| 5 — `--host deno`/`--host nodejs` finish | **blocked** — needs the narrow host below |
 
 ### D8 — a module is an IIFE, and nothing is renamed
 
@@ -196,11 +215,10 @@ leftover, and it is also the real acceptance test: a JS-hosted `wac` *is* that f
 
 ## Open
 
-**Is a narrow `wac` worth having in its own right?** The transform needs no capabilities, so it does
-not require one. But a small `wac` with read, write and argv — running under the ladder, before the
-full binary — may be a useful thing to be able to build, and a stepping stone with other uses. It is
-cheap for the same reason the transform is: the expensive part of `packages/platform/host/` is
-generality, not capability. Recorded here rather than assumed, because nothing in this note needs it.
+**What the narrow host offers, exactly.** `readFile`, `writeFile` and argv is the minimum that runs
+`packages/ts/src/main.wac`. Whether it should be more — and whether it becomes a thing in its own
+right rather than a bootstrap fixture — is worth deciding before it is written, because a host that
+grows one capability at a time becomes `packages/platform/host/` again.
 
 ## A correction owed to `bootstrap/MIGRATION.md`
 
