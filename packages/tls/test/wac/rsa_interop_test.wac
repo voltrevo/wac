@@ -166,7 +166,13 @@ string oneSize(Core core, Cli cli, i32 bits) {
 
   // The server saying it read a request is what separates "the handshake failed" from "the reply did
   // not arrive", and only the first is what a signature problem looks like.
-  t.isTrue(contains(logOf(cli, d), "received GET /"),
+  //
+  // **Waited for rather than read once**, because the server's output reaches this log through a
+  // relay: it runs as `wac <module.wasm>`, which spawns it and copies its streams, so the line is
+  // written some moments after `openssl` has exited. Reading immediately passed on an idle machine
+  // and failed under a loaded gate, which is the shape of a race rather than of a signature problem.
+  // The `listening` line above is waited for the same way and for the same reason.
+  t.isTrue(waitForLogWithin(core, cli, d, "received GET /", 5000),
            "our server got a request — the handshake completed. openssl said: " + err);
   t.isTrue(contains(out, BODY), "OpenSSL got the body. stdout: " + out + " stderr: " + err);
   // The signature scheme is the point: OpenSSL verified an RSA-PSS CertificateVerify made by us,
