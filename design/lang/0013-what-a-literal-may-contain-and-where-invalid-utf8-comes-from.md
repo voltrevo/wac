@@ -425,6 +425,54 @@ added a field to that struct for a different reason and it cost three constructi
 **Not measured here, and still the hard half**: the spans, as the section above says. Nothing in this
 measurement makes that easier — it only says how much else is waiting behind it.
 
+## The spans need no synthesised source, and the reason is the measurement above
+
+The section on step 7's shape calls the spans "the hard half … where the design has to be decided
+rather than derived", and points at `wapyparse.wac`'s `synthTail()` as the precedent to follow: a
+synthesised token needs source to point at, so append some. That is one answer. There is a cheaper
+one, and the measurement above is what makes it available.
+
+**Point the segment tokens at the real source, and let the delimiters be what they are.** In
+
+    "a\{itoa(n)}bc"
+
+the three segments are `"a\{`, `}bc"` and — in a longer literal — `}…\{` in the middle. Each of
+those is a real, contiguous run of the file. A span over it is exact, so every column in every
+diagnostic is right for free, and the printer can re-render the literal from the source rather than
+from a reconstruction. `stringLiteralBytes` already reads *between* the first and last byte of the
+span and un-escapes what it finds; what it does not know is that a segment's delimiters may be `\{`
+or `}` rather than `"`.
+
+**And it does not need to know it from the span**, which was the blocker, because the four consumers
+in the table above already have to be told which literals were interpolated. That plumbing — the
+lexer recording interpolated tokens on `Lexed`, since the token quintuple has no spare field — is
+required by the import paths and the JSX attribute whatever happens to the spans. Once it exists,
+`stringLiteralBytes` is a fifth reader of the same fact, and the synthesised tail is not needed at
+all.
+
+So the ordering is: **the marker first, the desugaring second, the spans for free.** That also
+inverts which half is hard — the "easy half" (a depth counter in the scanner) is unchanged, and the
+hard half turns out to be a `Lexed` field the previous step already showed how to add.
+
+**Not proven, and where it could still go wrong**: `stringLiteralBytes` is reached from `files.wac`
+as well as from the emitter, and `path.wac`'s header says the import of it is already a near-cycle.
+A fifth caller is fine; a fifth caller that needs the marker means `files.wac` needs the `Lexed` too,
+which it has. Worth checking before writing code, and cheaper than either answer to the spans.
+
+**The case to make pass**, kept here rather than in `spec/cases` because a case the compiler refuses
+is a red suite for everybody until step 7 lands:
+
+    // expect: answers f = 5
+    string itoa2(i32 n) { return n == 42 ? "42" : "??"; }
+    export i32 f() {
+      i32 n = 42;
+      string s = "a\{itoa2(n)}bc";
+      return s.len();
+    }
+
+Today it answers `error: unknown escape` with the caret on the opening quote, which is the whole of
+step 7's starting position.
+
 ## D6's tab rule is D3's rule, and asking twice said so twice
 
 *"Tabs in the indentation are refused outright rather than assigned a width, so no block string can
