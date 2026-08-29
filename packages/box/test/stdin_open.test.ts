@@ -2,7 +2,7 @@
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 import { boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 // A shell whose standard input is **still open** — the shape a terminal has, and the one no other
 // harness in this repo gives a shell.
 //

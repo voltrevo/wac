@@ -509,3 +509,51 @@ Blocked on understanding the four unexplained failures, not on `0275c`. The hone
 one migrated file pass for the right reason before moving eleven, and `bin.test.ts` is the one to
 start from: it already builds both ways, and the case that runs a `wac app` artefact under the native
 host is the regression test for `0275c`.
+
+
+## The migration, second attempt: nine files across, three that do not go
+
+Done one at a time this time, after the first attempt moved eleven at once and produced four failures.
+`sealing.test.ts` first, because its subject is what a sealed session can reach — 13 of 13. Then the
+rest, keeping only what passes.
+
+**Across (9):** `sealing`, `session`, `sealed`, `flags`, `programs`, `fuzz`, `jobs`,
+`pipeUngranted`, `stdin_open` — plus `bin`, already there. 30 tests green.
+
+**Not across (3), each for its own reason, and none of them the bugs from the first attempt.**
+
+### `unnameable.test.ts` — the Deno target has a second permission layer
+
+    sh-deno   stat: cannot statx '/proc': Not granted to this application
+    sh-app    /proc directory 0 2026-08-17T01:29:56.455Z
+
+Both built with `--allow-read`. The Deno artefact's refusal does not come from wac's capability layer
+at all — it comes from **Deno's**, and wac maps it to `FAULT_NOT_GRANTED`. That is the thing this
+file exists to check: *a denial must not arrive as absence*, which was `stat /proc` saying "not
+found" about a directory that is plainly there.
+
+A `wac app` artefact has one permission layer, not two. With read granted, nothing denies `/proc`, so
+there is no denial to report and the property has nothing to demonstrate itself on. **The test is not
+wrong and neither is the host** — it needs a path the layer *underneath* refuses, and picking one
+that is not Deno's is the work. Building the shell with no read grant would move the denial into
+wac's own layer, which tests a different sentence than the one that broke.
+
+### `shell.test.ts` — a spawned applet's working directory
+
+    cd sub; cat f.txt        deno: hello from sub    wac app: No such file or directory
+
+"A spawned applet stands where the shell stands" does not hold through `wac app`. `runBytes` spawns
+with `cwd` as `""`, and `joinPath` reads that as *resolve as given* — so the applet resolves against
+the process's directory rather than the shell's. One layer of spawn deeper than the Deno artefact,
+which is the launcher's own program.
+
+### `init.test.ts` — services and init, six failures, not yet diagnosed
+
+The largest of the three and the only one still unexplained.
+
+### What this says about the order
+
+The first attempt's four failures were three real bugs. These three are different in kind: two are
+*differences between the artefacts* that the tests were written against, and only the `cwd` one looks
+like something to fix. Moving one file at a time is what separated them; moving eleven produced a
+list nobody could act on.

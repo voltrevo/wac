@@ -29,7 +29,7 @@ Deno.test({
   name: "a file that cannot be read is reported in GNU's own words, through box's applets",
   ignore: !haveBash,
   fn: async () => {
-    const { buildApp } = await import("../../platform/build.ts");
+    const { buildApp } = await import("../../../harness/buildApp.ts");
     const built = await Deno.makeTempFile({ prefix: "box-programs-sh-" });
     const dir = await Deno.makeTempDir({ prefix: "box-programs-" });
     try {

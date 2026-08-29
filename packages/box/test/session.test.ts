@@ -25,7 +25,7 @@
 // if it tried — a sealed session is enforced by the capability world and demonstrated by the mount table,
 // rather than being a promise about what the code does.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 import "../../../harness/spawnRetry.ts";
 
 /** Local, because this repo has no third-party dependencies. */
@@ -51,7 +51,7 @@ globalThis.addEventListener("unload", () => {
 // this repo builds instrumented programs, and one of those carries a scoped `--allow-write` for
 // its coverage dump. That is a genuine difference in what the shebang says, and not the thing
 // this file is checking. wac-mono 0024.
-await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {}, "deno", false, { coverage: false });
+await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {});
 
 function run(script: string, cwd: string) {
   const r = new Deno.Command(sealed, {
