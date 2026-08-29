@@ -77,7 +77,9 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 283 issues, 223 closed.
 
-The count is checked against the directory by compiler/wacSpec.test.ts, which reads both
-trackers. It did not read this one until 2026-08-09, and the first thing it found was
+The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
+trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
+2026-08-28, taking the only copy of the check with it; the rule is a property of `issues/`, so it
+lives beside `issues/` now. It did not read this one until 2026-08-09, and the first thing it found was
 thirteen numbers used twice and five issues written in a third header format — neither of
 which anything would have noticed, because the rows above happened to be right.

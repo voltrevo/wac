@@ -15,6 +15,21 @@ wrong for a fortnight. The point of the page is that the next cut starts from nu
 
 ## The budget
 
+**Measured by the gate itself, 2026-08-29**, which now prints this on every run that reaches the
+push — the three-line lump at the bottom of the old estimate was never measured and turned out to be
+24 seconds:
+
+    pull+seed      1s
+    suite        469s
+    docs          14s
+    site           9s
+    ratchets     129s
+    ------------------
+    total        622s
+
+So it is **ten and a half minutes, not twelve**, and the suite is 75% of it. The estimate this page
+opened with is kept below for the record:
+
     suite                452s   (before 0274b; crypto's chunk has since gone 195s -> 25s)
     coverage ratchets    216s
     seed, doc checks, site, push
@@ -172,6 +187,12 @@ Measured on the ratchets, back to back, against each run's own bound of
     longest-first   471s of work, longest 89s  ->  ideal 118s, actual 119s   ( 1% over)
 
 Compare the ratios rather than the walls: the second run had a third less work in it.
+
+**The ratchets are done: 216s to 129s.** `coverage:all`'s own footer on that run reads *128s (511s
+of work at 4 workers)*, and 511/4 is 128 — so the packing is exact and there is nothing further to
+win by scheduling them.
+
+**The suite's wall is the number that has not been re-measured since the ordering changed
 
 **What to check next time this page is read.** The suite's wall is the number that has not been
 re-measured since the ordering changed — the 450s above is the *old* scheduler on the new workload.
