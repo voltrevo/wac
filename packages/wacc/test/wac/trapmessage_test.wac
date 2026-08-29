@@ -74,10 +74,11 @@ export string test_a_trap_case_that_passes_still_says_what_it_said(Core core, Cl
   T t = T.create();
   // The verdict is a pass, so this is purely what the reader is told — and it is where the message is
   // worth most, because a `test_traps_*` passing for the *wrong* trap looks exactly like one passing for
-  // the right one. `--verbose`, since a passing test says nothing without it.
+  // the right one. No flag: naming every passing test is the default since 2026-08-29, and this case
+  // asked for `--verbose` when it was not.
   string out = runProbe(cli,
     "export string test_traps_on_purpose() {\n  trap \"the size was implausible\";\n  return \"\";\n}\n",
-    string[]("--verbose"));
+    string[]());
   t.isTrue(holds(out, "the size was implausible"), "a passing trap case hid its message: " + out);
   return t.report();
 }
