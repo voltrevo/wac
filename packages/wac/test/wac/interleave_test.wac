@@ -1,0 +1,58 @@
+// A launched program's two streams reach one destination in the order it wrote them.
+//
+// **Only observable when both go to the same place**, which is why this runs the program under
+// `/bin/sh` with `2>&1` rather than through `Exec`: `Exec` hands back `stdout` and `stderr` as two
+// fields, and two fields cannot disagree about order. A terminal can, and a build log is a terminal.
+//
+// `wac <prog.wasm>` spawns the program and used to **relay** its two streams, waiting on both and
+// taking standard output whenever both were ready. So a diagnostic written between two lines of
+// output arrived after both:
+//
+//     one          expected:  one
+//     two                     mid
+//     mid                     two
+//
+// It is a race rather than a fixed reordering — 11 runs in 20 on the v8 host — which is why this
+// runs the program several times and why a single run proved nothing. `issues/system/0282c`.
+//
+// The fix is that a launcher hands the child *its own* streams, the way it already handed over its
+// standard input: `spawn`'s `inheritOut`. The order is then the order the child wrote, kept by
+// whatever the host writes descriptors with, rather than reconstructed by a parent that never had it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { binaryPath } from "../../../wactest/src/host.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string PROBE = "packages/wac/test/wac/interleave_probe.wac";
+
+/**
+ * How many times to run it.
+ *
+ * The bug appeared in a bit over half of runs, so one run would have missed it about as often as it
+ * caught it. Five makes a regression a ~2% chance of passing, and the program is small enough that
+ * five runs are cheaper than one build.
+ */
+const i32 RUNS = 5;
+
+export string test_a_launched_programs_error_output_lands_between_the_lines_it_was_written_between(
+    Core core, Cli cli) {
+  T t = T.create();
+
+  string mod = builtProgram(cli, PROBE, "interleaveprobe", string[0](fill: ""));
+  t.isTrue(mod != "", "the probe built");
+  if (mod == "") { return t.report(); }
+
+  // `2>&1` is the whole point: one destination, so the relative order of the two streams is a fact
+  // about the run rather than about which field the harness looked at first.
+  string cmd = "'" + binaryPath(cli) + "' '" + mod + "' 2>&1";
+  for (i32 i = 0; i < RUNS; i++) {
+    Exec r = cli.exec("/bin/sh", string[]("-c", cmd), u8[0]()).wait();
+    t.isTrue(r.ran(), "run " + itoa(i) + " started — " + r.error);
+    if (!r.ran()) { continue; }
+    t.eqStr(string.fromBytes(r.stdout), "one\nmid\ntwo\n",
+            "run " + itoa(i) + ": the diagnostic is between the two lines it was written between");
+  }
+  return t.report();
+}

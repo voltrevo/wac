@@ -366,6 +366,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
     childCwd: string,
     inheritIn: boolean,
     serveFs: boolean,
+    inheritOut = false,
   ): Promise<Uint8Array> => {
     const give = {
       read: (wanted & GRANT_READ) !== 0 && opts.fs?.read === true,
@@ -449,7 +450,15 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         // host's own directory, which is what a caller with no opinion passes.
         cwd: childCwd === "" ? opts.cwd : childCwd,
       }));
-    }, newBridge, blobWorker, graceEnv(), opts.moduleEntry ?? moduleEntryFromSource("deno"));
+    }, newBridge, blobWorker, graceEnv(), opts.moduleEntry ?? moduleEntryFromSource("deno"),
+      // **`writeSync`, not the async form**: two awaited writes can land out of order, which is the
+      // bug this exists to fix. `issues/system/0282c`.
+      inheritOut
+        ? {
+          out: (b: Uint8Array) => { Deno.stdout.writeSync(b); },
+          err: (b: Uint8Array) => { Deno.stderr.writeSync(b); },
+        }
+        : undefined);
 
     // **A parent that will not serve says so before the child runs.** Ending the reply queue is
     // what makes `Fs.overParent` answer immediately instead of waiting: a child asks one question,
@@ -1031,10 +1040,10 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
      * started, which is what `Child.error` is for. wac-mono issue 0021.
      */
     [OP.SPAWN]: (p) => {
-      const { source, args, cwd, inheritIn, serveFs } = unpackSpawn(p);
+      const { source, args, cwd, inheritIn, serveFs, inheritOut } = unpackSpawn(p);
       // **Bytes, whichever kind they are.** A worker bundle and a wasm module both start here now;
       // `spawnChild` wraps a module in a stub that drives it from its own manifest.
-      return startChild(source, args, want(p), cwd, inheritIn, serveFs);
+      return startChild(source, args, want(p), cwd, inheritIn, serveFs, inheritOut);
     },
 
     /**

@@ -207,8 +207,15 @@ Pending<Datagram> noReceiveFrom(i32 handle) {
 }
 Pending<bool> noSendTo(i32 handle, string host, i32 port, u8[] bytes) { return ready(false); }
 
-Pending<Child> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, bool inheritIn,
-                       bool inheritErr) {
+// **Its parameters have to match `spawn`'s exactly**, and nothing checks that here: this is a
+// funcref stored into a capability struct, so a mismatch is a wasm validation failure hundreds of
+// thousands of bytes into the module rather than a diagnostic about this line — `issues/lang/0290c`.
+//
+// The last one was called `inheritErr` and has always been `serveFs`; renamed while `inheritIn`
+// became the `inherit` flags, because a wrong name here is the whole difficulty of keeping them in
+// step.
+Pending<Child> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, i32 inherit,
+                       bool serveFs) {
   // -1 rather than -2: `Child.unavailable()` means "this host cannot spawn at all", and this host
   // can — it was not granted to this program. A shell that could not tell those apart would report
   // a missing feature where the truth is a missing permission.

@@ -73,3 +73,27 @@ Filed alongside `issues/lang/0290c`, which is the *other* silent failure the sam
 a funcref whose type does not match its struct field is emitted rather than refused. The two are
 independent: 0290c was a mismatch between the field and the function stored in it, fixed by updating
 the stubs; this one survives with every signature in agreement.
+
+## It is not parameter count in general — it is capability fields
+
+Added after filing, because the title as first written invites the wrong fix.
+
+**87 ordinary functions in `packages/**/src` already take seven or more parameters**, the widest being
+`emitFunctionOf` at **17**, in the compiler's own emitter. So wacc handles wide functions fine, and
+nothing here is a general arity limit.
+
+What is unusual about `spawn` is that it is a **`fn[…]` field of a capability struct** — a host call
+rather than a wac function. Six was the widest of those (`spawn`, `execWith`, `drawPixelsIn`), and
+the failure appears at seven.
+
+So the search is the capability path: the glue that emits a host call, the bind types written into
+the manifest's `"callbacks"`, or whatever `settleEmittable` consults about them. Ruled out on the way:
+
+- `callbackSlots()` is 16, and is a count of *slots a host may hold callbacks in*, not an arity.
+- There is no `params.len() > N` bound anywhere in `emit.wac`.
+
+The mechanism by which `main` disappears is at least clear. `exportSigsOf` skips a function whose
+`env.funcIndex[at]` is negative, and that index is set by the emit fixed point — whose rule is *"a
+call to an unemittable function is itself unsupported, so removing one can remove its callers"*. So
+something that calls the widened capability was declined, and the cascade reached `main(Core, Cli)`,
+which is the module's only export.

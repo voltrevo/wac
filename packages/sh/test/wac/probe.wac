@@ -272,7 +272,7 @@ Child resolveChild(i32 id) {
 }
 i32 resolveId(i32 id) { return id; }
 
-Pending<Child> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, bool inheritIn,
+Pending<Child> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, i32 inherit,
                          bool serveFs) {
   i32 handle = -1;
   // **The bytes, read back as text.** `spawn` takes `u8[]` now — a program is not text, and every

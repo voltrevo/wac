@@ -23,7 +23,7 @@ import { hashString, stringEq } from "core/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from "core";
 import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
-  GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, Pending, Stat, readReason, reasonOf }
+  GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_IN, INHERIT_NONE, Pending, Stat, readReason, reasonOf }
   from "std/platform.wac";
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
 import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeline, Redir,
@@ -1844,7 +1844,7 @@ Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
       u8[][] outer = u8[][argv.len() - 1](fill: u8[0]());
       for (i32 i = 1; i < argv.len(); i++) { outer[i - 1] = argv.get(i).toBytes(); }
       Child external = sh.cli
-        .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn, serveFs).wait();
+        .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn ? INHERIT_IN : INHERIT_NONE, serveFs).wait();
       if (!external.unavailable()) { return external; }
     }
   }
@@ -3517,7 +3517,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   // the *host's* directory, which meant the shell's `cd` was invisible to everything it ran.
   Child child = sh.cli.spawn(
     prog.bytes, args,
-    stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
+    stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : INHERIT_NONE, serveFsFor(sh)).wait();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
   // and must not be reported as one. Falling through is what keeps `packages/box`'s sixty applets
   // working in a world that answers -2 — before this, setting `$WACPATH` to a directory holding a

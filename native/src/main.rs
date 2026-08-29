@@ -300,6 +300,12 @@ struct AsChild {
     fsreq: Arc<Stream>,
     /// Its parent's **answers**, which this program reads. `recv(PARENT_FS)`.
     fsrep: Arc<Stream>,
+    /// Whether this child writes the *process's* own streams rather than the queues above.
+    ///
+    /// `platform.wac`'s `INHERIT_OUT`. Two queues record nothing about which stream was written
+    /// first, so a parent relaying them puts a diagnostic after the output it belonged between;
+    /// writing the real descriptors keeps the order the child wrote in. `issues/system/0282c`.
+    inherit_out: bool,
     /// Whether this child was told to read the *process's* input rather than what its parent sends.
     ///
     /// **Without this the queue below shadowed the real thing.** A child spawned with `inheritInput`
@@ -1693,7 +1699,7 @@ fn dispatch(
             let Some(world) = caller.data().world.clone() else {
                 return no_spawn_here(caller, results);
             };
-            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, results);
+            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, false, results);
         }
         // **Synchronous, unlike almost everything here.** Nothing is submitted and no ticket comes
         // back: instantiating a module and calling one of its exports both finish before the host call
@@ -1770,7 +1776,11 @@ fn dispatch(
                 _ => 0,
             };
             let cwd = read_string(caller, &params[4])?;
-            let inherit = matches!(arg(5), Val::I32(n) if n != 0);
+            // **Flags rather than a bool** — `platform.wac`'s `INHERIT_IN`/`INHERIT_OUT`, one `i32`
+            // because a capability may not have seven parameters (`issues/lang/0291c`).
+            let inherit_bits = match arg(5) { Val::I32(n) => n, _ => 0 };
+            let inherit = inherit_bits & 1 != 0;
+            let inherit_out = inherit_bits & 2 != 0;
             let serve_fs = matches!(arg(6), Val::I32(n) if n != 0);
             // **-2 still means what it means**: a world with no `spawn` at all says so, and it says
             // the same thing to both spawns rather than refusing one and serving the other.
@@ -1782,7 +1792,7 @@ fn dispatch(
             let engine = caller.engine().clone();
             return match world_from(&engine, &prog) {
                 Ok(world) => {
-                    spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, results)
+                    spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out, results)
                 }
                 // **A failed child rather than a trap.** A parent handed a file that is not a wac
                 // program has done nothing wrong, and `Child.error` is the field that says so —
@@ -2661,7 +2671,7 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
     }
     // A spawned child writes to its parent's queues, never to the terminal — when it has not
     // redirected itself above.
-    if let Some(streams) = caller.data().as_child.as_ref() {
+    if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherit_out) {
         let to = if to_stderr { streams.stderr.clone() } else { streams.stdout.clone() };
         return to.write(bytes);
     }
@@ -2979,6 +2989,9 @@ fn spawn_instance(
     cwd: Vec<u8>,
     inherit_input: bool,
     serve_fs: bool,
+    // `INHERIT_OUT`: the child writes this process's streams rather than the queues below. Always
+    // false for `spawnSelf`, which has no such flag — only `spawn` grew one.
+    inherit_out: bool,
     results: &mut [Val],
 ) -> Result<(), wasmtime::Error> {
 
@@ -3036,7 +3049,7 @@ fn spawn_instance(
     let err_handle = keep(caller, Handle::Err(child.clone()));
     let fs_handle = keep(caller, Handle::Fs(child));
 
-    let streams = AsChild { stdin, stdout, stderr, fsreq, fsrep, inherits: inherit_input };
+    let streams = AsChild { stdin, stdout, stderr, fsreq, fsrep, inherits: inherit_input, inherit_out };
     std::thread::spawn(move || {
         let code = run_child(world, argv, grants, cwd, streams, stop);
         exit.set(code);

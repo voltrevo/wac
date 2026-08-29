@@ -697,7 +697,9 @@ export function cliOf(
       args: Uint8Array[],
       grants: number,
       cwd: string,
-      inheritIn: boolean,
+      // **Flags, not a bool** — `INHERIT_IN | INHERIT_OUT`. One `i32` because a capability may not
+      // have seven parameters (`issues/lang/0291c`), and because `grants` is already one.
+      inherit: number,
       serveFs: boolean,
     ) =>
       // The grant flags, then the source length-prefixed, then the arguments length-prefixed and
@@ -711,7 +713,7 @@ export function cliOf(
               source,
               headed(
                 argvBytes(args),
-                prefixed(str(cwd), headed(flag(inheritIn), flag(serveFs))),
+                prefixed(str(cwd), headed(i32le(inherit), flag(serveFs))),
               ),
             ),
           ),

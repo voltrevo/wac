@@ -510,12 +510,25 @@ Deno.test("the browser world refuses what a page cannot do", async () => {
  * than imported because this test is checking the *host*, and a test that built its input with the
  * same helper the host parses with would agree with itself about the format.
  */
+/**
+ * A `spawn` payload, built by hand.
+ *
+ * **This is a second producer of a format `provider.ts` owns**, which is why it broke when the format
+ * changed: `inheritIn` became four bytes of `INHERIT_*` flags rather than one byte of bool
+ * (`issues/system/0282c`), and this went on writing one. Kept by hand rather than switched to
+ * `provider.ts` because the point of the test is to play the protocol *at* the host without a wac
+ * program in the way — but if it drifts again, that is the reason, and `unpackSpawn` is what to read.
+ *
+ * There is a precedent for doing better: `unnameable.test.ts` has *"the stat wire layout is one
+ * definition, since three hosts write it"*. `spawn`'s layout has two writers and no such guard, which
+ * is why this drifted silently rather than failing on the definition.
+ */
 function spawnPayload(
   source: string,
   args: string[],
   grants = 0,
   cwd = "",
-  inheritIn = false,
+  inherit = 0,
 ): Uint8Array {
   const src = str(source);
   const dir = str(cwd);
@@ -524,7 +537,7 @@ function spawnPayload(
   const argv = args.map((a) => str(a));
   let argvLen = 4;
   for (const a of argv) argvLen += 4 + a.length;
-  const out = new Uint8Array(13 + src.length + argvLen + dir.length);
+  const out = new Uint8Array(17 + src.length + argvLen + dir.length);
   out.set(i32le(grants), 0);
   out.set(i32le(src.length), 4);
   out.set(src, 8);
@@ -538,8 +551,13 @@ function spawnPayload(
   }
   out.set(i32le(dir.length), at);
   out.set(dir, at + 4);
-  // One byte: whether the child reads the page's own standard input rather than a queue. Issue 0042.
-  out[at + 4 + dir.length] = inheritIn ? 1 : 0;
+  // Four bytes: which of the child's streams are the page's own rather than queues —
+  // `INHERIT_IN | INHERIT_OUT`. One byte of bool until 2026-08-29. Issue 0042, then 0282c.
+  out.set(i32le(inherit), at + 4 + dir.length);
+  // ...then `serveFs`, which this never wrote: the reader took a missing byte as false, so the
+  // payload was one short and right by accident. Written now, because the next field added would
+  // have read this one.
+  out[at + 8 + dir.length] = 0;
   return out;
 }
 

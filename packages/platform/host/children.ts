@@ -367,6 +367,25 @@ export function blobWorker(source: string): WorkerLike {
  * neither is visible from here. `makeWorker` is the other injection, and between them this function
  * is the whole of spawning for every host.
  */
+/**
+ * A queue that writes straight out instead of holding bytes for a parent to read.
+ *
+ * `push` is what the responder calls, on the host thread, in the order the child wrote — so this is
+ * where an inherited stream belongs. Nothing reads it: a parent that inherited its child's output
+ * has nothing to receive, so `next` is never called.
+ */
+class WriteThrough extends ByteQueue {
+  #write: (b: Uint8Array) => void;
+  constructor(write: (b: Uint8Array) => void) {
+    super(0);
+    this.#write = write;
+  }
+  override push(b: Uint8Array): Promise<boolean> {
+    this.#write(b);
+    return Promise.resolve(true);
+  }
+}
+
 export function spawnChild(
   /**
    * The program: a worker bundle as text, or a **wasm module** as bytes.
@@ -412,10 +431,19 @@ export function spawnChild(
    * only the host knows whether its workers are Deno's or Node's. `issues/system/0144`.
    */
   moduleEntry?: string | null,
+  /**
+   * Where the child's output goes when it inherits this process's streams rather than being read.
+   *
+   * **A writer rather than a flag**, because only the host knows how to write its own descriptors —
+   * `Deno.stdout.writeSync` against `process.stdout.write` — and only the host thread may. The
+   * responder calls `push` once per write the child made and in that order, so writing through it
+   * keeps that order; two queues raced by a parent cannot. `issues/system/0282c`.
+   */
+  sinks?: { out(b: Uint8Array): void; err(b: Uint8Array): void },
 ): Child {
   // The two the child writes are capped; what the parent sends it is not — see `ByteQueue`.
-  const out = new ByteQueue(QUEUE_CAP);
-  const err = new ByteQueue(QUEUE_CAP);
+  const out = sinks ? new WriteThrough(sinks.out) : new ByteQueue(QUEUE_CAP);
+  const err = sinks ? new WriteThrough(sinks.err) : new ByteQueue(QUEUE_CAP);
   const input = new ByteQueue();
   // See `Child.fsReq` for why these two are the uncapped ones.
   const fsReq = new ByteQueue();
@@ -635,7 +663,14 @@ export function want(p: Uint8Array): number {
  */
 export function unpackSpawn(
   p: Uint8Array,
-): { source: Uint8Array; args: Uint8Array[]; cwd: string; inheritIn: boolean; serveFs: boolean } {
+): {
+  source: Uint8Array;
+  args: Uint8Array[];
+  cwd: string;
+  inheritIn: boolean;
+  serveFs: boolean;
+  inheritOut: boolean;
+} {
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
   const dec = new TextDecoder();
   const sourceLen = dv.getInt32(4, true);
@@ -650,8 +685,11 @@ export function unpackSpawn(
     source,
     args: after.args,
     cwd: dec.decode(p.subarray(after.at + 4, after.at + 4 + cwdLen)),
-    inheritIn: p[after.at + 4 + cwdLen] === 1,
-    serveFs: p[after.at + 5 + cwdLen] === 1,
+    // **Four bytes, not one**: `inherit` is `INHERIT_IN | INHERIT_OUT` rather than a bool.
+    // `issues/system/0282c`.
+    inheritIn: (dv.getInt32(after.at + 4 + cwdLen, true) & 1) !== 0,
+    inheritOut: (dv.getInt32(after.at + 4 + cwdLen, true) & 2) !== 0,
+    serveFs: p[after.at + 8 + cwdLen] === 1,
   };
 }
 
