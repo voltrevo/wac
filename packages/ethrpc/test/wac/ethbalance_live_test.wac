@@ -42,7 +42,7 @@ export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_
     core.warn("ethbalance live test: skipped — anvil not found at " + anvilPath(cli));
     return t.report();
   }
-  Node node = anvil(cli);
+  Node node = anvil(core, cli);
   t.isTrue(node.ok(), "anvil came up — " + node.why);
   if (!node.ok()) { return t.report(); }
 

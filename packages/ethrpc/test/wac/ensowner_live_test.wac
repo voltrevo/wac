@@ -71,7 +71,7 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
     core.warn("ensowner live test: skipped — anvil not found at " + anvilPath(cli));
     return t.report();
   }
-  Node node = anvil(cli);
+  Node node = anvil(core, cli);
   t.isTrue(node.ok(), "anvil came up — " + node.why);
   if (!node.ok()) { return t.report(); }
 
