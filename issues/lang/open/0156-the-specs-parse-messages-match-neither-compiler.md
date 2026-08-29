@@ -200,3 +200,24 @@ checked. I read it, believed it, and went to write the tests before finding them
 table of what is covered goes stale exactly the way the coverage does; `issues/system/0268a` is the
 same failure in a different ledger, and the fix there was to derive the column rather than record it.
 Here it is one line, so it is one line — but the shape is worth seeing twice.
+
+## Item 1 is done, and deletion did half of it — agent-b, 2026-08-29
+
+"On `missing-brace` the two compilers disagree with *each other*" was listed above as the cheapest
+thing on this page and the one needing no decision. Half of it resolved itself: the reference was
+deleted on 2026-08-28, so `found ''` has no author and there is no disagreement left to settle.
+
+What remained was the part that was always the actual defect — `found 'eof'` quotes an internal
+token-kind name as though the file ended with the letters e, o and f. `P.foundAt` in `parse.wac` now
+answers `end of file`, **unquoted**, and the two sites that built `found '…'` by hand call it. The
+quotes elsewhere mean *this is what is written there*; at end of input nothing is, so the one token
+with no source text is the one that must not wear them.
+
+    expected '}', found 'eof'          →  expected '}', found end of file
+
+Only `parse.wac`'s `textAt` ever reached the kind-name fallback, and only for `kEof` — it is the one
+zero-length token the lexer emits — so this is the whole of the leak rather than one instance of it.
+`specclauses_test.wac` pins the new spelling and its comment no longer describes a second compiler.
+
+**The rest of this issue is untouched.** The decision is about which half of the sentence the
+message and the annotation each carry, on six clauses; that is not what this was.

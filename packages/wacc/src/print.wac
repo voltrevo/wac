@@ -20,7 +20,8 @@ import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
 import { blockValue, escapeValue, isBlockLiteral, tokenStride, unicodeEscapeEnd,
-         unicodeEscapeValue, utf8Into } from "./lex.wac";
+         unicodeEscapeValue, utf8Into, literalBodyStart, literalBodyEnd } from "./lex.wac";
+import { kindName } from "./kinds.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
 export struct Pr {
@@ -95,6 +96,12 @@ export struct Pr {
    * unescape and then re-escape by the same rule, which makes the comparison exact
    * without either side having to reproduce the other's quoting.
    */
+  /** An operator token, by the spelling its kind has rather than by the bytes it spans. */
+  void opTok(this, i32 t) {
+    if (t < 0 || t >= this.tokCount) { this.out.push('?'); return; }
+    this.s(kindName(this.toks[t * tokenStride()]));
+  }
+
   void strTok(this, i32 t) {
     if (t < 0 || t >= this.tokCount) { this.out.push('?'); return; }
     i32 start = this.toks[t * tokenStride() + 1];
@@ -111,10 +118,11 @@ export struct Pr {
       this.out.push('"');
       return;
     }
-    // Skip the opening quote, and the closing one when the literal is terminated.
-    i32 i = start + 1;
-    i32 end = start + len;
-    if (len > 1 && this.src[end - 1] == '"') { end = end - 1; }
+    // Skip the opening delimiter, and the closing one when there is one — `literalBodyEnd`
+    // knows the three shapes, including the `\{` that ends an interpolated segment. This used to
+    // do its own arithmetic and rendered `"a\{` as `a{`.
+    i32 i = literalBodyStart(this.src, start, len);
+    i32 end = literalBodyEnd(this.src, start, len);
     while (i < end) {
       i32 c = this.src[i];
       if (c == '\\' && i + 1 < end) {
@@ -288,7 +296,12 @@ void printExpr(Pr w, Expr e) {
     }
     case Binary(op, left, right): {
       w.open("binary", e.line, e.col);
-      w.sp(); w.tok(op);
+      // **An operator is spelled by its kind, not by the bytes under it.** For every operator
+      // written in the file the two agree exactly; for the two `+` that an interpolation stands
+      // for they do not, because there is no `+` in `"a\{e}b"` to point at and their spans cover
+      // the `\{` and the `}`. Printing the span made the tree read `(binary \{ …)`.
+      // `design/lang/0013` D7.
+      w.sp(); w.opTok(op);
       w.sp(); printExpr(w, left);
       w.sp(); printExpr(w, right);
       w.close();

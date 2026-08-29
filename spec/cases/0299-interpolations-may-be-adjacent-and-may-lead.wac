@@ -1,0 +1,6 @@
+// expect: answers f = 4
+// why: two in a row with an empty segment between them, and one at the very start — the shapes
+//      where a scanner that assumes a segment has content goes wrong
+// from: design/lang/0013 D7
+string id(string s) { return s; }
+export i32 f() { string s = "\{id("a")}\{id("bc")}d"; return s.len(); }

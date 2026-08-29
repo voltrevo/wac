@@ -12,6 +12,7 @@
 // added is measured by running it rather than by reading it.
 
 import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, tokenStride,
+         literalBodyStart, literalBodyEnd,
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
@@ -4483,7 +4484,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // for a single-file caller they are the only ones there are.
   Lexed lexed = lexeds.len() > 0 && (lexeds[0] is not null)
     ? lexeds[0]!
-    : Lexed(i32[0](), 0, i32[0](), 0);
+    : Lexed(i32[0](), 0, i32[0](), 0, false);
   Program prog = progs.len() > 0 && (progs[0] is not null) ? progs[0]! : Program(Decl[]());
 
   Env env = envIn;
@@ -7652,6 +7653,25 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // `-2.3 as@ i32`, `1.0e300 as@ i32`. `f64` here and the conversion does the work, except into
       // a float target, where the target's own width is the right slot. `issues/lang/0117`.
       if (from == "" && isFloatLiteral(operand) && to != "f32" && to != "f64") { want2 = "f64"; }
+      // **And an integer literal too wide for the target is still an integer of its own width.**
+      // Exactly the case above, one family along, and it went the same way: with no type of its own
+      // the literal took the cast's target, so `4294967296 as~ i32` emitted `i32.const 0` — the low
+      // bits — and then converted `i32` to `i32`, which is nothing at all. The clamp `as~` promises
+      // had already been pre-empted by a truncation nobody wrote. Through a local it was right, and
+      // that contrast is what located it. `issues/lang/0281b`.
+      //
+      // `i64` and let `emitCast` do the work, which is correct for all three operators rather than
+      // for `as~` alone: `as@` on an `i64` wraps to the same low bits it was taking anyway, and
+      // `as!` traps where it should instead of silently answering the truncation.
+      //
+      // **Only where it does not fit.** Belt and braces rather than a live case: a bare literal that
+      // *does* fit `i32` already is one, so `42 as~ i32` is refused a step earlier as a cast between
+      // a type and itself. The guard keeps this arm honest if that rule ever loosens, and keeps the
+      // reading local — nothing here should depend on a refusal made somewhere else.
+      if (from == "" && !isFloatLiteral(operand) && narrowIntegerName(to)
+          && !integerLiteralsFitI32(src, lexed, operand)) {
+        want2 = "i64";
+      }
       emitExprAt(fb, src, lexed, env, operand, want2);
       emitCast(fb, env, want2, to, tokenKindOf(lexed, op));
     }
@@ -11319,6 +11339,33 @@ string operandNote(u8[] src, Lexed lexed, Env env, Expr e) {
 }
 
 /** Whether a literal is a float one, which cannot share a slot with an integer one. */
+/**
+ * Whether every integer literal in `e` fits an `i32`, which decides whether a cast can narrow it
+ * ahead of time. `true` for an expression holding no integer literal at all, since there is then
+ * nothing that would not fit.
+ *
+ * **A sum is asked of both sides rather than folded.** `(4294967295 + 1) as~ i32` overflows into
+ * range and this answers *false* for it, so the operand is emitted at `i64` and the cast does the
+ * arithmetic and the clamp. Folding here to discover that the sum happens to fit would be a second
+ * constant evaluator beside the one wasm already is.
+ */
+/** The 32-bit integer targets, which are the ones a wider literal has to be narrowed *into*. */
+bool narrowIntegerName(string t) { return t == "i32" || t == "u32"; }
+
+bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): {
+      i64 v = parseInt(tokenTextOf(src, lexed, tok));
+      return v >= (0 - 2147483648) as i64 && v <= 2147483647 as i64;
+    }
+    case Unary(op, operand): { return integerLiteralsFitI32(src, lexed, operand); }
+    case Binary(op, left, right): {
+      return integerLiteralsFitI32(src, lexed, left) && integerLiteralsFitI32(src, lexed, right);
+    }
+    else: { return true; }
+  }
+}
+
 bool isFloatLiteral(Expr e) {
   match (e.kind) {
     case FloatLit(tok): { return true; }
@@ -13647,8 +13694,14 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   // written with, so the literal's own length bounds the result.
   u8[] out = u8[len]();
   i32 n = 0;
-  i32 i = start + 1;
-  i32 end = start + len - 1;
+  // **The delimiters are one byte each, except the `\{` that ends an interpolated segment.**
+  // `"a\{e}bc"` lexes as `"a\{` `+` `e` `+` `}bc"` — `design/lang/0013` D7 — and the segments'
+  // spans are runs of the real file rather than synthesised source, so what varies is only which
+  // bytes are the delimiters. Opening is always one: a quote, or the `}` that closed the
+  // expression. Closing is two when it is `\{`, and a whole literal can never end that way, since
+  // an escaped backslash before a brace reads as `\\` then `{`.
+  i32 i = literalBodyStart(src, start, len);
+  i32 end = literalBodyEnd(src, start, len);
   while (i < end) {
     if (src[i] == 92 && i + 1 < end) {
       // **`\\u{…}` is the one escape that is not one byte.** It denotes a character, so it encodes
@@ -13684,9 +13737,9 @@ bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
   // **Three quotes each side for a block string, one for the others.** The escape *set* is the
   // same — `design/lang/0013` D6 — so only the bounds differ, and getting them wrong would read a
   // closing quote as content and answer about an escape nobody wrote.
-  i32 mark = isBlockLiteral(src, start, lexed.tokens[tok * tokenStride() + 2]) ? 3 : 1;
-  i32 end = start + lexed.tokens[tok * tokenStride() + 2] - mark;
-  i32 i = start + mark;
+  i32 len = lexed.tokens[tok * tokenStride() + 2];
+  i32 end = literalBodyEnd(src, start, len);
+  i32 i = literalBodyStart(src, start, len);
   while (i < end) {
     if (src[i] != 92) { i = i + 1; continue; }
     if (i + 1 >= end) { return false; }

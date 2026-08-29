@@ -1,6 +1,7 @@
 # 0280a — the wapy printer drops parentheses that decide what a program means
 
-- **Status:** open
+- **Status:** closed — the printer it is about is deleted, and the port does not have the defect
+- **Closed:** 2026-08-28 by agent-b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-27
@@ -72,3 +73,25 @@ are listed in that test's `KNOWN_BAD` with the issue they belong to.
 than a description of it, and `git commit` refused: *a NUL byte in commit log message not allowed*.
 Which is the argument for `0277a` in one line — the byte travels invisibly through everything that
 does not check.
+
+## Closed, 2026-08-28 — the question this page ends on has an answer
+
+It closes by saying *"whether it is worth fixing at all depends on whether `wapyPrint.ts` survives
+`design/lang/0003`'s direction — it is the last thing the reference has that wacc does not"*.
+
+It did not survive. `compiler/` was deleted on 2026-08-28, and wacc has a wapy printer of its own —
+`packages/wacc/src/wapyprint.wac`, written from `spec/spec/wapy.md`. So the subject is gone.
+
+**And the port does not carry the defect**, which is the part worth checking rather than assuming.
+It brackets every compound subexpression instead of carrying a precedence table, so this page's own
+reproduction renders as
+
+    return g((a < b), (c > e))
+
+with the parentheses on *both* arguments — one more than the source has, and never fewer. Verified
+by rendering `spec/cases/0237`'s program and comparing the trees: `dumpWapy(wapyOf(src))` equals
+`dump(src)` under the normalisation `wapy_test.wac` uses, which strips positions and maps wapy's
+word spellings (`and` → `&&`) onto wac's.
+
+That comparison is the property this issue is about — *"the rendering is a different program, and it
+compiles"* — rather than the presence of a parenthesis, and it holds.

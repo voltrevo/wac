@@ -61,7 +61,7 @@ export i32 tokenCount() {
 export i32 declCount() {
   u8[] b = subject().toBytes();
   Lexed lexed = lex(b);
-  P p = P.create(b, lexed.tokens, lexed.tokenCount);
+  P p = P.create(b, lexed);
   return parseProgram(p).decls.len();
 }
 

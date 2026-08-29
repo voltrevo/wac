@@ -382,6 +382,140 @@ wrong token"*. Interpolation needs the same arrangement and inherits the same wa
 sees only the segments (fine) or needs to know a literal was interpolated (not fine), and which is
 which is a half-hour of grep that will decide whether this is a day or a week.
 
+## The kString consumers, measured — agent-b, 2026-08-29
+
+The section above asks for this before starting, and says it decides whether step 7 is a day or a
+week. It is eleven sites, not ten, and **four of them need to know**. So: a day.
+
+Under D7's desugaring `"a\{e}b"` becomes the token stream for `"a" + e + "b"`, so a consumer that
+sees a `kString` sees a *segment* — an ordinary literal with ordinary contents. Seven sites want
+nothing else:
+
+| site | what it asks | why a segment is enough |
+| --- | --- | --- |
+| `emit.wac` `scanTokenTypes` | is there **any** `kString` in the file | it declares `i8[]`; a segment is a string |
+| `lex.wac` `endsExpression` | can a `<` after this be JSX | a segment ends an expression like any literal |
+| `parse.wac` `startsExpr` | can this token begin an expression | same |
+| `parse.wac` generic-vs-comparison | is `id<i32>` a call or two comparisons | same, `design/lang/0011` criterion 10 |
+| `parse.wac` `ExprKind.StrLit` | the literal expression itself | this *is* the desugaring's output |
+| `emit.wac` `stringLiteralBytes` | the bytes of a `StrLit` | wants the span, which is the other problem |
+| `blockstring_test.wac` | walks `kString` tokens | a test, and it would see segments |
+
+**The four that need to know are the four positions where the string is not an expression.** Each
+does `at1`/`expect(kString())` and then expects something specific next; handed `"a" + e + "b"` it
+takes `"a"` and then meets a `+` it has no case for.
+
+| site | position | what an interpolated one must do |
+| --- | --- | --- |
+| `parse.wac` (import) | `import { x } from "…"` | be refused: a module path is resolved at compile time |
+| `wapyparse.wac` | the same, for `.wapy` | the same |
+| `files.wac` | reads the path token's bytes to resolve the module | would silently resolve the first segment |
+| `parse.wac` (JSX) | `<a href="…">` | be refused — `href={e}` is already how an expression goes there |
+
+That last one is the only surprise in the list, and it is the reassuring kind: JSX already has a
+spelling for an expression in an attribute, so refusing the interpolated literal is consistent rather
+than a restriction invented for the implementation.
+
+**So the plumbing question is narrow**: those four have to be able to ask *was this literal
+interpolated?*, and the token is a flat quintuple with no spare field. The cheapest answer that does
+not widen the token is for the lexer to record the interpolated literals' token indices on `Lexed`
+beside `tokens` and `errors` — which is now an established shape there, since `issues/lang/0278a`
+added a field to that struct for a different reason and it cost three constructions.
+
+**Not measured here, and still the hard half**: the spans, as the section above says. Nothing in this
+measurement makes that easier — it only says how much else is waiting behind it.
+
+## The spans need no synthesised source, and the reason is the measurement above
+
+The section on step 7's shape calls the spans "the hard half … where the design has to be decided
+rather than derived", and points at `wapyparse.wac`'s `synthTail()` as the precedent to follow: a
+synthesised token needs source to point at, so append some. That is one answer. There is a cheaper
+one, and the measurement above is what makes it available.
+
+**Point the segment tokens at the real source, and let the delimiters be what they are.** In
+
+    "a\{itoa(n)}bc"
+
+the three segments are `"a\{`, `}bc"` and — in a longer literal — `}…\{` in the middle. Each of
+those is a real, contiguous run of the file. A span over it is exact, so every column in every
+diagnostic is right for free, and the printer can re-render the literal from the source rather than
+from a reconstruction. `stringLiteralBytes` already reads *between* the first and last byte of the
+span and un-escapes what it finds; what it does not know is that a segment's delimiters may be `\{`
+or `}` rather than `"`.
+
+**And it does not need to know it from the span**, which was the blocker, because the four consumers
+in the table above already have to be told which literals were interpolated. That plumbing — the
+lexer recording interpolated tokens on `Lexed`, since the token quintuple has no spare field — is
+required by the import paths and the JSX attribute whatever happens to the spans. Once it exists,
+`stringLiteralBytes` is a fifth reader of the same fact, and the synthesised tail is not needed at
+all.
+
+So the ordering is: **the marker first, the desugaring second, the spans for free.** That also
+inverts which half is hard — the "easy half" (a depth counter in the scanner) is unchanged, and the
+hard half turns out to be a `Lexed` field the previous step already showed how to add.
+
+**Not proven, and where it could still go wrong**: `stringLiteralBytes` is reached from `files.wac`
+as well as from the emitter, and `path.wac`'s header says the import of it is already a near-cycle.
+A fifth caller is fine; a fifth caller that needs the marker means `files.wac` needs the `Lexed` too,
+which it has. Worth checking before writing code, and cheaper than either answer to the spans.
+
+**The case to make pass**, kept here rather than in `spec/cases` because a case the compiler refuses
+is a red suite for everybody until step 7 lands:
+
+    // expect: answers f = 5
+    string itoa2(i32 n) { return n == 42 ? "42" : "??"; }
+    export i32 f() {
+      i32 n = 42;
+      string s = "a\{itoa2(n)}bc";
+      return s.len();
+    }
+
+Today it answers `error: unknown escape` with the caret on the opening quote, which is the whole of
+step 7's starting position.
+
+## Step 7 is built, and the prediction above held — agent-b, 2026-08-29
+
+`"a\{e}b"` compiles, and the whole of it is in the lexer: `lexStringBody` returns at a `\{` having
+pushed the segment and a `+`, the mode stack — the one JSX already uses — remembers where to come
+back to with `num` counting the braces the interpolation is not ended by, and the `}` that closes it
+pushes another `+` and resumes the literal at that byte. `cInterp` is a fourth frame kind on a stack
+whose sizing already covered it, since every push consumes a distinct `<`, `{` or `>` and the `{` of
+a `\{` is one.
+
+**No source was synthesised.** The segments' spans are runs of the real file, exactly as the section
+above predicted, and the only thing that had to learn anything was where a literal's content begins
+and ends. That is now `literalBodyStart`/`literalBodyEnd` in `emit.wac`, written once — because it
+was written *twice*, and fixing one copy turned the case from a lexer error into
+*a string literal with an escape this slice cannot read*, which is the same bug one layer down.
+
+**And the parentheses, which nothing I wrote caught.** The desugaring has to be `("a" + e + "b")`,
+not `"a" + e + "b"`. Without the group, `"a\{e}b".len()` measures the last segment: the postfix binds
+tighter than the `+`. Five cases of my own passed anyway, because every one of them wrote
+`string s = …;` and then `s.len()` — the assignment hides it. What found it was writing the *spec*
+clauses and running the fence, where the natural way to state a claim about a literal is
+`"…".len()`. The lesson is not about interpolation: **a case that names its subject in a local first
+is a case that has stopped testing precedence**, and the spec's habit of writing the expression
+inline is worth copying into `spec/cases`.
+
+**The segments needed no synthesised source; the two `+` did.** That is the correction to the
+section above, and it is worth stating because it points the other way from where I looked. A
+segment has real bytes to span. The operators an interpolation *stands for* have none — there is no
+`+` anywhere in `"a\{e}b"` — so their tokens span the `\{` and the `}` they replace, and anything
+that renders an operator from its bytes then prints `(binary \{ …)`. Both printers did, so the wapy
+round trip over 1,434 files failed on exactly the six that interpolate.
+
+The fix is not a span. **An operator's spelling is its kind**, and for every operator anybody has
+ever written the two agree exactly, so asking `kindName` instead of the source is right in general
+and only *visible* here. Same in `print.wac` and in `wapyprint.wac`.
+
+**What is not done.** The four consumers in the table above still refuse an interpolated literal by
+accident rather than on purpose — an interpolated import path lexes as `"./p\{` `+` `1` `+` `}.wac"`
+and the parser says *expected `;`, found `+`*. That is a refusal, so nothing is silently wrong, but
+it does not say what is wrong. The marker on `Lexed` is what those four need, and it is the same
+marker the section above says `stringLiteralBytes` could have used; it turned out not to need it, so
+the marker is now wanted *only* for the diagnostics. Block strings do not interpolate either, and
+D7 does not say whether they should.
+
 ## D6's tab rule is D3's rule, and asking twice said so twice
 
 *"Tabs in the indentation are refused outright rather than assigned a width, so no block string can

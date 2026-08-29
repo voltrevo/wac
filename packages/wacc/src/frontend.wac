@@ -64,11 +64,11 @@ export Frontend frontendOf(string path, u8[] src) {
     i32 parseN = wp.errorCount - lexN;
     i32[] parseErrs = i32[parseN * 3](fill: 0);
     for (i32 i = 0; i < parseN * 3; i++) { parseErrs[i] = wp.errors[lexN * 3 + i]; }
-    return Frontend(wp.src, Lexed(wp.toks, wp.tokCount, lexErrs, lexN), wp.program,
+    return Frontend(wp.src, Lexed(wp.toks, wp.tokCount, lexErrs, lexN, false), wp.program,
                     parseErrs, parseN, string[0](fill: ""), i32[parseN](fill: 0));
   }
   Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   return Frontend(src, lexed, prog, p.errors, p.errorCount, p.errorNotes, p.errorWidths);
 }

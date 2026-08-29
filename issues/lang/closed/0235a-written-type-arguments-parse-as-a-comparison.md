@@ -1,8 +1,9 @@
 # 0235a — written type arguments parse as a comparison, and the diagnostic says `found bool`
 
-- **Status:** open — **the decision is taken**: `design/lang/0011` is accepted and gathers this issue.
-  What is left is work, tracked there as its item 5
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — `design/lang/0011` fixed the reproduction; the diagnostic it left is done
+- **Fixed in:** `packages/wacc/src/check.wac` — a per-site hint where the name resolves to a
+  function. Guarded by `packages/wacc/test/wac/codes_test.wac`.
+- **Claimed by:** agent-b (2026-08-28)
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** diagnostic
@@ -185,3 +186,48 @@ either: its own last section names it as *"`C` holds one file's tokens"* — a t
 be re-walked while its own file is the one being checked, and the interesting instantiations are
 usually in another. Written type arguments change which letters are known, not which tokens are
 loaded. 0241a stands exactly as it was.
+
+## Re-measured 2026-08-28: the reproduction is fixed and one case of item 5 is left
+
+`design/lang/0011` landed, so the program at the top of this page **compiles and runs**. `main()`
+exits 0, which is the program's own assertion that the mapped value is 3 — checked by running it,
+not by reading the checker.
+
+    Box<i32> c = b.map<i32>((i32 x) => x + 1);     // was `expected Box<i32>, found bool`
+
+So the headline defect is gone, and what is left is item 5 — the diagnostic when the instantiation
+reading *fails* rather than succeeds. Measured, one program per way it can fail:
+
+| written | today |
+|---|---|
+| `id<i32, i32>(1)` where `id` takes one | **`the wrong number of type arguments — id takes 1 type argument, and 2 were written`** |
+| `plain<i32>(1)` where `plain` is not generic | `undefined type — unknown type 'plain'` |
+
+The first row is exactly what item 5 asks for: it names the rule and the count. **The second is
+still this issue.** It tells the author that their *function* is an unknown *type*, which names
+neither the rule — angle brackets after a name are type arguments — nor the escape. A reader who
+arrived from a language where `f<T>(x)` is ordinary gets a message about a type they did not write.
+
+The fix is the shape `issues/lang/0233a` used the same day: a hint written for the site rather than
+for the code, since `undefined type` is a general diagnostic and its own hint has to stay general.
+The site has the name in hand and knows it resolved to a non-generic function, which is the sentence
+worth printing.
+
+## Done, 2026-08-28
+
+    error: undefined type
+     2 | export i32 main() { return plain<i32>(1); }
+       |                            ^^^^^ unknown type 'plain'
+       = help: `plain` is a function, and `<...>` after a name is a type argument list —
+               write the call without them, or make `plain` generic
+
+**The annotation is untouched**, because it is a clause: `§wac-diag-parse-bad-type-n7qm3xf` pins
+*"unknown type 'foo'"* for this code. The explanation goes in the hint, which is not pinned — and
+per site rather than per code, since `undefined type` is a general diagnostic whose own hint has to
+stay general, and only the site knows the name resolved to a function.
+
+**Both escapes it names are compiled**, not asserted: dropping the brackets, and making `plain`
+generic. A hint offering a way out that does not work is worse than one offering none.
+
+One negative case holds the line — a genuinely unknown type that is not a function keeps the code's
+own hint, so the sentence cannot claim a function exists wherever a name is misspelled.

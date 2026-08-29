@@ -105,7 +105,7 @@ Mostly follows from the port. What has to be true:
 
 **Done.** `bootstrap/hosts/browser.js` is `fetch` and nothing else; `bootstrap/web/index.html` fetches the five rung
 sources, builds every rung in the page and runs the program. `bootstrap/ts/browser.test.ts` drives it under
-Playwright's Chromium with `--dump-dom` and checks the answer — 819 ms, and it skips when that
+Playwright's Chromium and checks the answer the page posts back — 754 ms, and it skips when that
 browser is not on the machine.
 
 Two things worth keeping from doing it:
@@ -254,11 +254,14 @@ answer goes into. Each of these is a wrong answer inside machinery that already 
 Where it stands: 236 tests pass, the ladder self-hosts, the seed is byte-identical to wac's own path
 at 1,793,909 bytes, and the corpus goes from 90 of 303 entry points validating to **96 of 309**.
 
-**And one flake, which is not this.** `bootstrap/ts/browser.test.ts` fails in a full-suite run while the wac
-gate is running and passes on its own in a second. It drives headless Chromium with
-`--virtual-time-budget` and `--dump-dom`, and under contention the browser is slow to reach the
-point where the DOM is worth dumping. A test that fails when the machine is busy will cry wolf on a
-shared box; worth fixing, not yet filed.
+**And one flake, now fixed.** `bootstrap/ts/browser.test.ts` used to fail in a full-suite run and pass
+on its own in a second. It drove headless Chromium with `--virtual-time-budget` and `--dump-dom`,
+and the diagnosis that the browser was *slow* was wrong: Chromium spends that budget while the page
+is busy rather than while it is idle, so the page was cut off mid-build at about the same real time
+a passing run took. Raising the budget from 180s to 600s did not help, which is what said no budget
+was the right size. The page now posts its result back to the server the test already runs, and the
+limit is honest real time — 120s against a job that takes 754ms, so it is a detector rather than a
+margin.
 
 ---
 

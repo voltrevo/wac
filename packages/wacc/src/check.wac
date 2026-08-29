@@ -2304,6 +2304,16 @@ export struct C {
     if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
     if (before < this.errorWidths.len()) { this.errorWidths[before] = this.toks[tok * tokenStride() + 2]; }
   }
+
+  /** The same, with a hint written for this diagnostic rather than for its code. */
+  void reportTokHinted(this, i32 code, i32 tok, string note, string hint) {
+    i32 before = this.errorCount;
+    this.report(code, this.toks[tok * tokenStride() + 3], this.toks[tok * tokenStride() + 4]);
+    if (this.errorCount == before) { return; }
+    if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+    if (before < this.errorWidths.len()) { this.errorWidths[before] = this.toks[tok * tokenStride() + 2]; }
+    if (before < this.errorHints.len()) { this.errorHints[before] = hint; }
+  }
 }
 
 /**
@@ -2469,6 +2479,24 @@ export string typeOfTy(C c, Ty t) {
         // the same fact in different words — and where the spec quotes an annotation, the quote is the
         // contract. The reference attaches no annotation here at all, so nothing is lost by agreeing
         // with the spec instead of with it.
+        // **When the name is a function, say which rule was applied** — `issues/lang/0235a`.
+        // `plain<i32>(1)` for a non-generic `plain` reaches here because the parser committed to the
+        // type reading, and the annotation the spec pins for this code — `§wac-diag-parse-bad-type-
+        // n7qm3xf`, *"unknown type 'foo'"* — then tells the author their function is an unknown
+        // type. That is true and unhelpful: nothing in it says angle brackets after a name are type
+        // arguments, and a reader arriving from a language where `f<T>(x)` is ordinary has no way
+        // in.
+        //
+        // The annotation is a clause and stays exactly as it is; the hint is not, and the site is
+        // the only place that knows the name resolved to a function. Per-site rather than per-code
+        // for the reason `hintFor` gives: `undefined type` is general and its own hint must stay so.
+        if (c.funcAt(base) >= 0) {
+          c.reportTokHinted(errUndefinedType(), tok, "unknown type '" + base + "'",
+                            "`" + base + "` is a function, and `<...>` after a name is a type "
+                            + "argument list — write the call without them, or make `" + base
+                            + "` generic");
+          return typeNone();
+        }
         c.reportTok(errUndefinedType(), tok, "unknown type '" + base + "'");
         return typeNone();
       }

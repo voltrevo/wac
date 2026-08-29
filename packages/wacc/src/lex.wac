@@ -50,6 +50,16 @@ export struct Lexed {
   i32 tokenCount;      // tokens, not i32s
   i32[] errors;
   i32 errorCount;
+  /**
+   * **Set once these tokens have been parsed, because parsing consumes them.**
+   *
+   * `splitGt` in the parser rewrites a `>>` in the array to a `>` when it closes two type-argument
+   * lists — `Vec<Vec<i32>>` — so the array a second parse would read is not the one the lexer
+   * produced, and `Vec<Vec<i32>` is a comparison rather than a type. Nothing does this today, and
+   * that is exactly why nothing would have caught it: `parseProgram` traps on the second call
+   * rather than answering differently. Lex again for a second parse. `issues/lang/0278a`.
+   */
+  bool parsed;
 }
 
 // Error codes rather than messages: a message would mean building a string per
@@ -527,9 +537,23 @@ export i32 escapeValue(i32 e) {
  * A string literal. The span kept is the whole literal including both quotes, so
  * a consumer can re-scan the escapes.
  */
-void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
+void lexString(Lexer lx, Lexed out, Modes md, i32 startLine, i32 startCol) {
   i32 start = lx.pos;
   lx.advance();                       // opening quote
+  lexStringBody(lx, out, md, start, startLine, startCol, false);
+}
+
+/**
+ * A literal from `start` to its closing quote, where `start` is not necessarily a quote.
+ *
+ * **The segment of an interpolated literal is the reason this is separate.** `"a\{e}bc"` lexes as
+ * `"a\{` `+` `e` `+` `}bc"` — three tokens whose spans are contiguous runs of the real file, so
+ * every column in every diagnostic is right without synthesising any source. The first opens with a
+ * quote and closes with `\{`; the last opens with `}`; a middle one has neither. What they have in
+ * common is the body, which is this. `design/lang/0013` D7.
+ */
+void lexStringBody(Lexer lx, Lexed out, Modes md, i32 start, i32 startLine, i32 startCol,
+                   bool interpolated) {
   bool closed = false;
   while (!lx.atEnd() && !closed) {
     i32 c = lx.peek(0);
@@ -548,6 +572,22 @@ void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
           fail(out, errBadUnicodeEscape(), startLine, startCol);
         }
         while (lx.pos < unicodeEscapeEnd(lx.src, escAt, lx.src.len())) { lx.advance(); }
+      } else if (esc == '{') {
+        // **The segment ends here and the expression begins** — D7 says interpolation is *exactly*
+        // sugar for `+`, so what the parser is handed is the token stream of `"a" + e + "bc"` and
+        // nothing downstream of the lexer needs to know. The `+` is spanned over the `\{` that
+        // stands for it, which is the nearest thing in the file to the operator it means.
+        // **The parentheses are not optional.** Without them `"a\{e}b".len()` desugars to
+        // `"a" + e + "b".len()` and the postfix binds to the last segment. Every test that writes
+        // `string s = …;` then `s.len()` passes either way, which is why the spec's own fence is
+        // what caught it. The first `\{` opens the group and the closing quote shuts it, each
+        // spanned over the quote it stands beside.
+        if (!interpolated) { pushToken(out, kLparen(), start, 1, startLine, startCol); }
+        pushToken(out, kString(), start, lx.pos - start, startLine, startCol);
+        pushToken(out, kPlus(), lx.pos - 2, 2, startLine, startCol);
+        md.push(cInterp(), md.mode, 0);
+        md.mode = mNormal();
+        return;
       } else if (!isStringEscape(esc)) {
         fail(out, errUnknownEscape(), startLine, startCol);
       }
@@ -582,6 +622,36 @@ void lexString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
   }
   if (!closed) { fail(out, errUnterminatedString(), startLine, startCol); }
   pushToken(out, kString(), start, lx.pos - start, startLine, startCol);
+  if (interpolated) { pushToken(out, kRparen(), lx.pos - 1, 1, lx.line, lx.col); }
+}
+
+
+/**
+ * Where a literal token's content starts and ends — its span minus its delimiters.
+ *
+ * **Four walks read this and they all have to agree**: `stringLiteralBytes` un-escapes the content,
+ * `knownEscapes` decides whether it can, and both printers re-render it. The arithmetic was written
+ * out at each of them, and interpolation gave a segment a two-byte closing delimiter — so fixing
+ * one turned `"a\{e}bc"` from a lexer error into *a string literal with an escape this slice cannot
+ * read*, and fixing two more left the printers rendering `"a{"`. It is written once here.
+ *
+ * Opening is three bytes for a block literal and one otherwise: a quote, or the `}` that closed an
+ * interpolated expression. Closing is three, or two when the segment runs into a `\{`, or one for
+ * a quote — **or none at all**, which is an unterminated literal the lexer has already reported and
+ * this must not chop a byte off. A whole literal can never end `\{`, since an escaped backslash
+ * before a brace reads as `\\` then `{`. `design/lang/0013` D7.
+ */
+export i32 literalBodyStart(u8[] src, i32 start, i32 len) {
+  return start + (isBlockLiteral(src, start, len) ? 3 : 1);
+}
+
+export i32 literalBodyEnd(u8[] src, i32 start, i32 len) {
+  if (isBlockLiteral(src, start, len)) { return start + len - 3; }
+  if (len >= 2 && src[start + len - 2] == 92 && src[start + len - 1] == '{') {
+    return start + len - 2;
+  }
+  if (len > 1 && src[start + len - 1] == '"') { return start + len - 1; }
+  return start + len;
 }
 
 /**
@@ -911,6 +981,15 @@ i32 cTag()  { return 0; }
 i32 cElem() { return 1; }
 /** Inside `{ … }`, with `num` counting the braces still open. */
 i32 cExpr() { return 2; }
+/**
+ * Inside a string literal's `\{ … }`, with `num` counting the braces still open.
+ *
+ * It is on the same stack as the JSX modes because it nests with them the same way and for the same
+ * reason — `"\{ <b>{x}</b> }"` is interpolation → tag → expression — and because the stack's
+ * sizing already covers it: every push consumes a distinct `<`, `{` or `>`, and the `{` of a `\{`
+ * is one. `design/lang/0013` D7.
+ */
+i32 cInterp() { return 3; }
 
 /**
  * The mode stack: `(kind, ret, num)` per entry, where `ret` is the mode to restore.
@@ -1053,7 +1132,8 @@ export Lexed lex(u8[] src) {
   i32 maxErrors = 64;
   Lexed out = Lexed(
     i32[(n + 1) * tokenStride()](), 0,
-    i32[maxErrors * errorStride()](), 0
+    i32[maxErrors * errorStride()](), 0,
+    false
   );
   Lexer lx = Lexer(src, 0, 1, 1);
   Modes md = Modes(i32[modeDepth(src) * 3](), 0, mNormal());
@@ -1104,7 +1184,7 @@ export Lexed lex(u8[] src) {
     if (c == '"' && lx.peek(1) == '"' && lx.peek(2) == '"') {
       lexBlockString(lx, out, startLine, startCol);
     } else if (c == '"') {
-      lexString(lx, out, startLine, startCol);
+      lexString(lx, out, md, startLine, startCol);
     } else if (c == '\'') {
       lexChar(lx, out, startLine, startCol);
     } else if (isDigit(c)) {
@@ -1126,8 +1206,21 @@ export Lexed lex(u8[] src) {
       i32 kind = lexOperator(lx);
       if (kind < 0) {
         fail(out, errUnexpectedChar(), startLine, startCol);
+      } else if (kind == kRbrace() && md.topKind() == cInterp() && md.topNum() == 0) {
+        // **The `}` is the other `+`**, and the literal resumes at it: the next segment's span
+        // starts on this byte, so `}bc"` is one contiguous run of the file.
+        pushToken(out, kPlus(), start, 1, startLine, startCol);
+        md.mode = md.topRet();
+        md.pop();
+        lexStringBody(lx, out, md, start, startLine, startCol, true);
       } else {
         pushToken(out, kind, start, lx.pos - start, startLine, startCol);
+        // Braces the interpolation is not ended by — a lambda body, a struct literal. Only counted
+        // while this frame is the interpolation's; JSX pushes its own and counts its own.
+        if (md.topKind() == cInterp()) {
+          if (kind == kLbrace()) { md.setTopNum(md.topNum() + 1); }
+          if (kind == kRbrace()) { md.setTopNum(md.topNum() - 1); }
+        }
         jsxAfterOperator(md, lx, kind, prevKind);
       }
     }

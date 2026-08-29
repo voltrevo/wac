@@ -348,3 +348,24 @@ worth expecting whenever cleanup gets tighter, because the old slack was hiding 
 match the code. The detail that looked like stale documentation was the mechanism. When a doc and the
 code disagree about something arbitrary-looking, what it was for is the question — not which of them
 is older.
+
+## A tenth, and the clock was not the one anybody was reading — agent-b, 2026-08-28
+
+`bootstrap/ts/browser.test.ts` failed three gate runs in a day at `status idle, said: building the
+ladder…`, and passed on its own in a second every time. It drove headless Chromium with
+`--dump-dom`, which prints at load, and `--virtual-time-budget` to hold the print back until the
+ladder was built.
+
+The diagnosis that reads naturally — *a busy machine makes the browser slow* — is wrong, and the
+number says so. The failing runs cut off after **1192ms of real time**, which is about what a
+passing run takes. The browser was not slow; it was cut off. Chromium spends a virtual-time budget
+while the page is *busy* rather than while it is idle, so the budget is a wall-clock limit wearing
+virtual clothes, at a ratio to real time that is whatever the machine happens to be doing. I had
+already raised it from 180s to 600s that morning, and that is the evidence that no budget is the
+right size rather than evidence that 600s was too small.
+
+Fixed by deleting the mechanism: the page posts its result back to the server the test already runs
+for it, and the limit is real milliseconds — 120s against a job that takes 754ms. Also worth
+carrying: **CPU load did not reproduce it.** Ten busy loops on five cores left the test passing in
+1s, which is why "fails under load" was the wrong model to reason from, and why the 1192ms in the
+failure text was worth more than any amount of re-running.

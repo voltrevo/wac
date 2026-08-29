@@ -84,7 +84,7 @@ string dumpAs(string path, u8[] src) {
  */
 export i32[] dumpParseErrors(u8[] src) {
   Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  P p = P.create(src, lexed);
   parseProgram(p);
   i32[] out = i32[p.errorCount * 3]();
   for (i32 i = 0; i < p.errorCount * 3; i++) { out[i] = p.errors[i]; }
@@ -93,7 +93,7 @@ export i32[] dumpParseErrors(u8[] src) {
 
 export i32[] dumpErrors(u8[] src) {
   Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  P p = P.create(src, lexed);
   parseProgram(p);
   // **The lexer's errors are errors too**, and this function dropped them. An unterminated block
   // comment, an unterminated string, an unknown escape and an unterminated character literal were
@@ -132,7 +132,7 @@ export string checkCodeMessage(i32 code) {
  */
 export i32[] dumpTypeErrors(u8[] src) {
   Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   return checkProgram(src, lexed.tokens, lexed.tokenCount, prog);
 }
@@ -150,7 +150,7 @@ export i32[] dumpTypeErrors(u8[] src) {
  */
 export string dumpFirstTypeHint(u8[] src) {
   Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   C c = C.create(src, lexed.tokens, lexed.tokenCount, lexed.tokenCount);
   declareModule(c, prog, string[0](fill: ""));
@@ -1288,7 +1288,7 @@ i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[
   }
   u8[] ksrc = coreSource().toBytes();
   Lexed klexed = lex(ksrc);
-  P kp = P.create(ksrc, klexed.tokens, klexed.tokenCount);
+  P kp = P.create(ksrc, klexed);
   Program kprog = parseProgram(kp);
   counts[paths.len()] = declarationsIn(ksrc, klexed, kprog);
   if (paths.len() < lexes.len()) { lexes[paths.len()] = klexed; }
@@ -1352,7 +1352,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   Lexed elexed = eat >= 0 && eat < lexes.len() && (lexes[eat] is not null) ? lexes[eat]! : lex(esrc);
   Program eprog = eat >= 0 && eat < progs.len() && (progs[eat] is not null)
     ? progs[eat]!
-    : parseProgram(P.create(esrc, elexed.tokens, elexed.tokenCount));
+    : parseProgram(P.create(esrc, elexed));
   // **Sized for what will go in it, and in the unit it goes in.** The tables here hold two kinds of
   // thing: the name table is per *function* and `clearScope` empties it between them, while structs,
   // fields, methods, variants and functions accumulate across every file the entry imports. So the
@@ -1484,7 +1484,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     Lexed ilexed = i < lexes.len() && (lexes[i] is not null) ? lexes[i]! : lex(isrc);
     Program iprog = i < progs.len() && (progs[i] is not null)
       ? progs[i]!
-      : parseProgram(P.create(isrc, ilexed.tokens, ilexed.tokenCount));
+      : parseProgram(P.create(isrc, ilexed));
     // **A file's exports are its own to state.** Asked for a name it does not export, the import is
     // the error — whether the name is declared without `export` or merely imported from somewhere
     // else, which does not pass it on (`§wac-no-reexport-f7kn4wq`).
@@ -1675,7 +1675,7 @@ export string capReachFiles(string[] paths, string[] sources) {
     if (paths[i] == "") { continue; }
     u8[] src = (i < sources.len() ? sources[i] : "").toBytes();
     Lexed lx = lex(src);
-    P p = P.create(src, lx.tokens, lx.tokenCount);
+    P p = P.create(src, lx);
     Program prog = parseProgram(p);
     string seen = "\t";
     for (i32 d = 0; d < prog.decls.len(); d++) {
