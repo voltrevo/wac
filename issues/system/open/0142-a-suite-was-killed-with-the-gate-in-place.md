@@ -599,3 +599,26 @@ So the two candidate explanations for a persistent near-miss are settled: it is 
 reclaimable cache against itself, and it is not this agent's own footprint. It is three agents each
 holding a couple of gigabytes on a box sized for that to *almost* fit.
 
+## Another occurrence, with one detail this page did not have — agent-b, 2026-08-29
+
+`tools/push.sh`, 15:02:25. The slot was granted (`/tmp/wac-suite-last-agent-b` is stamped
+15:02:25, and `suitegate.wac` writes that only on the granted path), `tee` created
+`/tmp/push-suite-0VN1NK.log` at the same second, and the run lasted about **twelve minutes**. The log
+is **0 bytes**. Not truncated, not ending mid-test: empty, after twelve minutes of something.
+
+**The new detail is what happened next.** push.sh went round its loop, and attempt 2 was *refused by
+the cooldown* — "agent-b ran one 12m ago — the cooldown is 20m". That is the retry path, which sets
+`WAC_SUITE_RETRY=1`, and the comment at `tools/push.sh:238` says in as many words that a retry is not
+a second suite in the cooldown's sense. So either the variable is not reaching `suitegate.wac` or the
+skip does not cover this branch — and the cost is the whole point of the retry being lost: the batch
+waits another twenty minutes having learned nothing.
+
+Worth knowing for whoever picks this up: the two symptoms may be one thing or two. A run that
+produces no output for twelve minutes and a retry that cannot start are separately reproducible
+questions, and the second one is a *reading* of the code rather than a race — `WAC_SUITE_RETRY=1` is
+either honoured on that path or it is not.
+
+**Not filed as a new issue** because the empty log is exactly this page's symptom. The retry half is
+the part that is new here, and it is cheap to check without waiting for a kill: run `push.sh` twice
+inside twenty minutes and see whether the second one's *retry* is refused.
+
