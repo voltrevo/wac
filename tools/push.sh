@@ -174,6 +174,13 @@ if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2
   fi
 fi
 
+# **Every phase is timed, and the gate says where its minutes went.** Until 2026-08-29 only the suite
+# was, so the answer to "why is the gate slow" had one measured number and four guesses beside it —
+# and one of the guesses was in the comment below the ratchets, which said 38 seconds for something
+# that had grown to 263. `issues/system/0275b` had to be written to find that out, and the point of
+# these four variables is that the next person does not have to write it again.
+tPre=$SECONDS
+
 for attempt in 1 2 3; do
   guardDenoCache
 
@@ -408,6 +415,7 @@ for attempt in 1 2 3; do
   fi
 
   echo "== suite passed in ${elapsed}s (load now $(cut -d' ' -f1-3 /proc/loadavg)) =="
+  tSuite=$SECONDS
   # **The threshold has to move when the suite does, and it has moved twice.** It said "several times
   # the usual ~50s" above 180s until 2026-08-18, when the wac lane became the largest and every green
   # run tripped it — a warning that cannot warn. It was re-measured then at 208s (78s Deno, 29s alone,
@@ -453,6 +461,7 @@ for attempt in 1 2 3; do
     exit 1
   fi
   echo "== doc checks passed =="
+  tDocs=$SECONDS
 
   # **The site, which the suite does not look at at all.** `site/` is in `deno.json`'s `exclude` and named
   # again in the parallel pass's `--ignore`, for a real reason: its sources are vite-resolved TypeScript
@@ -479,10 +488,17 @@ for attempt in 1 2 3; do
     exit 1
   fi
   echo "== the site passes its own tests and type-checks =="
+  tSite=$SECONDS
 
-  # **The coverage ratchets, after the suite and before the push.** Nineteen packages, 38 seconds
-  # against the suite's two hundred — twelve now that they run four at a time — so the cost is small for
-  # the thing the suite cannot
+  # **The coverage ratchets, after the suite and before the push.** Thirty-seven drivers, **633s of
+  # work at 4 workers and 216s of wall** as measured on 2026-08-29. This comment said "nineteen
+  # packages, 38 seconds, twelve when they run four at a time" until then, which was true when it was
+  # written and had been wrong for long enough that `issues/system/0275b` was written to find out —
+  # so the gate now prints its own budget below rather than relying on a comment to stay true.
+  #
+  # `coverage:platform` alone is 137s of the 216, which is above the perfect-balance figure, so no
+  # scheduling change can help; that one driver is `issues/system/0197`. The cost is worth it for the
+  # thing the suite cannot
   # see: an uncovered branch is not a failing test, it is code nothing asked about. issues/system 0101
   # is the whole argument — `coverage:crypto` had been red long enough for the reason to be forgotten,
   # and `rsa.wac` grew eighteen unmeasured branch points while the issue describing that was open,
@@ -510,6 +526,15 @@ for attempt in 1 2 3; do
   # deliberately narrow: a fence in `spec/**` or a `packages/*/README.md` is a program three consumers
   # compile, so editing one is editing code and the ratchets run.
   #
+  # **And it is not worth narrowing further, which was measured before being believed.** The obvious
+  # next step is to run only the drivers a change can reach — every exercise's import closure is one
+  # `wacFiles` walk away, and `issues/system/0241b` proved the reach crosses packages, so the
+  # predicate would have to be that closure rather than the package name. Over the last forty
+  # commits: eleven were documentation and already skip; **nineteen touched `packages/wacc`, the
+  # host, `tools/` or `harness/`**, where every driver's number can move and everything must run
+  # anyway; five were confined to packages. So the work would buy a skip on one push in eight, on the
+  # gate's safety path, and a push is a batch of commits — which makes it rarer still.
+  #
   # It skips **this check and nothing else**. The suite has already run by the time we get here, and it
   # must: a pure prose edit routinely breaks it on purpose, because
   # `tools/wac/issuecounts_test.wac` asserts `N issues, M closed.` against the files in `issues/*/`.
@@ -532,6 +557,20 @@ for attempt in 1 2 3; do
     echo "   went from blocking to reporting once before, and on what argument."
     exit 1
   fi
+  tCov=$SECONDS
+
+  # **The budget, printed on the run that produced it.** Every number here used to be reconstructed
+  # afterwards from separate measurements, which is how the ratchets spent a fortnight described as
+  # 38 seconds. `pull+seed` covers everything before the first attempt, so on a retry it is the
+  # original figure rather than this attempt's; the other four are this attempt's own.
+  echo "== where this gate's time went =="
+  printf '   %-11s %4ss\n' \
+    'pull+seed' "$tPre" \
+    'suite'     "$elapsed" \
+    'docs'      "$((tDocs - tSuite))" \
+    'site'      "$((tSite - tDocs))" \
+    'ratchets'  "$((tCov - tSite))" \
+    'total'     "$SECONDS"
 
   # `$tested:master`, not `HEAD:master`: pushing the revision the suite ran against. If HEAD has
   # moved since, those commits stay local and go out with the next gate, which is the answer that

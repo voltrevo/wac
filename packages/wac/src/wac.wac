@@ -71,7 +71,7 @@ import { Shell } from "../../sh/src/exec.wac";
 import { shellMain } from "../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../box/src/shrun.wac";
 import { Asked, Parsed, askedFrom, forCommand, narrowed } from "./grants.wac";
-import { Counters, Exercise, compareJournals, read } from "./counters.wac";
+import { Counters, Digest, Exercise, agreeLine, compareJournals, digest, read } from "./counters.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -1408,6 +1408,24 @@ export i32 main(Core core, Cli cli) {
       core.warn("usage: wac ctcompare [--all] <a.wasm> <b.wasm>");
       return 2;
     }
+    // **Both journals folded first, and read only if the folds disagree.** A `Cli.call` carries one
+    // `i32` and costs ~1.6µs, so fetching `p256PublicKey`'s 8.19 million events a slot at a time was
+    // 13s a comparison and `constanttime_test.wac` makes about sixteen — most of the suite's critical
+    // path, twice over, to print one line saying nothing had changed. `digest` asks the module to fold
+    // its own journal: four calls, whatever it recorded.
+    //
+    // The fold is a hash, so agreement is a 2^-32 coincidence away from being wrong, and that is
+    // stated where it is decided — `emitCoverageHelpers` in `packages/wacc/src/emit.wac`. Every
+    // *divergence* is still read out slot by slot below, which is the half a caller acts on.
+    Digest da = digest(core, cli, both[0]);
+    if (da.error != "") { core.warn("wac: " + da.error); return 1; }
+    Digest db = digest(core, cli, both[1]);
+    if (db.error != "") { core.warn("wac: " + db.error); return 1; }
+    if (da.used == db.used && da.want == db.want && da.hash == db.hash) {
+      core.log(agreeLine(da.used, da.want, db.used, db.want));
+      return 0;
+    }
+
     Exercise[] none = Exercise[0](fill: Exercise("", 0 - 1));
     Counters ca = read(core, cli, both[0], none, true);
     if (ca.error != "") { core.warn("wac: " + ca.error); return 1; }
@@ -2223,7 +2241,7 @@ export i32 main(Core core, Cli cli) {
     // Two more front ends, if this were `manifestFiles`: it derives `bindTypes` and `exportSigs`
     // from the sources, and both are already here.
     //
-    // **`sigsWithCounters`, because an instrumented build has three exports no source names.**
+    // **`sigsWithCounters`, because an instrumented build has four exports no source names.**
     // `issues/system/0243c` added that call for `wac test --coverage` and stopped there, so
     // `wac build --coverage` wrote a module exporting `__cov_init`, `__cov_len` and `__cov_get` and a
     // manifest listing neither — and a manifest that "claims to describe the module's callable

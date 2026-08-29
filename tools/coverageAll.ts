@@ -120,6 +120,50 @@ const driverOf = (pkg: string): string | null =>
 type Result = { pkg: string; code: number; ms: number; output: string };
 
 /**
+ * How long each package took last time, so the longest one starts first.
+ *
+ * **The tail is the whole wall time, and alphabetical order put the tail last.** A run's best possible
+ * wall is `max(longest driver, work / workers)`; measured on 2026-08-29, back to back:
+ *
+ *     alphabetical    696s of work, longest 94s  ->  ideal 174s, actual 204s   (17% over)
+ *     longest-first   471s of work, longest 89s  ->  ideal 118s, actual 119s   ( 1% over)
+ *
+ * **Compare the two ratios and not the two walls.** The second run had a third less work in it —
+ * these share a machine with two other agents and with each other's warm caches — so 204s against
+ * 119s flatters this considerably. What the change actually bought is the distance from each run's
+ * own bound, and that went from 30s to 1s.
+ *
+ * Longest-first is the standard answer to exactly this and needs no estimate to be good, only an
+ * approximate order. A file of last run's times gives that for free and corrects itself: a package
+ * that grows is late once and early after.
+ *
+ * **A package with no recorded time goes first**, which is the safe end. An unknown is usually a new
+ * package and short, so putting it first costs nothing; putting it last risks re-creating the exact
+ * problem this fixes, for a package nobody has timed yet.
+ *
+ * Missing or unreadable is not an error and not a warning — it is the first run in a fresh checkout,
+ * where alphabetical is what this always did.
+ */
+const TIMES_PATH = ".cache/coverage-times.json";
+const lastTimes: Record<string, number> = (() => {
+  try {
+    return JSON.parse(Deno.readTextFileSync(TIMES_PATH)) as Record<string, number>;
+  } catch {
+    return {};
+  }
+})();
+
+// `PACKAGES` itself stays alphabetical: it is what the report is sorted back into, and a reader
+// scanning for a red should not have the rows move because a machine was busy.
+// `Number.MAX_SAFE_INTEGER` rather than `Infinity` for the unknowns, because `Infinity - Infinity` is
+// `NaN` and a comparator that returns `NaN` has no defined answer. Two unknowns compare 0 here, which
+// leaves them in the alphabetical order they arrived in.
+const UNTIMED = Number.MAX_SAFE_INTEGER;
+const DISPATCH = [...PACKAGES].sort((a, b) =>
+  (lastTimes[b] ?? UNTIMED) - (lastTimes[a] ?? UNTIMED)
+);
+
+/**
  * Four at a time, because nineteen packages one after another is 38s of every push.
  *
  * `tools/push.sh` runs this after the suite and before the push, so nothing else is on the machine —
@@ -136,8 +180,8 @@ const WORKERS = 4;
 const results: Result[] = [];
 let next = 0;
 const worker = async () => {
-  while (next < PACKAGES.length) {
-    const pkg = PACKAGES[next++];
+  while (next < DISPATCH.length) {
+    const pkg = DISPATCH[next++];
     const started = performance.now();
     // **The checkout's binary, not `wac` on PATH.** An installed build is a different compiler than
     // the one these ratchets are measuring, and the gate is about this tree. Same reason
@@ -154,7 +198,24 @@ const worker = async () => {
     console.log(`${code === 0 ? "ok  " : "FAIL"}  coverage:${pkg}  ${(ms / 1000).toFixed(1)}s`);
   }
 };
-await Promise.all(Array.from({ length: Math.min(WORKERS, PACKAGES.length) }, () => worker()));
+await Promise.all(Array.from({ length: Math.min(WORKERS, DISPATCH.length) }, () => worker()));
+
+// **Written whatever happened, including after a failure.** A red package still took its time, and a
+// run that fails is exactly the one somebody repeats — so the ordering it leaves behind should be the
+// measured one rather than the one from before the package grew. Unwritable is not worth a word: the
+// only cost is that the next run dispatches alphabetically, which is what it did for a year.
+try {
+  // Seeded from the packages that exist *now*, not from the whole of last run's file: a package that
+  // loses its task would otherwise keep a time in here forever, and a stale key is the kind of thing
+  // that reads as a measurement later. A package that did not run this time keeps its old number,
+  // which is the point of the file.
+  const times: Record<string, number> = {};
+  for (const pkg of PACKAGES) {
+    if (lastTimes[pkg] !== undefined) times[pkg] = lastTimes[pkg];
+  }
+  for (const r of results) times[r.pkg] = Math.round(r.ms);
+  Deno.writeTextFileSync(TIMES_PATH, JSON.stringify(times, null, 2) + "\n");
+} catch { /* .cache/ may not exist in a fresh checkout, and this is an optimisation */ }
 results.sort((a, b) => PACKAGES.indexOf(a.pkg) - PACKAGES.indexOf(b.pkg));
 
 const failed = results.filter((r) => r.code !== 0);

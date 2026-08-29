@@ -627,6 +627,117 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
 
 // ── The bootstrap block's two figures ──────────────────────────────────────
 
+Deno.test("site: the compiler's line count is the tree's, within a tenth", async () => {
+  // `~41,000 lines` when `packages/wacc/src` was 42,816 — 4% out, which the tilde covers and which
+  // will not stay 4%. Same tolerance and the same argument as the seed-size check below: a figure
+  // that moves with every commit should not be exact, and one nobody checks stops being a figure.
+  const root = new URL("../../", import.meta.url).pathname;
+  let lines = 0;
+  for await (const e of Deno.readDir(`${root}packages/wacc/src`)) {
+    if (!e.isFile || !e.name.endsWith(".wac")) continue;
+    lines += (await Deno.readTextFile(`${root}packages/wacc/src/${e.name}`)).split("\n").length - 1;
+  }
+  if (lines < 1000) throw new Error(`only ${lines} lines found — did the walk resolve?`);
+
+  const page = await Deno.readTextFile(`${root}site/src/next/Home.tsx`);
+  const said = page.match(/~([\d,]+) lines/);
+  if (said === null) throw new Error("Home.tsx no longer states a line count — has the wording changed?");
+  const n = Number(said[1].replace(/,/g, ""));
+  if (Math.abs(n - lines) > lines * 0.1) {
+    throw new Error(`the site says ~${said[1]} lines; packages/wacc/src has ${lines} — more than 10% out`);
+  }
+});
+
+Deno.test("site: the coverage-ledger count and the list of packages without one are the tree's", async () => {
+  // **Both halves had drifted.** The page said "36 of the 39 packages" and named three without a
+  // ledger; there are 40 packages and four without one — `packages/ts` had arrived and joined the
+  // list without the sentence noticing. The count happened to still be right, which is the way this
+  // rots: one number moves, the other does not, and nothing reads them together.
+  //
+  // Derived exactly as `tools/coverageAll.ts` derives them, because that is the thing being
+  // described: a package is a directory under `packages/` with a `src/`, and it carries a ledger if
+  // `tasks.json5` has a `coverage:<name>` task. `core` is deliberately outside both counts — the page
+  // says so in the same sentence.
+  const root = new URL("../../", import.meta.url).pathname;
+  const packages: string[] = [];
+  for await (const e of Deno.readDir(`${root}packages`)) {
+    if (!e.isDirectory) continue;
+    try {
+      if ((await Deno.stat(`${root}packages/${e.name}/src`)).isDirectory) packages.push(e.name);
+    } catch { /* no src/ — fixtures or docs, not code a ledger could measure */ }
+  }
+  const tasks = await Deno.readTextFile(`${root}tasks.json5`);
+  const withLedger = packages.filter((p) => tasks.includes(`"coverage:${p}"`));
+  const without = packages.filter((p) => !tasks.includes(`"coverage:${p}"`)).sort();
+  if (packages.length < 10) throw new Error(`only ${packages.length} packages found — did the walk resolve?`);
+
+  const page = await Deno.readTextFile(`${root}site/src/next/Checked.tsx`);
+  const said = page.match(/<Lead>(\d+) of the (\d+) packages carry a coverage ledger<\/Lead>/);
+  if (said === null) throw new Error("Checked.tsx no longer states the ledger count — has the wording changed?");
+  if (Number(said[1]) !== withLedger.length || Number(said[2]) !== packages.length) {
+    throw new Error(
+      `the site says ${said[1]} of ${said[2]} packages carry a ledger; the tree has ` +
+        `${withLedger.length} of ${packages.length}`,
+    );
+  }
+  // The names are the half that went stale silently, so they are checked as names.
+  for (const name of without) {
+    if (!page.includes(`children: "${name}"`)) {
+      throw new Error(
+        `${name} has no coverage task and the site does not name it among the ones without a ` +
+          `ledger — the list is ${without.join(", ")}`,
+      );
+    }
+  }
+});
+
+Deno.test("site: every repository path the site links to is a file in the tree", async () => {
+  // **The site deploys on every push and its links are public**, and nothing checked them. Two were
+  // dead when this was written: a fixpointEmit test under packages/wacc, deleted with the TypeScript
+  // reference, and an issue linked under issues/lang/open after it had moved to closed. Both are
+  // named without backticks on purpose — `tools/wac/links_test.wac` reads a backticked repository
+  // path as a claim that the file exists, and a comment about a deleted file would fail it.
+  // Both are 404s on GitHub for anyone who follows them, and both had been that way for a while.
+  //
+  // `tools/wac/links_test.wac` is the same idea for backticked paths in markdown and does not see
+  // these: a site link is `<A href={`${BLOB}/path`}>`, in TypeScript, in a subtree that is excluded
+  // from the repo-wide Deno walks.
+  //
+  // **Only the paths written as literals.** A href built from a variable — `${BLOB}/${file}` — is
+  // not checked here, because what it resolves to is a runtime question; there are none today and
+  // one arriving would simply not be covered rather than fail.
+  const root = new URL("../../", import.meta.url).pathname;
+  const paths = new Set<string>();
+  const walk = async (dir: string): Promise<void> => {
+    for await (const e of Deno.readDir(dir)) {
+      const p = `${dir}/${e.name}`;
+      if (e.isDirectory) await walk(p);
+      else if (e.name.endsWith(".tsx") || e.name.endsWith(".ts")) {
+        for (const m of (await Deno.readTextFile(p)).matchAll(/\$\{(?:BLOB|TREE)\}\/([A-Za-z0-9_./-]+)/g)) {
+          paths.add(m[1]);
+        }
+      }
+    }
+  };
+  await walk(`${root}site/src`);
+  if (paths.size < 5) throw new Error(`only ${paths.size} repository links found — did the walk resolve?`);
+
+  const missing: string[] = [];
+  for (const rel of paths) {
+    try {
+      await Deno.stat(`${root}${rel}`);
+    } catch {
+      missing.push(rel);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `${missing.length} of ${paths.size} repository link(s) name nothing in the tree, so they are ` +
+        `404s on the published site:\n  ${missing.join("\n  ")}`,
+    );
+  }
+});
+
 Deno.test("site: the bootstrap block's source count and size are the tree's", async () => {
   // The block on the front page reads `B == C  17 sources, 1,059 KB, identical`, and its own comment
   // has admitted for months that both figures are typed and go stale — they said 11 sources and

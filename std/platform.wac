@@ -1566,9 +1566,9 @@ export struct Child {
  *
  * It exists because four commands needed it and no wac program could express them: `wac test` calls a
  * module's `test*` exports and has to survive one of them trapping, and `covdump`, `tracestat` and
- * `ctcompare` read the counters through `__cov_init`, `__cov_len` and `__cov_get`. Every host already
- * did this internally — `host/driver.ts`'s `asAppModule`, `native/v8`'s `run_tests` — and none of them
- * offered it. `issues/system/0240c`.
+ * `ctcompare` read the counters through `__cov_init`, `__cov_len`, `__cov_get` and `__cov_hash`.
+ * Every host already did this internally — `host/driver.ts`'s `asAppModule`, `native/v8`'s
+ * `run_tests` — and none of them offered it. `issues/system/0240c`.
  *
  * **Which exports there are is not a capability.** A module carries its own manifest, and the manifest
  * lists every non-`$bind$` export with its parameters and return type — so a caller reads the names

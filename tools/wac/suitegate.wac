@@ -454,8 +454,26 @@ export Slot takeAs(Core core, Cli cli, i32 pid) {
                 ",\"forced\":" + (forced ? "true" : "false") + "}";
   // An unwritable lock should not stop a run that has been allowed.
   cli.writeFile(lockPath(), json.toBytes()).wait();
-  cli.writeFile(lastRunPath(who), itoa64(now).toBytes()).wait();
   return Slot(true, 0, "", pid);
+}
+
+/**
+ * Record that this agent has started a suite — the cooldown's stamp.
+ *
+ * **Separate from taking the lock, and `issues/system/0283b` is what they cost together.**
+ * `tools/push.sh` takes the lock as its first act, before it pulls, because a run that *starts* must
+ * be a run that can *land* (`issues/system/0213a`). Writing the cooldown there too made every exit
+ * between the lock and the suite — a conflicting pull, a seed that will not rebuild, a dirty tree —
+ * cost the agent twenty minutes having tested nothing. Measured on 2026-08-29: a merge conflict in
+ * one line of `issues/system/INDEX.md`, then three refusals reading *"agent-b ran one 2m ago"* for a
+ * suite that never existed.
+ *
+ * So this is called where the lanes begin, which is the first point both callers pass through: a
+ * suite invoked *by* the gate takes the `WAC_GATE_LOCK` early return above and never saw the old
+ * write either.
+ */
+export void markRun(Core core, Cli cli) {
+  cli.writeFile(lastRunPath(agentName(cli)), itoa64(core.nowMillis().wait()).toBytes()).wait();
 }
 
 /** Print what the gate said and hand back its exit code. */

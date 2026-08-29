@@ -7,7 +7,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { has, endsWith } from "../../../wactest/src/strings.wac";
+import { has, endsWith, contains } from "../../../wactest/src/strings.wac";
+import { FileResult } from "std/platform.wac";
 import { Corpus, loadCorpus, waccSources } from "./corpus_probe.wac";
 
 export string test_the_walk_finds_the_repositorys_wac_and_reads_all_of_it(Core core, Cli cli) {
@@ -60,5 +61,55 @@ export string test_waccs_own_sources_are_found_since_the_bootstrap_rung_is_about
   t.isTrue(own.len() >= 8, "wacc has " + itoa(own.len()) + " sources in the corpus");
   t.isTrue(has(own, "packages/wacc/src/api.wac"), "including api.wac");
   t.isTrue(has(own, "packages/wacc/src/emit.wac"), "and emit.wac");
+  return t.report();
+}
+
+/**
+ * The corpus size the website quotes is the corpus.
+ *
+ * **Checked here rather than in `site/tools/site.test.ts`, because this is where the number exists.**
+ * The site's other figures are guarded there — the tag count, the compiler's size and line count, the
+ * package counts — but those are all things a TypeScript test can count for itself. The corpus is
+ * whatever `loadCorpus` walks, and replicating that walk in another language to check a sentence is
+ * the second implementation that goes wrong. The walk is already loaded here.
+ *
+ * It said **1075** when the corpus was 1122, which is the ordinary way this rots: the sentence was
+ * written on the day it was true and the repository kept growing.
+ *
+ * **A tenth of tolerance, not an exact match.** A `.wac` file is added most days, and a figure in
+ * prose that has to be edited by whoever adds one is a figure that will be wrong between edits and
+ * red in between — `site/tools/site.test.ts` makes the same argument about the seed's size.
+ */
+export string test_the_corpus_size_the_site_quotes_is_the_corpus(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "corpus_test");
+  t.isTrue(c.ok, "the walk: " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  FileResult f = cli.readFile("site/src/next/Stack.tsx").wait();
+  t.isTrue(f.ok, "reading the page — " + f.error);
+  if (!f.ok) { return t.report(); }
+  string page = string.fromBytes(f.bytes);
+
+  // The figure is written with a thousands separator, which is how the page writes every other one.
+  i32 at = page.indexOf("own 1,");
+  t.isTrue(at >= 0, "Stack.tsx no longer states a corpus size in the form `own N,NNN wac files`");
+  if (at < 0) { return t.report(); }
+  string rest = page.slice(at + 4, page.len());
+  i32 sp = rest.indexOf(" ");
+  string said = sp < 0 ? "" : rest.slice(0, sp);
+  i32 n = 0;
+  for (i32 i = 0; i < said.len(); i++) {
+    string ch = said.slice(i, i + 1);
+    if (ch == ",") { continue; }
+    i32 d = "0123456789".indexOf(ch);
+    if (d < 0) { n = 0 - 1; i = said.len(); continue; }
+    n = n * 10 + d;
+  }
+  i32 have = c.paths.len();
+  i32 slack = have / 10;
+  t.isTrue(n > 0 && n >= have - slack && n <= have + slack,
+           "the site says " + said + " wac files; the corpus walk finds " + itoa(have) +
+           " — more than a tenth out, so the sentence has stopped being about this repository");
   return t.report();
 }

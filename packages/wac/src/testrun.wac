@@ -773,8 +773,9 @@ struct Tally {
  *
  * The signatures are not read back out of the module and are not guessed. The instrumentation is
  * this repository's, and compiler/wasmBuildBin.ts states them in one line:
- * `__cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32`. All three are inside the closed
- * set `Cli.call` accepts, which is not luck -- that set exists to cover what these commands need.
+ * `__cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32`, and `__cov_hash(i32) -> i32`
+ * joined them for `issues/system/0274b`. All four are inside the closed set `Cli.call` accepts, which
+ * is not luck -- that set exists to cover what these commands need.
  *
  * A `name<TAB>ret<TAB>params` line each, with an empty return cell meaning void. Declaring them here
  * rather than teaching the platform about coverage keeps the boundary generic: the compiler is what
@@ -782,7 +783,7 @@ struct Tally {
  */
 export string sigsWithCounters(string sigs, bool covered) {
   if (!covered) { return sigs; }
-  return sigs + "__cov_init\t\t\n__cov_len\ti32\t\n__cov_get\ti32\ti32\n";
+  return sigs + "__cov_init\t\t\n__cov_len\ti32\t\n__cov_get\ti32\ti32\n__cov_hash\ti32\ti32\n";
 }
 
 /** ` (12 ms)`, the way the native runner spells a test's wall time under `--verbose`. */

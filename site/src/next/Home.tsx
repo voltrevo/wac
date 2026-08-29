@@ -234,7 +234,7 @@ export default function Home() {
         <P>
           <Lead>wac is self-hosted, and there is no seed.</Lead>{" "}
           {m({ children: "packages/wacc" })} is the compiler, written in wac —{" "}
-          <Lead>~41,000 lines</Lead> — and it is what builds everything here: the packages, the
+          <Lead>~43,000 lines</Lead> — and it is what builds everything here: the packages, the
           programs, the demos on this page. It grew out of a compiler written in TypeScript, which
           was the seed until 2026-08-28 and is deleted. What builds wacc now is a ladder of five
           rungs whose lowest is hand-written wasm assembly text, so nothing here starts from a

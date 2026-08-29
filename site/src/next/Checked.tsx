@@ -225,11 +225,11 @@ export default function Checked() {
           write down why.
         </P>
         <P>
-          <Lead>36 of the 39 packages carry a coverage ledger</Lead> — and so does{" "}
+          <Lead>36 of the 40 packages carry a coverage ledger</Lead> — and so does{" "}
           {m({ children: "core" })}, which is not a package — a file listing every branch point the
-          suite does not reach, each with a sentence saying what would reach it. The three without
-          one are {m({ children: "wacc" })}, which is 36,000 lines and its own project;{" "}
-          {m({ children: "box" })}; and {m({ children: "wac" })}, added days ago.
+          suite does not reach, each with a sentence saying what would reach it. The four without one
+          are {m({ children: "wacc" })}, which is 36,000 lines and its own project;{" "}
+          {m({ children: "box" })}; {m({ children: "wac" })}; and {m({ children: "ts" })}.
         </P>
         <P>
           <Lead>The ratchet runs both ways, and the second direction is the unusual one.</Lead> An
@@ -260,7 +260,7 @@ export default function Checked() {
 
       <Section id="spec" kicker="evidence, seventh kind" title="A specification that cannot drift">
         <P>
-          The language has a written specification, and <Lead>409 of its claims carry a tag</Lead>{" "}
+          The language has a written specification, and <Lead>415 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
           without evidence beside it reads as evidence, which is the failure mode a specification
           has, so a test walks the specification and fails with the list of any tag nothing covers.
@@ -273,10 +273,10 @@ export default function Checked() {
           {m({ children: "spec/spec/*.md" })} for the phrasings a rule is written in —{" "}
           <em>is a compile error</em>, <em>is refused</em>, <em>is not allowed</em> — with no tag
           nearby finds rules that nothing runs, and{" "}
-          <A href={`${BLOB}/issues/lang/open/0125-eleven-stated-spec-rules-have-nothing-that-measures-them.md`} external>an open issue</A>{" "}
-          lists them. Both compilers refuse every one that can be written as a program, at the same
-          positions — so the rules work and are held up by nobody, and the failure mode is a refactor
-          quietly dropping one while the suite stays green.
+          <A href={`${BLOB}/issues/lang/closed/0125-eleven-stated-spec-rules-have-nothing-that-measures-them.md`} external>issue 0125</A>{" "}
+          listed them. wacc refuses every one that can be written as a program — so the rules work
+          and were held up by nobody, and the failure mode is a refactor quietly dropping one while
+          the suite stays green.
         </P>
         <P>
           It found one on the day it was written: a claim about counted loops that was true, and had

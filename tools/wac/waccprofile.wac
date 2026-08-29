@@ -1,0 +1,46 @@
+// The compiler compiling something big, instrumented — an execution-count profile of `wacc` itself.
+//
+// **`issues/lang/0153` says there is no profiler, and there is one that nobody had pointed at this.**
+// That issue priced the front end by body-doubling — running a pure function's body twice and
+// subtracting — and got `lex` 2.5%, `parseProgram` 18%, *everything after* ~80%. It then stopped,
+// because the technique cannot go inside the 80%: `checkModule` and `settleEmittable` mutate
+// pre-populated state, so a second run does less work and the subtraction means nothing.
+//
+// `wac build --coverage` counts every branch point, and a count is not a time but it is a ranking.
+// Built with `--coverage` and read with `wac covdump`, this driver answers *which lines of the
+// compiler run most often when it compiles a large program* — which is the question the 80% is
+// hiding, and one nothing else here can ask.
+//
+//     wac build --coverage --allow-read -o /tmp/waccprof tools/wac/waccprofile.wac
+//     wac covdump /tmp/waccprof.wasm > /tmp/counts.tsv
+//     # join /tmp/counts.tsv with /tmp/waccprof.cov on the index and sort by count
+//
+// **What a count is not.** A point run ten million times in a two-instruction loop costs less than
+// one run a hundred times around a byte copy, so this ranks *frequency* and not cost. Read it as
+// "where the compiler spends its iterations", and price anything it turns up by the doubling method
+// before believing a number. The two instruments answer different halves and neither is the other.
+//
+// **The entry is the one 0153 measured**, so its numbers stay comparable: `packages/box/src/bin/sh.wac`
+// was 5,994 ms and 180 files there. Passing the whole corpus is deliberate and free — `emitFiles`
+// documents that what is emitted is the closure, not the table.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { emitFiles } from "../../packages/wacc/src/api.wac";
+import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wac";
+
+const string ENTRY = "packages/box/src/bin/sh.wac";
+
+export i32 main(Core core, Cli cli) {
+  Corpus c = loadCorpus(cli, "waccprofile");
+  if (!c.ok) {
+    core.warn("waccprofile: the corpus walk — " + c.error);
+    return 1;
+  }
+  u8[] out = emitFiles(c.paths, c.sources, ENTRY);
+  // **Printed, because a module that emitted nothing still fills a counter table.** A run that
+  // failed to find the entry would produce a plausible-looking profile of the failure path, and the
+  // byte count is the cheapest thing that tells the two apart.
+  core.log(itoa(c.paths.len()) + " files offered, " + itoa(out.len()) + " bytes emitted from " + ENTRY);
+  return out.len() > 0 ? 0 : 1;
+}

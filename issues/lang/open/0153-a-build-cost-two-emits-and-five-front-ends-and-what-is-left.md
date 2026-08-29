@@ -130,3 +130,90 @@ Body-doubling prices the callee but only where the function is pure: `lex` and `
 and `settleEmittable` mutate pre-populated state, so a second run does *less* work and the subtraction
 means nothing. That is why the 80% is one row rather than three — pricing inside it needs either a real
 profiler or a pure seam that does not exist yet.
+
+## Inside the 80%, with the profiler this issue said did not exist — agent-b, 2026-08-29
+
+The section above stops at *"pricing inside it needs either a real profiler or a pure seam that does
+not exist yet"*. There is an instrument: `wac build --coverage` counts every branch point, and
+nobody had pointed it at the compiler itself. `tools/wac/waccprofile.wac` is a driver that calls
+`emitFiles` on this issue's own entry — `packages/box/src/bin/sh.wac`, 1,122 files offered, 777,864
+bytes emitted — built with `--coverage` and read with `wac covdump`.
+
+**A count is not a time.** It ranks how often a line runs, not what it costs, so nothing below is a
+share of the clock; it is where the iterations are. Price anything it turns up by this page's
+doubling method before believing a number.
+
+    1,932,304,577 executions, 4,997 of 16,845 points reached
+
+    96.0%  emit.wac          1,855,315,176
+     2.6%  lex.wac              49,753,541
+     1.1%  parse.wac            20,891,223
+     0.3%  kinds.wac             5,082,697
+
+**Four linear scans are about a fifth of every iteration the compiler makes**, and the two that can
+be named cheaply are these:
+
+    Env.funcAt(name)    81,111 calls   97,412,789 iterations   1,201 string compares per call
+    Env.sigType(t)      35,594 calls   72,332,068 iterations   2,032 string compares per call
+
+Both are `for (i = 0; i < count; i++) if (table[i] == name) return i` over a table that grows with
+the program, so the cost is quadratic in it. The two hottest points of all are the same shape in the
+name resolver at `emit.wac:2813` and `:2819` — 122.6M and 63.6M iterations — scanning `declNames`
+by name and file.
+
+**This does not contradict the `C.findName` measurement above; it is the counterpart to it.** That
+scan was priced at 0.4% and a hash index there buys nothing. These are a different table in a
+different phase, and they are three orders of magnitude more traffic. The lesson is that "the scan is
+conspicuous" is not evidence either way — the difference between 0.4% and this is a measurement.
+
+**And the next step said to price one by doubling before indexing anything, because 1,201 compares of
+a short string may be cheaper than the count suggests. It was. See below — do not index these on the
+strength of the counts.**
+
+### Reproducing it
+
+    wac build --coverage --allow-read -o /tmp/waccprof tools/wac/waccprofile.wac
+    wac covdump /tmp/waccprof.wasm > /tmp/counts.tsv
+    # join on the index with /tmp/waccprof.cov, whose rows are `index<TAB>line<TAB>col<TAB>kind<TAB>file`
+
+Sixty seconds to build, six to run. The driver prints its byte count, because a run that failed to
+find the entry still fills a counter table and would profile the failure path convincingly.
+
+### `funcAt` doubled costs nothing measurable — so the counts are not the answer
+
+Body-doubling `Env.funcAt`, so every lookup scans twice, and building `packages/box/src/bin/sh.wac`
+three times each way:
+
+    doubled          5134 ms   6085 ms   6523 ms
+    reverted         5219 ms   5918 ms   6239 ms
+
+Indistinguishable — and **the honest reading is a bound, not a zero**. The spread within each set is
+about 1,400 ms, so what this measurement supports is "one `funcAt` pass costs less than roughly
+700 ms of a 5,000 ms build", not "it costs nothing". 97 million extra string comparisons are
+somewhere under a seventh of the build and the machine cannot say where. Anyone wanting the real
+number needs a quiet machine and more repetitions taking minima; three runs each way while another
+agent's suite is on the other four cores is not it.
+
+What it does rule out is the reading that sent me here: the counts do not translate into anything
+like a proportional share of the clock, so **a hash index on `funcs` is not justified by 97 million
+iterations alone**, and neither is one on any other table ranked that way.
+
+**I nearly reported the opposite.** An earlier baseline, taken twenty minutes before on a quiet
+machine, was 4477/4587/4514 ms, and against the doubled figures that reads as a 650 ms difference —
+14% of a build, which is exactly the sort of number that gets a hash index written. It is entirely
+contention: three agents share five cores here, and the load moved between the two measurements. The
+*reverted* build re-measured under the same load as the doubled one is what settles it, and the
+lesson is the one this page already had about `C.findName`, arriving from the other side: a
+conspicuous scan is not evidence, and neither is a large count.
+
+**One more thing the counts rule out.** `B.byte`, the emitter's byte buffer, is 2.59 million calls
+and its doubling-grow loop 3.2 million iterations — 0.13% of the total. Building the 777 KB module a
+byte at a time is not the cost either, which is worth knowing because it is the other obvious
+candidate and it is three orders of magnitude below the scans.
+
+**What that leaves.** The 96% figure for `emit.wac` still holds and is still where the work is — but
+it is 96% of *iterations*, and the phase-level split at the top of this section (`lex` 2.5%,
+`parseProgram` 18%, everything after ~80%) remains the only measurement here that is about time. The
+profiler is worth keeping for what it is good at: showing which code runs at all, and which of two
+candidate lines runs a thousand times more often than the other. It is not a way to choose what to
+optimise.
