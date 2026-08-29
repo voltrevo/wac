@@ -382,6 +382,49 @@ wrong token"*. Interpolation needs the same arrangement and inherits the same wa
 sees only the segments (fine) or needs to know a literal was interpolated (not fine), and which is
 which is a half-hour of grep that will decide whether this is a day or a week.
 
+## The kString consumers, measured — agent-b, 2026-08-29
+
+The section above asks for this before starting, and says it decides whether step 7 is a day or a
+week. It is eleven sites, not ten, and **four of them need to know**. So: a day.
+
+Under D7's desugaring `"a\{e}b"` becomes the token stream for `"a" + e + "b"`, so a consumer that
+sees a `kString` sees a *segment* — an ordinary literal with ordinary contents. Seven sites want
+nothing else:
+
+| site | what it asks | why a segment is enough |
+| --- | --- | --- |
+| `emit.wac` `scanTokenTypes` | is there **any** `kString` in the file | it declares `i8[]`; a segment is a string |
+| `lex.wac` `endsExpression` | can a `<` after this be JSX | a segment ends an expression like any literal |
+| `parse.wac` `startsExpr` | can this token begin an expression | same |
+| `parse.wac` generic-vs-comparison | is `id<i32>` a call or two comparisons | same, `design/lang/0011` criterion 10 |
+| `parse.wac` `ExprKind.StrLit` | the literal expression itself | this *is* the desugaring's output |
+| `emit.wac` `stringLiteralBytes` | the bytes of a `StrLit` | wants the span, which is the other problem |
+| `blockstring_test.wac` | walks `kString` tokens | a test, and it would see segments |
+
+**The four that need to know are the four positions where the string is not an expression.** Each
+does `at1`/`expect(kString())` and then expects something specific next; handed `"a" + e + "b"` it
+takes `"a"` and then meets a `+` it has no case for.
+
+| site | position | what an interpolated one must do |
+| --- | --- | --- |
+| `parse.wac` (import) | `import { x } from "…"` | be refused: a module path is resolved at compile time |
+| `wapyparse.wac` | the same, for `.wapy` | the same |
+| `files.wac` | reads the path token's bytes to resolve the module | would silently resolve the first segment |
+| `parse.wac` (JSX) | `<a href="…">` | be refused — `href={e}` is already how an expression goes there |
+
+That last one is the only surprise in the list, and it is the reassuring kind: JSX already has a
+spelling for an expression in an attribute, so refusing the interpolated literal is consistent rather
+than a restriction invented for the implementation.
+
+**So the plumbing question is narrow**: those four have to be able to ask *was this literal
+interpolated?*, and the token is a flat quintuple with no spare field. The cheapest answer that does
+not widen the token is for the lexer to record the interpolated literals' token indices on `Lexed`
+beside `tokens` and `errors` — which is now an established shape there, since `issues/lang/0278a`
+added a field to that struct for a different reason and it cost three constructions.
+
+**Not measured here, and still the hard half**: the spans, as the section above says. Nothing in this
+measurement makes that easier — it only says how much else is waiting behind it.
+
 ## D6's tab rule is D3's rule, and asking twice said so twice
 
 *"Tabs in the indentation are refused outright rather than assigned a width, so no block string can

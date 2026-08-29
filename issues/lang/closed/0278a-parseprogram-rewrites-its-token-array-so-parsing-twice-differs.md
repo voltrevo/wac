@@ -90,9 +90,18 @@ old behaviour reachable in three lines:
 
 First parse: 0 errors. Second: **1 error**, on a program that is fine. That is the report, run.
 
-Through `P.create` — every caller in the repository — the same program now stops at the mistake:
+Through `P.create` — every caller in the repository — the same program now stops at the mistake
+rather than answering.
 
-    wac: trapped: these tokens have already been parsed: parsing rewrites them, so lex again
+**The message could not travel, and that is filed as `issues/lang/0286b`.** It was written as
+`trap "these tokens have already been parsed: parsing rewrites them, so lex again"`, which built and
+ran, and then the ladder refused it: wac-L5 parses `trap` and expects `;`, and every file wacc's
+import graph reaches has to compile on rung 5. The seed build says only `wac-L5 refused 1 things in
+wacc` — running that step by hand is what names the line. So it is a bare `trap;` with the sentence
+in a comment above it, and what a reader gets is the stack, which names `parseProgram`.
+
+Worth knowing for its own sake: **nothing in `packages/wacc/src` uses `trap` in either spelling.**
+The first one it ever wanted was one with a message.
 
 **The flag lives on `Lexed` rather than on `P`**, because the issue is right that the array is what
 is consumed and `P` is created per parse. That meant `P` holding the `Lexed` instead of `toks` and

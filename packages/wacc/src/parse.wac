@@ -2393,9 +2393,15 @@ export Program parseProgram(P p) {
   // type-argument lists into a `>`, and `Vec<Vec<i32>` is a comparison. Nobody does this today;
   // the point of the guard is that the wrong answer would arrive three phases later, as a type
   // error about something that is not wrong. `issues/lang/0278a`.
-  if (p.lx.parsed) {
-    trap "these tokens have already been parsed: parsing rewrites them, so lex again";
-  }
+  //
+  // **Bare `trap;`, and the message is here rather than in it**, because `trap "…"` is a language
+  // feature the ladder cannot build: wac-L5 parses `trap` and then refuses the string, and every
+  // file `packages/wacc` reaches has to compile on rung 5. What a reader gets is the stack, which
+  // names this function. `issues/lang/0286b`.
+  //
+  // What it would have said: *these tokens have already been parsed — parsing rewrites them, so
+  // lex again.*
+  if (p.lx.parsed) { trap; }
   p.lx.parsed = true;
 
   DeclList decls = DeclList.create();

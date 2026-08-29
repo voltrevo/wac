@@ -13,8 +13,10 @@
 //   - the flag is set on the caller's own `Lexed`, not on a copy the parser took. If `Lexed` were
 //     ever handed around by value the guard would still compile, still look right, and never fire —
 //     and the trap test would still pass, because it holds the same object either way.
-//   - lexing again is the supported way to parse a program twice, and gives the same answer. That is
-//     what the trap's message tells a reader to do, so it is worth a test rather than a sentence.
+//   - lexing again is the supported way to parse a program twice, and gives the same answer. The
+//     trap cannot say so — wac-L5 has no `trap "…"` and wacc has to compile on it, `issues/lang/
+//     0286b` — so the advice lives in a comment at the trap and in this test, and a test is the
+//     half that cannot quietly stop being true.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
