@@ -44,7 +44,7 @@ Worth noting that `host/layout.ts` already described this shape from the other e
 That note is about *rebuilding* capabilities, where the identities genuinely differ and
 deduplication cannot help. This was the other case, and it failed on the **first** run.
 
-## The second fault, open
+## The second fault, fixed
 
 With the slots fixed, the same command gets further and then:
 
@@ -57,10 +57,30 @@ wac: Cannot read properties of undefined (reading 'Failed')
 is `undefined`: the host is building a capability whose *enum constructor the loaded module does not
 export*.
 
-That is very likely `issues/lang/0107`'s rule seen from the host side — a module exports constructors
-only for the types a signature in it reaches, and `app-run` builds a world for somebody else's
-module rather than for its own program. The native host does not go through `driver.ts` at all, which
-is why it never met either fault.
+It was simpler than that. `drive()` builds `classes` from `manifest.structs` and skipped any type
+with neither a static `of` nor a `create` — which is every **enum**. `Read` is one, so `cls.Read` was
+never set. The manifest had the variants all along, each with its own `make` export; nothing read
+them.
+
+Building a constructor per variant fixes it, and `wac app-run` on a JavaScript host now starts
+`packages/box`'s shell: `echo hello` answers. 123 platform tests and 33 box tests stay green.
+
+## The third fault, open
+
+A *pipeline* still does not work, and the shape is different again:
+
+```
+$ ./wac-deno app-run /tmp/app -c 'echo hello'
+hello
+$ ./wac-deno app-run /tmp/app -c 'seq 1 5 | /bin/wc -l'
+wacc: unknown command 'seq' — check, compile, build, bindgen, run, test…
+```
+
+That is the *host* answering, not the shell: a stage spawned with `spawnSelf` re-executed the
+JavaScript `wac` and handed it `seq 1 5` as a command line, rather than re-entering the application.
+On the native host `spawnSelf` re-enters the program inside the binary; under `app-run` on a
+JavaScript host the program lives in a file the launcher was pointed at, and something has to carry
+that.
 
 ## What it means for `design/system/0009`
 
