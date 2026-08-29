@@ -1,6 +1,6 @@
 # 0281 — a spawned child's working directory is not applied on the native host
 
-- **Status:** open — a known divergence, with one failed attempt already measured
+- **Status:** closed — fixed 2026-08-29
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** bug
@@ -49,7 +49,32 @@ Reverted. That measurement is the reason this is filed rather than fixed. It is 
 number: the knowledge exists as a comment on the function that has the bug, so the next person to
 meet the symptom re-derives it.
 
-## What the question actually is
+## Fixed: apply the child's cwd exactly when the child resolves its own paths
+
+The blind fold was wrong because it applied to *every* child. The distinction that separates the two
+cases is not frame-versus-world — it is **who resolves the path**, and the hosts already record it.
+
+`serveFsFor(sh)` in `packages/sh/src/exec.wac` is `!sh.fs.isPlainHost()`:
+
+- a shell on a **plain host** filesystem spawns with `serveFs` **false**, so the child reaches the
+  host itself and its own directory is the only base there is — `cd sub; cat f.txt`;
+- a shell on an **image** spawns with `serveFs` **true**, so every file operation goes up the channel
+  and the *parent* resolves it. Resolving again against the child's directory is what lost the image.
+
+The host can tell them apart already: `AsChild::fs_req` is `Some` exactly when a parent serves the
+filesystem, and its own note says *"`None` is a child that was spawned with `serveFs` false, and
+every program that was not spawned at all."* So `framed_path` folds in `cwd_override` only when that
+is `None`, behind a `resolves_own_paths` flag that says why.
+
+`cwd_override` itself is untouched, because `Cap::Cwd` must keep answering the child's directory
+either way — a program that cannot resolve its own paths still knows where it stands.
+
+    a spawned applet stands where the shell stands        ok
+    v8host image differential                             3 of 3   (the blind fold: 2 of 3)
+
+Green after: 236 Deno tests across box, sh and platform; 38 platform wac files; 19 box wac files.
+
+## What the question was
 
 Both halves are defensible and they conflict, which is what the failed attempt found:
 

@@ -484,6 +484,15 @@ struct HostState {
     inherits: bool,
     /// The directory a child was started in.
     cwd_override: Option<String>,
+    /// Whether this program resolves its own paths, or a parent resolves them for it.
+    ///
+    /// **True unless a parent is serving its filesystem.** A child spawned with `serveFs` sends every
+    /// file operation up the channel and the parent answers it, so the path it sends has already been
+    /// resolved by whoever handed it over — resolving it again against this program's own directory
+    /// is what broke `v8host_test.wac`'s image differential when `cwd_override` was folded in blind.
+    /// A child *without* that channel reaches the host itself, and then its directory is the only
+    /// base there is. `issues/system/0281c`.
+    resolves_own_paths: bool,
     /// Which ticket carries each child's exit code, by the handle its parent holds.
     child_exits: HashMap<i32, i32>,
     /// Each child's input queue, so `closeFeed` can end it.
@@ -1100,6 +1109,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             child_input: as_child.input.clone(),
             inherits: as_child.inherits,
             cwd_override: as_child.cwd.clone(),
+            // `fs_req` is `Some` exactly when the parent agreed to serve this child's filesystem —
+            // see `AsChild::fs_req`, whose own note says `None` covers both a `serveFs false` child
+            // and a program nobody spawned.
+            resolves_own_paths: as_child.fs_req.is_none(),
             child_exits: HashMap::new(),
             child_feeds: HashMap::new(),
             wasm: wasm.to_vec(),
@@ -1902,7 +1915,15 @@ fn framed_path(path: &str) -> String {
     let base = HOST.with(|h| {
         let b = h.borrow();
         let s = b.as_ref()?;
-        s.frames.last().map(|f| f.cwd.clone())
+        // **The frame's `cwd`, then this program's own — but only if it resolves its own paths.**
+        // A frame is an applet running in process and its directory always wins. Below that, a
+        // spawned child's directory is the base for a path *it* built, which is what makes
+        // `cd sub; cat f.txt` find the file: the applet is a child of the shell and stands where the
+        // shell stands. It is not the base for a child whose parent resolves paths on its behalf.
+        // `issues/system/0281c`.
+        s.frames.last().map(|f| f.cwd.clone()).or_else(|| {
+            if s.resolves_own_paths { s.cwd_override.clone() } else { None }
+        })
     });
     let cwd = match base {
         Some(d) if !d.is_empty() => d,
