@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0289b](open/0289b-the-cast-diagnostic-names-three-fixes-and-all-three-fail.md) | the help on a refused `i32` to `u8` cast names three operators and all three are refused the same way; `u8` is packed, so no operator can spell it | diagnostic | compile error — the right one, with help that cannot be followed |
 | [0282b](closed/0282b-waccs-bindgen-surfaces-unsigned-returns-as-signed.md) | wacc's bindgen emits neither `>>> 0` nor `asUintN`, so every `u32`/`u64` above the signed range reaches JS negative — `issues/lang/0039` in the other implementation | bug | wrong answer |
 | [0284b](closed/0284b-a-wapy-files-lexer-diagnostics-are-rendered-with-the-parsers-table.md) | a `.wapy` file's lexer errors are handed back in the parse slot, so all seven render as "the parser refused this" — the codes are right and the table is wrong | diagnostic | wrong answer |
 | [0285b](open/0285b-a-module-level-const-array-is-unreachable-because-wac-l5-cannot-compile-one.md) | wacc cannot hold a generated lookup table: a module-level `const` array is refused by wac-L5 and a plain global traps, so the ladder is what bounds it | missing feature | invalid wasm |
@@ -47,7 +48,7 @@ has been fixed and why.
 
 ## Closed
 
-227 issues, 200 closed.
+228 issues, 200 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
