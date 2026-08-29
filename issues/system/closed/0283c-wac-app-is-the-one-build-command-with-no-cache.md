@@ -1,6 +1,6 @@
 # 0283 — `wac app` is the one build command with no cache, and it is the most cacheable
 
-- **Status:** open
+- **Status:** closed — fixed 2026-08-29
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** performance
@@ -58,3 +58,28 @@ so for a run.
 The cache's own comment says why the miss is total rather than partial: *"Each of those is a miss
 forever rather than a wrong hit"* — which is the right instinct for a command whose key is unclear,
 and `app`'s is clearer than `build`'s.
+
+
+## Fixed
+
+Two edits, because the key was already right. `buildCachePath`'s key eats the stem only for `build`:
+
+    h.eat(cmd);
+    h.eat(cmd == "test" ? target : entry);
+    h.eat(cmd == "build" ? baseName(stem) + ".wasm" : "");
+
+So `app` needed an arm in the guard above it, and a hit path. What is stored is the **sealed module**
+rather than the finished file — an app is that module behind two shell lines, so a hit rebuilds the
+artefact with `writeApp` exactly as a miss does. Putting the preamble in the cache would be storing
+the one part that costs nothing.
+
+    wc.wac    1s → 0s        box.wac   4s → 1s        identical bytes both
+
+**And the wrong-hit cases were checked rather than assumed**, because the cache's own note says the
+right instinct is *"a miss forever rather than a wrong hit"*:
+
+    same entry, different destination   hits, identical bytes      — the point
+    same entry, different grants        does not hit, bytes differ — grants are in the manifest
+
+Green: `app_test.wac` 7 of 7, `packages/box` 85 Deno tests, `packages/platform/test/wac` 38 of 38,
+docs 23 of 23.
