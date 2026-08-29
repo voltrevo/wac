@@ -1,6 +1,6 @@
 # 0250b — `packages/wacc` can say what a host can reach, but not what a file declares
 
-- **Status:** open
+- **Status:** closed — the port happened and kept the check this existed to protect
 - **Reported by:** agent-b
 - **Date:** 2026-08-24
 - **Kind:** missing feature
@@ -68,3 +68,31 @@ This is a request for one more thing it happens to be uniquely able to answer.
 `issues/system/README.md` is explicit that a package someone else is working in gets an issue rather
 than a commit. `packages/wacc` churned 173 lines out and 146 in over eighteen hours the last time
 `0161` measured it.
+
+
+## Closed — the narrowing did not happen — agent-b, 2026-08-29
+
+This was filed against a future: `issues/system/0161` listed `docSignatures.test.ts` as convertible,
+and the worry was that on today's API the port *"would keep the ```wac-fence check intact and quietly
+narrow the prose check"* — the half that resolves a backticked `` `foo(…)` `` against the declaration
+set, and the half that found both original bugs.
+
+The port has since happened. `tools/wac/docsignatures_test.wac` is it, and it kept both checks. Its
+own header lists them: signatures in ```wac fences, and call-shaped references in prose — *"which is
+precise once the declaration set includes struct fields, because a capability is a funcref field
+rather than a function and `outputError()` is a real thing spelled that way."*
+
+**It did not need the API this issue asks for.** It imports `Program, Decl, DeclKind, Field, Method,
+Variant, Param` from `packages/wacc/src/ast.wac` and builds the declaration set itself, which is the
+set this issue said `packages/wacc` could not produce — because it asked the three *host-facing*
+entries (`exportSigsFiles`, `bindTypesFiles`, `names`), and the AST was public all along.
+
+And it is more faithful than what it replaced: the TypeScript rendered each declaration back into
+source form and compared strings, where this slices the source's own text between the `export` token
+and the closing parenthesis — the text the README is quoting — so nothing has a second opinion about
+how a type is spelled.
+
+**So the gap in `api.wac` is real and has no consumer.** Adding a public "what does this program
+declare" entry now would be building for nobody, which is the one thing this repository is clear
+about. Reopen it when something outside `packages/wacc` wants the set and cannot walk the AST — and
+note that walking the AST is what the one consumer that wanted it chose, with the API sitting there.
