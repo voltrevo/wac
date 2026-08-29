@@ -55,7 +55,7 @@ async function gnuOptions(tool: string): Promise<string[]> {
 }
 
 Deno.test("a long option is one word, not a bundle of short ones", async () => {
-  const { buildApp } = await import("../../platform/build.ts");
+  const { buildApp } = await import("../../../harness/buildApp.ts");
   const built = await Deno.makeTempFile({ prefix: "wacsh-long-" });
   try {
     await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
@@ -93,7 +93,7 @@ Deno.test("a long option is one word, not a bundle of short ones", async () => {
 Deno.test({
   name: "no option that GNU has is called invalid — a gap says it is a gap",
   fn: async () => {
-    const { buildApp } = await import("../../platform/build.ts");
+    const { buildApp } = await import("../../../harness/buildApp.ts");
     const built = await Deno.makeTempFile({ prefix: "wacsh-gaps-" });
     try {
       await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
@@ -190,7 +190,7 @@ Deno.test({
 Deno.test({
   name: "the descriptor forms work, and the ones that cannot are named",
   fn: async () => {
-    const { buildApp } = await import("../../platform/build.ts");
+    const { buildApp } = await import("../../../harness/buildApp.ts");
     const built = await Deno.makeTempFile({ prefix: "wacsh-redir-" });
     try {
       await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
@@ -270,7 +270,7 @@ Deno.test({
 // working is the reason the check looks at the *name* beside the operator rather than the operator:
 // `5--3` is `5 - (-3)` and answers 8 in both shells.
 Deno.test("arithmetic increment and assignment are refused by name, not called syntax errors", async () => {
-  const { buildApp } = await import("../../platform/build.ts");
+  const { buildApp } = await import("../../../harness/buildApp.ts");
   const built = await Deno.makeTempFile({ prefix: "wacsh-arith-" });
   try {
     await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });

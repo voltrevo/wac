@@ -22,7 +22,7 @@
 
 import { KNOWN, sameName } from "../../../tools/corpusStderr.ts";
 import { loadNow } from "../../../harness/bounded.ts";
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
