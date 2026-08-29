@@ -19,15 +19,21 @@ wrong for a fortnight. The point of the page is that the next cut starts from nu
 push — the three-line lump at the bottom of the old estimate was never measured and turned out to be
 24 seconds:
 
-    pull+seed      1s
-    suite        469s
-    docs          14s
-    site           9s
-    ratchets     129s
-    ------------------
-    total        622s
+    run 1          run 2
+    pull+seed      1s             0s
+    suite        469s           394s
+    docs          14s            13s
+    site           9s             9s
+    ratchets     129s           130s
+    --------------------------------
+    total        622s           546s
 
-So it is **ten and a half minutes, not twelve**, and the suite is 75% of it. The estimate this page
+So it is **nine to ten minutes, not twelve**, and the suite is about three quarters of it.
+
+**The two runs are not a before-and-after and must not be read as one.** Run 2 is the first with the
+suite queue ordered by measured cost, but it also carried 1076s of work against run 1's 1260s — the
+machine was quieter. Against each run's own floor: 469/362 = 1.30, then 394/318 = 1.24. Suggestive,
+not conclusive, and the way to settle it is two runs adjacent in time rather than two an hour apart. The estimate this page
 opened with is kept below for the record:
 
     suite                452s   (before 0274b; crypto's chunk has since gone 195s -> 25s)
@@ -59,9 +65,48 @@ test 6s or below. That was `wac ctcompare` reading a journal's capacity rather t
 crossing into wasm rather than anything the host wrapper does. That half is closed too — the module
 folds its own journal now — and the file is **8s**, the chunk 25s. 0274b has the anatomy.
 
+**`packages/wac` is one file, and it is `buildcache_test.wac` at 105s.** Timed one at a time, the
+package's seventeen files:
+
+    105.7s  buildcache_test.wac        6 tests
+     12.2s  app_test.wac
+      8.1s  testcli_test.wac
+      7.3s  covdump_test.wac
+      ...the other thirteen under 5s each
+
+8.6x the next file and more than half the package. The cost is per *test* and uniform — 15.7s, 15.8s,
+20.3s for the three measured alone — because each one points `WAC_HOME` at a fresh directory, which
+is the whole point (it is testing a build cache, so it must start without one) and also means
+`wac run … wacc.wac` recompiles the compiler-as-a-program every time.
+
+**Left alone deliberately.** Its header explains why it runs the checkout's `wacc.wac` rather than
+`wac build`: the binary carries a *seed*, so `wac build` would test the compiler the change under
+test is not in. Sharing the wacc compile across the six tests while keeping each subject's cache
+fresh is possible and is somebody's careful decision to make, not a passing optimisation — and at
+~70s of 1076s of suite work it is worth less than it looks, since the suite's floor is set by total
+work over four workers rather than by any one file.
+
 **wacc is not one file, and not compile overhead.** Its 81 non-heavy files are 274s warm, and the
 top ten are 229s of it. The build cache works well — a wacc test is **1,990ms cold and 118ms warm** —
 so "the suite recompiles everything" is not the story it looks like.
+
+Timed one at a time, its 82 non-heavy files rank:
+
+    71.7s  commandparity_test.wac
+    27.6s  collide0234_test.wac
+    27.0s  latearray0271_test.wac
+    24.8s  manyfiles_test.wac
+    23.1s  bootstrapemit_test.wac
+           ...and a tail of 77 more
+
+One outlier at 2.6x the next and then nothing — so unlike `packages/crypto` and `packages/wac`,
+there is no second file to find here.
+
+**Those figures sum to 585s where the suite spends about 234s on the same files**, and the gap is not
+a contradiction: a chunk of twelve shares one `wac test` invocation and one aggregate compile, while
+timing a file alone pays that per file. It works out at roughly 4s of fixed cost per invocation,
+which is the number behind `chunkSize()` being 12 rather than 1 — and worth knowing before anyone
+reads a per-file timing as a per-file cost.
 
 Its biggest is `commandparity_test.wac` at **78s**, and that file already explains itself: three
 hosts each compile a 219-file program, up from 44 files when the command became one payload
