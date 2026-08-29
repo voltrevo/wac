@@ -76,6 +76,28 @@ log="$(mktemp -t push-suite-XXXXXX.log)"
 guardDenoCache() {
   ./native/v8/target/release/wac run --allow-read --allow-write --allow-env tools/runTests.wac -- guard
 }
+# **Before the suite rather than after it fails.** `guardDenoCache` clears when Deno's *code cache*
+# is over its own size limit, which is a different question from whether there is room to run: on
+# 2026-08-29 the code cache was well under the limit and `df` said **112 MB free, 100%**, because most
+# of this overlay belongs to the host and not to us. The suite then started, and what came back was a
+# `Deno.mkdir` failure inside `harness/buildCache.ts`, reported as a *test* failing in
+# `packages/wacc/test/wac/files_test.wac`. Nothing in that message says "disk", so the first guess is
+# whatever the change touched — which cost a real investigation before `df` was run.
+#
+# The reactive path below still exists and still matters, because the disk can fill *during* a run.
+# This only stops the case where it was already full before the run started, which is a whole suite
+# and a cooldown for a fact `df` answers instantly.
+#
+# 2 GB, because a suite's own artefacts are a few hundred megabytes and the margin is worth more than
+# the cache being kept: clearing it costs the next build some time and nothing else.
+guardDiskSpace() {
+  avail=$(df -P / 2>/dev/null | awk 'NR == 2 { print $4 }')
+  [ -z "$avail" ] && return 0
+  [ "$avail" -ge 2097152 ] && return 0
+  echo "== $((avail / 1024)) MB free before the suite — clearing Deno's caches first =="
+  freeDenoCache
+}
+
 freeDenoCache() {
   echo "== the disk is full and it is not this change: clearing Deno's caches and retrying =="
   du -sh "$HOME/.cache/deno"/* 2>/dev/null | sort -h | tail -3
@@ -197,6 +219,7 @@ tPre=$SECONDS
 
 for attempt in 1 2 3; do
   guardDenoCache
+  guardDiskSpace
 
   # There used to be a `git -C ../wac pull` here. The compiler was a separate repository and this
   # one was `wac-mono`, so `../wac` was the sibling checkout the version pin pointed at, and the
