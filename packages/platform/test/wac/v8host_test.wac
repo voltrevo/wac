@@ -70,12 +70,15 @@ const string SCRIPT =
  * real child through `spawnSelf` — a separate instance with its own grants. They are the same commands
  * over two entirely different host paths, and the first script only ever exercises the first.
  *
- * **Adding one `cp` to this script is red today, and the bug is filed rather than the case.**
- * `cp MERGE.md copied.txt` then reading the file back gives 6667 bytes on the Deno host and **0** on
- * the V8 one — an empty file, nothing said, exit 0. It depends on the script arriving on *standard
- * input*, which is how this test drives the shell: through `-c` both hosts are right.
- * `issues/system/0285c`. Put the case back on the day it closes; it is three lines and it is the only
- * thing here that reaches a spawned applet's own output.
+ * **The two file-reading lines below are what found `issues/system/0285c`**, and they are here
+ * because nothing else in this file reaches a spawned applet reading a named file. On the V8 host
+ * such an applet read *its parent's queue* instead of the file it had opened: usually empty, so
+ * `wc -c` said `0` and `sha256sum` gave the hash of the empty string, and when the parent still had
+ * input left it printed **that** instead of the file. Deno and wasmtime were right throughout.
+ *
+ * Worth knowing which assertion catches it: an empty-file check does **not**. The first version of
+ * this case asserted 0 bytes against 6667 and would have passed against a host handing back the
+ * parent's bytes. What catches it is comparing the two hosts, which is what this file already does.
  *
  * That gap hid `issues/system/0148` for two days. The spawning path was broken twice over on this
  * host: argv was read with the `string[]` accessors when `spawn` passes `u8[][]`, so children were
@@ -83,15 +86,33 @@ const string SCRIPT =
  * channel number wac reserves as 1, was the first handle this host's socket allocator handed out.
  * Neither could fail the comparison above, because `pushChild` reaches neither.
  */
-const string SPAWNING_SCRIPT =
-  // An applet on its own: the smallest thing that re-enters `main` as a multi-call entry.
-  "seq 1 3\n" +
-  // A pipeline, so more than one child exists at once and the parent reads both.
-  "seq 1 5 | sort -nr | head -1\n" +
-  // An applet that takes an argument, because argv arriving *empty* was the first fault: a child
-  // given no arguments runs the shell, prints nothing and exits 0, which reads as success.
-  "echo spawned ok\n" +
-  "echo done\n";
+string spawningScript(string dir) {
+  return
+    // An applet on its own: the smallest thing that re-enters `main` as a multi-call entry.
+    "seq 1 3\n" +
+    // A pipeline, so more than one child exists at once and the parent reads both.
+    "seq 1 5 | sort -nr | head -1\n" +
+    // An applet that takes an argument, because argv arriving *empty* was the first fault: a child
+    // given no arguments runs the shell, prints nothing and exits 0, which reads as success.
+    "echo spawned ok\n" +
+    // A spawned applet reading a **named file**. Nothing above reaches one: every command here
+    // either reads its parent's pipe or nothing at all, and that is the gap `issues/system/0285c`
+    // sat in. Two applets rather than one because they fail differently — `wc -c` answers a
+    // plausible `0`, and `sha256sum` answers the hash of the empty string, which is the fingerprint.
+    //
+    // **The fixture is this test's own**, six bytes it wrote itself, rather than a file in the repo.
+    // The first version of this case read `MERGE.md`, whose size and hash are another agent's to
+    // change: an assertion that has to be re-typed when an unrelated file grows is one that will
+    // eventually be re-typed wrongly.
+    "cd " + dir + "\n" +
+    "wc -c f.txt\n" +
+    "sha256sum f.txt\n" +
+    "echo done\n";
+}
+
+/** `sha256sum` of the six bytes `spawningScript` writes — a constant because the fixture is fixed. */
+const string FIXTURE_SHA =
+  "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
 
 /** The V8 host binary, or "" with the reason said out loud. */
 string v8Host(Core core, Cli cli) {
@@ -272,18 +293,22 @@ export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_h
   Programs p = programs(cli);
   t.eqStr(p.error, "", "the programs built");
   if (!p.ok) { return t.report(); }
-  Ran onDeno = run(cli, p.spawnshDeno, string[0](fill: ""), SPAWNING_SCRIPT);
+  string dir = freshScratch(t, cli, "spawnfile");
+  cli.writeFile(dir + "/f.txt", "hello\n".toBytes()).wait();
+  string script = spawningScript(dir);
+  Ran onDeno = run(cli, p.spawnshDeno, string[0](fill: ""), script);
 
   // **Asserted before it is compared.** Two hosts that both print nothing agree perfectly, and that is
   // exactly the state this test exists to catch: before 0148 was fixed the V8 host printed *nothing at
   // all* for every line of this script.
   t.eqStrArray(trimmedLines(onDeno.out),
-               string[]("1", "2", "3", "5", "spawned ok", "done"),
+               string[]("1", "2", "3", "5", "spawned ok", "6 f.txt",
+                        FIXTURE_SHA + "  f.txt", "done"),
                "the Deno half: " + onDeno.err);
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { return t.report(); }
-  Ran onV8 = run(cli, v8, string[](p.spawnshStem + ".wasm"), SPAWNING_SCRIPT);
+  Ran onV8 = run(cli, v8, string[](p.spawnshStem + ".wasm"), script);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
