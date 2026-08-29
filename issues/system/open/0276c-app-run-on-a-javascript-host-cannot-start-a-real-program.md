@@ -76,11 +76,25 @@ $ ./wac-deno app-run /tmp/app -c 'seq 1 5 | /bin/wc -l'
 wacc: unknown command 'seq' — check, compile, build, bindgen, run, test…
 ```
 
-That is the *host* answering, not the shell: a stage spawned with `spawnSelf` re-executed the
-JavaScript `wac` and handed it `seq 1 5` as a command line, rather than re-entering the application.
-On the native host `spawnSelf` re-enters the program inside the binary; under `app-run` on a
-JavaScript host the program lives in a file the launcher was pointed at, and something has to carry
-that.
+That is the *host* answering, not the shell: a stage re-executed the JavaScript `wac` and handed it
+`seq 1 5` as a command line, rather than re-entering the application.
+
+**The cause is one field.** `spawnSelf` has no source argument — its whole point is that the host
+already has this program, because it is what started it. `entry.ts` supplies that as
+`selfSource: workerSource`, and `workerSource` is the *launcher's* worker bundle. That is right for
+an ordinary built application, where the launcher and the program are the same thing.
+
+Under `app-run` they are not. The launcher's program is the `wac` command; the program actually
+running is a module loaded out of the file it was pointed at. So `selfSource` starts `wac`, with the
+stage's argv, and `wac` says it does not have a command called `seq`.
+
+The machinery for the right answer is already there and already passed in beside it: `moduleEntry` is
+the generic entry for starting a *module* as a child, which is exactly what a loaded module's
+`spawnSelf` needs — that entry plus the app's own bytes. So this is a matter of the world built for a
+loaded module carrying its own `selfSource` rather than inheriting the launcher's, not of new
+machinery.
+
+The native host never meets this because its `spawnSelf` re-enters the program inside the binary.
 
 ## What it means for `design/system/0009`
 
