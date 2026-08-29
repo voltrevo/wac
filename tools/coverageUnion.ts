@@ -60,6 +60,7 @@ const parse = (text: string): Table => {
 // others is a driver whose *timings* are noise — the point sets are the same either way, but a run
 // that takes twice as long for no reason is one nobody repeats.
 const tables = new Map<string, Table>();
+const failed: string[] = [];
 for (const pkg of wanted) {
   const cmd = TASKS[`coverage:${pkg}`];
   const parts = cmd.split(/\s+/).filter(Boolean);
@@ -76,6 +77,7 @@ for (const pkg of wanted) {
     `${pkg.padEnd(12)} ${String(rows).padStart(6)} points  ` +
       `${((performance.now() - started) / 1000).toFixed(1)}s${code === 0 ? "" : `  (exit ${code})`}`,
   );
+  if (code !== 0) failed.push(pkg);
   if (rows > 0) tables.set(pkg, table);
 }
 
@@ -133,3 +135,13 @@ console.log(
 console.log(
   "A package's own floor is unaffected and should be: this is the reason column, not a ratchet.",
 );
+
+// **A driver that exited non-zero contributed a partial table**, and a partial table can only make
+// the union smaller — so every figure above is a floor rather than an answer. Said out loud because
+// the direction is the reassuring one, which is exactly how it would go unnoticed.
+if (failed.length > 0) {
+  console.log(
+    `\n${failed.length} driver(s) exited non-zero — ${failed.join(", ")}. Their point sets are ` +
+      `whatever they reached before stopping, so the gains above are understated.`,
+  );
+}
