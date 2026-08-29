@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `wac task map` after adding a package or an entry point; `wac task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-39 packages, 142,096 lines of wac, 2929 tests,
-82 command-line programs and 11 browser pages.
+40 packages, 147,381 lines of wac, 2965 tests,
+83 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -30,6 +30,7 @@ In dependency order: nothing here imports anything below it.
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point. | 1,321 | 59 | `bytes` `fmt` |
 | [`raster`](packages/raster/) | A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell. | 1,084 | 28 | `fmt` `unicode` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 13 | `fmt` |
+| [`ts`](packages/ts/) | TypeScript to JavaScript, in wac. | 2,342 | 40 | `fmt` `gzip` |
 | [`server`](packages/server/) | An HTTP server written in wac. | 328 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,061 | 55 | `crypto` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 143 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `tls` `unicode` `url` `zstd` |
@@ -47,10 +48,10 @@ In dependency order: nothing here imports anything below it.
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 32 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,435 | 200 | `bytes` `codec` `crypto` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,451 | 324 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `tls` `wactest` |
-| [`wac`](packages/wac/) | The command. | 4,664 | 66 | `box` `fmt` `fs` `json` `platform` `sh` `wacc` `wacpkg` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 40,030 | 399 | `bytes` `codec` `crypto` `fmt` `sh` |
+| [`wac`](packages/wac/) | The command. | 5,009 | 68 | `box` `fmt` `fs` `json` `platform` `sh` `wacc` `wacpkg` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 42,621 | 393 | `bytes` `codec` `crypto` `fmt` `sh` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,816 | 50 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
-| [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 2,287 | 35 | `bytes` `crypto` `fmt` `json` |
+| [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 2,294 | 35 | `bytes` `crypto` `fmt` `json` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,754 | 79 | `crypto` `fmt` `gzip` `tls` |
 
 ## Programs
@@ -69,6 +70,7 @@ reach — see `packages/platform/README.md`.
 | `packages/tty/example/ttycat.wac` | A terminal and a `cat` behind it, so the line discipline can be compared with the kernel's. |
 | `packages/http/example/tunnel.wac` | `tunnel <host> <port>` — open a `CONNECT` tunnel through the proxy in `$HTTP_PROXY` and say so. |
 | `packages/raster/example/deskshot.wac` | The desktop, drawn and written out as a PPM — the same program on every host. |
+| `packages/ts/src/main.wac` | `ts` as a command: read TypeScript, write JavaScript. |
 | `packages/box/example/boxsh.wac` | `box` and the shell in one command-line program — the twin of `term.wac`, without a browser. |
 | `packages/box/example/desk.wac` | A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started. |
 | `packages/box/example/term.wac` | A shell, in a browser tab. |
