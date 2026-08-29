@@ -65,6 +65,35 @@ place a peer, a file or a script can be wrong, which a differential against bash
 the two agree on what works and disagree on what this declines to do. That is one rule covering
 sixteen points, and it is written already — in prose, in the wrong file, where nothing can check it.
 
+## The 1,036 by kind, and the 44 that are whole functions
+
+    358  then          101  ternary       77  loop        32  case
+    276  else           85  and           63  or          44  entry
+
+`entry` means a function nothing ever calls, and 44 of them is the tractable end of this: each is one
+explanation covering every branch inside it, rather than an entry per branch. 36 are in `exec.wac`,
+which is where 865 of the points are.
+
+They are not scattered. Resolved to names, they fall into four families:
+
+* **job control** — `jobsBuiltin`, `killBuiltin`, `killList`, `waitBuiltin`, `reapJob`, `endJob`,
+  `jobIndex`, `jobOfPid`, `dropFinished`, `stopAll`, `stopStage`, `spawnStage`, `streamPipeline`,
+  `breakOrContinue`. A whole subsystem, and `issues/system/0135` is an open bug about backgrounding a
+  builtin — worth reading together, though that issue is about a defect and this is about a hole in
+  the exercise.
+* **filesystem builtins** — `cd`, `ls`, `mkdir`, `rm`, `mtimeOf`, `onFs`, `ownership`, `octalMode`,
+  `statReason`.
+* **refusals** — `refused`, `optionRefusal`, `tryHelp`, `gnuHas`, and all four of `refusal.wac`'s
+  uncovered entries. This is the family `packages/sh/cov.ts` already explains in prose.
+* **lexer helpers** — `isName`, `nameByte`, `nameStart`, `isAllDigits`, `isBlankAt`, `hexValue`,
+  `endsWithColon`, `ansiEscape`, `declaredLocal`, `localVar`, `spawnableName`, `enterSelf`.
+
+So the writing is four or five rules and a tail, not a thousand sentences — and two of the families
+say something worth knowing on their own. A shell whose `cd`, `ls`, `mkdir` and `rm` are never
+entered by its own coverage exercise is a fact about the exercise; whether it is also a fact about
+the tests is the first thing the ledger's author has to check, because a rule has to say which other
+test drives the code and be right about it.
+
 ## What it would take, sized
 
 1036 points is the reason this is filed rather than done. The ledger is not one entry per point —
