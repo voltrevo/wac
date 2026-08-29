@@ -501,3 +501,19 @@ many programs this package compiles.
 Which makes the two live levers `issues/lang/0153` (that second) and `issues/system/0287b` (the build
 cache being off on every host but `native/v8`, so two thirds of `commandparity_test.wac`'s
 invocations cannot hit it even when the same fixture is compiled nine times).
+
+
+**Nothing in the largest chunk is a defect**, which is worth writing down so it is not asked again.
+Timed one file at a time, the six of its twelve that are not trivial:
+
+     71.7s  commandparity_test.wac      (0153, and 45% of the chunk)
+     17.2s  specfences_test.wac         every fence in the spec, compiled
+     16.3s  bindgenwac_test.wac
+     13.4s  cases_test.wac
+      5.6s  scoping_test.wac
+      1.7s  tour_test.wac
+
+The rest reach the chunk's 159.3s between them. Each of those is doing what it says — specfences
+compiles a few hundred programs and is near the floor for that — so there is no single slow test to
+find here. The chunk is large because `commandparity_test.wac` is, and that file is large for the
+reason above rather than for one of its own.
