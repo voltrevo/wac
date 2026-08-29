@@ -163,7 +163,7 @@ export default function Bootstrap() {
               <span style={{ fontFamily: font.mono }}>wac-L5</span>,
               "wac itself — all of core/ and all of wacc/src",
               "wac-L4",
-              "4,082 lines",
+              "4,092 lines",
             ],
           ]}
         />

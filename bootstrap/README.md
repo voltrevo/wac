@@ -106,7 +106,7 @@ everything above it is trusted by derivation.
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 298 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 591 lines |
 | **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,331 lines |
-| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,082 lines |
+| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,092 lines |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names
