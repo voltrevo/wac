@@ -172,7 +172,18 @@ string oneSize(Core core, Cli cli, i32 bits) {
   // written some moments after `openssl` has exited. Reading immediately passed on an idle machine
   // and failed under a loaded gate, which is the shape of a race rather than of a signature problem.
   // The `listening` line above is waited for the same way and for the same reason.
-  t.isTrue(waitForLogWithin(core, cli, d, "received GET /", 5000),
+  //
+  // **And for the same 20 seconds, since 2026-08-29.** It was 5,000 ms while the line above it was
+  // 20,000, and that asymmetry is what failed: a gate run turned red here, and the same test passed
+  // on its own in 2s immediately afterwards — `issues/system/0203`'s eleventh entry. The two waits
+  // are one relay and one machine, so a deadline that is right for *listening* is right for the
+  // request that follows it; the shorter one was not a measurement of anything, and 5s against a
+  // sub-second normal is not the 3-5x a timeout wants when three agents share five cores.
+  //
+  // What this costs is that a server which genuinely never answers takes 20s to say so instead of 5.
+  // That is the right trade for a check whose failure is otherwise indistinguishable from a real
+  // signature bug — which is exactly how it read when it fired.
+  t.isTrue(waitForLogWithin(core, cli, d, "received GET /", 20000),
            "our server got a request — the handshake completed. openssl said: " + err);
   t.isTrue(contains(out, BODY), "OpenSSL got the body. stdout: " + out + " stderr: " + err);
   // The signature scheme is the point: OpenSSL verified an RSA-PSS CertificateVerify made by us,
