@@ -280,6 +280,22 @@ ones:
    `wac app` makes a 74 KB file that needs `wac` on PATH; `build.ts --target deno` makes a
    self-contained one that needs only the runtime. Different products for different situations.
 
+### The decision, and what it costs
+
+**`packages/platform/build.ts` keeps the browser build and loses the rest**, then gets a name that
+says so. It is flagged in its own header rather than renamed yet, because renaming it while it still
+builds three targets would be a second wrong name.
+
+Removing the `deno` and `node` targets costs two things, measured:
+
+- **~20 `buildApp` calls across 12 files in `packages/box/test/`**, nearly all on the default target.
+  Each becomes a `wac app` invocation — mechanical, and arguably better, since it would test the
+  command that ships rather than a second builder standing beside it.
+- **`packages/box/test/node_shell.test.ts` passes `"node"` deliberately**: it is a test *of* the
+  Node-hosted path, so it needs a Node-hosted build to exist. That one moves to whatever
+  `bootstrap.sh --host nodejs` produces, not to `wac app`, and it is the reason this is a migration
+  rather than a deletion.
+
 ### What is redundant, and what is not
 
 The **browser** target has no other home: a page must carry its host, and nothing else builds one.
