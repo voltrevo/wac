@@ -45,6 +45,29 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
            "only " + itoa(cases.len()) + " cases read from spec/cases — did the walk resolve?");
   if (cases.len() < 200) { return t.report(); }
 
+  // **And the count is exact, because a floor stops tracking what it was a floor under.** 200 was
+  // about 97% of the corpus when it was written — the comment above says 206 — and the corpus is 306
+  // now, so the canary had grown a third of slack without anyone changing it. A walk that started
+  // dropping every fourth case would still clear it.
+  //
+  // Compared against a plain listing rather than a bigger constant, so it stays true as cases are
+  // added. It is not a tautology: `casesIn` filters what it walks, and this asks the directory
+  // directly, so a filter that starts narrowing — a case named `.WAC`, a suffix check that changes —
+  // is the difference between the two numbers. What it cannot catch is the capability itself lying,
+  // which is what the floor above is still for.
+  string[]? entries = cli.readDir("spec/cases").wait();
+  t.isTrue(!(entries is null), "spec/cases could not be listed");
+  if (!(entries is null)) {
+    i32 wac = 0;
+    for (i32 i = 0; i < entries!.len(); i++) {
+      string n = entries![i];
+      if (n.len() > 4 && n.slice(n.len() - 4, n.len()) == ".wac") { wac = wac + 1; }
+    }
+    t.eqI32(cases.len(), wac, "spec/cases holds " + itoa(wac) + " `.wac` files and the walk loaded "
+        + itoa(cases.len()) + " — every case below is measured against the ones that were read, so "
+        + "the ones that were not read pass by being absent");
+  }
+
   // A directory of its own under `.cache`, removed at the end: ninety modules written straight into
   // `.cache` is ninety files beside every other test's artefacts, and identifiable ones are worth more
   // than tidy ones only while a failure is being read.
