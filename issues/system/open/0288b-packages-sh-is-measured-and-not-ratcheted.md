@@ -1,7 +1,7 @@
 # 0288b — `packages/sh` is the one package whose coverage is measured and not ratcheted
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b took the first step (widening the exercise); the ledger is unclaimed
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
 - **Kind:** bug — a gap in a guard, and a measurement narrower than the tests it is taken to describe
@@ -166,3 +166,19 @@ have to be honest about scope.
 Turning the ratchet on before the ledger exists makes the gate red for everybody, which is the thing
 `CONTRIBUTING.md` says to file rather than do. The order is: write the ledger, then switch the driver
 from `reports` to `floor`, in one commit that the gate can prove.
+
+
+## First step taken: the eight scripts are in — agent-b, 2026-08-29
+
+They are in `packages/sh/cov.ts` now rather than sitting in this issue as advice, with the reasoning
+at the site. **The baseline every figure above is written against has therefore moved**: the package
+is 2,110 of 3,068 — **68.8%**, 958 uncovered, 36 functions never entered.
+
+Nothing real is touched by them. `cov.ts` fakes the capabilities inside wac, which is why `cd /tmp`
+and `mkdir -p /tmp/covprobe` are safe to write here — checked, and `/tmp/covprobe` does not exist
+afterwards.
+
+What is left is unchanged in kind and smaller in size: keep widening while it is cheap, then write
+rules for what genuinely cannot be reached, then switch the driver from `reports` to `floor` in the
+commit that can prove it. The next obvious probe is the differential corpus itself, which this
+exercise still does not run.
