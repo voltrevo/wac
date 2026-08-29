@@ -55,13 +55,23 @@ string oneTestDir(Cli cli, T t, string name) {
   return dir;
 }
 
-/** The line beginning `<n> files:`, which is the line anybody reads. */
+/**
+ * The line beginning `<n> files:`, which is the line anybody reads — **without its time**.
+ *
+ * That line has carried ` in <t>` since 2026-08-29, and the cases below compare it whole because the
+ * counts are the claim. A wall time cannot be compared whole, so it is cut here rather than each
+ * case being loosened to `contains`: an assertion that checks a prefix would stop noticing anything
+ * added after it, which is exactly what this cut is protecting.
+ */
 string summaryOf(string out) {
   i32 from = 0;
   for (i32 i = 0; i <= out.len(); i++) {
     if (i == out.len() || out.slice(i, i + 1) == "\n") {
       string line = out.slice(from, i);
-      if (contains(line, " files: ") || contains(line, " file: ")) { return line; }
+      if (contains(line, " files: ") || contains(line, " file: ")) {
+        i32 at = line.indexOf(" in ");
+        return at < 0 ? line : line.slice(0, at);
+      }
       from = i + 1;
     }
   }

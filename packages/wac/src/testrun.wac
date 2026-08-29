@@ -795,10 +795,38 @@ export string sigsWithCounters(string sigs, bool covered) {
   return sigs + "__cov_init\t\t\n__cov_len\ti32\t\n__cov_get\ti32\ti32\n__cov_hash\ti32\ti32\n";
 }
 
-/** ` (12 ms)`, the way the native runner spells a test's wall time under `--verbose`. */
+/**
+ * A name padded so the times after it form a column.
+ *
+ * **A fixed column rather than the longest name**, because the lines are printed as each test
+ * finishes and the longest is not known until the last one has. 58 covers most of this repository's
+ * names; a longer one pushes its own time right rather than being truncated, since the name is the
+ * part a reader is looking for and the alignment is only there to help them scan.
+ */
+string column(string name) {
+  string out = name;
+  while (out.len() < 58) { out = out + " "; }
+  return out;
+}
+
+/** ` (12 ms)`, the way a test's wall time is spelled. */
 string tookMs(Core core, i64 began) {
   i64 took = (core.monotonicNanos().wait() - began) / 1000000;
   return " (" + itoa64(took) + " ms)";
+}
+
+/**
+ * How long a file's tests took, for the summary line: `1.4s` past a second, `340 ms` below it.
+ *
+ * Two scales because they answer different questions. Under a second the interesting digit is the
+ * hundred of milliseconds — is this file 40 ms or 400 — and above it nobody reads three digits of
+ * millisecond, they read "this one is the slow one".
+ */
+string elapsedText(Core core, i64 began) {
+  i64 ms = (core.monotonicNanos().wait() - began) / 1000000;
+  if (ms < 1000 as i64) { return itoa64(ms) + " ms"; }
+  i64 tenths = (ms + 50 as i64) / 100 as i64;
+  return itoa64(tenths / 10 as i64) + "." + itoa64(tenths % 10 as i64) + "s";
 }
 
 /**
@@ -856,8 +884,9 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
     // the repository is named that way today — 392 to 0 — which is why no test noticed.
     bool wantsTrap = (shown.len() > 11 && shown.slice(0, 11) == "test_traps_")
                      || (shown.len() > 9 && shown.slice(0, 9) == "testTraps");
-    // The clock only when it will be printed: a run that is not `--verbose` says nothing per test, and
-    // this is a host call per test on the JavaScript hosts.
+    // The clock only when it will be printed: `--quiet` says nothing per test, and this is a host
+    // call per test on the JavaScript hosts. The suite passes that flag and is where the host calls
+    // would add up — 2,700 of them for a figure nobody reads.
     i64 began = loud ? core.monotonicNanos().wait() : 0 as i64;
     i32[] before = profiling ? countersOf(cli, handle) : i32[0]();
     CallResult c = cli.call(handle, t.name, 0);
@@ -897,16 +926,24 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
       core.log("FAIL " + shown + " — " + c.text);
     } else {
       passed = passed + 1;
-      if (loud) { core.log("ok   " + shown + tookMs(core, began)); }
+      if (loud) { core.log("ok   " + column(shown) + tookMs(core, began)); }
     }
   }
   return Tally(passed, failed, filtered, ungranted, ungrantedCount, profileTests, profileSkipped);
 }
 
-/** The summary one run of tests prints: what passed, what failed, and what was left out. */
-void sayTally(Core core, Tally t) {
+/**
+ * The summary one run of tests prints: what passed, what failed, what was left out, and how long.
+ *
+ * **The time is on the summary and not only on each test**, because the two answer different
+ * questions: the per-test times say which one to look at, and this says whether the file is worth
+ * looking at at all. It is also the number a reader compares against the last run, and adding the
+ * per-test times by hand is not that.
+ */
+void sayTally(Core core, Tally t, i64 began) {
   core.log(itoa(t.passed) + " passed, " + itoa(t.failed) + " failed"
-           + (t.filtered > 0 ? ", " + itoa(t.filtered) + " filtered out" : ""));
+           + (t.filtered > 0 ? ", " + itoa(t.filtered) + " filtered out" : "")
+           + " in " + elapsedText(core, began));
 }
 
 /**
@@ -995,6 +1032,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     }
     i32[] all = i32[names.len()]();
     for (i32 i = 0; i < names.len(); i++) { all[i] = i; }
+    i64 began = core.monotonicNanos().wait();
     Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter, loud,
                        covTable, profileDir != "");
     // **Read before the handle goes.** The counters live in the module, so `unload` is the end of
@@ -1015,7 +1053,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
       core.log("(no test matches --filter " + filter + ")");
       return 1;
     }
-    sayTally(core, t);
+    sayTally(core, t, began);
     if (covTable != "") { sayCoverage(core, covTable, hit, string[0]()); }
     writeProfile(core, cli, profileDir, entry, t, uniqLines(tableLines(covTable)));
     return t.failed == 0 ? 0 : 3;
@@ -1040,6 +1078,10 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // The entry a profile is keyed by is what the caller named, which for a walk is the directory.
   string walkTests = "";
   string walkSkipped = "";
+  // The whole walk, for the summary — the per-file times below say which file, and this says
+  // whether the run was worth waiting for. Wall time, named as such: the CPU split the native
+  // command used to print is `getrusage` and not something a wac program is offered.
+  i64 runBegan = core.monotonicNanos().wait();
   for (i32 f = 0; f < files.len(); f++) {
     i32[] mine = i32[names.len()]();
     i32 count = 0;
@@ -1052,6 +1094,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     // there. One file named by a directory reads like one file named directly, plus the summary line
     // that says a directory was walked.
     if (files.len() > 1) { core.log("── " + files[f]); }
+    i64 began = core.monotonicNanos().wait();
     Tally t = runNamed(core, cli, m.handle, names, mine, count, grants, filter, loud,
                        covTable, profileDir != "");
     if (t.ungrantedCount > 0) {
@@ -1078,7 +1121,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     } else if (nothingMatched) {
       core.log("(no test matches --filter " + filter + ")");
     } else {
-      sayTally(core, t);
+      sayTally(core, t, began);
     }
     if (t.profileTests != "") { walkTests = walkTests + (walkTests == "" ? "" : ",") + t.profileTests; }
     if (t.profileSkipped != "") {
@@ -1149,7 +1192,8 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
            + (withFailures > 0 ? ", " + itoa(withFailures) + " with failures" : "")
            + (ungrantedFiles > 0 ? ", " + itoa(ungrantedFiles) + " needing a grant" : "")
            + (ungrantedTests > 0 ? ", " + itoa(ungrantedTests) + " test(s) skipped for a grant" : "")
-           + (unmatched > 0 ? ", " + itoa(unmatched) + " with nothing matching --filter" : ""));
+           + (unmatched > 0 ? ", " + itoa(unmatched) + " with nothing matching --filter" : "")
+           + " in " + elapsedText(core, runBegan));
   if (failingN > 0) {
     i32 wide = 0;
     for (i32 i = 0; i < failingN; i++) {

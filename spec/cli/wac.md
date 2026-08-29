@@ -217,18 +217,28 @@ path still runs it** — the exclusion is for the run that discovers, not a way 
 
 ### test: what a run prints
 
-A run prints a line per failure and a summary, and says nothing about a test that passed.
-`[§wac-cli-verbose-5vq3mk8]` `--verbose` adds a line per passing test as well:
-`ok   <name> (<n> ms)`, and `ok   <name> — trapped, as it says: <what>` for a `test_traps_*`
-export that passed by trapping.
+`[§wac-cli-verbose-5vq3mk8]` A run prints a line per test as it finishes — `ok   <name> (<n> ms)`,
+and `ok   <name> — trapped, as it says: <what>` for a `test_traps_*` export that passed by trapping —
+then a summary: `<p> passed, <f> failed in <t>`.
+
+**`--quiet` prints the summary alone**, which is what a caller running hundreds of files wants:
+`tools/runTests.wac` passes it, because the gate's log is read for what failed and a line per passing
+test buries that. Anything running one file is better served by the default.
+
+**This was the other way round until 2026-08-29** — silent unless `--verbose` — and the flag is gone
+rather than kept as a no-op. A test runner that says nothing until asked makes the ordinary case,
+one file, the one you have to know a flag to use; `deno test` and `cargo test` both name every test
+by default.
 
 The figure is wall time around the one call, and it is the only part of this output not compared
 between hosts — `packages/wacc/test/wac/commandparity_test.wac` maps it to `(N ms)` and compares
-everything else, which is a comparison a host printing no timing at all still fails.
+everything else, which is a comparison a host printing no timing at all still fails. The summary's
+`in <t>` is the same measurement over the whole file, two scales — `340 ms` below a second and
+`1.4s` above it.
 
-**The flag was accepted and ignored on three of the four hosts until 2026-08-24**, which is why it is
-written down now: it was spelled correctly, refused nothing, and did nothing, and no document said
-what it should have done.
+**The flag it replaces was accepted and ignored on three of the four hosts until 2026-08-24**, which
+is why any of this is written down: it was spelled correctly, refused nothing, and did nothing, and
+no document said what it should have done.
 
 ### Grants, and which side of the entry they go
 

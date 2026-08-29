@@ -577,6 +577,10 @@ void writeTimes(Cli cli, Took[] took, i32 n) {
 string[] runArgs(string[] targets, string[] ignore) {
   Names args = Names.create();
   args.push("test");
+  // **The tally only, because this is the suite.** `wac test` names every test it runs and how long
+  // each took, which is what somebody running one file wants and is 2,700 lines here — the gate's
+  // log is read for what failed, and a per-test line for everything that passed buries it.
+  args.push("--quiet");
   string[] grants = wacGrants();
   for (i32 i = 0; i < grants.len(); i++) { args.push(grants[i]); }
   if (ignore.len() > 0) {

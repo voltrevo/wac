@@ -110,10 +110,16 @@ bool put(T t, Cli cli, string path, string text) {
 }
 
 /**
- * `(12 ms)` becomes `(N ms)` — the one figure two hosts are allowed to disagree about.
+ * Every timing becomes `N` — the one figure two hosts are allowed to disagree about.
  *
  * A *map* rather than a strip, because the failure this row exists to catch is a host printing no
  * timing at all, and deleting the figure from both sides would call that agreement.
+ *
+ * **Two shapes, because the output has two.** `(12 ms)` after each test, and ` in 12 ms` — or
+ * ` in 1.4s` past a second — on the summary. The second was added on 2026-08-29 and this function
+ * was not, so every row failed on a millisecond: 22 of them, all reading `in 4 ms` against
+ * `in 3 ms`. Both scales collapse to the same token on purpose, since a host that took 1.4s where
+ * another took 4 ms has not disagreed about anything this file is asking.
  */
 string steadied(string s) {
   string out = "";
@@ -126,6 +132,22 @@ string steadied(string s) {
         out = out + "(N ms)";
         i = j + 4;
         continue;
+      }
+    }
+    if (i + 4 <= s.len() && s.slice(i, i + 4) == " in ") {
+      i32 j = i + 4;
+      while (j < s.len() && "0123456789.".indexOf(s.slice(j, j + 1)) >= 0) { j = j + 1; }
+      if (j > i + 4) {
+        if (j + 3 <= s.len() && s.slice(j, j + 3) == " ms") {
+          out = out + " in N";
+          i = j + 3;
+          continue;
+        }
+        if (j < s.len() && s.slice(j, j + 1) == "s") {
+          out = out + " in N";
+          i = j + 1;
+          continue;
+        }
       }
     }
     out = out + s.slice(i, i + 1);
@@ -246,10 +268,15 @@ string[][] cases() {
     // on every host — agreement, on a value that is wrong. A differential can pin that as easily as
     // anything else, and pinning it is how it would survive being fixed.
     string[]("test", "--allow-read", "src/breaks_test.wac"),
-    // **`--verbose`, which was accepted and ignored.** `unknownTestFlag` let it through — so it was
-    // spelled correctly and did nothing — while the native printed a line per passing test. A flag
-    // that is refused is a bad answer and a flag that is silently dropped is a worse one.
-    string[]("test", "--allow-read", "--verbose", "src/one_test.wac"),
+    // **`--quiet`, which is `--verbose` turned around.** Naming every test is the default as of
+    // 2026-08-29, so what needs a row is the flag that suppresses it — and the row above already
+    // covers the default, since every `test` row prints those lines now.
+    //
+    // Its ancestor is why this row exists at all: `--verbose` was accepted by `unknownTestFlag` and
+    // implemented by nobody on three of the four hosts — spelled correctly, doing nothing — while
+    // the native printed a line per passing test. A flag that is refused is a bad answer and a flag
+    // that is silently dropped is a worse one.
+    string[]("test", "--allow-read", "--quiet", "src/one_test.wac"),
     // **`tracestat`, which was a host command until it was not.** Two rows: the journal it reads, and
     // the sentence it says about a file that is not an instrumented module. The second is the one that
     // would have caught the move being half done — a host that still intercepted the command would
@@ -553,9 +580,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // A built Node program is not executable by itself; `node` runs it, as `spawn_test.wac` does.
     Said j = say(cli, dir, "node " + node, table[i]);
     string what = joined(table[i], " ");
-    // Timing is the one thing the header says is not compared, and `--verbose` prints some. Mapped to
-    // `(N ms)` rather than deleted: a host that printed no timing at all would pass a comparison that
-    // stripped the figure from both sides, and printing it is half of what that flag is.
+    // Timing is the one thing the header says is not compared, and every `test` row prints some now.
+    // Mapped to `(N ms)` rather than deleted: a host that printed no timing at all would pass a
+    // comparison that stripped the figure from both sides, and printing it is half of the point.
     string nOut = steadied(n.out);
     string dOut = steadied(d.out);
     string jOut = steadied(j.out);
