@@ -627,6 +627,27 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
 
 // ── The bootstrap block's two figures ──────────────────────────────────────
 
+Deno.test("site: the compiler's line count is the tree's, within a tenth", async () => {
+  // `~41,000 lines` when `packages/wacc/src` was 42,816 — 4% out, which the tilde covers and which
+  // will not stay 4%. Same tolerance and the same argument as the seed-size check below: a figure
+  // that moves with every commit should not be exact, and one nobody checks stops being a figure.
+  const root = new URL("../../", import.meta.url).pathname;
+  let lines = 0;
+  for await (const e of Deno.readDir(`${root}packages/wacc/src`)) {
+    if (!e.isFile || !e.name.endsWith(".wac")) continue;
+    lines += (await Deno.readTextFile(`${root}packages/wacc/src/${e.name}`)).split("\n").length - 1;
+  }
+  if (lines < 1000) throw new Error(`only ${lines} lines found — did the walk resolve?`);
+
+  const page = await Deno.readTextFile(`${root}site/src/next/Home.tsx`);
+  const said = page.match(/~([\d,]+) lines/);
+  if (said === null) throw new Error("Home.tsx no longer states a line count — has the wording changed?");
+  const n = Number(said[1].replace(/,/g, ""));
+  if (Math.abs(n - lines) > lines * 0.1) {
+    throw new Error(`the site says ~${said[1]} lines; packages/wacc/src has ${lines} — more than 10% out`);
+  }
+});
+
 Deno.test("site: the coverage-ledger count and the list of packages without one are the tree's", async () => {
   // **Both halves had drifted.** The page said "36 of the 39 packages" and named three without a
   // ledger; there are 40 packages and four without one — `packages/ts` had arrived and joined the
