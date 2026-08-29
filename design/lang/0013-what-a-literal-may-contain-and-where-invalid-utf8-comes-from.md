@@ -280,7 +280,7 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
 | 3 — the category rule | **done**, 2026-08-28 — six categories of seven; `Cn` deferred, see below |
 | 4 — `u8` truncation | **done**, 2026-08-28 — character literals only; see the note below |
-| 5 — `isUtf8` / `toUtf8` | `isUtf8` **done**, 2026-08-29 — three clauses and 59 cases; `toUtf8` is next, see below |
+| 5 — `isUtf8` / `toUtf8` | **done**, 2026-08-29 — six clauses, and 489,744 inputs agreeing with Python |
 | 6 — block strings | **done**, 2026-08-28 — D6's tab clause turned out to be D3's |
 | 7 — interpolation | **done**, 2026-08-29 — sugar for `+` in the lexer; five cases, three clauses, and `strInterp` in the tour |
 
@@ -592,11 +592,24 @@ itself: *"a type was registered while a body was being emitted — 70 counted, 7
 `fn[bool(string)]` and `fn[bool(u8[])]` are now registered up with `fn[string()]`. The rest of the
 family got away without this because their signatures already existed for something else.
 
-### What is left: `toUtf8`
+### `toUtf8`, and the check that mattered
 
-The algorithm is written and checked and the emitter is not. `toUtf8` replaces each maximal invalid
-subsequence with U+FFFD on the WHATWG rule, and the reference implementation of it was validated
-against Python's `decode("utf-8", "replace")` over every byte string of length 1-3 and 160,000
-four-byte combinations over the boundary values: zero disagreements. It is harder to emit than
-`isUtf8` for one reason — it allocates. Two passes over the input, the first to size the output and
-the second to fill it, then `str_from_bytes` to make a string of it.
+Two passes over the input, the first to size the output and the second to fill it. The alternatives
+were both worse: one pass needs `3n` allocated up front for the case where nothing is wrong, and
+"validate first, copy if clean" needs the helper to call `is_utf8` — and no emitted helper in
+`emit.wac` calls another, so being the first would be a change to how helper indices are assigned.
+
+**The verification is the part worth copying.** The walk was checked as a plain reference
+implementation against Python's `strict` and `replace` before any wasm existed. That says nothing
+about the bytes emitted for it, so the *built* `string.isUtf8` and `string.toUtf8` were then run
+against the same oracle: every 1- and 2-byte input, and 423,952 three- and four-byte inputs over the
+boundary values — **489,744 in total, zero mismatches on either function**. Six hundred lines of
+hand-written wasm bytes are not something a dozen hand-picked cases can vouch for.
+
+With this, every step in the table above is done.
+
+### One thing found on the way
+
+`u8[](a as u8)` for an `i32` is refused with help naming three cast operators, and all three are
+refused the same way, because `u8` is packed and there is no such conversion to spell. The bare
+`u8[](a)` is what works. `issues/lang/0289b`.
