@@ -35,8 +35,12 @@ Deno.test({
   fn: async () => {
     const driver = await Deno.readTextFile(`${HERE}../drivers/emit_and_run.wac`);
     const l0 = await l5ToL0(await flatten(API) + "\n" + driver);
-    const refusals = (l0.match(/^!!/gm) ?? []).length;
-    if (refusals !== 0) throw new Error(`wac-L5 refused ${refusals} things in wacc`);
+    // The `!!` lines, not their count — each names the line and the token wac-L5 stopped on, and a
+    // bare number sends the reader to a scratch script to get them back.
+    const refused = l0.split("\n").filter((l) => l.startsWith("!!"));
+    if (refused.length !== 0) {
+      throw new Error(`wac-L5 refused ${refused.length} things in wacc:\n${refused.join("\n")}`);
+    }
 
     const mod = await WebAssembly.compile(assemble(l0).buffer as ArrayBuffer);
     const inst = await WebAssembly.instantiate(mod, {});

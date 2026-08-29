@@ -18,9 +18,16 @@ const dir = Deno.args[0] ?? `${HERE}../../spec/cases`;
 const api = `${HERE}../../packages/wacc/src/api.wac`;
 
 const l0 = await l5ToL0(await flatten(api) + "\n" + await Deno.readTextFile(`${HERE}../drivers/spec_cases.wac`));
-const refusals = (l0.match(/^!!/gm) ?? []).length;
-if (refusals > 0) {
-  console.error(`wac-L5 refused ${refusals} things in wacc`);
+// **The refusals themselves, not just how many.** wac-L5 writes each one as an `!!` line and this
+// used to count them and throw the lines away, so a seed build that stopped said only
+// `wac-L5 refused 1 things in wacc` — and finding out *what* meant re-running this pipeline by hand
+// in a scratch script. Every refusal names a line and the token it stopped on, which is usually the
+// whole answer: `unexpected token these tokens have alread before ;` is a `trap "…"` in a file that
+// has to compile on rung 5.
+const refused = l0.split("\n").filter((l) => l.startsWith("!!"));
+if (refused.length > 0) {
+  console.error(`wac-L5 refused ${refused.length} things in wacc:`);
+  for (const line of refused) console.error(`  ${line}`);
   Deno.exit(1);
 }
 const inst = (await WebAssembly.instantiate(

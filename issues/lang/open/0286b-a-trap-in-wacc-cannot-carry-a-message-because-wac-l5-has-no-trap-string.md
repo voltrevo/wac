@@ -30,10 +30,12 @@ trap "these tokens have already been parsed: parsing rewrites them, so lex again
     bootstrap: building the wac command with it
     wac-L5 refused 1 things in wacc
 
-The refusal itself is not printed by `bootstrap.sh` — only the count is. Running the step by hand
-gives it, and the message is precise about where it stopped:
+The refusal itself was not printed — only the count — and finding out *what* meant re-running the
+pipeline by hand in a scratch script. It prints now, in both places that counted them, because the
+line is usually the whole answer:
 
-    !! wac-L5: line 4797: unexpected token these tokens have alread before ; } p
+    wac-L5 refused 1 things in wacc:
+      !! wac-L5: line 4797: unexpected token these tokens have alread before ; } p
 
 So wac-L5 parses `trap`, expects `;`, and finds a string. Bare `trap;` compiles.
 
