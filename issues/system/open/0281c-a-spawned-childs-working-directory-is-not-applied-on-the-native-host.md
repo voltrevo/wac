@@ -37,7 +37,15 @@ spawned child's directory:
 > spawned-child case is a separate question from this issue's, and closing one blind broke something
 > real.
 
-That measurement is the reason this is filed rather than fixed. It is also the reason it is worth a
+**The measurement was re-run on 2026-08-29 and still holds**, which is worth saying because a note
+about a failed attempt is only useful while it is current. Folding `cwd_override` into `framed_path`'s
+base — one `.or_else(|| s.cwd_override.clone())` — reproduces it exactly:
+
+    FAIL test_an_image_survives_a_process_and_is_readable_by_a_spawned_child
+      the two hosts disagree about what the image held: got "", want "5"
+      the V8 host could not read an image Deno wrote: got "", want "5"
+
+Reverted. That measurement is the reason this is filed rather than fixed. It is also the reason it is worth a
 number: the knowledge exists as a comment on the function that has the bug, so the next person to
 meet the symptom re-derives it.
 
@@ -51,9 +59,15 @@ Both halves are defensible and they conflict, which is what the failed attempt f
   override into every path made `imaged`'s child resolve the image path through the parent's
   directory and lose it.
 
-The two are only in conflict because one function answers for both. `packages/platform/host/child.ts`
-separates them — `joinPath(cwd, path)` for the child's own paths, and the world's `opts.cwd` folded
-in by `P` — so the shape of an answer exists there.
+The two are only in conflict because one function answers for both, and the Deno host shows the shape
+of a separation: `P = joinPath(opts.cwd ?? "", kids.path(path))` resolves against the innermost frame
+*first* and folds the world's own directory in *after*. The v8 host does only the first half.
+
+What the re-run suggests is that the distinction wanted is not frame-versus-world but **who
+constructed the path**. An applet that opens `f.txt` after its shell did `cd sub` built that path
+itself and means the shell's directory. A child *handed* an image path by whoever spawned it was
+given a path already resolved, and resolving it again is what breaks. One function cannot tell those
+apart from the string alone, which is why this needs a decision rather than a patch.
 
 ## Why it matters now
 
