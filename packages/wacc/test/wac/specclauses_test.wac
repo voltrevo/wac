@@ -486,3 +486,34 @@ export string test_arithmetic_on_a_reference_is_refused() {
       + "rule above went with the rule: " + ok[0]);
   return t.report();
 }
+
+/**
+ * `§wac-cast-bang-redundant-6qw3nkf` and `§wac-cast-tilde-redundant-2xk9mrp` — the weakest cast that
+ * works is the one you have to write.
+ *
+ * Two sentences, one in each of `casts.md`'s `as!` and `as~` sections, and one diagnostic behind
+ * both: *wrong cast operator for these types*. Each section already tags what its cast does at *run
+ * time* — `§wac-narrow-ok-2ytx5qj`, `§wac-narrow-trap-z7te84b`, `§wac-narrow-frac-t6kq2wp` — and the
+ * static rule beside them had nothing, which is the shape this file exists for.
+ *
+ * The rule is worth holding because it is the one that keeps a cast's spelling informative. `as!`
+ * means *this can fail and I have thought about it*; if it were merely permitted wherever `as` works,
+ * a reader could no longer tell a checked narrowing from a widening somebody spelled defensively, and
+ * every `as!` in a diff would have to be read to find out which it was.
+ *
+ * The widening case is the control: it must still compile with `as`, since a rule that refuses the
+ * redundant spelling is only interesting if the plain one is accepted.
+ */
+export string test_a_stronger_cast_where_a_plain_one_works_is_refused() {
+  T t = T.create();
+  string[] bang = firstDiagnostic("export i64 f(i32 x) { return x as! i64; }");
+  t.isTrue(bang.len() == 4, "`x as! i64` on a widening compiled — `as!` is accepted where `as` works");
+
+  string[] tilde = firstDiagnostic("export i64 f(i32 x) { return x as~ i64; }");
+  t.isTrue(tilde.len() == 4, "`x as~ i64` on a widening compiled — `as~` is accepted where `as` works");
+
+  string[] plain = firstDiagnostic("export i64 f(i32 x) { return x as i64; }");
+  t.eqI32(plain.len(), 0, plain.len() == 0 ? "" : "`x as i64` was refused, so the two rules above are "
+      + "passing because widening is refused outright rather than because the spelling is: " + plain[0]);
+  return t.report();
+}
