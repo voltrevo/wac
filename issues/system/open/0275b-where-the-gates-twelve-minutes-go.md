@@ -32,6 +32,9 @@ Perfect balance over 1283s would be 321s and the floor is 357s, so **the chunkin
 optimal and the total work is the thing**. 452s against a 357s floor is about 95s of scheduling
 loss, which is the smallest of the numbers here.
 
+*That conclusion did not survive the work being cut — see "the loss moved into the schedule" below.
+The 95s was small because one chunk was large enough to hide the tail behind.*
+
 ## The suite, chunk by chunk
 
 **crypto was one file.** Timed one at a time: `constanttime_test.wac` **265s**, every other crypto
@@ -142,6 +145,38 @@ crypto did the first time.
 The last row is the one to read: `constanttime_test.wac` was **265s** when this page was started,
 136s after the cursor fix, and is **8s** now. The three unknowns above are the gate's to fill in —
 they come from the suite's own footer and only a gate run produces them honestly.
+
+## The loss moved into the schedule, and that is now fixed too
+
+Re-measured after `issues/system/0274b` closed, from the suite's own footer:
+
+    before   1283s of work, floor 357s, wall 452s   ->   95s of loss
+    after    1045s of work, floor 299s, wall 450s   ->  151s of loss
+
+**238s came out of the work and 2s came off the wall.** All of it went into idle workers, which is
+the answer to a question this page had got wrong: the "95s of scheduling loss" it called *"the
+smallest of the numbers here"* was small only because one chunk was big enough to hide behind. Take
+the big chunk away and the tail is the whole story.
+
+Both queues ordered by a proxy. `tools/coverageAll.ts` pulled packages off an alphabetically sorted
+list; `chunksOf` in `tools/runTests.wac` sorted chunks by file count, which its own comment called
+"a weak proxy for cost". A file count cannot see that twelve `packages/wacc` files are 183s and
+another twelve are 79s. Both now order by the previous run's measurements — `.cache/coverage-times.json`
+and `.cache/suite-times`, both written after failing runs too, both falling back to the old behaviour
+when absent.
+
+Measured on the ratchets, back to back, against each run's own bound of
+`max(longest driver, work / workers)`:
+
+    alphabetical    696s of work, longest 94s  ->  ideal 174s, actual 204s   (17% over)
+    longest-first   471s of work, longest 89s  ->  ideal 118s, actual 119s   ( 1% over)
+
+Compare the ratios rather than the walls: the second run had a third less work in it.
+
+**What to check next time this page is read.** The suite's wall is the number that has not been
+re-measured since the ordering changed — the 450s above is the *old* scheduler on the new workload.
+The gate prints its own budget now, so the next green run answers it without anybody arranging a
+measurement.
 
 ## What is left, in the order the numbers suggest
 
