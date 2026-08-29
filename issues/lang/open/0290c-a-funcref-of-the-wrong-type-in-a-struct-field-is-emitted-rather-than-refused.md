@@ -66,3 +66,22 @@ defect is about the mismatch rather than the width, and a *narrower* stub would 
 
 `packages/wacc/test/wac/glueclosure_test.wac` is about the neighbouring question — that the types
 *inside* a funcref field survive being written as one string — which is why it did not catch this.
+
+## The checker does this correctly one construct away
+
+Worth knowing before looking for the fix, because it means the machinery exists and this path does
+not reach it. The same widening, at a *call site*, is caught and reported well:
+
+    error: argument does not match the parameter's type
+         --> packages/sh/src/exec.wac:3728:58
+          |
+     3728 |     .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : … )
+          |                                                          ^
+
+File, line, column, caret. That is a wac call whose argument type does not match a parameter's.
+
+What is silent is the *other* direction — a function **stored into** a `fn[…]` field, where the
+comparison is between the funcref's type and the field's declared type. Same question, same two
+types available, no diagnostic, and an invalid module instead.
+
+So a fix is plausibly small: make the `struct.new` path ask what the call path already asks.

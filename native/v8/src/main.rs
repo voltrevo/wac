@@ -2237,7 +2237,15 @@ fn dispatch(
             let argv = read_bytes_array(scope, args.get(2));
             let grant_bits = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(4));
-            let inherits = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            // **Flags, not a bool**, as `platform.wac`'s `INHERIT_IN`/`INHERIT_OUT`. One `i32`
+            // because a capability may not have seven parameters — `issues/lang/0291c` — and
+            // because `grants` two arguments earlier is already a bitfield.
+            let inherit = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let inherits = inherit & 1 != 0;
+            // **The child writes this process's own streams.** A child here is a thread, so the two
+            // reach the real descriptors in the order it wrote them — which two queues cannot,
+            // because the parent reads whichever answers first. `issues/system/0282c`.
+            let inherit_out = inherit & 2 != 0;
             // The sixth here against the fifth in `spawnSelf`: same list with the program's bytes
             // in front. Getting this index wrong is silent — it reads as `serveFs` never being
             // asked for, which is what 0157 looked like.
@@ -2296,8 +2304,9 @@ fn dispatch(
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
-                out: Some(out.clone()),
-                err: Some(err.clone()),
+                // None is what `emit_bytes` falls through on: no parent queue, so the real stream.
+                out: if inherit_out { None } else { Some(out.clone()) },
+                err: if inherit_out { None } else { Some(err.clone()) },
                 input: Some(input),
                 inherits,
                 fs_req: fs_req.clone(),

@@ -1,6 +1,6 @@
 # 0282 — a relayed program's standard error does not interleave with its standard output
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** bug
@@ -177,7 +177,7 @@ There is also a question this option does not answer and the other two do: what 
 `differential.test.ts` and `design/system/0009` need; it is not a general answer to "two streams,
 one order".
 
-## Attempted 2026-08-29, and blocked on `issues/lang/0291c`
+## Attempted first with a seventh parameter, which is where `issues/lang/0291c` came from
 
 The third option above was implemented in full — `inheritOut` on `spawn`, both Rust hosts, the three
 JavaScript hosts, all eleven call sites — and the mechanism works. A throwaway prototype that simply
@@ -189,7 +189,7 @@ never installed the child's queues, so `emit_bytes` fell through to the real str
 and the same prototype broke `seq 1 3 | wc -l` into printing `1 2 3` and counting `0`, which confirms
 the other half: it has to be per-spawn, exactly as `inheritIn` is, and a shell must pass false.
 
-**It cannot land in that shape**, because a seventh parameter on a capability makes wacc drop the
+**It could not land in that shape**, because a seventh parameter on a capability makes wacc drop the
 module's entry point with no diagnostic — `issues/lang/0291c`, which this work found and which was
 confirmed by reverting every behaviour change and keeping only the parameter. Six is the widest
 capability in the tree, so `spawn` would have been the first with seven.
@@ -205,3 +205,47 @@ Also found on the way, and worth knowing before repeating this: `packages/wac/sr
 so their parameter lists have to track `spawn`'s exactly. Nothing checks that — `issues/lang/0290c`
 — and getting it wrong emits an invalid module rather than a diagnostic. `noSpawn`'s last parameter
 is also misnamed `inheritErr`; it has always been `serveFs`.
+
+## Fixed 2026-08-29 — a launcher inherits its child's output
+
+`spawn`'s `inheritIn: bool` became `inherit: i32`, carrying `INHERIT_IN | INHERIT_OUT`. A child told
+`INHERIT_OUT` writes the process's own streams instead of two queues its parent reads, so the order
+between them is the order the child wrote in — kept by whatever the host writes descriptors with,
+rather than reconstructed by a parent that never had it.
+
+    before   11 runs in 20 printed `one two mid`
+    after     0 runs in 20
+
+`packages/wac/test/wac/interleave_test.wac` is the regression, and two details of it are the point.
+It runs the program under `/bin/sh` with `2>&1`, because `Exec` hands back `stdout` and `stderr` as
+two fields and two fields cannot disagree about order. And it runs five times: this was a race, so a
+single run would have missed it about as often as it caught it.
+
+**Flags rather than a seventh parameter**, because a capability may not have seven —
+`issues/lang/0291c`, which this work found. It is not a contortion around that: `grants`, one
+argument earlier in the same signature, is already a bitfield, and the two inherit bits are one
+question about which of a child's streams its parent is standing in for.
+
+**It has to be per-spawn, and that was measured too.** A prototype that inherited unconditionally
+made `seq 1 3 | wc -l` print `1 2 3` and count `0`: a parent that wants the bytes — a pipeline, a
+redirection, a capture — must be the one holding them. So `packages/sh` passes `INHERIT_IN` or
+nothing, and only the three launchers pass `INHERIT_OUT`.
+
+### What went with it
+
+`relay` is **deleted**. It had no callers left, and `packages/sh/src/exec.wac` has its own loop for
+the parents that genuinely read their children. `issues/system/0278c` — the broken-pipe fix inside it
+— is subsumed rather than lost: an inherited descriptor means the operating system tells the child
+its reader has gone, which is the same fact by a shorter route and one nothing can forget to pass on.
+`app_test.wac`'s case for it is unchanged and still passes, because the claim was always about the
+artefact rather than about how it was implemented.
+
+Also fixed on the way: `noSpawn`'s last parameter was named `inheritErr` and has always been
+`serveFs`.
+
+### Not addressed
+
+A shell's own pipelines still relay two queues, so `packages/sh` has this bug internally — the
+`Child.errHandle` documentation says why they cannot simply be merged. That is a different fix with a
+different caller, and nothing here needs it: this issue was about `wac app` and `wac <prog.wasm>`
+standing in for the program they started.

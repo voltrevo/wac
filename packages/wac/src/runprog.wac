@@ -1,6 +1,6 @@
 // Running a program: which grants it gets, and what happens to its streams.
 //
-// **`wac prog.wasm` and the relaying half of `wac run`**, taken out of the *compiler's* example along
+// **`wac prog.wasm` and the running half of `wac run`**, taken out of the *compiler's* example along
 // with the test runner — `issues/system/0257c`. A compiler does not start programs. The operator's
 // rule is that a host may implement *running a module*, because that is the engine doing engine work,
 // and everything else goes through the wac program; this is the wac program's side of that line.
@@ -14,7 +14,7 @@
 //     for everything and letting a host narrow it, which is the difference between a capability hole
 //     and a program that runs with what it asked for.
 
-import { Child, Cli, Core, Exec, FileResult, Pending, faultWords } from "std/platform.wac";
+import { Child, Cli, Core, Exec, FileResult, INHERIT_IN, INHERIT_OUT, Pending, faultWords } from "std/platform.wac";
 import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
@@ -202,7 +202,7 @@ export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
               + "-o <stem>` writes one that can run");
     return 1;
   }
-  Child kid = cli.spawn(wasm, args, grants, "", true, false).wait();
+  Child kid = cli.spawn(wasm, args, grants, "", INHERIT_IN | INHERIT_OUT, false).wait();
   if (kid.unavailable()) {
     core.warn("wac: this host cannot run a module — it has no form of `spawn`");
     return 1;
@@ -211,7 +211,16 @@ export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
     core.warn("wac: cannot run " + shown + " — " + kid.error);
     return 1;
   }
-  return relay(core, cli, kid);
+  // **Inherited both ways, so there is nothing between the program and the terminal.** This relayed
+  // the child's two streams until 2026-08-29, and a parent reading two queues cannot know which was
+  // written first: `echo one; nope; echo two` put the complaint after both lines, 11 runs in 20.
+  // `issues/system/0282c`.
+  //
+  // The `relay` that did it is **gone** rather than kept for a caller that might want it — there is
+  // none, and `packages/sh/src/exec.wac` has its own loop for the parents that do read their
+  // children. What replaced it is the kernel: a launcher hands over its streams and waits for a
+  // status.
+  return cli.exitCode(kid.handle).wait();
 }
 
 /**
@@ -223,65 +232,3 @@ export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
  * thing to a wac program. The name ends `_test.wac` so that a walk which happens across `.cache`
  * would find something that *is* a test file rather than a fragment.
  */
-/**
- * Relay a child's two streams until both end, then answer its exit code.
- *
- * **Both, in the order they arrive.** One `recv` in flight per open stream and `waitAny` over the
- * pair, which is `packages/sh/src/exec.wac`'s shape: draining one to exhaustion first would put every
- * complaint after every line of output, and a program that interleaves them — which is most of them,
- * on failure — would be unreadable.
- *
- * The native binary's `run` does not relay at all: it instantiates the module in its own process, so
- * the program writes to the real streams. This is the same bytes on each stream and the same status,
- * which is what `commandparity_test.wac` compares, and it is not the same thing — a program wanting a
- * terminal sees a pipe here. Said plainly because it is the one place the two implementations differ
- * in kind rather than in code. `issues/system/0230a`.
- */
-export i32 relay(Core core, Cli cli, Child kid) {
-  Pending<Read> out = cli.recv(kid.handle);
-  Pending<Read> err = cli.recv(kid.errHandle);
-  bool reading = true;
-  bool readingErr = true;
-  while (reading || readingErr) {
-    i32[] live = i32[reading && readingErr ? 2 : 1]();
-    i32 n = 0;
-    if (reading) { live[n] = out.id; n = n + 1; }
-    if (readingErr) { live[n] = err.id; }
-    // No deadline: there is nothing to do between chunks, and a poll would only burn a core.
-    i32 which = core.waitAny(live, -1);
-    if (which < 0) { break; }
-    if (reading && which == 0) {
-      match (out.wait()) {
-        case Data(bytes): {
-          // **A write that did not land stops the child**, which is the whole of what a broken pipe
-          // means and what `write`'s bool is for. This discarded it, so `wac app-run prog | head -2`
-          // relayed into a closed pipe for ever: `head` exits, this keeps draining, and the child —
-          // which is writing into a queue that always accepts — never finds out. `box yes | box head
-          // -2` printed two lines and then hung, and every other route stops correctly, which is why
-          // it read as a shell bug rather than as this one. `issues/system/0278c`.
-          //
-          // `closeSocket` is what stops it, the same capability `packages/sh` uses for a pipeline
-          // stage with nowhere left to write, and the same one `issues/system/0275c` taught the
-          // native host to honour.
-          if (!cli.write(bytes)) {
-            cli.closeSocket(kid.handle);
-            if (kid.errHandle >= 0) { cli.closeSocket(kid.errHandle); }
-            reading = false;
-            readingErr = false;
-          } else {
-            out = cli.recv(kid.handle);
-          }
-        }
-        case End: { reading = false; }
-        case Failed(why): { core.warn("wac: " + why); reading = false; }
-      }
-    } else {
-      match (err.wait()) {
-        case Data(bytes): { cli.writeErr(bytes); err = cli.recv(kid.errHandle); }
-        case End: { readingErr = false; }
-        case Failed(why): { core.warn("wac: " + why); readingErr = false; }
-      }
-    }
-  }
-  return cli.exitCode(kid.handle).wait();
-}

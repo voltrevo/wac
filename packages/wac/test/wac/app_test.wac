@@ -371,11 +371,17 @@ export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
 /**
  * A reader that stops ends the program, rather than leaving it writing into a closed pipe.
  *
- * **`relay` discarded what `write` answered.** A `wac app` artefact runs its program as a *child* and
- * relays the child's two streams; `write` returns false when the far end has gone, which is the whole
- * of what a broken pipe means and the only signal there is. Ignoring it meant `./thing | head -2`
- * relayed for ever: `head` exits, the relay keeps draining, and the child — writing into a queue that
- * always accepts — never finds out. `issues/system/0278c`.
+ * **The mechanism changed under this test on 2026-08-29, and the case is the same.** It was written
+ * for `relay`, which read the child's two streams and wrote them on: `write` returns false when the
+ * far end has gone, that being the whole of what a broken pipe means, and discarding the answer meant
+ * `./thing | head -2` relayed for ever — `head` exits, the relay keeps draining, and the child,
+ * writing into a queue that always accepts, never finds out. `issues/system/0278c`.
+ *
+ * There is no relay now. A launcher hands the child its own streams (`INHERIT_OUT`,
+ * `issues/system/0282c`), so the child writes the real pipe and the operating system tells it the
+ * reader has gone — the same fact by a shorter route, and one nothing can forget to pass on. Kept
+ * because the *claim* is about the artefact and not about how it was implemented: a reader that
+ * stops must end the program.
  *
  * **Through `/bin/sh`, because the pipe has to be the operating system's.** The shell's own
  * pipelines are a different mechanism with its own stopping rule (`issues/system/0275c` was that

@@ -24,7 +24,7 @@
 // on saying sixteen after the ring had 128. When the ring *did* have four, four of four is why a
 // third stage was not something this could grow.
 
-import { Child, Cli, Core, FileResult, GRANT_NONE, Pending } from "std/platform.wac";
+import { Child, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending } from "std/platform.wac";
 import { argvOf } from "../src/stream.wac";
 import { Read } from "core";
 
@@ -47,8 +47,8 @@ export i32 main(Core core, Cli cli) {
 
   // The same bundle twice, differing only in argv. Nothing stops them being different
   // programs — one bundle just makes the example short.
-  Child a = cli.spawn(source, argvOf(argv(string.fromBytes(cli.arg(1).wait()))), GRANT_NONE, "", false, false).wait();
-  Child b = cli.spawn(source, argvOf(argv(string.fromBytes(cli.arg(2).wait()))), GRANT_NONE, "", false, false).wait();
+  Child a = cli.spawn(source, argvOf(argv(string.fromBytes(cli.arg(1).wait()))), GRANT_NONE, "", INHERIT_NONE, false).wait();
+  Child b = cli.spawn(source, argvOf(argv(string.fromBytes(cli.arg(2).wait()))), GRANT_NONE, "", INHERIT_NONE, false).wait();
   if (a.handle < 0 || b.handle < 0) {
     core.warn("pipe: " + (a.handle < 0 ? a.error : b.error));
     return 1;

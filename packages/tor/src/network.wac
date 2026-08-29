@@ -96,7 +96,7 @@
 // discovering: what it does cover is a network with no C in it, which is exactly step 5's condition.
 
 import {
-  Child, Cli, Core, FileResult, GRANT_NET, GRANT_READ, GRANT_WRITE, Pending,
+  Child, Cli, Core, FileResult, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_NONE, Pending,
 } from "std/platform.wac";
 import { Read } from "core";
 import { Buf } from "../../bytes/src/buf.wac";
@@ -281,7 +281,7 @@ Node? startNode(Core core, Cli cli, Directive d) {
     return null;
   }
   Child kid = cli.spawn(prog.bytes, d.args,
-                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", false, false).wait();
+                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
     core.warn("network: " + d.name + ": " + kid.error);
     return null;
@@ -444,7 +444,7 @@ i32 runOnce(Core core, Cli cli, Directive d) {
     return 1;
   }
   Child kid = cli.spawn(prog.bytes, d.args,
-                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", false, false).wait();
+                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
     core.warn("network: " + d.name + ": " + kid.error);
     return 1;

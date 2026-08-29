@@ -1,0 +1,15 @@
+// Three writes, alternating streams, for `interleave_test.wac`.
+//
+// The middle one goes to standard error and the two around it to standard output, so the only thing
+// this program can tell you is whether the order between the two streams survived. Nothing here is
+// slow or large on purpose: the bug it exists for is a race between two queues, and a race is
+// clearest when there is nothing else happening.
+
+import { Core, Cli } from "std/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  cli.write("one\n".toBytes());
+  core.warn("mid");
+  cli.write("two\n".toBytes());
+  return 0;
+}

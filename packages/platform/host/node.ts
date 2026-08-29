@@ -330,6 +330,7 @@ export function nodeWorld(
     childCwd: string,
     inheritIn: boolean,
     serveFs: boolean,
+    inheritOut = false,
   ): Promise<Uint8Array> => {
     const makeWorker = opts.makeWorker;
     if (makeWorker === undefined) {
@@ -385,7 +386,14 @@ export function nodeWorld(
         moduleEntry: opts.moduleEntry,
         cwd: childCwd === "" ? opts.cwd : childCwd,
       }));
-    }, newBridge, makeWorker, graceEnv(), opts.moduleEntry ?? moduleEntryFromSource("node"));
+    }, newBridge, makeWorker, graceEnv(), opts.moduleEntry ?? moduleEntryFromSource("node"),
+      // As Deno's: the host thread writes, in the order the child wrote. `issues/system/0282c`.
+      inheritOut
+        ? {
+          out: (b: Uint8Array) => { process.stdout.write(b); },
+          err: (b: Uint8Array) => { process.stderr.write(b); },
+        }
+        : undefined);
 
     // **A parent that will not serve says so before the child runs.** Ending the reply queue is
     // what makes `Fs.overParent` answer immediately instead of waiting: a child asks one question,
@@ -537,10 +545,10 @@ export function nodeWorld(
      * act on: -2, "there is no spawn here", which is not a fact about the program.
      */
     [OP.SPAWN]: (p) => {
-      const { source, args, cwd, inheritIn, serveFs } = unpackSpawn(p);
+      const { source, args, cwd, inheritIn, serveFs, inheritOut } = unpackSpawn(p);
       // **Bytes, whichever kind they are.** A worker bundle and a wasm module both start here now;
       // `spawnChild` wraps a module in a stub that drives it from its own manifest.
-      return startChild(source, args, want(p), cwd, inheritIn, serveFs);
+      return startChild(source, args, want(p), cwd, inheritIn, serveFs, inheritOut);
     },
 
     /** This same program again, with different arguments. See `spawnSelf` in platform.wac. */

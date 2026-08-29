@@ -732,6 +732,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * a place to put a canvas.
      */
     [OP.SPAWN]: (p) => {
+      // **`inheritOut` is decoded and not honoured here, deliberately.** A page has no descriptors
+      // to inherit, and the caller it exists for — `wac <prog.wasm>`, a launcher standing in for the
+      // program it started — has no meaning in a tab. `issues/system/0282c`.
       const { source, args, cwd, inheritIn, serveFs } = unpackSpawn(p);
       // **Bytes, whichever kind they are.** A worker bundle and a wasm module both start here now;
       // `spawnChild` wraps a module in a stub that drives it from its own manifest.
