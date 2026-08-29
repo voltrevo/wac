@@ -193,6 +193,38 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
     }
   }
 
+  // **A local that shadows an import is refused, not rewritten.** Every occurrence of an imported
+  // name is read through the exporting module, which is only sound while the name means the import
+  // *everywhere in the file*. `packages/platform/host/provider.ts` imports `collect` and then
+  // declares `const collect` — its comment says so: *"`collect`, shadowed for this world only"* —
+  // and rewriting produced `const $m4.collect = …`, which is not a declaration at all.
+  //
+  // Refusing rather than guessing is `design/system/0009` D4, and the alternative here is worse than
+  // usual. Skipping only the *binding* occurrence would leave the uses inside that scope pointing at
+  // the import, so the shadowed `collect` — which exists to refuse a denied call — would be bypassed
+  // silently. A bundle that runs and does the wrong thing is the outcome this whole file is built to
+  // avoid, and this is exactly the shape of it.
+  //
+  // The real fix is scope analysis: rewrite only *free* occurrences, and rename the local otherwise.
+  // Until then this names the file and the identifier, which is enough to act on.
+  {
+    i32 tn = tokenCount(l);
+    for (i32 i = 0; i + 1 < tn; i++) {
+      if (kindAt(l, i) != kIdent()) { continue; }
+      string kw = textAt(src, l, i);
+      if (kw != "const" && kw != "let" && kw != "var" && kw != "function" && kw != "class") {
+        continue;
+      }
+      if (kindAt(l, i + 1) != kIdent()) { continue; }
+      string bound = textAt(src, l, i + 1);
+      if (indexOfVec(local, bound) < 0) { continue; }
+      return "ERROR:" + paths[m] + " declares `" + bound + "` and also imports it — this bundler "
+           + "reads an imported name through its module everywhere it appears, so a local that "
+           + "shadows one cannot be told apart from it. Rename the local, or import under another "
+           + "name.";
+    }
+  }
+
   Vec<i32> out = Vec.create();
   i32 written = 0;
   i32 n = tokenCount(l);

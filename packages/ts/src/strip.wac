@@ -135,6 +135,62 @@ export Stripped strip(u8[] src) {
         continue;
       }
 
+      // ── `import { type X }` — one specifier, not the whole clause ────────
+      //
+      // **The clause form above does not cover this one**, and the difference is not cosmetic: an
+      // inline `type` left standing is read by the *bundler* as an imported binding called `type`,
+      // so every later use of that identifier is rewritten to reach through the exporting module.
+      // In `packages/platform/host/driver.ts` that turned an object literal's method parameter into
+      // `fromWasm($m11.type, v)`, which is not JavaScript — and Deno's parser is what said so, four
+      // steps downstream of the actual mistake.
+      //
+      // **`type` is only a modifier when an identifier follows it.** `import { type as x }` imports
+      // a binding that happens to be named `type`, and erasing that would delete a real import. The
+      // token after decides, which is exactly how TypeScript reads it.
+      if (tx == "type" && inImportOrExport(src, l, i) && inBraces(stack)
+          && i + 1 < n && kindAt(l, i + 1) == kIdent() && textAt(src, l, i + 1) != "as") {
+        i32 end = pastSpecifier(src, l, i + 1);
+        i32 from = startAt(l, i);
+        // **A comma goes with it, and which one matters.** Erasing `type Bound` out of
+        // `{ type Bound, shapeOf }` without its comma leaves `{ , shapeOf }`, which parses as
+        // nothing at all. So the following comma is taken when there is one.
+        //
+        // When there is not — the specifier is last — the *preceding* one is taken instead.
+        // `{ shapeOf, }` is legal JavaScript, so this is not about correctness; it is that
+        // `ts.transpileModule` writes `{ shapeOf }`, and `test/stripDifferential.test.ts` compares
+        // against exactly that. Leaving the trailing comma made the differential red on
+        // `entryBrowser.ts`, which is the oracle doing its job.
+        // **Exactly one separator per specifier removed**, or the clause is left malformed in one
+        // direction or the other. Both mistakes were made here before this comment was:
+        //
+        //   `{ type A, b }`                    take the one after   → `{ b }`
+        //   `{ b, type A }`                    take the one before  → `{ b }`
+        //   `{ b, type A, type C }`            one each             → `{ b }`
+        //
+        // The third is why the search backwards skips what is already erased. Taking the following
+        // comma for `type A` consumes the separator that `type C` would otherwise reach back for, so
+        // a naive `i - 1` finds a comma that is *already blank* and spends nothing — leaving
+        // `{ b, }`. That is `entryBrowser.ts`, and the differential is what reported it.
+        //
+        // Cuts are appended in increasing order by this forward walk, so the last one's end is a
+        // high-water mark and anything starting below it is gone.
+        if (end < n && textAt(src, l, end) == ",") {
+          end = end + 1;
+        } else {
+          // The range, not just its end: a token *before* the last cut also starts below its end,
+          // so testing the end alone walks straight past the live comma this is looking for.
+          i32 last = cutTo.len() - 1;
+          i32 low = last >= 0 ? cutFrom.get(last) : 0;
+          i32 high = last >= 0 ? cutTo.get(last) : 0;
+          i32 b = i - 1;
+          while (b > 0 && startAt(l, b) >= low && startAt(l, b) < high) { b = b - 1; }
+          if (b > 0 && textAt(src, l, b) == ",") { from = startAt(l, b); }
+        }
+        cut(cutFrom, cutTo, from, endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+
       // ── Modifiers that are pure type syntax ──────────────────────────────
       if (tx == "readonly" || tx == "abstract" || tx == "override"
           || tx == "public" || tx == "private" || tx == "protected") {
@@ -161,7 +217,17 @@ export Stripped strip(u8[] src) {
       // is not a type assertion, and erasing it silently drops the local name so every use of it
       // becomes undefined. The two are spelled identically and only the enclosing statement says
       // which — hence `inSpecifiers`.
-      if ((tx == "as" || tx == "satisfies") && !inImportOrExport(src, l, i)) {
+      //
+      // **And a rename is always *inside* the clause's braces**, which is the second half of that
+      // and was missing. `inImportOrExport` scans back to the statement's first word, so
+      // `export const OP = { … } as const;` — where the `as` sits at depth 0, the brace having
+      // closed — answered *rename* on the strength of the `export` and left `} as const;` in the
+      // output. `packages/platform/host/ops.ts:104` is that line, and it reached a JavaScript
+      // parser before anything here objected: the differential could not see it, because it prints
+      // our output through `ts.transpileModule` to normalise layout and that removes leftover
+      // TypeScript on the way. Third time that blindness has cost a bug — see the note on
+      // `test/stripDifferential.test.ts`'s third case.
+      if ((tx == "as" || tx == "satisfies") && !(inBraces(stack) && inImportOrExport(src, l, i))) {
         i32 end = pastType(src, l, i + 1, stack);
         if (end < 0) { err = "a type after `" + tx + "` that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
         cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
@@ -303,6 +369,9 @@ void bumpTernary(Vec<Ctx> s, i32 by) {
 }
 
 bool inParens(Vec<Ctx> s) { return top(s).open == '('; }
+
+/** Whether the innermost open bracket is a `{` — an import clause's, among other things. */
+bool inBraces(Vec<Ctx> s) { return top(s).open == '{'; }
 
 // ── Deciding what a token is ──────────────────────────────────────────────────
 
@@ -788,6 +857,21 @@ i32 pastBracedDeclaration(u8[] src, Lexed l, i32 i) {
 }
 
 /** Past a statement ending in `;`, or at the last token of the line if there is none. */
+/**
+ * One import or export specifier, from its name to the token after it.
+ *
+ * `Bound`, `Bound as B` — that is the whole grammar, so this is two steps rather than a scan. It is
+ * deliberately *not* bounded by the closing brace: a caller that has already decided this is a
+ * specifier is asking where it ends, and a malformed clause should run into the brace and be
+ * reported by the parser that reads the output rather than silently half-erased here.
+ */
+i32 pastSpecifier(u8[] src, Lexed l, i32 i) {
+  i32 n = tokenCount(l);
+  i32 k = i + 1;
+  if (k + 1 < n && kindAt(l, k) == kIdent() && textAt(src, l, k) == "as") { k = k + 2; }
+  return k;
+}
+
 i32 pastStatement(u8[] src, Lexed l, i32 i) {
   i32 n = tokenCount(l);
   i32 depth = 0;

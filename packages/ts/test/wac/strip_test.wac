@@ -104,6 +104,42 @@ export string test_whole_declarations_vanish() {
   return t.report();
 }
 
+export string test_a_type_specifier_inside_an_import_clause() {
+  T t = T.create();
+  // **The inline form, which the whole-clause rule above does not reach.** Left standing, `type` is
+  // read by the bundler as an imported *binding*, so every later use of that identifier is rewritten
+  // to reach through the exporting module — in `packages/platform/host/driver.ts` that turned an
+  // object literal's method parameter into `fromWasm($m11.type, v)`. Deno's parser is what caught it,
+  // four steps downstream of the mistake, which is why there is a case here now.
+  t.eqStr(js("import { type A, b } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "a type specifier first");
+  // Last, where the comma taken is the one *before* it. `{ b, }` is legal JavaScript, so this is not
+  // about correctness — it is that `ts.transpileModule` writes `{ b }`, and the differential compares
+  // against exactly that. Leaving the trailing comma made it red on `entryBrowser.ts`.
+  t.eqStr(js("import { b, type A } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "and last, where the comma taken is the preceding one");
+  t.eqStr(js("import { type A as B, c } from \"./m.ts\";"), js("import { c } from \"./m.ts\";"),
+          "one that renames");
+  t.eqStr(js("export { type A, b };"), js("export { b };"), "and on the way out");
+  // **A run of them, which is what `entryBrowser.ts` contains.** Taking the *following* comma each
+  // time strands the separator that joined the run to the value before it — the first version of
+  // this left `{ b, }` here, and the differential is what said so.
+  t.eqStr(js("import { b, type A, type C } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "two type specifiers after a value");
+  t.eqStr(js("import { type A, type C, b } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "and two before one");
+
+  // **`type` is only a modifier when an identifier follows it.** This imports a binding that happens
+  // to be named `type`; erasing it would delete a real import, which is the failure the other
+  // direction. The token after decides, exactly as TypeScript reads it.
+  t.eqStr(js("import { type as renamed } from \"./m.ts\";"),
+          js("import { type as renamed } from \"./m.ts\";"),
+          "a binding actually named `type` survives");
+
+  t.isTrue(sameLength("import { type A, b } from \"./m.ts\";"), "and positions do not move");
+  return t.report();
+}
+
 export string test_a_colon_that_is_not_a_type() {
   T t = T.create();
   // **The object literal.** Erasing here would delete the value and leave `{ a }`.
@@ -133,6 +169,18 @@ export string test_as_and_the_non_null_assertion() {
   t.eqStr(js("const x = y satisfies T;"), js("const x = y;"), "`satisfies`");
   t.eqStr(js("const x = y!.z;"), js("const x = y.z;"), "a non-null assertion");
   t.eqStr(js("const x = f()!;"), js("const x = f();"), "one after a call");
+  // **`as` at depth 0 in an `export` statement is still a cast.** `inImportOrExport` scans back to
+  // the statement's first word, so this answered *rename* on the strength of the `export` and left
+  // `} as const;` in the output — `packages/platform/host/ops.ts:104`, found by a JavaScript parser
+  // rather than by anything here. A rename is always *inside* the clause's braces.
+  t.eqStr(js("export const OP = { A: 1 } as const;"), js("export const OP = { A: 1 };"),
+          "`as const` after a closed brace in an export");
+  t.eqStr(js("export const r = { c: 3 as T };"), js("export const r = { c: 3 };"),
+          "and one inside the braces, which already worked");
+  t.eqStr(js("import { a as b } from \"./m.ts\";"), js("import { a as b } from \"./m.ts\";"),
+          "while a real rename is untouched");
+  t.eqStr(js("export { d as e };"), js("export { d as e };"), "on the way out too");
+
   // A prefix `!` is not an assertion and must survive.
   t.eqStr(js("const x = !y;"), js("const x = !y;"), "a logical not");
   t.eqStr(js("if (!a) { b(); }"), js("if (!a) { b(); }"), "one in a condition");

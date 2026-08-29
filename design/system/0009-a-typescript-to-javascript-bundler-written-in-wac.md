@@ -297,6 +297,37 @@ A test is not a reason to keep the thing it tests. `CLAUDE.md` says so directly:
 yourself proposing to keep something, say what would break, and check that it is not just a test you
 could edit."*
 
+### A correction: the deno target is not dead code, it is the bootstrap's product
+
+The section above says the `deno` and `node` targets go because `wac app` replaces them. That is
+right for **user programs** and wrong as a whole, and the thing that shows it is step 5.
+
+`wac app` writes a file that runs `command -v wac` and execs `wac app-run "$0"`. That is the correct
+artefact for somebody who *has* a `wac`. The bootstrap is the one case that does not: `bootstrap.sh
+--host deno` exists precisely to give a machine its first one, on nothing but Deno. So what it has to
+produce is a **self-contained** JavaScript file with the bridge and the module inside it — which is
+exactly what `buildApp(…, "deno")` produces today, and the only thing that does.
+
+So the deno and node targets are not redundant. They are the bootstrap's, and they are in the wrong
+file: `packages/platform/build.ts` is TypeScript, and a bootstrap that needed TypeScript to build a
+compiler would be the loop this whole note exists to cut.
+
+**The end state is unchanged and better justified.** `build.ts` keeps the browser build; the
+self-contained JavaScript build moves into `bootstrap/` as plain JS. There is still exactly one
+producer of each artefact — a page, a self-contained JS command, and `wac app`'s one-file executable
+— and the one that had no home now has one.
+
+It also removes the last npm dependency without a second decision. `build.ts`'s `bundle()` shells out
+to `deno bundle`, which fetches `@esbuild/<platform>` on first use; the bootstrap's copy calls
+`packages/ts` instead, because it must. Whether `build.ts`'s browser path follows is then a small
+question rather than the load-bearing one.
+
+**What this costs:** the assembly is written twice, once in TypeScript for the browser and once in
+JavaScript for the bootstrap. `bootstrap/MIGRATION.md` already accepts that shape for
+`bootstrap/js/flatten.js` against `harness/wacFiles.ts`, and names the mitigation — the two must not
+drift unnoticed. The mitigation here is stronger, because the JS one is what `bootstrap.sh` runs on
+every build and the suite runs `bootstrap.sh`.
+
 ### What is redundant, and what is not
 
 The **browser** target has no other home: a page must carry its host, and nothing else builds one.
