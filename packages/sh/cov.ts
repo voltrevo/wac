@@ -495,6 +495,14 @@ for (
     "PATH=/a:/b; echo $PATH", "echo $'\\x42'",
     "mkdir -p /tmp/covp2 && : > /tmp/covp2/f && ls -l /tmp/covp2",
     "ls -l /tmp/covp2/f", "ls -ld /tmp/covp2",
+    // A fourth batch, and this one was found by reading the callers rather than the names.
+    // `octalMode` is chmod's, `ownership` is chmod-and-chown's, and `mtimeOf` is the `-nt` / `-ot`
+    // test operators — none of them is reached by listing, which is what the `ls -l` probes above
+    // were aimed at and why they bought nothing. `ls` has no `-l` at all: it answers
+    // "ls: -l is not implemented".
+    "chmod 644 /bin/prog", "chmod 0755 /bin/prog", "chmod x /bin/prog", "chown me /bin/prog",
+    "[ /bin/prog -nt /bin/echo ]", "[ /bin/prog -ot /bin/echo ]", "[ /nosuch -nt /bin/echo ]",
+    "cat /nosuchfile", "cd /nosuchdir",
   ]
 ) {
   m.shOut(script);

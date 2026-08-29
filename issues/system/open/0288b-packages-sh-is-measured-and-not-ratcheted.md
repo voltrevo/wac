@@ -203,9 +203,14 @@ survives that.
     octalMode of onFs ownership reapJob refused spawnableName statReason stopAll
     stopStage streamPipeline tryHelp
 
-They read as three groups. **Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`,
-`isBlankAt`, `endsWithColon`, `ansiEscape` — which are the ones most likely to be one odd script
-away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
+They read as three groups — and I grouped two of them wrongly the first time, by the shape of the
+name rather than by what the function does. `spawnableName` and `streamPipeline` are not helpers:
+they are the *streaming pipeline*, where every stage runs at once and bytes move between them as they
+arrive, so they belong with job control below and are blocked by the same stateless fake.
+Grouping by name is how a plausible list becomes a wrong one.
+
+**Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`, `isBlankAt`, `endsWithColon`,
+`ansiEscape` — which are the ones most likely to be one odd script away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
 `streamPipeline` — which needs a job that outlives the script that started it. **That one is
 settled, and it is the true answer.** `packages/sh/test/wac/probe.wac` fakes `spawn` statelessly on
 purpose, and says why: *"a fake that returned bytes would return them for ever and the read loop
@@ -225,6 +230,116 @@ reach. The reason is one line of the probe:
 Its comment says what it is for — *"Only the two programs under `/bin` exist, which is what makes a
 `$WACPATH` search decide"* — so it is a fake built for path resolution, and every field `ls -l` would
 read is a constant zero or false. Nothing a script says can vary them.
+
+**Wrong twice, and the second correction is the useful one.** I guessed the stat group needed a
+richer `Stat` from the fake — every field but existence was zero — and enriching it changed nothing.
+The actual reason is simpler and was one command away:
+
+    $ wac sh --allow-read -c "ls -l dir"
+    ls: -l is not implemented
+
+There is no long-format listing, so nothing in `ls` was ever going to reach those functions. Reading
+their callers instead of their names says where they live: `octalMode` is **chmod's**, `ownership` is
+**chmod and chown's**, `mtimeOf` is the **`-nt` and `-ot` test operators**, and `statReason` is the
+error path several builtins share.
+
+Nine scripts written from that — `chmod 644`, `chmod x` for the refusal, `chown`,
+`[ a -nt b ]`, `[ a -ot b ]`, a missing operand, `cat` and `cd` on a path that is not there — took
+**850 to 824 and 26 entries to 23**. That is a better return than the ten guessed scripts of the
+batch before it, which is the whole lesson: the names of these functions describe what they compute,
+and the callers describe what reaches them, and only the second one tells you what to write.
+
+## What it would take, sized
+
+1036 points is the reason this is filed rather than done. The ledger is not one entry per point —
+`tools/wac/covledger.wac` has `Rule`, which speaks for every point its scope reaches, and
+`packages/fs` uses it for 94 of its 127 — so the work is to find the handful of explanations that
+cover most of the 1036 and write an entry for the remainder.
+
+The shape is likely to be favourable. `packages/sh/src/exec.wac` is 1946 points at 55.5% and
+`refusal.wac` is 19 at 15.8%, and `packages/sh/cov.ts`'s own header says why: the interesting
+branches are refusals — *"every place a peer, a file or a script can be wrong"* — which a differential
+against bash cannot reach by construction, because bash and this agree on what works and disagree on
+what this declines to do. That is a rule-shaped explanation rather than a thousand sentences.
+
+**A rule that matches nothing fails the run**, which is what stops it being a blanket, so the rules
+have to be honest about scope.
+
+## Why it is not just "add a ratchet"
+
+Turning the ratchet on before the ledger exists makes the gate red for everybody, which is the thing
+`CONTRIBUTING.md` says to file rather than do. The order is: write the ledger, then switch the driver
+from `reports` to `floor`, in one commit that the gate can prove.
+
+
+## First step taken: the eight scripts are in — agent-b, 2026-08-29
+
+They are in `packages/sh/cov.ts` now rather than sitting in this issue as advice, with the reasoning
+at the site. **The baseline every figure above is written against has therefore moved**: the package
+is 2,110 of 3,068 — **68.8%**, 958 uncovered, 36 functions never entered.
+
+Nothing real is touched by them. `cov.ts` fakes the capabilities inside wac, which is why `cd /tmp`
+and `mkdir -p /tmp/covprobe` are safe to write here — checked, and `/tmp/covprobe` does not exist
+afterwards.
+
+A second batch followed the same afternoon, aimed at the entries the first left behind — long-form
+listing, the refusal paths every builtin shares, and the job-control half that needs an actual job:
+
+    after batch one   958 uncovered, 36 never entered, 68.8%
+    after batch two   880 uncovered, 28 never entered, 71.3%
+
+    after batch three 850 uncovered, 26 never entered, 72.3%
+
+Thirty-one scripts in total have taken it from 1,036 to 850 and from 44 functions to 26 — 18% of the
+points and 41% of the entries, for six percentage points.
+
+**And the third batch is where the return fell off**: batches one and two were -78 points and -8
+entries each, batch three was -30 and -2 for ten scripts aimed at the group I had picked as most
+likely. That was the stated signal to stop guessing, so this is the natural boundary between widening
+and the two things that come after it — targeted work for the groups below, and rules for whatever
+survives that.
+
+**The 28 that remain**, so the next person starts from a list rather than a walk — 22 in `exec.wac`,
+2 each in `arith.wac`, `lex.wac` and `refusal.wac`:
+
+    HELD_CAP INTERRUPT_POLL_MS ansiEscape before declaredLocal endJob endsWithColon
+    enterSelf hexValue isBlankAt isName jobOfPid killList mtimeOf nameByte nameStart
+    octalMode of onFs ownership reapJob refused spawnableName statReason stopAll
+    stopStage streamPipeline tryHelp
+
+They read as three groups — and I grouped two of them wrongly the first time, by the shape of the
+name rather than by what the function does. `spawnableName` and `streamPipeline` are not helpers:
+they are the *streaming pipeline*, where every stage runs at once and bytes move between them as they
+arrive, so they belong with job control below and are blocked by the same stateless fake.
+Grouping by name is how a plausible list becomes a wrong one.
+
+**Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`, `isBlankAt`, `endsWithColon`,
+`ansiEscape` — which are the ones most likely to be one odd script away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
+`streamPipeline` — which needs a job that outlives the script that started it. **That one is
+settled, and it is the true answer.** `packages/sh/test/wac/probe.wac` fakes `spawn` statelessly on
+purpose, and says why: *"a fake that returned bytes would return them for ever and the read loop
+would not finish"*. A child there answers end-of-input immediately and never transitions, so nothing
+this exercise can write will produce a job to reap, stop or list.
+
+The same comment names where the coverage actually is — `packages/sh/test/spawn.test.ts`, *"against
+the real host instead, which is the only place a child can actually speak"*. So this family's ledger
+rule is written already, in the probe, in the same way the refusals family's was written in
+`cov.ts`: two of the three groups above turn out to have their explanation sitting in prose
+somewhere a test cannot read it, which is the general shape this issue keeps running into. And **stat detail** —
+`mtimeOf`, `onFs`, `ownership`, `octalMode`, `statReason` — which `ls -l` was aimed at and did not
+reach. The reason is one line of the probe:
+
+    Stat resolveStat(i32 id) { return Stat.of(id == 1, id == 1, false, 0, 0, false, false, 0); }
+
+Its comment says what it is for — *"Only the two programs under `/bin` exist, which is what makes a
+`$WACPATH` search decide"* — so it is a fake built for path resolution, and every field `ls -l` would
+read is a constant zero or false. Nothing a script says can vary them.
+
+**Tried, and it is not the paths.** The obvious next guess is that `ls -l` reached nothing because
+the paths it was given do not exist in the fake — `present` has exactly five, all under `/bin`. Four
+scripts listing those instead (`ls -l /bin/prog`, `ls -ld`, two paths, a bare `ls`) moved the total by
+**2 points and no entries at all**, so they were dropped rather than kept for the noise. It really is
+the `Stat` value and not the path.
 
 **This group is the one that differs from the other two**, and the distinction is what a ledger entry
 would have to get right. Job control is unreachable *by design*: the fake is stateless because a
