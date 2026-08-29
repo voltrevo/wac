@@ -301,6 +301,15 @@ export default function Bootstrap() {
           JavaScript underneath it at all, which is the only test of the claim that a wac program
           does not depend on one.
         </P>
+        <P>
+          <b>And on a machine with neither.</b> {m({ children: "--host deno" })} and{" "}
+          {m({ children: "--host nodejs" })} build the same command as a single JavaScript file with
+          a shebang, needing no cargo, no C++ toolchain and nothing from npm — so the ladder is
+          reachable by somebody who cannot or would rather not build V8. That is not a lesser route
+          through it: the rungs are the same rungs, and the bundler that flattens the host into one
+          file is {m({ children: "packages/ts" })}, written in wac and run by the ladder itself,
+          which is what removed the npm step that used to make this the awkward option.
+        </P>
       </Section>
 
       <Section
