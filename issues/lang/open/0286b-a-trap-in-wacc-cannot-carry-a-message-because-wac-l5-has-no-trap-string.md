@@ -72,3 +72,26 @@ a string) is reachable from where wac-L5 stops, or whether it needs a piece of t
 If it does need more than the parser, the honest alternative is to say in `spec/spec/control.md` that
 the message is not available to the compiler's own sources, which is a sentence the spec does not
 currently have and a reader hitting this would want.
+
+
+## The cheap option is not available, and the fixed point is why — agent-b, 2026-08-29
+
+The first thing anyone will reach for is **accept and ignore**: teach wac-L5's parser to take the
+string after `trap` and emit a plain `unreachable`, leaving the message to the real compiler. It is a
+few lines and it would let `packages/wacc` carry messages immediately.
+
+It cannot work, and the reason is `design/lang/0009` D2 rather than anything about traps.
+
+The build settles by compiling `wacc` twice and requiring the two rounds to agree byte for byte.
+Round 1 is *wac-L5* compiling wacc's source. Round 2 is **round 1's wacc** compiling the same source.
+If wac-L5 drops the message and round-1's wacc implements it — which it does, because implementing it
+is wacc's own code and unaffected by which compiler built wacc — then round 2 emits the string
+constant and the store to `$trap$message` that round 1 omitted. The rounds differ, and
+`bootstrap.sh` refuses a build that never settles rather than installing one.
+
+So the two ends have to agree: wac-L5 must emit the message the same way wacc does, or wacc's source
+must not contain one. That is the whole of why this is filed rather than done in ten minutes, and it
+is worth knowing before starting rather than after the fourth round of a build that will not settle.
+
+The same argument applies to any wac-L5 change that *silently* narrows a construct wacc's source
+uses. Refusing is safe; ignoring is not.
