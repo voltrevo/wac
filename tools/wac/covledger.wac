@@ -393,6 +393,30 @@ void sortMissed(string[] a, i32 n) {
  *
  * `verbose` prints every missed point rather than the first twenty.
  */
+/**
+ * Every point as one row — `file<TAB>line<TAB>col<TAB>count` — with no prefix filter.
+ *
+ * **The prefix is applied at `report`, not at collection**, so a driver already executes points in
+ * files outside its own package and then throws them away. That is `issues/system/0241b`: a file
+ * imported across a package boundary is measured once per importer and never as a whole, so each
+ * ledger overstates the gap in it. `packages/tls/src/handshake.wac` reads 36 dark to `tls` and 33
+ * to `quic`, and 15 to both.
+ *
+ * Unioning those needs a key the drivers agree on, and the counter *index* is not one: each driver
+ * compiles its own graph and numbers its own points. The source position is, which is why this
+ * prints one and not the other.
+ *
+ * Test files are dropped here for the same reason `report` drops them — a test's unreached branches
+ * are its assertions that did not fire — but the *prefix* is not, because that is the whole point.
+ */
+export void reportPoints(Core core, Point[] points, i32 nPoints, i32[] counts) {
+  for (i32 i = 0; i < nPoints; i++) {
+    Point p = points[i];
+    if (isTest(p.file)) { continue; }
+    core.log(p.file + "\t" + itoa(p.line) + "\t" + itoa(p.col) + "\t" + itoa(counts[i]));
+  }
+}
+
 export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string prefix, bool verbose) {
   // **Merged by source position, so a generic's instantiations are one line each.** See `Merged`.
   Merged[] merged = mergeRoom(nPoints);
