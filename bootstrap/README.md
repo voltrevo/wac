@@ -62,7 +62,7 @@ The shortcuts, so nobody has to discover them:
 
 ## The answer to the question
 
-**The ladder is 9,843 lines** — the five rungs at 8,126, the assembler that runs at 1,217 and the
+**The ladder is 9,860 lines** — the five rungs at 8,143, the assembler that runs at 1,217 and the
 flattener at 500 — against the 19,499 of the reference compiler, which was deleted on 2026-08-28.
 The line count is the less interesting half, because the two numbers are not the same kind of thing.
 
@@ -109,7 +109,7 @@ everything above it is trusted by derivation.
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 298 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 591 lines |
 | **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,331 lines |
-| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,092 lines |
+| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,109 lines |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names

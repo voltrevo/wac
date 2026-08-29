@@ -14,9 +14,11 @@
 //     ever handed around by value the guard would still compile, still look right, and never fire —
 //     and the trap test would still pass, because it holds the same object either way.
 //   - lexing again is the supported way to parse a program twice, and gives the same answer. The
-//     trap cannot say so — wac-L5 has no `trap "…"` and wacc has to compile on it, `issues/lang/
-//     0286b` — so the advice lives in a comment at the trap and in this test, and a test is the
-//     half that cannot quietly stop being true.
+//     trap says so, since 2026-08-29: *trapped: these tokens have already been parsed: parsing
+//     rewrites them, so lex again*. It could not until then — wac-L5 parsed `trap` and refused the
+//     string, and every file wacc reaches has to compile on that rung, so the advice lived only in a
+//     comment beside the trap. `issues/lang/0286b`. The case below still exists, because a message
+//     is read by whoever hits the trap and a test is read every run.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

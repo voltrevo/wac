@@ -93,7 +93,8 @@ First parse: 0 errors. Second: **1 error**, on a program that is fine. That is t
 Through `P.create` — every caller in the repository — the same program now stops at the mistake
 rather than answering.
 
-**The message could not travel, and that is filed as `issues/lang/0286b`.** It was written as
+**The message could not travel, and that was `issues/lang/0286b` — fixed on 2026-08-29, and the
+sentence below is in the trap now rather than beside it.** It was written as
 `trap "these tokens have already been parsed: parsing rewrites them, so lex again"`, which built and
 ran, and then the ladder refused it: wac-L5 parses `trap` and expects `;`, and every file wacc's
 import graph reaches has to compile on rung 5. The seed build says only `wac-L5 refused 1 things in

@@ -217,3 +217,38 @@ it is 96% of *iterations*, and the phase-level split at the top of this section 
 profiler is worth keeping for what it is good at: showing which code runs at all, and which of two
 candidate lines runs a thousand times more often than the other. It is not a way to choose what to
 optimise.
+
+
+## What is left is mostly *emitting* the platform, not checking it — agent-b, 2026-08-29
+
+Four builds on the native host, `--no-cache`, three runs each, medians:
+
+    build  export i32 main() { return 7; }                 53 ms      2.6 KB out
+    build  the same plus `import … from "std/platform.wac"`  1 100 ms    241.3 KB out
+    check  the trivial one                                  40 ms
+    check  the one importing the platform                  190 ms
+
+**One import costs a second, and about 150 ms of that is the front end.** So of the ~1 050 ms a
+platform import adds, roughly one seventh is lex, parse and check and the rest is emitting 238 KB of
+module. That tracks this issue's own `~6 ms/KB` model — it predicts 1 433 ms for that delta and the
+measurement is 1 050 ms, the same shape on a different machine.
+
+**That reframes "skip checking files that have not changed"**, which is the first entry under *What
+is left to try*. It is worth having, and it is bounded by the 150 ms: checking is not where the time
+went. What repeats across builds is the *emitted code* for a closure that is byte-identical every
+time — a hello-world gets 241 KB because the whole platform is compiled into it.
+
+**Which makes this the same phenomenon as `issues/system/0129`**, from the other end. That issue
+measures the floor in bytes — every executable carrying ~350 KiB it did not ask for — and treats it
+as a size question with an open bundling decision. It is also a *time* question: the floor is emitted
+from source on every build, so 0129's bundling question and this issue's remaining cost are one
+question, and answering it once answers both.
+
+**And it is why `issues/system/0275b`'s item 1 is what it is.** `commandparity_test.wac` makes 34
+invocations across three hosts, and the entries those rows name import the platform. At roughly a
+second of emit apiece that is most of its 71.7s — so the largest chunk in the suite is the executable
+floor, arriving as wall-clock in the gate rather than as bytes on disk.
+
+Not decomposed further here: whether the 900 ms is the emitter's own work or the cost of writing and
+validating a 241 KB module. `wac check` stops before emit, which is what separates the two numbers
+above, but nothing here separates emit from output.

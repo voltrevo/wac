@@ -284,8 +284,8 @@ export default function Home() {
           rebound, which made every linked-list walk in the specification illegal.
         </P>
         <Caveat title="not finished">
-          All 1075 of the repository&rsquo;s wac files compile whole now — it was 27 short of 729 five
-          days ago — and none of that sweep produced an invalid module. What is not finished is the
+          Every file in the corpus compiles whole now — it was 27 short of 729 five days ago — and
+          none of that sweep produced an invalid module. What is not finished is the
           reach: when the emitter does stop, it says which feature stopped it rather than emitting
           something that fails later. And the way back is closing:{" "}
           {m({ children: "box" })} no longer builds with the seed at all, because the shell&rsquo;s

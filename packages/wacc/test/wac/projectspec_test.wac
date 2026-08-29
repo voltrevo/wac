@@ -351,7 +351,8 @@ export string test_a_project_specifier_does_not_depend_on_the_working_directory(
 }
 
 /**
- * A bare specifier that names no mapping is refused, not joined — `issues/system/0234a`.
+ * A bare specifier that names no mapping is refused, not joined — `[§wac-import-undefined-h4mq9xk]`,
+ * `issues/system/0234a`.
  *
  * **`spec/spec/imports.md` defines three kinds and this is none of them.** A path is relative, `@/`
  * is the project root, and a bare name **may name a mapping** the manifest declares.

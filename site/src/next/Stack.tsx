@@ -541,10 +541,10 @@ export default function Stack() {
         </Sub>
       </Section>
 
-      <Section id="wacc" kicker="hard to fake, #5" title="The compiler, being rewritten in the language it compiles">
+      <Section id="wacc" kicker="hard to fake, #5" title="The compiler, written in the language it compiles">
         <P>
-          {m({ children: "packages/wacc" })} is the wac compiler ported to wac, so that it can
-          eventually compile itself. The point is not the compiler.{" "}
+          {m({ children: "packages/wacc" })} is the wac compiler, written in wac, and it compiles
+          itself. The point is not the compiler.{" "}
           <Lead>A compiler is the program shape this language is worst at</Lead> — syntax trees want
           sum types, symbol tables want generics, everything wants strings — so it exercises the
           friction with a real consumer rather than by argument.
@@ -569,7 +569,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>1075 of 1075 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>1125 of 1125 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -590,7 +590,7 @@ export default function Stack() {
           entry is missing from the list too, which is the one failure a list cannot find in itself.
           So: sixteen operators against fifteen types on both sides, <Lead>3,600 programs</Lead>,
           the reference deciding every cell. It found <Lead>51</Lead> where the
-          reference refuses and wacc said nothing — 45 of them arithmetic on a reference, so{" "}
+          reference refused and wacc said nothing — 45 of them arithmetic on a reference, so{" "}
           {m({ children: "S + S" })}, {m({ children: "i32[] - i32[]" })} and{" "}
           {m({ children: "anyref % anyref" })} all compiled, because the rule that was there asked
           about {m({ children: "bool" })} and funcrefs only. The other six were every comparison on{" "}
@@ -618,32 +618,32 @@ export default function Stack() {
         </P>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
-            Still a subset of the <em>reference</em>, and deliberately — roughly 210 distinct
-            diagnostics exist there and this implements a fraction, reporting fewer rather than
-            different ones. Reporting a diagnostic the reference does not is what would break the
-            comparison, so the checker stays quiet where it cannot type something rather than
-            guessing.
+            Deliberately a subset — it reports fewer diagnostics than the reference did, never
+            different ones, and where it cannot type something it stays quiet rather than guessing.
+            That rule was what kept the comparison meaningful while there was something to compare
+            against; it survives the reference because it is also the honest behaviour on its own.
+            A checker that guesses is a checker whose silence means nothing.
           </span>
         </P>
         <P>
-          <Lead>The last rung is reached, which is the one the others were for.</Lead> Take wacc,
-          compile it with the reference to get stage A; compile wacc <em>with stage A</em> to get
-          stage B; then ask stage B to compile wacc, and compare. <Lead>B and C are the same
-          bytes.</Lead> A compiler that reproduces itself is what a bootstrap means, and nothing
+          <Lead>The last rung is reached, which is the one the others were for.</Lead> The route
+          used to start at the reference: compile wacc with it to get stage A, compile wacc with
+          stage A to get stage B, ask stage B for stage C, and require B and C to be the same bytes.
+          Since the reference was deleted the start of that chain is{" "}
+          <A href="#/bootstrap">the ladder</A> instead, and the requirement is unchanged —{" "}
+          {m({ children: "./bootstrap.sh" })} rebuilds the compiler with the compiler it just built
+          until two rounds are byte-identical, and <Lead>refuses to install one that never
+          settles</Lead>. A compiler that reproduces itself is what a bootstrap means, and nothing
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>402 of the repository&rsquo;s 405 wac
-          files</Lead> whole. That number used to fall as often as it rose, because the corpus is the
-          live repository and code written for other reasons walks in using things this emitter had
-          not reached; what changed is that the emitter caught up. <Lead>Nothing in the repository is
-          declined any more.</Lead> All three files it cannot finish block on the same thing, and it
-          is not a language feature: an import of a file the harness does not supply. Every answer it
-          gives for the specification&rsquo;s own cases agrees — 356 of 356, from the 241 of 275
-          programs it emits whole — and all 84 of the specification&rsquo;s rejections are also its.
-          And <em>none of the 402 produces an invalid module</em>, which is the property that had to
-          hold before the fixpoint meant anything: a walk that approves a function the emitter cannot
-          actually emit would reach a fixpoint on garbage.
+          It is finished, and the table above is where the number lives:{" "}
+          <Lead>every file in the corpus compiles whole, and none produces an invalid module</Lead>.
+          That figure used to fall as often as it rose, because the corpus is the live repository and
+          code written for other reasons walks in using things the emitter had not reached; what
+          changed is that the emitter caught up. Not producing an invalid module is the property that
+          had to hold before the fixpoint meant anything — a walk that approves a function the
+          emitter cannot actually emit would reach a fixpoint on garbage.
         </P>
         <Sub id="wacc-emitter" title="Why the emitter is not checked on its bytes">
           <P>
@@ -651,9 +651,9 @@ export default function Stack() {
             wrong one. Byte identity pins the type section&rsquo;s ordering, index assignment,
             section order and{" "}
             <Lead>the width of a number&rsquo;s encoding</Lead> — a wasm integer may legally be
-            written in one byte or five — none of which is the language. Held to it, this would be
-            reproducing an implementation rather than a language, against a reference that changes
-            several times a day.
+            written in one byte or five — none of which is the language. Held to it, this would have
+            been reproducing an implementation rather than a language, against a reference that
+            changed several times a day.
           </P>
           <P>
             So the two modules are <em>run</em> and their answers compared, on every program in the

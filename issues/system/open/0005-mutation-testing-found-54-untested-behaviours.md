@@ -848,3 +848,41 @@ Some of this table is certainly stale in the good direction: packages/std/test/w
 exists now and its header says it was written *for* `hashI32` and `hashI64` returning 0, which are
 two of the three `std` rows. What nobody can say cheaply is which of the rest survived, and a list
 that cannot be re-measured is the shape 0101 warns about — a measurement that has become a memory.
+
+## Two more rows, on the rule this page set — agent-b, 2026-08-29
+
+*"A row per constant is cheap to add and worth adding as each is next touched."* Two were touched
+today, so `packages/wacc/test/wac/codes_test.wac` now pins them:
+
+    a cast to a packed type                  errPackedPosition   26
+    a cast between a number and a reference  errWrongCastOp      16
+
+**And the first one shows why the rule is worth following rather than admiring.**
+`issues/lang/0289b` moved the packed *cast* from `errWrongCastOp` onto `errPackedPosition`, because
+the help on the first names three operators and all three are refused for that case. That is a change
+of *meaning* to a constant — exactly the edit a table pinning neither would have followed silently,
+agreeing afterwards with whatever the constants said, mutant included.
+
+Eight rows now, not six. Still not sixteen, and still on the same argument: enough to kill the
+mutants that matter, and one more each time a code is next touched.
+
+## The website quotes this page, so a re-run has a second thing to update — agent-b, 2026-08-29
+
+`site/src/next/Checked.tsx` cites *434 of 497 mutants killed* and links here. That figure is fine and
+is now dated on the page, because it is what the first full run said and always will be.
+
+**What was not fine was the sentence after it**, which claimed the 54 survivors "have been worked
+down to eight". Eight is from this page's 2026-08-0x state — `url`'s two, `bignum`'s two and
+`wactest`'s one, plus three more — and this page has since recorded that at least three of those are
+gone: `wactest` is 2/2 by deleting the mutant's subject, and `url`'s two name functions the package
+refactored away. So the site was asserting a live count that is a documented over-count, on a page
+whose whole argument is that its numbers came from somewhere.
+
+It now says the survivors "have been worked down package by package" and links here for the detail,
+which is true without asserting a total. **That is deliberate rather than lazy**: the section above
+says plainly that *"what nobody can say cheaply is which of the rest survived"*, so a number there
+would be a claim nobody in this repository can currently check.
+
+**For whoever runs the next full sweep:** the site is the second place to update, and the honest
+figure to put back is a total with a date on it rather than a bare one.
+

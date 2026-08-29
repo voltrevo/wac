@@ -173,6 +173,14 @@ prefix; for a prefix the unmatched suffix is appended to the mapping's `subdir` 
 climbs out. Mappings may not overlap, so at most one can match and there is no precedence rule to
 learn.
 
+`[§wac-import-undefined-h4mq9xk]` A specifier that matches **none** of those four descriptions is a
+compile error, named. It is not a path: `./` and `../` are what make one, so `sub/lib.wac` is a
+mapping name or it is nothing. Joining it to the importing file's directory instead — which every
+host did until 2026-08-29 — finds a file that is usually absent and *occasionally present*, and the
+second is the worse failure: `wac build` compiled `src/sub/lib.wac` into a module and exited 0,
+having read a file the manifest never named. The diagnostic names the specifier and the four things
+it could have been, because the fix is a character and the reader has to be able to see which.
+
 Resolution reads the lockfile, never the network: `wac.lock` records the commit each mapping is
 pinned to, and the file is read from the checkout cache. **A missing lock entry, or a commit that is
 not in the cache, is a compile error naming `wac update`** — an ordinary command does not fetch, and

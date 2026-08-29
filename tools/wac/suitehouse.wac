@@ -16,7 +16,7 @@
 
 import { Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
-import { startsWith, endsWith } from "../../packages/wactest/src/strings.wac";
+import { startsWith, endsWith, splitLines } from "../../packages/wactest/src/strings.wac";
 import { envOf } from "./suitegate.wac";
 
 /** Deno's cache directory, wherever this environment puts it. */
@@ -211,4 +211,43 @@ export void dropUnreachableTranspiles(Core core, Cli cli) {
     core.log("dropped " + itoa(r.gone) + " transpile(s) of sources that no longer exist, " +
              itoa64(mb(r.bytes)) + " MB (0068)");
   }
+}
+
+/**
+ * The queue's stopwatch file after a run that measured `fresh`, each entry already `key<TAB>ms`.
+ *
+ * **A measurement is a fact about a chunk, not about the run that took it.** This used to be written
+ * from the current run alone, which is right for the gate — it measures every chunk — and wrong for
+ * every narrower one. `wac task test packages/fmt` measures a single chunk, and the file went from 59
+ * lines to 1: the next full suite then had nothing to order by and fell back to the file-count proxy,
+ * which `issues/system/0274b` measured at about 150s of idle workers. Nothing reported it, because the
+ * file was written and merely shorter.
+ *
+ * **Whole keys, not prefixes.** `packages/b/test/wac` and `packages/b/test/wac#0` are different chunks
+ * whose names share a start — the first is a directory small enough to run in one piece, the second is
+ * part of one that was split. A directory crossing that threshold has both in the file at different
+ * times, and a prefix match would drop the wrong one.
+ *
+ * Stale keys are left alone. A chunk that no longer exists is never looked up, `recordedMs` answers -1
+ * for it, and a line costs about thirty bytes; a sweep that decided which keys are still real would
+ * need this file to know how the queue is chunked today, which is the second implementation that goes
+ * wrong.
+ */
+export string mergedTimes(string existing, string[] fresh) {
+  string out = "";
+  for (i32 i = 0; i < fresh.len(); i++) { out = out + fresh[i] + "\n"; }
+
+  string[] lines = splitLines(existing);
+  for (i32 i = 0; i < lines.len(); i++) {
+    i32 tab = lines[i].indexOf("\t");
+    if (tab < 0) { continue; }
+    string key = lines[i].slice(0, tab);
+    bool replaced = false;
+    for (i32 k = 0; k < fresh.len(); k++) {
+      i32 t2 = fresh[k].indexOf("\t");
+      if (t2 >= 0 && fresh[k].slice(0, t2) == key) { replaced = true; }
+    }
+    if (!replaced) { out = out + lines[i] + "\n"; }
+  }
+  return out;
 }

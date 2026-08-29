@@ -31,6 +31,26 @@ const EX_L1 = `; an interpreter, not a compiler — s-expressions, closures, a h
         ((symbol? e) (emit-load (lookup e env)))
         (else        (compile-call e env))))`;
 
+const EX_L2 = `// A wx string literal is a length then its bytes, so writing one out is a loop over both.
+(fn emits ((s i32)) i32
+  (do (let n (load s))
+      (let i 0)
+      (while (< i n)
+        (emit1 (load8 (+ s (+ 4 i))))
+        (set i (+ i 1)))
+      0))`;
+
+const EX_L3 = `i32 emits(i32 s) {
+  i32 n = load(s);
+  i32 i = 0;
+  while (i < n) { emit1(load8(s + 4 + i)); i = i + 1; }
+  return 0;
+}`;
+
+const EX_L4 = `struct Tok { i32 kind; i32 start; i32 len; i32 val; }
+
+Tok[] toks;`;
+
 const EX_L5 = `enum Option {
   Some(i32 v), None
   bool isSome(const this) {
@@ -163,7 +183,7 @@ export default function Bootstrap() {
               <span style={{ fontFamily: font.mono }}>wac-L5</span>,
               "wac itself — all of core/ and all of wacc/src",
               "wac-L4",
-              "4,092 lines",
+              "4,109 lines",
             ],
           ]}
         />
@@ -186,6 +206,38 @@ export default function Bootstrap() {
             An interpreter is smaller than a compiler, and L1 is the rung whose implementation a
             person has to write by hand in assembly text. Making it the cheapest possible thing is
             what keeps the hand-written root at 1,300 lines instead of several thousand.
+          </P>
+        </Sub>
+
+        <Sub id="second" title="The second rung is where a compiler first appears">
+          <Code label="wac-L2 — from bootstrap/boot/l3.l2, which is the L3 compiler" lang="text" code={EX_L2} />
+          <P>
+            Still s-expressions, and no longer an interpreter: this is the language the first real
+            compiler is written in. Whole vocabulary: {m({ children: "i32" })}, fixed memory,
+            functions, {m({ children: "while" })}, string literals. There is no allocator, so every
+            table inside the compiler it holds is a hard-coded address — the file says so at the
+            top, and lists them.
+          </P>
+        </Sub>
+
+        <Sub id="c-family" title="The third rung is where it starts to look like wac">
+          <Code label="wac-L3 — the same routine one rung up, from bootstrap/boot/l4.l3" code={EX_L3} />
+          <P>
+            <Lead>The same function, in the next language.</Lead> Braces, infix arithmetic, a
+            condition in parentheses, {m({ children: "return" })}. Nothing was added to the
+            program — it is the same loop over the same bytes — which is what makes the pair worth
+            printing: the distance between two rungs is the syntax and not the work.
+          </P>
+        </Sub>
+
+        <Sub id="gc" title="The fourth rung stops doing its own memory arithmetic">
+          <Code label="wac-L4 — from bootstrap/boot/l5.l4, which is the L5 compiler" code={EX_L4} />
+          <P>
+            Every compiler below this one keeps its tokens at a fixed address —{" "}
+            {m({ children: "i32 TOK = 262144;" })}, with the layout arithmetic written out at each
+            use, because no rung below L4 has an allocator. Here the same table is{" "}
+            {m({ children: "Tok[] toks" })}: a wasm GC array of a declared struct. Its own source
+            calls that <em>the first thing on this ladder that has been true of a compiler here</em>.
           </P>
         </Sub>
 

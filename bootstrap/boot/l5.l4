@@ -2879,7 +2879,24 @@ i32 statement() {
     line("return");
     return 0;
   }
-  if (isword("trap")) { next(); want(59); line("unreachable"); return 0; }
+  // `trap` takes an optional message, and this rung **parses it and throws it away** — the string
+  // never reaches the output. `issues/lang/0286b`: `spec/spec/control.md` gives `trap` a message, the
+  // machinery to carry one is wacc's, and every file wacc's import graph reaches has to compile here
+  // first, so before this the compiler was the one program that could not use the construct it
+  // implements.
+  //
+  // Discarding is sound because of what this rung compiles, which is one program. The module it
+  // produces is `wacc` built by the ladder, and `bootstrap.sh` replaces that on the next round with
+  // one built by a compiler that *does* carry messages — its loop exists for exactly this, and
+  // demanding agreement after a single round would refuse every emitter change. So the artefact
+  // missing its messages is an intermediate, and its traps do not fire during a successful compile.
+  if (isword("trap")) {
+    next();
+    if (kind() == K_STR) { next(); }
+    want(59);
+    line("unreachable");
+    return 0;
+  }
   if (isword("break")) {
     next(); want(59);
     if (loop_out == 0 - 1) { oops(); } else { word("br"); label(loop_out); nl(); }

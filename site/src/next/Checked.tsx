@@ -199,9 +199,9 @@ export default function Checked() {
           suite is asked to notice.
         </P>
         <P>
-          <Lead>434 of 497 mutants killed</Lead> on the first full run. The other 63 are not all
-          gaps — nine were discarded as provably equivalent or uncompilable — and the 54 that did
-          survive have been worked down to eight as tests were written for them, in{" "}
+          <Lead>434 of 497 mutants killed</Lead> on the first full run, 2026-08-01. The other 63 are
+          not all gaps — nine were discarded as provably equivalent or uncompilable — and the 54 that
+          did survive have been worked down package by package as tests were written for them, in{" "}
           <A href={`${BLOB}/issues/system/open/0005-mutation-testing-found-54-untested-behaviours.md`} external>an open issue</A>{" "}
           rather than quietly tolerated.
         </P>
@@ -260,7 +260,7 @@ export default function Checked() {
 
       <Section id="spec" kicker="evidence, seventh kind" title="A specification that cannot drift">
         <P>
-          The language has a written specification, and <Lead>415 of its claims carry a tag</Lead>{" "}
+          The language has a written specification, and <Lead>417 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
           without evidence beside it reads as evidence, which is the failure mode a specification
           has, so a test walks the specification and fails with the list of any tag nothing covers.

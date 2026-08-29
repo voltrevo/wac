@@ -65,10 +65,10 @@ test 6s or below. That was `wac ctcompare` reading a journal's capacity rather t
 crossing into wasm rather than anything the host wrapper does. That half is closed too — the module
 folds its own journal now — and the file is **8s**, the chunk 25s. 0274b has the anatomy.
 
-**`packages/wac` is one file, and it is `buildcache_test.wac` at 105s.** Timed one at a time, the
-package's seventeen files:
+**`packages/wac` was one file, and it was `buildcache_test.wac` at 105s — now 6.6s.** Timed one at a
+time, the package's seventeen files:
 
-    105.7s  buildcache_test.wac        6 tests
+    105.7s  buildcache_test.wac        6 tests   (now 6.6s)
      12.2s  app_test.wac
       8.1s  testcli_test.wac
       7.3s  covdump_test.wac
@@ -195,6 +195,26 @@ core to put them on, and taking one would slow the other two agents rather than 
     floor         415s ->  357s -> ?
     suite         505s ->  452s -> ?
     crypto        334s ->  195s -> 25s
+    buildcache    105.7s        -> 6.6s
+
+**Item 2 was 95.6s off the suite's *work*, and the wall-clock followed it.** Four workers, so what a
+chunk costs only moves the run if that chunk was the one everything waited on — which is why this was
+first recorded as a work figure and nothing more. The next full gate answered it:
+
+    lock wait      1s        suite   452s -> 340s
+    pull+seed     38s        total          537s
+    suite        340s
+    docs          17s
+    site           8s
+    ratchets     133s
+
+112s off the suite against 95.6s of work removed, so `packages/wac` *was* on the critical path and
+the rest is the day's load. The total did not fall as far because this run rebuilt the seed after a
+pull — 38s that a run with a fresh seed does not pay.
+
+Stated as a range rather than a single number on purpose: a previous entry on this page claimed a
+wall-clock saving that a re-measurement took back, and the difference between the two cases is that
+this one has a before *and* an after from the same instrument.
 
 Three changes: `ctcompare` bounded by the journal's cursor; `Cli.call` caching the export it resolves
 instead of building a `v8::String` per call; and then `issues/system/0274b`'s second half, where the
@@ -252,14 +272,41 @@ in merging them. Every item here is *work reduction*, and each belongs to an iss
 exists.
 
 1. **`commandparity_test.wac`, 71.7s**, and the compile cost behind it — `issues/lang/0153`. The
-   largest single file in the suite, and 2.6x the next in its package. Three hosts each compile a
-   219-file program. That issue now also carries a profile of the compiler and, more usefully, the
-   retraction of what the profile first appeared to show.
-2. **`buildcache_test.wac`, 105.7s**, more than half of `packages/wac`. Per *test*, because each
-   points `WAC_HOME` at a fresh directory — which is the point of a build-cache test and also makes
-   `wac run` recompile the compiler-as-a-program six times. Sharing that compile while keeping each
-   subject's cache fresh is possible and is a decision about what the test proves; see the section
-   above for why it was left.
+   largest single file in the suite, and 2.6x the next in its package. That issue now also carries a
+   profile of the compiler and, more usefully, the retraction of what the profile first appeared to
+   show.
+
+   **Corrected: this said "three hosts each compile a 219-file program", and that is not the cost.**
+   Building the command is paid once per host and cached — `builtByDeno` keys on the closure of
+   `wacc.wac`, `compiler/`, `build.ts` and `packages/platform/host/`, so a rebuild after an unrelated
+   change is a copy and a runtime start. The file's own header says where the time goes: *"Nearly all
+   of it is the three hosts each compiling the entry a row names"* — 34 invocations across three
+   hosts, each compiling the small program that row points at, at about 2.1s a row.
+
+   That matters because it is a different lever. The one this sentence implied — build the command
+   once and share it — is already done. What is left is either the compiler's own speed on small
+   inputs, which is 0153, or letting the rows share a build cache. **The second is not free and
+   probably not wanted**: this file is a differential between three hosts, and a hit means the second
+   and third host did not do the work the row exists to compare. The rows do repeat entries —
+   `src/hello.wac` is named nine times — so the saving would be real, and so would the loss.
+2. ~~**`buildcache_test.wac`, 105.7s**~~ — **done, 102.2s → 6.6s.** Each case points `WAC_HOME` at a
+   fresh directory, which is the point of a build-cache test, and each build went through
+   `wac run … wac.wac`, so the compile of the command was cold every time: 10.7s apiece. Per *case*
+   rather than per build, except in `test_the_directory_is_bounded`, which was 33.9s on its own —
+   with the bound at two, the compile's own cache entry was evicted by the very builds the case was
+   making, so it recompiled between iterations.
+
+   The command is built to a module once, by an ordinary `wac build`, and every case runs *that*
+   (`wac <module>.wasm build …`). The build cache decides when the module is stale, which is the only
+   staleness check here that cannot be wrong about which compiler is under test. What it proves is
+   unchanged and was checked rather than assumed: cutting `cacheKey` to `return ""` in
+   `packages/wac/src/wac.wac` turns five of the six red, so the module really is the checkout's
+   compiler and not the binary's seed.
+
+   Two things fell out. Each home now holds only its own case's entries, so the counting assertions
+   are totals rather than deltas and picking an entry out is a count rather than a match on the
+   length of the bytes just written. And three build helpers became one: they differed only in which
+   of two optional arguments they appended.
 3. **Process starts** — `issues/system/0197`, and **already being worked**, so read it before
    starting anything here. `harness/buildApp.ts` is the replacement builder, going through `wac app`
    at ~20ms against ~107ms, and `design/system/0009` is why `packages/platform/build.ts` is losing
@@ -393,3 +440,30 @@ as work. It is the one line here that no change to the suite, the docs or the ra
   130s floor, so the workers are saturated either way. Only making that task cheaper moves this row.
 - **The suite's floor was 331s against 409s wall** on the run above, with the longest single chunks
   175s (`packages/wacc/test/wac`, 12 files) and 143s (`packages/wac/test/wac`, 9 files).
+
+
+## The floor is total work, not the tail — agent-b, 2026-08-29
+
+Recovered from a gate log after `.cache/suite-times` was clobbered (`issues/system/0286b` is the
+clobbering; the runner merges now):
+
+    1025s of work at 4 workers, of which 62s ran alone — floor 303s, wall 387s
+      178s  packages/wacc/test/wac — 12 of its files (3 of 7)
+       65s  packages/wacc/test/wac — 11 of its files (6 of 7)
+       53s  packages/wacc/test/wac — 12 of its files (5 of 7)
+
+**The longest chunk is 178s and the floor is 303s, so the tail is not what the run waits on.** That
+settles which of the two remaining levers is worth anything: rebalancing the queue cannot go below
+303s, and 303s is `(1025 - 62) / 4 + 62`. Only removing *work* moves it. The scheduling is finished
+and was finished before this.
+
+The three chunks above are all `packages/wacc/test/wac`, which is 82 non-heavy files in 7 chunks.
+The largest one holds `commandparity_test.wac`, so item 1 above is also the largest chunk — the
+stride split puts files 2, 9, 16, … of the sorted list together, and its other eleven are:
+
+    bindgenwac cases cttrace envtables grants latearray0271
+    parseconsumes scoping specfences tour wapy
+
+Nothing to conclude from that list yet; it is here so the next person does not have to recover it
+from a log the way this was. **The chunk key is positional**, so this membership changes the day a
+file is added to that directory — `#2` is not a stable name for these twelve.

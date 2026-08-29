@@ -98,18 +98,73 @@ export string test_the_corpus_size_the_site_quotes_is_the_corpus(Core core, Cli 
   string rest = page.slice(at + 4, page.len());
   i32 sp = rest.indexOf(" ");
   string said = sp < 0 ? "" : rest.slice(0, sp);
-  i32 n = 0;
-  for (i32 i = 0; i < said.len(); i++) {
-    string ch = said.slice(i, i + 1);
-    if (ch == ",") { continue; }
-    i32 d = "0123456789".indexOf(ch);
-    if (d < 0) { n = 0 - 1; i = said.len(); continue; }
-    n = n * 10 + d;
-  }
+  i32 n = numberFrom(said);
   i32 have = c.paths.len();
   i32 slack = have / 10;
   t.isTrue(n > 0 && n >= have - slack && n <= have + slack,
            "the site says " + said + " wac files; the corpus walk finds " + itoa(have) +
            " — more than a tenth out, so the sentence has stopped being about this repository");
+
+  // **And the emitter cell in the table above that sentence**, which is the same corpus counted by a
+  // different walk: `N of N files, 0 invalid`.
+  //
+  // Checked from here, cheaply, rather than where the emitter's own number is produced.
+  // `corpusemit_test.wac` measures it exactly — and declares `test-lane: heavy` at over 1200s, so it
+  // does not run in the gate, and a guard living there would not catch the page going stale between
+  // heavy runs. What *is* cheap is the corpus size, already walked above, so this asks the two things
+  // that need no emit: that the page's own pair agrees with itself, and that it is still about a
+  // corpus this size.
+  //
+  // The pair agreeing is the exact half. `1125 of 1125` is the claim that every file is emitted
+  // whole; a page that said `1100 of 1125` would be reporting a partial, and that is a fact about the
+  // emitter rather than a figure drifting, so it fails at any size.
+  i32 marker = page.indexOf(" files, 0 invalid");
+  t.isTrue(marker >= 0, "the table no longer has an `N of N files, 0 invalid` cell for the emitter");
+  i32 cell = marker < 0 ? 0 - 1 : lastOfBefore(page, marker);
+  if (cell >= 0) {
+    i32 from = cell;
+    while (from > 0) {
+      string ch = page.slice(from - 1, from);
+      if (ch < "0" || ch > "9") { break; }
+      from = from - 1;
+    }
+    string lhs = page.slice(from, cell);
+    string rhs = page.slice(cell + 4, marker);
+    i32 a = numberFrom(lhs);
+    i32 b = numberFrom(rhs);
+    t.isTrue(a > 0 && a == b,
+             "the table says " + lhs + " of " + rhs + " files — the two differ, so the page is "
+             + "reporting that the emitter leaves corpus files unfinished");
+    t.isTrue(b > 0 && b >= have - slack && b <= have + slack,
+             "the table counts " + rhs + " corpus files; the walk finds " + itoa(have)
+             + " — more than a tenth out");
+  }
   return t.report();
+}
+
+/** The ` of ` immediately before `at`, or -1 — the page says "of" in prose long before the table. */
+i32 lastOfBefore(string page, i32 at) {
+  i32 found = 0 - 1;
+  i32 from = 0;
+  while (from < at) {
+    i32 k = page.slice(from, at).indexOf(" of ");
+    if (k < 0) { return found; }
+    found = from + k;
+    from = found + 1;
+  }
+  return found;
+}
+
+/** `1,125` or `1125` as a number, or -1 for anything else. */
+i32 numberFrom(string said) {
+  if (said.len() == 0) { return 0 - 1; }
+  i32 n = 0;
+  for (i32 i = 0; i < said.len(); i++) {
+    string ch = said.slice(i, i + 1);
+    if (ch == ",") { continue; }
+    i32 d = "0123456789".indexOf(ch);
+    if (d < 0) { return 0 - 1; }
+    n = n * 10 + d;
+  }
+  return n;
 }
