@@ -923,12 +923,13 @@ fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
 
 /// **One body for the parent and for a child**, because a child is this same program with a
 /// different world: its own arguments, possibly narrower grants, and streams instead of a terminal.
+
 /// A V8 isolate belongs to one thread, so a child gets a thread and an isolate of its own — and
 /// `HOST` is a `thread_local!`, which is why that costs nothing here.
-fn run_as(m: &Manifest, wasm: &[u8], as_child: AsChild) -> i32 {
-    run_as_with(m, wasm, "", as_child)
-}
-
+///
+/// **`manifest_text` is not decoration.** A child re-parses it to build the world for its own child,
+/// so a caller that has it must pass it — `run_as` was a two-line wrapper that passed `""`, and
+/// `issues/system/0280c` is what that cost. It had one caller and is gone.
 fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild) -> i32 {
     // Taken before `as_child` is unpacked into the host's state below, which is where it stops
     // being available.
@@ -2137,7 +2138,15 @@ fn dispatch(
                         return;
                     }
                 };
-                let code = run_as(&manifest, &wasm, child);
+                // **`run_as_with`, so the manifest text reaches the child.** `run_as` passes `""`,
+                // and a child re-parses this string to build the world for *its* own child — so an
+                // empty one made every **grandchild** fail: `serde_json::from_str("")` is an error,
+                // and the arm above answers 127 before anything starts.
+                //
+                // `init` starting services out of an image is the ordinary case. Each service came
+                // back 127 and the boot still ended `init: all services have stopped`, because a
+                // service that never started has stopped. `issues/system/0280c`.
+                let code = run_as_with(&manifest, &wasm, &manifest_text, child);
                 // **Both streams end when the child does**, or a parent reading them waits for ever.
                 out.finish();
                 err.finish();

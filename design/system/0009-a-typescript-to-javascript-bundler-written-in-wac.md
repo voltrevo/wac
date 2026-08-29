@@ -511,16 +511,16 @@ start from: it already builds both ways, and the case that runs a `wac app` arte
 host is the regression test for `0275c`.
 
 
-## The migration, second attempt: nine files across, three that do not go
+## The migration: ten files across, two that do not go
 
 Done one at a time this time, after the first attempt moved eleven at once and produced four failures.
 `sealing.test.ts` first, because its subject is what a sealed session can reach — 13 of 13. Then the
 rest, keeping only what passes.
 
-**Across (9):** `sealing`, `session`, `sealed`, `flags`, `programs`, `fuzz`, `jobs`,
-`pipeUngranted`, `stdin_open` — plus `bin`, already there. 30 tests green.
+**Across (10):** `sealing`, `session`, `sealed`, `flags`, `programs`, `fuzz`, `jobs`,
+`pipeUngranted`, `stdin_open`, `init` — plus `bin`, already there.
 
-**Not across (3), each for its own reason, and none of them the bugs from the first attempt.**
+**Not across (2), each for its own reason, and neither of them the bugs from the first attempt.**
 
 ### `unnameable.test.ts` — the Deno target has a second permission layer
 
@@ -547,13 +547,25 @@ with `cwd` as `""`, and `joinPath` reads that as *resolve as given* — so the a
 the process's directory rather than the shell's. One layer of spawn deeper than the Deno artefact,
 which is the launcher's own program.
 
-### `init.test.ts` — services and init, six failures, not yet diagnosed
+### `init.test.ts` — was `issues/system/0280c`, and is across now
 
-The largest of the three and the only one still unexplained.
+Six failures, all one cause. `run_as` — the path every spawned child takes — passed `""` as the
+manifest text, so a child's own `spawnSelf` parsed empty JSON and every **grandchild** was answered
+127 before starting. `init` runs inside `imaged`, which under `wac app` is itself a child, so every
+service it started came back 127 — and the boot still ended `init: all services have stopped`,
+because a service that never started has stopped.
+
+One argument, and `run_as` had no other caller: it is gone.
 
 ### What this says about the order
 
-The first attempt's four failures were three real bugs. These three are different in kind: two are
-*differences between the artefacts* that the tests were written against, and only the `cwd` one looks
-like something to fix. Moving one file at a time is what separated them; moving eleven produced a
-list nobody could act on.
+Moving one file at a time is what made these legible; moving eleven produced a list nobody could act
+on. Of the two that remain, one is a real divergence with a measured failed fix (`0281c`) and one is
+not a bug at all.
+
+**And the shape is worth naming.** Six host divergences were found on 2026-08-29 by driving `wac app`
+by hand — `0275c`, `0276c`, `0277c`, `0278c`, `0280c`, `0281c` — every one of them a capability that
+works on one host and not another. `issues/system/0279c` is why the instrument meant to catch them
+did not: `conformance_test.wac` credits `OPEN_OUTPUT`, `SPAWN_SELF` and `CWD` to
+`native_hostfs_test.wac`, which skips wherever the wasmtime host has not been built. Those are three
+of the six.

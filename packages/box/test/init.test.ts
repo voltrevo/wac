@@ -16,7 +16,7 @@
 // readiness, and stopping a service. `init.wac`'s header names all five. A test that checked "the
 // service is still running" would be checking nothing, since nothing here can end one.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
