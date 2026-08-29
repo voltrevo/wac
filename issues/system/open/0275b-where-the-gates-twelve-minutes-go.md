@@ -237,3 +237,35 @@ on the built exercise took 3s and looked like proof that the sweeps were cheap; 
 mistake wearing a different hat, because covdump takes no grants and every test that shells out
 failed in microseconds. The exercise's honest figure is 91s, and running it with `--allow-run`
 removed gives 5s *and* `60 test(s) failed`. Read the failure count before believing a difference.
+
+## The largest thing left is that the gate runs two queues instead of one
+
+Both phases are a pool of independent jobs run at four workers, and they run **one after the other**:
+
+    suite      1260s of work, 62s of it alone   ->  floor 362s, wall 469s
+    ratchets    511s of work                    ->  floor 128s, wall 129s
+                                                    ------------------------
+                                                    598s of the gate's 622s
+
+Neither can go much below its own floor now — the ratchets are packed exactly, and the suite's floor
+is `work/4 + alone`, which is a *work* number and not a scheduling one. But the two floors are added
+together only because the phases are sequential, and nothing makes them so: a coverage ratchet is an
+independent check, not something that reads the suite's result.
+
+One queue over both:
+
+    (1260 + 511 - 62) / 4 + 62  =  489s
+
+against 598s, so **about 110 seconds, or 18% of the gate** — larger than anything else left on this
+page, and it needs no test to get faster.
+
+**What it costs.** `tools/runTests.wac` owns the queue and `tools/coverageAll.ts` owns the drivers;
+merging means the ratchets become queue items with a `Chunk`-shaped label and their failures reported
+the way a lane's are. The ordering file already generalises — a driver is just another key. The real
+question is whether an instrumented build competing with four test chunks makes both slower than the
+arithmetic says, which is a measurement rather than an argument.
+
+**And a reason it might be refused.** Failures currently arrive in phases, so "the suite passed and
+the ratchets are red" is two sentences a reader can act on separately. One queue makes that one
+sentence with two kinds of failure in it, and the gate's output is the thing everyone reads when
+something is wrong.
