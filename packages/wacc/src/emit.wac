@@ -12,6 +12,7 @@
 // added is measured by running it rather than by reading it.
 
 import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, tokenStride,
+         literalBodyStart, literalBodyEnd,
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
@@ -13728,30 +13729,6 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   u8[] exact = u8[n]();
   for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
   return exact;
-}
-
-/**
- * Where a literal token's content starts and ends — the span minus its delimiters.
- *
- * **Two walks read this and they have to agree**: `stringLiteralBytes` un-escapes the content and
- * `knownEscapes` decides whether it can. They had the arithmetic written out separately, and when
- * interpolation gave a segment a two-byte closing delimiter, fixing one of them turned
- * `"a\{e}bc"` from a lexer error into *a string literal with an escape this slice cannot read* —
- * the same bug one layer down. So it is written once.
- *
- * Opening is three bytes for a block literal and one otherwise: a quote, or the `}` that closed an
- * interpolated expression. Closing is three, or two when the segment runs into a `\{`, or one.
- * A whole literal can never end `\{`, since an escaped backslash before a brace reads as `\\`
- * then `{`. `design/lang/0013` D7.
- */
-i32 literalBodyStart(u8[] src, i32 start, i32 len) {
-  return start + (isBlockLiteral(src, start, len) ? 3 : 1);
-}
-
-i32 literalBodyEnd(u8[] src, i32 start, i32 len) {
-  if (isBlockLiteral(src, start, len)) { return start + len - 3; }
-  bool intoInterp = len >= 2 && src[start + len - 2] == 92 && src[start + len - 1] == '{';
-  return start + len - (intoInterp ? 2 : 1);
 }
 
 /** Whether a string literal uses only escapes this emitter resolves the same way the language does. */

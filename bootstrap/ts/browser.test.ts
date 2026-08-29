@@ -65,6 +65,14 @@ Deno.test({
     });
     await ready.promise;
 
+    // **Its own profile directory.** Without `--user-data-dir` Chromium uses the shared default
+    // one, and the suite runs other Chromium instances — `packages/webrtc` and
+    // `packages/platform` both drive one. A second instance finding the profile locked does not
+    // report anything; it just never gets as far as the page, which arrives here as
+    // `status (never reported)` after the whole budget. One run failed that way on 2026-08-29
+    // between two that passed.
+    const profile = await Deno.makeTempDir({ prefix: "wac-ladder-chrome-" });
+
     try {
       const url = `http://localhost:${port}/web/index.html?auto=1`;
       // **The page says when it has stopped; nothing here guesses.** This used to be `--dump-dom`
@@ -82,7 +90,13 @@ Deno.test({
       // being cut off partway.
       const began = performance.now();
       const child = new Deno.Command(CHROME, {
-        args: ["--headless", "--no-sandbox", "--disable-gpu", url],
+        args: [
+          "--headless",
+          "--no-sandbox",
+          "--disable-gpu",
+          `--user-data-dir=${profile}`,
+          url,
+        ],
         stdout: "null",
         stderr: "piped",
       }).spawn();
@@ -90,15 +104,23 @@ Deno.test({
       // pipe and block on a write while we are waiting for the page.
       const noise = new Response(child.stderr).text();
 
+      // **A browser that has exited is not worth waiting on.** Racing its status as well turns a
+      // Chromium that never started into an immediate failure rather than two minutes of nothing,
+      // and the stderr tail below then says why.
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let exited = false;
       const said = await Promise.race([
         done.promise,
+        child.status.then(() => {
+          exited = true;
+          return "";
+        }),
         new Promise<string>((_, reject) => {
           timer = setTimeout(() => reject(new Error("timeout")), 120_000);
         }),
       ]).catch(() => "");
       clearTimeout(timer);
-      child.kill();
+      if (!exited) { child.kill(); }
       await child.status;
 
       const ms = Math.round(performance.now() - began);
@@ -110,6 +132,7 @@ Deno.test({
         const tail = (await noise).trim().split("\n").slice(-3).join(" / ");
         throw new Error(
           `the page did not finish after ${ms}ms: status ${status || "(never reported)"},` +
+            `${exited ? " chromium exited first," : ""}` +
             ` said: ${rest.join(" ").slice(0, 200)}${tail ? ` — chromium said: ${tail}` : ""}`,
         );
       }
@@ -117,6 +140,7 @@ Deno.test({
       if (answer !== "44") throw new Error(`the browser answered ${answer}, want 44`);
     } finally {
       await server.shutdown();
+      await Deno.remove(profile, { recursive: true }).catch(() => {});
     }
   },
 });

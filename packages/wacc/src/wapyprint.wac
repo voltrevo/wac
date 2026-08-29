@@ -41,7 +41,8 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
-import { tokenStride } from "./lex.wac";
+import { tokenStride, literalBodyStart, literalBodyEnd } from "./lex.wac";
+import { kindName } from "./kinds.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
 export struct Wp {
@@ -75,6 +76,34 @@ export struct Wp {
     i32 start = this.toks[t * tokenStride() + 1];
     i32 len = this.toks[t * tokenStride() + 2];
     for (i32 i = 0; i < len; i++) { this.out.push(this.src[start + i]); }
+  }
+
+  /**
+   * A string literal, written as one — which a *segment* of an interpolated literal is not.
+   *
+   * `"a\{e}b"` lexes as the tokens of `("a" + e + "b")`, and the first of those spells itself
+   * `"a\{` in the file. Printing the span verbatim, which is what every other token wants, emits
+   * that — and wapy has no interpolation, so what comes back is not a program. The interior bytes
+   * are already correctly escaped literal content, so quoting them is the whole of it; nothing has
+   * to be re-escaped. `design/lang/0013` D7.
+   */
+  void strTok(this, i32 t) {
+    if (t < 0 || t >= this.tokCount) { this.out.push('?'); return; }
+    i32 start = this.toks[t * tokenStride() + 1];
+    i32 len = this.toks[t * tokenStride() + 2];
+    bool whole = len >= 2 && this.src[start] == '"' && this.src[start + len - 1] == '"';
+    if (whole) { this.tok(t); return; }
+    i32 from = literalBodyStart(this.src, start, len);
+    i32 to = literalBodyEnd(this.src, start, len);
+    this.out.push('"');
+    for (i32 i = from; i < to; i++) { this.out.push(this.src[i]); }
+    this.out.push('"');
+  }
+
+  /** A token's kind, for a caller that needs the spelling rather than the bytes. */
+  i32 kindOfTok(this, i32 t) {
+    if (t < 0 || t >= this.tokCount) { return -1; }
+    return this.toks[t * tokenStride()];
   }
 
   /** Whether a token's text is exactly `want`. */
@@ -208,7 +237,7 @@ void wapyPrintExpr(Wp w, Expr e) {
   match (e.kind) {
     case IntLit(tok): { w.tok(tok); }
     case FloatLit(tok): { w.tok(tok); }
-    case StrLit(tok): { w.tok(tok); }
+    case StrLit(tok): { w.strTok(tok); }
     case BoolLit(value): { w.s(value ? "True" : "False"); }
     case NullLit: { w.s("None"); }
     case Ident(tok): { w.tok(tok); }
@@ -224,7 +253,9 @@ void wapyPrintExpr(Wp w, Expr e) {
       w.s(" ");
       if (w.tokIs(op, "&&")) { w.s("and"); }
       else if (w.tokIs(op, "||")) { w.s("or"); }
-      else { w.tok(op); }
+      // The spelling comes from the kind: the two `+` an interpolated literal stands for span the
+      // `\{` and the `}` they replace, and there is no `+` in the file to point at.
+      else { w.s(kindName(w.kindOfTok(op))); }
       w.s(" ");
       printOperand(w, right);
     }

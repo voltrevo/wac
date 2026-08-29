@@ -625,6 +625,35 @@ void lexStringBody(Lexer lx, Lexed out, Modes md, i32 start, i32 startLine, i32 
   if (interpolated) { pushToken(out, kRparen(), lx.pos - 1, 1, lx.line, lx.col); }
 }
 
+
+/**
+ * Where a literal token's content starts and ends — its span minus its delimiters.
+ *
+ * **Four walks read this and they all have to agree**: `stringLiteralBytes` un-escapes the content,
+ * `knownEscapes` decides whether it can, and both printers re-render it. The arithmetic was written
+ * out at each of them, and interpolation gave a segment a two-byte closing delimiter — so fixing
+ * one turned `"a\{e}bc"` from a lexer error into *a string literal with an escape this slice cannot
+ * read*, and fixing two more left the printers rendering `"a{"`. It is written once here.
+ *
+ * Opening is three bytes for a block literal and one otherwise: a quote, or the `}` that closed an
+ * interpolated expression. Closing is three, or two when the segment runs into a `\{`, or one for
+ * a quote — **or none at all**, which is an unterminated literal the lexer has already reported and
+ * this must not chop a byte off. A whole literal can never end `\{`, since an escaped backslash
+ * before a brace reads as `\\` then `{`. `design/lang/0013` D7.
+ */
+export i32 literalBodyStart(u8[] src, i32 start, i32 len) {
+  return start + (isBlockLiteral(src, start, len) ? 3 : 1);
+}
+
+export i32 literalBodyEnd(u8[] src, i32 start, i32 len) {
+  if (isBlockLiteral(src, start, len)) { return start + len - 3; }
+  if (len >= 2 && src[start + len - 2] == 92 && src[start + len - 1] == '{') {
+    return start + len - 2;
+  }
+  if (len > 1 && src[start + len - 1] == '"') { return start + len - 1; }
+  return start + len;
+}
+
 /**
  * A block string — `"""`, a newline, the content, then the closing mark.
  *

@@ -497,6 +497,17 @@ clauses and running the fence, where the natural way to state a claim about a li
 is a case that has stopped testing precedence**, and the spec's habit of writing the expression
 inline is worth copying into `spec/cases`.
 
+**The segments needed no synthesised source; the two `+` did.** That is the correction to the
+section above, and it is worth stating because it points the other way from where I looked. A
+segment has real bytes to span. The operators an interpolation *stands for* have none — there is no
+`+` anywhere in `"a\{e}b"` — so their tokens span the `\{` and the `}` they replace, and anything
+that renders an operator from its bytes then prints `(binary \{ …)`. Both printers did, so the wapy
+round trip over 1,434 files failed on exactly the six that interpolate.
+
+The fix is not a span. **An operator's spelling is its kind**, and for every operator anybody has
+ever written the two agree exactly, so asking `kindName` instead of the source is right in general
+and only *visible* here. Same in `print.wac` and in `wapyprint.wac`.
+
 **What is not done.** The four consumers in the table above still refuse an interpolated literal by
 accident rather than on purpose — an interpolated import path lexes as `"./p\{` `+` `1` `+` `}.wac"`
 and the parser says *expected `;`, found `+`*. That is a refusal, so nothing is silently wrong, but
