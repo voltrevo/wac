@@ -80,3 +80,37 @@ asked for — and 15 minutes of cargo on every push is a large price for a count
 Found by asking why four host bugs in one day all had the same shape: a capability implemented
 correctly on one host and not another, surviving because nothing exercised the wrong one. The others
 were `0275c` (wasmtime right, v8 wrong) and `0278c`.
+
+
+## The stronger statement: the comparison that *does* run excludes the shipped host
+
+Everything above is about coverage that skips. There is a worse case, found on 2026-08-29 while
+sizing `design/system/0009`'s remaining migration.
+
+`native_hostfs_test.wac` is this ledger's most-cited file — seventeen entries. It builds the same
+program two ways and compares:
+
+- a **Deno** artefact, from `packages/platform/build.ts`, which is always available;
+- the **wasmtime** binary at `native/target/release/wac`, which skips when it is not built.
+
+The **v8 host is not in that comparison at all.** It appears once, as the thing that *builds* the
+native side — `cli.exec(root(cli) + "/native/v8/target/release/wac", …)` — and never as a host under
+test. `native/` is the wasmtime crate and `native/v8/` is the one the command ships as.
+
+**So the default binary is structurally absent from the tree's most-cited cross-host comparison**,
+and that is not a gap in what it covers but in what it compares. `issues/system/0277c` is the proof:
+`openOutput` for a spawned child was correct on Deno *and* correct on wasmtime, and wrong on v8. No
+number of opcodes and no amount of building the wasmtime host would have surfaced it here.
+
+Five of the nine divergences found that day were v8's.
+
+### What follows
+
+This makes the ledger's number optimistic in a second, independent way. An opcode can be *credited*,
+*compared*, and *not compared on the host that ships* — and nothing distinguishes the three.
+
+It also reframes `design/system/0009`'s choice about `build.ts`'s deno target. Keeping it preserves a
+comparison with a hole exactly where the bugs are. The successor pattern — one artefact run under
+several hosts, which `packages/ts/test/wac/bootstrap_test.wac` demonstrates — puts v8 in the
+comparison for the first time, because each host's `wac` runs the same artefact. That was verified by
+reintroducing `0277c` and watching it fail.
