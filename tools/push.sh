@@ -396,6 +396,17 @@ for attempt in 1 2 3; do
       # `cannot emit` and `did not build` are here for a failure with no failing test at all: a
       # directory whose files collide on a name builds one at a time instead, every test passes, and
       # the suite still exits non-zero. Without them the summary is empty and truthful and useless.
+      #
+      # **A passing run must match none of these, and on 2026-08-29 it matched nine.** Eight were the
+      # wasmtime-host skips — *"skipped — cargo did not build `native`"* — and one was a green status
+      # line that happened to quote the marker `// error:`. So every red gate opened with nine lines
+      # of noise above the failure, in the one piece of output everybody reads when something is
+      # wrong. The filter is not the thing to loosen: `did not build` is here for a real failure with
+      # no failing test in it. The *messages* gave way — the skips say "cargo has not built" and the
+      # status line describes its marker instead of quoting it.
+      #
+      # Worth re-running after any change here: `grep -E "$fails"` over a **green** suite log should
+      # print nothing at all.
       fails='FAILED|^FAIL |error:|wacc: cannot emit|did not build|with failures|did not run'
       echo "-- failures --"
       if ! grep -qE "$fails" "$log"; then

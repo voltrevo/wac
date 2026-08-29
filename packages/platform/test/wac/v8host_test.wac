@@ -96,7 +96,7 @@ string v8Host(Core core, Cli cli) {
       "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
       "cd native/v8 && cargo build --release --quiet"), u8[0]()).wait();
   if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
-    core.warn("SKIPPING the V8 half: cargo did not build native/v8. " +
+    core.warn("SKIPPING the V8 half: cargo has not built native/v8. " +
               "The Deno half still runs. See native/v8/README.md.");
     return "";
   }

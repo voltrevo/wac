@@ -214,7 +214,13 @@ export string test_a_fence_the_spec_marks_as_an_error_is_refused(Core core, Cli 
     }
   }
 
-  core.log("    spec error fences: " + itoa(whole) + " whole programs marked `// error:`, " +
+  // **The marker is described rather than quoted**, and that is not fussiness. `tools/push.sh`
+  // extracts a gate's failure block with a pattern that includes `error:`, so this line — a *passing*
+  // status line — was pulled into `-- failures --` on every red run, purely because it contained the
+  // marker's literal text. Two gate reports this week opened with it above the actual failure. The
+  // filter cannot be tightened without risking a real diagnostic, and the line is ours, so the line
+  // gives way.
+  core.log("    spec error fences: " + itoa(whole) + " whole programs marked as errors, " +
            itoa(nAccepted) + " accepted");
 
   t.isTrue(whole >= 5,
