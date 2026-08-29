@@ -394,6 +394,36 @@ void sortMissed(string[] a, i32 n) {
  * `verbose` prints every missed point rather than the first twenty.
  */
 /**
+ * The flags a coverage ledger takes, read in one place rather than in thirty-five.
+ *
+ * Every `cov_ledger.wac` under `packages` had the same five lines copied into its `main` — a loop
+ * over `cli.arg` looking for `--verbose` — and they were byte-identical in all thirty-five, which is
+ * what a second copy of anything looks like just before it drifts. `--points` is the flag that made
+ * it worth fixing: adding it there would have been five more lines thirty-five more times.
+ *
+ * `issues/system/0241b` is what wants `--points`: a coverage run reaches points in files outside its
+ * own package and throws them away at report time, so a file with two consumers is measured twice
+ * and never as a whole. Getting the union needs every driver's per-point table, and a driver is a
+ * ledger rather than `covreport` — the exercise path, the grants and the case exports live in it.
+ */
+export struct LedgerFlags {
+  bool verbose;
+  bool points;
+
+  LedgerFlags read(Cli cli) {
+    bool v = false;
+    bool p = false;
+    i32 argc = cli.argCount().wait();
+    for (i32 i = 0; i < argc; i++) {
+      string a = string.fromBytes(cli.arg(i).wait());
+      if (a == "--verbose") { v = true; }
+      if (a == "--points") { p = true; }
+    }
+    return LedgerFlags(v, p);
+  }
+}
+
+/**
  * Every point as one row — `file<TAB>line<TAB>col<TAB>count` — with no prefix filter.
  *
  * **The prefix is applied at `report`, not at collection**, so a driver already executes points in
