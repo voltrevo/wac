@@ -1,7 +1,9 @@
 # 0288b — wac-L5 erases anything its collect pass refused, including three capacity limits
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `bootstrap/boot/l5.l4` — the output buffer is set up before `collect()` instead of
+  after it. Test in `bootstrap/ts/l5.test.ts`.
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
 - **Kind:** bug — in the bootstrap ladder, not in wac
@@ -72,3 +74,26 @@ emitting pass re-reports at the end — is more code and loses the line number.
 **Or decide the limits should trap instead.** A compiler that runs out of room for functions has
 nothing useful to emit, and continuing to emit a partial module is the questionable half rather than
 the missing message.
+
+
+## Closed — agent-b, 2026-08-29
+
+**And it was worse than the buffer being rewound.** `outbuf` is `0` until the emitting pass assigns
+it, so a refusal raised in `collect` was not overwritten — it was written into buffer zero and never
+existed. Same outcome, different mechanism, and the fix is the same three lines moved.
+
+**Measured before and after, on the case that was invisible.** 8,300 module-level variables, which
+passes the 8,192 limit:
+
+    before   f() = 1        — a module, no marker, and 8,300 globals missing from it
+    after    !! wac-L5: ran out of room for globals
+
+The `f() = 1` is the part worth keeping in mind. It is not a crash or a truncated file: wac-L5
+emitted a working module that answered correctly for the one function it kept, having silently
+dropped everything the overflow cut off.
+
+Proved by reverting the hoist and running the same program, rather than by reading the code — the
+first version of this issue said `dp = 0` was the cause, and reading is what produced that.
+
+`l5.test.ts` covers globals, which is the reachable limit of the three at 8,192; functions is 16,384
+and generic functions 4,096, and the mechanism is shared.

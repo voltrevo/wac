@@ -3355,9 +3355,9 @@ i32 collect() {
       if (full(nglo, 8192, "globals")) { return 0; }
       glos[nglo] = Glo(p, n, ret);
       nglo = nglo + 1;
-      // The initialiser is checked in the *emitting* pass rather than here — this one's output is
-      // thrown away by the `dp = 0` that starts the emit pass, so an `oops` raised here is counted
-      // and never printed.
+      // Checked in the emitting pass rather than here, so one mistake is one diagnostic: both
+      // passes walk this declaration and a refusal in each would print twice. `issues/lang/0288b`
+      // is why that is now a choice rather than the collect pass's message being invisible.
       while (ispunct(59) == 0 & kind() != K_EOF) { next(); }
       next();
     }}}}}
@@ -4010,14 +4010,24 @@ i32 compile(i32 s, i32 out) {
   loop_in = 0 - 1;
 
   lex();
+  // **The output buffer is set up before `collect`, not after it.** `outbuf` is 0 until it is, so a
+  // refusal raised in the collect pass wrote into buffer zero and was never seen — `nrefusal`
+  // counted it and nothing printed it. That is where `full()` reports running out of room for
+  // functions, globals and generic functions from, so an overflow emitted a module missing
+  // everything after it with no marker in it. `issues/lang/0288b`.
+  //
+  // A refusal written before `memory 64` is found by the same grep as one written after: an
+  // emitting-pass refusal already lands in the middle of a module, and every reader here looks for
+  // `^!!` anywhere in the text.
+  outbuf = out;
+  to_buf(out, outcap);
+  dp = 0;
+
   collect();
   // Every instantiation named anywhere in the program now has a type index; this fills them in.
   expand_types();
 
   tp = 0;
-  outbuf = out;
-  to_buf(out, outcap);
-  dp = 0;
   line("memory 64");
   word("export"); emit1(34); emits("memory"); emit1(34); sp(); line("memory");
   nl();

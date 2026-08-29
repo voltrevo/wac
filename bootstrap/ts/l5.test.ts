@@ -725,3 +725,29 @@ for (const [name, source, want] of globals) {
     if (got !== want) throw new Error(`got ${got}, want ${want}`);
   });
 }
+
+// **A capacity limit reports, rather than emitting a module without the overflow in it** —
+// `issues/lang/0288b`.
+//
+// `full()` is wac-L5's guard for running out of table space, and its three top-level call sites —
+// functions, globals, generic functions — are reached only from the *collect* pass. `outbuf` was 0
+// until after that pass, so the message went into buffer zero: this program compiled clean and
+// answered **1**, with 8,300 globals missing and no marker anywhere in the output.
+//
+// Globals is the reachable one of the three, at 8,192. The other two are 16,384 and 4,096 and this
+// covers them by covering the mechanism.
+Deno.test("wac-L5: running out of room for globals says so", async () => {
+  const src = Array.from({ length: 8300 }, (_, i) => `i32 g${i};`).join("\n") +
+    "\nexport i32 f() { return 1; }\n";
+  const l0 = await l5ToL0(src);
+  const refused = l0.split("\n").filter((l) => l.startsWith("!!"));
+  if (refused.length === 0) {
+    throw new Error(
+      "wac-L5 emitted a module for 8,300 globals with no marker — the collect pass's refusal is " +
+        "being written somewhere nothing reads",
+    );
+  }
+  if (!refused.some((l) => l.includes("ran out of room for globals"))) {
+    throw new Error(`refused, but not for the reason expected:\n${refused.join("\n")}`);
+  }
+});
