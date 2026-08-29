@@ -551,16 +551,43 @@ i32 recordedMs(string[] lines, string key) {
  *
  * Only the queued chunks: the serial runs are not ordered, and `Took.key` is empty for them.
  */
-void writeTimes(Cli cli, Took[] took, i32 n) {
+void writeTimes(Core core, Cli cli, Took[] took, i32 n) {
   Names fresh = Names.create();
   for (i32 i = 0; i < n; i++) {
     if (took[i].key == "") { continue; }
     fresh.push(took[i].key + "\t" + itoa64(took[i].ms));
   }
   if (fresh.n == 0) { return; }
+
+  // **The directory, and the result.** This wrote straight into `.cache/` and dropped what
+  // `writeFile` answered, so on a tree where that directory does not exist yet the ordering is
+  // silently never recorded — and the next run reads nothing and falls back to the file-count proxy,
+  // which is the same loss `mergedTimes` exists to prevent, arriving from the other side.
+  //
+  // It works today only because the tests that ran first made `.cache/<something>` on their way past.
+  // That is a precondition this function does not state and did not create, which is exactly what
+  // `packages/wac/test/wac/buildcache_test.wac` was fixed for on 2026-08-29 — the same day, the same
+  // shape, two directories apart.
+  //
+  // Warned rather than failed: a suite that ran is worth reporting even if its stopwatch could not be
+  // saved, and a silent miss here is the thing being fixed.
+  // The parent of wherever the file goes, not `.cache` by name: `WAC_SUITE_TIMES` moves it, and a
+  // test that pointed it elsewhere would otherwise have this creating a directory it does not use.
+  string path = timesPath(cli);
+  i32 cut = 0 - 1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) {
+    Change made = cli.mkdir(path.slice(0, cut), true).wait();
+    if (!made.ok()) {
+      core.warn("   the run's timings could not be saved: " + made.message);
+      return;
+    }
+  }
   // Merged rather than replaced — `mergedTimes` has the reason, which is a narrowed run erasing the
   // ordering the gate depends on.
-  cli.writeFile(timesPath(cli), mergedTimes(readTimes(cli), fresh.all()).toBytes()).wait();
+  Change wrote =
+      cli.writeFile(timesPath(cli), mergedTimes(readTimes(cli), fresh.all()).toBytes()).wait();
+  if (!wrote.ok()) { core.warn("   the run's timings could not be saved: " + wrote.message); }
 }
 
 /**
@@ -1344,7 +1371,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
 
   // Before the report rather than after it, so a run killed while printing still leaves its
   // measurements behind — the ordering is the thing that survives a bad run usefully.
-  writeTimes(cli, took, tookN);
+  writeTimes(core, cli, took, tookN);
 
   // ── what the lane cost ───────────────────────────────────────────────────────────────────────
   i64 work = 0 as i64;
