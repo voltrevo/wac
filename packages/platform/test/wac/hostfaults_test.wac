@@ -20,7 +20,7 @@
 // `issues/system/0132` is the conformance tier this belongs in.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FAULT_NOT_GRANTED, FAULT_REFUSED, FileResult, Socket, faultWords }
+import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_REFUSED, FileResult, Socket, Stat, faultWords }
        from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -218,5 +218,54 @@ export string test_a_refused_connection_is_refused_and_not_merely_failed(Core co
           "a refused dial is its own category, not FAULT_OTHER — got " + itoa(s.fault)
           + " with the message " + s.error);
   t.eqStr(faultWords(s.fault), "Connection refused", "and the words strerror uses for it");
+  return t.report();
+}
+
+/**
+ * A path the *operating system* refuses arrives as `FAULT_DENIED`, not as absence.
+ *
+ * **The tests above read `fault_of`'s source; this one runs it.** Comparing the two hosts' arms
+ * catches a table that has drifted, and cannot catch a table that is wrong in both — so the arm that
+ * matters most is worth exercising rather than counting. `PermissionDenied → FAULT_DENIED` is that
+ * arm: `FAULT_NOT_FOUND` is what a caller acts on by creating the file, and answering it about
+ * something that is plainly there is the failure this whole family exists to prevent.
+ *
+ * `packages/box/test/unnameable.test.ts` makes the same claim on the Deno host and reaches it through
+ * `/proc`, which Deno's `--allow-read` does not cover — a route with no equivalent here, since a
+ * `wac app` artefact has one permission layer rather than two. A directory with no execute bit is the
+ * portable way to ask: the grant allows it and the kernel does not.
+ *
+ * **Not the same as `FAULT_NOT_GRANTED`**, which is this program's own capability world refusing
+ * before anything is attempted. This is the machine refusing something the program was allowed to try.
+ */
+export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/hostfaults-denied";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/inside.txt", "here\n".toBytes()).wait();
+  t.isTrue(wrote.ok(), "the fixture was written — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  // No execute bit, so the kernel refuses to walk into it. `chmod` through the shell because
+  // `Cli` has no mode-setting capability beyond `setExecutable`, which sets rather than clears.
+  Exec locked = cli.exec("/bin/sh", string[]("-c", "chmod 000 '" + dir + "'"), u8[0]()).wait();
+  t.isTrue(locked.ran() && locked.status == 0, "the directory was locked");
+  if (!locked.ran() || locked.status != 0) { return t.report(); }
+
+  FileResult r = cli.readFile(dir + "/inside.txt").wait();
+  Stat s = cli.stat(dir + "/inside.txt").wait();
+
+  // Unlocked before the assertions, so a failure does not leave a directory the suite cannot remove.
+  cli.exec("/bin/sh", string[]("-c", "chmod 755 '" + dir + "'"), u8[0]()).wait();
+
+  t.isTrue(!r.ok, "reading through a locked directory failed");
+  t.eqI32(r.fault, FAULT_DENIED(), "and the fault says denied rather than " + faultWords(r.fault));
+  // **The `stat` half is the one a script acts on.** A `test -e` built on a `stat` that answered
+  // "absent" would tell a script the file is not there, and the script would go on to create it.
+  t.eqI32(s.fault, FAULT_DENIED(), "stat says denied rather than " + faultWords(s.fault));
+  t.isTrue(!s.exists, "and does not claim it exists, which it cannot know");
+
+  cli.remove(dir, true).wait();
   return t.report();
 }
