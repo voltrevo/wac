@@ -526,7 +526,14 @@ with the position in the note: *a module path is resolved before the program run
 *write `a={…}` to put an expression in an attribute* — which names the attribute, and compiles when
 followed.
 
-**Still not done**: block strings do not interpolate, and D7 does not say whether they should.
+**Block strings do not interpolate, and now say so.** D7 is silent on them and `lexBlockString` is
+a scanner of its own, so `\{` in one was already refused — as *unknown escape*, which is true and
+sends the reader looking for a typo. It has its own code now: *a block string does not interpolate —
+`\{` opens an expression only in a one-line literal*. That is right whichever way the open question
+goes, and the question is still open: **should they?** The argument for is that the two literal
+forms differ in nothing else since D6 made the escape set the same; the argument against is that a
+block string's content is usually something quoted verbatim, and `\{` appearing in it by accident
+would be a new way for a paste to stop compiling.
 
 ## D6's tab rule is D3's rule, and asking twice said so twice
 
