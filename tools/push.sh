@@ -52,6 +52,13 @@ if ! "$WAC" run --allow-read --allow-write --allow-env --allow-run tools/runTest
   exit 75
 fi
 export WAC_GATE_LOCK=$$
+# **Waiting for the lock is not this gate's work, and the budget said it was.** `$SECONDS` runs from
+# the top of the script, so `pull+seed` — set below and printed at the end — counted every minute
+# spent behind another agent's `--queue`. One run reported `pull+seed 374s`, the largest line in the
+# budget and larger than the suite, of which **360s was waiting** and 14s was the pull and the seed
+# rebuild together. A number the whole point of which is deciding what to make faster should not
+# bundle idle waiting with the only part anyone can do something about.
+tLock=$SECONDS
 # Released however this exits — a lock let go only on the happy path is a lock left behind by every
 # failure, which is the shape `release` already guards against one level down.
 trap '"$WAC" run --allow-read --allow-write --allow-env tools/runTests.wac -- unlock '"$$"' >/dev/null 2>&1' EXIT
@@ -579,11 +586,16 @@ for attempt in 1 2 3; do
 
   # **The budget, printed on the run that produced it.** Every number here used to be reconstructed
   # afterwards from separate measurements, which is how the ratchets spent a fortnight described as
-  # 38 seconds. `pull+seed` covers everything before the first attempt, so on a retry it is the
-  # original figure rather than this attempt's; the other four are this attempt's own.
+  # 38 seconds. `pull+seed` covers everything from the lock to the first attempt, so on a retry it is
+  # the original figure rather than this attempt's; the other four are this attempt's own.
+  #
+  # **`lock wait` is time this gate did not spend**, and it is printed so that the lines below it can
+  # be read as work. It measures how many other agents were ahead of you, so it is the one row no
+  # change to the suite, the docs or the ratchets can move.
   echo "== where this gate's time went =="
   printf '   %-11s %4ss\n' \
-    'pull+seed' "$tPre" \
+    'lock wait' "$tLock" \
+    'pull+seed' "$((tPre - tLock))" \
     'suite'     "$elapsed" \
     'docs'      "$((tDocs - tSuite))" \
     'site'      "$((tSite - tDocs))" \

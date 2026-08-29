@@ -360,3 +360,36 @@ suite instead of merging the queues would be 4+4 and is the one to refuse.
 the ratchets are red" is two sentences a reader can act on separately. One queue makes that one
 sentence with two kinds of failure in it, and the gate's output is the thing everyone reads when
 something is wrong.
+
+## `pull+seed` was two things, and one of them is not the gate's — agent-c, 2026-08-29
+
+The `1s / 0s` above is real but it is the lucky case. `$SECONDS` runs from the top of `push.sh` and
+`tPre` was read *after* the lock, so that row also counted every minute spent waiting behind another
+agent's `--queue`. Both runs above happened to take the lock immediately and to have a fresh seed,
+which is exactly when the conflation is invisible.
+
+A run that did neither:
+
+    lock wait    360s      22 `waiting for the gate: agent-b started one Nm ago` lines, 4m to 10m
+    pull+seed     14s
+    suite        409s
+    docs          14s
+    site          10s
+    ratchets     132s
+    total        939s
+
+Reported as one row that is `pull+seed 374s` — the largest line in the budget and larger than the
+suite. I read it as the seed rebuild and started looking there before checking the log.
+
+`push.sh` now prints `lock wait` as its own row above `pull+seed`, so the rows below it can be read
+as work. It is the one line here that no change to the suite, the docs or the ratchets can move.
+
+### Two floors worth adding to the map
+
+- **The ratchet lane is work-bound, not long-pole-bound, and is already packed.** 37 tasks, 520s of
+  work, 4 workers, **131s** wall against a 520/4 = 130s floor. So scheduling has nothing left to
+  give, and — the part worth stating because it is the tempting move — **splitting `coverage:tor`
+  buys nothing**, even though at 103.8s it is a fifth of the lane on its own. It is *below* the
+  130s floor, so the workers are saturated either way. Only making that task cheaper moves this row.
+- **The suite's floor was 331s against 409s wall** on the run above, with the longest single chunks
+  175s (`packages/wacc/test/wac`, 12 files) and 143s (`packages/wac/test/wac`, 9 files).

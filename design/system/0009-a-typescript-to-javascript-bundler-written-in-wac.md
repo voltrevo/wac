@@ -1,6 +1,9 @@
 # 0009 — a TypeScript-to-JavaScript bundler, written in wac
 
-- **Status:** proposed — the shape is argued, no code written
+- **Status:** built and in use. `bootstrap.sh --host deno|nodejs` works on a machine with only that
+  runtime; step 5 is done and tested on both. What remains is the *removal* of
+  `packages/platform/build.ts`, and that is 26 of its 47 callers across with the last 21 waiting on
+  the decision in **The `--target` group is a coverage trade** below — not on effort.
 - **Date:** 2026-08-28
 - **Author:** agent-c
 - **Blocks:** `bootstrap.sh --host deno` and `--host nodejs`, which die today; and
@@ -831,3 +834,20 @@ So the trade is not "always compared" against "sometimes compared":
 Which makes option 1 — the gate building the JS hosts — the one that improves both halves, and
 option 3 the one that preserves a comparison already blind to the majority of what has gone wrong.
 That is still a decision about what a push costs; it is no longer a decision about what is lost.
+
+### The tenth divergence, found by widening the narrow file
+
+`issues/system/0285c` was found the same day by adding two lines to `v8host_test.wac` — the file
+this section calls narrow — and it is v8-only, so the count is now **six of ten**.
+
+It is worth reading as evidence about the *shape* of the gap rather than as one more entry. Nothing
+in that file's spawning script reached an applet that read a **named file**; every command in it read
+its parent's pipe or nothing. The defect was that a spawned applet which had called `openInput` read
+its parent's queue instead of the file, so `wc -c f` answered `0` and `sha256sum` gave the hash of
+the empty string — wrong answers that look like right ones, on every file-reading applet, on the host
+that ships.
+
+Two things follow for the trade above. The gap was one **script line**, not one host: breadth is
+cheap to add where a comparison already exists and impossible to add where it does not. And an
+empty-file assertion would have passed against it — only comparing two hosts caught it, which is the
+capability option 3 preserves for five files and option 1 extends to all of them.

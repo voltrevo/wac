@@ -2360,11 +2360,19 @@ fn dispatch(
             // this one did not, so a spawned `wc` read the *process's* standard input — empty — and
             // answered `0 0 0` to a question its parent had asked with bytes in hand. The bounded
             // read and the unbounded one are two capabilities and one rule.
-            let from_parent = HOST.with(|h| {
+            // **An explicit `openInput` wins over the parent's queue as well**, and that is the half
+            // of the rule this host was missing. The frame's queue below was ordered correctly and
+            // this branch was not, four lines above the comment that describes the very same bug —
+            // so a spawned applet that had opened a file went on reading what its parent was
+            // feeding it. Usually nothing, so `wc -c f` answered a plausible `0` and `sha256sum`
+            // gave the hash of the empty string; when the parent still had input, the applet
+            // printed *that* in place of the file. `issues/system/0285c`.
+            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
+            let from_parent = if redirected { None } else { HOST.with(|h| {
                 let b = h.borrow();
                 let s = b.as_ref()?;
                 if s.inherits { None } else { s.child_input.clone() }
-            });
+            })};
             if let Some(q) = from_parent {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };
                 let id = t.submit();
@@ -2388,7 +2396,6 @@ fn dispatch(
                 }
                 return;
             }
-            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
             let framed = if redirected { None } else { HOST.with(|h| {
                 let mut b = h.borrow_mut();
                 let st = b.as_mut()?;
@@ -3233,11 +3240,19 @@ fn dispatch(
             // way round and walked into it.
             // A child reads what its parent sends — unless it inherits, when the terminal is what
             // was meant.
-            let from_parent = HOST.with(|h| {
+            // **An explicit `openInput` wins over the parent's queue as well**, and that is the half
+            // of the rule this host was missing. The frame's queue below was ordered correctly and
+            // this branch was not, four lines above the comment that describes the very same bug —
+            // so a spawned applet that had opened a file went on reading what its parent was
+            // feeding it. Usually nothing, so `wc -c f` answered a plausible `0` and `sha256sum`
+            // gave the hash of the empty string; when the parent still had input, the applet
+            // printed *that* in place of the file. `issues/system/0285c`.
+            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
+            let from_parent = if redirected { None } else { HOST.with(|h| {
                 let b = h.borrow();
                 let s = b.as_ref()?;
                 if s.inherits { None } else { s.child_input.clone() }
-            });
+            })};
             if let Some(q) = from_parent {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };
                 let id = t.submit();
