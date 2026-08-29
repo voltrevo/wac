@@ -487,7 +487,7 @@ export string test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
-    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_hostfs: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Shells s = shells(cli);
@@ -539,7 +539,7 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
-    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_hostfs: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Shells s = shells(cli);
@@ -648,7 +648,7 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
-    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_hostfs: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Shells s = shells(cli);
@@ -732,7 +732,7 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
-    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_hostfs: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Shells s = shells(cli);
@@ -826,7 +826,7 @@ export string test_kill_percent_one_ends_a_background_job_on_both_hosts(Core cor
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
-    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_hostfs: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Shells s = shells(cli);

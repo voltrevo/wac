@@ -54,6 +54,7 @@ import { assertCaught, assertQuiet, caughtAndQuiet, complaint,
          joinedWith, ours, oursBesidesMissingImports }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
+import { errPackedPosition, errWrongCastOp } from "../../src/check.wac";
 
 /**
  * Programs that are wrong in the one way this slice knows about.
@@ -2476,5 +2477,40 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "export void ok() { return; }",
     "export i32 ok2() { return 1; }"),
   "operators, members and indexing");
+  return t.report();
+}
+
+/**
+ * A cast to a packed type says which *rule*, not which operator — `issues/lang/0289b`.
+ *
+ * **The advice was the defect, not the refusal.** `u8[](a as u8)` was refused with *wrong cast
+ * operator for these types* and the help *"`as` converts without loss, `as!` checks at runtime,
+ * `as~` takes the nearest value"*. All three are refused with the same sentence, because `u8` is
+ * packed and there is no conversion for any operator to spell — so a reader follows the advice three
+ * times, learns nothing, and is one character away from `u8[](a)`, which is accepted.
+ *
+ * **Asserted on the codes rather than the words**, which is what `dumpTypeErrors` hands back and
+ * what survives a rewording. Both directions: checking only that the packed code appears would pass
+ * if the cast-operator one appeared beside it, and two diagnostics for one mistake is the other half
+ * of what this was for.
+ */
+export string test_a_cast_to_a_packed_type_names_the_rule_not_the_operator_0289b(Core core, Cli cli) {
+  T t = T.create();
+  i32[] flat = dumpTypeErrors(("export i32 main() {\n  i32 a = 65;\n" +
+                               "  u8[] one = u8[](a as u8);\n  return one[0];\n}\n").toBytes());
+  t.isTrue(flat.len() >= 3, "the cast is still refused");
+  bool rule = false;
+  bool operator = false;
+  string codes = "";
+  for (i32 i = 0; i * 3 < flat.len(); i++) {
+    i32 code = flat[i * 3];
+    codes = codes + (codes == "" ? "" : ", ") + itoa(code);
+    if (code == errPackedPosition()) { rule = true; }
+    if (code == errWrongCastOp()) { operator = true; }
+  }
+  t.isTrue(rule, "it names the packed rule; codes were " + codes);
+  t.isTrue(!operator,
+           "it still asks which operator, and all three are refused for a packed target; codes were " +
+           codes);
   return t.report();
 }

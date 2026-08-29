@@ -165,9 +165,16 @@ fi
 # the question, so this cannot drift from the definition because it *is* the definition.
 if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
   echo "== the seed is older than the tree — rebuilding before the suite =="
-  if ! "$WAC" task seed >/dev/null 2>&1; then
+  # **Kept, not discarded.** This was `>/dev/null 2>&1` and the advice below was "run it by hand to
+  # see why", which is a round trip for output that had already been produced and thrown away. The
+  # docs and site branches further down capture theirs to a file and print the tail; this now does
+  # the same. It matters more since `issues/system/0273b`: the build refuses a compiler that is a
+  # fixed point and cannot compile a seven-line program, and the sentence explaining that is exactly
+  # what was being dropped.
+  if ! "$WAC" task seed > "$log.seed" 2>&1; then
     echo "== the seed will not rebuild: not running the suite ==" >&2
-    echo "   Run \`wac task seed\` by hand to see why; every later failure would be downstream of it." >&2
+    tail -20 "$log.seed" | sed 's/^/   /' >&2
+    echo "   -- full output: $log.seed --" >&2
     echo "   \`./bootstrap.sh\` is the way out if a wacc change has made wacc unable to" >&2
     echo "   build itself." >&2
     exit 1
@@ -318,7 +325,7 @@ for attempt in 1 2 3; do
     # announced a cooldown refusal as a failing suite. Two wrong readings of the same overloaded code
     # are what bought the code of its own.
     if [ "$status" -eq 75 ]; then
-      rm -f "$log"
+      rm -f "$log" "$log".*   # and its siblings: .docs, .site, .seed
       if [ "$attempt" -eq 1 ]; then
         echo "== the suite gate refused; going round once with WAC_SUITE_RETRY=1 =="
         echo "   That skips the twenty-minute cooldown and nothing else. If the refusal was the lock,"
@@ -389,6 +396,17 @@ for attempt in 1 2 3; do
       # `cannot emit` and `did not build` are here for a failure with no failing test at all: a
       # directory whose files collide on a name builds one at a time instead, every test passes, and
       # the suite still exits non-zero. Without them the summary is empty and truthful and useless.
+      #
+      # **A passing run must match none of these, and on 2026-08-29 it matched nine.** Eight were the
+      # wasmtime-host skips — *"skipped — cargo did not build `native`"* — and one was a green status
+      # line that happened to quote the marker `// error:`. So every red gate opened with nine lines
+      # of noise above the failure, in the one piece of output everybody reads when something is
+      # wrong. The filter is not the thing to loosen: `did not build` is here for a real failure with
+      # no failing test in it. The *messages* gave way — the skips say "cargo has not built" and the
+      # status line describes its marker instead of quoting it.
+      #
+      # Worth re-running after any change here: `grep -E "$fails"` over a **green** suite log should
+      # print nothing at all.
       fails='FAILED|^FAIL |error:|wacc: cannot emit|did not build|with failures|did not run'
       echo "-- failures --"
       if ! grep -qE "$fails" "$log"; then
@@ -582,7 +600,7 @@ for attempt in 1 2 3; do
     else
       echo "== pushed =="
     fi
-    rm -f "$log"
+    rm -f "$log" "$log".*   # and its siblings: .docs, .site, .seed
     starveClear
     exit 0
   fi
@@ -619,9 +637,10 @@ for attempt in 1 2 3; do
   # cannot drift from the definition because it *is* the definition.
   if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
     echo "   the merge aged the seed or a host — rebuilding"
-    if ! "$WAC" task seed >/dev/null 2>&1; then
+    if ! "$WAC" task seed > "$log.seed" 2>&1; then
       echo "== the seed would not rebuild after the merge: not retrying =="
-      echo "   Run \`wac task seed\` by hand to see why; every later failure would be downstream of it."
+      tail -20 "$log.seed" | sed 's/^/   /'
+      echo "   -- full output: $log.seed --"
       exit 1
     fi
     # **And the wasmtime host, which `wac task seed` does not build.** It builds `native/v8` only, so

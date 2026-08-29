@@ -201,7 +201,7 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
 
   string native = nativeBinaryPath(core, cli, "native_shell");
   if (native == "") {
-    core.warn("native_shell: skipped the native half — cargo did not build `native`");
+    core.warn("native_shell: skipped the native half — cargo has not built `native`");
     cli.remove(tmp, true).wait();
     return t.report();
   }
@@ -238,7 +238,7 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
   T t = T.create();
   string native = nativeBinaryPath(core, cli, "native_shell");
   if (native == "") {
-    core.warn("native_shell: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_shell: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Built b = builds(cli);
@@ -316,7 +316,7 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   T t = T.create();
   string native = nativeBinaryPath(core, cli, "native_shell");
   if (native == "") {
-    core.warn("native_shell: skipped — cargo did not build `native`, so nothing was compared");
+    core.warn("native_shell: skipped — cargo has not built `native`, so nothing was compared");
     return t.report();
   }
   Built b = builds(cli);

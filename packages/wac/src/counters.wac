@@ -163,6 +163,12 @@ Running start(Core core, Cli cli, string path) {
 
   // The exercise. `main` is what the native ran and what a built module has; a module without one has
   // nothing to record and answers an empty table, which is a true answer rather than an error.
+  //
+  // **It is called with no argument, and a module that reads one sees the host's.** `Cli` here is the
+  // command's own, so an exercise calling `cli.arg(0)` gets `"covdump"` — not an empty argv and not
+  // its own. That is worth knowing before writing an exercise that takes a parameter: it will read a
+  // plausible string, do something with it, and record a profile of the wrong work.
+  // `tools/wac/waccprofile.wac` was written that way for ten minutes and emitted an eight-byte module.
   CallResult ran = cli.call(m.handle, "main", 0);
   return Running("", m.handle, ran.status == 1, ran.status == 1 ? ran.text : "");
 }

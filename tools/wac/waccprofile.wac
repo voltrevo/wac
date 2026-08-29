@@ -29,9 +29,18 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { emitFiles } from "../../packages/wacc/src/api.wac";
 import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wac";
 
+/**
+ * The default entry, and it is `issues/lang/0153`'s own: `packages/box/src/bin/sh.wac` was 5,994 ms
+ * and 180 files there, so profiling it keeps this comparable with the numbers on that page.
+ */
 const string ENTRY = "packages/box/src/bin/sh.wac";
 
 export i32 main(Core core, Cli cli) {
+  // **The entry is a constant and cannot be an argument.** This runs under `wac covdump`, which
+  // calls `main` with no argv of its own — and a loaded module sees the *host's*, so
+  // `cli.arg(0)` here is the string `"covdump"`. Reading it took the entry to be a file of that name
+  // and emitted an eight-byte module, which is a profile of nothing that looks exactly like a profile.
+  // Change `ENTRY` to profile something else.
   Corpus c = loadCorpus(cli, "waccprofile");
   if (!c.ok) {
     core.warn("waccprofile: the corpus walk — " + c.error);

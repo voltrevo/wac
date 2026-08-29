@@ -8043,8 +8043,16 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   //
   // Reported at the operator, which is where the reference puts it and where every other
   // wrong-spelling complaint in this family goes.
+  //
+  // **But not as a wrong *operator*, which is the question this case does not have** —
+  // `issues/lang/0289b`. `errWrongCastOp` carries the help *"`as` converts without loss, `as!` checks
+  // at runtime, `as~` takes the nearest value"*, and for a packed target all three are refused with
+  // the same sentence: there is no conversion for any of them to spell. A reader follows the advice
+  // three times and learns nothing, one character away from `u8[](a)`, which is accepted. So this
+  // reports the rule instead — *a packed type cannot be used in this position* — which the compiler
+  // already says when a packed type is asked for as a value, and which is the fact behind both.
   if (isPackedName(castFrom) || isPackedName(to)) {
-    c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
+    c.reportTok(errPackedPosition(), op, "from " + castFrom + " to " + to);
     return;
   }
   bool fromRef = isCastRef(c, castFrom);

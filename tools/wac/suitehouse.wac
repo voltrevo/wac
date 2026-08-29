@@ -119,7 +119,12 @@ export void sweepStaleTemp(Core core, Cli cli) {
   string first = "";
   for (i32 i = 0; i < names.len(); i++) {
     string name = names[i];
-    if (!startsWith(name, "wac-")) { continue; }
+    // **`push-suite-` as well as `wac-`.** `tools/push.sh` opens a `mktemp -t push-suite-XXXXXX.log`
+    // per run and keeps `.docs`, `.site` and `.seed` beside it; the failing paths cite those files in
+    // their output, so they are deliberately not removed there — and nothing removed them here
+    // either, because they do not begin with `wac-`. Measured on 2026-08-29: **967 files, 7.6 MB**,
+    // growing by two or three a run since the gate was written. A day old is well past any reader.
+    if (!startsWith(name, "wac-") && !startsWith(name, "push-suite-")) { continue; }
     if (name == "wac-doc-warnings" || name == "wac-suite.lock") { continue; }
     if (startsWith(name, "wac-suite-last-")) { continue; }
     string path = "/tmp/" + name;

@@ -767,3 +767,66 @@ export string test_every_measurement_in_the_wacc_table_names_its_printer(Core co
                          "fewer than the three this was written for");
   return t.report();
 }
+
+/**
+ * `bootstrap/README.md`'s trust table is the sizes of the files it names.
+ *
+ * **The claim the whole ladder rests on**: everything above the root is derived and checked by
+ * running it, and exactly three files are trusted because a human read them. So those three numbers
+ * are the argument, and until 2026-08-29 every one of them was wrong — 832 lines for a file of 1,217,
+ * 1,804 for one of 1,814, and a flattener credited to `ts/l5.ts` at 191 lines after it had moved to
+ * `rust-ladder/src/flatten.rs` and grown to 500. The table's own total disagreed with the same total
+ * quoted five lines below it, 2,827 against 2,782, which is the tell that nothing was reading either.
+ *
+ * `site/src/next/Bootstrap.tsx` states the same three figures and `site/tools/site.test.ts` has
+ * checked them for a while — so the *website* was right and the document it says it took its numbers
+ * from was not. This is the missing half of that check.
+ *
+ * **Exact, not a tolerance.** The rest of this file allows drift because the things it counts move
+ * with every commit; these three files change a few times a year, and the point of the claim is that
+ * a reader could go and read them. A number that is nearly right is no use for that.
+ */
+/**
+ * `wc -l`, and **not** `splitLines(s).len()`.
+ *
+ * `splitLines` drops empty lines — `if (i > from)` in `packages/wactest/src/strings.wac` — so it
+ * answers *non-blank* lines, which is a different measure and 73 short on `rust/src/lib.rs` alone.
+ * The figures being checked are the ones a person gets from `wc -l`, and the website's own guard
+ * counts them that way, so this has to as well or the two checks disagree about a true statement.
+ */
+i32 newlines(string text) {
+  u8[] b = text.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '\n') { n = n + 1; }
+  }
+  return n;
+}
+
+export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Core core, Cli cli) {
+  T t = T.create();
+  string readme = read(core, cli, "bootstrap/README.md");
+  string[] paths = string[]("bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0",
+                            "bootstrap/rust-ladder/src/flatten.rs");
+  string[] labels = string[]("wac-L0 assembler, one of the two", "wac-L1 interpreter, hand-written",
+                             "the flattener");
+  i32 total = 0;
+  for (i32 i = 0; i < paths.len(); i++) {
+    i32 lines = newlines(read(core, cli, paths[i]));
+    total = total + lines;
+    string[] caps = firstMatch(labels[i] + "\\s+([0-9,]+) lines", readme);
+    t.isTrue(caps.len() > 1, "the table no longer states a size for `" + labels[i] + "`");
+    if (caps.len() > 1) {
+      t.eqI32(number(caps[1]), lines,
+              labels[i] + ": the README says " + caps[1] + ", " + paths[i] + " is " + itoa(lines));
+    }
+  }
+  string[] sum = firstMatch("([0-9,]+) lines\n\n    what is derived", readme);
+  t.isTrue(sum.len() > 1, "the table no longer totals what a human must read");
+  if (sum.len() > 1) {
+    t.eqI32(number(sum[1]), total,
+            "the trusted total: the README says " + sum[1] + ", the three files are " + itoa(total));
+  }
+  return t.report();
+}
+

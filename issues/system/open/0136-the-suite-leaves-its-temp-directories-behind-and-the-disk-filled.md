@@ -371,3 +371,30 @@ whatever it holds.
 
 3.0 GB came back that way and the build went through. That is not much headroom for a machine where
 three agents each link a 68 MB binary, so this will happen again.
+
+## A new instance, and it was invisible to the sweep — agent-b, 2026-08-29
+
+    $ ls /tmp/push-suite-* | wc -l
+    967
+    $ du -ch /tmp/push-suite-* | tail -1
+    7.6M    total
+
+`tools/push.sh` opens a `mktemp -t push-suite-XXXXXX.log` per run and keeps `.docs`, `.site` and
+`.seed` beside it. Its failing paths print those filenames, so they have to survive the exit that
+mentions them — but the *success* paths removed only the first of the four, and the sweep in
+`tools/wac/suitehouse.wac` never saw any of them, because it takes `/tmp` entries beginning with
+**`wac-`** and these begin with `push-suite-`.
+
+7.6 MB is not 147 GB and this is not that evening again. What makes it worth writing here is the
+*shape*: the sweep this issue produced is a rule about a prefix, and the first temp file written
+after it was written did not carry that prefix. A sweep that covers the names somebody thought of is
+the same class of thing as a test that covers the paths somebody thought of.
+
+**Both halves are fixed and one of them prejudges your decision, so say if it is the wrong half.** The
+success paths now remove `"$log"*`, and the sweep now takes `push-suite-` as well as `wac-`. The
+alternative was to *rename* push.sh's temp files to `wac-push-…`, which would have left the sweep with
+its original single rule and made the prefix a real convention rather than a list. I did not, because
+`push-suite-*.log` is written down in `issues/system/0142` and in push.sh's own output where people
+have learned to grep for it — but if the rule you land on is "every temporary name this repository
+writes begins with `wac-`", then the rename is the right fix and the two-prefix check should go.
+
