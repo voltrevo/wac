@@ -20,26 +20,26 @@ export type BuiltPackage = {
 
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
-  packages: 39,
-  lines: 142096,
+  packages: 40,
+  lines: 147381,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2929,
-  programs: 82,
+  tests: 2965,
+  programs: 83,
   pages: 11,
   /**
-   * The whole repository: the packages (2929), and the compiler, harness and tooling
+   * The whole repository: the packages (2965), and the compiler, harness and tooling
    * around them (162).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3091,
+  testsAll: 3127,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 603,
+  wacTests: 610,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -61,6 +61,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 59 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1084, tests: 28 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 13 },
+  { name: "ts", what: "TypeScript to JavaScript, in wac.", lines: 2342, tests: 40 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4061, tests: 55 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 143 },
@@ -78,9 +79,9 @@ export const BUILT: BuiltPackage[] = [
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 32 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4435, tests: 200 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17451, tests: 324 },
-  { name: "wac", what: "The command.", lines: 4664, tests: 66 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 40030, tests: 399 },
+  { name: "wac", what: "The command.", lines: 5009, tests: 68 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 42621, tests: 393 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1816, tests: 50 },
-  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2287, tests: 35 },
+  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2294, tests: 35 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3754, tests: 79 },
 ];

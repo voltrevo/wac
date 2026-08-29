@@ -413,7 +413,7 @@ grants. It shells out to `run.js` rather than importing it, so there is one impl
 Four bugs, every one of them found by a JavaScript parser rather than by the tests that existed:
 the inline `type` specifier, `as const` at depth 0, a local shadowing an import, and `await` at the
 top level of the entry module. The last three were introduced or exposed by fixing the first, which
-is the argument for `tools/wac/bootstrapdeno_test.wac` running the whole thing rather than checking
+is the argument for `packages/ts/test/wac/bootstrap_test.wac` running the whole thing rather than checking
 parts — the parts were green while the whole was broken.
 
 ### Node is not the same build run twice
