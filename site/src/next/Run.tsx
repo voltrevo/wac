@@ -197,17 +197,24 @@ export default function Run() {
       <Section id="bootstrap" kicker="the one that needs running" title="wacc compiling itself, here">
         <P>
           <Lead>A compiler that reproduces itself is what a bootstrap means, and nothing short of
-          running it can show that.</Lead> The reference compiler — bundled into this page for the
-          playground below — compiles wacc&rsquo;s own {" "}
-          <A href={`${BLOB}/packages/wacc/src`}>eleven sources</A> into stage A. A compiles them into
-          B. B compiles them into C. If wacc is a compiler that reproduces itself, B and C are the
-          same bytes.
+          running it can show that.</Lead> A ladder of five rungs runs here in the page — the lowest
+          is hand-written wasm assembly text, and each one compiles the next — until wac-L5 compiles
+          wacc&rsquo;s own <A href={`${BLOB}/packages/wacc/src`}>sources</A> into stage A. A compiles
+          them into B. B compiles them into C. If wacc is a compiler that reproduces itself, B and C
+          are the same bytes.
+        </P>
+        <P>
+          <Lead>No compiler written in another language takes part in any of it.</Lead> This used to
+          start from a TypeScript reference compiler bundled into the page; that compiler was deleted
+          on 2026-08-28 and the ladder is the whole story now, which is the stronger claim anyway.
         </P>
         <P>
           It runs on your machine, in this tab, and takes a second or two. The suite settles the same
           claim in{" "}
-          <A href={`${BLOB}/packages/wacc/test/fixpointEmit.test.ts`}>fixpointEmit.test.ts</A> — this
-          is that argument with the reader holding the evidence instead of being told it.
+          <A href={`${BLOB}/packages/wacc/test/wac/selfhost_test.wac`}>selfhost_test.wac</A>, and{" "}
+          <A href={`${BLOB}/bootstrap.sh`}>bootstrap.sh</A> refuses to install a build that never
+          settles — this is that argument with the reader holding the evidence instead of being told
+          it.
         </P>
         <Bootstrap />
         <Caveat title="what the page has to fetch, and why">
