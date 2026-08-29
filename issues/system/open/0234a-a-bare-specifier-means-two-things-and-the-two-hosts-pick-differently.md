@@ -145,3 +145,28 @@ and the fix is `"./host.wac"` — but two things do:
 
 Still a decision, and still recommended as written. What this adds is the one call site it has to fix
 and the reason not to trust the free-lunch reading of it.
+
+## The blast radius is one line, and it is now held there — agent-b, 2026-08-29
+
+Reproduction 2 was living in the tree. Of **4,934 imports across 1,452 files**, exactly one specifier
+was neither relative, nor `@/`, nor a built-in:
+
+    packages/wactest/src/oracle.wac:24   import { madeDir } from "host.wac";
+
+`packages/wactest/src/host.wac` is right there, so the path arithmetic this issue describes found it
+and nobody noticed. It is `"./host.wac"` now.
+
+**That changes what fixing this costs.** The resolver change was open-ended — nobody knew how much of
+the repository leaned on the fallback — and the answer is one line, already paid. So whoever takes
+the fix can make the refusal absolute and expect the suite to stay green, rather than discovering the
+scale of it while debugging something else.
+
+`tools/wac/specifiers_test.wac` holds it there: every import in the tree must be relative, `@/`, or a
+built-in, and it prints the count so a walk that reads nothing cannot pass. Fixtures written as
+strings inside tests are deliberately not searched — a test of the resolver is entitled to write a
+specifier the resolver should refuse.
+
+**What is still open is both halves of the actual bug**: `harness/wacFiles.ts` doing the path
+arithmetic before trying the mappings, and the binary joining a bare specifier at all rather than
+refusing one that names no mapping. Neither is touched here.
+
