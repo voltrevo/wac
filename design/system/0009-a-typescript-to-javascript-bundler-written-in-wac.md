@@ -511,16 +511,16 @@ start from: it already builds both ways, and the case that runs a `wac app` arte
 host is the regression test for `0275c`.
 
 
-## The migration: ten files across, two that do not go
+## The migration: eleven files across, one that does not go
 
 Done one at a time this time, after the first attempt moved eleven at once and produced four failures.
 `sealing.test.ts` first, because its subject is what a sealed session can reach — 13 of 13. Then the
 rest, keeping only what passes.
 
-**Across (10):** `sealing`, `session`, `sealed`, `flags`, `programs`, `fuzz`, `jobs`,
-`pipeUngranted`, `stdin_open`, `init` — plus `bin`, already there.
+**Across (11):** `sealing`, `session`, `sealed`, `flags`, `programs`, `fuzz`, `jobs`,
+`pipeUngranted`, `stdin_open`, `init`, `shell` — plus `bin`, already there.
 
-**Not across (2), each for its own reason, and neither of them the bugs from the first attempt.**
+**Not across (1).**
 
 ### `unnameable.test.ts` — the Deno target has a second permission layer
 
@@ -538,14 +538,13 @@ wrong and neither is the host** — it needs a path the layer *underneath* refus
 that is not Deno's is the work. Building the shell with no read grant would move the denial into
 wac's own layer, which tests a different sentence than the one that broke.
 
-### `shell.test.ts` — a spawned applet's working directory
+### `shell.test.ts` — was `issues/system/0281c`, and is across now
 
-    cd sub; cat f.txt        deno: hello from sub    wac app: No such file or directory
-
-"A spawned applet stands where the shell stands" does not hold through `wac app`. `runBytes` spawns
-with `cwd` as `""`, and `joinPath` reads that as *resolve as given* — so the applet resolves against
-the process's directory rather than the shell's. One layer of spawn deeper than the Deno artefact,
-which is the launcher's own program.
+"A spawned applet stands where the shell stands" did not hold through `wac app`, because
+`framed_path` resolved against the innermost frame and stopped. The fix is that a child's directory
+applies **exactly when the child resolves its own paths** — which is when no parent serves its
+filesystem, a thing the host already records. The recorded earlier attempt folded it in for every
+child and lost the image differential; this one keeps it at 3 of 3.
 
 ### `init.test.ts` — was `issues/system/0280c`, and is across now
 
@@ -556,6 +555,91 @@ service it started came back 127 — and the boot still ended `init: all service
 because a service that never started has stopped.
 
 One argument, and `run_as` had no other caller: it is gone.
+
+### `unnameable.test.ts` — the denial has a portable source, measured
+
+Recorded first as *not a bug and not migratable*. Half of that is right and half was not looked at
+hard enough.
+
+The file's property is that **a denial must arrive as a denial rather than as absence** — the bug it
+was written for was Deno's `NotCapable`, newer than the fault table, falling through to `FAULT_NONE`
+so that `stat /proc` said *not found* about a directory that is plainly there. Its cases reach that
+property through a path **Deno's sandbox** refuses while the wac grant allows it, and a `wac app`
+artefact has no such layer, so those cases have nothing to demonstrate themselves on.
+
+But the property does not need Deno's layer. An ordinary mode-000 file is refused by the *operating
+system*, and both hosts map that correctly:
+
+    sh-deno   cat: locked: Permission denied
+    sh-app    cat: locked: Permission denied
+
+So the file can move, with each case's denial coming from the OS rather than from Deno. What that
+**loses** is the specific claim these cases make today — that *Deno's* error kinds map to
+`FAULT_NOT_GRANTED` rather than to absence, which is the regression that happened. What it **gains**
+is the same property checked against `fault_of` on the native host, which has its own errno mapping
+and its own way to get this wrong.
+
+That is a fair trade only because the thing being lost is a test *of the Deno target*, and the Deno
+target is what `design/system/0009` removes. `CLAUDE.md`'s rule applies exactly: *"If you find
+yourself proposing to keep something, say what would break, and check that it is not just a test you
+could edit."* What breaks is a check on a host that is going away.
+
+**Not done here**, because it is a rewrite of seven cases rather than an import swap, and because it
+should happen in the commit that removes the target rather than before it — until then both claims
+are live and both are worth having.
+
+### The real size of the removal, measured
+
+`packages/box/test/` was one consumer group of ten, and calling the removal "unblocked" after it
+understated the rest. **47 code uses of `packages/platform/build.ts` across the tree**, not counting
+mentions in prose:
+
+    packages/platform   19        tools/*                7   (corpus runners, _spawncmp, mutate)
+    packages/sh          7        harness/*              6   (appRun, buildCache, waccBuild, …)
+    packages/box         5        packages/tor           3
+    packages/tls         3        packages/raster        1
+
+Twelve of box's are done. What is left is thirty-five, and they are not all the same shape: box's and
+`harness/`'s call `buildApp` as a **function**, while `packages/platform/test/wac/` and
+`packages/tor/test/wac/` shell out to `deno run -A packages/platform/build.ts …` as a **command
+line**, which `wac app` replaces differently.
+
+**Do not read "unblocked" as "nearly done".** What box's twelve bought is that the *route* works: a
+`wac app` artefact now behaves like a `build.ts` one for grants, redirects, spawning, pipelines,
+grandchildren and working directories, because each of those was a bug and each is fixed. What they
+cost was seven host divergences, six of them found by moving those twelve files — so the honest
+expectation for the remaining thirty-five is more of the same, and the honest method is the one that
+found them: one group at a time, measured.
+
+`packages/platform`'s nineteen are the ones to do next, and not because they are the largest. They
+are the tests *of the thing being changed*, so a divergence there is about the platform rather than
+about a package that happens to use it.
+
+### What the removal breaks, and it is not nothing
+
+`packages/platform/test/wac/runtimes_test.wac` is *"One application, two JavaScript runtimes, and the
+artefact each build produces"* — it builds the same program with `--target deno` and `--target node`
+and makes the two tell the same story. It is cited **16 times** by `conformance_test.wac`, more than
+any file that does not skip.
+
+Removing the deno and node targets removes its subject. `echod_test.wac` passes `--target` for the
+same reason and goes the same way.
+
+Set beside `issues/system/0279c` — 15 opcodes whose only comparison is a test that skips wherever the
+wasmtime host is not built — this would leave the two-host surface much thinner than the ledger's
+number suggests: the skipping files carry the wasmtime comparison, and `runtimes_test` carries
+Deno-against-Node.
+
+**The replacement exists and has to be built, not assumed.** The deno and node *hosts* are not going
+anywhere: `bootstrap.sh --host deno` and `--host nodejs` build a working `wac` on each, which is
+`design/system/0009` step 5 and is done. So the successor to `runtimes_test` is the same comparison
+driven through those two commands rather than through two targets of a TypeScript builder — and it is
+a better test for it, because it compares the hosts people will actually have.
+
+That work belongs *in* the removal rather than after it. `CLAUDE.md`: *"If you find yourself proposing
+to keep something, say what would break."* What breaks is sixteen ledger citations and the only
+Deno-against-Node comparison in the tree, and the answer is to rebuild it on the bootstrap rather than
+to accept the loss.
 
 ### What this says about the order
 
@@ -569,3 +653,44 @@ works on one host and not another. `issues/system/0279c` is why the instrument m
 did not: `conformance_test.wac` credits `OPEN_OUTPUT`, `SPAWN_SELF` and `CWD` to
 `native_hostfs_test.wac`, which skips wherever the wasmtime host has not been built. Those are three
 of the six.
+
+
+## The removal's successor: one artefact, several hosts
+
+Scoping the remaining thirty-five uses turned up something better than a port.
+
+**What `packages/platform/test/wac/` uses `build.ts` for is a comparison baseline.** `native_shell`,
+`native_hostfs`, `v8host`, `runtimes` and `echod` build the *same program twice* — once with
+`--target deno`, once for the native host — and check the two tell the same story. The deno target is
+how they get the Deno side. So removing it does not merely delete `runtimes_test`'s subject; it takes
+the baseline out of every host comparison in that directory.
+
+**The pattern that replaces it inverts the shape, and it is stronger.** Since step 5,
+`bootstrap.sh --host deno` and `--host nodejs` each build a working `wac`, and every `wac` can run a
+`wac app` artefact. So instead of *N artefacts, each with a host baked in*, a comparison becomes
+**one artefact run under N hosts**:
+
+    wac app prog.wac -o prog                    once
+    ./native/v8/target/release/wac app-run prog     the V8 host
+    ./wac-deno  app-run prog                        the Deno host
+    ./wac-node  app-run prog                        the Node host
+    ./native/target/release/wac app-run prog        wasmtime
+
+The artefact is then **held constant**, which the current shape cannot do: two builds differ in the
+host embedded in them *and* in everything the two builders do differently, so a disagreement has two
+possible causes and the test cannot say which.
+
+**This is not speculation about a better design — it is how six bugs were found today.** Every one of
+`0275c`, `0276c`, `0277c`, `0278c`, `0280c` and `0281c` was caught by running one artefact under two
+hosts by hand and reading the difference. The tests that existed compared two *artefacts* and saw
+nothing. `0277c` is the sharpest case: `box cp README.md out` copies through one and writes the file
+to standard output through the other, and no test in the tree could see it.
+
+It also answers `issues/system/0279c` from the other end. That issue is about a ledger deriving which
+hosts a cited test drives; under this shape the hosts are a *parameter of the runner*, so "which hosts
+is this opcode compared across" stops being something to derive and becomes something to read.
+
+**What it costs**, and it is real: a comparison needs the other hosts *built*, and `CLAUDE.md` is
+deliberate that the wasmtime binary is not built by default. That is the same constraint `0279c`
+describes rather than a new one — and this shape at least makes the number honest, because a host
+that is not built is a host the runner cannot list.
