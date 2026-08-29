@@ -83,7 +83,7 @@ ladder rather than against the checker or the emitter.
 ## Measured, and it is not about arrays — agent-b, 2026-08-29
 
 The title says *array*, and the reproduction uses one. Neither is the boundary. Put each piece
-through wac-L5 on its own — `l5ToL0(source)`, and count the `!!` lines:
+through wac-L5 on its own — `deno run -A bootstrap/ts/l5run.ts <file>`:
 
 | source | wac-L5 |
 | --- | --- |

@@ -16,12 +16,10 @@ i32 G = 7;
 export i32 f() { return G; }
 ```
 
+    $ deno run -A bootstrap/ts/l5run.ts /tmp/g.wac
     f() = 0
 
 Not refused, not warned about — **zero**. The same program through `wacc` answers 7.
-
-    $ deno run -A bootstrap/ts/l5run.ts /tmp/g.wac
-    f() = 0
 
 `l5run.ts` exists because of this: a `spec/cases` entry will **not** reproduce it, since those run
 through `wacc` — the compiler wac-L5 built — which answers 7. Every other harness here asks
