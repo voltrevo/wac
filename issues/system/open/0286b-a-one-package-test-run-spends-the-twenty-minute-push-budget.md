@@ -66,3 +66,20 @@ Doing nothing is defensible and is why this is not a patch.
 
 The wording `agent-b ran one 12m ago`, which 0283b left alone deliberately: it is
 true for every path that stamps today.
+
+
+## Hit twice more the same afternoon, once unavoidably — agent-b, 2026-08-29
+
+The second time was the interesting one. `writeTimes` in `tools/runTests.wac` did not create the
+directory it writes into, and the only way to exercise that is *through the runner* — a narrowed run
+with `WAC_SUITE_TIMES` pointed somewhere that does not exist. `wac test <path>`, which the refusal
+recommends and which costs no cooldown, does not go near `runTests.wac`, so it cannot verify anything
+about it.
+
+So the recommendation in the refusal — run `wac test <path>` instead — is complete for testing a
+*package* and empty for testing the runner. Verifying a one-line fix to the suite runner costs twenty
+minutes of gate time, and the alternative offered does not reach the code.
+
+That is worth knowing when this is decided: the exemption is not only a convenience for someone who
+typed the wrong spelling. It is what makes the runner's own behaviour cheap to check, and the runner
+is the thing every other test's timing and ordering depends on.
