@@ -653,3 +653,44 @@ works on one host and not another. `issues/system/0279c` is why the instrument m
 did not: `conformance_test.wac` credits `OPEN_OUTPUT`, `SPAWN_SELF` and `CWD` to
 `native_hostfs_test.wac`, which skips wherever the wasmtime host has not been built. Those are three
 of the six.
+
+
+## The removal's successor: one artefact, several hosts
+
+Scoping the remaining thirty-five uses turned up something better than a port.
+
+**What `packages/platform/test/wac/` uses `build.ts` for is a comparison baseline.** `native_shell`,
+`native_hostfs`, `v8host`, `runtimes` and `echod` build the *same program twice* — once with
+`--target deno`, once for the native host — and check the two tell the same story. The deno target is
+how they get the Deno side. So removing it does not merely delete `runtimes_test`'s subject; it takes
+the baseline out of every host comparison in that directory.
+
+**The pattern that replaces it inverts the shape, and it is stronger.** Since step 5,
+`bootstrap.sh --host deno` and `--host nodejs` each build a working `wac`, and every `wac` can run a
+`wac app` artefact. So instead of *N artefacts, each with a host baked in*, a comparison becomes
+**one artefact run under N hosts**:
+
+    wac app prog.wac -o prog                    once
+    ./native/v8/target/release/wac app-run prog     the V8 host
+    ./wac-deno  app-run prog                        the Deno host
+    ./wac-node  app-run prog                        the Node host
+    ./native/target/release/wac app-run prog        wasmtime
+
+The artefact is then **held constant**, which the current shape cannot do: two builds differ in the
+host embedded in them *and* in everything the two builders do differently, so a disagreement has two
+possible causes and the test cannot say which.
+
+**This is not speculation about a better design — it is how six bugs were found today.** Every one of
+`0275c`, `0276c`, `0277c`, `0278c`, `0280c` and `0281c` was caught by running one artefact under two
+hosts by hand and reading the difference. The tests that existed compared two *artefacts* and saw
+nothing. `0277c` is the sharpest case: `box cp README.md out` copies through one and writes the file
+to standard output through the other, and no test in the tree could see it.
+
+It also answers `issues/system/0279c` from the other end. That issue is about a ledger deriving which
+hosts a cited test drives; under this shape the hosts are a *parameter of the runner*, so "which hosts
+is this opcode compared across" stops being something to derive and becomes something to read.
+
+**What it costs**, and it is real: a comparison needs the other hosts *built*, and `CLAUDE.md` is
+deliberate that the wasmtime binary is not built by default. That is the same constraint `0279c`
+describes rather than a new one — and this shape at least makes the number honest, because a host
+that is not built is a host the runner cannot list.
