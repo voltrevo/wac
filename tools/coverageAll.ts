@@ -37,6 +37,7 @@
 // repository time. A figure quoted in prose is dated for that reason.
 
 import { announceHeavy } from "./suiteGate.ts";
+import { dispatchOrder } from "./coverageOrder.ts";
 
 // Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
 // programs and runs them, and nothing else made it visible. issues/system 0142.
@@ -122,27 +123,9 @@ type Result = { pkg: string; code: number; ms: number; output: string };
 /**
  * How long each package took last time, so the longest one starts first.
  *
- * **The tail is the whole wall time, and alphabetical order put the tail last.** A run's best possible
- * wall is `max(longest driver, work / workers)`; measured on 2026-08-29, back to back:
- *
- *     alphabetical    696s of work, longest 94s  ->  ideal 174s, actual 204s   (17% over)
- *     longest-first   471s of work, longest 89s  ->  ideal 118s, actual 119s   ( 1% over)
- *
- * **Compare the two ratios and not the two walls.** The second run had a third less work in it —
- * these share a machine with two other agents and with each other's warm caches — so 204s against
- * 119s flatters this considerably. What the change actually bought is the distance from each run's
- * own bound, and that went from 30s to 1s.
- *
- * Longest-first is the standard answer to exactly this and needs no estimate to be good, only an
- * approximate order. A file of last run's times gives that for free and corrects itself: a package
- * that grows is late once and early after.
- *
- * **A package with no recorded time goes first**, which is the safe end. An unknown is usually a new
- * package and short, so putting it first costs nothing; putting it last risks re-creating the exact
- * problem this fixes, for a package nobody has timed yet.
- *
- * Missing or unreadable is not an error and not a warning — it is the first run in a fresh checkout,
- * where alphabetical is what this always did.
+ * The ordering itself is `tools/coverageOrder.ts`, which has the measurement and the argument in it
+ * and a test beside it. This is the file-reading half: missing or unreadable is not an error and not
+ * a warning — it is the first run in a fresh checkout, where alphabetical is what this always did.
  */
 const TIMES_PATH = ".cache/coverage-times.json";
 const lastTimes: Record<string, number> = (() => {
@@ -155,13 +138,7 @@ const lastTimes: Record<string, number> = (() => {
 
 // `PACKAGES` itself stays alphabetical: it is what the report is sorted back into, and a reader
 // scanning for a red should not have the rows move because a machine was busy.
-// `Number.MAX_SAFE_INTEGER` rather than `Infinity` for the unknowns, because `Infinity - Infinity` is
-// `NaN` and a comparator that returns `NaN` has no defined answer. Two unknowns compare 0 here, which
-// leaves them in the alphabetical order they arrived in.
-const UNTIMED = Number.MAX_SAFE_INTEGER;
-const DISPATCH = [...PACKAGES].sort((a, b) =>
-  (lastTimes[b] ?? UNTIMED) - (lastTimes[a] ?? UNTIMED)
-);
+const DISPATCH = dispatchOrder(PACKAGES, lastTimes);
 
 /**
  * Four at a time, because nineteen packages one after another is 38s of every push.
