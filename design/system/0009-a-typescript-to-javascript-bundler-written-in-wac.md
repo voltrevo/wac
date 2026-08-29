@@ -257,39 +257,48 @@ equal. `readonly fault: number;` survived every test here until Deno was asked t
 and refused. A JavaScript parser asked about JavaScript is the only question that catches a
 leftover, and it is also the real acceptance test: a JS-hosted `wac` *is* that file.
 
-## Where this ends: `packages/platform/build.ts` should not exist
+## Who the bundle is actually for
 
-942 lines, and what it is is **the JavaScript-hosted app builder** — the thing that turns a wac entry
-into one runnable file for Deno, Node or a browser. `wac app` in `packages/wac/src/app.wac` is the
-*native* one. Two producers of one artefact, which this repository already forbids, and the only
-reason for the split was that the hosted one needed a bundler and the language did not have one.
+Two consumers, and both **must** embed the bridge because neither can assume a `wac` exists:
 
-It does now.
+- **`bootstrap.sh --host deno|nodejs`**, producing a JS-hosted `wac` command;
+- **`--target browser`**, because a page has no PATH to find one on.
 
-### What it does, and where each part goes
+`wac app` is *not* one of them. Its artefact is a shell preamble that runs `command -v wac` and
+execs `wac app-run "$0"`, so it needs a `wac` on PATH and does not care which one — native,
+Deno-hosted or Node-hosted are all the same to it. It has no target and should not gain one.
 
-| build.ts does | already exists as |
-| --- | --- |
-| compile the entry through `waccArtifacts` | `wac build` |
-| compose the worker, launcher and childwasm sources | nothing — ~200 lines to port |
-| bundle them (`deno bundle`, hence npm) | `packages/ts/src/bundle.wac` |
-| emit shebang + launcher, or a browser page | `wac app` does the native half |
+**An earlier draft of this section got that wrong twice**, and the corrections are worth keeping
+because both were the same kind of error — inventing a shared thing where there are two different
+ones:
 
-### Why the wac side is easier than it looks
+1. It said `wac app --target deno` would call `bundle()` directly. It would not: the bridge is
+   *fixed*, identical for every application, so bundling it per-application is bundling one thing
+   repeatedly — which is why `packages/platform/build.ts` needs a cache around `deno bundle` at all.
+   A bundle is an **artefact built once**, not a step in an application build.
+2. It then said `build.ts` and `wac app` were two producers of one artefact. They are not.
+   `wac app` makes a 74 KB file that needs `wac` on PATH; `build.ts --target deno` makes a
+   self-contained one that needs only the runtime. Different products for different situations.
 
-For the **binary**, `wac app --target deno` would call `bundle()` directly — both are wac, so there
-is no wasm boundary and no host at all. For the **bootstrap**, `run.js` calls `transform.wasm`. Same
-wac code, two entry points, and the tiny interface exists only for the second.
+### What is redundant, and what is not
 
-That also removes the npm dependency for everyone rather than only for the bootstrap:
-`--target deno` currently shells out to `deno bundle`, which fetches `@esbuild/<platform>` on first
-use, and that is the single thing making a hosted build need a network.
+The **browser** target has no other home: a page must carry its host, and nothing else builds one.
 
-### What has to move first
+The **deno and node self-contained targets** are the arguable ones. Once `bootstrap.sh --host deno`
+has given somebody a `wac`, `wac app` produces the smaller artefact for the same job — so what those
+targets add is a build for a machine that has deno and wants no `wac` at all, which is a narrower
+case than it looks.
 
-`buildApp` has seven callers in `packages/box/test/` plus `site/tools/syncDemos.ts`, and three
-`packages/ethrpc/example/*.wac` headers name `wac task app:build`. None of them is an obstacle —
-they are the reason to do it once rather than twice.
+### The one change that stands regardless
+
+`build.ts` bundles by shelling out to `deno bundle`, which fetches `@esbuild/<platform>` from npm on
+first use. That is the only reason a hosted build needs a network, and `packages/ts` removes it.
+Whatever happens to the targets, that swap is worth making on its own.
+
+The coupling to expect when making it: the sources `build.ts` generates import through
+`import.meta.resolve`, so their specifiers are `file://` URLs rather than relative paths, and the
+bundler treats anything that is not relative as external. Either those sources learn to use relative
+specifiers or the bundler learns `file://`.
 
 ## Open
 
