@@ -218,7 +218,20 @@ rule is written already, in the probe, in the same way the refusals family's was
 `cov.ts`: two of the three groups above turn out to have their explanation sitting in prose
 somewhere a test cannot read it, which is the general shape this issue keeps running into. And **stat detail** —
 `mtimeOf`, `onFs`, `ownership`, `octalMode`, `statReason` — which `ls -l` was aimed at and did not
-reach, so something narrower is wanted there.
+reach. The reason is one line of the probe:
+
+    Stat resolveStat(i32 id) { return Stat.of(id == 1, id == 1, false, 0, 0, false, false, 0); }
+
+Its comment says what it is for — *"Only the two programs under `/bin` exist, which is what makes a
+`$WACPATH` search decide"* — so it is a fake built for path resolution, and every field `ls -l` would
+read is a constant zero or false. Nothing a script says can vary them.
+
+**This group is the one that differs from the other two**, and the distinction is what a ledger entry
+would have to get right. Job control is unreachable *by design*: the fake is stateless because a
+stateful one would hang the read loop, and the real coverage is named elsewhere. Stat detail is
+merely **not arranged** — a probe whose `resolveStat` varied by id would reach it, and that is a
+change to the fake rather than an argument about what can be tested. So one of these is a rule and
+the other is a to-do, and writing them the same way would be the mistake.
 
 What is left is unchanged in kind and smaller in size: keep widening while it is cheap, then write
 rules for what genuinely cannot be reached, then switch the driver from `reports` to `floor` in the
