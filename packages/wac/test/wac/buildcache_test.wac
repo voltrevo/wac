@@ -47,7 +47,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
-import { freshDir, putFile } from "../../../wactest/src/host.wac";
+import { freshDir, madeDir, putFile } from "../../../wactest/src/host.wac";
 
 const string WACC = "packages/wac/src/wac.wac";
 
@@ -68,6 +68,16 @@ string runnerStem(Cli cli) { return cli.cwd().wait() + "/.cache/buildcache-runne
  * program with the same authority, reached without a compile.
  */
 string runnerWhyNot(Cli cli) {
+  // **The directory, because `wac build -o dir/stem` does not create `dir`.** Every case here
+  // depended on it already existing, which it does after any earlier run — so this file passed on
+  // every machine that had run it before and would have failed on a fresh clone. It went red when
+  // the directory went away for unrelated reasons, and the message said nothing about a directory
+  // this file was supposed to own: `wacc: cannot write …/wac.wasm — No such file or directory`.
+  //
+  // `madeDir` rather than `freshDir`: the point of building here is that it is a *cache hit* —
+  // 0.3s against 10.7s — and emptying the directory first would throw that away every run.
+  string whyDir = madeDir(cli, cli.cwd().wait() + "/.cache/buildcache-runner");
+  if (whyDir != "") { return whyDir; }
   Exec r = cli.execWith(wacBinary(cli),
       string[]("build", WACC, "-o", runnerStem(cli), "--quiet",
                "--allow-read", "--allow-write", "--allow-env", "--allow-run"),
