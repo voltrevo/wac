@@ -5,7 +5,7 @@
 // precedence chain. What is missing is breadth (integer widths, casts, strings) and one piece of
 // depth (generics), and both are easier to add to something that already parses the language.
 
-import { l5Run, l5RunFile } from "./l5.ts";
+import { l5Run, l5RunFile, l5ToL0 } from "./l5.ts";
 import { boot } from "../hosts/deno.js";
 
 const expr: [string, number][] = [
@@ -692,3 +692,36 @@ Deno.test({
     }
   },
 });
+
+
+// **A module-level variable's initialiser is refused unless it is `= 0`** — `issues/lang/0287b`.
+//
+// The emit pass writes every global as `(global … mut = 0)` and skips the initialiser, because a
+// wasm global takes a constant expression and wac's may be any expression. Until 2026-08-29 the
+// initialiser was simply dropped, so `i32 G = 7; return G;` answered **0** with no diagnostic —
+// and nothing noticed, because the only two initialisers in everything the ladder compiles are
+// `i32 nfile = 0;` in `selfhost.wac` and in `spec_cases.wac`, which ask for the value the bug gave.
+//
+// `= 0` therefore still compiles, and that is the case worth keeping: refusing it would have made
+// this a change to two driver files rather than to the rung at fault.
+const globals: [string, string, number | null][] = [
+  ["a global with no initialiser is assigned in code", "i32 G;\nexport i32 f() { G = 9; return G; }", 9],
+  ["a global initialised to zero still compiles", "i32 G = 0;\nexport i32 f() { G = 7; return G; }", 7],
+  ["a global initialised to anything else is refused", "i32 G = 7;\nexport i32 f() { return G; }", null],
+];
+
+for (const [name, source, want] of globals) {
+  Deno.test(`wac-L5: ${name}`, async () => {
+    const l0 = await l5ToL0(source);
+    const refused = l0.split("\n").filter((l) => l.startsWith("!!"));
+    if (want === null) {
+      if (refused.length === 0) {
+        throw new Error("wac-L5 accepted `i32 G = 7;` — it emits globals as zero, so this answers 0");
+      }
+      return;
+    }
+    if (refused.length > 0) throw new Error(`wac-L5 refused it:\n${refused.join("\n")}`);
+    const got = await l5Run(source, "f");
+    if (got !== want) throw new Error(`got ${got}, want ${want}`);
+  });
+}

@@ -1,16 +1,18 @@
 // `deno run -A ts/l5run.ts <file.wac> [export]` — one program through **wac-L5 itself**, run.
 //
-// **The gap this fills.** Everything else here asks wac-L5 to build `wacc` and then asks questions
-// of `wacc`: `spec_cases.ts` runs `spec/cases` through the compiler wac-L5 produced, `ladder.test.ts`
-// checks that the ladder closes. Both are about the top rung's *output*. Neither can answer "what
-// does wac-L5 do with this program", and that is a different question, because wac-L5 implements a
-// subset of wac and its gaps are invisible from above — a construct it drops silently is a construct
-// `wacc` handles correctly, so no test built on `wacc` can see it.
+// **The gap this fills**, which is narrower than "you could not do this". `l5Run` in `l5.ts` has
+// always run a program through wac-L5 and `l5.test.ts` uses it a hundred times. What there was no
+// way to do from a shell was ask *one* file the question — and, more to the point, `l5Run` gives you
+// an answer or an exception, and says nothing about a **refusal**: wac-L5 writes those as `!!` lines
+// into the module it emits, so a refused program comes back as a broken module rather than as a
+// reason. Both halves in one command is the whole of this file.
 //
-// `issues/lang/0287b` is what that costs. wac-L5 emits every module-level variable as zero and skips
-// its initialiser, so `i32 G = 7; return G;` answers **0** — and no `spec/cases` entry can reproduce
-// it, because those run through `wacc`, which answers 7. Finding it needed exactly this script, and
-// writing it as a scratch file each time is how it stayed unfound.
+// Worth having because the ladder's other harnesses ask questions of wac-L5's *output* —
+// `spec_cases.ts` runs `spec/cases` through the `wacc` that wac-L5 built, `ladder.test.ts` checks
+// the ladder closes — and a construct the top rung mishandles is one `wacc` handles correctly, so
+// nothing built on `wacc` can see it. `issues/lang/0287b` is what that cost: wac-L5 answered **0**
+// for `i32 G = 7; return G;`, and no `spec/cases` entry could reproduce it, because a spec case runs
+// through `wacc`, which answers 7.
 //
 // Refusals come out as they are: wac-L5 writes each one as an `!!` line naming the source line and
 // the token it stopped on. Nothing is run when there are any, because the emitted module is a
