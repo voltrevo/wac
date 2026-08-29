@@ -246,42 +246,32 @@ measurement.
 
 ## What is left, in the order the numbers suggest
 
-1. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
-2. **Process starts** — `issues/system/0197`, and **already being worked**, so read that before
-   starting anything here. A built app costs ~107ms to spawn against 15ms for the native binary;
-   `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s. `harness/buildApp.ts`
-   is the replacement builder, going through `wac app` at ~20ms, and `design/system/0009` is why
-   `packages/platform/build.ts` is losing its `deno` and `node` targets altogether.
+**Scheduling is done.** Both queues now order by measured cost and both are close to their floors —
+the ratchets within 1% and the suite 362s against 319s — and the section below shows there is nothing
+in merging them. Every item here is *work reduction*, and each belongs to an issue that already
+exists.
 
-   Two of that issue's three "shapes worth measuring" are answered and can be skipped: the cache
-   flags in the shebang are *not* the money (107ms → 90ms) and both have a written reason — a
-   `v8_code_cache_v2` that reached 28 GB and a transpile cache that reached 23 GB, neither of which
-   evicts. The live one is the third, the artefact's size, since start cost is ~50ms fixed plus
-   ~43ms a megabyte.
-3. **Crypto's own speed**, which is now a smaller number than it looked: the chunk is 25s and the
+1. **`commandparity_test.wac`, 71.7s**, and the compile cost behind it — `issues/lang/0153`. The
+   largest single file in the suite, and 2.6x the next in its package. Three hosts each compile a
+   219-file program. That issue now also carries a profile of the compiler and, more usefully, the
+   retraction of what the profile first appeared to show.
+2. **`buildcache_test.wac`, 105.7s**, more than half of `packages/wac`. Per *test*, because each
+   points `WAC_HOME` at a fresh directory — which is the point of a build-cache test and also makes
+   `wac run` recompile the compiler-as-a-program six times. Sharing that compile while keeping each
+   subject's cache fresh is possible and is a decision about what the test proves; see the section
+   above for why it was left.
+3. **Process starts** — `issues/system/0197`, and **already being worked**, so read it before
+   starting anything here. `harness/buildApp.ts` is the replacement builder, going through `wac app`
+   at ~20ms against ~107ms, and `design/system/0009` is why `packages/platform/build.ts` is losing
+   its `deno` and `node` targets. Two of that issue's three shapes are answered and can be skipped:
+   the shebang's cache flags are not the money (107ms → 90ms) and both have a written reason — a
+   code cache that reached 28 GB and a transpile cache that reached 23 GB, neither of which evicts.
+   The live one is the artefact's size, since start cost is ~50ms fixed plus ~43ms a megabyte.
+4. **Crypto's own speed**, now a smaller number than it looked: the suite chunk is 25s and the
    ratchet driver 24s. `issues/system/0209` is one piece of it.
 
-The ratchets' 216s is *not* a separate item: `coverage:platform` is 137s of it and that is 2, and no
-schedule can beat one driver. Skipping them was measured and refused separately.
-
-## Two traps, because both cost me a measurement
-
-**A plain `wac test <dir>` does not skip the heavy lane.** Two attempts at timing `packages/wacc`
-spent their whole budget inside `corpusemit_test.wac`, which is declared at 1,204s. `--ignore` takes
-a comma-separated list of paths rather than acting as a switch, so it is
-`--ignore packages/wacc/test/wac/corpusemit_test.wac,packages/wacc/test/wac/names_test.wac`; passed
-bare it swallows the directory that follows it and the run does nothing, quickly.
-
-**Cold and warm differ by 2×**, and a run taken seconds after a gate is neither: the gate rewrites
-`native/v8/target/release/wac`, so a measurement started against it can be timing a binary that is
-being replaced. Three of my first readings were of tests that never ran, and all three were fast.
-Check for the test's own `N passed` line, not for a timing.
-
-**Dropping a grant drops the work, so a subtraction across grants measures nothing.** `wac covdump`
-on the built exercise took 3s and looked like proof that the sweeps were cheap; it was the same
-mistake wearing a different hat, because covdump takes no grants and every test that shells out
-failed in microseconds. The exercise's honest figure is 91s, and running it with `--allow-run`
-removed gives 5s *and* `60 test(s) failed`. Read the failure count before believing a difference.
+The ratchets are not a separate item. They are 133s against a floor of 131s, `coverage:platform` is
+the largest driver, and that is item 3. Skipping them entirely was measured and refused separately.
 
 ## One queue instead of two saves nothing, and the arithmetic says so — withdrawn
 
