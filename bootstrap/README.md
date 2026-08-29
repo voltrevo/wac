@@ -62,32 +62,35 @@ The shortcuts, so nobody has to discover them:
 
 ## The answer to the question
 
-**The ladder is 9,834 lines against the reference's 19,499** — but the line count is the less
-interesting half, because the two numbers are not the same kind of thing.
+**The ladder is 9,843 lines** — the five rungs at 8,126, the assembler that runs at 1,217 and the
+flattener at 500 — against the 19,499 of the reference compiler, which was deleted on 2026-08-28.
+The line count is the less interesting half, because the two numbers are not the same kind of thing.
 
-    what a human must read to trust it
-      wac-L0 assembler, one of the two           832 lines   (the other is the check, not the trust)
-      wac-L1 interpreter, hand-written         1,804 lines
-      the flattener, in ts/l5.ts                 191 lines
+    what a human must read to trust it                        (re-measured 2026-08-29)
+      wac-L0 assembler, one of the two         1,217 lines   rust/src/lib.rs — the other is the
+      wac-L1 interpreter, hand-written         1,814 lines   boot/l1.l0        check, not the trust
+      the flattener                              500 lines   rust-ladder/src/flatten.rs
                                                -----------
-                                               2,827 lines
+                                               3,531 lines
 
     what is derived from that, and checked by running it
-      wac-L2 ... wac-L5                        5,986 lines
-      the second assembler                     1,212 lines
+      wac-L2 ... wac-L5                        6,312 lines   boot/l2.l1 … boot/l5.l4
+      the second assembler                     1,065 lines   js/assemble.js
 
     what produces no artefact at all
       the instruments                          1,209 lines
       the tests                                1,512 lines
 
 **The flattener is in the first column and it took a while to notice.** wac-L5 ignores `import`,
-so something has to do the linking, and that something is 191 lines of TypeScript that resolves
-specifiers, concatenates modules and *renames the colliding private declarations of two of them*.
+so something has to do the linking, and that something is 500 lines of Rust — `rust-ladder/src/flatten.rs`,
+which `./bootstrap.sh` runs — that resolves specifiers, concatenates modules and *renames the
+colliding private declarations of two of them*. It was 191 lines of TypeScript in `ts/l5.ts` when
+this was written, and moving it did not move this paragraph.
 A bug there produces a wrong program quietly, which is the definition of code that has to be
 trusted. It is the cost of the shortcut, and leaving it out of the count was flattering.
 
 The reference's 18,203 lines were all in the first column: every one of them was trusted because
-somebody read it. Here, 2,782 are — and one of those three files is checked against a second
+somebody read it. Here, 3,531 are — and one of those three files is checked against a second
 implementation of the same written format, so even the root has a witness.
 
 That is the case for a ladder, and it is a different case from "fewer lines".
