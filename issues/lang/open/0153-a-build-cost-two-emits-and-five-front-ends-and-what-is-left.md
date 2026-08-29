@@ -166,10 +166,9 @@ scan was priced at 0.4% and a hash index there buys nothing. These are a differe
 different phase, and they are three orders of magnitude more traffic. The lesson is that "the scan is
 conspicuous" is not evidence either way — the difference between 0.4% and this is a measurement.
 
-**What to do about it is still open**, and deliberately not done here: indexing `funcs`, `sigTypes`
-and `declNames` by name is a change to the emitter's core tables, and the honest next step is to
-price one of them by doubling first, because 1,201 compares of a *short* string may be cheaper than
-the count suggests.
+**And the next step said to price one by doubling before indexing anything, because 1,201 compares of
+a short string may be cheaper than the count suggests. It was. See below — do not index these on the
+strength of the counts.**
 
 ### Reproducing it
 
@@ -180,3 +179,29 @@ the count suggests.
 Sixty seconds to build, six to run. The driver prints its byte count, because a run that failed to
 find the entry still fills a counter table and would profile the failure path convincingly.
 
+### `funcAt` doubled costs nothing measurable — so the counts are not the answer
+
+Body-doubling `Env.funcAt`, so every lookup scans twice, and building `packages/box/src/bin/sh.wac`
+three times each way:
+
+    doubled          5134 ms   6085 ms   6523 ms
+    reverted         5219 ms   5918 ms   6239 ms
+
+Indistinguishable. 97 million extra string comparisons — a second pass over the whole of the hottest
+scan in the compiler — disappear into the noise. So `funcAt` is not worth indexing, and by extension
+neither is anything ranked by iteration count alone.
+
+**I nearly reported the opposite.** An earlier baseline, taken twenty minutes before on a quiet
+machine, was 4477/4587/4514 ms, and against the doubled figures that reads as a 650 ms difference —
+14% of a build, which is exactly the sort of number that gets a hash index written. It is entirely
+contention: three agents share five cores here, and the load moved between the two measurements. The
+*reverted* build re-measured under the same load as the doubled one is what settles it, and the
+lesson is the one this page already had about `C.findName`, arriving from the other side: a
+conspicuous scan is not evidence, and neither is a large count.
+
+**What that leaves.** The 96% figure for `emit.wac` still holds and is still where the work is — but
+it is 96% of *iterations*, and the phase-level split at the top of this section (`lex` 2.5%,
+`parseProgram` 18%, everything after ~80%) remains the only measurement here that is about time. The
+profiler is worth keeping for what it is good at: showing which code runs at all, and which of two
+candidate lines runs a thousand times more often than the other. It is not a way to choose what to
+optimise.
