@@ -19,15 +19,21 @@ wrong for a fortnight. The point of the page is that the next cut starts from nu
 push — the three-line lump at the bottom of the old estimate was never measured and turned out to be
 24 seconds:
 
-    pull+seed      1s
-    suite        469s
-    docs          14s
-    site           9s
-    ratchets     129s
-    ------------------
-    total        622s
+    run 1          run 2
+    pull+seed      1s             0s
+    suite        469s           394s
+    docs          14s            13s
+    site           9s             9s
+    ratchets     129s           130s
+    --------------------------------
+    total        622s           546s
 
-So it is **ten and a half minutes, not twelve**, and the suite is 75% of it. The estimate this page
+So it is **nine to ten minutes, not twelve**, and the suite is about three quarters of it.
+
+**The two runs are not a before-and-after and must not be read as one.** Run 2 is the first with the
+suite queue ordered by measured cost, but it also carried 1076s of work against run 1's 1260s — the
+machine was quieter. Against each run's own floor: 469/362 = 1.30, then 394/318 = 1.24. Suggestive,
+not conclusive, and the way to settle it is two runs adjacent in time rather than two an hour apart. The estimate this page
 opened with is kept below for the record:
 
     suite                452s   (before 0274b; crypto's chunk has since gone 195s -> 25s)
