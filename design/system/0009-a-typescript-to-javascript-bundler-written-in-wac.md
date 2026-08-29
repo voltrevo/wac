@@ -765,3 +765,45 @@ finding another way to make one.
 needs an in-process wac program. That is a real dependency and it is not this note's to discharge:
 recorded here so the next person does not spend the time I did looking for a way to build a worker
 bundle without `build.ts`.
+
+
+## The `--target` group is a coverage trade, not just infrastructure
+
+Sizing the smallest of the five made the shape of this clear, and it is worse than "add a fixture".
+
+`setexecutable_test.wac` compares the Deno host against the native one by building the same probe
+twice — `build.ts --target deno` for one side, `wac build` for the other. Its header says why it
+exists at all:
+
+> On 2026-08-24 the V8 native host was setting `mode | 0o100` … where Deno, Node and the wasmtime host
+> all do `mode | ((mode & 0o444) >> 2)`. The same program on the same file gave **744** natively and
+> **755** under Deno.
+
+So it is a live oracle that has caught a real bug, and it runs **on every gate**, because `build.ts`
+is always available.
+
+**Under the successor pattern it would not.** One artefact run under two `wac` binaries needs a
+Deno-hosted `wac` to exist, and — following `nativeHostWhyNot`'s precedent — a test whose host is
+absent skips with a reason. `bootstrap.sh --host deno` takes 45 seconds and nothing builds it as part
+of a push.
+
+So the conversion trades *compared on every run* for *compared when somebody built the host*. That is
+`issues/system/0279c` exactly, arriving from the other direction: that issue is about fifteen opcodes
+whose only comparison skips, and this would add to them rather than subtract.
+
+### What that means
+
+Converting this group piecemeal makes cross-host coverage **worse**, and no amount of care in the
+individual conversions changes that. The trade only comes out right if the JS hosts become artefacts
+the gate maintains — which is a decision about what the gate costs, not about a migration.
+
+Three ways it could go, and none of them is this note's to pick:
+
+1. **The gate builds them.** 45s each, no cargo, no network — cheaper than the wasmtime host, which
+   the gate already declines to build. Then the comparisons run and `0279c` improves.
+2. **They are built on request**, like the wasmtime host, and these five join the fifteen that skip.
+3. **`build.ts` keeps its deno and node targets** for exactly these five files, and the removal is of
+   everything else.
+
+The third is worth saying out loud because it is not obviously wrong: the targets exist to build a
+program for a host, and a test comparing hosts is the one caller that genuinely wants that.
