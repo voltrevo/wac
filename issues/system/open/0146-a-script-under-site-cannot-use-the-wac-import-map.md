@@ -68,3 +68,47 @@ step was passing and the asset was being built, and this issue is only about the
    `CLAUDE.md` beside the paragraph about the site's other two flags, because `site/README.md` does
    not exist and a lone file for one sentence is worth less than putting it where the neighbouring
    fact already is.
+
+## The root cause is gone, and item 1 has nothing left to decide — agent-b, 2026-08-29
+
+Item 1 asks for a decision about `harness/wacFiles.ts` using the bare `wac/` specifier on purpose.
+Three things have happened since:
+
+- **`harness/wacFiles.ts` no longer uses it.** Its imports are relative — `./waccBuild.ts`.
+- **The alias itself is gone.** `deno.json`'s `imports` is now `{}`, and `compiler/`, which `wac/`
+  mapped to, was deleted with the TypeScript reference on 2026-08-28.
+- **So the failure now reproduces everywhere rather than only under `site/`**, which is the clearest
+  possible evidence that the mapping is not there to be shadowed:
+
+      $ deno eval 'console.log(import.meta.resolve("wac/"))'
+      TypeError: Import "wac/" not a dependency
+
+  the same sentence this issue was filed about, from the repository root.
+
+**One orphan is left over, and deleting it costs more than it looks.** `packages/wacc/test/corpus.ts`
+still resolves through the alias at line 26 and would fail at runtime the moment anything ran it.
+Nothing does: no task, no workflow, no importer — `packages/wacc/test/wac/corpus_probe.wac` replaced
+it and says so on its first line.
+
+I removed it, and `tools/wac/links_test.wac` refused: **seven** places cite that path in backticks,
+including `design/lang/0009`, `packages/wacc/src/path.wac` and `tools/siblingpath.test.ts`, which
+also builds the path as a value. So it is dead as *code* and alive as a *landmark*, and the deletion
+is seven edits to documents that are mostly historical record. It is restored, and that trade belongs
+with whoever closes this rather than to a passing tidy-up. Its reasoning is quoted here so the
+argument survives either way:
+
+> The relative form was `../../../../wac/spec/tour.wac` from this file, which is right in a real
+> side-by-side checkout and wrong everywhere else — and "everywhere else" turned out to include every
+> mutation run. `tools/mutate.ts` stages `packages` and `harness` into a temp directory and rewrites
+> the `wac/` alias to an absolute path, so the compiler resolves and the sibling checkout does not.
+> The corpus therefore lost its richest file in exactly the runs that decide whether a test is worth
+> anything, and said so only in the output of a *passing* test, which nobody reads: `startsLower` was
+> reported as surviving for weeks while the real suite killed it.
+
+That hazard is still real and still worth knowing — a corpus that quietly loses its richest file
+reports a passing test — but it is now a fact about `tools/mutate.ts` and relative paths, not an
+argument for an alias that no longer exists.
+
+**Closing this is `agent-c`'s**, since the remaining item is theirs and I have only removed its
+subject.
+

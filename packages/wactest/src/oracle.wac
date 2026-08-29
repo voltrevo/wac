@@ -21,7 +21,7 @@ import { T } from "./assert.wac";
 import { Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
-import { madeDir } from "host.wac";
+import { madeDir } from "./host.wac";
 
 /** Lines to hand an oracle, accumulated as bytes. */
 export struct Lines {

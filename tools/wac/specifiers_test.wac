@@ -1,0 +1,95 @@
+// Every import in the repository is a specifier the language defines.
+//
+//     wac test --allow-read --allow-run tools/wac/specifiers_test.wac
+//
+// **`spec/spec/imports.md` names three kinds and there is no fourth.** A path is relative, using
+// `./` or `../`; `@/` is the project root; and a bare name may name a mapping declared in
+// `wac.json5` or one of the seven built-ins. `[§wac-import-mapped-6np2rkq]` A specifier that is
+// none of those is not defined by the language.
+//
+// **It is accepted anyway, and that is `issues/system/0234a`.** Both hosts fall through to path
+// arithmetic for a bare specifier — joining it to the importing file's directory — so
+// `import { two } from "sub/lib.wac";` compiles `src/sub/lib.wac` and exits 0. The two hosts do it
+// at *different points* relative to trying the mappings, so a project with a `dep/` mapping and a
+// `src/dep/` directory gets a different file out of each. That issue has the reproductions.
+//
+// **This is not that fix; it is what keeps that fix free.** When the resolver stops joining bare
+// specifiers, every import in the tree has to already be one of the defined kinds, or the change
+// arrives as a pile of unrelated breakage that hides whatever it really broke. There was exactly one
+// when this was written — `packages/wactest/src/oracle.wac` importing `"host.wac"`, which resolved
+// to its own directory by the accident above and is now `"./host.wac"` — and one is the number worth
+// holding at.
+//
+// Fixtures written as *strings* inside tests are deliberately not searched: a test of the resolver is
+// entitled to write a specifier the resolver should refuse, and this reads files as files.
+
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { splitLines, startsWith, contains } from "../../packages/wactest/src/strings.wac";
+import { isBuiltinSpec } from "../../packages/wacc/src/coretext.wac";
+
+/** The specifier of an `import { … } from "…";` line, or empty for a line that is not one. */
+string specifierOf(string line) {
+  if (!startsWith(line, "import ")) { return ""; }
+  i32 from = line.indexOf(" from \"");
+  if (from < 0) { return ""; }
+  string rest = line.slice(from + 7, line.len());
+  i32 end = rest.indexOf("\"");
+  return end < 0 ? "" : rest.slice(0, end);
+}
+
+/**
+ * Whether the language defines what this specifier names.
+ *
+ * A mapping name cannot be recognised from the specifier alone — that is the whole of 0234a — so
+ * this asks the narrower question every file in *this* repository can answer: it is relative, it is
+ * the project root, or it is a built-in. This repository declares no mappings, which is why the
+ * narrower question is the right one here and would not be in a project that did.
+ */
+bool defined(string spec) {
+  return startsWith(spec, "./") || startsWith(spec, "../") || startsWith(spec, "@/")
+      || isBuiltinSpec(spec);
+}
+
+export string test_every_import_in_the_repository_is_a_specifier_the_language_defines(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] files = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
+  t.isTrue(files.len() > 100, "the walk found " + itoa(files.len()) + " files — did it resolve?");
+
+  string[] bad = string[files.len()](fill: "");
+  i32 n = 0;
+  i32 imports = 0;
+  for (i32 f = 0; f < files.len(); f++) {
+    string[] lines = splitLines(readFile(core, cli, files[f]));
+    for (i32 i = 0; i < lines.len(); i++) {
+      string spec = specifierOf(lines[i]);
+      if (spec == "") { continue; }
+      imports = imports + 1;
+      if (defined(spec)) { continue; }
+      if (n < bad.len()) { bad[n] = files[f] + ": \"" + spec + "\""; }
+      n = n + 1;
+    }
+  }
+
+  // **The count is asserted too.** A walk that found no imports would pass the check above it while
+  // measuring nothing, which is the failure this whole family of repository guards keeps having.
+  t.isTrue(imports > 500, "only " + itoa(imports) + " imports found — the reader is not reading");
+  core.log("    imports: " + itoa(imports) + " across " + itoa(files.len()) + " files, " +
+           itoa(n) + " undefined");
+  t.eqI32(n, 0, n == 0 ? "" : "these specifiers are neither relative, nor `@/`, nor built-in, so " +
+          "`spec/spec/imports.md` does not say what they name — the first is " + bad[0]);
+  return t.report();
+}
+
+/** One file, or a trap naming it — a repository guard that cannot read is not a passing guard. */
+string readFile(Core core, Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("specifiers: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  return string.fromBytes(r.bytes);
+}
