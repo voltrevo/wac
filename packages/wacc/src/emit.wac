@@ -4613,6 +4613,15 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     cmp2[0] = "string";
     cmp2[1] = "string";
     env.addFunc(" str_cmp", "i32", cmp2);
+    // **Two of each, because a `string` and a `u8[]` are different wasm array types.** The alternative
+    // is `s.isUtf8()` lowered as `str_is_utf8(str_to_bytes(s))`, which copies the whole string to look
+    // at it — `toBytes` is a copy by specification, not a view. One emitter, two functions.
+    string[] oneStr = string[1]();
+    oneStr[0] = "string";
+    env.addFunc(" str_is_utf8", "bool", oneStr);
+    string[] oneBytes = string[1]();
+    oneBytes[0] = "u8[]";
+    env.addFunc(" bytes_is_utf8", "bool", oneBytes);
   }
   // **`$trap$message`'s types, here and not later.** The comment on the counter array above is the
   // reason: a type has to exist before the section that declares it is written, and asking for one while
@@ -4623,6 +4632,14 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // above would make `hasStringType` true for every module and pull nine string helpers into all of them.
   env.arrayType("i8[]");
   env.sigType("fn[string()]");
+  // **The validators' signatures, registered here rather than where they are emitted.** The type
+  // section is *sized* before any body is written, so a `sigType` first asked for inside an emitter
+  // arrives after the count is fixed and the module refuses itself — "70 counted, 72 wanted". These
+  // two are the only string helpers whose signature nothing else in the module already needs;
+  // `fn[bool(string,string)]` exists for `str_eq`, which is why the family got away without this.
+  env.arrayType("u8[]");
+  env.sigType("fn[bool(string)]");
+  env.sigType("fn[bool(u8[])]");
   // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
   // and the answer can change once the functions it calls have settled. Cheap, and the alternative
   // is a global assigned from a function that was skipped.
@@ -4989,7 +5006,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // after the declared functions, so its ordinal is `lambdaFirst + i`. `design/lang/0002` tier two.
   env.lambdaFirst = count;
   count = count + env.lambdaCount;
-  i32 stringHelpers = needsStrings ? 9 : 0;
+  i32 stringHelpers = needsStrings ? 11 : 0;
   i32 memHelperAt = env.cbSigCount + count + stringHelpers;
   i32 arrayHelpersAt = memHelperAt + 1;
   i32 structHelpersAt = arrayHelpersAt + arrHelpers;
@@ -5587,6 +5604,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     emitStringSlice(funcs, code, env);
     emitStringIndexOf(funcs, code, env);
     emitStringCompare(funcs, code, env);
+    emitIsUtf8(funcs, code, env, "string", env.arrayType("i8[]"));
+    emitIsUtf8(funcs, code, env, "u8[]", env.arrayType("u8[]"));
   }
   // **The string builtins occupy nine indices and this loop does not advance `index` itself**, so the
   // lambdas below would start on top of them. They did, and the wrapper for the first lambda called
@@ -8082,6 +8101,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.u32leb(env.funcIndex[fb2]);
             return;
           }
+          if (isStringTypeName(src, lexed, env, obj) && mname == "isUtf8" && args.len() == 1) {
+            i32 bu = env.funcAt(" bytes_is_utf8");
+            if (!haveRequired(env, bu, " bytes_is_utf8")) { return; }
+            emitExprAt(fb, src, lexed, env, args[0], "u8[]");
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[bu]);
+            return;
+          }
           string pown = primTypeName(env, src, lexed, obj);
           if (primStaticType(pown, mname) != "" && args.len() == 1) {
             emitExprAt(fb, src, lexed, env, args[0], primStaticArg(pown, mname));
@@ -8170,6 +8197,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(16);
             fb.u32leb(env.funcIndex[tb]);
+            return;
+          }
+          // The string half of the same validator, over `i8[]` rather than `u8[]`, so this reads the
+          // string in place instead of copying it out through `toBytes` first.
+          if (ot == "string" && mname == "isUtf8") {
+            i32 su = env.funcAt(" str_is_utf8");
+            if (!haveRequired(env, su, " str_is_utf8")) { return; }
+            emitExpr(fb, src, lexed, env, obj);
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[su]);
             return;
           }
           // `dst.copyFrom(src, srcStart, dstStart, count)` is `array.copy`, whose operands go in a
@@ -8572,6 +8609,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string pst = primStaticType(primTypeName(env, src, lexed, obj), mn);
           if (pst != "") { return pst; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "isUtf8") { return "bool"; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
@@ -8580,6 +8618,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes") { return "u8[]"; }
+          if (ot == "string" && mn == "isUtf8") { return "bool"; }
           if (ot == "string" && mn == "slice") { return "string"; }
           if (ot == "string" && mn == "indexOf") { return "i32"; }
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
@@ -11736,6 +11775,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint" && args.len() == 1) {
             return unsupportedValueAt(src, lexed, env, args[0], "i32");
           }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "isUtf8" && args.len() == 1) {
+            return unsupportedValueAt(src, lexed, env, args[0], "u8[]");
+          }
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
@@ -11751,6 +11793,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (o != "") { return o; }
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes" && args.len() == 0) { return ""; }
+          if (ot == "string" && mn == "isUtf8" && args.len() == 0) { return ""; }
           if (ot == "string" && mn == "slice" && args.len() == 2) {
             string s1 = unsupportedValueAt(src, lexed, env, args[0], "i32");
             if (s1 != "") { return s1; }
@@ -15524,6 +15567,128 @@ void emitStringSlice(B funcs, B code, Env env) {
   b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(4); b.byte(107);
   b.byte(251); b.u32leb(17); b.u32leb(at); b.u32leb(at);          // array.copy
   b.byte(32); b.u32leb(6);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
+ * `bool <t>_is_utf8(<t> b)` — strict UTF-8 validation over a byte array.
+ *
+ * **Emitted twice, over `string`'s `i8[]` and over `u8[]`**, because those are different wasm array
+ * types and the alternative is a copy: `s.isUtf8()` lowered as `str_is_utf8(str_to_bytes(s))` would
+ * duplicate the whole string to look at it, and `toBytes` is specified as a copy rather than a view.
+ * One emitter, two functions, `at` the only difference.
+ *
+ * **Strict, which is the whole point of it.** `string.fromBytes` does not validate — deliberately,
+ * `[§wac-str-frombytes-utf8-m9fj2xr]` — so this is the function callers reach for precisely because
+ * the constructor does not, and a validator that accepts overlongs is worse than none. Rejected:
+ *
+ *   - `C0` and `C1`, which can only ever begin an overlong two-byte form;
+ *   - `E0 80..9F`, the overlong three-byte forms;
+ *   - `ED A0..BF`, the UTF-16 surrogates D800..DFFF, which are not scalar values;
+ *   - `F0 80..8F`, the overlong four-byte forms;
+ *   - `F4 90..BF` and any lead above `F4`, which are above U+10FFFF;
+ *   - a truncated sequence at the end of the array.
+ *
+ * The table was checked against Python's strict decoder over **every** byte string of length 1, 2 and
+ * 3 — 16,843,008 of them — and over the four-byte boundary combinations, before a byte of this was
+ * written. `packages/wacc/test/wac/utf8_test.wac` carries the cases that walk each branch.
+ */
+void emitIsUtf8(B funcs, B code, Env env, string arg, i32 at) {
+  funcs.u32leb(env.sigType("fn[bool(" + arg + ")]"));
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(7); b.byte(127);   // 1 n, 2 i, 3 the lead, 4 lo, 5 hi, 6 how many it needs, 7 the byte
+
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);   // n = b.len()
+  b.byte(33); b.u32leb(1);
+  b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(2);     // i = 0
+
+  b.byte(2); b.byte(64);                                // block — left when i reaches n
+  b.byte(3); b.byte(64);                                // loop
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(1); b.byte(78);   // i >= n
+  b.byte(13); b.u32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2);
+  b.byte(251); b.u32leb(13); b.u32leb(at);              // c = b[i]
+  b.byte(33); b.u32leb(3);
+
+  // ASCII is the whole of the fast path and most of every real input.
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(128); b.byte(73);  // c < 0x80
+  b.byte(4); b.byte(64);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(2);
+  b.byte(12); b.u32leb(1);                              // continue
+  b.byte(11);
+
+  // Never a lead byte: a continuation on its own, an overlong C0/C1, or anything above F4.
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(194); b.byte(73);  // c < 0xC2
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(244); b.byte(75);  // c > 0xF4
+  b.byte(114);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(0); b.byte(15); b.byte(11);
+
+  // Two bytes, and the ranges the next one has to be in.
+  b.byte(65); b.i32leb(2); b.byte(33); b.u32leb(6);
+  b.byte(65); b.i32leb(128); b.byte(33); b.u32leb(4);
+  b.byte(65); b.i32leb(191); b.byte(33); b.u32leb(5);
+
+  // Three: E0 excludes the overlongs, ED excludes the surrogates.
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(224); b.byte(79);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(3); b.byte(33); b.u32leb(6);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(224); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(160); b.byte(33); b.u32leb(4); b.byte(11);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(237); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(159); b.byte(33); b.u32leb(5); b.byte(11);
+  b.byte(11);
+
+  // Four: F0 excludes the overlongs, F4 stops at U+10FFFF.
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(240); b.byte(79);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(4); b.byte(33); b.u32leb(6);
+  b.byte(65); b.i32leb(128); b.byte(33); b.u32leb(4);
+  b.byte(65); b.i32leb(191); b.byte(33); b.u32leb(5);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(240); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(144); b.byte(33); b.u32leb(4); b.byte(11);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(244); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(143); b.byte(33); b.u32leb(5); b.byte(11);
+  b.byte(11);
+
+  // A sequence that runs off the end is not valid, which is the case a naive validator reads past.
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(6); b.byte(106);
+  b.byte(32); b.u32leb(1); b.byte(74);                  // i + need > n
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(0); b.byte(15); b.byte(11);
+
+  // The second byte, against the lead's own range rather than a blanket 80..BF.
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(251); b.u32leb(13); b.u32leb(at);
+  b.byte(33); b.u32leb(7);
+  b.byte(32); b.u32leb(7); b.byte(32); b.u32leb(4); b.byte(73);
+  b.byte(32); b.u32leb(7); b.byte(32); b.u32leb(5); b.byte(75);
+  b.byte(114);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(0); b.byte(15); b.byte(11);
+
+  // The third and fourth are plain continuations.
+  for (i32 k = 2; k <= 3; k++) {
+    b.byte(32); b.u32leb(6); b.byte(65); b.i32leb(k); b.byte(74);   // need > k
+    b.byte(4); b.byte(64);
+    b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(k); b.byte(106);
+    b.byte(251); b.u32leb(13); b.u32leb(at);
+    b.byte(33); b.u32leb(7);
+    b.byte(32); b.u32leb(7); b.byte(65); b.i32leb(128); b.byte(73);
+    b.byte(32); b.u32leb(7); b.byte(65); b.i32leb(191); b.byte(75);
+    b.byte(114);
+    b.byte(4); b.byte(64); b.byte(65); b.i32leb(0); b.byte(15); b.byte(11);
+    b.byte(11);
+  }
+
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(6); b.byte(106);
+  b.byte(33); b.u32leb(2);                              // i += need
+  b.byte(12); b.u32leb(0);
+  b.byte(11);
+  b.byte(11);
+  b.byte(65); b.i32leb(1);
   b.byte(11);
   code.u32leb(b.len);
   code.bytes(b);

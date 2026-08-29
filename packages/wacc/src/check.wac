@@ -6755,6 +6755,9 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
     else { want = "u32"; }
   } else if (recv == "string") {
     if (name == "fromBytes") { want = "u8[]"; }
+    // `fromBytes` does not validate — `[§wac-str-frombytes-utf8-m9fj2xr]`, deliberately — so these two
+    // are what a caller reaches for when it needs the answer that constructor does not give.
+    else if (name == "isUtf8") { want = "u8[]"; }
     else if (name == "fromCodepoint") { want = "i32"; }
     else {
       c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
@@ -6868,6 +6871,7 @@ string staticMethodType(C c, Expr obj, string name) {
 string builtinStaticReturn(string recv, string name) {
   if (recv == "string") {
     if (name == "fromBytes" || name == "fromCodepoint") { return "string"; }
+    if (name == "isUtf8") { return "bool"; }
     return "";
   }
   if (recv == "f64") {
@@ -7332,6 +7336,7 @@ string builtinReturnType(string recv, string name) {
     if (name == "indexOf") { return "i32"; }
     if (name == "slice") { return "string"; }
     if (name == "toBytes") { return "u8[]"; }
+    if (name == "isUtf8") { return "bool"; }
   }
   // **An integer's five answer in the receiver's own width**, which is what the instruction does:
   // `i64.clz` is `[i64] -> [i64]`, not `[i64] -> [i32]`. Stating it here rather than assuming `i32`
@@ -7369,7 +7374,8 @@ bool isArrayBuiltin(string name) {
 }
 
 bool isStringBuiltin(string name) {
-  return name == "len" || name == "slice" || name == "toBytes" || name == "indexOf";
+  return name == "len" || name == "slice" || name == "toBytes" || name == "indexOf"
+      || name == "isUtf8";
 }
 
 /**
@@ -7553,8 +7559,10 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     }
     return;
   }
-  // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments.
-  if (recv == "string" && name == "toBytes") {
+  // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments. `isUtf8`
+  // is the same shape: a string built by `fromBytes` may hold bytes that are not UTF-8, so asking a
+  // string about its own is a real question rather than a constant `true`.
+  if (recv == "string" && (name == "toBytes" || name == "isUtf8")) {
     if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
     return;
   }

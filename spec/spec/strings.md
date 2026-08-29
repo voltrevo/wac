@@ -405,6 +405,37 @@ indexing returns `""` at the bad offset — the same thing that happens when
 count. Validating on every call would cost a second pass for a guarantee the type
 does not otherwise make; a caller that needs one should check before converting.
 
+`string.isUtf8(bytes)` is that check, and `s.isUtf8()` asks it of a string's own
+bytes — which is a real question rather than a constant `true`, precisely because
+`fromBytes` does not validate.
+
+```wac
+export bool ok() { return string.isUtf8(u8[](0xC3, 0xA9)); }
+```
+
+`[§wac-str-isutf8-k4mq7vn]` `ok()` returns `true`, and
+`string.isUtf8(u8[](0xFF, 0x41))` is `false`.
+`[§wac-str-isutf8-value-r2nk8fq]` `"é".isUtf8()` is `true` and
+`string.fromBytes(u8[](0xFF, 0x41)).isUtf8()` is `false` — the same question
+about a value, answered without copying its bytes out.
+
+**It is strict, and that is the point of it.** A validator that accepts what a
+decoder would reject is worse than none, because the callers that reach for this
+are the ones the constructor already declined to help. Rejected as well as the
+obviously malformed:
+
+`[§wac-str-isutf8-strict-p9wj3xd]` an **overlong** encoding — `{ 0xC0, 0x80 }`
+and `{ 0xE0, 0x80, 0x80 }` are `false`, being non-shortest spellings of U+0000; a
+**surrogate** — `{ 0xED, 0xA0, 0x80 }` is `false`, U+D800 not being a scalar
+value; anything **above U+10FFFF** — `{ 0xF4, 0x90, 0x80, 0x80 }` is `false`, and
+so is any lead byte above `0xF4`; and a **truncated** sequence at the end of the
+array — `{ 0xE2, 0x82 }` is `false`.
+
+The boundaries either side are accepted, which is what makes those rejections a
+range rather than a blanket: `{ 0xC2, 0x80 }`, `{ 0xE0, 0xA0, 0x80 }`,
+`{ 0xED, 0x9F, 0xBF }`, `{ 0xF0, 0x90, 0x80, 0x80 }` and
+`{ 0xF4, 0x8F, 0xBF, 0xBF }` are all `true`.
+
 ### String methods
 
 ```wac

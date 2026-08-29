@@ -280,7 +280,7 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
 | 3 — the category rule | **done**, 2026-08-28 — six categories of seven; `Cn` deferred, see below |
 | 4 — `u8` truncation | **done**, 2026-08-28 — character literals only; see the note below |
-| 5 — `isUtf8` / `toUtf8` | **blocked** — one question for the operator, in the section below |
+| 5 — `isUtf8` / `toUtf8` | `isUtf8` **done**, 2026-08-29 — three clauses and 59 cases; `toUtf8` is next, see below |
 | 6 — block strings | **done**, 2026-08-28 — D6's tab clause turned out to be D3's |
 | 7 — interpolation | **done**, 2026-08-29 — sugar for `+` in the lexer; five cases, three clauses, and `strInterp` in the tour |
 
@@ -562,3 +562,41 @@ and `§wac-str-noimplicit-p3jw7xf` stands. When conversion does arrive it belong
 in `\{}` and not in `+`: `+` is an operator on values, where an implicit
 conversion is a footgun, while interpolation is syntax whose entire job is
 building a string.
+
+
+## Step 5 was not blocked, and the row saying so pointed at nothing — agent-b, 2026-08-29
+
+The state table said *"blocked — one question for the operator, in the section below"* and there was
+no section below. Whatever the question was, it was never written down, which is worse than either
+asking it or answering it: a blocker nobody can read is indistinguishable from work nobody did.
+
+So I went looking for what it could have been, and the two candidates are both already answered:
+
+- **"Is `s.isUtf8()` meaningful, or a constant `true`?"** `spec/spec/strings.md` settles it in the
+  `fromBytes` clause: *"The bytes are taken to be UTF-8 and are not checked, so a string can hold
+  sequences that are not valid UTF-8. That is deliberate."* A string can be ill-formed, so asking one
+  is a real question. `[§wac-str-isutf8-value-r2nk8fq]` is that case.
+- **"Where does the implementation go, given `packages/wacc` may import nothing?"** Nowhere new.
+  Every string builtin is already a hand-emitted wasm helper — `str_index_of`, `str_slice`,
+  `str_cmp` — reached through `env.funcAt(" str_…")`. Two more is the established shape rather than a
+  mechanism decision.
+
+**Emitted twice, over `i8[]` and `u8[]`**, because a `string` and a `u8[]` are different wasm array
+types. The alternative is lowering `s.isUtf8()` as `str_is_utf8(str_to_bytes(s))`, which copies the
+whole string in order to look at it — `toBytes` is a copy by specification. One emitter function,
+called with two type indices.
+
+**One trap, and it cost a build.** The type section is *sized* before any body is emitted, so a
+`sigType` first asked for inside an emitter arrives after the count is fixed and the module refuses
+itself: *"a type was registered while a body was being emitted — 70 counted, 72 wanted"*.
+`fn[bool(string)]` and `fn[bool(u8[])]` are now registered up with `fn[string()]`. The rest of the
+family got away without this because their signatures already existed for something else.
+
+### What is left: `toUtf8`
+
+The algorithm is written and checked and the emitter is not. `toUtf8` replaces each maximal invalid
+subsequence with U+FFFD on the WHATWG rule, and the reference implementation of it was validated
+against Python's `decode("utf-8", "replace")` over every byte string of length 1-3 and 160,000
+four-byte combinations over the boundary values: zero disagreements. It is harder to emit than
+`isUtf8` for one reason — it allocates. Two passes over the input, the first to size the output and
+the second to fill it, then `str_from_bytes` to make a string of it.
