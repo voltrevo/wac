@@ -449,3 +449,71 @@ export string test_current_wording_and_count_for_a_bad_struct_member() {
   t.eqI32(wireLines(wire).len(), 3, "the number of diagnostics one bad struct member produces");
   return t.report();
 }
+
+/**
+ * `§wac-arith-ref-3jd8qkr` — arithmetic on a reference is refused, and `string + string` is not.
+ *
+ * **This clause has a history of being false.** The operator sweep on the stack page — sixteen
+ * operators against fifteen types on both sides, 3,600 programs — found 51 cells where the reference
+ * refused and wacc said nothing, and **45 of them were arithmetic on a reference**: `S + S`,
+ * `i32[] - i32[]` and `anyref % anyref` all compiled, because the rule that was there asked about
+ * `bool` and funcrefs only. They are closed, and the sweep is a test rather than an afternoon.
+ *
+ * What was never true is that the *spec clause* had anything holding it. The paragraph it comes from
+ * extends `§wac-struct-eq-k4rm7xq` — which is about `==` on structs — to arrays, enums, nullables,
+ * the ordering operators and then to arithmetic, and only the first sentence carried a tag. A rule
+ * that a sweep once found broken in 45 places is a poor one to leave unnamed.
+ *
+ * The last case is the half that must not refuse. An exception that stops working is as much a
+ * breakage as a rule that stops holding, and it is the easier one to lose while tightening the rule
+ * around it — which is exactly what the 45 were.
+ */
+export string test_arithmetic_on_a_reference_is_refused() {
+  T t = T.create();
+  string[] refused = string[](
+      "struct S { i32 v; }\nexport i32 f() { S a = S(1); S b = S(2); S c = a + b; return 0; }",
+      "export i32 f() { i32[] a = i32[](1); i32[] b = i32[](2); i32[] c = a - b; return 0; }",
+      "export i32 f(anyref a, anyref b) { anyref c = a % b; return 0; }");
+  string[] why = string[]("`S + S`", "`i32[] - i32[]`", "`anyref % anyref`");
+  for (i32 i = 0; i < refused.len(); i++) {
+    string[] d = firstDiagnostic(refused[i]);
+    t.isTrue(d.len() == 4, why[i] + " compiled — arithmetic on a reference is accepted again, which "
+        + "is the shape of the 45 cells the operator sweep found");
+  }
+
+  string[] ok = firstDiagnostic("export string f() { return \"a\" + \"b\"; }");
+  t.eqI32(ok.len(), 0, ok.len() == 0 ? "" : "`\"a\" + \"b\"` was refused — the one exception to the "
+      + "rule above went with the rule: " + ok[0]);
+  return t.report();
+}
+
+/**
+ * `§wac-cast-bang-redundant-6qw3nkf` and `§wac-cast-tilde-redundant-2xk9mrp` — the weakest cast that
+ * works is the one you have to write.
+ *
+ * Two sentences, one in each of `casts.md`'s `as!` and `as~` sections, and one diagnostic behind
+ * both: *wrong cast operator for these types*. Each section already tags what its cast does at *run
+ * time* — `§wac-narrow-ok-2ytx5qj`, `§wac-narrow-trap-z7te84b`, `§wac-narrow-frac-t6kq2wp` — and the
+ * static rule beside them had nothing, which is the shape this file exists for.
+ *
+ * The rule is worth holding because it is the one that keeps a cast's spelling informative. `as!`
+ * means *this can fail and I have thought about it*; if it were merely permitted wherever `as` works,
+ * a reader could no longer tell a checked narrowing from a widening somebody spelled defensively, and
+ * every `as!` in a diff would have to be read to find out which it was.
+ *
+ * The widening case is the control: it must still compile with `as`, since a rule that refuses the
+ * redundant spelling is only interesting if the plain one is accepted.
+ */
+export string test_a_stronger_cast_where_a_plain_one_works_is_refused() {
+  T t = T.create();
+  string[] bang = firstDiagnostic("export i64 f(i32 x) { return x as! i64; }");
+  t.isTrue(bang.len() == 4, "`x as! i64` on a widening compiled — `as!` is accepted where `as` works");
+
+  string[] tilde = firstDiagnostic("export i64 f(i32 x) { return x as~ i64; }");
+  t.isTrue(tilde.len() == 4, "`x as~ i64` on a widening compiled — `as~` is accepted where `as` works");
+
+  string[] plain = firstDiagnostic("export i64 f(i32 x) { return x as i64; }");
+  t.eqI32(plain.len(), 0, plain.len() == 0 ? "" : "`x as i64` was refused, so the two rules above are "
+      + "passing because widening is refused outright rather than because the spelling is: " + plain[0]);
+  return t.report();
+}

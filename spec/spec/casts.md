@@ -58,8 +58,8 @@ so the conversion is checked rather than lossless. That is the whole reason this
 
 #### `as!` — checked
 
-Succeeds with the exact value or traps. No silent data loss. Using `as!` where
-`as` would work is a compile error.
+Succeeds with the exact value or traps. No silent data loss.
+`[§wac-cast-bang-redundant-6qw3nkf]` Using `as!` where `as` would work is a compile error.
 
 ```wac
 export i32 safeNarrow(i64 big) {
@@ -115,8 +115,8 @@ f64  -> f32       traps if the f64 value has no exact f32 representation
 
 #### `as~` — nearest
 
-Best approximation, never traps. Rounds to nearest, clamps/saturates on
-overflow. Using `as~` where `as` would work is a compile error.
+Best approximation, never traps. Rounds to nearest, clamps/saturates on overflow.
+`[§wac-cast-tilde-redundant-2xk9mrp]` Using `as~` where `as` would work is a compile error.
 
 ```wac
 export i32 roundIt(f64 x) {

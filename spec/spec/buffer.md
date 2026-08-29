@@ -65,9 +65,10 @@ struct Buffer {
 }
 ```
 
-Note: methods must use `this.field` and `this.method()` explicitly — bare
-`field` or `method()` access without `this.` is not allowed. This applies to
-all struct methods in wac.
+Note: methods must use `this.field` and `this.method()` explicitly. That is
+`[§wac-bare-field-q3wn8v5]` in `spec/spec/structs.md`, where the rule and its
+diagnostic live; it is not a rule about buffers, and it was restated here in
+different words until 2026-08-29.
 
 ### Bit-packed variant (using i32[])
 

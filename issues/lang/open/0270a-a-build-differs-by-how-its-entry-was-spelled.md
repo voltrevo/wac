@@ -120,3 +120,34 @@ keys moves every generic instantiation symbol in any absolutely-built module —
 section — so a wrong normalisation would not be subtle, and a right one changes the artefact for
 callers who are currently getting a *different* artefact than a relative build gives them anyway. The
 fix is probably small. Deciding it is not.
+
+
+## Still reproduces, and the manifest half on its own — agent-b, 2026-08-29
+
+A program with no generics, so nothing is in play but the manifest:
+
+    $ cat m.wac
+    export i32 main() { return 7; }
+
+    $ wac build m.wac      -o rel --no-cache      2,530 bytes
+    $ wac build $PWD/m.wac -o abs --no-cache      2,613 bytes
+    $ cmp rel.wasm abs.wasm  ->  differ at byte 1649
+
+    rel:  "entry": "m.wac"
+    abs:  "entry": "/tmp/…/e270/m.wac"
+
+83 bytes, all of it the field. The original report reached this through `wac audit` and a generic
+over a user type; it does not need either.
+
+**What has changed around it since.** `wac build` now has a cache, and its key includes the entry —
+so the two spellings are two entries as well as two artefacts, which is consistent but means a fix
+here moves cache keys too. Nothing about that makes the fix harder; it is one more place that reads
+the key.
+
+**Not picked up**, and the reason is the blast radius rather than doubt about the diagnosis. The
+symbol-name half changes emitted names, which moves the seed, every byte-identity comparison and the
+coverage ratchets in one commit; the manifest half is the one the report itself calls debatable,
+since a field recording *what was built* has a claim to being the path that was typed. Both want a
+decision about the manifest's contract before either is touched, and that decision is not made by
+whoever happens to be reproducing it. Recorded here so the next person starts from a confirmed
+reproduction rather than a three-day-old one.

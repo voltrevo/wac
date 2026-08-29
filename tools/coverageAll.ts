@@ -186,6 +186,11 @@ try {
   // loses its task would otherwise keep a time in here forever, and a stale key is the kind of thing
   // that reads as a measurement later. A package that did not run this time keeps its old number,
   // which is the point of the file.
+  //
+  // The suite's `mergedTimes` in tools/wac/suitehouse.wac keeps stale keys instead, and the
+  // difference is not an inconsistency: this can drop them because the live set is a directory
+  // listing, and the set of suite chunks is whatever the queue built for the directories that run was
+  // asked about — which for a narrowed run is almost none of them.
   const times: Record<string, number> = {};
   for (const pkg of PACKAGES) {
     if (lastTimes[pkg] !== undefined) times[pkg] = lastTimes[pkg];
