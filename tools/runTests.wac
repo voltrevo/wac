@@ -416,16 +416,39 @@ struct Chunk {
  * together.
  */
 Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
-  Names labels = Names.create();
-  Chunk[] out = Chunk[dirs.len() * 4](fill: Chunk(string[0](fill: ""), "", ""));
-  i32 n = 0;
+  // **Sized from the work, and it was sized from a guess.** This allocated `dirs.len() * 4`, where
+  // four was not a bound on anything — it was the number `packages/wacc` produced on the day the line
+  // was written, and `chunkSize`'s comment still says so: *"12 is where packages/wacc's 40 files
+  // become four chunks"*. At 84 files it is seven, and the write past the end is an engine trap:
+  // `wac task test packages/wacc` answered *array element access out of bounds* and nothing else.
+  //
+  // **The whole-repository run could not reach it**, because the array is sized from the number of
+  // *directories* and filled with chunks: 40 directories give 160 slots for 59 chunks, so the slack
+  // of every small directory covered the one large one. Narrow the target and the slack goes with it
+  // — one directory, four slots, seven chunks — so the failure belonged to every developer command
+  // that names a package and to none of the ones the gate runs.
+  //
+  // Counting first costs a second pass over lists already in hand; the directory reads are not
+  // repeated, since `kept` holds what the walk found.
+  string[][] kept = string[][dirs.len()](fill: string[0](fill: ""));
+  i32 total = 0;
   for (i32 d = 0; d < dirs.len(); d++) {
     Names keep = Names.create();
     string[] files = testFilesIn(cli, dirs[d]);
     for (i32 i = 0; i < files.len(); i++) {
       if (!has(skip, files[i])) { keep.push(files[i]); }
     }
-    string[] mine = keep.all();
+    kept[d] = keep.all();
+    if (kept[d].len() == 0) { continue; }
+    total = total + (kept[d].len() <= chunkSize()
+                     ? 1
+                     : (kept[d].len() + chunkSize() - 1) / chunkSize());
+  }
+
+  Chunk[] out = Chunk[total](fill: Chunk(string[0](fill: ""), "", ""));
+  i32 n = 0;
+  for (i32 d = 0; d < dirs.len(); d++) {
+    string[] mine = kept[d];
     if (mine.len() == 0) { continue; }
     if (mine.len() <= chunkSize()) {
       out[n] = Chunk(string[](dirs[d]), dirs[d], dirs[d]);
@@ -471,8 +494,9 @@ Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
     i32 ms = recordedMs(lines, out[i].key);
     cost[i] = ms < 0 ? 2000000000 + out[i].targets.len() : ms;
   }
-  Chunk[] queue = Chunk[n](fill: Chunk(string[0](fill: ""), "", ""));
-  for (i32 i = 0; i < n; i++) { queue[i] = out[i]; }
+  // Sorted in place. There was a copy into a second array here, which existed because `out` was
+  // allocated larger than the work and `n` was the only honest length; now they are the same number.
+  Chunk[] queue = out;
   for (i32 i = 1; i < n; i++) {
     Chunk v = queue[i];
     i32 c = cost[i];

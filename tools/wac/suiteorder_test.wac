@@ -126,3 +126,69 @@ export string test_a_chunk_recorded_as_slow_is_dispatched_before_one_recorded_as
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/** `--dry` narrowed to one directory, answering its output and its exit status. */
+struct Dry { bool ok; i32 status; string out; }
+
+Dry dryRunOn(Cli cli, string times, string target) {
+  Exec r = cli.execWith(binaryPath(cli),
+      string[]("task", "test", "--", "--dry", target), u8[0](),
+      string[]("WAC_SUITE_TIMES=" + times), false, false).wait();
+  if (!r.ran()) { return Dry(false, 0 - 1, r.error); }
+  return Dry(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+}
+
+/** The `N test files` the discovery line reports, or -1. */
+i32 filesReported(string out) {
+  string[] lines = splitLines(out);
+  for (i32 i = 0; i < lines.len(); i++) {
+    i32 at = lines[i].indexOf(" test files");
+    if (at < 0) { continue; }
+    i32 from = at;
+    while (from > 0) {
+      string c = lines[i].slice(from - 1, from);
+      if (c < "0" || c > "9") { break; }
+      from = from - 1;
+    }
+    return atoi(lines[i].slice(from, at));
+  }
+  return 0 - 1;
+}
+
+/**
+ * **A run narrowed to one big directory has to survive its own chunking.**
+ *
+ * `chunksOf` allocated `Chunk[dirs.len() * 4]`, and four was not a bound — it was the number
+ * `packages/wacc` happened to produce on the day the line was written, when the comment on
+ * `chunkSize` still said "12 is where packages/wacc's 40 files become four chunks". At 84 files it
+ * is seven, and `wac task test packages/wacc` died with *array element access out of bounds* and no
+ * further explanation.
+ *
+ * **It could only fail for a narrow target, which is why nobody hit it.** The array is sized from
+ * `dirs.len()`, so the whole-repository run gets 40 x 4 = 160 slots for 59 chunks and the overflow
+ * has nowhere to happen. Ask for one directory and the slack is gone: one directory, four slots,
+ * seven chunks. Every developer command that names a package took that path.
+ *
+ * The check that keeps this honest is the second assertion. A directory small enough to fit in four
+ * chunks would pass this test while testing nothing, so the case asserts it is still big enough to
+ * have overflowed — more than `chunkSize()` x 4 files. If wacc's tests are ever split up, that
+ * assertion fails and says to point this somewhere still large rather than leaving it vacuous.
+ */
+export string test_a_dry_run_of_one_large_directory_does_not_overflow_its_chunks(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/suiteorder-narrow";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+
+  Dry d = dryRunOn(cli, dir + "/times", "packages/wacc/test/wac");
+  t.isTrue(d.ok, "the dry run did not start — " + d.out);
+  t.eqI32(d.status, 0, "`--dry packages/wacc/test/wac` failed, and a trap here is the chunk array "
+      + "being sized from a guess rather than from the work: " + d.out);
+
+  i32 files = filesReported(d.out);
+  t.isTrue(files > 48, "that directory now has " + itoa(files) + " test files, which fits in four "
+      + "chunks of " + itoa(12) + " — so this case no longer reaches the bound it is about, and "
+      + "wants pointing at whichever directory is now the largest");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
