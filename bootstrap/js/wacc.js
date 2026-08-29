@@ -77,6 +77,22 @@ export function wacc(instance) {
     },
 
     /**
+     * The JavaScript binding layer for the module `emitFiles` just built.
+     *
+     * **Call it after `emitFiles` and before `seal`.** It reads the driver's `built`, `paths`,
+     * `sources` and `namebuf` as they stand, so it answers about the last build and nothing else —
+     * the same arrangement `seal` already relies on.
+     *
+     * `design/system/0009` step 5: a module is not a command until something instantiates it and
+     * hands it its capabilities, and that something calls through this.
+     *
+     * @returns {string}
+     */
+    bindgen() {
+      return new TextDecoder().decode(take(e.drv_bindgen(), "drv_glueByteAt"));
+    },
+
+    /**
      * Append the `wac.manifest` section to what `emitFiles` just built.
      *
      * **wacc writes it, not us.** The format is `manifestOf`'s, and asking the compiler that owns
@@ -132,7 +148,7 @@ export function wacc(instance) {
  * @param {string} o.entryAsWritten the entry as the command line wrote it
  * @param {string} o.wasmName     the name the manifest records — the output's, not the entry's
  * @param {number} o.grants
- * @returns {Promise<Uint8Array>}
+ * @returns {Promise<{ module: Uint8Array, glue: string }>}
  */
 export async function buildWithWacc(o) {
   const l0 = await o.l5ToL0(o.waccSource);
@@ -150,5 +166,9 @@ export async function buildWithWacc(o) {
     const why = w.decline();
     throw new Error(why === "" ? "wacc emitted nothing, and said nothing about why" : why);
   }
-  return w.seal(o.entryAsWritten, o.wasmName, o.grants);
+  // **Before `seal`, because both read the driver's state as the build left it.** The glue describes
+  // the module's exports, which the manifest section does not change — but asking in the other order
+  // would make that a fact about `seal` rather than about the two calls being independent.
+  const glue = o.glue === true ? w.bindgen() : "";
+  return { module: w.seal(o.entryAsWritten, o.wasmName, o.grants), glue };
 }

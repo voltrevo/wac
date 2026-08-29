@@ -81,7 +81,7 @@ if (isMain) {
     }
     const out = args[dashO + 1];
     const base = out.replace(/\.wasm$/, "").split("/").pop();
-    const bytes = await buildWithWacc({
+    const { module: bytes } = await buildWithWacc({
       l5ToL0: (src) => l.l5ToL0(src),
       assemble,
       waccSource: await flattenFrom(args[0]) + "\n" +

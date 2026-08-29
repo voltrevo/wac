@@ -227,7 +227,14 @@ export Stripped strip(u8[] src) {
       // our output through `ts.transpileModule` to normalise layout and that removes leftover
       // TypeScript on the way. Third time that blindness has cost a bug — see the note on
       // `test/stripDifferential.test.ts`'s third case.
-      if ((tx == "as" || tx == "satisfies") && !(inBraces(stack) && inImportOrExport(src, l, i))) {
+      //
+      // **And braces are not the only place a rename lives.** `import * as ns from "…"` puts one at
+      // depth 0, so requiring braces erased `as ns from "./m.js"` as though it were a cast — which
+      // deleted the *specifier*, so the import walk never saw the module and the bundle silently came
+      // out without it. That is why the `*` is named here beside the braces.
+      bool renaming = inImportOrExport(src, l, i)
+                   && (inBraces(stack) || (i > 0 && textAt(src, l, i - 1) == "*"));
+      if ((tx == "as" || tx == "satisfies") && !renaming) {
         i32 end = pastType(src, l, i + 1, stack);
         if (end < 0) { err = "a type after `" + tx + "` that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
         cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));

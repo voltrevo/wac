@@ -1,0 +1,85 @@
+// `bootstrap.sh --host deno` builds a `wac` that works, on a machine with only Deno.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/bootstrapdeno_test.wac
+//
+// `design/system/0009` step 5. The claim is the whole reason `packages/ts` exists: **a compiler can
+// be built from source with no compiler, no cargo, no npm and no network** — five rungs of
+// hand-written wasm text build wacc, wacc builds the command and its binding layer, and a bundler
+// written in wac turns the TypeScript bridge into the JavaScript that runs it.
+//
+// ## Why this runs the thing rather than checking its parts
+//
+// The parts are already checked and were all green while the whole was broken.
+// `packages/ts/test/stripDifferential.test.ts` says the bridge bundles and Deno parses it;
+// `bundle_test.wac` says modules flatten correctly. Both passed for a bundle whose last line was
+// `await` inside a non-async arrow function — *Unexpected reserved word*, three megabytes in.
+//
+// And a fixed point is not a smoke test. `bootstrap.sh` iterates until two rounds agree, which is a
+// claim about **stability**: `f(x) = x` holds for a broken `f` as readily as a working one, and
+// `issues/system/0273b` is the day that mattered. So this compiles and runs a program, which is the
+// only question a user asks.
+//
+// ## What it costs, and why it is not smaller
+//
+// About 45 seconds, nearly all of it the ladder. Nothing cheaper covers the claim: the expensive
+// steps *are* the claim. A version that reused an artefact built earlier would be testing whatever
+// happened to be lying around, which is the failure `issues/system/0160` cost two days to find.
+//
+// test-lane: heavy — 45s, five ladder rungs, two wacc builds, three bundles and a compile
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, Change, Exec, FileResult } from "std/platform.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
+import { freshDir, scratch } from "../../../wactest/src/host.wac";
+
+/** A program with no imports beyond `Core`, so what is being tested is the command and not a graph. */
+const string PROGRAM =
+  "import { Core } from \"std/platform.wac\";\n" +
+  "export i32 main(Core core) { core.log(\"it compiled and it ran\"); return 0; }\n";
+
+Exec sh(Cli cli, string script) {
+  return cli.exec("/bin/sh", string[]("-c", script), u8[0]()).wait();
+}
+
+export string test_bootstrap_host_deno_builds_a_working_wac(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "bootstrap-deno");
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+
+  // **Skipped rather than failed where there is no Deno**, which is the honest answer: this file
+  // tests what `--host deno` does, and a machine without Deno is not a machine where that is broken.
+  // The native hosts are what such a machine builds, and they have their own tests.
+  Exec have = sh(cli, "command -v deno >/dev/null 2>&1 && echo yes || echo no");
+  if (trimmed(string.fromBytes(have.stdout)) != "yes") {
+    core.log("   no deno on this machine — skipping");
+    return t.report();
+  }
+
+  string out = dir + "/wac";
+  Exec built = sh(cli, "bash bootstrap.sh --host deno -o '" + out + "' 2>&1");
+  t.eqI32(built.status, 0,
+          "bootstrap.sh --host deno failed:\n" + string.fromBytes(built.stdout));
+  if (built.status != 0) { return t.report(); }
+
+  // It reached a fixed point rather than merely finishing — the script refuses to write a command
+  // that never settles, so this is checking the script said so rather than trusting the exit code.
+  t.isTrue(contains(string.fromBytes(built.stdout), "fixed point"),
+           "it did not report a fixed point:\n" + string.fromBytes(built.stdout));
+
+  Change wrote = cli.writeFile(dir + "/hello.wac", PROGRAM.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the program — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  // **The question a user asks.** Everything above is machinery; this is whether the artefact is a
+  // compiler. `--allow-read` because the program is on disk and the command has no ambient authority.
+  Exec ran = sh(cli, "'" + out + "' run --allow-read '" + dir + "/hello.wac' 2>&1");
+  t.eqI32(ran.status, 0, "the built command could not run a program: "
+                       + string.fromBytes(ran.stdout));
+  t.eqStr(trimmed(string.fromBytes(ran.stdout)), "it compiled and it ran",
+          "what it printed: " + string.fromBytes(ran.stdout));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

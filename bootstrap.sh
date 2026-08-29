@@ -199,35 +199,82 @@ build_native() {
   built="$crate/target/release/wac"
 }
 
+# **How a moved seed becomes a new command**, which differs by host and is the only thing the
+# fixed-point loop below needs to know about one. A native host relinks the crate that carries the
+# module; a JavaScript host has no crate and assembles the single file again.
+relink() {
+  ( cd "$crate" && cargo build --release --quiet )
+}
+
 build_js() {
   runner=$1
-  say "building the wac command with $runner"
-  # **The bridge is no longer the blocker.** It was until 2026-08-29: `packages/platform/host/` is
-  # TypeScript and had to be plain JavaScript before it could go in one file without a bundler. It
-  # can be now — `packages/ts` is that bundler, written in wac, and the ladder builds it from source
-  # with no `wac` in the loop:
-  #
-  #     hosts/$runner.js packages/wacc/src/api.wac --with-wacc packages/ts/src/transform.wac \
-  #         -o transform.wasm                                    # 74 KB, ladder only
-  #     $runner packages/ts/host/run.js transform.wasm packages/platform/host/entry.ts …
-  #                                                              # 311 KB of JavaScript Deno parses
-  #
-  # `packages/ts/test/stripDifferential.test.ts` holds that claim for both entry points.
-  #
-  # What is left is assembly, and it is written down rather than guessed at — `design/system/0009`,
-  # "What step 5 still needs". Three generated entry files (launcher, worker, child), each bundled;
-  # the module's binding glue, which `bindgenFiles(…, "js")` in `packages/wacc/src/api.wac` already
-  # emits but no driver here calls yet; and a shebang. `packages/platform/build.ts` does all of it
-  # for the `deno` and `node` targets today, in TypeScript, which is why that file is flagged rather
-  # than deleted.
-  die "--host $host cannot finish yet: the bridge bundles, and the single file is not assembled.
-    See design/system/0009, \"What step 5 still needs\". Use --host v8." 
+  if [ "$runner" != deno ]; then
+    # The Node target is a different three bundles, not the same three run by `node`: its worker
+    # entry is `entryNode.ts`, its launcher is `runLauncherNode`, and it reaches `node:worker_threads`
+    # and `node:fs/promises` where this one reaches `Deno.*` directly. `packages/platform/build.ts`
+    # has all of it. Writing it here without running it would be worse than saying so.
+    die "--host nodejs cannot finish yet: the Deno target is done and this one needs its own
+    launcher, worker and child entries. See design/system/0009. Use --host deno or --host v8."
+  fi
+
+  work="$(mktemp -d)"
+  cleanup="$work"
+
+  # **The bundler, built by the ladder from source.** This is what the whole design turns on:
+  # `packages/ts` is written in wac, so the thing that turns TypeScript into JavaScript is built by
+  # the same five rungs that build the compiler, and nothing here needs npm or a network.
+  say "building the bundler with the ladder"
+  deno run -A --no-check bootstrap/hosts/deno.js packages/wacc/src/api.wac \
+    --with-wacc packages/ts/src/transform.wac -o "$work/transform.wasm" \
+    || die "the ladder could not build packages/ts"
+
+  # The command, and — since `drv_bindgen` — the binding layer that makes the module callable.
+  # `build.ts` gets the second from `waccArtifacts`; this path had no way to ask for it, which is
+  # why `--host deno` could build a module and not a command.
+  say "building the wac command with deno"
+  deno run -A --no-check bootstrap/hosts/deno.js packages/wacc/src/api.wac \
+    --with-wacc packages/wac/src/wac.wac $GRANTS -o "$work/wacc.wasm" --glue "$work/app.gen.js" \
+    || die "the ladder could not build the wac command"
+
+  seed="$work/wacc.wasm"
+  transform="$work/transform.wasm"
+  built="$work/wac"
+  assemble_js || die "the command would not assemble"
+}
+
+# The grants `$GRANTS` names, as the record the launcher is handed. One list spelled twice — the
+# shebang wants flags and `runLauncher` wants an object — so this derives the second from the first
+# rather than letting them drift.
+grantsJson() {
+  r=false; w=false; n=false; e=false; u=false
+  case "$GRANTS" in *--allow-read*)  r=true ;; esac
+  case "$GRANTS" in *--allow-write*) w=true ;; esac
+  case "$GRANTS" in *--allow-net*)   n=true ;; esac
+  case "$GRANTS" in *--allow-env*)   e=true ;; esac
+  case "$GRANTS" in *--allow-run*)   u=true ;; esac
+  printf '{"read":%s,"write":%s,"net":%s,"env":%s,"run":%s}' "$r" "$w" "$n" "$e" "$u"
+}
+
+assemble_js() {
+  rm -rf "$work/asm"
+  deno run -A --no-check bootstrap/js/assembleCommand.js \
+    "$work/asm" "$transform" "$work/app.gen.js" "$built" "$(grantsJson)"
 }
 
 case "$host" in
   v8)       build_native native/v8 ;;
   wasmtime) build_native native ;;
-  deno)   build_js deno ;;
+  deno)
+    build_js deno
+    # **No crate to relink, so a moved seed becomes a command by being assembled again** — and the
+    # glue is regenerated first, because it describes the module's exports and the module has just
+    # moved. `bindgen --js` is the command's own: from here the fixed point is checked with the
+    # thing being checked, exactly as the native path does.
+    relink() {
+      "$built" bindgen --js packages/wac/src/wac.wac "$work/app.gen.js" >/dev/null \
+        && assemble_js
+    }
+    ;;
   nodejs) build_js node ;;
 esac
 
@@ -271,8 +318,7 @@ while [ "$n" -le "$MAX_ROUNDS" ]; do
     || die "the compiler it built cannot rebuild its own command — refusing to install it"
   if cmp -s "$prev" "$rounds/$n/wacc.wasm"; then converged=$n; break; fi
   cp "$rounds/$n/wacc.wasm" "$seed"
-  ( cd "$crate" && cargo build --release --quiet ) \
-    || die "the seed moved but the binary would not relink — refusing to install it"
+  relink || die "the seed moved but the command would not rebuild — refusing to install it"
   prev="$rounds/$n/wacc.wasm"
   n=$((n + 1))
 done

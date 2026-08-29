@@ -59,6 +59,7 @@ if (import.meta.main) {
     console.error("  --l0      print the wac-L0 instead");
     console.error("  -o FILE   write the wasm module");
     console.error("  --with-wacc E   build wacc from <file.wac>, then compile E with *that*,");
+    console.error("  --glue FILE     ...and write E's JavaScript binding layer there");
     console.error("            and seal it with the manifest wacc writes for it");
     Deno.exit(2);
   }
@@ -76,7 +77,11 @@ if (import.meta.main) {
     }
     const out = args[dashO + 1];
     const base = out.replace(/\.wasm$/, "").split("/").pop();
-    const bytes = await buildWithWacc({
+    // `--glue PATH` also writes the JavaScript binding layer, which is what turns a module into
+    // something runnable — `design/system/0009` step 5. Off unless asked: it costs a second pass
+    // over the program's exports, and the ladder's own builds do not need it.
+    const glueAt = args.indexOf("--glue");
+    const { module: bytes, glue } = await buildWithWacc({
       l5ToL0: (src) => l.l5ToL0(src),
       assemble,
       waccSource: await flattenFrom(args[0]) + "\n" +
@@ -85,8 +90,10 @@ if (import.meta.main) {
       entryAsWritten: args[withWacc + 1],
       wasmName: `${base}.wasm`,
       grants: grantsOf(args),
+      glue: glueAt >= 0,
     });
     await Deno.writeFile(out, bytes);
+    if (glueAt >= 0) await Deno.writeTextFile(args[glueAt + 1], glue);
     Deno.exit(0);
   }
 

@@ -107,7 +107,22 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     if (body.len() > 6 && body.slice(0, 6) == "ERROR:") {
       return Bundled(u8[0](), body.slice(6, body.len()));
     }
-    pushString(out, "// -- " + paths[m] + "\nconst " + ns[m] + " = (() => {\n");
+    // **Top-level `await` needs an `async` IIFE, and only the entry may have one.** A module body
+    // goes inside an arrow function, so `await runLauncher(…)` at the top of a file became an
+    // `await` in a non-async arrow — *Unexpected reserved word*, at the last line of a 3 MB bundle.
+    //
+    // The entry can be made async because nothing imports it: `await (async () => {…})()` at the top
+    // level of an ES module is ordinary, and its return value is not read. Any *other* module is
+    // refused rather than wrapped, because making it async turns `$mN` into a promise and every
+    // `$mN.name` a reader wrote would silently answer `undefined` — the wrong-answer shape again.
+    bool tla = hasTopLevelAwait(texts[m]);
+    if (tla && m != at) {
+      return Bundled(u8[0](), paths[m] + " uses `await` at the top level, and is imported by "
+                            + "something. Only the entry may do that: wrapping any other module "
+                            + "would make what it exports a promise.");
+    }
+    string open = tla ? " = await (async () => {\n" : " = (() => {\n";
+    pushString(out, "// -- " + paths[m] + "\nconst " + ns[m] + open);
     pushString(out, body);
     pushString(out, "\nreturn { " + exportList(texts[m]) + " };\n})();\n\n");
   }
@@ -375,6 +390,32 @@ bool precededByParams(u8[] src, Lexed l, i32 i) {
             && head != "catch" && head != "with";
       }
     }
+  }
+  return false;
+}
+
+
+/**
+ * Whether a module has `await` outside every function — the thing an IIFE cannot carry unasked.
+ *
+ * **Brace depth, which is a deliberate approximation.** An `await` at depth 0 is top-level and an
+ * `await` inside any `{ … }` is treated as somebody else's. That misses the rarer shapes — an
+ * initialiser like `const x = { a: await f() }` sits at depth 1 and is still top-level — and the cost
+ * of missing one is a bundle a JavaScript parser rejects, which is loud. Claiming one that is not
+ * there would be worse: it would make a module async for no reason, and that is the silent kind.
+ */
+bool hasTopLevelAwait(u8[] src) {
+  Lexed l = lex(src);
+  i32 n = tokenCount(l);
+  i32 depth = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (kindAt(l, i) == kPunct()) {
+      string p = textAt(src, l, i);
+      if (p == "{") { depth = depth + 1; }
+      if (p == "}") { depth = depth - 1; }
+      continue;
+    }
+    if (depth == 0 && kindAt(l, i) == kIdent() && textAt(src, l, i) == "await") { return true; }
   }
   return false;
 }

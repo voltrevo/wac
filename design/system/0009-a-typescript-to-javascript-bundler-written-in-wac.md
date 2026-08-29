@@ -372,7 +372,59 @@ Two smaller drifts in the same file: its summary advertises `--host {rust,deno,n
 `rust` is now explicitly refused in favour of `v8` and `wasmtime`, and `deno`/`nodejs` do not finish.
 
 
-## What step 5 still needs
+## Step 5, done for Deno
+
+`bootstrap.sh --host deno` builds a working `wac` in about 45 seconds, on a machine with **Deno and
+nothing else** — no cargo, no npm, no network, no existing compiler.
+
+    $ bash bootstrap.sh --host deno -o ./wac
+    bootstrap: building the bundler with the ladder
+    bootstrap: building the wac command with deno
+    bootstrap: fixed point, round 1 of at most 4
+    bootstrap: it is a fixed point after 1 round(s), 1828660 bytes
+    $ ./wac run --allow-read hello.wac
+    hello from a JavaScript-hosted wac
+
+3.4 MB, and the module inside it is **byte-identical to the native seed** — same 1,828,660 bytes —
+which is the useful part: the two hosts differ in what they are, not in what they compile.
+
+### What closed it
+
+Three things, in the order they were missing.
+
+**The bundler had to be buildable by the ladder.** It is: `hosts/deno.js packages/wacc/src/api.wac
+--with-wacc packages/ts/src/transform.wac` gives a 75 KB module with no `wac` in the loop, and
+`packages/ts/host/run.js` drives it. That was the assumption the whole design rested on and it held
+on the first attempt.
+
+**The glue had nowhere to come from.** `build.ts` gets it from `waccArtifacts`; this path drove wacc
+for `emit` only, so it could build a module and not a command. `drv_bindgen` in
+`bootstrap/drivers/spec_cases.wac` calls `bindgenFiles(…, "js")`, which wacc already had — a driver
+call, not a compiler change.
+
+**And the assembly.** `bootstrap/js/assembleCommand.js`, which is `buildApp`'s deno target written in
+plain JavaScript: three bundles — worker, child, launcher — and a shebang that names exactly the
+grants. It shells out to `run.js` rather than importing it, so there is one implementation of
+"drive the transform" and it is exercised the way anybody else would exercise it.
+
+### What it cost on the way
+
+Four bugs, every one of them found by a JavaScript parser rather than by the tests that existed:
+the inline `type` specifier, `as const` at depth 0, a local shadowing an import, and `await` at the
+top level of the entry module. The last three were introduced or exposed by fixing the first, which
+is the argument for `tools/wac/bootstrapdeno_test.wac` running the whole thing rather than checking
+parts — the parts were green while the whole was broken.
+
+### Node is not done
+
+`--host nodejs` still refuses, and says why: its worker entry is `entryNode.ts`, its launcher is
+`runLauncherNode`, and it carries `node:worker_threads` and `node:fs/promises` where the Deno target
+reaches `Deno.*` directly. `build.ts` has all of it; it is a second `assembleCommand` rather than a
+new idea.
+
+## What the Node target still needs
+
+
 
 Written down because the blocker moved on 2026-08-29 and the old one is no longer true.
 

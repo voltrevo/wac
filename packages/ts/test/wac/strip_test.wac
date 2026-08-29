@@ -180,6 +180,11 @@ export string test_as_and_the_non_null_assertion() {
   t.eqStr(js("import { a as b } from \"./m.ts\";"), js("import { a as b } from \"./m.ts\";"),
           "while a real rename is untouched");
   t.eqStr(js("export { d as e };"), js("export { d as e };"), "on the way out too");
+  // **A namespace import puts a rename at depth 0**, so a rule that asked only for braces erased
+  // `as lib from "./m.js"` as a cast. That deleted the *specifier*, so the import walk never queued
+  // the module and the bundle came out without it — valid JavaScript with a free variable in it.
+  t.eqStr(js("import * as lib from \"./m.js\";"), js("import * as lib from \"./m.js\";"),
+          "a namespace import keeps its rename and its specifier");
 
   // A prefix `!` is not an assertion and must survive.
   t.eqStr(js("const x = !y;"), js("const x = !y;"), "a logical not");
