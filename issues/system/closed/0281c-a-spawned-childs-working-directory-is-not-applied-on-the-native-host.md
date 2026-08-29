@@ -72,7 +72,19 @@ either way — a program that cannot resolve its own paths still knows where it 
     a spawned applet stands where the shell stands        ok
     v8host image differential                             3 of 3   (the blind fold: 2 of 3)
 
-Green after: 236 Deno tests across box, sh and platform; 38 platform wac files; 19 box wac files.
+**And one more condition, found by the tests rather than by reasoning.** The first version of this
+fix routed spawned children into a line that predates it — `if path.is_empty() { return cwd }` —
+which is the *frame's* behaviour and wrong for a child, because an empty path is the **standard-input
+convention** rather than a relative path: an applet reading stdin asks for `""`, and `Fs.onHost`
+knows it. `cat` with no argument answered *Is a directory*.
+
+That is what `shell.test.ts`'s three standard-input cases were reporting, and I first read them as a
+separate divergence. They were this change. The fold now skips the empty path, so frames keep the
+behaviour they had and children do not acquire it.
+
+Green after: 236 Deno tests across box, sh and platform; 38 platform wac files; 19 box wac files;
+2 sh wac files. `packages/box/test/shell.test.ts` moves onto `wac app` with it, 11 of 11 — the
+eleventh of twelve files in `design/system/0009`'s migration.
 
 ## What the question was
 

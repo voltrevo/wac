@@ -9,7 +9,7 @@
 // Compared against bash where the answer is bash's to give. `packages/sh` has its own differential
 // suite of 539 scripts against bash; this file is about the *wiring*, not the language.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";

@@ -1921,8 +1921,15 @@ fn framed_path(path: &str) -> String {
         // `cd sub; cat f.txt` find the file: the applet is a child of the shell and stands where the
         // shell stands. It is not the base for a child whose parent resolves paths on its behalf.
         // `issues/system/0281c`.
+        //
+        // **And never for the empty path**, which is the standard-input convention rather than a
+        // relative path: an applet reading stdin asks for `""`, and `Fs.onHost` knows it. The line
+        // below that turns an empty path into the directory predates this and is the frame's, where
+        // nothing reaches it that way — routing children into it made `cat` with no argument answer
+        // *Is a directory*, which is the whole of what `packages/box/test/shell.test.ts`'s three
+        // standard-input cases were reporting.
         s.frames.last().map(|f| f.cwd.clone()).or_else(|| {
-            if s.resolves_own_paths { s.cwd_override.clone() } else { None }
+            if s.resolves_own_paths && !path.is_empty() { s.cwd_override.clone() } else { None }
         })
     });
     let cwd = match base {
