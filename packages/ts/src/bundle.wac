@@ -50,6 +50,14 @@ export struct Import {
   string spec;
   /** Flattened pairs — `names[2k]` is the exported name, `names[2k+1]` the local one. */
   string[] names;
+  /**
+   * `import * as ns from "…"` — the local name, or "".
+   *
+   * **The easiest form under this design**, which is worth saying because it is the hardest one for
+   * a bundler that renames: a namespace object is exactly what each module's IIFE already returns,
+   * so the whole of it is `const ns = $m3;`.
+   */
+  string namespace;
 }
 
 /**
@@ -76,6 +84,23 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
   for (i32 k = 0; k < order.len(); k++) { ns[order.get(k)] = prefix + itoa(k); }
 
   Vec<i32> out = Vec.create();
+
+  // **External imports are hoisted, because an ESM `import` must be top-level.** A module asking for
+  // `node:worker_threads` is asking the runtime, not the file set, so the statement is reproduced at
+  // the top of the bundle and the binding it makes is visible to every IIFE below — which is the
+  // same module and the same binding it would have had unbundled.
+  Vec<string> hoisted = Vec.create();
+  for (i32 k = 0; k < order.len(); k++) {
+    Import[] imports = importsIn(texts[order.get(k)]);
+    for (i32 i = 0; i < imports.len(); i++) {
+      if (!isExternal(imports[i].spec)) { continue; }
+      string stmt = textOfRange(texts[order.get(k)], imports[i].from, imports[i].to);
+      if (indexOfVec(hoisted, stmt) < 0) { hoisted.push(stmt); }
+    }
+  }
+  for (i32 i = 0; i < hoisted.len(); i++) { pushString(out, hoisted.get(i) + "\n"); }
+  if (hoisted.len() > 0) { pushString(out, "\n"); }
+
   for (i32 k = 0; k < order.len(); k++) {
     i32 m = order.get(k);
     string body = moduleBody(paths, texts, ns, m, backFrom, backTo);
@@ -104,6 +129,7 @@ string visit(string[] paths, u8[][] texts, i32 m, Vec<i32> order, Vec<i32> state
   state.set(m, 1);
   Import[] imports = importsIn(texts[m]);
   for (i32 i = 0; i < imports.len(); i++) {
+    if (isExternal(imports[i].spec)) { continue; }
     string want = resolve(paths[m], imports[i].spec);
     i32 to = indexOf(paths, want);
     if (to < 0) {
@@ -158,6 +184,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
   Vec<string> reads = Vec.create();
   Vec<i32> fromModule = Vec.create();
   for (i32 i = 0; i < imports.len(); i++) {
+    if (isExternal(imports[i].spec)) { continue; }
     i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
     for (i32 k = 0; k + 1 < imports[i].names.len(); k = k + 2) {
       local.push(imports[i].names[k + 1]);
@@ -212,6 +239,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
       continue;
     }
 
+
     if (kindAt(l, i) != kIdent()) { continue; }
     string w = textAt(src, l, i);
 
@@ -254,7 +282,38 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
 
   u8[] b = u8[out.len()]();
   for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
+
+  // `import * as ns from "./x.ts"` becomes `const ns = $m3;` — the IIFE's return value *is* the
+  // namespace object, so there is nothing to construct. Written over the blanked statement, which
+  // is always long enough to hold it: the binding is shorter than the import that made it.
+  for (i32 i = 0; i < imports.len(); i++) {
+    if (imports[i].namespace == "" || isExternal(imports[i].spec)) { continue; }
+    i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
+    if (to < 0) { continue; }
+    writeOver(b, imports[i].from, "const " + imports[i].namespace + " = " + ns[to] + ";");
+  }
   return string.fromBytes(b);
+}
+
+/** Write `what` over `b` at `at`, stopping at a line break. */
+void writeOver(u8[] b, i32 at, string what) {
+  u8[] w = what.toBytes();
+  for (i32 i = 0; i < w.len() && at + i < b.len(); i++) {
+    if (b[at + i] == '\n') { return; }
+    b[at + i] = w[i];
+  }
+}
+
+/** The bytes `[from, to)` as a string. */
+string textOfRange(u8[] src, i32 from, i32 to) {
+  u8[] b = u8[to - from]();
+  for (i32 i = from; i < to; i++) { b[i - from] = src[i]; }
+  return string.fromBytes(b);
+}
+
+/** Whether a specifier names a file in the set, or something the runtime resolves — `node:fs`. */
+export bool isExternal(string spec) {
+  return spec.len() == 0 || spec.slice(0, 1) != ".";
 }
 
 /** Whether an edge between these two modules closes a cycle. */
@@ -320,9 +379,22 @@ export Import[] importsIn(u8[] src) {
     i32 from = startAt(l, i);
     Vec<string> names = Vec.create();
     string spec = "";
+    string nsName = "";
     i32 k = i + 1;
     bool ok = false;
-    if (k < n && kindAt(l, k) == kPunct() && textAt(src, l, k) == "{") {
+    // `import * as ns from "…"`
+    if (k + 2 < n && kindAt(l, k) == kPunct() && textAt(src, l, k) == "*"
+        && kindAt(l, k + 1) == kIdent() && textAt(src, l, k + 1) == "as"
+        && kindAt(l, k + 2) == kIdent()) {
+      nsName = textAt(src, l, k + 2);
+      k = k + 3;
+      if (k < n && kindAt(l, k) == kIdent() && textAt(src, l, k) == "from") { k = k + 1; }
+      if (k < n && kindAt(l, k) == kStr()) {
+        string q = textAt(src, l, k);
+        spec = q.slice(1, q.len() - 1);
+        ok = true;
+      }
+    } else if (k < n && kindAt(l, k) == kPunct() && textAt(src, l, k) == "{") {
       k = k + 1;
       while (k < n && !(kindAt(l, k) == kPunct() && textAt(src, l, k) == "}")) {
         if (kindAt(l, k) == kIdent()) {
@@ -351,7 +423,7 @@ export Import[] importsIn(u8[] src) {
     if (k + 1 < n && kindAt(l, k + 1) == kPunct() && textAt(src, l, k + 1) == ";") {
       to = startAt(l, k + 1) + 1;
     }
-    out.push(Import(from, to, spec, names.toArray()));
+    out.push(Import(from, to, spec, names.toArray(), nsName));
     i = k + 1;
   }
   return out.toArray();

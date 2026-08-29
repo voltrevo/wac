@@ -127,3 +127,38 @@ export string test_dependencies_come_first() {
   t.isTrue(out.indexOf("import") < 0, "and the import is gone");
   return t.report();
 }
+
+export string test_a_namespace_import_binds_the_module_itself() {
+  T t = T.create();
+  // **The easiest form under this design, and the hardest one for a bundler that renames.** An
+  // IIFE's return value already *is* the namespace object, so there is nothing to construct.
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import * as lib from \"./b.ts\";\nexport const go = () => lib.base();\n".toBytes();
+  texts[1] = "export function base() { return 1; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.eqStr(r.error, "", "it bundles");
+  if (r.error != "") { return t.report(); }
+  string out = string.fromBytes(r.out);
+  t.isTrue(out.indexOf("const lib = $m") >= 0, "the namespace binds the module — got:\n" + out);
+  t.isTrue(out.indexOf("lib.base()") >= 0, "and uses of it are untouched");
+  return t.report();
+}
+
+export string test_an_external_import_is_hoisted_not_bundled() {
+  T t = T.create();
+  // `node:worker_threads` is the runtime's to resolve, not the file set's — and an ESM `import`
+  // must be top-level, so it cannot stay inside the IIFE it was written in.
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import * as wt from \"node:worker_threads\";\nimport { base } from \"./b.ts\";\nexport const go = () => wt.isMainThread && base();\n".toBytes();
+  texts[1] = "export function base() { return 1; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.eqStr(r.error, "", "it bundles");
+  if (r.error != "") { return t.report(); }
+  string out = string.fromBytes(r.out);
+  i32 imp = out.indexOf("import * as wt from \"node:worker_threads\";");
+  t.isTrue(imp >= 0, "the external import survives — got:\n" + out);
+  t.isTrue(imp < out.indexOf("const $m"), "and is hoisted above every module");
+  return t.report();
+}
