@@ -475,7 +475,22 @@ relayed into a closed pipe for ever. Three layers and the failure at the outermo
 the others — the reader gone, the relay writing into a closed pipe, the producer writing into a queue
 that always accepts.
 
-**What is still unexplained:** the network applets. One failure of the four, and the smallest.
+**The network applets are not a fourth bug.** Measured directly: a `wac app` build of `box` with
+`--allow-net` listens, says *listening on port N*, and serves a request — `curl` gets `wac http
+server` back. So that failure was a consequence of the other two rather than its own thing, and the
+migration's remaining blocker is `issues/system/0277c` alone.
+
+### So the order is
+
+1. **`0277c` is decided and fixed** — a spawned child's `openOutput` must reach its file. Until then
+   every file-writing applet is wrong under `wac app`, which is most of what `packages/box/test/`
+   asserts.
+2. Then the migration is re-attempted, one file first, and what remains is measured rather than
+   guessed at.
+3. Then `build.ts` keeps the browser build and loses the rest.
+
+Two of the three failures that stopped the first attempt are understood and one is fixed
+(`0278c`). The third is a decision across three hosts and is written up with the evidence.
 
 ### What the third failure means on its own
 
