@@ -125,6 +125,26 @@ the corpus under instrumentation and finding out how many of the 1,036 survive.
 That is worth doing *before* the rules, because a rule is a claim about why something is unreachable
 and most of these may simply not be unreachable.
 
+**Measured, with eight lines.** Adding these to `SCRIPTS` in `packages/sh/cov.ts`, temporarily and
+not committed:
+
+    "cd /tmp && ls", "ls", "ls /nosuchfile", "mkdir -p /tmp/covprobe && ls /tmp/covprobe",
+    "rm -f /tmp/covprobe/x", "cd /", "jobs", "kill -0 1"
+
+    uncovered points   1036 -> 958      (-78)
+    never entered        44 -> 36       (-8 whole functions)
+    packages/sh/       66.2% -> 68.8%
+
+So eight one-line scripts bought 7.5% of the entire gap, and every one of them is a thing the shell
+obviously does. **The 1,036 is dominated by the narrowness of the exercise rather than by code
+nothing can reach**, and the recommendation flips accordingly: widen the exercise first, then write
+rules for whatever survives. Writing a thousand justifications for code that is one script away from
+being covered would be the expensive way to be wrong.
+
+It also says the ledger is not the long pole it looked like. Whoever picks this up should expect the
+uncovered count to fall a long way before any rule is written, and should re-measure rather than
+trusting the 1,036 in the heading above.
+
 ## What it would take, sized
 
 1036 points is the reason this is filed rather than done. The ledger is not one entry per point —
