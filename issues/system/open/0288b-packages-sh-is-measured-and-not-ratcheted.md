@@ -203,9 +203,14 @@ survives that.
     octalMode of onFs ownership reapJob refused spawnableName statReason stopAll
     stopStage streamPipeline tryHelp
 
-They read as three groups. **Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`,
-`isBlankAt`, `endsWithColon`, `ansiEscape` — which are the ones most likely to be one odd script
-away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
+They read as three groups — and I grouped two of them wrongly the first time, by the shape of the
+name rather than by what the function does. `spawnableName` and `streamPipeline` are not helpers:
+they are the *streaming pipeline*, where every stage runs at once and bytes move between them as they
+arrive, so they belong with job control below and are blocked by the same stateless fake.
+Grouping by name is how a plausible list becomes a wrong one.
+
+**Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`, `isBlankAt`, `endsWithColon`,
+`ansiEscape` — which are the ones most likely to be one odd script away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
 `streamPipeline` — which needs a job that outlives the script that started it. **That one is
 settled, and it is the true answer.** `packages/sh/test/wac/probe.wac` fakes `spawn` statelessly on
 purpose, and says why: *"a fake that returned bytes would return them for ever and the read loop
