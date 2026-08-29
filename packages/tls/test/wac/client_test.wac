@@ -19,6 +19,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 
 /** The directory holding a path, so the built artefact can find `wac` on PATH. */
 string dirOf(string p) {
@@ -54,23 +55,20 @@ struct Ours {
 
 Ours ourServer(T t, Cli cli, Core core, string dir) {
   string bin = dir + "/tlsserved";
-  // **`wac app` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is removing
-  // that builder's non-browser targets, and this test wanted an executable rather than anything only
-  // it could make. One fewer thing here needs Deno at all.
-  Exec built = cli.exec(binaryPath(cli),
-    string[]("app", "packages/tls/test/wac/tlsserved.wac",
-             "--allow-read", "--allow-net", "-o", bin), u8[0]()).wait();
-  if (!built.ran() || built.status != 0) {
-    return Ours(Daemon(-1, "", ""), -1, "tlsserved did not build: " + string.fromBytes(built.stderr));
-  }
+  // **`builtProgram` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is
+  // removing that builder's non-browser targets. It answers a cached `.wasm` at a stable path and
+  // rebuilds only when the sources or the compiler move, which is what keeps this cheap: a `wac app`
+  // executable to a fresh temporary name cannot be cached at all, because the output's base name is
+  // in the manifest and two destinations are two artefacts. Measured: 2s cached against 8s not.
+  string mod = builtProgram(cli, "packages/tls/test/wac/tlsserved.wac", "tlsserved",
+                            string[]("--allow-read", "--allow-net"));
+  if (mod == "") { return Ours(Daemon(-1, "", ""), -1, "tlsserved did not build"); }
   // Port 0, and the program says which it got — two agents running the suite cannot collide on it.
   // **The artefact finds its runtime on PATH**, with `command -v wac` — and `Cli.exec` passes no
   // environment, so `/bin/sh` starts from its own default and this checkout's binary is not on it.
-  // **Through `env`, not a `PATH=` prefix.** `start` wraps the line as `{ exec <line>; }`, and `exec`
-  // takes a command rather than an assignment — a prefix there becomes the command name and the
-  // server never starts, saying `exec: PATH=…: not found`.
-  Daemon d = start(cli, "env PATH=" + quoted(dirOf(binaryPath(cli)) + ":/usr/bin:/bin") + " "
-                      + quoted(bin) + " 0", dir + "/log");
+  // **The binary runs the module**, which needs no `wac` on PATH and no `env` wrapper: `wac
+  // <module.wasm>` is how a module with a manifest is started.
+  Daemon d = start(cli, quoted(binaryPath(cli)) + " " + quoted(mod) + " 0", dir + "/log");
   if (!d.ok()) { return Ours(d, -1, "tlsserved did not start: " + d.error); }
   const string MARK = "listening on 127.0.0.1:";
   if (!waitForLogWithin(core, cli, d, MARK, 20000)) {

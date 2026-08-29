@@ -22,6 +22,7 @@
 // reached with `Cli.exec`, whose stdin is exactly what the TypeScript's piped writer was for.
 
 import { binaryPath } from "../../../wactest/src/host.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
@@ -31,12 +32,6 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
 import { openssl35, have } from "./openssl.wac";
 
-/** The directory holding a path, so a built artefact can find `wac` on PATH. */
-string dirOf(string p) {
-  i32 cut = -1;
-  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
-  return cut < 0 ? "." : p.slice(0, cut);
-}
 
 const string DATA = "packages/tls/test/data";
 const string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
@@ -55,17 +50,17 @@ Ours serveOnce(Core core, Cli cli, string name) {
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string bin = dir + "/tlsserved";
-  // **`wac app` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is removing
-  // that builder's non-browser targets, and this wanted an executable rather than anything only it
-  // could make. One fewer thing here needs Deno at all.
-  Exec built = cli.exec(binaryPath(cli),
-    string[]("app", "packages/tls/test/wac/tlsserved.wac",
-             "--allow-read", "--allow-net", "-o", bin), u8[0]()).wait();
-  if (!built.ran() || built.status != 0) {
-    return Ours(Daemon(-1, "", ""), -1, dir,
-                "tlsserved did not build: " + string.fromBytes(built.stderr));
+  // **`builtProgram` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is
+  // removing that builder's non-browser targets. It answers a cached `.wasm` at a stable path and
+  // rebuilds only when the sources or the compiler move. A `wac app` executable to a fresh temporary
+  // name cannot be cached: the output's base name is in the manifest, so two destinations are two
+  // artefacts. Measured on `client_test.wac`: 2s cached against 8s not.
+  string mod = builtProgram(cli, "packages/tls/test/wac/tlsserved.wac", "tlsserved",
+                            string[]("--allow-read", "--allow-net"));
+  if (mod == "") {
+    return Ours(Daemon(-1, "", ""), -1, "", "the server did not build");
   }
-  Daemon d = start(cli, "env PATH=" + quoted(dirOf(binaryPath(cli)) + ":/usr/bin:/bin") + " " + quoted(bin) + " 0 --body " + quoted(BODY), dir + "/log");
+  Daemon d = start(cli, quoted(binaryPath(cli)) + " " + quoted(mod) + " 0 --body " + quoted(BODY), dir + "/log");
   if (!d.ok()) { return Ours(d, -1, dir, "tlsserved did not start: " + d.error); }
   const string MARK = "listening on 127.0.0.1:";
   if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
