@@ -13693,8 +13693,14 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   // written with, so the literal's own length bounds the result.
   u8[] out = u8[len]();
   i32 n = 0;
-  i32 i = start + 1;
-  i32 end = start + len - 1;
+  // **The delimiters are one byte each, except the `\{` that ends an interpolated segment.**
+  // `"a\{e}bc"` lexes as `"a\{` `+` `e` `+` `}bc"` — `design/lang/0013` D7 — and the segments'
+  // spans are runs of the real file rather than synthesised source, so what varies is only which
+  // bytes are the delimiters. Opening is always one: a quote, or the `}` that closed the
+  // expression. Closing is two when it is `\{`, and a whole literal can never end that way, since
+  // an escaped backslash before a brace reads as `\\` then `{`.
+  i32 i = literalBodyStart(src, start, len);
+  i32 end = literalBodyEnd(src, start, len);
   while (i < end) {
     if (src[i] == 92 && i + 1 < end) {
       // **`\\u{…}` is the one escape that is not one byte.** It denotes a character, so it encodes
@@ -13724,15 +13730,39 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   return exact;
 }
 
+/**
+ * Where a literal token's content starts and ends — the span minus its delimiters.
+ *
+ * **Two walks read this and they have to agree**: `stringLiteralBytes` un-escapes the content and
+ * `knownEscapes` decides whether it can. They had the arithmetic written out separately, and when
+ * interpolation gave a segment a two-byte closing delimiter, fixing one of them turned
+ * `"a\{e}bc"` from a lexer error into *a string literal with an escape this slice cannot read* —
+ * the same bug one layer down. So it is written once.
+ *
+ * Opening is three bytes for a block literal and one otherwise: a quote, or the `}` that closed an
+ * interpolated expression. Closing is three, or two when the segment runs into a `\{`, or one.
+ * A whole literal can never end `\{`, since an escaped backslash before a brace reads as `\\`
+ * then `{`. `design/lang/0013` D7.
+ */
+i32 literalBodyStart(u8[] src, i32 start, i32 len) {
+  return start + (isBlockLiteral(src, start, len) ? 3 : 1);
+}
+
+i32 literalBodyEnd(u8[] src, i32 start, i32 len) {
+  if (isBlockLiteral(src, start, len)) { return start + len - 3; }
+  bool intoInterp = len >= 2 && src[start + len - 2] == 92 && src[start + len - 1] == '{';
+  return start + len - (intoInterp ? 2 : 1);
+}
+
 /** Whether a string literal uses only escapes this emitter resolves the same way the language does. */
 bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
   i32 start = lexed.tokens[tok * tokenStride() + 1];
   // **Three quotes each side for a block string, one for the others.** The escape *set* is the
   // same — `design/lang/0013` D6 — so only the bounds differ, and getting them wrong would read a
   // closing quote as content and answer about an escape nobody wrote.
-  i32 mark = isBlockLiteral(src, start, lexed.tokens[tok * tokenStride() + 2]) ? 3 : 1;
-  i32 end = start + lexed.tokens[tok * tokenStride() + 2] - mark;
-  i32 i = start + mark;
+  i32 len = lexed.tokens[tok * tokenStride() + 2];
+  i32 end = literalBodyEnd(src, start, len);
+  i32 i = literalBodyStart(src, start, len);
   while (i < end) {
     if (src[i] != 92) { i = i + 1; continue; }
     if (i + 1 >= end) { return false; }

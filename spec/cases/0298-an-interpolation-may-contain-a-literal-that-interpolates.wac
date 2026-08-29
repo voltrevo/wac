@@ -1,0 +1,7 @@
+// expect: answers interpNest = 4
+// spec:  §wac-str-interp-nest-r4kw9np
+// why: the braces are matched rather than counted from outside, so the inner literal is an
+//      ordinary literal lexed by the ordinary rule — which is what makes nesting fall out
+// from: design/lang/0013 D7
+string two() { return "xy"; }
+export i32 interpNest() { return "\{two() + "\{two()}"}".len(); }

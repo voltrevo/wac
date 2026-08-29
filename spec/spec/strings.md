@@ -145,6 +145,37 @@ These are separate requirements from the one above because a literal whose only
 escape sits at the very end cannot distinguish a correct implementation from one
 that rescans: there is nothing after the escape left to lose.
 
+### Interpolation
+
+`\{` inside a double-quoted literal begins an embedded expression, ended by the
+matching `}`. It is **exactly sugar for `+`**: `"a\{e}b"` is the same program as
+`"a" + e + "b"`, with the same type rules, the same evaluation order and the same
+diagnostics. Nothing about it is deferred to run time and there is no formatting
+language — the expression is whatever `+` accepts on the right of a string.
+
+The braces balance, so an expression may contain its own braces and its own
+string literals, including further interpolation.
+
+```wac
+string two() { return "xy"; }
+export i32 interp()      { return "a\{two()}b".len(); }
+export i32 interpAlone() { return "\{two()}".len(); }
+export i32 interpNest()  { return "\{two() + "\{two()}"}".len(); }
+```
+
+`[§wac-str-interp-sugar-k3nq7wm]` `interp()` returns `4` — the same answer as
+`("a" + two() + "b").len()`, which is the program it stands for.
+`[§wac-str-interp-alone-d8mf2xq]` `interpAlone()` returns `2`. A literal may be
+nothing but an interpolation, and the empty segments each side contribute
+nothing.
+`[§wac-str-interp-nest-r4kw9np]` `interpNest()` returns `4`. A literal inside an
+interpolation is an ordinary literal and may interpolate in turn; the braces are
+matched, not counted from the outside.
+
+`\{` is the only new spelling. A literal backslash before a brace is written
+`\\{`, which is the escaped backslash of `[§wac-str-esc-dbl-h2mf9xp]` followed by
+an ordinary `{`, and means what it always did.
+
 ### Length
 
 `.len()` returns byte length.

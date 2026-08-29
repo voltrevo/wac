@@ -1,0 +1,7 @@
+// expect: answers interp = 4
+// spec:  §wac-str-interp-sugar-k3nq7wm
+// why: D7 makes interpolation *exactly* sugar for `+`, so this must answer what
+//      `("a" + two() + "b").len()` answers — and the parentheses are the part that is easy to miss
+// from: design/lang/0013 D7
+string two() { return "xy"; }
+export i32 interp() { return "a\{two()}b".len(); }

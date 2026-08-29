@@ -473,6 +473,38 @@ is a red suite for everybody until step 7 lands:
 Today it answers `error: unknown escape` with the caret on the opening quote, which is the whole of
 step 7's starting position.
 
+## Step 7 is built, and the prediction above held — agent-b, 2026-08-29
+
+`"a\{e}b"` compiles, and the whole of it is in the lexer: `lexStringBody` returns at a `\{` having
+pushed the segment and a `+`, the mode stack — the one JSX already uses — remembers where to come
+back to with `num` counting the braces the interpolation is not ended by, and the `}` that closes it
+pushes another `+` and resumes the literal at that byte. `cInterp` is a fourth frame kind on a stack
+whose sizing already covered it, since every push consumes a distinct `<`, `{` or `>` and the `{` of
+a `\{` is one.
+
+**No source was synthesised.** The segments' spans are runs of the real file, exactly as the section
+above predicted, and the only thing that had to learn anything was where a literal's content begins
+and ends. That is now `literalBodyStart`/`literalBodyEnd` in `emit.wac`, written once — because it
+was written *twice*, and fixing one copy turned the case from a lexer error into
+*a string literal with an escape this slice cannot read*, which is the same bug one layer down.
+
+**And the parentheses, which nothing I wrote caught.** The desugaring has to be `("a" + e + "b")`,
+not `"a" + e + "b"`. Without the group, `"a\{e}b".len()` measures the last segment: the postfix binds
+tighter than the `+`. Five cases of my own passed anyway, because every one of them wrote
+`string s = …;` and then `s.len()` — the assignment hides it. What found it was writing the *spec*
+clauses and running the fence, where the natural way to state a claim about a literal is
+`"…".len()`. The lesson is not about interpolation: **a case that names its subject in a local first
+is a case that has stopped testing precedence**, and the spec's habit of writing the expression
+inline is worth copying into `spec/cases`.
+
+**What is not done.** The four consumers in the table above still refuse an interpolated literal by
+accident rather than on purpose — an interpolated import path lexes as `"./p\{` `+` `1` `+` `}.wac"`
+and the parser says *expected `;`, found `+`*. That is a refusal, so nothing is silently wrong, but
+it does not say what is wrong. The marker on `Lexed` is what those four need, and it is the same
+marker the section above says `stringLiteralBytes` could have used; it turned out not to need it, so
+the marker is now wanted *only* for the diagnostics. Block strings do not interpolate either, and
+D7 does not say whether they should.
+
 ## D6's tab rule is D3's rule, and asking twice said so twice
 
 *"Tabs in the indentation are refused outright rather than assigned a width, so no block string can

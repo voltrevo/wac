@@ -289,6 +289,19 @@ export i32 strBlock() {
   return usage.len();               // -> 29 — the margin is gone, the newline stays
 }
 
+// INTERPOLATION is exactly sugar for `+`: `"a\{e}b"` is the same program as
+// `("a" + e + "b")`, parentheses and all, so `.len()` on it measures the whole
+// thing rather than the last piece. There is no formatting language — whatever
+// `+` takes on the right of a string is what may go in the braces, including
+// another literal that interpolates in turn. The braces are matched, so an
+// expression may contain its own.
+export i32 strInterp() {
+  string who = "wac";
+  return "hi \{who}!".len();       // -> 7 — the same as ("hi " + who + "!").len()
+}
+// A literal backslash before a brace is still `\\{`: an escaped backslash and
+// then an ordinary brace, which is what it always meant.
+
 export string strOps() {
   string s = "hello";
   s += " world";                    // strings are immutable: `+=` rebinds s,
@@ -943,7 +956,7 @@ export bool selfTest() {
       && raw(3.7) == 3 && raw(0.0 / 0.0) == 0
       && truthy(42) && !truthy(0)
       && strBasics() == 15
-      && strEscapes() == 5 && strBlock() == 29
+      && strEscapes() == 5 && strBlock() == 29 && strInterp() == 7
       && strOps() == "world" && strFind() == 6
       && strIndex() == "😀" && strMid() == 0
       && strEq()
