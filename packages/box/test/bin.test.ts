@@ -24,6 +24,9 @@
 // second of work is a slot not available to something that needs one.
 
 import { buildApp } from "../../platform/build.ts";
+// The *other* builder, and the reason there are two here — see the test at the end of this file.
+import { buildApp as buildAppCommand } from "../../../harness/buildApp.ts";
+import { bounded } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -86,4 +89,50 @@ Deno.test("a program in /bin is the same program down every route a command can 
   // the general case; this is the spelling that had no reason to be in it.
   const streamed = await sh("yes | /bin/head -2");
   assertEquals(streamed.out, "y\ny\n", `${streamed.out} / ${streamed.err}`);
+});
+
+/**
+ * The same pipeline through `wac app`, which is a different **host**.
+ *
+ * A `build.ts` artefact carries the Deno bridge; a `wac app` one is two shell lines and a module,
+ * run by whatever `wac` is on the machine — here the native binary. Same wasm, same script, and
+ * until 2026-08-29 the second one hung: `yes | /bin/head -2` printed both lines and never returned.
+ *
+ * **`closeSocket` is what stops a stage**, and the native host's did not. It removed the handle from
+ * its socket table, which drops the *parent's* `Arc` on the child's output while the child keeps its
+ * own — so the stream was never marked done, `write` went on answering `true` to a pipe with no
+ * reader, and `yes` looped for ever. `native/v8/src/streams.rs` states the contract it broke: *"false
+ * is what `write` answers to a closed pipe, and what a program like `yes` is written to notice."*
+ * `issues/system/0275c`.
+ *
+ * **Why this needs its own case rather than the one above.** That one is the same script and cannot
+ * see this: it runs a Deno-hosted artefact, and the Deno host was right all along. So was the
+ * wasmtime host — `native/src/main.rs` has ended the queues since `issues/system/0123`. Only the
+ * default binary was wrong, and the conformance table credited `CLOSE_SOCKET` to
+ * `native_hostfs_test.wac`, which **skips** wherever `cargo` has not built the wasmtime host. A
+ * capability tested only by a test that does not run is a capability that is not tested.
+ *
+ * `bounded`, because the failure mode is *not returning*: an unbounded run of this against a broken
+ * host hangs the suite rather than failing it.
+ */
+Deno.test("a stage with nowhere left to write is stopped, on the host that runs a `wac app`", async () => {
+  const app = await Deno.makeTempFile({ prefix: "wac-bin-app-" });
+  try {
+    await buildAppCommand("packages/box/src/bin/sealedsh.wac", app, {});
+
+    // Ten seconds against a case that answers in well under one. The number is a detector rather
+    // than a margin: reaching it means nothing ever refused a write.
+    const r = bounded(10, app, ["-c", "yes | /bin/head -2"], { stdin: "null" });
+    assertEquals(r.hung, false, `the pipeline never returned — ${r.seconds}s, out: ${r.out}`);
+    assertEquals(r.out, "y\ny\n", `${r.out} / ${r.err}`);
+    assertEquals(r.code, 0, r.err);
+
+    // And a *bounded* producer still works, so the fix is about ending the stream rather than about
+    // stopping every child early: `seq` finishes on its own and its output has to arrive whole.
+    const seq = bounded(10, app, ["-c", "seq 1 5 | /bin/wc -l"], { stdin: "null" });
+    assertEquals(seq.hung, false, "the bounded pipeline never returned");
+    assertEquals(seq.out.trim(), "5", `${seq.out} / ${seq.err}`);
+  } finally {
+    await Deno.remove(app).catch(() => {});
+  }
 });

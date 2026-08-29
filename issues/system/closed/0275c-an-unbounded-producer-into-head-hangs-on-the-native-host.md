@@ -1,6 +1,6 @@
 # 0275 — an unbounded producer into `head` hangs on the native host, streams on Deno's
 
-- **Status:** open
+- **Status:** closed — fixed 2026-08-29
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** bug
@@ -128,3 +128,34 @@ Found by driving the migration rather than by reading either host. Neither imple
 on its own; they differ, and only running the same program on both says so. `commandparity_test.wac`
 compares commands across hosts and would be the natural place for a row, except that what differs
 here is a *pipeline's* lifetime rather than a command's answer.
+
+
+## Fixed
+
+`Cap::CloseSocket` in `native/v8/src/main.rs` removed the handle from its socket table and did
+nothing else. That drops the **parent's** `Arc` on the child's output while the child keeps its own,
+so the stream was never marked done, `write` went on answering `true` to a pipe with no reader, and
+`yes` looped for ever. Ending the queue — and the child's feed with it — is the fix.
+
+    yes | /bin/head -2      before: y y, then killed at 20s
+                            after:  y y, exit 0, 0s
+
+**The correct version was already next door.** `native/src/main.rs`, the wasmtime host, has stopped
+the child since `issues/system/0123`, and its comment is the specification: *"Ending the queues alone
+was this runtime's whole answer, and issue 0123 is the difference it left."* Three hosts implement
+`closeSocket`; two were right and the default binary was not.
+
+The child's handle stays in `child_exits`, which is the wasmtime host's rule and the JavaScript
+hosts': a parent that stops a child and wants to know it is gone asks `exitCode` next.
+
+## Why it survived
+
+`packages/platform/test/wac/conformance_test.wac` credits `CLOSE_SOCKET` to
+`native_hostfs_test.wac` — *"`kill %1` is delivered by closing the child"* — and that file **skips
+wherever `cargo` has not built the wasmtime host**, which is every machine that has not asked for it.
+`packages/box/test/bin.test.ts` ran the exact script, `yes | /bin/head -2`, against a *Deno-hosted*
+artefact, and the Deno host was right.
+
+So the capability was covered twice and exercised on the failing host never. The regression case is
+in `bin.test.ts` beside the one that could not see it: the same pipeline through `wac app`, which is
+run by the native binary, bounded because the failure mode is *not returning*.

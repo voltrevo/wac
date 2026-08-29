@@ -30,7 +30,8 @@
 // `self`, its network is `host/nodeNet.js`, and its shebang states nothing because Node has no
 // permission system. A green Deno run says nothing about any of that.
 //
-// test-lane: heavy — 90s, two hosts: five ladder rungs, two wacc builds, three bundles and a compile
+// test-lane: heavy — 90s measured 2026-08-29, two hosts: five ladder rungs, two wacc builds per host,
+// three bundles and a compile. 82s of CPU across both, and the ladder is nearly all of it.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, Change, Exec, FileResult } from "std/platform.wac";

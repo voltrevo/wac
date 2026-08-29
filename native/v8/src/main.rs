@@ -2770,7 +2770,31 @@ fn dispatch(
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             HOST.with(|h| {
                 if let Some(st) = h.borrow().as_ref() {
-                    st.sockets.lock().unwrap().remove(&handle);
+                    // **Ending the queue is what stops the child**, and dropping the entry is not
+                    // that. This removed the handle and nothing else — so the *parent's* `Arc` went
+                    // and the child's stayed, the stream was never marked done, and the child's
+                    // `write` kept answering `true` to a pipe nobody was reading. `yes | head -2`
+                    // printed both lines and then never returned. `issues/system/0275c`.
+                    //
+                    // `streams.rs` states the contract this restores: *"`false` is what `write`
+                    // answers to a closed pipe, and what a program like `yes` is written to
+                    // notice."* And `native/src/main.rs` — the wasmtime host — has done exactly
+                    // this since `issues/system/0123`, which is where the wording below comes from:
+                    // ending the queues is what the child's *parent* needs, and a reader parked on
+                    // its output has to find out.
+                    if let Some(Sock::Queue(q)) = st.sockets.lock().unwrap().remove(&handle) {
+                        q.finish();
+                    }
+                    // Its input too: a child parked reading what nobody will send is stopped just as
+                    // surely as one writing where nobody reads, and `closeFeed` is the capability
+                    // for ending *only* that — see its note on why the two are not one thing.
+                    if let Some(feed) = st.child_feeds.get(&handle) {
+                        feed.finish();
+                    }
+                    // **The child's handle stays in `child_exits`.** Its status is still worth
+                    // asking for — a parent that stops a child and wants to know it is gone asks
+                    // `exitCode` next — which is the wasmtime host's rule and the JavaScript hosts'.
+                    //
                     // **And anything parked for it.** A handle is reused, so a datagram left over
                     // from a closed socket would be answered to whatever opens next —
                     // `issues/system/0207` is about not losing packets, not about inventing them.
