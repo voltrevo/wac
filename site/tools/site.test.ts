@@ -344,7 +344,7 @@ Deno.test("site: the compiler size the site claims is the size it is", async () 
 // string or taking an array failed at run time with "not a function", including the landing
 // page's hello world. Nothing noticed, because nothing here had ever called one.
 
-import { createRunner, runnable } from "../src/editor/wac-compile.ts";
+import { createRunner, runnable, RUN_TIMEOUT_MS } from "../src/editor/wac-compile.ts";
 
 /**
  * The panel's own path: text in, text out.
@@ -467,8 +467,22 @@ Deno.test("site: every runnable playground export actually runs", async () => {
   //
   // Every example therefore has to terminate on empty input, and one did not: the Collatz
   // example looped forever on 0, so clicking Run without typing hung the tab. It has a guard now,
-  // and each call here goes through the same worker and the same deadline the page uses — so a
-  // future example that loops fails this test rather than hanging it.
+  // and each call here goes through the same worker the page uses — so a future example that loops
+  // fails this test rather than hanging it.
+  //
+  // **The deadline is not the page's, and the comment here said it was.** The page's is
+  // `RUN_TIMEOUT_MS`, 5s, and this passed a hardcoded 3000 — stricter than production, and a second
+  // copy of a number that had already moved once. What the deadline is *for* differs too: on the page
+  // it is a UX choice about not hanging a tab, and here it is a detector for an example that never
+  // terminates. A detector does not need to be tight. Every one of these snippets runs in single-digit
+  // milliseconds — the whole sweep is 464ms on an idle machine — so anything that outstays a multiple
+  // of the page's own deadline is looping, and nothing that finishes normally can come near it.
+  //
+  // It went red in the gate on 2026-08-29 for exactly the reason a tight wall-clock bound goes red on
+  // this machine: three of them were killed at 3s while a four-worker suite and the coverage ratchets
+  // had the five cores. The message it printed is the one that makes this expensive to diagnose —
+  // *check for a loop that never reaches its condition* — which is a confident statement about the
+  // snippet when the truth was about the machine.
   // One worker for the whole sweep. A worker each costs a fresh type-check of the worker module
   // under Deno, which took this from milliseconds to a minute.
   const runner = createRunner();
@@ -487,7 +501,7 @@ Deno.test("site: every runnable playground export actually runs", async () => {
             funcName: f.name,
             argStrings: f.params.map(() => ""),
           },
-          3000,
+          RUN_TIMEOUT_MS * 4,
         );
         if (!out.success && !out.output.startsWith("Runtime error: wac trap")) {
           broken.push(`${ex.name} · ${f.name} — ${out.output}`);

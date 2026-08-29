@@ -258,6 +258,22 @@ console.log(
     `and cannot fail` + (count("no driver") > 0 ? `, ${count("no driver")} have no driver at all` : ""),
 );
 
+// **And which drivers cannot fail**, because the line above counts them and a count does not name.
+// `1 report and cannot fail` sat in every gate's output; one is a number that reads as a rounding
+// rather than as a package, and the sweep is the only thing that knows which. `issues/system/0288b`
+// is what that one turned out to be. Printed on the same argument as the unswept list below: the
+// denominator and the exceptions are the two things a summary cannot warn you about.
+// Everything that is not a floor, not only the `reports` ones: an `entries` driver can fail, but only
+// when an exemption it already carries has drifted, so coverage falling past it is as silent there.
+// That count is zero today, and naming the set rather than one kind is what keeps this true if it
+// stops being.
+const weak = results.map((r, i) => [r.pkg, kinds[i]] as const)
+  .filter(([, k]) => k !== "floor")
+  .map(([pkg, k]) => `${pkg} (${k})`);
+if (weak.length > 0) {
+  console.log(`   no coverage floor: ${weak.join(", ")}`);
+}
+
 // And what it is a sweep *of*, which the line above cannot say because it counts only what it ran.
 const unswept = unmeasured();
 if (unswept.length > 0) {

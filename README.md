@@ -117,10 +117,10 @@ so the graph it builds absorbed box's applets.
 
 Every rung was checked against the TypeScript compiler before the next was started — token streams,
 syntax trees, then diagnostics at exact positions. The type checker was finished against four
-independent corpora, the newest being this repository's own **1077** wac files, with no false alarm
+independent corpora, the newest being this repository's own **1125** wac files, with no false alarm
 among them.
 
-The emitter compiles **all 1077** of them whole — none partially, none invalidly. It was 702 of 729
+The emitter compiles **all 1125** of them whole — none partially, none invalidly. It was 702 of 729
 five days earlier and 411 of 414 six days before that, so the interesting property is not the number
 but that the number is *printed by the rung that produces it*: the corpus is the live repository, and
 code written for other reasons keeps arriving using things the emitter has not reached, so this goes

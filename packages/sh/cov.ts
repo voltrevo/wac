@@ -468,6 +468,39 @@ for (
   m.shWritten(script);
 }
 
+// **The builtins the exercise never reached**, added 2026-08-29 — `issues/system/0288b`.
+//
+// This list had no `cd`, `ls`, `mkdir`, `rm`, `jobs` or `kill` in it, so every one of those builtins
+// read as never entered and their branches counted among the uncovered. That is a fact about this
+// file rather than about the shell: they work, and the differential corpus drives some of them —
+// `wac sh` prefers its own builtin over `PATH`, checked by putting a fake `ls` on `PATH` and watching
+// the builtin answer anyway.
+//
+// Eight lines, and they moved the package from 66.2% to 68.8%: 78 branch points and 8 whole
+// functions. Kept here rather than turned into ledger entries for exactly that reason — a ledger
+// entry is a claim that nothing can reach the code, and one script disproves it.
+for (
+  const script of [
+    "cd /tmp && ls", "ls", "ls /nosuchfile", "mkdir -p /tmp/covprobe && ls /tmp/covprobe",
+    "rm -f /tmp/covprobe/x", "cd /", "jobs", "kill -0 1",
+    // A second batch, aimed at the entries the first left behind: long-form listing (mode, owner
+    // and time), the refusal paths every builtin shares, and the job-control half that needs a job.
+    "ls -l /tmp", "ls -la /", "ls --badoption", "ls --help", "cd --badoption",
+    "sleep 0 &", "sleep 0 & wait", "sleep 1 & jobs; kill %1", "true & wait %1",
+    "for i in a b; do continue; done", "for i in a b; do break; done",
+    "f() { return 3; }; f; echo $?", "local x=1",
+    // A third batch at the lexer helpers and the stat detail `ls -l` did not reach.
+    "abc_1=x; echo $abc_1", "abc_1=x; echo ${abc_1}", "   echo spaced",
+    "printf '\\x41\\n'", "printf '\\033[1mbold\\033[0m\\n'",
+    "PATH=/a:/b; echo $PATH", "echo $'\\x42'",
+    "mkdir -p /tmp/covp2 && : > /tmp/covp2/f && ls -l /tmp/covp2",
+    "ls -l /tmp/covp2/f", "ls -ld /tmp/covp2",
+  ]
+) {
+  m.shOut(script);
+  m.shStatus(script);
+}
+
 m.shTouchStubs();
 
 report([run], "packages/sh/", { verbose });

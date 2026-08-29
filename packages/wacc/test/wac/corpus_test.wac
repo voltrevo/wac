@@ -139,7 +139,59 @@ export string test_the_corpus_size_the_site_quotes_is_the_corpus(Core core, Cli 
              "the table counts " + rhs + " corpus files; the walk finds " + itoa(have)
              + " — more than a tenth out");
   }
+
+  // **And the README's copy of the same two numbers**, which had nothing at all.
+  //
+  // The root `README.md` states the corpus size and then *"the emitter compiles all N of them
+  // whole"*, and both were 1077 against a walk that finds 1125 — inside the tolerance above, and
+  // stale, and unguarded. It is the split this repository keeps producing: the website figure gets a
+  // test because a test can read a page, and the README beside it carries the same fact with nothing
+  // holding it. `tools/wac/readmefigures_test.wac` covers that file at a tenth of tolerance, which is
+  // four hundred lines of slack on a four-figure number and cannot see this.
+  //
+  // Checked here rather than there for the reason at the top of this file: the corpus is whatever
+  // `loadCorpus` walks, and this is where that walk already is.
+  FileResult rf = cli.readFile("README.md").wait();
+  t.isTrue(rf.ok, "reading README.md — " + rf.error);
+  if (rf.ok) {
+    string readme = string.fromBytes(rf.bytes);
+    i32 size = numberFrom(boldBefore(readme, "** wac files"));
+    i32 whole = numberFrom(between(readme, "**all ", "**"));
+    t.isTrue(size > 0 && size >= have - slack && size <= have + slack,
+        "README.md says " + itoa(size) + " wac files; the corpus walk finds " + itoa(have));
+    t.eqI32(whole, size, "README.md says the emitter compiles all " + itoa(whole) + " of them whole "
+        + "and states the corpus as " + itoa(size) + " — the two are one claim and have drifted");
+  }
   return t.report();
+}
+
+/**
+ * The bold figure immediately before `close` — the last `**` that opens it.
+ *
+ * Not the *first* `**` in the file, which is what a plain "between these two" answers and what this
+ * asked for first: README.md opens with bold text long before it says anything about the corpus, so
+ * the number came back as -1 and the failure read as a missing figure rather than a wrong search.
+ */
+string boldBefore(string text, string close) {
+  i32 at = text.indexOf(close);
+  if (at < 0) { return ""; }
+  string head = text.slice(0, at);
+  i32 last = 0 - 1;
+  i32 from = 0;
+  while (from < head.len()) {
+    i32 k = head.slice(from, head.len()).indexOf("**");
+    if (k < 0) { from = head.len(); } else { last = from + k; from = last + 2; }
+  }
+  return last < 0 ? "" : head.slice(last + 2, head.len());
+}
+
+/** The text between the first `open` and the next `close` after it, or `""`. */
+string between(string text, string open, string close) {
+  i32 a = text.indexOf(open);
+  if (a < 0) { return ""; }
+  string rest = text.slice(a + open.len(), text.len());
+  i32 b = rest.indexOf(close);
+  return b < 0 ? "" : rest.slice(0, b);
 }
 
 /** The ` of ` immediately before `at`, or -1 — the page says "of" in prose long before the table. */
