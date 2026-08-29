@@ -176,3 +176,32 @@ There is also a question this option does not answer and the other two do: what 
 `packages/sh` pipelines whatever happens here. This fixes the launcher, which is what
 `differential.test.ts` and `design/system/0009` need; it is not a general answer to "two streams,
 one order".
+
+## Attempted 2026-08-29, and blocked on `issues/lang/0291c`
+
+The third option above was implemented in full — `inheritOut` on `spawn`, both Rust hosts, the three
+JavaScript hosts, all eleven call sites — and the mechanism works. A throwaway prototype that simply
+never installed the child's queues, so `emit_bytes` fell through to the real streams, gave:
+
+    before   11 runs in 20 printed `one two mid`
+    after     0 runs in 20
+
+and the same prototype broke `seq 1 3 | wc -l` into printing `1 2 3` and counting `0`, which confirms
+the other half: it has to be per-spawn, exactly as `inheritIn` is, and a shell must pass false.
+
+**It cannot land in that shape**, because a seventh parameter on a capability makes wacc drop the
+module's entry point with no diagnostic — `issues/lang/0291c`, which this work found and which was
+confirmed by reverting every behaviour change and keeping only the parameter. Six is the widest
+capability in the tree, so `spawn` would have been the first with seven.
+
+The way through is to stay at six by folding the two flags into one `i32`, which is what the
+neighbouring parameter already does — `grants` is `GRANT_READ | GRANT_WRITE | …`, not five bools. So
+`inheritIn: bool` becomes `inherit: i32` carrying `INHERIT_IN | INHERIT_OUT`. That is a change to
+every caller and to the `spawn` payload's wire format, and it is not a contortion around the bug: it
+is the shape the signature already uses one argument earlier.
+
+Also found on the way, and worth knowing before repeating this: `packages/wac/src/grants.wac`'s
+`noSpawn` and `packages/sh/test/wac/probe.wac`'s `fakeSpawn` are stored *into* the capability field,
+so their parameter lists have to track `spawn`'s exactly. Nothing checks that — `issues/lang/0290c`
+— and getting it wrong emits an invalid module rather than a diagnostic. `noSpawn`'s last parameter
+is also misnamed `inheritErr`; it has always been `serveFs`.
