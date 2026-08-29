@@ -147,6 +147,24 @@ export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli)
   t.isTrue(contains(string.fromBytes(c.stderr), "--verbose"),
            "the refusal should say what `audit` takes: " + string.fromBytes(c.stderr));
 
+  // **A tail is not this command's to judge.** `wac task map --check` is the spelling `CLAUDE.md`
+  // documents and the doc lane runs: `--check` belongs to the task, not to `wac task`. Making the
+  // task *name* end the flag scan is what was missing — the first version stopped only at `--`, so a
+  // documented invocation started answering *unknown flag* and the doc lane went red.
+  //
+  // Asserted against a task that does not exist, so this stays a question about argument boundaries
+  // rather than about whatever the tree's tasks happen to do.
+  Exec tail = cli.exec(binaryPath(cli), string[]("task", "no-such-task", "--check"), u8[0]()).wait();
+  t.isTrue(!contains(string.fromBytes(tail.stderr), "unknown flag"),
+           "`--check` after a task name is the task's: " + string.fromBytes(tail.stderr));
+  t.isTrue(contains(string.fromBytes(tail.stderr), "no-such-task"),
+           "and the refusal is about the task: " + string.fromBytes(tail.stderr));
+
+  // ...while a flag *before* the name is still this command's, and it has none.
+  Exec before = cli.exec(binaryPath(cli), string[]("task", "--nonsense"), u8[0]()).wait();
+  t.isTrue(contains(string.fromBytes(before.stderr), "unknown flag"),
+           "a flag before the task name is `wac task`'s: " + string.fromBytes(before.stderr));
+
   // **The canary.** `check` took no flag check at all until this table existed, and exited 0 on
   // anything — so a test that only asserted refusals would have passed on the broken build by
   // never reaching a command that answered. This is the same command with nothing wrong.

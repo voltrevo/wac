@@ -1051,14 +1051,12 @@ i32 flagStop(Cli cli, i32 argc, string cmd) {
   i32 i = 1;
   while (i < argc) {
     string a = string.fromBytes(cli.arg(i).wait());
-    // **`task`'s boundary is `--` and nothing else.** Its name is an ordinary argument, so a
-    // non-flag must not end the scan the way it does for `run` — doing that returned `argc` at the
-    // name and then read the caller's `--` as a flag `task` does not take.
-    if (cmd == "task") {
-      if (a == "--") { return i; }
-      i = i + 1;
-      continue;
-    }
+    // **`task` has two boundaries and needs both.** `--` is one, for the explicit form. The task
+    // *name* is the other, and leaving it out broke `wac task gen:core --check` — a spelling
+    // `CLAUDE.md` documents and the doc lane runs — by reading `--check` as a flag `wac task` does
+    // not have. Everything after the name belongs to the command the task names, exactly as
+    // everything after `run`'s entry belongs to the program.
+    if (cmd == "task" && a == "--") { return i; }
     // The script and the module are the tail's first element rather than a flag's value, so the stop
     // is *after* them: `-c` and its script are both this command's, everything following is not.
     if (cmd == "sh" && a == "-c") { return i + 2 < argc ? i + 2 : argc; }
