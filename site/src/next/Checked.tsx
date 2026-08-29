@@ -199,9 +199,9 @@ export default function Checked() {
           suite is asked to notice.
         </P>
         <P>
-          <Lead>434 of 497 mutants killed</Lead> on the first full run. The other 63 are not all
-          gaps — nine were discarded as provably equivalent or uncompilable — and the 54 that did
-          survive have been worked down to eight as tests were written for them, in{" "}
+          <Lead>434 of 497 mutants killed</Lead> on the first full run, 2026-08-01. The other 63 are
+          not all gaps — nine were discarded as provably equivalent or uncompilable — and the 54 that
+          did survive have been worked down package by package as tests were written for them, in{" "}
           <A href={`${BLOB}/issues/system/open/0005-mutation-testing-found-54-untested-behaviours.md`} external>an open issue</A>{" "}
           rather than quietly tolerated.
         </P>
