@@ -24,7 +24,7 @@ wrong for a fortnight. The point of the page is that the next cut starts from nu
 The suite's own accounting, from its footer:
 
     1283s of work at 4 workers, of which 49s ran alone — the floor is 357s
-      195s  packages/crypto/test/wac
+      195s  packages/crypto/test/wac    (25s since 0274b closed)
       191s  packages/wacc/test/wac
       128s  packages/wac/test/wac
 
@@ -36,10 +36,10 @@ loss, which is the smallest of the numbers here.
 
 **crypto was one file.** Timed one at a time: `constanttime_test.wac` **265s**, every other crypto
 test 6s or below. That was `wac ctcompare` reading a journal's capacity rather than its contents —
-`issues/system/0274b`, fixed, and the chunk went 334s → 195s. What remains of it is 136s, all of it
+`issues/system/0274b`, and the chunk went 334s → 195s. The 136s left after that was all
 `p256PublicKey`, whose journal genuinely fills: 8.4 million host calls at ~1.6µs, and that µs is V8
-crossing into wasm rather than anything the host wrapper does. 0274b has the anatomy and two ways
-out, one of which needs no host API.
+crossing into wasm rather than anything the host wrapper does. That half is closed too — the module
+folds its own journal now — and the file is **8s**, the chunk 25s. 0274b has the anatomy.
 
 **wacc is not one file, and not compile overhead.** Its 81 non-heavy files are 274s warm, and the
 top ten are 229s of it. The build cache works well — a wacc test is **1,990ms cold and 118ms warm** —
@@ -99,31 +99,40 @@ core to put them on, and taking one would slow the other two agents rather than 
 
 ## What was cut, and what it bought
 
-    total work   1490s -> 1283s
-    floor         415s ->  357s
-    suite         505s ->  452s
-    crypto        334s ->  195s
+    total work   1490s -> 1283s -> ?
+    floor         415s ->  357s -> ?
+    suite         505s ->  452s -> ?
+    crypto        334s ->  195s -> 25s
 
-Two changes: `ctcompare` bounded by the journal's cursor, and `Cli.call` caching the export it
-resolves instead of building a `v8::String` per call. The second is 12% off *every* loop that calls
-into a loaded module, which is why the total fell further than crypto did.
+Three changes: `ctcompare` bounded by the journal's cursor; `Cli.call` caching the export it resolves
+instead of building a `v8::String` per call; and then `issues/system/0274b`'s second half, where the
+module folds its own journal so a comparison is four host calls rather than 8.4 million. The middle
+one is 12% off *every* loop that calls into a loaded module, which is why the total fell further than
+crypto did the first time.
+
+The last row is the one to read: `constanttime_test.wac` was **265s** when this page was started,
+136s after the cursor fix, and is **8s** now. The three unknowns above are the gate's to fill in —
+they come from the suite's own footer and only a gate run produces them honestly.
 
 ## What is left, in the order the numbers suggest
 
-1. **`p256`'s 136s** — `issues/system/0274b`. Needs fewer host calls, not cheaper ones.
-2. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
-3. **Process starts** — `issues/system/0197`. A built app costs ~107ms to spawn against 15ms for the
+1. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
+2. **Process starts** — `issues/system/0197`. A built app costs ~107ms to spawn against 15ms for the
    native binary; `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s.
-4. **Crypto's own speed.** 195s of the suite and 88s of the ratchets, with no single file to blame
-   now that `constanttime_test.wac` is fixed. `issues/system/0209` is one piece of it.
+3. **Crypto's own speed.** 88s of the ratchets, with no single file to blame now that
+   `constanttime_test.wac` is fixed — the suite chunk it used to dominate is 25s.
+   `issues/system/0209` is one piece of it.
 
 The ratchets' 263s is *not* on this list any more: the section above measures it, and every second of
-it belongs to 2, 3 or 4. Skipping them was measured and refused separately.
+it belongs to 1, 2 or 3. Skipping them was measured and refused separately.
 
 ## Two traps, because both cost me a measurement
 
 **A plain `wac test <dir>` does not skip the heavy lane.** Two attempts at timing `packages/wacc`
-spent their whole budget inside `corpusemit_test.wac`, which is declared at 1,204s. Pass `--ignore`.
+spent their whole budget inside `corpusemit_test.wac`, which is declared at 1,204s. `--ignore` takes
+a comma-separated list of paths rather than acting as a switch, so it is
+`--ignore packages/wacc/test/wac/corpusemit_test.wac,packages/wacc/test/wac/names_test.wac`; passed
+bare it swallows the directory that follows it and the run does nothing, quickly.
 
 **Cold and warm differ by 2×**, and a run taken seconds after a gate is neither: the gate rewrites
 `native/v8/target/release/wac`, so a measurement started against it can be timing a binary that is

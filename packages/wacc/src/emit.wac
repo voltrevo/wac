@@ -4997,7 +4997,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // reference uses, and the same condition the nine internal ones already carry.
   i32 bindStrHelpers = needsStrings ? 6 : 0;
   i32 cbHelpers = env.cbSigCount * (callbackSlots() + 1);
-  i32 covHelpers = env.coverage ? 3 : 0;
+  i32 covHelpers = env.coverage ? 4 : 0;
   // `$trap$message` — one function, always, like `__fmod`: see `assignGlobals`.
   i32 trapHelpers = 1;
   i32 outHelpers = env.outSigCount;
@@ -5880,6 +5880,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     exportFunc(exports, fnName, "__cov_init", covHelpersAt);
     exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
     exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
+    exportFunc(exports, fnName, "__cov_hash", covHelpersAt + 3);
   }
   {
     // The reference's name, because a host that reads one compiler's should read the other's.
@@ -8970,6 +8971,54 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   gb.byte(11);
   code.u32leb(gb.len);
   code.bytes(gb);
+
+  // `__cov_hash(upto)` — one number for slots `[0, upto)`, so a reader can ask whether two journals
+  // agree without fetching them.
+  //
+  // **The reason it exists is arithmetic rather than taste.** A host call costs about 1.6µs and that
+  // is V8 crossing into wasm, not anything the wrapper does — measured step by step in
+  // `issues/system/0274b`, where the whole wrapper with the call skipped is 14ns. `p256PublicKey`
+  // records 8.19 million events, so `wac ctcompare` reading both journals a slot at a time is 8.4
+  // million crossings and 13s a comparison, and `constanttime_test.wac` makes about sixteen of them.
+  // A `Cli.call` carries one `i32` in and one out, so no loop over that boundary can be cheap; the
+  // only way to move a journal in one call is to let the module fold it.
+  //
+  // Which makes agreement a hash comparison rather than a slot-by-slot one, and that is a real
+  // weakening, stated here because it is the kind that hides: two *different* journals whose hashes
+  // agree would be read as constant-time. The mixing below is xor-multiply-rotate per slot, so a
+  // false agreement is a 2^-32 coincidence between two runs of our own code on our own vectors —
+  // nobody is choosing inputs against this function. `wac ctcompare` compares the cursor and the
+  // event total as plain numbers beside it, and falls back to reading both journals whenever the
+  // hashes differ, so every *reported* divergence is still exact.
+  funcs.u32leb(env.sigType("fn[i32(i32)]"));
+  B hb = B.create();
+  hb.u32leb(1);
+  hb.u32leb(2); hb.byte(127);                      // two i32 locals: the cursor and the hash
+  hb.byte(65); hb.i32leb(0 - 2128831035); hb.byte(33); hb.u32leb(2);   // h = FNV offset basis
+  hb.byte(65); hb.i32leb(0); hb.byte(33); hb.u32leb(1);                // i = 0
+  hb.byte(2); hb.byte(64);
+  hb.byte(3); hb.byte(64);
+  hb.byte(32); hb.u32leb(1);
+  hb.byte(32); hb.u32leb(0);
+  hb.byte(78);                                     // i32.ge_s — i >= upto
+  hb.byte(13); hb.u32leb(1);
+  hb.byte(32); hb.u32leb(2);                       // h
+  hb.byte(35); hb.u32leb(0);
+  hb.byte(32); hb.u32leb(1);
+  hb.byte(251); hb.u32leb(11); hb.u32leb(at);      // array.get — the slot
+  hb.byte(115);                                    // i32.xor
+  hb.byte(65); hb.i32leb(16777619); hb.byte(108);  // i32.mul by the FNV prime
+  hb.byte(65); hb.i32leb(13); hb.byte(119);        // i32.rotl — so a high bit reaches the low ones
+  hb.byte(33); hb.u32leb(2);
+  hb.byte(32); hb.u32leb(1); hb.byte(65); hb.i32leb(1); hb.byte(106);
+  hb.byte(33); hb.u32leb(1);
+  hb.byte(12); hb.u32leb(0);
+  hb.byte(11);
+  hb.byte(11);
+  hb.byte(32); hb.u32leb(2);
+  hb.byte(11);
+  code.u32leb(hb.len);
+  code.bytes(hb);
 }
 
 /**

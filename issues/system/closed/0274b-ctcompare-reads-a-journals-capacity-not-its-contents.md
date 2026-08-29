@@ -1,6 +1,6 @@
 # 0274b — `wac ctcompare` read a journal's capacity rather than its contents, at 15.7s a call
 
-- **Status:** open — the cheap half is fixed; the remaining half is p256 and needs a bulk read
+- **Status:** closed — both halves fixed; `constanttime_test.wac` is 8s, from 265s
 - **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
@@ -104,3 +104,37 @@ That settles the shape of the remaining fix: it has to make **fewer calls**, not
 The second is cheaper and keeps `Cli.call` as it is. It is written down here rather than done because
 "a trace claims to be the same when a hash agrees" is a claim about a *security* test, and widening
 what counts as proof there is somebody's decision rather than a tidy-up.
+
+
+## Closed — the module folds its own journal, 2026-08-29
+
+The second option below is what was built, and the reason it stopped being a decision is that the
+*first* one turned out to be exact and unaffordable rather than exact and merely awkward. Working
+through it:
+
+- A `Cli.call` carries one `i32` in and one out. Moving 8.19 million events across it exactly needs
+  8.19 million calls, whatever else changes — so an exact comparison has to use a **different
+  channel**, and there is one: `ret_kind == 2` in `call_loaded` means a `string` return already
+  crosses and lands in `CallResult.text`. A `__cov_chunk(i)` handing back 4,096 slots as text would be
+  exact, need no host change, and cut the calls by four thousand.
+- It was refused on two counts. The encoding is ~131MB of string built, marshalled and compared per
+  comparison, which buys perhaps 5x rather than 500x; and the helpers here are emitted as raw wasm
+  bytes beside `__cov_init`, where a loop that allocates and fills a string is a different order of
+  work from one that folds into a local.
+
+So `__cov_hash(upto)` — slots `[0, upto)` folded with xor-multiply-rotate, about thirty bytes of
+emitted wasm next to the three that were already there. `wac ctcompare` compares two of those plus
+the cursor and the event total as plain integers, which is four calls a module, and **reads both
+journals properly the moment they disagree**. Every `differs`, `site`, `split` and `longer` is
+therefore still exact and slot-derived; what the hash decides is `same`.
+
+That is the weakening, and it is stated in `spec/cli/wac.md`, in `emitCoverageHelpers`, and at the
+call site: a wrong `same` is a 32-bit coincidence between two runs of our own code on our own vectors,
+with nobody choosing inputs against the function. `ctcompare_test.wac` has the case that a plausible
+fold fails — two journals holding the same numbers in a different order, where the cursor, the event
+total and the multiset all agree, so nothing but the hash can answer.
+
+    packages/crypto/test/wac/constanttime_test.wac    136s -> 8s
+    packages/crypto/test/wac (the chunk)              195s -> 25s
+
+Both warm. The gate's own footer is the figure to trust for the suite.

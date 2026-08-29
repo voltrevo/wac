@@ -421,6 +421,17 @@ all is also what a command that never ran produces.
 export name calls nothing and records nothing, and two empty journals match perfectly. A caller that
 did not check the number would be told every routine it asked about is constant-time.
 
+**Agreement is decided by a hash; every divergence is read out in full.** The journals are compared
+by asking each module to fold its own — `__cov_hash(upto)`, injected beside the three accessors — and
+comparing the two numbers, along with the cursor and the event total as plain integers. A host call
+carries one `i32` and costs about 1.6µs because the engine is crossing into wasm, so fetching 8.19
+million events a slot at a time was 13 seconds per comparison; folding happens where the array is, in
+four calls. When the folds disagree `ctcompare` reads both journals properly and answers from them, so
+`differs`, `site`, `split` and `longer` are exact. What the hash decides is `same`, and a wrong `same`
+is a 32-bit coincidence between two runs of the caller's own code — nobody is choosing inputs against
+it. `same` over journals of different lengths is impossible for a different reason: the cursor and the
+total are compared as themselves.
+
 **Truncation is checked after the walk, not before it.** A difference found inside the prefix both
 journals kept is real — the events are aligned up to there, and what was dropped cannot un-differ
 them — so an overflowing run is still measurable, which matters because the routines that overflow are

@@ -60,6 +60,23 @@ string branching(i32 secret) {
          "}\n";
 }
 
+/**
+ * Two index events whose values are swapped — the same numbers, in the other order.
+ *
+ * **Written against the hash, and it is the case a plausible one passes.** `wac ctcompare` compares
+ * two journals by asking each module to fold its own into one number (`__cov_hash`), because fetching
+ * `p256PublicKey`'s 8.19 million events a slot at a time cost 13s a comparison. A fold that adds, or
+ * xors, or counts, agrees here: both journals hold `{siteA, siteB, 2, 5}` and differ only in which
+ * site got which value. That is exactly the divergence a constant-time test is looking for, so a hash
+ * blind to order would report every leak of this shape as `same`.
+ */
+string swapped(bool other) {
+  return "const u8[] SBOX = u8[](3, 1, 4, 1, 5, 9, 2, 6);\n" +
+         "export i32 main() {\n" +
+         "  return SBOX[" + (other ? "5" : "2") + "] + SBOX[" + (other ? "2" : "5") + "];\n" +
+         "}\n";
+}
+
 /** Build one traced module, answering the stem or the empty string. */
 string built(T t, Cli cli, string dir, string name, string src) {
   string entry = dir + "/" + name + ".wac";
@@ -215,6 +232,29 @@ export string test_a_secret_dependent_branch_parts_the_two_runs_6knq4wp(Core cor
   // values. `--all` stops there, because past it the journals are not aligned.
   string all = compared(t, cli, a, b, true);
   t.isTrue(startsWith(all, "split "), "a branch leak should be a split, got: " + all);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_two_journals_holding_the_same_numbers_in_a_different_order_differ_6knq4wp(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "ctcompare-order");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  string a = built(t, cli, dir, "a", swapped(false));
+  string b = built(t, cli, dir, "b", swapped(true));
+  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+
+  // Same length, same cursor, same event total, same numbers — everything the comparison checks as a
+  // plain integer agrees, so this reaches the hash and nothing else can answer it.
+  string said = compared(t, cli, a, b, false);
+  t.isTrue(startsWith(said, "differs "),
+           "two journals differing only in the order of their events: " + said);
+  // And it is a `site`, not a `split`: both runs are at the same point holding different values,
+  // which is the shape of an index leak and what `--all` is for.
+  string all = compared(t, cli, a, b, true);
+  t.isTrue(startsWith(all, "site "), "an index leak should be a site, got: " + all);
   cli.remove(dir, true).wait();
   return t.report();
 }

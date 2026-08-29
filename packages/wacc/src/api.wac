@@ -237,7 +237,7 @@ export u8[] emitFilesChecked(string[] paths, string[] sources, string entry) {
 
 /**
  * The same module instrumented for coverage: a counter per branch point, read through
- * `__cov_init()`, `__cov_len()` and `__cov_get(i)`.
+ * `__cov_init()`, `__cov_len()`, `__cov_get(i)` and `__cov_hash(upto)`.
  */
 export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
   return emitLinkedCovered(paths, sources, entry);
@@ -444,9 +444,13 @@ export string covTableFilesIn(string[] paths, string[] sources, Res res, string 
 /**
  * The same module instrumented for a *trace* rather than for coverage — `wac ctcompare` reads one.
  *
- * Read through the same three accessors, because a consumer written against one compiler should
+ * Read through the same four accessors, because a consumer written against one compiler should
  * work against the other: `__cov_init()` clears the journal, `__cov_len()` is its capacity, and
  * `__cov_get(i)` reads a slot. Slot 0 is the cursor and events follow in `(site, value)` pairs.
+ *
+ * `__cov_hash(upto)` folds slots `[0, upto)` into one number, which is how `wac ctcompare` asks
+ * whether two journals agree without fetching either: a host call carries one `i32` and costs ~1.6µs,
+ * so a real journal is 13s a side to read and four calls to fold. `issues/system/0274b`.
  */
 export u8[] emitFilesTraced(string[] paths, string[] sources, string entry) {
   return emitLinkedTraced(paths, sources, entry);
