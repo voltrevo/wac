@@ -51,7 +51,7 @@ globalThis.addEventListener("unload", () => { Deno.removeSync(dir, { recursive: 
 // Snippets live in `src/snippets.ts` (the tour) and beside the page that prints only its own.
 // A name exists once across all of them.
 const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.tsx",
-  "next/Bootstrap.tsx"]
+  "next/Bootstrap.tsx", "next/Start.tsx"]
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
@@ -152,6 +152,10 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
     // that page are not wac and are not here: L0 is wasm assembly text and L1 is s-expressions,
     // and a compiler that accepted either would be the thing going wrong.
     ["EX_L5", "a.wac"],
+    // The "use it" page's first program, which a reader is expected to paste into an empty
+    // directory. It is the only snippet here that imports a capability, so it also checks that
+    // `std/platform.wac` resolves as a built-in rather than as a file the reader has to have.
+    ["EX_START_HELLO", "a.wac"],
   ] as const) {
     const r = compile({ [file]: await snippet(name) }, file);
     if (!r.ok) {

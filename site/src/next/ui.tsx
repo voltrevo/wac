@@ -15,9 +15,12 @@ export const TREE = `${GITHUB}/tree/master`;
 export const BLOB = `${GITHUB}/blob/master`;
 
 export type Route =
-  | "home" | "language" | "run" | "stack" | "bootstrap" | "checked" | "roadmap" | "playground";
+  | "home" | "start" | "language" | "run" | "stack" | "bootstrap" | "checked" | "roadmap" | "playground";
 
 export const PAGES: { route: Route; href: string; label: string }[] = [
+  // **First, because it is the one page a reader acts on.** Everything else here answers "is this
+  // real"; this answers "what do I type", and it was reachable only as a link into GitHub.
+  { route: "start", href: "#/start", label: "use it" },
   { route: "language", href: "#/language", label: "the language" },
   { route: "run", href: "#/run", label: "run it here" },
   { route: "stack", href: "#/stack", label: "the stack" },

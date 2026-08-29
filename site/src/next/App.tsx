@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Home from "./Home";
+import Start from "./Start";
 import Language from "./Language";
 import Stack from "./Stack";
 import Bootstrap from "./Bootstrap";
@@ -12,7 +13,7 @@ import Roadmap from "./Roadmap";
 import Playground from "../Playground";
 import type { Route } from "./ui";
 
-const ROUTES: Record<string, Route> = { "": "home", language: "language", run: "run",
+const ROUTES: Record<string, Route> = { "": "home", start: "start", language: "language", run: "run",
   bootstrap: "bootstrap", stack: "stack", checked: "checked", roadmap: "roadmap", playground: "playground" };
 
 /**
@@ -47,6 +48,7 @@ export default function App() {
   }, [route, anchor]);
 
   switch (route) {
+    case "start":    return <Start />;
     case "language": return <Language />;
     case "run":      return <Run />;
     case "stack":    return <Stack />;
