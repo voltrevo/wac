@@ -192,6 +192,23 @@ fi
 #
 # The same condition as the one in the loop, and for the same reason: `tools/seedFresh.test.ts` owns
 # the question, so this cannot drift from the definition because it *is* the definition.
+# **And the wasmtime host, for the same reason one step earlier.** `seedFresh.test.ts` checks three
+# things and `wac task seed` rebuilds only one of them: it builds `native/v8`, so a merge touching
+# `native/src/` leaves `native/target/release/wac` behind and the suite fails on *"the wasmtime host,
+# if built, is not older than the Rust it is built from"*. The retry path below already rebuilds it
+# after a merge; attempt 1 did not, so a merge landed by an *earlier* gate cost a whole suite twice on
+# 2026-08-29 — 577s and a cooldown each time, for a `cargo build` that takes three seconds when the
+# crate is otherwise warm.
+#
+# Only when it exists: a checkout that has never built it has nothing to age, and whichever test wants
+# it builds it. `issues/system/0208` is that it has no owner; this is the gate not needing one.
+if [ -f native/target/release/wac ] && ! (cd native && cargo build --release >/dev/null 2>&1); then
+  echo "== the wasmtime host will not rebuild: not running the suite ==" >&2
+  echo "   Run \`cd native && cargo build --release\` by hand to see why; every two-host test would" >&2
+  echo "   otherwise compare against the older one." >&2
+  exit 1
+fi
+
 if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
   echo "== the seed is older than the tree — rebuilding before the suite =="
   # **Kept, not discarded.** This was `>/dev/null 2>&1` and the advice below was "run it by hand to
