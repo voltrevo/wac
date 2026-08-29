@@ -130,3 +130,53 @@ Body-doubling prices the callee but only where the function is pure: `lex` and `
 and `settleEmittable` mutate pre-populated state, so a second run does *less* work and the subtraction
 means nothing. That is why the 80% is one row rather than three — pricing inside it needs either a real
 profiler or a pure seam that does not exist yet.
+
+## Inside the 80%, with the profiler this issue said did not exist — agent-b, 2026-08-29
+
+The section above stops at *"pricing inside it needs either a real profiler or a pure seam that does
+not exist yet"*. There is an instrument: `wac build --coverage` counts every branch point, and
+nobody had pointed it at the compiler itself. `tools/wac/waccprofile.wac` is a driver that calls
+`emitFiles` on this issue's own entry — `packages/box/src/bin/sh.wac`, 1,122 files offered, 777,864
+bytes emitted — built with `--coverage` and read with `wac covdump`.
+
+**A count is not a time.** It ranks how often a line runs, not what it costs, so nothing below is a
+share of the clock; it is where the iterations are. Price anything it turns up by this page's
+doubling method before believing a number.
+
+    1,932,304,577 executions, 4,997 of 16,845 points reached
+
+    96.0%  emit.wac          1,855,315,176
+     2.6%  lex.wac              49,753,541
+     1.1%  parse.wac            20,891,223
+     0.3%  kinds.wac             5,082,697
+
+**Four linear scans are about a fifth of every iteration the compiler makes**, and the two that can
+be named cheaply are these:
+
+    Env.funcAt(name)    81,111 calls   97,412,789 iterations   1,201 string compares per call
+    Env.sigType(t)      35,594 calls   72,332,068 iterations   2,032 string compares per call
+
+Both are `for (i = 0; i < count; i++) if (table[i] == name) return i` over a table that grows with
+the program, so the cost is quadratic in it. The two hottest points of all are the same shape in the
+name resolver at `emit.wac:2813` and `:2819` — 122.6M and 63.6M iterations — scanning `declNames`
+by name and file.
+
+**This does not contradict the `C.findName` measurement above; it is the counterpart to it.** That
+scan was priced at 0.4% and a hash index there buys nothing. These are a different table in a
+different phase, and they are three orders of magnitude more traffic. The lesson is that "the scan is
+conspicuous" is not evidence either way — the difference between 0.4% and this is a measurement.
+
+**What to do about it is still open**, and deliberately not done here: indexing `funcs`, `sigTypes`
+and `declNames` by name is a change to the emitter's core tables, and the honest next step is to
+price one of them by doubling first, because 1,201 compares of a *short* string may be cheaper than
+the count suggests.
+
+### Reproducing it
+
+    wac build --coverage --allow-read -o /tmp/waccprof tools/wac/waccprofile.wac
+    wac covdump /tmp/waccprof.wasm > /tmp/counts.tsv
+    # join on the index with /tmp/waccprof.cov, whose rows are `index<TAB>line<TAB>col<TAB>kind<TAB>file`
+
+Sixty seconds to build, six to run. The driver prints its byte count, because a run that failed to
+find the entry still fills a counter table and would profile the failure path convincingly.
+
