@@ -103,3 +103,56 @@ export string test_every_accepted_command_is_named_in_the_usage_block(Core core,
   t.eqStr(missing, "", "the dispatcher accepts commands `wac --help` does not name —" + missing);
   return t.report();
 }
+
+/**
+ * A flag a command does not take is refused, and a misspelt *grant* says which mistake it was.
+ *
+ * **Three shapes, and the difference between them is the point.** `--allow-everything` is nobody's
+ * grant, so the reader mistyped one of five words; `--allow-read` is a real grant that `check` simply
+ * does not take, so they mistyped which command; `--nonsense` is neither. Collapsing the first into
+ * the second is what the code did until 2026-08-29 everywhere except `wac sh`, whose own parser reads
+ * grant words and always said so.
+ *
+ * **And nine commands refused nothing at all.** `wac check --nonsense x.wac` exited **0** — the flag
+ * lists lived in `unknownFlag`, `unknownFlagBefore` and `unknownTestFlag`, and only four arms
+ * consulted any of them. `flagsFor(cmd)` is one table now, which is what makes a per-command answer
+ * possible to assert.
+ */
+export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string prog = "/tmp/wac-flagshape.wac";
+  FileResult had = cli.readFile(prog).wait();
+  if (!had.ok) {
+    cli.writeFile(prog, ("import { Core } from \"std/platform.wac\";\n"
+                       + "export i32 main(Core core) { return 0; }\n").toBytes()).wait();
+  }
+
+  // A word that is no grant of ours, on a command that does take grants.
+  Exec a = cli.exec(binaryPath(cli), string[]("build", "--allow-everything", prog, "-o", "/tmp/wac-flagshape-out"), u8[0]()).wait();
+  t.eqI32(a.status, 2, "an invented grant should exit 2: " + string.fromBytes(a.stderr));
+  t.isTrue(contains(string.fromBytes(a.stderr), "is not a grant"),
+           "an invented grant should say so: " + string.fromBytes(a.stderr));
+
+  // A real grant, on a command that has none. Not the same mistake, and not the same sentence.
+  Exec b = cli.exec(binaryPath(cli), string[]("check", "--allow-read", prog), u8[0]()).wait();
+  t.eqI32(b.status, 2, "a grant `check` does not take should exit 2: " + string.fromBytes(b.stderr));
+  t.isTrue(contains(string.fromBytes(b.stderr), "unknown flag"),
+           "a real grant on the wrong command is an unknown flag: " + string.fromBytes(b.stderr));
+  t.isTrue(!contains(string.fromBytes(b.stderr), "is not a grant"),
+           "...and must not be called an invented one: " + string.fromBytes(b.stderr));
+
+  // Neither. The refusal names what the command *does* take, which the old fixed string could not.
+  Exec c = cli.exec(binaryPath(cli), string[]("audit", "--nonsense", prog), u8[0]()).wait();
+  t.eqI32(c.status, 2, "an unknown flag should exit 2: " + string.fromBytes(c.stderr));
+  t.isTrue(contains(string.fromBytes(c.stderr), "--verbose"),
+           "the refusal should say what `audit` takes: " + string.fromBytes(c.stderr));
+
+  // **The canary.** `check` took no flag check at all until this table existed, and exited 0 on
+  // anything — so a test that only asserted refusals would have passed on the broken build by
+  // never reaching a command that answered. This is the same command with nothing wrong.
+  Exec ok = cli.exec(binaryPath(cli), string[]("check", prog), u8[0]()).wait();
+  t.eqI32(ok.status, 0, "the same command without a flag should succeed: " + string.fromBytes(ok.stderr));
+
+  cli.remove(prog, false).wait();
+  return t.report();
+}
