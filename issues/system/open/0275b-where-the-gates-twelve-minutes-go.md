@@ -65,6 +65,27 @@ test 6s or below. That was `wac ctcompare` reading a journal's capacity rather t
 crossing into wasm rather than anything the host wrapper does. That half is closed too — the module
 folds its own journal now — and the file is **8s**, the chunk 25s. 0274b has the anatomy.
 
+**`packages/wac` is one file, and it is `buildcache_test.wac` at 105s.** Timed one at a time, the
+package's seventeen files:
+
+    105.7s  buildcache_test.wac        6 tests
+     12.2s  app_test.wac
+      8.1s  testcli_test.wac
+      7.3s  covdump_test.wac
+      ...the other thirteen under 5s each
+
+8.6x the next file and more than half the package. The cost is per *test* and uniform — 15.7s, 15.8s,
+20.3s for the three measured alone — because each one points `WAC_HOME` at a fresh directory, which
+is the whole point (it is testing a build cache, so it must start without one) and also means
+`wac run … wacc.wac` recompiles the compiler-as-a-program every time.
+
+**Left alone deliberately.** Its header explains why it runs the checkout's `wacc.wac` rather than
+`wac build`: the binary carries a *seed*, so `wac build` would test the compiler the change under
+test is not in. Sharing the wacc compile across the six tests while keeping each subject's cache
+fresh is possible and is somebody's careful decision to make, not a passing optimisation — and at
+~70s of 1076s of suite work it is worth less than it looks, since the suite's floor is set by total
+work over four workers rather than by any one file.
+
 **wacc is not one file, and not compile overhead.** Its 81 non-heavy files are 274s warm, and the
 top ten are 229s of it. The build cache works well — a wacc test is **1,990ms cold and 118ms warm** —
 so "the suite recompiles everything" is not the story it looks like.
