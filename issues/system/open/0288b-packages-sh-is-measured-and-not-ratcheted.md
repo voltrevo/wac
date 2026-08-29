@@ -4,7 +4,7 @@
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-29
-- **Kind:** bug — a gap in a guard, and a sentence on the website that counts it as closed
+- **Kind:** bug — a gap in a guard, and a measurement narrower than the tests it is taken to describe
 - **Symptom:** no error; the gate names the gap every run and nothing fails on it
 
 ## Measured
@@ -102,12 +102,28 @@ those names finds them — `cd` in three files, `ls` in three, `rm` in one. Ever
 evidence that the names appear, not that `exec.wac`'s builtin `ls` is ever entered. The coverage run
 says it is not.
 
-So the honest answer for this family is not yet known, and the way to settle it is to ask the
-coverage run rather than the grep: drive the builtin deliberately and see the entry go covered. That
-is one script, and it is the difference between a rule that says *"driven by the differential"* — which
-would be false in the way `packages/fs`'s `remoteRename` was false, named as driven and driven by
-nothing — and a rule that says *"nothing reaches this, and here is why that is acceptable"*, which may
-well be the true one.
+**Settled, and it went the other way.** The question is whether a script saying `ls` reaches sh's
+builtin or the system's, and that is answerable in one command — put a fake `ls` on `PATH` and see
+which answers:
+
+    $ printf '#!/bin/sh\necho EXTERNAL-LS\n' > fakebin/ls && chmod +x fakebin/ls
+    $ env -i PATH=fakebin wac sh --allow-read --allow-run -c "cd shtest && ls"
+    alpha.txt
+    beta.txt
+
+**sh prefers its own builtin over `PATH`.** So the differential corpus does enter `exec.wac`'s `ls`,
+and a rule saying *"driven by the differential"* would be true for this family rather than false —
+the opposite of what the paragraph above was warning about, which is why it was worth asking instead
+of assuming in either direction.
+
+That reframes the whole issue. sh's 66.2% is **coverage of `packages/sh/cov.ts`'s script list**, not
+of what the tests reach: the differential corpus is a separate body of scripts that the coverage run
+never executes. So an unknown share of the 1,036 is already exercised by tests that the measurement
+cannot see, and the cheapest route to a ledger may not be writing rules at all — it may be running
+the corpus under instrumentation and finding out how many of the 1,036 survive.
+
+That is worth doing *before* the rules, because a rule is a claim about why something is unreachable
+and most of these may simply not be unreachable.
 
 ## What it would take, sized
 
