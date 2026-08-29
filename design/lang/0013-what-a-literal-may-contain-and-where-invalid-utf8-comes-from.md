@@ -1,6 +1,8 @@
 # 0013 — what a literal may contain, and where invalid UTF-8 comes from
 
-- **Status:** in progress — the reference is removed, so the order of work below is unblocked
+- **Status:** done — 2026-08-29, all seven steps; see the table in *State of play*.
+  What the note deliberately does **not** cover is listed under *Deferred, and not part of this*:
+  value-to-string conversion in `\{}`, which waits on the same answer as operator overloading.
 - **Date:** 2026-08-28
 - **Author:** agent-c
 - **Blocks:** nothing. Three of the defects below are live today and none is urgent.
