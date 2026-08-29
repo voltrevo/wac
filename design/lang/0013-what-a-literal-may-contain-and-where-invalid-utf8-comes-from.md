@@ -508,13 +508,32 @@ The fix is not a span. **An operator's spelling is its kind**, and for every ope
 ever written the two agree exactly, so asking `kindName` instead of the source is right in general
 and only *visible* here. Same in `print.wac` and in `wapyprint.wac`.
 
-**What is not done.** The four consumers in the table above still refuse an interpolated literal by
-accident rather than on purpose — an interpolated import path lexes as `"./p\{` `+` `1` `+` `}.wac"`
-and the parser says *expected `;`, found `+`*. That is a refusal, so nothing is silently wrong, but
-it does not say what is wrong. The marker on `Lexed` is what those four need, and it is the same
-marker the section above says `stringLiteralBytes` could have used; it turned out not to need it, so
-the marker is now wanted *only* for the diagnostics. Block strings do not interpolate either, and
-D7 does not say whether they should.
+**The refusals are deliberate now, and no marker was needed for them either.** I had this down as
+the one thing still wanting a field on `Lexed`. It does not: the parenthesis the desugaring opens is
+the only `(` in a file whose span is a **quote**, because a written `(` spans a `(`. So
+`P.atInterpolation` is two comparisons on the token stream and nothing is recorded beside it — the
+same shape as the segments' spans, and the third time this design has turned out to need no state.
+
+There were two positions rather than the four the table counts. `files.wac` reads a path token the
+parser now refuses to produce, and `wapyparse` lexes its own strings — `wapylex.wac` never calls
+`lexString`, so `\{` in a `.wapy` file is not interpolation and its import path was never at risk.
+
+What it was worth: an interpolated import path reported **six** diagnostics, every one of them at
+the same column, none about interpolation, and the first said `unexpected token … found '"'` —
+naming a quote that is genuinely there, because the synthetic `(` spans it. It is one diagnostic
+now, `perrInterpolatedHere`, headline *this string cannot interpolate* since the code is shared,
+with the position in the note: *a module path is resolved before the program runs*, and for JSX
+*write `a={…}` to put an expression in an attribute* — which names the attribute, and compiles when
+followed.
+
+**Block strings do not interpolate, and now say so.** D7 is silent on them and `lexBlockString` is
+a scanner of its own, so `\{` in one was already refused — as *unknown escape*, which is true and
+sends the reader looking for a typo. It has its own code now: *a block string does not interpolate —
+`\{` opens an expression only in a one-line literal*. That is right whichever way the open question
+goes, and the question is still open: **should they?** The argument for is that the two literal
+forms differ in nothing else since D6 made the escape set the same; the argument against is that a
+block string's content is usually something quoted verbatim, and `\{` appearing in it by accident
+would be a new way for a paste to stop compiling.
 
 ## D6's tab rule is D3's rule, and asking twice said so twice
 

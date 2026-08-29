@@ -98,10 +98,28 @@ export function importPaths(src: string): string[] {
     if (c === '"') {
       let j = i + 1;
       let text = "";
+      // **`\\{` opens an interpolation, and ends the literal for this scanner's purposes.**
+      // `"a\\{e}b"` is sugar for `("a" + e + "b")` — `design/lang/0013` D7 — so it is an
+      // expression, and a module path has to be one string written out. wacc refuses it with
+      // *this string cannot interpolate*; reading through the `\\{` here would report an import of
+      // `./p{1}.wac`, which is a path the compiler never resolves.
+      let interpolated = false;
       while (j < n && src[j] !== '"') {
+        if (src[j] === "\\" && src[j + 1] === "{") { interpolated = true; break; }
         if (src[j] === "\\") { text += src[j + 1] ?? ""; j += 2; continue; }
         text += src[j];
         j++;
+      }
+      if (interpolated) {
+        // **To the end of the line, and no cleverer than that.** Finding the literal's real end
+        // textually means pairing quotes across an expression that may hold literals of its own —
+        // `"\\{f("x")}"` is legal — and this scanner has no parser to lean on. An import is one
+        // line, so skipping the rest of it cannot hide one or invent one, and that is the whole of
+        // what this walk has to get right.
+        while (j < n && src[j] !== "\n") j++;
+        toks.push({ kind: "interp", text: "" });
+        i = j;
+        continue;
       }
       toks.push({ kind: "string", text });
       i = j + 1;

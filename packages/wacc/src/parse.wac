@@ -81,6 +81,20 @@ export i32 perrEnumMethodThis() { return 32; }
  */
 export i32 perrTypeArgsThenValue() { return 33; }
 
+/**
+ * An interpolated literal where a written-out string is required — `design/lang/0013` D7.
+ *
+ * Two positions want a *constant* string rather than an expression: a module path, resolved before
+ * anything runs, and a JSX attribute, which already spells an expression `attr={e}`. Interpolation
+ * lexes as `("a" + e + "b")`, so both met a `(` where they wanted a literal and said
+ * `unexpected token … found '"'` — the caret on an opening quote that is genuinely there, naming
+ * the byte the synthetic `(` spans. One mistake produced **six** diagnostics and none of them was
+ * about interpolation.
+ *
+ * The headline names the rule, since the code is shared; the note names the position.
+ */
+export i32 perrInterpolatedHere() { return 34; }
+
 export struct P {
   u8[] src;
   /**
@@ -168,6 +182,36 @@ export struct P {
     return this.at;
   }
 
+  /**
+   * Whether an interpolated literal starts at the cursor.
+   *
+   * `"a\{e}b"` lexes as `(` `"a\{` `+` `e` `+` `}b"` `)`, and that `(` is the only one in a file
+   * that spans a quote — a written `(` spans a `(`. So the token stream already says this and
+   * nothing has to be recorded beside it. `design/lang/0013` D7.
+   */
+  bool atInterpolation(const this) {
+    return this.kindAt(0) == kLparen() && this.textAt(0) == "\"";
+  }
+
+  /**
+   * Step over a whole interpolated literal, so one mistake stays one diagnostic.
+   *
+   * Balanced, because the expressions inside may have parentheses of their own.
+   */
+  void skipInterpolation(this) {
+    if (!this.atInterpolation()) { return; }
+    i32 depth = 0;
+    while (!this.at1(kEof())) {
+      i32 k = this.kindAt(0);
+      if (k == kLparen()) { depth = depth + 1; }
+      if (k == kRparen()) {
+        depth = depth - 1;
+        if (depth == 0) { this.advance(); return; }
+      }
+      this.advance();
+    }
+  }
+
   /** How wide the token at the cursor is, which is how much of the line a diagnostic underlines. */
   i32 widthAt(const this, i32 offset) {
     i32 len = this.lx.tokens[this.idx(offset) * tokenStride() + 2];
@@ -191,7 +235,11 @@ export struct P {
 
   /** The source text of a token near the cursor, for a diagnostic that has to quote it. */
   string textAt(const this, i32 offset) {
-    i32 t = this.idx(offset);
+    return this.textOf(this.idx(offset));
+  }
+
+  /** The same, for a token a caller already holds the index of rather than an offset from here. */
+  string textOf(const this, i32 t) {
     i32 start = this.lx.tokens[t * tokenStride() + 1];
     i32 len = this.lx.tokens[t * tokenStride() + 2];
     if (len <= 0) { return kindName(this.lx.tokens[t * tokenStride()]); }
@@ -1281,6 +1329,12 @@ Expr parseJsx(P p) {
       p.advance();
       attrs.push(JsxAttr(nameTok, parseExpr(p)));
       p.expect(kRbrace());
+    } else if (p.atInterpolation()) {
+      // The attribute already has a spelling for an expression, one line up.
+      p.failWith(perrInterpolatedHere(),
+                 "write `" + p.textOf(nameTok) + "={…}` to put an expression in an attribute");
+      p.skipInterpolation();
+      attrs.push(JsxAttr(nameTok, Expr(ExprKind.StrLit(0 - 1), p.lineAt(0), p.colAt(0))));
     } else {
       i32 strTok = p.expect(kString());
       attrs.push(JsxAttr(nameTok, Expr(ExprKind.StrLit(strTok), p.lineAt(0), p.colAt(0))));
@@ -2179,6 +2233,11 @@ Decl parseImport(P p) {
   i32 pathTok = -1;
   i32 prefixTok = -1;
   if (p.at1(kString())) { pathTok = p.advance(); }
+  else if (p.atInterpolation()) {
+    p.failWith(perrInterpolatedHere(),
+               "a module path is resolved before the program runs, so it cannot interpolate");
+    p.skipInterpolation();
+  }
   else if (p.at1(kIdent())) {
     string word = p.textAt(0);
     p.failWith(perrBareSpec(),

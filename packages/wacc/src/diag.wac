@@ -46,6 +46,9 @@ export string lexMessage(i32 code) {
   if (code == 10) {
     return "a block string opens with `\"\"\"` and a newline — the content starts on the next line";
   }
+  if (code == 11) {
+    return "a block string does not interpolate — `\\{` opens an expression only in a one-line literal";
+  }
   return "the lexer refused this";
 }
 
@@ -64,6 +67,7 @@ export string parseMessage(i32 code) {
   if (code == 30) { return "a keyword cannot be used as a name"; }
   if (code == 31) { return "'override' is not allowed on an enum method"; }
   if (code == 32) { return "an enum method must take 'this'"; }
+  if (code == 34) { return "this string cannot interpolate"; }
   if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
     // **wapy's structure parser, codes 40-53.** A `.wapy` file's diagnostics arrive as *parse* errors,
   // which is the right phase for most of them — `packages/wacc/src/wapyparse.wac` is a parser. The

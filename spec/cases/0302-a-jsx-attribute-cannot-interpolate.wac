@@ -1,0 +1,11 @@
+// expect: refused
+// why: JSX already spells an expression `a={e}`, so the interpolated literal is the one spelling
+//      too many — and the diagnostic names the attribute, so following it is the fix
+// from: design/lang/0013 D7
+import { Attr, Node } from "core";
+
+export i32 run() {
+  string who = "w";
+  Node n = <div a="x\{who}y"/>;
+  return 0;
+}

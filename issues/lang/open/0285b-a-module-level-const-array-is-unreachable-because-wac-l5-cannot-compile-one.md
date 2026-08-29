@@ -79,3 +79,51 @@ initialiser shows up as a compiler that cannot rebuild itself.
 ranges of exactly this shape and is used by `packages/box`'s `wc`. The language is fine. The rung
 that has to compile the compiler is what is missing it, which is why this is filed against the
 ladder rather than against the checker or the emitter.
+
+## Measured, and it is not about arrays — agent-b, 2026-08-29
+
+The title says *array*, and the reproduction uses one. Neither is the boundary. Put each piece
+through wac-L5 on its own — `deno run -A bootstrap/ts/l5run.ts <file>`:
+
+| source | wac-L5 |
+| --- | --- |
+| `const i32[] T = i32[](1,2,3);` and never read it | **accepted** |
+| `const i32 N = 7;` and never read it | **accepted** |
+| `const i32[] T = …; return T[1];` | refused at `[` |
+| `const i32[] T = …; return T.len();` | refused at `.` |
+| `const i32 N = 7; return N;` | refused at `;` |
+| `const i32 N = 7; return N + 1;` | refused at `+` |
+| `return ZZZ;` — a name nothing declares | refused at `;`, **identically** |
+| `i32[] T = i32[](1,2,3); return T[1];` — a local | accepted |
+| `const i32 N = 7;` *inside* a function | accepted |
+
+So the gap is **module-level `const` bindings of any type**, not arrays: a plain `const i32` is as
+unusable as a table. And the last two rows say what the mechanism is — a declared module-level const
+fails exactly the way an undefined name does, so wac-L5 parses the declaration, **drops it**, and
+then meets an unknown name. Its parser reports that as a token error rather than as an unknown name,
+which is why the messages in the reproduction above point at `.len(`, at a local's type and at a `[`:
+every one of them is the token *after* the name, and none of them is the const.
+
+### What this changes about fixing it
+
+**The declaration being accepted is the first thing to fix and the cheapest.** wac-L5 takes a
+`const` it cannot honour and says nothing, so the failure surfaces somewhere else entirely. Refusing
+it outright would cost a few lines and is safe today: **no file in `packages/wacc/src` declares a
+module-level `const`** — the constraint has been worked around for so long that `kinds.wac` spells
+its constants as `i32 kGt() { return 46; }`, which is the shape this issue's absence produced.
+
+**Then the two halves are not the same size.** A scalar `const` needs no wasm global at all — its
+value is known at compile time and can be inlined at each use, which is a symbol-table entry and a
+substitution. An array needs a real global plus a start function to fill it, which is the
+`i32[](1,2,3)` initialiser problem and the reason the non-`const` version panics the Rust ladder.
+Anyone doing this should take the scalar half first: it is most of the ergonomic win and none of the
+initialiser risk.
+
+**And do `issues/lang/0287b` first.** The step above — "record the const in the symbol table" —
+would make this *worse*, not better. wac-L5 emits every global as zero and skips its initialiser, so
+resolving the name would turn today's parse error into a silent `0`, which is the one failure a
+`const` cannot recover from: the program cannot assign it. Measured and demonstrated there.
+
+**Not attempted here.** `bootstrap/boot/l5.l4` is 4,056 lines of wac-L4 and every rung below has to
+keep building it; that is bootstrap surgery rather than a sitting, and it wants to be somebody's
+whole afternoon rather than the tail of somebody else's.

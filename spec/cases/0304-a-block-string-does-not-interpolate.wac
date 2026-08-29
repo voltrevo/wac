@@ -1,0 +1,12 @@
+// expect: refused
+// why: `lexBlockString` is a scanner of its own and D7 says nothing about block strings, so this
+//      is refused — and said by name, because the reader has just learned that a one-line literal
+//      does interpolate and is applying that rule one place it does not hold
+// from: design/lang/0013 D7
+string two() { return "xy"; }
+export i32 f() {
+  string s = """
+    a\{two()}b
+    """;
+  return s.len();
+}

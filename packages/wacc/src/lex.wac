@@ -74,6 +74,14 @@ export i32 errCharTooLong()         { return 7; }
 export i32 errBadUnicodeEscape()    { return 8; }
 export i32 errRawCharacter()        { return 9; }
 export i32 errBlockStringOpen()     { return 10; }
+/**
+ * `\{` in a block string — `design/lang/0013` D7.
+ *
+ * Its own code rather than `errUnknownEscape`, because since a one-line literal interpolates, the
+ * reader who writes this has learned a rule and is applying it one place it does not hold. *Unknown
+ * escape* is true and sends them looking for a typo.
+ */
+export i32 errBlockInterp()         { return 11; }
 
 // ── Character classification ──────────────────────────────────────────────────
 //
@@ -701,6 +709,11 @@ void lexBlockString(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
           fail(out, errBadUnicodeEscape(), startLine, startCol);
         }
         while (lx.pos < unicodeEscapeEnd(lx.src, escAt, lx.src.len())) { lx.advance(); }
+      } else if (esc == '{') {
+        // Not interpolation here: `lexBlockString` is a scanner of its own, and D7 says nothing
+        // about block strings. Said by name rather than as an unknown escape, since the reader has
+        // just learned that `"a\{e}b"` works.
+        fail(out, errBlockInterp(), startLine, startCol);
       } else if (!isStringEscape(esc)) {
         fail(out, errUnknownEscape(), startLine, startCol);
       }

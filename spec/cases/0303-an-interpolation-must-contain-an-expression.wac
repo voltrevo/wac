@@ -1,0 +1,5 @@
+// expect: refused
+// why: `\{}` opens an interpolation and closes it with nothing in it, and D7 makes the braces hold
+//      an expression rather than an optional one — the scanner must not read the `}` as content
+// from: design/lang/0013 D7
+export i32 f() { string s = "a\{}"; return s.len(); }
