@@ -20,10 +20,13 @@ export i32 f() { return G; }
 
 Not refused, not warned about — **zero**. The same program through `wacc` answers 7.
 
-To reproduce, put the source through `l5ToL0`, assemble it and call the export; `bootstrap/ts/l5.ts`
-and `bootstrap/js/assemble.js` are the two pieces, and `bootstrap/ts/spec_cases.ts` shows the shape.
-Note that a `spec/cases` entry will *not* reproduce it: those run through `wacc`, which is the
-compiler wac-L5 built rather than wac-L5 itself.
+    $ deno run -A bootstrap/ts/l5run.ts /tmp/g.wac
+    f() = 0
+
+`l5run.ts` exists because of this: a `spec/cases` entry will **not** reproduce it, since those run
+through `wacc` — the compiler wac-L5 built — which answers 7. Every other harness here asks
+questions of wac-L5's *output*, and a construct the top rung drops silently is one `wacc` handles
+correctly, so nothing built on `wacc` can see it.
 
 ## Why
 
