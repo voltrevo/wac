@@ -84,10 +84,15 @@ increment despite the reference's message naming only `i32` and `i64`. `is` with
 right wants a reference that has a hierarchy to test, so a `fn[…]` is refused there — `f is null` on
 a nullable one is a different question and is fine.
 
-**A packed type — `u8 i8 u16 i16` — cannot be cast**, in either direction. `n as u8` and
-`a[0] as i32` for a `u8[]` are both refused: a packed value is read and widened where it sits, and
+`[§wac-cast-packed-v7nq4mj]` **A packed type — `u8 i8 u16 i16` — cannot be cast**, in either
+direction. `n as u8` and `a[0] as i32` for a `u8[]` are both refused: a packed value is read and widened where it sits, and
 there is no slot to hold the result of a conversion. It is an array element and nowhere else, so it
 is equally not a parameter, a local, a return type or a struct field.
+
+The refusal names *that* rule and not a wrong operator. `as`, `as!` and `as~` are all rejected for
+this, so a message about which operator to reach for sends a reader round three spellings that cannot
+work — `issues/lang/0289b` is what that cost. The diagnostic is the one for a packed type used where a
+value is wanted, which is the fact behind both.
 
 Bitwise (`&`, `|`, `^`, `~`) require matching types — `i32` or `i64` only.
 

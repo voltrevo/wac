@@ -105,6 +105,9 @@ string[] checkSrc() {
 // errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity,
 // errPackedPosition, errWrongCastOp
 //
+// The packed row is `[§wac-cast-packed-v7nq4mj]`, which was a stated rule with nothing measuring it
+// until this table grew a row for it.
+//
 // **The last two were added the day `errPackedPosition` changed meaning** — `issues/system/0234a`
 // moved the packed *cast* onto it, so a table that pinned neither would have agreed with whatever the
 // constants said afterwards. That is this table's own argument, from the side where it bites: the
