@@ -65,10 +65,10 @@ test 6s or below. That was `wac ctcompare` reading a journal's capacity rather t
 crossing into wasm rather than anything the host wrapper does. That half is closed too — the module
 folds its own journal now — and the file is **8s**, the chunk 25s. 0274b has the anatomy.
 
-**`packages/wac` is one file, and it is `buildcache_test.wac` at 105s.** Timed one at a time, the
-package's seventeen files:
+**`packages/wac` was one file, and it was `buildcache_test.wac` at 105s — now 6.6s.** Timed one at a
+time, the package's seventeen files:
 
-    105.7s  buildcache_test.wac        6 tests
+    105.7s  buildcache_test.wac        6 tests   (now 6.6s)
      12.2s  app_test.wac
       8.1s  testcli_test.wac
       7.3s  covdump_test.wac
@@ -195,6 +195,13 @@ core to put them on, and taking one would slow the other two agents rather than 
     floor         415s ->  357s -> ?
     suite         505s ->  452s -> ?
     crypto        334s ->  195s -> 25s
+    buildcache    105.7s        -> 6.6s
+
+**Item 2 is 95.6s off the suite's *work*, and how much of it is wall-clock is a separate question.**
+Four workers, and what a chunk costs only moves the run if that chunk was the one everything waited
+on. `packages/wac` was not obviously it, so the honest claim is the work figure — the next full gate
+prints the budget and will say. Recording it this way because a previous entry on this page claimed a
+wall-clock saving that a re-measurement took back.
 
 Three changes: `ctcompare` bounded by the journal's cursor; `Cli.call` caching the export it resolves
 instead of building a `v8::String` per call; and then `issues/system/0274b`'s second half, where the
@@ -255,11 +262,24 @@ exists.
    largest single file in the suite, and 2.6x the next in its package. Three hosts each compile a
    219-file program. That issue now also carries a profile of the compiler and, more usefully, the
    retraction of what the profile first appeared to show.
-2. **`buildcache_test.wac`, 105.7s**, more than half of `packages/wac`. Per *test*, because each
-   points `WAC_HOME` at a fresh directory — which is the point of a build-cache test and also makes
-   `wac run` recompile the compiler-as-a-program six times. Sharing that compile while keeping each
-   subject's cache fresh is possible and is a decision about what the test proves; see the section
-   above for why it was left.
+2. ~~**`buildcache_test.wac`, 105.7s**~~ — **done, 102.2s → 6.6s.** Each case points `WAC_HOME` at a
+   fresh directory, which is the point of a build-cache test, and each build went through
+   `wac run … wac.wac`, so the compile of the command was cold every time: 10.7s apiece. Per *case*
+   rather than per build, except in `test_the_directory_is_bounded`, which was 33.9s on its own —
+   with the bound at two, the compile's own cache entry was evicted by the very builds the case was
+   making, so it recompiled between iterations.
+
+   The command is built to a module once, by an ordinary `wac build`, and every case runs *that*
+   (`wac <module>.wasm build …`). The build cache decides when the module is stale, which is the only
+   staleness check here that cannot be wrong about which compiler is under test. What it proves is
+   unchanged and was checked rather than assumed: cutting `cacheKey` to `return ""` in
+   `packages/wac/src/wac.wac` turns five of the six red, so the module really is the checkout's
+   compiler and not the binary's seed.
+
+   Two things fell out. Each home now holds only its own case's entries, so the counting assertions
+   are totals rather than deltas and picking an entry out is a count rather than a match on the
+   length of the bytes just written. And three build helpers became one: they differed only in which
+   of two optional arguments they appended.
 3. **Process starts** — `issues/system/0197`, and **already being worked**, so read it before
    starting anything here. `harness/buildApp.ts` is the replacement builder, going through `wac app`
    at ~20ms against ~107ms, and `design/system/0009` is why `packages/platform/build.ts` is losing
