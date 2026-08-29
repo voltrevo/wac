@@ -5,32 +5,51 @@ does not work yet it says so and names the issue, rather than being left out.
 
 ## Getting the command
 
-**The supported way needs a checkout of this repository, Deno, and Cargo**, and it is the one to
-follow unless you have a reason not to:
+**One line, no clone, and no Rust:**
 
 ```sh
-git clone <this repo> wac && cd wac
-./bootstrap.sh                    # builds the compiler from source and puts `wac` on PATH
+curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh | sh -s -- --host deno
 ```
 
-Or with no clone at all:
+That builds the compiler from source and puts `wac` on your PATH. `--host nodejs` is the same command
+run by node instead. Neither needs cargo, a C++ toolchain, or npm.
+
+**Without `--host`, you get a native binary**, which is faster and needs Rust:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh | sh
 ```
 
-**There is no seed to fetch.** `bootstrap.sh` builds the compiler through a ladder of five rungs,
-the lowest of which is hand-written wasm assembly text — see `bootstrap/README.md`. It needs cargo
-and a C++ toolchain, checks for both before it starts, and reaches no network beyond the clone.
+`sh -s --` is how you pass arguments to a script that arrived on standard input; the script's own
+`--help` says so, because getting it wrong silently runs the default.
+
+From a clone it is the same script:
+
+```sh
+git clone https://github.com/voltrevo/wac wac && cd wac
+./bootstrap.sh                    # or --host deno|nodejs|wasmtime
+```
+
+What each host needs, checked before the script does any work rather than after:
+
+| `--host`             | needs                  | what you get                              |
+| -------------------- | ---------------------- | ----------------------------------------- |
+| `v8` *(default)*     | cargo, a C++ toolchain | a native binary, ~68 MB                    |
+| `wasmtime`           | cargo                  | a native binary with no JavaScript in it   |
+| `deno`               | deno                   | one JavaScript file with a shebang         |
+| `nodejs`             | node                   | the same file, run by node                 |
+
+**Every host produces the same `wac`.** The command is `packages/wac/src/wac.wac`, a wac program the
+host carries; what differs is the engine underneath it. So the JavaScript hosts are not a cut-down
+version — `packages/wacc/test/wac/commandparity_test.wac` holds every command they share to the same
+output on all of them.
+
+**There is no seed to fetch.** `bootstrap.sh` builds the compiler through a ladder of five rungs, the
+lowest of which is hand-written wasm assembly text — see `bootstrap/README.md` — and reaches no
+network beyond the clone, on any host.
 
 There used to be a second route that built the compiler with the TypeScript reference instead. That
 reference is deleted and so is the script that drove it: the ladder is the only way in.
-
-**There is a second way as of 2026-08-26** — `wac task wac:install --target deno` — which needs
-neither Cargo nor Rust and installs the same command to the same place. It is second rather than
-equal for one reason, stated where it is documented below: building it shells out to `deno bundle`,
-which fetches from npm the first time, so the route with no network requirement is this one. Nothing
-about the *result* is lesser; see "Without Cargo" below.
 
 **Why the path to the binary rather than a bare `wac task`.** Because you do not have one yet: that is
 what the second line builds and the third line installs. `wac task` is a subcommand of the `wac`
@@ -68,30 +87,36 @@ a manifest, a lockfile, a source file or a build product.
 **There is no release, no package manager entry and no prebuilt binary.** If that matters to you,
 this is the wrong week.
 
-### Without Cargo: compiling through Deno
+### Without Cargo: a JavaScript-hosted `wac`
 
-If you have Deno and not Rust, you can compile without installing `wac` at all. The repository's
-Deno-hosted compiler takes an entry and an output stem, from any directory:
-
-```sh
-deno run --allow-read --allow-write --allow-env --allow-run \
-  --import-map <wac>/deno.json <wac>/packages/platform/native.ts \
-  main.wac --allow-read -o out
-```
-
-That writes `out.wasm`, the same artefact `wac build` writes, and honours `@/` and a `wac.json5` the
-same way. It is slower — it is the reference front end plus wacc running as wasm under Deno rather than
-a binary — and it is a developer fallback rather than the supported route, which is
-`wac task wac:install`.
-
-**And a Deno- or Node-hosted `wac` command is a thing you can build**, which is not the same as the
-line above: that one compiles, and this one is the command.
+If you have Deno or Node and not Rust, `--host deno` and `--host nodejs` are the whole answer, and
+they are not a fallback — they build the same command from the same ladder:
 
 ```sh
-deno run -A <wac>/packages/platform/build.ts <wac>/packages/wac/src/wac.wac \
-  -o wac --target deno --allow-read --allow-write --allow-run --allow-env --allow-net
-./wac run main.wac                       # compile and run, no file in between
+./bootstrap.sh --host deno              # or --host nodejs
+wac run main.wac                        # compile and run, no file in between
 ```
+
+`-o PATH` writes the command somewhere and installs nothing, which is what you want if you would
+rather not touch your shell profile:
+
+```sh
+./bootstrap.sh --host deno -o ./wac
+./wac run main.wac
+```
+
+What you get is a single JavaScript file with a shebang instead of a 67 MB binary, and nothing that
+runs it needs to know which. It is slower than the native host on compiler-shaped work and identical
+in what it answers.
+
+**This section described two other routes until 2026-08-29, and both are gone.** One ran
+`packages/platform/native.ts` under Deno to compile without installing anything; the other built the
+command with `packages/platform/build.ts --target deno`. They needed npm — `build.ts` shells out to
+`deno bundle`, which fetches on first use — so the Cargo-free route was also the one that needed a
+network, which is the opposite of what somebody without Rust usually wants. `design/system/0009`
+replaced them: the bundler that flattens the host into one JavaScript file is now
+`packages/ts`, written in wac and run by the ladder, so `--host deno` needs no npm, no network and no
+`build.ts`. That builder is being removed.
 
 **The entry is `packages/wac/src/wac.wac`, and this line named the compiler's old example until
 2026-08-26** — packages/wacc/example/wacc.wac, unbackticked here because it no longer exists and
@@ -101,19 +126,24 @@ repoint, and repointed the others. So for a day the one documented Cargo-free wa
 named a deleted file. Everything the paragraphs below claim was still true of the program; the reader
 could not reach it.
 
-**And since 2026-08-26 you can install it rather than build it**, which is the difference between a
-command and a file you made:
+**Installing rather than building** is the difference between a command and a file you made, and it
+is the same script either way — `bootstrap.sh` installs unless you tell it not to:
 
 ```sh
-cd <wac> && wac task wac:install --target deno    # or --target node
-wac check src/main.wac                             # …and it is on PATH like any other
+./bootstrap.sh --host deno       # builds it and puts it on PATH
+wac check src/main.wac           # …and it is there like any other command
 ```
 
 Same `$WAC_HOME` layout as the native install, same one marked line in your shell profile, same
-`wac self uninstall` to take it away. `$WAC_HOME/bin/wac` is a JavaScript file with a shebang instead of a
-67 MB binary, and nothing that runs it needs to know which. `install.json5` records which you have.
+`wac self uninstall` to take it away. `install.json5` records which host you have.
 
-`--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
+**This said `wac task wac:install --target deno` until 2026-08-29**, and that command cannot work:
+`wac:install` is `bash bootstrap.sh --host v8` in `tasks.json5`, and `bootstrap.sh` has no `--target`
+— it would answer `unknown argument` and print its usage. The flag belonged to `build.ts`, which is
+not what installs anything. Worth stating rather than quietly correcting, because it is the shape of
+error a reader cannot debug: the command names a flag, so a failure reads as *their* mistake.
+
+`--host nodejs` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
 `build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
 built module with the grants that module's own manifest declares. `test --coverage` works here too,
 over a file or a directory, though a directory answers a narrower table than the binary used to —
@@ -151,7 +181,7 @@ missing because of how the command was built rather than because a host cannot h
 (`issues/system/0257c`). That is a change from what this
 section said until 2026-08-25, and the paragraph above is where it happened: one program, built for
 Deno or Node, answering `check`, `compile`, `build`, `bindgen`, `run`, `test` — a file or a directory,
-with or without `--coverage` — plus `sh`, `update`, `app`, `app-run`, `validate` and `uninstall`, and
+with or without `--coverage` — plus `sh`, `update`, `app`, `app-run`, `validate` and `self`, and
 `wac <prog.wasm>`. It is the same wac program the native binary
 carries, so "the same" is by construction rather than by care, and
 `packages/wacc/test/wac/commandparity_test.wac` measures it invocation by invocation anyway.
@@ -171,30 +201,20 @@ and resolve a project differently — reaching for one of those is what GitHub i
 originally about. Reach for the built command unless you are working on the compiler itself. And note
 that **`wac task check` is this repository's own TypeScript check**, not `wac check`.
 
-**One thing to know before you build it**: the hosted build shells out to `deno bundle`, which fetches
-`@esbuild/<your platform>` from npm the first time. The binary has no such step, so an offline
-environment is still a reason to install it.
+**Nothing on this page needs the network**, on any host, which was not true until 2026-08-29 and is
+worth stating because the warning it replaces is still quoted elsewhere.
 
-**That fetch used to happen in silence**, and twice — August and a later tour — somebody watched a
-command this page calls offline sit for ~72 and ~74 seconds and then fail on an npm URL. Since
-2026-08-26 a bundle still going after five seconds says so and names the package, and a failure that
-mentions npm says how to get it and how to avoid needing it:
+Building a runnable application is `wac app`, a subcommand of the one program every host carries, and
+it writes a preamble and a module — no JavaScript bundling and so no npm. Compiling, installing and
+running reach none either.
 
-```
-wac: still bundling (worker) — the first bundle on a machine downloads npm:@esbuild/linux-arm64,
-     which needs the network. `deno cache npm:@esbuild/linux-arm64` does it once, ahead of time.
-```
-
-`deno cache npm:@esbuild/<your platform>` is the one-time step if you would rather do it deliberately;
-nothing requires it. **And it is only the bundler.** Compiling and installing reach no npm at all —
-`./bootstrap.sh` is the offline route to the whole command, which is why the failure message names
-it.
-
-**One thing here does need the network, once.** Compiling does not: the two commands above complete
-under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*
-(`packages/platform/build.ts`) shells out to `deno bundle`, and Deno downloads `@esbuild` for your
-platform the first time it does — about 72 seconds of waiting and then a failure if you are offline.
-`issues/system/0228a` item 7 has the measurement.
+**What did need it was `packages/platform/build.ts`**, which shells out to `deno bundle` and so
+fetched `@esbuild/<your platform>` on first use: twice — August and a later tour — somebody watched a
+command this page called offline sit for ~72 and ~74 seconds and then fail on an npm URL
+(`issues/system/0228a` item 7). That builder is not how you build an application any more, and
+`design/system/0009` is removing what is left of it. The diagnostic added for it in 2026-08-26 — a
+bundle still going after five seconds naming the package — remains where `build.ts` is still called
+from inside this repository.
 
 ## The smallest program
 
@@ -374,6 +394,7 @@ wac check   src/main.wac              # diagnostics, nothing written
 wac run     src/main.wac [args…]      # compile to a temporary file and run
 wac build   src/main.wac -o hello     # hello.wasm — one file, nothing beside it
 wac hello.wasm                        # run a built artefact — the manifest says what it needs
+wac app     src/main.wac -o hello     # an executable you can run directly: ./hello
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # src/main.gen.ts — the glue a JS host calls it through
 ```
@@ -390,6 +411,16 @@ $ wac argsprog.wasm -- one two     # the program is passed:  [--][one][two]
 ```
 
 Reported as friction on GitHub issue 22, where a habit formed on `run` was carried to an artefact.
+
+**`app` against `build`**: `build` writes a module you run with `wac hello.wasm`; `app` writes a file
+you run as `./hello`. The executable is a short preamble in front of that same module, and the
+preamble finds the runtime with `command -v wac` — so it is not a static binary, and a machine
+without `wac` gets a sentence saying so rather than a confusing failure:
+
+```
+./hello: needs the wac command on PATH.
+  https://github.com/voltrevo/wac — ./bootstrap.sh builds and installs it.
+```
 
 **The manifest is inside the module**, in a `wac.manifest` custom section — not a file beside it.
 That is what makes a built artefact one file you can hand to somebody: `wac hello.wasm` reads the

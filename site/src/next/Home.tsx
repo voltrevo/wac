@@ -103,6 +103,16 @@ function useDemosBuilt(): boolean {
   return built;
 }
 
+/**
+ * The install line, which the front page did not have.
+ *
+ * The reader has just watched a shell run; the next question is how to get it, and the answer was a
+ * link into GitHub. `--host deno` rather than the default on purpose: it is the line that works for
+ * the most people — no Rust, no C++ toolchain, no npm — and the default is one sentence away.
+ */
+const GET_IT = `$ curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh \\
+    | sh -s -- --host deno`;
+
 export default function Home() {
   const demosBuilt = useDemosBuilt();
   return (
@@ -207,6 +217,17 @@ export default function Home() {
             The shell agrees with GNU bash on <Lead>{TOTALS.corpus} differential scripts</Lead>, on
             standard output and exit status. <A href="#/run">Two more running here →</A>
           </span>
+        </P>
+      </Section>
+
+      {/* ── Get it ────────────────────────────────────────────────────────── */}
+      <Section id="get" kicker="and you can have it" title="One line, no clone, no Rust">
+        <Code label="puts `wac` on your PATH" lang="text" code={GET_IT} />
+        <P>
+          It builds the compiler from source through the ladder, so there is no seed to fetch and
+          nothing from npm. Drop the {m({ children: "-s -- --host deno" })} for the default, a native
+          binary on V8, which is faster and needs cargo and a C++ toolchain — every host carries the
+          same command. <A href="#/start">Using it in a project of your own →</A>
         </P>
       </Section>
 

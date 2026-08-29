@@ -51,7 +51,7 @@ globalThis.addEventListener("unload", () => { Deno.removeSync(dir, { recursive: 
 // Snippets live in `src/snippets.ts` (the tour) and beside the page that prints only its own.
 // A name exists once across all of them.
 const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.tsx",
-  "next/Bootstrap.tsx"]
+  "next/Bootstrap.tsx", "next/Start.tsx"]
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
@@ -152,6 +152,10 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
     // that page are not wac and are not here: L0 is wasm assembly text and L1 is s-expressions,
     // and a compiler that accepted either would be the thing going wrong.
     ["EX_L5", "a.wac"],
+    // The "use it" page's first program, which a reader is expected to paste into an empty
+    // directory. It is the only snippet here that imports a capability, so it also checks that
+    // `std/platform.wac` resolves as a built-in rather than as a file the reader has to have.
+    ["EX_START_HELLO", "a.wac"],
   ] as const) {
     const r = compile({ [file]: await snippet(name) }, file);
     if (!r.ok) {
@@ -620,6 +624,11 @@ Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", a
  * subcommand of that word. `wac task` is in the page, so `wac task wac:install` passes on its first
  * two words; that is deliberate, since the task registry is not the CLI page's to enumerate.
  *
+ * **A file is not a subcommand**, which the lookahead below is for. `wac hello.wasm` runs a built
+ * module — the form `spec/cli/wac.md` writes as `wac <module.wasm>` — and reading it as a `hello`
+ * subcommand made this refuse a page that was right. Any lowercase stem would have done it, so the
+ * effect was that documenting the one command whose argument is a *file* was impossible.
+ *
  * **Every page, read from the directory, rather than `PAGES`.** That list exists so `snippet()` can
  * find an `EX_*` constant and holds the five pages that declare one — `Roadmap.tsx` is not among
  * them, and `Roadmap.tsx` is where both stale spellings were. A guard that borrowed the list would
@@ -635,7 +644,7 @@ Deno.test("site: the command spellings the site prints are the ones the CLI page
   const seen = new Set<string>();
   for (const file of files) {
     const src = await Deno.readTextFile(file);
-    for (const m of src.matchAll(/(?:children: "|`)wac ([a-z][a-z]*)/g)) seen.add(m[1]);
+    for (const m of src.matchAll(/(?:children: "|`)wac ([a-z][a-z]*)(?![\w.])/g)) seen.add(m[1]);
   }
   const missing = [...seen].filter((word) => !cli.includes(`wac ${word}`)).sort();
   if (missing.length > 0) {

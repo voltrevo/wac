@@ -9,6 +9,23 @@ A C-family language for WebAssembly GC, and the systems stack written in it.
 **[Website](https://voltrevo.github.io/wac/)** · **[Get the command](docs/your-own-project.md)** ·
 **[Language](spec/)** · **[Packages](packages/)** · **[Docs](docs/)** · **[Design](design/)**
 
+## Get it
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh | sh -s -- --host deno
+```
+
+One line, no clone and no Rust. It builds the compiler from source — through a ladder of five rungs
+whose lowest is hand-written wasm assembly text — and puts `wac` on your PATH. There is no seed to
+fetch and nothing from npm.
+
+Drop the `-s -- --host deno` for the default, a native binary on V8, which is faster and needs cargo
+and a C++ toolchain. `--host nodejs` and `--host wasmtime` are the other two. **Every host carries the
+same command**, because the command is a wac program; what differs is the engine underneath it.
+
+Then [**using wac in a project of your own**](docs/your-own-project.md): a project file, dependencies,
+building, running and testing — every step run in an empty directory outside this repository.
+
 ## Meet wacland: userland written in wac
 
 A shell, 65 applets and a filesystem — and all of it is wac. Not busybox compiled to wasm, not a
@@ -64,8 +81,9 @@ Structs with methods and subtyping, monomorphised generics, enums with payloads 
 cost — `as` lossless, `as!` checked, `as~` lossy, `as@` raw.
 
 The collector owns the heap, so there is no allocator to write and no linear memory in the artifact.
-The compiler is about 19,000 lines of TypeScript with no LLVM, no binaryen and nothing to install,
-and it runs in a browser as readily as on a command line.
+The compiler is about 43,000 lines of wac with no LLVM, no binaryen and nothing to install, and it
+runs in a browser as readily as on a command line. It used to be 19,000 lines of TypeScript; that
+reference was deleted on 2026-08-28 and this line described it for a day.
 
 [`spec/tour.wac`](spec/tour.wac) is the whole language in one annotated file that compiles and
 self-tests — much faster than reading the specification, and the right starting point before writing
@@ -78,14 +96,14 @@ tell which produced a given declaration. See [`spec/spec/wapy.md`](spec/spec/wap
 
 ## The compiler, written in wac
 
-The compiler above is TypeScript. It is being replaced by itself. `packages/wacc` is that compiler
-written in wac — lexer, parser, type checker, emitter — and a compiler is the program shape this
+It replaced itself, and finished on 2026-08-28. `packages/wacc` is the compiler written in wac —
+lexer, parser, type checker, emitter — and a compiler is the program shape this
 language is worst at: syntax trees want sum types, symbol tables want generics, everything wants
 strings. Writing one is how the language finds out what it is missing, with a real consumer rather
 than by argument.
 
 ```
-stage A   wacc, built by the TypeScript compiler
+stage A   wacc, built by the ladder — by the TypeScript reference until it was deleted
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
