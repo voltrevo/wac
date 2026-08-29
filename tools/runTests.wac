@@ -79,7 +79,7 @@ import { contains, startsWith, endsWith, joined, has, splitLines }
   from "../packages/wactest/src/strings.wac";
 import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, markRun,
          warningsSoFar, clearWarnings, envOf } from "./wac/suitegate.wac";
-import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles }
+import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles, mergedTimes }
   from "./wac/suitehouse.wac";
 
 /** The roots the lane walks — `harness/testLane.ts`'s `LANE_ROOTS`, and one list for its reason. */
@@ -552,13 +552,15 @@ i32 recordedMs(string[] lines, string key) {
  * Only the queued chunks: the serial runs are not ordered, and `Took.key` is empty for them.
  */
 void writeTimes(Cli cli, Took[] took, i32 n) {
-  string out = "";
+  Names fresh = Names.create();
   for (i32 i = 0; i < n; i++) {
     if (took[i].key == "") { continue; }
-    out = out + took[i].key + "\t" + itoa64(took[i].ms) + "\n";
+    fresh.push(took[i].key + "\t" + itoa64(took[i].ms));
   }
-  if (out == "") { return; }
-  cli.writeFile(timesPath(cli), out.toBytes()).wait();
+  if (fresh.n == 0) { return; }
+  // Merged rather than replaced — `mergedTimes` has the reason, which is a narrowed run erasing the
+  // ordering the gate depends on.
+  cli.writeFile(timesPath(cli), mergedTimes(readTimes(cli), fresh.all()).toBytes()).wait();
 }
 
 /**

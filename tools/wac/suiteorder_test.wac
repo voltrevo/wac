@@ -24,11 +24,12 @@
 // test writing the real path would be a second writer on the file the run around it is about to
 // write.
 
-import { Core, Cli, Change, Exec, execReason } from "std/platform.wac";
+import { Core, Cli, Change, Exec, FileResult, execReason } from "std/platform.wac";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, freshDir } from "../../packages/wactest/src/host.wac";
 import { contains, splitLines, startsWith, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { mergedTimes } from "./suitehouse.wac";
 
 /** One `--dry` chunk line, reduced to the key `chunksOf` would have given it. */
 struct Parsed {
@@ -190,5 +191,59 @@ export string test_a_dry_run_of_one_large_directory_does_not_overflow_its_chunks
       + "wants pointing at whichever directory is now the largest");
 
   cli.remove(dir, true).wait();
+  return t.report();
+}
+
+
+/**
+ * **A narrowed run keeps the measurements it did not take.**
+ *
+ * `writeTimes` built its output from the chunks *this* run measured and wrote that over the file. A
+ * full suite measures every chunk, so the gate never noticed; `wac task test packages/fmt` measures
+ * one, and left `.cache/suite-times` holding a single line. Observed, not theorised: the file went
+ * from 59 chunks to 1.
+ *
+ * What that costs is the ordering this file is about. Every other chunk becomes unmeasured, the queue
+ * falls back to the file-count proxy, and the next full run pays for it until it rebuilds the file —
+ * `issues/system/0274b` put the difference between those two orderings at about 150s of idle
+ * workers. A developer running the tests for one package silently slowed the next push, and nothing
+ * said so, because the file is written and merely shorter.
+ *
+ * A measurement is a fact about a chunk rather than about the run that took it, so the file is merged:
+ * this run's keys replace their old lines and every other line stays.
+ *
+ * **Tested as a function rather than by running a narrowed suite**, which is not a thing a test may
+ * do — `wac task test <package>` takes the gate lock and starts the twenty-minute cooldown, so a test
+ * that called it would refuse on a machine that had just pushed and would sabotage the gate on one
+ * that was about to. That is why the merge is in `suitehouse.wac`.
+ */
+export string test_merging_the_times_file_keeps_what_this_run_did_not_measure(Core core, Cli cli) {
+  T t = T.create();
+  string was = "packages/a/test/wac\t100\npackages/b/test/wac#0\t200\npackages/b/test/wac#1\t300\n";
+
+  // A run that measured one of them: its line is replaced, the other two survive.
+  string got = mergedTimes(was, string[]("packages/b/test/wac#0\t999"));
+  t.isTrue(contains(got, "packages/a/test/wac\t100"), "an untouched key was dropped: " + got);
+  t.isTrue(contains(got, "packages/b/test/wac#1\t300"), "an untouched key was dropped: " + got);
+  t.isTrue(contains(got, "packages/b/test/wac#0\t999"), "the new measurement is missing: " + got);
+  t.isTrue(!contains(got, "packages/b/test/wac#0\t200"),
+      "the old measurement for a key this run measured is still there, so the file grows a second "
+      + "line for one chunk and `recordedMs` answers with whichever it meets first: " + got);
+
+  // **A prefix is not a key.** `packages/b/test/wac` and `packages/b/test/wac#0` share their start,
+  // and a merge that matched on prefixes would drop the first when the second was measured.
+  t.isTrue(contains(mergedTimes(was, string[]("packages/b/test/wac#0\t1")), "packages/a/test/wac"),
+      "matching on prefixes rather than on the whole key");
+  string one = mergedTimes("packages/b/test/wac\t100\n", string[]("packages/b/test/wac#0\t1"));
+  t.isTrue(contains(one, "packages/b/test/wac\t100"),
+      "`packages/b/test/wac` was dropped when `packages/b/test/wac#0` was measured — a directory that "
+      + "grows past one chunk would lose its own record: " + one);
+
+  // A first run has nothing to merge with, and a run that measured nothing does not reach here.
+  t.isTrue(contains(mergedTimes("", string[]("k\t1")), "k\t1"), "an empty file lost the new line");
+
+  // A line without a tab is not a record; keeping it would make the file unparseable to itself.
+  t.isTrue(!contains(mergedTimes("junk\n", string[]("k\t1")), "junk"),
+      "a line with no tab survived the merge");
   return t.report();
 }
