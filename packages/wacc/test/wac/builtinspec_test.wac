@@ -259,7 +259,7 @@ export string test_the_cheap_builtin_test_agrees_with_the_files_served() {
  * A built-in *prefix* that names no built-in says which ones there are.
  *
  * **The set is closed, so the set is the answer.** `core` and `std` are served from text inside the
- * compiler — there is no file to look for and no manifest that could declare one — so `core/nope.wac`
+ * compiler — there is no file to look for and no manifest that could declare one — so a mistyped one
  * is a typo with exactly five alternatives, and printing them is the whole of the help a reader
  * needs.
  *

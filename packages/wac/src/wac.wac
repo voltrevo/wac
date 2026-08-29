@@ -171,10 +171,10 @@ string noProject(string spec, string from) {
  * issue 22, a path the author never wrote and cannot find in their own source.
  */
 /**
- * What `Sources.why` says for `core/nope.wac` — a built-in *prefix* that names no built-in.
+ * What `Sources.why` says for a "core/" or "std/" specifier that names no built-in.
  *
  * **Separated from `noMapping` because the reader's mistake is different and so is the fix.** A bare
- * `sub/lib.wac` may be a mapping the manifest is missing; `core/nope.wac` cannot be — `core` and
+ * `sub/lib.wac` may be a mapping the manifest is missing; a mistyped "core/" module cannot be — `core` and
  * `std` are served from text inside this compiler and the set is closed, so the useful answer is the
  * set. Before `issues/system/0234a` this said *"cannot read …/core/nope.wac"*, which named a path
  * nobody wrote but did at least point at the file; refusing without naming the alternatives would
