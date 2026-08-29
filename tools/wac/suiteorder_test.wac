@@ -1,0 +1,128 @@
+// The suite queue runs its longest chunk first, and this is what says so.
+//
+// **Why it is worth a test.** The queue's wall time is its floor plus whatever the tail wastes, and
+// the tail is decided by one insertion sort in `chunksOf`. That sort used *file count* as a proxy for
+// cost, which was good enough while `packages/crypto`'s chunk was 195s and nothing could hide behind
+// it. `issues/system/0274b` took crypto to 25s and the proxy stopped being good enough in the same
+// commit — the suite's own footer, before and after:
+//
+//     before   1283s of work, floor 357s, wall 452s    ->   95s of loss
+//     after    1045s of work, floor 299s, wall 450s    ->  151s of loss
+//
+// 238s came out of the work and 2s came off the wall, so all of it went into idle workers. The fix is
+// to order by the previous run's measurements, kept in `.cache/suite-times`; this checks the ordering
+// actually reads them, because a file that is written and never read looks exactly the same from
+// outside as one that works.
+//
+// **The keys come from the runner rather than from here.** An earlier draft named
+// `packages/wacc/test/wac#6` directly and would have gone quietly vacuous the day wacc's file count
+// changed the number of parts — the key would name nothing, both chunks would be unknown, and the
+// assertion would pass for the wrong reason. So this asks `--dry` what the chunks are, then makes the
+// *second* of a pair expensive and the first cheap, and requires them to swap.
+//
+// **`WAC_SUITE_TIMES` is why the runner has that variable.** `tools/` runs inside the suite, so a
+// test writing the real path would be a second writer on the file the run around it is about to
+// write.
+
+import { Core, Cli, Change, Exec, execReason } from "std/platform.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, freshDir } from "../../packages/wactest/src/host.wac";
+import { contains, splitLines, startsWith, trimmed } from "../../packages/wactest/src/strings.wac";
+import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+
+/** One `--dry` chunk line, reduced to the key `chunksOf` would have given it. */
+struct Parsed {
+  bool ok;
+  string key;
+  string label;
+}
+
+/**
+ * `   chunk 3 (12): packages/wacc/test/wac — 12 of its files (4 of 7)` → `packages/wacc/test/wac#3`.
+ *
+ * A whole-directory chunk has no `(k of n)` and its key is the directory, which this reports too —
+ * the caller wants a *split* one and checks.
+ */
+Parsed parseChunk(string line) {
+  string t = trimmed(line);
+  if (!startsWith(t, "chunk ")) { return Parsed(false, "", ""); }
+  i32 colon = t.indexOf(": ");
+  if (colon < 0) { return Parsed(false, "", ""); }
+  string label = t.slice(colon + 2, t.len());
+  i32 dash = label.indexOf(" — ");
+  string dir = dash < 0 ? label : label.slice(0, dash);
+  // The part number is the last `(` on the line, and only a split chunk has one.
+  i32 open = 0 - 1;
+  for (i32 i = 0; i < label.len(); i++) {
+    if (label.slice(i, i + 1) == "(") { open = i; }
+  }
+  if (open < 0 || dash < 0) { return Parsed(true, dir, label); }
+  string rest = label.slice(open + 1, label.len());
+  i32 of = rest.indexOf(" of ");
+  if (of <= 0) { return Parsed(true, dir, label); }
+  i32 k = atoi(rest.slice(0, of)) - 1;
+  return Parsed(true, dir + "#" + itoa(k), label);
+}
+
+/** `wac task test -- --dry`, with the times file pointed wherever the caller wants. */
+string dryRun(T t, Cli cli, string times) {
+  Exec r = cli.execWith(binaryPath(cli),
+      string[]("task", "test", "--", "--dry"), u8[0](),
+      string[]("WAC_SUITE_TIMES=" + times), false, false).wait();
+  t.isTrue(r.ran() && r.status == 0, "the dry run — " + execReason(r));
+  if (!r.ran() || r.status != 0) { return ""; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+/** Where `key` appears in the chunk order, or -1. */
+i32 positionOf(string[] lines, string key) {
+  i32 at = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    Parsed p = parseChunk(lines[i]);
+    if (!p.ok) { continue; }
+    if (p.key == key) { return at; }
+    at = at + 1;
+  }
+  return 0 - 1;
+}
+
+export string test_a_chunk_recorded_as_slow_is_dispatched_before_one_recorded_as_fast(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/suiteorder-probe";
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  string times = dir + "/times";
+
+  // A file that does not exist is the fresh-checkout case, and the order it gives is the one the
+  // proxy always gave. It is also where the pair to swap comes from.
+  string[] first = splitLines(dryRun(t, cli, times));
+  string a = "";
+  string b = "";
+  for (i32 i = 0; i < first.len(); i++) {
+    Parsed p = parseChunk(first[i]);
+    if (!p.ok || !contains(p.key, "#")) { continue; }
+    if (a == "") { a = p.key; continue; }
+    if (b == "") { b = p.key; }
+  }
+  t.isTrue(a != "" && b != "", "the dry run named two split chunks — got '" + a + "' and '" + b + "'");
+  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+  t.isTrue(positionOf(first, a) < positionOf(first, b),
+           "with no file, " + a + " should still come before " + b);
+
+  // Now say the second one is the expensive one. Nothing else is recorded, so every other chunk is
+  // unknown and sorts above both — what is being checked is this pair's order relative to each other.
+  Change wrote = cli.writeFile(times, (a + "\t1000\n" + b + "\t900000\n").toBytes()).wait();
+  t.isTrue(wrote.ok(), "writing the times file — " + wrote.message);
+
+  string[] second = splitLines(dryRun(t, cli, times));
+  i32 pa = positionOf(second, a);
+  i32 pb = positionOf(second, b);
+  t.isTrue(pa >= 0 && pb >= 0, "both chunks are still in the order: " + itoa(pa) + " and " + itoa(pb));
+  t.isTrue(pb < pa,
+           "900,000ms should be dispatched before 1,000ms — " + b + " is at " + itoa(pb) +
+           " and " + a + " at " + itoa(pa));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

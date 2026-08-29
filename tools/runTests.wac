@@ -75,7 +75,8 @@
 
 import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std/platform.wac";
 import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
-import { contains, startsWith, endsWith, joined, has } from "../packages/wactest/src/strings.wac";
+import { contains, startsWith, endsWith, joined, has, splitLines }
+  from "../packages/wactest/src/strings.wac";
 import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, warningsSoFar,
          clearWarnings, envOf } from "./wac/suitegate.wac";
 import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles }
@@ -398,6 +399,15 @@ string[] filesDeclaring(Declared[] all, string lane) {
 struct Chunk {
   string[] targets;
   string label;
+  /**
+   * What `.cache/suite-times` records this chunk's cost under — stable across runs, unlike `label`.
+   *
+   * Two chunks of one directory can carry the *same* label: it is spelled from the target count, and
+   * `parts` divides evenly more often than not. That already cost the report something — the summary
+   * dedupes on the label, so the second of a matching pair never appeared in the slowest-three list —
+   * and it would quietly halve the ordering below.
+   */
+  string key;
 }
 
 /**
@@ -407,7 +417,7 @@ struct Chunk {
  */
 Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
   Names labels = Names.create();
-  Chunk[] out = Chunk[dirs.len() * 4](fill: Chunk(string[0](fill: ""), ""));
+  Chunk[] out = Chunk[dirs.len() * 4](fill: Chunk(string[0](fill: ""), "", ""));
   i32 n = 0;
   for (i32 d = 0; d < dirs.len(); d++) {
     Names keep = Names.create();
@@ -418,7 +428,7 @@ Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
     string[] mine = keep.all();
     if (mine.len() == 0) { continue; }
     if (mine.len() <= chunkSize()) {
-      out[n] = Chunk(string[](dirs[d]), dirs[d]);
+      out[n] = Chunk(string[](dirs[d]), dirs[d], dirs[d]);
       n = n + 1;
       continue;
     }
@@ -427,20 +437,104 @@ Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
       Names part = Names.create();
       for (i32 i = k; i < mine.len(); i = i + parts) { part.push(mine[i]); }
       string[] targets = part.all();
-      out[n] = Chunk(targets, dirs[d] + " — " + itoa(targets.len()) + " of its files");
+      // **`(k of parts)`, because without it two chunks of one directory are the same string.**
+      // `parts` divides evenly more often than not, so `--dry` printed the same line twice for
+      // different work, and the footer — which dedupes the slowest runs by label — showed one of
+      // them and silently dropped the other. That is the exact information somebody reading either
+      // is after.
+      out[n] = Chunk(targets, dirs[d] + " — " + itoa(targets.len()) + " of its files ("
+                              + itoa(k + 1) + " of " + itoa(parts) + ")",
+                     dirs[d] + "#" + itoa(k));
       n = n + 1;
     }
   }
-  // Biggest first, which is a weak proxy for cost and all the ordering a queue needs.
-  Chunk[] queue = Chunk[n](fill: Chunk(string[0](fill: ""), ""));
+  // **Longest first, from the last run's own measurements.** The queue's wall time is its floor plus
+  // whatever the tail wastes, and the tail is decided here. Ordering by *file count* — which is what
+  // this did, and what the comment called "a weak proxy for cost" — was good enough while one chunk
+  // dominated: `packages/crypto`'s was 195s and nothing could hide behind it. `issues/system/0274b`
+  // took crypto to 25s and the proxy stopped being good enough in the same commit:
+  //
+  //     before   1283s of work, floor 357s, wall 452s    ->   95s of loss
+  //     after    1045s of work, floor 299s, wall 450s    ->  151s of loss
+  //
+  // The work fell by 238s and the wall by 2s, so *all* of it went into idle workers. A file count
+  // cannot see that `packages/wacc`'s twelve files are 183s and another twelve are 79s; a stopwatch
+  // can, and the runner already holds one — `Took` is recorded per chunk for the footer and is now
+  // written out for the next run to read.
+  //
+  // **An unmeasured chunk goes first**, above every measured one, ordered among its own kind by the
+  // old proxy. That is the safe end: an unknown is a directory that is new or has just been re-split,
+  // and putting it last is how this fails. A checkout with no file behaves exactly as before.
+  string[] lines = splitLines(readTimes(cli));
+  i32[] cost = i32[n](fill: 0);
+  for (i32 i = 0; i < n; i++) {
+    i32 ms = recordedMs(lines, out[i].key);
+    cost[i] = ms < 0 ? 2000000000 + out[i].targets.len() : ms;
+  }
+  Chunk[] queue = Chunk[n](fill: Chunk(string[0](fill: ""), "", ""));
   for (i32 i = 0; i < n; i++) { queue[i] = out[i]; }
   for (i32 i = 1; i < n; i++) {
     Chunk v = queue[i];
+    i32 c = cost[i];
     i32 k = i - 1;
-    while (k >= 0 && queue[k].targets.len() < v.targets.len()) { queue[k + 1] = queue[k]; k = k - 1; }
+    while (k >= 0 && cost[k] < c) {
+      queue[k + 1] = queue[k];
+      cost[k + 1] = cost[k];
+      k = k - 1;
+    }
     queue[k + 1] = v;
+    cost[k + 1] = c;
   }
   return queue;
+}
+
+/**
+ * Where the queue's own stopwatch is kept, one `key<TAB>ms` line per chunk.
+ *
+ * **`WAC_SUITE_TIMES` moves it, and that exists for one reason.** The `tools/` tests run *inside* a
+ * suite, so a test of this ordering that used the real path would write the file the run around it is
+ * about to write — two writers on one path, where the loser is whichever finished first. The
+ * override is what lets `tools/wac/suiteorder_test.wac` have a file of its own.
+ */
+string timesPath(Cli cli) {
+  string set = envOf(cli, "WAC_SUITE_TIMES");
+  return set == "" ? ".cache/suite-times" : set;
+}
+
+/** Last run's file, or empty — a checkout that has never run one is the ordinary first case. */
+string readTimes(Cli cli) {
+  FileResult f = cli.readFile(timesPath(cli)).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** What `key` cost last time in milliseconds, or -1 when this run has never seen it. */
+i32 recordedMs(string[] lines, string key) {
+  for (i32 i = 0; i < lines.len(); i++) {
+    i32 tab = lines[i].indexOf("\t");
+    if (tab <= 0) { continue; }
+    if (lines[i].slice(0, tab) != key) { continue; }
+    return atoi(lines[i].slice(tab + 1, lines[i].len()));
+  }
+  return 0 - 1;
+}
+
+/**
+ * Write what this run measured, for the next one to order by.
+ *
+ * **Written after a failing run too.** A red chunk still took its time, and a failing run is the one
+ * somebody repeats immediately — leaving it with the ordering from before the change that broke it
+ * would be the one case where this is worth having and does not have it.
+ *
+ * Only the queued chunks: the serial runs are not ordered, and `Took.key` is empty for them.
+ */
+void writeTimes(Cli cli, Took[] took, i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) {
+    if (took[i].key == "") { continue; }
+    out = out + took[i].key + "\t" + itoa64(took[i].ms) + "\n";
+  }
+  if (out == "") { return; }
+  cli.writeFile(timesPath(cli), out.toBytes()).wait();
 }
 
 /**
@@ -576,10 +670,12 @@ void emit(Core core, string tag, string text) {
   }
 }
 
-/** What one run in a lane cost, for the report. */
+/** What one run in a lane cost, for the report and for the next run's ordering. */
 struct Took {
   string what;
   i64 ms;
+  /** `Chunk.key`, or empty for the serial runs, which are not queued and so are never ordered. */
+  string key;
 }
 
 i64 nowMs(Core core) { return core.monotonicNanos().wait() / (1000000 as i64); }
@@ -1026,7 +1122,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     }
   }
 
-  Took[] took = Took[queue.len() + f.alone.len() + 1](fill: Took("", 0 as i64));
+  Took[] took = Took[queue.len() + f.alone.len() + 1](fill: Took("", 0 as i64, ""));
   i32 tookN = 0;
   i32 files = 0;
   i32 tests = 0;
@@ -1138,7 +1234,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     Exec r = live[slot].wait();
     Chunk done = queue[slotItem[slot]];
     i64 ms = nowMs(core) - slotStart[slot];
-    took[tookN] = Took(done.label, ms);
+    took[tookN] = Took(done.label, ms, done.key);
     tookN = tookN + 1;
     // The rest of the log, partial last line included: the child is gone, so nothing more is coming
     // and what it managed to write is what it said.
@@ -1205,7 +1301,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
       // No `--ignore` here: this run *names a file*, which is the answer to which files run.
       Exec r = cli.execWith(wac, wacArgs(string[](serial[i]), string[0](fill: "")), u8[0](),
                             string[0](fill: ""), false, false).wait();
-      took[tookN] = Took(serial[i] + " (alone)", nowMs(core) - started);
+      took[tookN] = Took(serial[i] + " (alone)", nowMs(core) - started, "");
       tookN = tookN + 1;
       string alone = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
       core.log(trimEnd(alone));
@@ -1219,6 +1315,10 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
       if (!r.ran() && wacCode == 0) { wacCode = 1; }
     }
   }
+
+  // Before the report rather than after it, so a run killed while printing still leaves its
+  // measurements behind — the ordering is the thing that survives a bad run usefully.
+  writeTimes(cli, took, tookN);
 
   // ── what the lane cost ───────────────────────────────────────────────────────────────────────
   i64 work = 0 as i64;
