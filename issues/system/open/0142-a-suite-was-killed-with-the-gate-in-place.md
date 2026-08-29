@@ -606,19 +606,14 @@ holding a couple of gigabytes on a box sized for that to *almost* fit.
 `/tmp/push-suite-0VN1NK.log` at the same second, and the run lasted about **twelve minutes**. The log
 is **0 bytes**. Not truncated, not ending mid-test: empty, after twelve minutes of something.
 
-**The new detail is what happened next.** push.sh went round its loop, and attempt 2 was *refused by
-the cooldown* — "agent-b ran one 12m ago — the cooldown is 20m". That is the retry path, which sets
-`WAC_SUITE_RETRY=1`, and the comment at `tools/push.sh:238` says in as many words that a retry is not
-a second suite in the cooldown's sense. So either the variable is not reaching `suitegate.wac` or the
-skip does not cover this branch — and the cost is the whole point of the retry being lost: the batch
-waits another twenty minutes having learned nothing.
+I also wrote here that push.sh's *retry* had then been refused by the cooldown despite setting
+`WAC_SUITE_RETRY=1`, and guessed that either the variable was not reaching `suitegate.wac` or the skip
+did not cover that branch. **Both guesses were wrong and the claim is withdrawn.** `takeAs` reads
+`WAC_SUITE_RETRY` and wraps the whole cooldown check in `if (!retry)`, so the skip is honoured; and
+push.sh only takes the retry path when the suite exits **75**, which a run that lasted twelve minutes
+did not. What I saw was attempt 1 of a later invocation being refused on its own merits.
 
-Worth knowing for whoever picks this up: the two symptoms may be one thing or two. A run that
-produces no output for twelve minutes and a retry that cannot start are separately reproducible
-questions, and the second one is a *reading* of the code rather than a race — `WAC_SUITE_RETRY=1` is
-either honoured on that path or it is not.
+The empty log after twelve minutes stands, and is this page's symptom. Nothing about the retry does.
 
-**Not filed as a new issue** because the empty log is exactly this page's symptom. The retry half is
-the part that is new here, and it is cheap to check without waiting for a kill: run `push.sh` twice
-inside twenty minutes and see whether the second one's *retry* is refused.
+**Not filed as a new issue** because the empty log is exactly this page's symptom.
 
