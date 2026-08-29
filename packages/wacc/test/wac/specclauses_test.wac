@@ -410,10 +410,12 @@ export string test_current_wording_for_a_missing_paren() {
  * opened here`, on the line that opened the block, above a `...` elision. Neither compiler emits it
  * and wacc's diagnostic wire has one position per diagnostic, so it cannot: `issues/lang/0232a`.
  *
- * And it is the one clause where the two compilers disagree with **each other** rather than only with
- * the spec: wacc says `found 'eof'` and the reference says `found ''`. The README's parity row claims
- * *"the wording agrees where both speak"*; here it does not, and one of the two spellings is a token
- * name leaking into prose.
+ * It was also the one clause where the two compilers disagreed with **each other** rather than only
+ * with the spec: wacc said `found 'eof'` and the reference said `found ''`, and `issues/lang/0156`
+ * called that a token name leaking into prose. The reference went on 2026-08-28, so the disagreement
+ * went with it and the leak was what was left — `foundAt` in `parse.wac` now says `end of file`,
+ * unquoted, because the quotes elsewhere mean *this is what is written there* and at end of input
+ * nothing is.
  */
 export string test_current_wording_for_a_missing_brace() {
   T t = T.create();
@@ -421,8 +423,8 @@ export string test_current_wording_for_a_missing_brace() {
   t.isTrue(d.len() == 4, "wacc reported nothing for an unclosed brace");
   if (d.len() != 4) { return t.report(); }
   t.eqStr(d[0], "unexpected token", "the message wacc uses today — spec: `expected '}'`");
-  t.eqStr(d[1], "expected '}', found 'eof'",
-      "the annotation — the reference says `found ''` for the same thing");
+  t.eqStr(d[1], "expected '}', found end of file",
+      "the annotation — unquoted, because there is no source text at end of input to quote");
   return t.report();
 }
 

@@ -164,7 +164,7 @@ export struct P {
   i32 expect(this, i32 kind) {
     if (this.at1(kind)) { return this.advance(); }
     this.failWith(perrExpected(),
-                  "expected '" + kindName(kind) + "', found '" + this.textAt(0) + "'");
+                  "expected '" + kindName(kind) + "', found " + this.foundAt(0));
     return this.at;
   }
 
@@ -172,6 +172,21 @@ export struct P {
   i32 widthAt(const this, i32 offset) {
     i32 len = this.lx.tokens[this.idx(offset) * tokenStride() + 2];
     return len > 0 ? len : 1;
+  }
+
+  /**
+   * How a diagnostic names the token at `offset`: the source text in quotes, or `end of file`.
+   *
+   * **The quotes say "this is what is written there"**, so the one token with nothing written must
+   * not wear them. End of input used to render as `found 'eof'` — an internal kind name, quoted as
+   * though the file ended with the letters e, o and f. `issues/lang/0156` found it by noticing the
+   * two compilers spelled it differently, and called it a token name leaking into prose; the other
+   * spelling went with the reference, so what is left is just the leak. `issues/lang/0156`.
+   */
+  string foundAt(const this, i32 offset) {
+    i32 t = this.idx(offset);
+    if (this.lx.tokens[t * tokenStride()] == kEof()) { return "end of file"; }
+    return "'" + this.textAt(offset) + "'";
   }
 
   /** The source text of a token near the cursor, for a diagnostic that has to quote it. */
@@ -193,7 +208,7 @@ export struct P {
    * `;`* — which of the two is on the line the reader is staring at.
    */
   void fail(this, i32 code) {
-    this.failWith(code, "found '" + this.textAt(0) + "'");
+    this.failWith(code, "found " + this.foundAt(0));
   }
 
   /** The same, with the operands the parser was refusing over. */
