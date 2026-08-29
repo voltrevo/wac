@@ -82,7 +82,7 @@ correctly on one host and not another, surviving because nothing exercised the w
 were `0275c` (wasmtime right, v8 wrong) and `0278c`.
 
 
-## The stronger statement: the comparison that *does* run excludes the shipped host
+## The broad comparison excludes the shipped host, and the one that includes it is narrow
 
 Everything above is about coverage that skips. There is a worse case, found on 2026-08-29 while
 sizing `design/system/0009`'s remaining migration.
@@ -97,17 +97,31 @@ The **v8 host is not in that comparison at all.** It appears once, as the thing 
 native side — `cli.exec(root(cli) + "/native/v8/target/release/wac", …)` — and never as a host under
 test. `native/` is the wasmtime crate and `native/v8/` is the one the command ships as.
 
-**So the default binary is structurally absent from the tree's most-cited cross-host comparison**,
-and that is not a gap in what it covers but in what it compares. `issues/system/0277c` is the proof:
-`openOutput` for a spawned child was correct on Deno *and* correct on wasmtime, and wrong on v8. No
-number of opcodes and no amount of building the wasmtime host would have surfaced it here.
+**So the default binary is absent from this file's comparison**, and that is not a gap in what it
+covers but in what it compares.
 
-Five of the nine divergences found that day were v8's.
+**It is compared elsewhere, and that is the other half.** `v8host_test.wac` is *"Two hosts, one
+program, one answer — with the second host being `native/v8`"*: Deno against v8, which is the pairing
+`native_hostfs` lacks. But it is **narrow where the other is broad** — two shell scripts, and neither
+contains an output redirection, a `cp` or a `tee`. `native_hostfs` compares twelve filesystem
+operations and every grant refusal.
+
+So the two comparisons are complementary in the wrong direction: the one with the breadth omits the
+shipped host, and the one with the shipped host has no breadth. `issues/system/0277c` fell exactly
+between them — `openOutput` for a spawned child was right on Deno, right on wasmtime, wrong on v8,
+and no script in `v8host_test` redirects output. Five of the nine divergences found that day were
+v8's.
+
+*(An earlier draft of this section said the v8 host was "structurally absent from cross-host
+comparison". That was a generalisation from one file and it was wrong — `v8host_test` exists. The
+accurate statement is above, and it explains the escapes better: not that v8 goes uncompared, but
+that the comparison including it does not reach these capabilities.)*
 
 ### What follows
 
 This makes the ledger's number optimistic in a second, independent way. An opcode can be *credited*,
-*compared*, and *not compared on the host that ships* — and nothing distinguishes the three.
+*compared broadly on two hosts that are not the shipped one*, and *compared narrowly on the shipped
+one* — and nothing distinguishes those.
 
 It also reframes `design/system/0009`'s choice about `build.ts`'s deno target. Keeping it preserves a
 comparison with a hole exactly where the bugs are. The successor pattern — one artefact run under

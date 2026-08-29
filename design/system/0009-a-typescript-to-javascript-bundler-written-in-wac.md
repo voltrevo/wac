@@ -810,14 +810,18 @@ program for a host, and a test comparing hosts is the one caller that genuinely 
 
 ### Except that the comparison being preserved has a hole where the bugs are
 
-Reading `native_hostfs_test.wac` — this ledger's most-cited file — settles which way the trade
-actually falls. It compares a **Deno** artefact against the **wasmtime** binary. The **v8 host**, the
-one the command ships as, appears only as the thing that builds the native side and never as a host
-under test.
+Reading `native_hostfs_test.wac` — the ledger's most-cited file — settles which way the trade
+actually falls. It compares a **Deno** artefact against the **wasmtime** binary, and the **v8 host**
+appears only as the thing that builds the native side.
 
-`issues/system/0277c` is the proof: `openOutput` for a spawned child was right on Deno, right on
-wasmtime, and wrong on v8. That comparison could not have found it, whatever it covered and whether
-or not the wasmtime host was built. **Five of the nine divergences found on 2026-08-29 were v8's.**
+v8 is compared elsewhere: `v8host_test.wac` runs Deno against it. But that file is **narrow where
+this one is broad** — two shell scripts, neither containing a redirection, a `cp` or a `tee`, against
+twelve filesystem operations and every grant refusal. So the breadth is on a pairing without the
+shipped host, and the shipped host is on a pairing without the breadth.
+
+`issues/system/0277c` fell between them: `openOutput` for a spawned child was right on Deno, right on
+wasmtime, wrong on v8, and no script in `v8host_test` redirects output. **Five of the nine divergences
+found on 2026-08-29 were v8's.**
 
 So the trade is not "always compared" against "sometimes compared":
 

@@ -70,6 +70,13 @@ const string SCRIPT =
  * real child through `spawnSelf` — a separate instance with its own grants. They are the same commands
  * over two entirely different host paths, and the first script only ever exercises the first.
  *
+ * **Adding one `cp` to this script is red today, and the bug is filed rather than the case.**
+ * `cp MERGE.md copied.txt` then reading the file back gives 6667 bytes on the Deno host and **0** on
+ * the V8 one — an empty file, nothing said, exit 0. It depends on the script arriving on *standard
+ * input*, which is how this test drives the shell: through `-c` both hosts are right.
+ * `issues/system/0285c`. Put the case back on the day it closes; it is three lines and it is the only
+ * thing here that reaches a spawned applet's own output.
+ *
  * That gap hid `issues/system/0148` for two days. The spawning path was broken twice over on this
  * host: argv was read with the `string[]` accessors when `spawn` passes `u8[][]`, so children were
  * started with **no arguments** and a shell asked for nothing exits silently; and `PARENT_FS`, a
