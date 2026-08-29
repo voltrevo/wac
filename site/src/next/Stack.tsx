@@ -385,7 +385,7 @@ export default function Stack() {
             answered why it does not vary: the host builds a <Lead>fixed capability table</Lead>, so
             a program that never spawns, never draws and never opens a socket is handed the same one
             as a shell with 65 applets in it — nothing is failing to shake, because nothing is asking
-            what the program uses. What that would be worth has since been run: stub
+            what the program uses. What that would be worth was run on 2026-08-12: stub
             out the spawn half and the entry bundle drops <Lead>18.3 KB</Lead>, a fifth of it — which
             lands between the two numbers that would have settled it, so the sockets are the next
             thing to weigh and they are not yet in a file of their own. The cheaper lead was the one
