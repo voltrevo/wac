@@ -309,7 +309,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       write: (wanted & GRANT_WRITE) !== 0 && opts.root !== undefined && opts.writable === true,
     };
     const h = nextHandle++;
-    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs) => {
+    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs, childSelf) => {
       const enc = new TextEncoder();
       return serveHostCalls(bridgeOf(sab), browserWorld({
         args: cargs,
@@ -361,8 +361,12 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         // three of the four hosts it is. This is the one that cannot be, and a reader of that
         // sentence should not have to discover it.
         ...(give.read ? { root: opts.root, writable: give.write } : {}),
-        // So that a child can run itself too: the bundle is the same one.
-        selfSource: opts.selfSource,
+        // **Its own source, not this one's.** A program's "self" is what it was started as, and
+        // passing `opts.selfSource` down was right only while every child was a bundle spawned from
+        // the same one. A wasm child is not: under `wac app-run` the launcher's program is the `wac`
+        // command and the application is a module, so the child's `spawnSelf` re-ran `wac` with the
+        // caller's argv. `issues/system/0276c`.
+        selfSource: childSelf,
         // Where its relative paths resolve from. A shell in a tab that has done `cd sub` starts its
         // children there, exactly as it would on a command line.
         cwd: childCwd === "" ? opts.cwd : childCwd,

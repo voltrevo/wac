@@ -374,7 +374,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       env: (wanted & GRANT_ENV) !== 0 && opts.env !== undefined,
     };
     const h = nextHandle++;
-    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs) => {
+    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs, childSelf) => {
       const enc = new TextEncoder();
       return serveHostCalls(bridgeOf(sab), denoWorld({
         args: cargs,
@@ -435,8 +435,12 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         // reads `fsHandle` leaves that child's first request unanswered — which is a parent
         // choosing not to serve rather than a capability being granted.
         parentFs,
-        // So that a child can run itself as well: the bundle is the same one.
-        selfSource: opts.selfSource,
+        // **Its own source, not this one's.** A program's "self" is what it was started as, and
+        // passing `opts.selfSource` down was right only while every child was a bundle spawned from
+        // the same one. A wasm child is not: under `wac app-run` the launcher's program is the `wac`
+        // command and the application is a module, so the child's `spawnSelf` re-ran `wac` with the
+        // caller's argv. `issues/system/0276c`.
+        selfSource: childSelf,
         // And so that a child can start a module too. A grandchild is where this went missing first
         // in the equivalent `selfSource` line's history: a capability the top of the tree has and
         // nothing below it does is a capability that works until something nests.

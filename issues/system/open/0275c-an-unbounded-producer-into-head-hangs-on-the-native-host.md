@@ -99,7 +99,18 @@ found rather than shipped.
 tests are not the obstacle, the host difference they exposed is. A `wac app` artefact is what this
 repository tells people to distribute, and `producer | head` is not an exotic idiom.
 
-## An attempt at the decisive experiment, and why it failed
+## The decisive experiment, now that it can be run
+
+`issues/system/0276c` is fixed, so the same artefact runs under both hosts. One `wac app` build of
+`packages/box/src/bin/sealedsh.wac`, one script, `app-run` on each:
+
+    JS host    exit=0    0s    y y
+    native     exit=124  20s   y y      correct output, then never returns
+
+The artefact is held constant — same file, same wasm, same manifest — so this is the host and nothing
+else. That is what the section below could not establish.
+
+## The earlier attempt, and why it failed
 
 The obvious next step is to run **one artefact under both hosts** — same wasm, same script — which
 removes the artefact as a variable entirely. It cannot be done yet: `wac app-run` on a

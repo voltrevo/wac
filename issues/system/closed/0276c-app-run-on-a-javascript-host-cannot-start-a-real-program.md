@@ -1,6 +1,6 @@
 # 0276 — `wac app-run` on a JavaScript host cannot start a real program
 
-- **Status:** open — one of the two faults is fixed; the second is what remains
+- **Status:** closed — all three faults fixed, 2026-08-29
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** bug
@@ -65,7 +65,7 @@ them.
 Building a constructor per variant fixes it, and `wac app-run` on a JavaScript host now starts
 `packages/box`'s shell: `echo hello` answers. 123 platform tests and 33 box tests stay green.
 
-## The third fault, open
+## The third fault, fixed
 
 A *pipeline* still does not work, and the shape is different again:
 
@@ -92,9 +92,18 @@ wrong program: the launcher's bundle is the `wac` command, so the stage starts `
 argv.
 
 So the host has to answer `SPAWN_SELF` with **the asking child's** own source rather than its own.
-`children.ts` already has the module's bytes when it starts one, so this is bookkeeping per child
-rather than new machinery — but it is on the host side of the bridge, not in the world the module is
-handed, which is what the first attempt got wrong.
+
+`spawnChild` already computes it — `wrapModule(program, moduleEntry)` for a wasm child — and then
+never told anyone: each host built that child's world with `selfSource: opts.selfSource`, its own.
+Passing the child's source to the `startWorld` callback and using it is the whole fix, in
+`children.ts` and the three hosts. **A program's "self" is what it was started as**, which is what
+every one of them should have said in the first place.
+
+    echo hello                 hello
+    seq 1 5 | /bin/wc -l       5
+    yes | /bin/head -2         y y      exit 0
+
+144 platform, sh and harness tests stay green.
 
 The native host never meets this because its `spawnSelf` re-enters the program inside the binary.
 
