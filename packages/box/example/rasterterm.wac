@@ -12,9 +12,10 @@
 // would be a renderer nobody could use for anything else, and `packages/raster` has no dependencies
 // on purpose. A program is allowed to know about both.
 //
-// What it does not do yet: scrollback you can scroll, selection, and a caret that blinks. The grid
-// has the first, the manager step 3 built has the second's hit-testing, and neither is wired here —
-// this is the smallest thing that answers "does the same shell come out the same way on pixels".
+// All three of the things this said it did not do yet are wired now: PgUp and PgDn move `back` over
+// the grid's scrollback, a drag selects, and the caret blinks on the wait's deadline. What is still
+// missing is the end of the selection story — `Grid.selectedText` exists and nothing here calls it,
+// so text can be selected and not copied out.
 
 import { Cli, Core, Event, Page, Pending } from "std/platform.wac";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
@@ -170,8 +171,15 @@ export i32 page(Core core, Cli cli, Page page) {
     }
     Event e = ev.wait();
     ev = page.nextEvent();
-    // Any event is activity, so the caret is on and the phase starts again from here.
-    caretOn = true;
+    // **Activity restarts the blink phase, and a bare pointer move is not activity.** A caret that
+    // is mid-blink when you press a key looks like a dropped keystroke, which is what this is for —
+    // but the host sends a `pointermove` for every move over the canvas, and resetting on those
+    // means the caret stops blinking while the pointer merely rests over the terminal. Typing,
+    // pressing and releasing are activity; moving is only activity while dragging, where it is
+    // changing the selection. `issues/system/0178`.
+    if (e.kind != "pointermove" || dragging) {
+      caretOn = true;
+    }
     if (e.kind == "pointerdown") {
       dragging = true;
       g.selectFrom(e.x / cellWidth(), e.y / cellHeight());

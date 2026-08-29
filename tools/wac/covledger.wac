@@ -393,6 +393,66 @@ void sortMissed(string[] a, i32 n) {
  *
  * `verbose` prints every missed point rather than the first twenty.
  */
+/**
+ * The flags a coverage ledger takes, read in one place rather than in thirty-five.
+ *
+ * Every `cov_ledger.wac` under `packages` had the same five lines copied into its `main` — a loop
+ * over `cli.arg` looking for `--verbose` — and they were byte-identical in all thirty-five, which is
+ * what a second copy of anything looks like just before it drifts. `--points` is the flag that made
+ * it worth fixing: adding it there would have been five more lines thirty-five more times.
+ *
+ * `issues/system/0241b` is what wants `--points`: a coverage run reaches points in files outside its
+ * own package and throws them away at report time, so a file with two consumers is measured twice
+ * and never as a whole. Getting the union needs every driver's per-point table, and a driver is a
+ * ledger rather than `covreport` — the exercise path, the grants and the case exports live in it.
+ */
+export struct LedgerFlags {
+  bool verbose;
+  bool points;
+
+  LedgerFlags read(Cli cli) {
+    bool v = false;
+    bool p = false;
+    i32 argc = cli.argCount().wait();
+    for (i32 i = 0; i < argc; i++) {
+      string a = string.fromBytes(cli.arg(i).wait());
+      if (a == "--verbose") { v = true; }
+      if (a == "--points") { p = true; }
+    }
+    return LedgerFlags(v, p);
+  }
+}
+
+/**
+ * Every point as one row — `file<TAB>line<TAB>col<TAB>kind<TAB>count` — with no prefix filter.
+ *
+ * **The prefix is applied at `report`, not at collection**, so a driver already executes points in
+ * files outside its own package and then throws them away. That is `issues/system/0241b`: a file
+ * imported across a package boundary is measured once per importer and never as a whole, so each
+ * ledger overstates the gap in it. `packages/tls/src/handshake.wac` reads 36 dark to `tls` and 33
+ * to `quic`, and 15 to both.
+ *
+ * Unioning those needs a key the drivers agree on, and the counter *index* is not one: each driver
+ * compiles its own graph and numbers its own points. The source position is, which is why this
+ * prints one and not the other.
+ *
+ * Test files are dropped here for the same reason `report` drops them — a test's unreached branches
+ * are its assertions that did not fire — but the *prefix* is not, because that is the whole point.
+ *
+ * **`kind` is in the row because the position is not unique.** Several counters can sit at one
+ * `line:col` — `handshake.wac` has 108 points over 75 distinct positions — so a reader that keyed on
+ * the position alone would fold a dark branch into a lit one beside it and report 12 dark where the
+ * ledger reports 28. That was the first version of this and the ledger's own table is what caught it.
+ */
+export void reportPoints(Core core, Point[] points, i32 nPoints, i32[] counts) {
+  for (i32 i = 0; i < nPoints; i++) {
+    Point p = points[i];
+    if (isTest(p.file)) { continue; }
+    core.log(p.file + "\t" + itoa(p.line) + "\t" + itoa(p.col) + "\t" + p.kind
+           + "\t" + itoa(counts[i]));
+  }
+}
+
 export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string prefix, bool verbose) {
   // **Merged by source position, so a generic's instantiations are one line each.** See `Merged`.
   Merged[] merged = mergeRoom(nPoints);

@@ -26,7 +26,7 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
          deskCloseDuringDrag, deskTyped, deskDrawn, gridDrawnInk, gridSelected,
          gridSelectionInk ,
-         gridClamped, gridSelectedBackwards, gridSelectionAbsent, gridSelectedAt,
+         gridClamped, gridPressWithoutDrag, gridSelectedBackwards, gridSelectionAbsent, gridSelectedAt,
          gridCursorColumn, gridDrawnAt, deskClosedOutOfRange, deskTypedWithNoWindows,
          damageOfDegenerate, glyphAt} from "./scenes.wac";
 
@@ -796,6 +796,17 @@ export string test_the_documented_degenerate_contracts_all_hold() {
           "and one before its start is not");
   t.eqI32(gridSelectedBackwards(4, 3, 1, 0, 3, 2, 2, 1), 1,
           "the same range dragged forwards means the same thing");
+
+  // **A click selects nothing; a drag selects.** `issues/system/0178`: `selectFrom` sets anchor and
+  // head to the same cell, and `selected` answered true for it, so a plain click on the terminal
+  // left one cell drawn inverted — a fill in the foreground colour, over nothing.
+  i32[] press = gridPressWithoutDrag(4, 3, 1, 1);
+  t.eqI32(press[0], 0, "a press that never moved selects no cell");
+  t.eqI32(press[1], 0, "and its selected text is empty");
+  t.eqI32(press[2], 1,
+          "a drag back onto the cell it started on selects that cell — which is why the rule is "
+          + "`selectTo` was called, not `anchor == head`");
+  t.eqI32(press[3], 1, "and an ordinary drag still selects its anchor");
 
   // No selection, a selection extended before one was begun, and one that was cleared.
   i32[] absent = gridSelectionAbsent(4, 2, i32[]('a', 'b', 'c'));

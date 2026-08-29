@@ -33,7 +33,7 @@
 
 import { Core, Cli } from "std/platform.wac";
 
-import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 const string EXERCISE = "packages/abi/test/cov_exercise.wac";
 const string PREFIX = "packages/abi/";
@@ -96,15 +96,14 @@ Pin[] pins() {
 }
 
 export i32 main(Core core, Cli cli) {
-  bool verbose = false;
-  i32 argc = cli.argCount().wait();
-  for (i32 i = 0; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
-  }
+  LedgerFlags flags = LedgerFlags.read(cli);
 
   Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
   if (m.nPoints == 0) { return 1; }
 
-  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
+  // union this driver's reach with another's — `issues/system/0241b`.
+  if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
+  report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
 }

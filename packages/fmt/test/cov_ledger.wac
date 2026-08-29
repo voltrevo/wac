@@ -64,7 +64,7 @@
 // a few ulps from a boundary rather than anything a test writes down by hand.
 
 import { Core, Cli } from "std/platform.wac";
-import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 const string EXERCISE = "packages/fmt/test/cov_exercise.wac";
 const string PREFIX = "packages/fmt/";
@@ -183,17 +183,16 @@ Pin[] pins() {
 }
 
 export i32 main(Core core, Cli cli) {
-  bool verbose = false;
-  i32 argc = cli.argCount().wait();
-  for (i32 i = 0; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
-  }
+  LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: none of the 24 tests wired into the exercise expects a trap.
   Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
   if (m.nPoints == 0) { return 1; }
 
-  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
+  // union this driver's reach with another's — `issues/system/0241b`.
+  if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
+  report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
                  Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
 }

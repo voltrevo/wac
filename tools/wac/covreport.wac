@@ -36,7 +36,7 @@
 // third copy of what `packages/wactest/src/strings.wac` already exported.
 
 import { Core, Cli } from "std/platform.wac";
-import { Measured, measure, report } from "./covledger.wac";
+import { Measured, measure, report, reportPoints } from "./covledger.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
@@ -48,6 +48,7 @@ export i32 main(Core core, Cli cli) {
   string entry = string.fromBytes(cli.arg(0).wait());
   string prefix = string.fromBytes(cli.arg(1).wait());
   bool verbose = false;
+  bool points = false;
   // **Grants go to the build and export names go to the run**, and both are new on 2026-08-20 with
   // `issues/system/0221`: `covdump` used to instantiate with no imports and call only `main`, so an
   // exercise could hold no capabilities and at most one trapping case. It runs the ordinary program
@@ -64,6 +65,8 @@ export i32 main(Core core, Cli cli) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a == "--verbose") {
       verbose = true;
+    } else if (a == "--points") {
+      points = true;
     } else if (a.len() > 8 && a.slice(0, 8) == "--allow-") {
       if (nGrants >= 8) { core.warn("covreport: too many grants"); return 2; }
       grants[nGrants] = a;
@@ -73,7 +76,8 @@ export i32 main(Core core, Cli cli) {
       exports[nExports] = a;
       nExports = nExports + 1;
     } else {
-      core.warn("covreport: " + a + " is not --verbose, a --allow-… grant, or an export name");
+      core.warn("covreport: " + a + " is not --verbose, --points, a --allow-… grant, or an "
+              + "export name");
       return 2;
     }
   }
@@ -85,6 +89,13 @@ export i32 main(Core core, Cli cli) {
   Measured m = measure(core, cli, entry, g, e);
   if (m.nPoints == 0) { return 1; }
 
+  if (points) {
+    // Machine-readable and unfiltered — `issues/system/0241b`. The prefix is still taken, because
+    // the caller names one, and still ignored here: what a union needs is every point the exercise
+    // reached, including the ones in somebody else's package.
+    reportPoints(core, m.points, m.nPoints, m.counts);
+    return 0;
+  }
   report(core, m.points, m.nPoints, m.counts, prefix, verbose);
   return 0;
 }
