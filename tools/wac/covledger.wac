@@ -424,7 +424,7 @@ export struct LedgerFlags {
 }
 
 /**
- * Every point as one row — `file<TAB>line<TAB>col<TAB>count` — with no prefix filter.
+ * Every point as one row — `file<TAB>line<TAB>col<TAB>kind<TAB>count` — with no prefix filter.
  *
  * **The prefix is applied at `report`, not at collection**, so a driver already executes points in
  * files outside its own package and then throws them away. That is `issues/system/0241b`: a file
@@ -438,12 +438,18 @@ export struct LedgerFlags {
  *
  * Test files are dropped here for the same reason `report` drops them — a test's unreached branches
  * are its assertions that did not fire — but the *prefix* is not, because that is the whole point.
+ *
+ * **`kind` is in the row because the position is not unique.** Several counters can sit at one
+ * `line:col` — `handshake.wac` has 108 points over 75 distinct positions — so a reader that keyed on
+ * the position alone would fold a dark branch into a lit one beside it and report 12 dark where the
+ * ledger reports 28. That was the first version of this and the ledger's own table is what caught it.
  */
 export void reportPoints(Core core, Point[] points, i32 nPoints, i32[] counts) {
   for (i32 i = 0; i < nPoints; i++) {
     Point p = points[i];
     if (isTest(p.file)) { continue; }
-    core.log(p.file + "\t" + itoa(p.line) + "\t" + itoa(p.col) + "\t" + itoa(counts[i]));
+    core.log(p.file + "\t" + itoa(p.line) + "\t" + itoa(p.col) + "\t" + p.kind
+           + "\t" + itoa(counts[i]));
   }
 }
 

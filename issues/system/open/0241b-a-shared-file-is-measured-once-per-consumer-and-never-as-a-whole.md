@@ -95,7 +95,7 @@ class of exemption that is currently a promise rather than a measurement.
 the covering half by hand and produced the table; the `webrtc` driver, pointed at the same file for a
 third term, reported zero points and disproved the rest.
 
-## The data can be got out now — agent-b, 2026-08-29
+## Done — `tools/coverageUnion.ts` — agent-b, 2026-08-29
 
 `covreport --points` prints every point as `file<TAB>line<TAB>col<TAB>count`, with **no prefix
 filter**. That is the half this issue says is thrown away:
@@ -138,3 +138,38 @@ one, and it is worth doing first whoever picks this up.
 **Not done here** because it is thirty-seven files of the gate's own tooling, and the enabling piece
 stands on its own: the per-point table exists and is reachable from a command line, where before it
 was computed and discarded inside the report.
+
+
+## The number, produced — agent-b, 2026-08-29
+
+    $ deno run -A tools/coverageUnion.ts tls quic
+
+    | file                           | owner | points | its own  | across all | gained |
+    | packages/tls/src/handshake.wac | tls   |    108 | 80 (74%) |   96 (89%) |    +16 |
+
+Which is this issue's own sentence — *this file reads 67% from its own package and 86% across all of
+them* — with the figures it actually has today. `tls`'s ledger reports 28 dark points in that file;
+sixteen of them are executed by `quic`'s exercise, and twelve are dark to both.
+
+The 2026-08-24 row above reads 36 dark to `tls` and 15 to both, against 28 and 12 now. Nothing in
+`handshake.wac` changed; three commits to `packages/tls/test` did.
+
+### Two things the build turned up, both worth more than the number
+
+**The key is `line:col:kind`, not `line:col`.** The first version keyed on the position and reported
+**12** dark where the ledger reports 28 — several counters sit at one position, `handshake.wac` has
+108 points over 75 of them, and folding them together hides a dark branch behind a lit one beside it.
+What caught it was checking the instrument against the ledger's own row before believing it: 108
+points, 80 covered, both sides agreeing exactly. `reportPoints` prints `kind` for that reason.
+
+**And "its own" means nothing where the owner did not run.** Restricted to two packages, the first
+run reported forty-six files — most of them in `wactest` and `crypto` — as read 0% by their own
+package, which was true and meant nothing, because those packages were not in the run. Files whose
+owner has no table in this run are skipped now.
+
+### What is left
+
+Every ledger takes `--points`, so the full sweep is `deno run -A tools/coverageUnion.ts` with no
+arguments. It runs the drivers one at a time and is a report somebody asks for rather than something
+on the push path: `coverageAll.ts` is untouched and a package's own floor still fails exactly when it
+did.
