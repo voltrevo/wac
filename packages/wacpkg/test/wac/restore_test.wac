@@ -6,7 +6,7 @@
 //
 // `plan` compares the manifest with the lock and never looks at the cache, so a lock entry meant
 // *nothing to do*. Remove the cache and keep the lock — which is what a fresh machine, a clean CI
-// checkout or a `wac uninstall` leaves — and the project had no working command:
+// checkout or a `wac self uninstall` leaves — and the project had no working command:
 //
 //     $ wac update
 //     wacfetch: nothing to fetch; 1 mapping(s) already locked

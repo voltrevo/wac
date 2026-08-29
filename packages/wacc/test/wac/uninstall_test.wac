@@ -1,4 +1,4 @@
-// `wac uninstall` removes what an install wrote, and nothing else.
+// `wac self uninstall` removes what an install wrote, and nothing else.
 //
 // `[§wac-cli-uninstall-7kq3mvp]`
 //
@@ -108,7 +108,7 @@ export string test_the_subcommand_removes_what_an_install_wrote(Core core, Cli c
                    binaryPath(cli), string[]("self", "uninstall"));
   t.isTrue(r.ran(), "the command did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "wac uninstall failed: " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "wac self uninstall failed: " + string.fromBytes(r.stderr));
 
   string[] wrong = survivors(cli, home, false);
   t.eqI32(wrong.len(), 0, joined(wrong, "; "));
@@ -128,7 +128,7 @@ export string test_keep_cache_keeps_the_cache_and_nothing_else(Core core, Cli cl
   Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
                    binaryPath(cli), string[]("self", "uninstall", "--keep-cache"));
   t.isTrue(r.ran() && r.status == 0,
-           "wac uninstall --keep-cache failed: " + string.fromBytes(r.stderr));
+           "wac self uninstall --keep-cache failed: " + string.fromBytes(r.stderr));
   string[] wrong = survivors(cli, home, true);
   t.eqI32(wrong.len(), 0, joined(wrong, "; "));
   cli.remove(dir, true).wait();

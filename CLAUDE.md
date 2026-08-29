@@ -59,7 +59,7 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     ./bootstrap.sh                                   build the `wac` command and install it
     ./bootstrap.sh --no-install                      ...leaving it in the tree — `wac task seed`
     ./bootstrap.sh --host wasmtime                   ...on the engine with no JavaScript in it
-    wac uninstall [--keep-cache]                      and take it away again — the command, not a task
+    wac self uninstall [--keep-cache]                and take it away again — the command, not a task
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
 
@@ -75,7 +75,7 @@ written is reported beside a complete install rather than failing it. Until 2026
 place, so it reported failure over a usable installation and re-running could not help — GitHub
 wac#26.
 
-**Taking it away is `wac uninstall`, a subcommand rather than a task**, and it removes exactly those
+**Taking it away is `wac self uninstall`, a subcommand rather than a task**, and it removes exactly those
 things and never a manifest, a lockfile, a source file or a build product. There was a
 `deno task wac:uninstall` too until 2026-08-26; it went because it was the copy nobody who had
 installed the command could reach — a Deno program under `tools/` needs this checkout, and they have
