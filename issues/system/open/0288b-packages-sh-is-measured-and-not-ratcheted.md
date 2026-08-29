@@ -206,8 +206,17 @@ survives that.
 They read as three groups. **Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`,
 `isBlankAt`, `endsWithColon`, `ansiEscape` — which are the ones most likely to be one odd script
 away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
-`streamPipeline` — which needs a job that outlives the script that started it, so it is the group
-where "cannot be reached by this exercise" may turn out to be the true answer. And **stat detail** —
+`streamPipeline` — which needs a job that outlives the script that started it. **That one is
+settled, and it is the true answer.** `packages/sh/test/wac/probe.wac` fakes `spawn` statelessly on
+purpose, and says why: *"a fake that returned bytes would return them for ever and the read loop
+would not finish"*. A child there answers end-of-input immediately and never transitions, so nothing
+this exercise can write will produce a job to reap, stop or list.
+
+The same comment names where the coverage actually is — `packages/sh/test/spawn.test.ts`, *"against
+the real host instead, which is the only place a child can actually speak"*. So this family's ledger
+rule is written already, in the probe, in the same way the refusals family's was written in
+`cov.ts`: two of the three groups above turn out to have their explanation sitting in prose
+somewhere a test cannot read it, which is the general shape this issue keeps running into. And **stat detail** —
 `mtimeOf`, `onFs`, `ownership`, `octalMode`, `statReason` — which `ls -l` was aimed at and did not
 reach, so something narrower is wanted there.
 
