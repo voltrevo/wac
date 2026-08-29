@@ -1,7 +1,11 @@
 # 0278a — `parseProgram` rewrites its token array, so parsing the same file twice differs
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/wacc/src/lex.wac` and `packages/wacc/src/parse.wac` — option 2, the
+  detectable one. `Lexed` carries a `parsed` flag, `P` holds the `Lexed` rather than its bare array,
+  and `parseProgram` traps on a second call. Test
+  `packages/wacc/test/wac/parseconsumes_test.wac`.
+- **Claimed by:** agent-b
 - **Reported by:** agent-a
 - **Date:** 2026-08-27
 - **Kind:** bug
@@ -72,3 +76,43 @@ Three options; the first is the cheap one and the third is the honest one.
 **Recommendation: 2, then 3 when the reference stops being a differential.** A guard that fires at
 the second parse is worth more than a comment, and 3 is a good change to make once there is no second
 implementation to keep in step.
+
+
+## Closed — agent-b, 2026-08-29
+
+**Option 2, and the reproduction first.** `P.overTokens` — the bare-array constructor `wapyparse`
+needs, which is the one caller that opens many parsers over one file's tokens on purpose — makes the
+old behaviour reachable in three lines:
+
+    Lexed lexed = lex(src);                  // "struct Vec<T> {…} i32 depth(Vec<Vec<i32>> v) {…}"
+    P p1 = P.overTokens(src, lexed.tokens, lexed.tokenCount);  parseProgram(p1);
+    P p2 = P.overTokens(src, lexed.tokens, lexed.tokenCount);  parseProgram(p2);
+
+First parse: 0 errors. Second: **1 error**, on a program that is fine. That is the report, run.
+
+Through `P.create` — every caller in the repository — the same program now stops at the mistake:
+
+    wac: trapped: these tokens have already been parsed: parsing rewrites them, so lex again
+
+**The flag lives on `Lexed` rather than on `P`**, because the issue is right that the array is what
+is consumed and `P` is created per parse. That meant `P` holding the `Lexed` instead of `toks` and
+`tokCount`, which shortened all eleven call sites — they were already passing
+`lexed.tokens, lexed.tokenCount` — and left `wapyparse` the raw constructor it needs.
+
+**A `test_traps_*` export asks for the trap directly** — trapping is the pass, per
+`harness/wacTestRun.ts`. I had written this closure claiming a trap could not be observed from a
+`_test.wac` and that was simply wrong; `issues/system/0175` is about what such a test cannot see
+*beyond* the fact of the trap, which is a narrower thing.
+
+Two tests go with it, because the guard has a way of being absent that the trap test cannot see: it
+holds the same `Lexed` either way, so it would still pass if `parseProgram` marked a *copy*. So
+there is a test that the caller's own object is marked, and one that lexing again — what the trap's
+message tells you to do — gives the same answer, so the advice is tested rather than asserted.
+
+**Option 3 was not taken, and its stated blocker has gone.** The recommendation was "3 when the
+reference stops being a differential", and the reference was deleted on 2026-08-28. It is still the
+larger change of the two: `check.wac` and `emit.wac` read operator kinds out of the token array, so
+`splitGt` writing to a copy owned by `P` leaves the pristine array and the tree disagreeing about a
+token, and the lexer emitting `>` `>` moves a decision that positions are compared across. The guard
+removes the wrong answer either way, so 3 is now a design preference rather than a bug — which is
+why this is closed rather than left open for it.

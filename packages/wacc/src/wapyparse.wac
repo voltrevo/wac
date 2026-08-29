@@ -121,7 +121,7 @@ i32 blockEnd(W w, i32 i) {
 
 /** A `P` over the file's array, positioned at `at`. */
 P at(W w, i32 pos) {
-  P p = P.create(w.src, w.toks, w.tokCount);
+  P p = P.overTokens(w.src, w.toks, w.tokCount);
   p.at = pos;
   return p;
 }

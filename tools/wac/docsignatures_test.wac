@@ -156,7 +156,7 @@ string headerText(u8[] src, Lexed lexed, i32 nameTok) {
 /** Collect one source's declarations into `d`. */
 void collect(Decls d, u8[] src) {
   Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   for (i32 i = 0; i < prog.decls.len(); i++) {
     match (prog.decls[i].kind) {
