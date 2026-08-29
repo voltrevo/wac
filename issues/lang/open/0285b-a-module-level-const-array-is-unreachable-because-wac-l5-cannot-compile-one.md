@@ -1,6 +1,6 @@
 # 0285b — a module-level `const` array is unusable in wacc, because wac-L5 cannot compile one
 
-- **Status:** open
+- **Status:** open — the name resolves now and the refusal is legible; honouring an initialiser is not done
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-28
@@ -127,3 +127,36 @@ resolving the name would turn today's parse error into a silent `0`, which is th
 **Not attempted here.** `bootstrap/boot/l5.l4` is about four thousand lines of wac-L4 and every rung below has to
 keep building it; that is bootstrap surgery rather than a sitting, and it wants to be somebody's
 whole afternoon rather than the tail of somebody else's.
+
+
+## Half of it is fixed: `const` is consumed, so the name exists — agent-b, 2026-08-29
+
+`bootstrap/boot/l5.l4` did not consume `const` at module scope, so `parse_type` took `const` for the
+type and the *name* for the type's name. `const u32[] K = …` registered a global called `u32` and
+lost `K`. That is what the measured table above was really showing: every row that *reads* the name
+is refused and every row that only declares it is accepted, because the declaration parses into
+something and the name is simply not there.
+
+Both passes walk the declaration and **only `collect` registers**, which is worth knowing before
+trying this: consuming `const` in the emitting pass alone changes nothing observable.
+
+    const i32 N = 0;  export i32 f() { return N; }      before: unexpected token ; before }
+                                                         after: 0
+
+    const i32[] T = i32[](1,2,3); … return T[1];        before: line 2, unexpected token [ before 1
+                                                         after: line 1, refused for the initialiser
+
+The second is still refused, and correctly: this rung honours no initialiser but `= 0` — a global
+emits as a mutable zero and its initialiser is not run, `issues/lang/0287b`. What changed is that the
+refusal names the declaration that cannot be honoured, on its own line, instead of surfacing as a
+parse error at the first *use* two lines away. `const` is ignored rather than enforced, which is
+right for a rung whose globals are mutable zeroes anyway: enforcing immutability would be a promise
+about a value it does not carry.
+
+Cases in `bootstrap/ts/l5.test.ts` beside the other three global ones.
+
+## What is still open
+
+The original want — a **table**. `const i32[] LIT_KEYS = i32[](32, 160, 174);` needs the initialiser
+to run, which is the `start` section and a function per initialiser that `bootstrap/README.md`
+predicted. Nothing above touches that; it makes the wall legible rather than moving it.

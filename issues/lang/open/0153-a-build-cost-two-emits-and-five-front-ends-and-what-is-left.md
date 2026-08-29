@@ -229,9 +229,42 @@ Four builds on the native host, `--no-cache`, three runs each, medians:
     check  the one importing the platform                  190 ms
 
 **One import costs a second, and about 150 ms of that is the front end.** So of the ~1 050 ms a
-platform import adds, roughly one seventh is lex, parse and check and the rest is emitting 238 KB of
-module. That tracks this issue's own `~6 ms/KB` model — it predicts 1 433 ms for that delta and the
-measurement is 1 050 ms, the same shape on a different machine.
+platform import adds, roughly one seventh is lex, parse and check, and the rest happens after.
+
+**It is not proportional to what comes out, and I said it was.** The paragraph above first attributed
+the rest to emitting 238 KB and called it agreement with this issue's `~6 ms/KB` model. Two more
+measurements say otherwise:
+
+    build  no imports                                        53 ms      2.6 KB out
+    build  `import { Option } from "core/option.wac"`       ~100 ms      7.4 KB out
+    build  std/platform imported, `main()`, nothing used    ~890 ms     44.9 KB out
+    build  std/platform, `main(Core core)`                 1 113 ms     77.0 KB out
+    build  std/platform, `main(Core core, Cli cli)`        1 100 ms    241.3 KB out
+
+The last two are the same source but for the capability `main` names, and the emitted module differs
+threefold — `Cli`'s surface is most of it, which is `issues/system/0129`'s "one number only across
+programs that name the same capabilities", visible from the compiler's side. **The time does not
+move.** So the second is spent over the whole closure regardless of how much of it survives into the
+module, and the ms/KB model does not describe this range; it was fitted to programs several times
+larger, where it may well still hold.
+
+**The third row is where the cost actually starts.** A program that *imports* `std/platform.wac`,
+declares no capability and uses nothing from it already pays ~890 ms of the second — 80% of it —
+while emitting 44.9 KB. Declaring `Core` adds 32 KB and about 200 ms; adding `Cli` adds 164 KB more
+and no time at all. So what costs is having the 107 KB of source in the graph, not what the program
+asks of it.
+
+That 44.9 KB is worth `issues/system/0129`'s attention on its own: an import nobody uses is 45 KB in
+the module, and this repository has 603 imports of that one file.
+
+`core/option.wac` costing ~100 ms is the other end of the same point: a built-in import is cheap, so
+this is `std/platform.wac` specifically — 107 KB of source, reconstructed from literals in
+`coretext.wac` on every build.
+
+**Where the split falls, from the other side.** The same program with one undefined name in it —
+so the build stops at diagnostics and never emits — costs **~300 ms**. That agrees with `wac check`
+at ~190-230 ms, allowing for what `build` does before it, and puts the after-check work at about
+800 ms. It is that 800 ms which does not move between the 77 KB and 241 KB modules.
 
 **That reframes "skip checking files that have not changed"**, which is the first entry under *What
 is left to try*. It is worth having, and it is bounded by the 150 ms: checking is not where the time

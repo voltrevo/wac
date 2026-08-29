@@ -3351,6 +3351,10 @@ i32 collect() {
       ngfn = ngfn + 1;
       skip_decl();
     } else {
+    // Both passes walk the same declaration, so both consume `const` — see the emitting pass for
+    // what it means here. This is the one that *registers* the name, so without it the global was
+    // recorded under the type's spelling and every later use resolved to nothing.
+    eatword("const");
     i32 ret = parse_type();
     i32 p = tstart();
     i32 n = tlen();
@@ -4067,6 +4071,19 @@ i32 compile(i32 s, i32 out) {
       if (record_template(T_ENUM) == 0) { enum_decl(1, out); }
     } else {
     if (looks_like_generic_fn()) { skip_decl(); } else {
+    // **`const` at module scope is consumed and otherwise ignored** — `issues/lang/0285b`. Until
+    // 2026-08-29 it was not consumed at all, so `parse_type` took `const` for the type and the
+    // *name* for the type's name: `const u32[] K = …` declared a global called `u32` and lost `K`
+    // entirely. Every later use then failed on whatever token followed the name, which is how a
+    // missing declaration came out as `unexpected token . before len`.
+    //
+    // Ignoring it is right for this rung rather than merely cheap. A global here emits as a mutable
+    // zero and its initialiser is not run — see `initialiser_is_zero` — so `const` would be a
+    // promise about a value the rung does not carry anyway. What the rung owes is that the name
+    // exists and that anything it cannot honour is refused by a rule with a sentence attached, and
+    // both of those it now does: `const i32 N = 0;` is a global that reads 0, and
+    // `const i32[] T = i32[](1,2,3);` is refused for the initialiser rather than for its brackets.
+    eatword("const");
     i32 ret = parse_type();
     i32 p = tstart();
     i32 n = tlen();

@@ -722,6 +722,24 @@ const globals: [string, string, number | null][] = [
   ["a global with no initialiser is assigned in code", "i32 G;\nexport i32 f() { G = 9; return G; }", 9],
   ["a global initialised to zero still compiles", "i32 G = 0;\nexport i32 f() { G = 7; return G; }", 7],
   ["a global initialised to anything else is refused", "i32 G = 7;\nexport i32 f() { return G; }", null],
+
+  // **`const` at module scope is consumed and otherwise ignored** — `issues/lang/0285b`. It was not
+  // consumed at all until 2026-08-29, so `parse_type` took `const` for the type and the *name* for
+  // the type's name: the global was registered as `i32` and `N` was lost. Both passes walk the
+  // declaration and only the collect pass registers, which is why fixing the emitting pass alone
+  // changed nothing.
+  //
+  // The failure that caused was the confusing kind. Nothing said the declaration was wrong; every
+  // *use* of the name failed on whatever token followed it, so a missing global surfaced as
+  // `unexpected token . before len` two lines away. The third case below is that one: it is still
+  // refused, because the rung honours no initialiser but `= 0`, and it is now refused on line 1 for
+  // the initialiser rather than on line 2 for its brackets.
+  ["a module-level const is a global and its name resolves",
+    "const i32 N = 0;\nexport i32 f() { return N; }", 0],
+  ["a const initialised to anything else is refused, like any other global",
+    "const i32 N = 7;\nexport i32 f() { return N; }", null],
+  ["a const array is refused for its initialiser, not for its brackets",
+    "const i32[] T = i32[](1,2,3);\nexport i32 f() { return T[1]; }", null],
 ];
 
 for (const [name, source, want] of globals) {

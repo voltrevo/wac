@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0287b](open/0287b-the-build-cache-is-off-on-every-host-but-one.md) | only `native/v8` sets `WAC_COMPILER_ID`, so `cacheKey` refuses to key a build on any other host and the spec says it caches | bug | no error |
 | [0286b](open/0286b-a-one-package-test-run-spends-the-twenty-minute-push-budget.md) | `wac task test <package>` stamps the cooldown, so 1.3s of work refuses the next push for twenty minutes | bug | no error |
 | [0285c](closed/0285c-a-spawned-applet-reads-its-parents-leftover-input-instead-of-the-file-it-opened.md) | On the V8 host a spawned applet that has called `openInput` reads **its parent's queue** instead of the file: `printf 'one\nA\nB\n' \| wac sh -c 'read v; cat MERGE.md'` prints `A` and `B`. Usually the parent has nothing left, so `wc -c f` answers a plausible **`0`** and `sha256sum` gives the hash of the empty string. `Cap::ReadStdin` and `Cap::ReadChunk` both check the parent's queue *before* the `openInput` redirect, so a redirect wins over the frame's queue and loses to the parent's — the frame half of that rule was fixed and the parent half was left, in the same function. wasmtime and Deno are right. Scope is every file-reading applet: 37 files import the `input.wac` helper | bug | file contents replaced by the parent's input, exit 0 |
 | [0284c](open/0284c-the-hosts-word-a-refusal-differently-and-only-one-says-which-capability.md) | A program built without `--allow-read` is told `filesystem read not granted to this application` by the JavaScript hosts and `Not granted to this application` by both Rust ones — which names no capability, and is the same string for all five. A program can be built without several at once, so the shorter sentence leaves the reader to work out which, with nothing in the message, the file name or the status to say. Surfaced by `world_test.wac`, whose case for a withheld capability asserts the informative wording | diagnostic | one refusal, two sentences |
@@ -76,7 +77,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-286 issues, 227 closed.
+287 issues, 227 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
