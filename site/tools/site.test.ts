@@ -577,6 +577,33 @@ Deno.test("site: the rung sizes the bootstrap page states are the sizes on disk"
  * out the interpreter. `bootstrap/README.md` says it plainly, in a column this had skimmed: *"the
  * other is the check, not the trust"*.
  */
+/**
+ * And the rung excerpts, which are quotations rather than illustrations.
+ *
+ * The page shows five rungs' source and says which file each came from. That is the same kind of
+ * claim as the sizes above — a number, or here a snippet, that came from outside the sentence
+ * containing it — and it decays the same way: somebody tidies a compiler, and the page goes on
+ * showing what it used to say while claiming to show what it says.
+ *
+ * **Compiling them is not the check.** L2 is s-expressions and L3 and L4 are rungs of a ladder, not
+ * wac; a compiler that accepted them would be the thing going wrong, which is why they are not in
+ * the snippets-compile test. What can be checked is that the file contains the text, exactly.
+ */
+Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", async () => {
+  const boot = new URL("../../bootstrap/boot", import.meta.url).pathname;
+  for (const [name, file] of [
+    ["EX_L2", "l3.l2"], ["EX_L3", "l4.l3"], ["EX_L4", "l5.l4"],
+  ] as const) {
+    const text = await snippet(name);
+    const source = await Deno.readTextFile(`${boot}/${file}`);
+    if (!source.includes(text)) {
+      throw new Error(
+        `${name} is not verbatim in bootstrap/boot/${file} — the page shows a rung's source and ` +
+        `names the file it came from, and the two have drifted`);
+    }
+  }
+});
+
 Deno.test("site: the trusted-line count is the size of the three files it names", async () => {
   const root = new URL("../..", import.meta.url).pathname;
   // The path `./bootstrap.sh` actually runs: `rust-ladder` depends on `../rust` for the assembler,
