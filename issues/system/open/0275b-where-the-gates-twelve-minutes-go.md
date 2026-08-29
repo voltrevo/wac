@@ -15,8 +15,8 @@ wrong for a fortnight. The point of the page is that the next cut starts from nu
 
 ## The budget
 
-    suite                452s
-    coverage ratchets   ~263s
+    suite                452s   (before 0274b; crypto's chunk has since gone 195s -> 25s)
+    coverage ratchets    216s
     seed, doc checks, site, push
     ---------------------------
     about twelve minutes
@@ -52,7 +52,7 @@ two emits and five front ends — from the other side.
 
 ## The ratchets, and why they are not skippable
 
-263s on every push that is not documentation-only. The obvious narrowing is to run only the drivers
+216s on every push that is not documentation-only. The obvious narrowing is to run only the drivers
 a change can reach, and the reach is computable. Measured over the last forty commits before
 building it:
 
@@ -64,37 +64,48 @@ One push in eight, on the gate's safety path, and a push is a *batch* of commits
 rarer still. The comment beside the predicate in `tools/push.sh` now says this so the measurement is
 not spent twice.
 
-## The ratchets, taken apart
+## The ratchets, taken apart — and one wrong answer, corrected
 
-`coverage:crypto` is 100s standalone, and almost none of it is coverage:
+**As measured after `issues/system/0274b` closed:** 37 drivers, **633s of work at 4 workers, 216s
+wall**, and the floor is one driver:
 
-    build the instrumented exercise      9s
-    run it, and the two sweeps           1s   (145 trap cases + 35 probes)
-    read counters, report, ratchet      <1s
-    the exercise's own body             91s
+    137.2s  coverage:platform
+     41.9s  coverage:git
+     35.0s  coverage:quic
+     28.9s  coverage:tls
+     24.2s  coverage:crypto
+             ...31 more, all under 21s
 
-So the ledger machinery is a tenth of it and **the driver is the package's tests, run a second
-time**. `packages/crypto/test/cov_exercise.wac` enumerates the same 152 test functions the suite
-runs, so crypto's expensive work happens twice per gate — 195s in the suite chunk, 91s again here.
+`coverage:platform` is more than the perfect-balance figure of 158s all by itself, so **the ratchets
+cannot go below it however they are scheduled**. Its 85s standalone splits as 159 `deno` spawns at
+277ms — 44s — plus the builds those tests do, which is `issues/system/0197` and nothing else.
 
-What the 91s is *not*: external oracles. Under a shim that timed every child, the whole exercise
-spawned **51 node, 5 deno and 1 openssl, for 3.4s in total**. The other 88s is wac computing crypto,
-spread over the algorithms rather than pooled in one file the way `constanttime_test.wac` was — it is
-about what the suite's per-file timings add up to, once the per-file process and compile overhead the
-chunk pays is taken off. `issues/system/0209` is the nearest thing filed, though it is about one
-ratio rather than about the total.
+### The wrong answer, and the instrument that gave it
 
-`coverage:platform` is 85s and splits differently: **159 `deno` spawns at 277ms each, 44s**, which is
-`issues/system/0197` — a built app costs ~107ms to start and these also run one. The rest is the
-builds those tests do.
+Before 0274b closed, `coverage:crypto` was 108s. I took it apart and reported that 91s of it was the
+exercise's own body, that only 3.4s was external processes, and therefore that the remaining 88s was
+**wac computing crypto** with no coverage-shaped win available. All three numbers were right and the
+conclusion was wrong: it is **24.2s** now, and nothing about crypto changed.
 
-**So there is no coverage-shaped win here.** The three costs are the three already filed, and the
-only lever specific to the ratchets is the duplication above, which is not a small change: the
-exercise is one serial module and the suite's crypto chunk is many files over four workers, so
-running the exercise *as* the chunk would trade 90s of total work for a worse floor.
+The instrument is why. I measured the spawns with a `PATH` shim that timestamped `node`, `openssl`
+and `deno` — the three external oracles — and `packages/crypto/test/cov_exercise.wac` imports
+`constanttime_test.wac`'s tests, which spawn **`wac`**: `wac build --trace` twice and `wac ctcompare`
+once per comparison. The subject's own binary was the one child the shim did not watch, so its time
+was left in the residue and the residue was labelled "crypto".
 
-**And the phases cannot overlap.** Running the ratchets beside the suite is the obvious 263s, but
-`nproc` is 5 and three agents share them; the suite already runs four workers. There is no idle
+The lesson is narrower than "shim everything": **a shim over the tools you thought of measures the
+ones you did not as zero**, and a residue is only evidence when the enumeration was complete. Asking
+the exercise what it imports would have taken one grep and would have named `ctcompare` immediately.
+
+### What still holds
+
+The duplication does: `cov_exercise.wac` enumerates the same test functions the suite runs, so those
+packages' work happens twice per gate. It is still not worth undoing — the exercise is one serial
+module and the chunk is many files over four workers — but it is why a fix to a *test's* cost shows up
+twice, which is exactly what 0274b did here.
+
+**And the phases still cannot overlap.** Running the ratchets beside the suite is the obvious 216s,
+but `nproc` is 5 and three agents share them; the suite already runs four workers. There is no idle
 core to put them on, and taking one would slow the other two agents rather than this gate.
 
 ## What was cut, and what it bought
@@ -119,12 +130,11 @@ they come from the suite's own footer and only a gate run produces them honestly
 1. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
 2. **Process starts** — `issues/system/0197`. A built app costs ~107ms to spawn against 15ms for the
    native binary; `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s.
-3. **Crypto's own speed.** 88s of the ratchets, with no single file to blame now that
-   `constanttime_test.wac` is fixed — the suite chunk it used to dominate is 25s.
-   `issues/system/0209` is one piece of it.
+3. **Crypto's own speed**, which is now a smaller number than it looked: the chunk is 25s and the
+   ratchet driver 24s. `issues/system/0209` is one piece of it.
 
-The ratchets' 263s is *not* on this list any more: the section above measures it, and every second of
-it belongs to 1, 2 or 3. Skipping them was measured and refused separately.
+The ratchets' 216s is *not* a separate item: `coverage:platform` is 137s of it and that is 2, and no
+schedule can beat one driver. Skipping them was measured and refused separately.
 
 ## Two traps, because both cost me a measurement
 
