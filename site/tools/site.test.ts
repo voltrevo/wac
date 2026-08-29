@@ -624,6 +624,11 @@ Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", a
  * subcommand of that word. `wac task` is in the page, so `wac task wac:install` passes on its first
  * two words; that is deliberate, since the task registry is not the CLI page's to enumerate.
  *
+ * **A file is not a subcommand**, which the lookahead below is for. `wac hello.wasm` runs a built
+ * module — the form `spec/cli/wac.md` writes as `wac <module.wasm>` — and reading it as a `hello`
+ * subcommand made this refuse a page that was right. Any lowercase stem would have done it, so the
+ * effect was that documenting the one command whose argument is a *file* was impossible.
+ *
  * **Every page, read from the directory, rather than `PAGES`.** That list exists so `snippet()` can
  * find an `EX_*` constant and holds the five pages that declare one — `Roadmap.tsx` is not among
  * them, and `Roadmap.tsx` is where both stale spellings were. A guard that borrowed the list would
@@ -639,7 +644,7 @@ Deno.test("site: the command spellings the site prints are the ones the CLI page
   const seen = new Set<string>();
   for (const file of files) {
     const src = await Deno.readTextFile(file);
-    for (const m of src.matchAll(/(?:children: "|`)wac ([a-z][a-z]*)/g)) seen.add(m[1]);
+    for (const m of src.matchAll(/(?:children: "|`)wac ([a-z][a-z]*)(?![\w.])/g)) seen.add(m[1]);
   }
   const missing = [...seen].filter((word) => !cli.includes(`wac ${word}`)).sort();
   if (missing.length > 0) {
