@@ -201,30 +201,20 @@ and resolve a project differently — reaching for one of those is what GitHub i
 originally about. Reach for the built command unless you are working on the compiler itself. And note
 that **`wac task check` is this repository's own TypeScript check**, not `wac check`.
 
-**One thing to know before you build it**: the hosted build shells out to `deno bundle`, which fetches
-`@esbuild/<your platform>` from npm the first time. The binary has no such step, so an offline
-environment is still a reason to install it.
+**Nothing on this page needs the network**, on any host, which was not true until 2026-08-29 and is
+worth stating because the warning it replaces is still quoted elsewhere.
 
-**That fetch used to happen in silence**, and twice — August and a later tour — somebody watched a
-command this page calls offline sit for ~72 and ~74 seconds and then fail on an npm URL. Since
-2026-08-26 a bundle still going after five seconds says so and names the package, and a failure that
-mentions npm says how to get it and how to avoid needing it:
+Building a runnable application is `wac app`, a subcommand of the one program every host carries, and
+it writes a preamble and a module — no JavaScript bundling and so no npm. Compiling, installing and
+running reach none either.
 
-```
-wac: still bundling (worker) — the first bundle on a machine downloads npm:@esbuild/linux-arm64,
-     which needs the network. `deno cache npm:@esbuild/linux-arm64` does it once, ahead of time.
-```
-
-`deno cache npm:@esbuild/<your platform>` is the one-time step if you would rather do it deliberately;
-nothing requires it. **And it is only the bundler.** Compiling and installing reach no npm at all —
-`./bootstrap.sh` is the offline route to the whole command, which is why the failure message names
-it.
-
-**One thing here does need the network, once.** Compiling does not: the two commands above complete
-under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*
-(`packages/platform/build.ts`) shells out to `deno bundle`, and Deno downloads `@esbuild` for your
-platform the first time it does — about 72 seconds of waiting and then a failure if you are offline.
-`issues/system/0228a` item 7 has the measurement.
+**What did need it was `packages/platform/build.ts`**, which shells out to `deno bundle` and so
+fetched `@esbuild/<your platform>` on first use: twice — August and a later tour — somebody watched a
+command this page called offline sit for ~72 and ~74 seconds and then fail on an npm URL
+(`issues/system/0228a` item 7). That builder is not how you build an application any more, and
+`design/system/0009` is removing what is left of it. The diagnostic added for it in 2026-08-26 — a
+bundle still going after five seconds naming the package — remains where `build.ts` is still called
+from inside this repository.
 
 ## The smallest program
 
@@ -404,6 +394,7 @@ wac check   src/main.wac              # diagnostics, nothing written
 wac run     src/main.wac [args…]      # compile to a temporary file and run
 wac build   src/main.wac -o hello     # hello.wasm — one file, nothing beside it
 wac hello.wasm                        # run a built artefact — the manifest says what it needs
+wac app     src/main.wac -o hello     # an executable you can run directly: ./hello
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # src/main.gen.ts — the glue a JS host calls it through
 ```
@@ -420,6 +411,16 @@ $ wac argsprog.wasm -- one two     # the program is passed:  [--][one][two]
 ```
 
 Reported as friction on GitHub issue 22, where a habit formed on `run` was carried to an artefact.
+
+**`app` against `build`**: `build` writes a module you run with `wac hello.wasm`; `app` writes a file
+you run as `./hello`. The executable is a short preamble in front of that same module, and the
+preamble finds the runtime with `command -v wac` — so it is not a static binary, and a machine
+without `wac` gets a sentence saying so rather than a confusing failure:
+
+```
+./hello: needs the wac command on PATH.
+  https://github.com/voltrevo/wac — ./bootstrap.sh builds and installs it.
+```
 
 **The manifest is inside the module**, in a `wac.manifest` custom section — not a file beside it.
 That is what makes a built artefact one file you can hand to somebody: `wac hello.wasm` reads the

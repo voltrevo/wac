@@ -48,6 +48,7 @@ const EX_START_COMMANDS = `wac check   src/main.wac              # diagnostics, 
 wac run     src/main.wac [args…]      # compile to a temporary file and run
 wac build   src/main.wac -o hello     # hello.wasm — one file, nothing beside it
 wac hello.wasm                        # run it — the manifest says what it needs
+wac app     src/main.wac -o hello     # an executable you run directly: ./hello
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # the glue a JavaScript host calls it through`;
 
@@ -143,6 +144,13 @@ export default function Start() {
 
       <Section id="commands" kicker="the loop" title="Building, running and testing">
         <Code lang="text" code={EX_START_COMMANDS} />
+        <P>
+          {m({ children: "build" })} writes a module you run with {m({ children: "wac hello.wasm" })};
+          {" "}{m({ children: "app" })} writes a file you run as {m({ children: "./hello" })}. The
+          executable is a short preamble in front of that same module, and the preamble finds the
+          runtime with {m({ children: "command -v wac" })} — so it is not a static binary, and a
+          machine without wac gets a sentence saying so rather than a confusing failure.
+        </P>
         <P>
           <b>The manifest is inside the module</b>, in a {m({ children: "wac.manifest" })} custom
           section rather than a file beside it. That is what makes a built artefact one file you can
