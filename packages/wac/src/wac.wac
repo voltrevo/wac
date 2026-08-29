@@ -1398,9 +1398,9 @@ export i32 main(Core core, Cli cli) {
       return 2;
     }
     Exercise[] none = Exercise[0](fill: Exercise("", 0 - 1));
-    Counters ca = read(core, cli, both[0], none);
+    Counters ca = read(core, cli, both[0], none, true);
     if (ca.error != "") { core.warn("wac: " + ca.error); return 1; }
-    Counters cb = read(core, cli, both[1], none);
+    Counters cb = read(core, cli, both[1], none, true);
     if (cb.error != "") { core.warn("wac: " + cb.error); return 1; }
     if (ca.values.len() < 2 || cb.values.len() < 2) {
       core.warn("wac: a journal is at least two slots; got " + itoa(ca.values.len()) +
@@ -1450,7 +1450,7 @@ export i32 main(Core core, Cli cli) {
     Exercise[] asked = Exercise[n](fill: Exercise("", 0 - 1));
     for (i32 i = 0; i < n; i++) { asked[i] = also[i]; }
 
-    Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked);
+    Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked, false);
     if (c.error != "") { core.warn("wac: " + c.error); return 1; }
     for (i32 i = 0; i < c.values.len(); i++) {
       core.log(itoa(i) + "\t" + itoa(c.values.get(i)));
@@ -1480,7 +1480,7 @@ export i32 main(Core core, Cli cli) {
       return 2;
     }
     Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()),
-                      Exercise[0](fill: Exercise("", 0 - 1)));
+                      Exercise[0](fill: Exercise("", 0 - 1)), false);
     if (c.error != "") { core.warn("wac: " + c.error); return 1; }
     if (c.values.len() < 2) {
       core.warn("wac: a journal is at least two slots; got " + itoa(c.values.len()));

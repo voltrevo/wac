@@ -76,7 +76,7 @@ export struct Exercise {
  * `grants` is passed to `load` and is the loader's own ceiling intersected with what is asked, so this
  * cannot hand a module more than the command holds.
  */
-export Counters read(Core core, Cli cli, string path, Exercise[] also) {
+export Counters read(Core core, Cli cli, string path, Exercise[] also, bool traced) {
   Vec<i32> none = Vec.create();
   FileResult f = cli.readFile(path).wait();
   if (!f.ok) { return Counters("cannot read " + path + " — " + f.error, none, false, "", Vec.create()); }
@@ -174,11 +174,37 @@ export Counters read(Core core, Cli cli, string path, Exercise[] also) {
     return Counters(path + " has __cov_init and no __cov_len", none, trapped, trapText, missing);
   }
   Vec<i32> out = Vec.create();
-  for (i32 i = 0; i < n.value; i++) {
+  // **A trace is read to its cursor, not to its capacity.** `__cov_len` is how many slots the journal
+  // *has* — 2^22 by default — and `compareJournals` needs three things out of it: slot 0, the live
+  // entries it counts, and the last slot's total. Everything between the cursor and the end is a slot
+  // nothing wrote, and fetching it costs a host call each.
+  //
+  // That was the whole of `wac ctcompare`'s cost. Every call read 4.19 million slots per module,
+  // twice, whatever the routine did: `sha256` over 1,543 events took **15.7s** and `p256PublicKey`
+  // over 8.19 million took 16.4s — the same, because neither number was what the loop was counting.
+  // `packages/crypto/test/wac/constanttime_test.wac` makes about sixteen comparisons and cost 265s,
+  // which was most of the whole suite's critical path.
+  //
+  // Not for `covdump`, where the journal is a counter table and every slot is a real number — hence
+  // the flag rather than a guess. `issues/system/0274b`.
+  i32 cap = n.value;
+  i32 upto = cap - 1;
+  if (traced && cap > 1) {
+    CallResult cursor = cli.call(m.handle, "__cov_get", 0);
+    i32 used = cursor.status == 0 && cursor.value > 0 ? cursor.value : 0;
+    if (used < upto) { upto = used; }
+  }
+  for (i32 i = 0; i <= upto; i++) {
     CallResult v = cli.call(m.handle, "__cov_get", i);
     // -1 for a slot that would not answer, which is what the native reader records. A negative count
     // is impossible for a real slot, so it reads as "this one is missing" rather than as a value.
     out.push(v.status == 0 ? v.value : 0 - 1);
+  }
+  // The last slot is how many events happened whether or not there was room, and `compareJournals`
+  // reads it as `a.get(a.len() - 1)`. When the loop stopped at the cursor it has not been read yet.
+  if (traced && upto < cap - 1) {
+    CallResult last = cli.call(m.handle, "__cov_get", cap - 1);
+    out.push(last.status == 0 ? last.value : 0 - 1);
   }
   cli.unload(m.handle);
   return Counters("", out, trapped, trapText, missing);

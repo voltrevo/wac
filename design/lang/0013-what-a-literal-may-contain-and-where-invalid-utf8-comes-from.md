@@ -280,9 +280,9 @@ Each of 1, 3, 4 is a breaking change and belongs in the breaking-changes note.
 | 2 — `\u{…}` | **done**, 2026-08-28 — bounds shared with `string.fromCodepoint`, both sides of all three edges tested |
 | 3 — the category rule | **done**, 2026-08-28 — six categories of seven; `Cn` deferred, see below |
 | 4 — `u8` truncation | **done**, 2026-08-28 — character literals only; see the note below |
-| 5 — `isUtf8` / `toUtf8` | not started |
+| 5 — `isUtf8` / `toUtf8` | **blocked** — one question for the operator, in the section below |
 | 6 — block strings | **done**, 2026-08-28 — D6's tab clause turned out to be D3's |
-| 7 — interpolation | not started |
+| 7 — interpolation | **done**, 2026-08-29 — sugar for `+` in the lexer; five cases, three clauses, and `strInterp` in the tour |
 
 ## Step 3 is not blocked by the no-dependencies rule, and here is what it costs
 
