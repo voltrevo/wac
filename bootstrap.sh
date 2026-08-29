@@ -202,13 +202,26 @@ build_native() {
 build_js() {
   runner=$1
   say "building the wac command with $runner"
-  # The module is not the problem — `hosts/$runner.js --with-wacc` writes a wac command byte for
-  # byte identical to the Rust host's. What is missing is the half that *runs* it: a JavaScript
-  # file that instantiates the module and hands it its capabilities. That bridge is
-  # `packages/platform/host/`, 8,521 lines of TypeScript, and it has to be plain JavaScript before
-  # it can go in a single file without a bundler. See `bootstrap/MIGRATION.md`.
-  die "--host $host cannot finish yet: it can build the module, but the platform bridge it needs to
-    run is still TypeScript. Use --host v8." 
+  # **The bridge is no longer the blocker.** It was until 2026-08-29: `packages/platform/host/` is
+  # TypeScript and had to be plain JavaScript before it could go in one file without a bundler. It
+  # can be now — `packages/ts` is that bundler, written in wac, and the ladder builds it from source
+  # with no `wac` in the loop:
+  #
+  #     hosts/$runner.js packages/wacc/src/api.wac --with-wacc packages/ts/src/transform.wac \
+  #         -o transform.wasm                                    # 74 KB, ladder only
+  #     $runner packages/ts/host/run.js transform.wasm packages/platform/host/entry.ts …
+  #                                                              # 311 KB of JavaScript Deno parses
+  #
+  # `packages/ts/test/stripDifferential.test.ts` holds that claim for both entry points.
+  #
+  # What is left is assembly, and it is written down rather than guessed at — `design/system/0009`,
+  # "What step 5 still needs". Three generated entry files (launcher, worker, child), each bundled;
+  # the module's binding glue, which `bindgenFiles(…, "js")` in `packages/wacc/src/api.wac` already
+  # emits but no driver here calls yet; and a shebang. `packages/platform/build.ts` does all of it
+  # for the `deno` and `node` targets today, in TypeScript, which is why that file is flagged rather
+  # than deleted.
+  die "--host $host cannot finish yet: the bridge bundles, and the single file is not assembled.
+    See design/system/0009, \"What step 5 still needs\". Use --host v8." 
 }
 
 case "$host" in

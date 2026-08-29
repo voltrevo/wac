@@ -370,3 +370,39 @@ went out with it.
 
 Two smaller drifts in the same file: its summary advertises `--host {rust,deno,nodejs}`, where
 `rust` is now explicitly refused in favour of `v8` and `wasmtime`, and `deno`/`nodejs` do not finish.
+
+
+## What step 5 still needs
+
+Written down because the blocker moved on 2026-08-29 and the old one is no longer true.
+
+**Done, and holding.** The ladder builds the bundler from source with no `wac` binary in the loop —
+`hosts/deno.js packages/wacc/src/api.wac --with-wacc packages/ts/src/transform.wac -o transform.wasm`
+gives 74 KB — and `packages/ts/host/run.js` drives it to turn `packages/platform/host/` into 311 KB
+of JavaScript that Deno parses. `test/stripDifferential.test.ts` asserts it for **both** entry points,
+which is not redundancy: `ops.ts` is reachable from `entry.ts` and not from `deno.ts`, and it held one
+of the three bugs that had to be fixed to get here.
+
+**What is left is assembly.** `packages/platform/build.ts` already does all of this for the `deno` and
+`node` targets, in TypeScript, which the bootstrap cannot run — that is why it is flagged rather than
+deleted, and the shape to copy is `buildApp`'s.
+
+1. **The module's binding glue.** `build.ts` gets it from `waccArtifacts`; the ladder path has no
+   equivalent, because `bootstrap/js/wacc.js` drives wacc for `emit` only. `bindgenFiles(wasm, paths,
+   sources, entry, lang)` in `packages/wacc/src/api.wac:373` is the export that produces it, so this
+   is a driver call rather than a compiler change — every value crosses as an `i32`, a byte at a
+   time, exactly as the existing calls do.
+2. **Three generated entries, each bundled.** The launcher (`runLauncher(workerSource, grants,
+   moduleEntry)`), the worker, and the child — `build.ts` lines 743–812. They are short generated
+   strings that import from the bridge and from the glue.
+3. **A shebang**, which for Deno carries the grants as `--allow-*` flags and for Node carries
+   nothing, because Node has no permission system and the capability world is the whole boundary.
+
+One thing to carry over rather than rediscover: `build.ts` writes those entries with
+`import.meta.resolve`, so their specifiers are `file://` URLs. `packages/ts` treats a non-relative
+specifier as external and hoists it, so the bootstrap's copies want plain relative paths.
+
+**And one shortcut that is not one.** `run.js` takes an explicit file list rather than walking
+imports, so the caller supplies the set. Passing the whole of `packages/platform/host/` works — the
+bundle is 318 KB against 311 KB and parses either way — which means no TypeScript import walker is
+needed in plain JavaScript to get this finished.
