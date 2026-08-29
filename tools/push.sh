@@ -510,6 +510,15 @@ for attempt in 1 2 3; do
   # deliberately narrow: a fence in `spec/**` or a `packages/*/README.md` is a program three consumers
   # compile, so editing one is editing code and the ratchets run.
   #
+  # **And it is not worth narrowing further, which was measured before being believed.** The obvious
+  # next step is to run only the drivers a change can reach — every exercise's import closure is one
+  # `wacFiles` walk away, and `issues/system/0241b` proved the reach crosses packages, so the
+  # predicate would have to be that closure rather than the package name. Over the last forty
+  # commits: eleven were documentation and already skip; **nineteen touched `packages/wacc`, the
+  # host, `tools/` or `harness/`**, where every driver's number can move and everything must run
+  # anyway; five were confined to packages. So the work would buy a skip on one push in eight, on the
+  # gate's safety path, and a push is a batch of commits — which makes it rarer still.
+  #
   # It skips **this check and nothing else**. The suite has already run by the time we get here, and it
   # must: a pure prose edit routinely breaks it on purpose, because
   # `tools/wac/issuecounts_test.wac` asserts `N issues, M closed.` against the files in `issues/*/`.
