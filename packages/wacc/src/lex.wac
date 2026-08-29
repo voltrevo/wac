@@ -50,6 +50,16 @@ export struct Lexed {
   i32 tokenCount;      // tokens, not i32s
   i32[] errors;
   i32 errorCount;
+  /**
+   * **Set once these tokens have been parsed, because parsing consumes them.**
+   *
+   * `splitGt` in the parser rewrites a `>>` in the array to a `>` when it closes two type-argument
+   * lists — `Vec<Vec<i32>>` — so the array a second parse would read is not the one the lexer
+   * produced, and `Vec<Vec<i32>` is a comparison rather than a type. Nothing does this today, and
+   * that is exactly why nothing would have caught it: `parseProgram` traps on the second call
+   * rather than answering differently. Lex again for a second parse. `issues/lang/0278a`.
+   */
+  bool parsed;
 }
 
 // Error codes rather than messages: a message would mean building a string per
@@ -1053,7 +1063,8 @@ export Lexed lex(u8[] src) {
   i32 maxErrors = 64;
   Lexed out = Lexed(
     i32[(n + 1) * tokenStride()](), 0,
-    i32[maxErrors * errorStride()](), 0
+    i32[maxErrors * errorStride()](), 0,
+    false
   );
   Lexer lx = Lexer(src, 0, 1, 1);
   Modes md = Modes(i32[modeDepth(src) * 3](), 0, mNormal());

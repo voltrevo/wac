@@ -1,0 +1,88 @@
+// Parsing consumes its tokens, and the `Lexed` it consumed knows it — `issues/lang/0278a`.
+//
+// `splitGt` in `parse.wac` rewrites a `>>` in the token array into a `>` when it closes two
+// type-argument lists, so `Vec<Vec<i32>>` becomes `Vec<Vec<i32>` for anybody who reads the array
+// afterwards — a comparison rather than a type. Nothing parses the same `Lexed` twice today, which
+// is exactly why nothing would have noticed: the wrong answer arrives three phases later, as a type
+// error about a program that is fine.
+//
+// `parseProgram` therefore traps on the second call rather than answering differently, and a
+// `test_traps_*` export is how that is asked for directly — trapping is the pass. Two more go with
+// it, because the guard has a way of being silently absent that the trap test cannot see:
+//
+//   - the flag is set on the caller's own `Lexed`, not on a copy the parser took. If `Lexed` were
+//     ever handed around by value the guard would still compile, still look right, and never fire —
+//     and the trap test would still pass, because it holds the same object either way.
+//   - lexing again is the supported way to parse a program twice, and gives the same answer. That is
+//     what the trap's message tells a reader to do, so it is worth a test rather than a sentence.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+import { lex, Lexed } from "../../src/lex.wac";
+import { P, parseProgram } from "../../src/parse.wac";
+
+/** A program whose types nest, so `splitGt` is reached rather than merely available. */
+string subject() {
+  return "struct Vec<T> { T[] items; }\n" +
+         "i32 depth(Vec<Vec<i32>> v) { return v.items.len(); }\n" +
+         "export i32 main() { return 0; }\n";
+}
+
+export string test_traps_parsing_one_lexed_twice() {
+  u8[] src = subject().toBytes();
+  Lexed lexed = lex(src);
+
+  P first = P.create(src, lexed);
+  parseProgram(first);
+
+  // The same tokens again. `splitGt` has already rewritten this array, so without the guard this
+  // parse answers — with one error, against a program that is fine.
+  P second = P.create(src, lexed);
+  parseProgram(second);
+  return "a second parse of one Lexed was allowed, and issues/lang/0278a is back";
+}
+
+export string test_parsing_marks_the_lexed_it_consumed() {
+  T t = T.create();
+  u8[] src = subject().toBytes();
+  Lexed lexed = lex(src);
+  t.isTrue(!lexed.parsed, "a fresh Lexed came back already marked as parsed");
+
+  P p = P.create(src, lexed);
+  parseProgram(p);
+  t.isTrue(p.errorCount == 0,
+      "the fixture did not parse cleanly — " + itoa(p.errorCount) + " errors, so this test is not "
+      + "reaching splitGt and is not measuring what it says");
+
+  // The whole guard rests on this: `parseProgram` marked *this* object, the one the caller still
+  // holds, rather than a copy it was passed.
+  t.isTrue(lexed.parsed,
+      "parsing did not mark the caller's Lexed, so the second-parse guard in parseProgram can "
+      + "never fire and issues/lang/0278a is back with no test to show it");
+  return t.report();
+}
+
+export string test_lexing_again_is_how_a_program_is_parsed_twice() {
+  T t = T.create();
+  string text = subject();
+
+  u8[] a = text.toBytes();
+  Lexed la = lex(a);
+  P pa = P.create(a, la);
+  i32 first = parseProgram(pa).decls.len();
+
+  u8[] b = text.toBytes();
+  Lexed lb = lex(b);
+  P pb = P.create(b, lb);
+  i32 second = parseProgram(pb).decls.len();
+
+  t.isTrue(first == 3,
+      "expected three declarations from the fixture, got " + itoa(first));
+  t.isTrue(first == second,
+      "two lexes of one program parsed to " + itoa(first) + " and " + itoa(second) + " declarations");
+  t.isTrue(pa.errorCount == 0 && pb.errorCount == 0,
+      "the second parse reported " + itoa(pb.errorCount) + " errors against the first's "
+      + itoa(pa.errorCount));
+  return t.report();
+}

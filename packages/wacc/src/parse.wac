@@ -17,7 +17,7 @@ import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref,
   Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm, JsxAttr,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program, jsxTrim } from "./ast.wac";
-import { tokenStride } from "./lex.wac";
+import { Lexed, tokenStride } from "./lex.wac";
 import { kindName } from "./kinds.wac";
 import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
@@ -83,8 +83,12 @@ export i32 perrTypeArgsThenValue() { return 33; }
 
 export struct P {
   u8[] src;
-  i32[] toks;      // flat quintuples from lex
-  i32 tokCount;
+  /**
+   * **The lexer's output, not just its array**, because parsing consumes it: `splitGt` below
+   * rewrites a `>>` into a `>` in place, so a second parse of the same tokens reads a different
+   * program. Holding the `Lexed` is what lets `parseProgram` say so — see `Lexed.parsed`.
+   */
+  Lexed lx;
   i32 at;          // token index
   i32[] errors;    // (code, line, col) triples
   /**
@@ -99,8 +103,17 @@ export struct P {
   i32[] errorWidths;
   i32 errorCount;
 
-  P create(u8[] src, i32[] toks, i32 tokCount) {
-    return P(src, toks, tokCount, 0, i32[192](), string[64](), i32[64](), 0);
+  P create(u8[] src, Lexed lexed) {
+    return P(src, lexed, 0, i32[192](), string[64](), i32[64](), 0);
+  }
+
+  /**
+   * A parser over a bare token array, for a caller that has no `Lexed` and is not parsing a
+   * program with it — `wapyparse` opens one of these per statement over one file's tokens, which
+   * is deliberate and is why the guard is on `parseProgram` rather than here.
+   */
+  P overTokens(u8[] src, i32[] toks, i32 tokCount) {
+    return P.create(src, Lexed(toks, tokCount, i32[0](), 0, false));
   }
 
   // ── Token access ────────────────────────────────────────────────────────────
@@ -110,24 +123,24 @@ export struct P {
 
   i32 idx(const this, i32 offset) {
     i32 i = this.at + offset;
-    if (i >= this.tokCount) { return this.tokCount - 1; }
+    if (i >= this.lx.tokenCount) { return this.lx.tokenCount - 1; }
     return i;
   }
 
   i32 kindAt(const this, i32 offset) {
-    return this.toks[this.idx(offset) * tokenStride()];
+    return this.lx.tokens[this.idx(offset) * tokenStride()];
   }
   i32 startAt(const this, i32 offset) {
-    return this.toks[this.idx(offset) * tokenStride() + 1];
+    return this.lx.tokens[this.idx(offset) * tokenStride() + 1];
   }
   i32 lenAt(const this, i32 offset) {
-    return this.toks[this.idx(offset) * tokenStride() + 2];
+    return this.lx.tokens[this.idx(offset) * tokenStride() + 2];
   }
   i32 lineAt(const this, i32 offset) {
-    return this.toks[this.idx(offset) * tokenStride() + 3];
+    return this.lx.tokens[this.idx(offset) * tokenStride() + 3];
   }
   i32 colAt(const this, i32 offset) {
-    return this.toks[this.idx(offset) * tokenStride() + 4];
+    return this.lx.tokens[this.idx(offset) * tokenStride() + 4];
   }
 
   /** Absolute token index — what the AST stores. */
@@ -139,7 +152,7 @@ export struct P {
   /** Consume the current token, returning its absolute index. */
   i32 advance(this) {
     i32 i = this.at;
-    if (this.at < this.tokCount - 1) { this.at++; }
+    if (this.at < this.lx.tokenCount - 1) { this.at++; }
     return i;
   }
 
@@ -157,16 +170,16 @@ export struct P {
 
   /** How wide the token at the cursor is, which is how much of the line a diagnostic underlines. */
   i32 widthAt(const this, i32 offset) {
-    i32 len = this.toks[this.idx(offset) * tokenStride() + 2];
+    i32 len = this.lx.tokens[this.idx(offset) * tokenStride() + 2];
     return len > 0 ? len : 1;
   }
 
   /** The source text of a token near the cursor, for a diagnostic that has to quote it. */
   string textAt(const this, i32 offset) {
     i32 t = this.idx(offset);
-    i32 start = this.toks[t * tokenStride() + 1];
-    i32 len = this.toks[t * tokenStride() + 2];
-    if (len <= 0) { return kindName(this.toks[t * tokenStride()]); }
+    i32 start = this.lx.tokens[t * tokenStride() + 1];
+    i32 len = this.lx.tokens[t * tokenStride() + 2];
+    if (len <= 0) { return kindName(this.lx.tokens[t * tokenStride()]); }
     u8[] out = u8[len]();
     for (i32 i = 0; i < len; i++) { out[i] = this.src[start + i]; }
     return string.fromBytes(out);
@@ -664,10 +677,10 @@ i64 q6(i32 a, i32 b, i32 c, i32 d, i32 e, i32 f) {
  */
 void splitGt(P p) {
   i32 base = p.abs(0) * tokenStride();
-  p.toks[base] = p.kindAt(0) == kShrU() ? kShr() : kGt();
-  p.toks[base + 1] = p.toks[base + 1] + 1;
-  p.toks[base + 2] = p.toks[base + 2] - 1;
-  p.toks[base + 4] = p.toks[base + 4] + 1;
+  p.lx.tokens[base] = p.kindAt(0) == kShrU() ? kShr() : kGt();
+  p.lx.tokens[base + 1] = p.lx.tokens[base + 1] + 1;
+  p.lx.tokens[base + 2] = p.lx.tokens[base + 2] - 1;
+  p.lx.tokens[base + 4] = p.lx.tokens[base + 4] + 1;
 }
 
 /** Whether the current token closes a type-argument list, in any of its munched forms. */
@@ -2360,6 +2373,16 @@ Decl parseConstDecl(P p, bool exported) {
 
 /** The whole file. */
 export Program parseProgram(P p) {
+  // **These tokens are consumed by parsing**, so a second parse of the same `Lexed` would read a
+  // program the lexer never produced — `splitGt` has rewritten every `>>` that closed two
+  // type-argument lists into a `>`, and `Vec<Vec<i32>` is a comparison. Nobody does this today;
+  // the point of the guard is that the wrong answer would arrive three phases later, as a type
+  // error about something that is not wrong. `issues/lang/0278a`.
+  if (p.lx.parsed) {
+    trap "these tokens have already been parsed: parsing rewrites them, so lex again";
+  }
+  p.lx.parsed = true;
+
   DeclList decls = DeclList.create();
   while (!p.at1(kEof())) {
     if (p.at1(kImport())) { decls.push(parseImport(p)); continue; }

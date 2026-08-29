@@ -4483,7 +4483,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // for a single-file caller they are the only ones there are.
   Lexed lexed = lexeds.len() > 0 && (lexeds[0] is not null)
     ? lexeds[0]!
-    : Lexed(i32[0](), 0, i32[0](), 0);
+    : Lexed(i32[0](), 0, i32[0](), 0, false);
   Program prog = progs.len() > 0 && (progs[0] is not null) ? progs[0]! : Program(Decl[]());
 
   Env env = envIn;
