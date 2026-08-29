@@ -18,6 +18,7 @@
 // `readFile` away and nothing can fill.
 
 import { binaryPath } from "../../../wactest/src/host.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
@@ -29,12 +30,6 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-/** The directory holding a path, so a built artefact can find `wac` on PATH. */
-string dirOf(string p) {
-  i32 cut = -1;
-  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
-  return cut < 0 ? "." : p.slice(0, cut);
-}
 
 string DESCRIPTOR(Cli cli) {
   return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptor");
@@ -146,14 +141,15 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   t.isTrue(whyDir == "", whyDir);
   string bin = dir + "/dird";
 
-  // **`wac app` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is removing
-  // that builder's non-browser targets, and this wanted an executable rather than anything only it
-  // could make. One fewer thing here needs Deno at all.
-  Exec built = cli.exec(binaryPath(cli),
-    string[]("app", "packages/tor/src/dird.wac",
-             "--allow-read", "--allow-net", "-o", bin), u8[0]()).wait();
-  t.eqI32(built.status, 0, "dird built — " + string.fromBytes(built.stderr));
-  if (built.status != 0) { return t.report(); }
+  // **`builtProgram` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is
+  // removing that builder's non-browser targets. It answers a cached `.wasm` at a stable path and
+  // rebuilds only when the sources or the compiler move. A `wac app` executable to a fresh temporary
+  // name cannot be cached: the output's base name is in the manifest, so two destinations are two
+  // artefacts. Measured on `client_test.wac`: 2s cached against 8s not.
+  string mod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
+                            string[]("--allow-read", "--allow-net"));
+  t.isTrue(mod != "", "the server built");
+  if (mod == "") { return t.report(); }
 
   string consensus = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
                            "consensus");
@@ -171,8 +167,7 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   // checkout's binary is not on. A `PATH=` prefix will not do: `start` wraps the line as
   // `{ exec <line>; }` and `exec` takes a command rather than an assignment.
   Daemon d = start(cli,
-    "env PATH=" + quoted(dirOf(binaryPath(cli)) + ":/usr/bin:/bin") + " " +
-      quoted(bin) + " " + quoted(dir + "/consensus") + " " + quoted(dir + "/cert") + " " +
+    quoted(binaryPath(cli)) + " " + quoted(mod) + " " + quoted(dir + "/consensus") + " " + quoted(dir + "/cert") + " " +
       quoted(dir + "/desc") + " 0",
     dir + "/log");
   t.isTrue(d.ok(), "dird started — " + d.error);
