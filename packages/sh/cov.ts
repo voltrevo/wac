@@ -489,6 +489,12 @@ for (
     "sleep 0 &", "sleep 0 & wait", "sleep 1 & jobs; kill %1", "true & wait %1",
     "for i in a b; do continue; done", "for i in a b; do break; done",
     "f() { return 3; }; f; echo $?", "local x=1",
+    // A third batch at the lexer helpers and the stat detail `ls -l` did not reach.
+    "abc_1=x; echo $abc_1", "abc_1=x; echo ${abc_1}", "   echo spaced",
+    "printf '\\x41\\n'", "printf '\\033[1mbold\\033[0m\\n'",
+    "PATH=/a:/b; echo $PATH", "echo $'\\x42'",
+    "mkdir -p /tmp/covp2 && : > /tmp/covp2/f && ls -l /tmp/covp2",
+    "ls -l /tmp/covp2/f", "ls -ld /tmp/covp2",
   ]
 ) {
   m.shOut(script);

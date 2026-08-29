@@ -184,9 +184,16 @@ listing, the refusal paths every builtin shares, and the job-control half that n
     after batch one   958 uncovered, 36 never entered, 68.8%
     after batch two   880 uncovered, 28 never entered, 71.3%
 
-Twenty-one scripts in total have taken it from 1,036 to 880 and from 44 functions to 28. The
-per-script return has not fallen off yet, which is the signal to keep going before writing anything
-down as unreachable.
+    after batch three 850 uncovered, 26 never entered, 72.3%
+
+Thirty-one scripts in total have taken it from 1,036 to 850 and from 44 functions to 26 — 18% of the
+points and 41% of the entries, for six percentage points.
+
+**And the third batch is where the return fell off**: batches one and two were -78 points and -8
+entries each, batch three was -30 and -2 for ten scripts aimed at the group I had picked as most
+likely. That was the stated signal to stop guessing, so this is the natural boundary between widening
+and the two things that come after it — targeted work for the groups below, and rules for whatever
+survives that.
 
 **The 28 that remain**, so the next person starts from a list rather than a walk — 22 in `exec.wac`,
 2 each in `arith.wac`, `lex.wac` and `refusal.wac`:
