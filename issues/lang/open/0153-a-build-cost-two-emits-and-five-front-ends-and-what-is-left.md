@@ -187,9 +187,16 @@ three times each way:
     doubled          5134 ms   6085 ms   6523 ms
     reverted         5219 ms   5918 ms   6239 ms
 
-Indistinguishable. 97 million extra string comparisons — a second pass over the whole of the hottest
-scan in the compiler — disappear into the noise. So `funcAt` is not worth indexing, and by extension
-neither is anything ranked by iteration count alone.
+Indistinguishable — and **the honest reading is a bound, not a zero**. The spread within each set is
+about 1,400 ms, so what this measurement supports is "one `funcAt` pass costs less than roughly
+700 ms of a 5,000 ms build", not "it costs nothing". 97 million extra string comparisons are
+somewhere under a seventh of the build and the machine cannot say where. Anyone wanting the real
+number needs a quiet machine and more repetitions taking minima; three runs each way while another
+agent's suite is on the other four cores is not it.
+
+What it does rule out is the reading that sent me here: the counts do not translate into anything
+like a proportional share of the clock, so **a hash index on `funcs` is not justified by 97 million
+iterations alone**, and neither is one on any other table ranked that way.
 
 **I nearly reported the opposite.** An earlier baseline, taken twenty minutes before on a quiet
 machine, was 4477/4587/4514 ms, and against the doubled figures that reads as a 650 ms difference —
@@ -198,6 +205,11 @@ contention: three agents share five cores here, and the load moved between the t
 *reverted* build re-measured under the same load as the doubled one is what settles it, and the
 lesson is the one this page already had about `C.findName`, arriving from the other side: a
 conspicuous scan is not evidence, and neither is a large count.
+
+**One more thing the counts rule out.** `B.byte`, the emitter's byte buffer, is 2.59 million calls
+and its doubling-grow loop 3.2 million iterations — 0.13% of the total. Building the 777 KB module a
+byte at a time is not the cost either, which is worth knowing because it is the other obvious
+candidate and it is three orders of magnitude below the scans.
 
 **What that leaves.** The 96% figure for `emit.wac` still holds and is still where the work is — but
 it is 96% of *iterations*, and the phase-level split at the top of this section (`lex` 2.5%,
