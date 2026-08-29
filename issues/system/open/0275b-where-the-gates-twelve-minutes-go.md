@@ -265,6 +265,12 @@ the way a lane's are. The ordering file already generalises — a driver is just
 question is whether an instrumented build competing with four test chunks makes both slower than the
 arithmetic says, which is a measurement rather than an argument.
 
+**The objection that is not CPU.** Memory is what this container runs out of — `issues/system/0266c`
+is thirty-five refusals in a day from the suite gate's memory floor, and push.sh counts OOM kills
+around every run. But the arithmetic above is *one* queue at four workers, not two queues at four
+each, so the peak is what it already is: four jobs. A version that ran `coverage:all` beside the
+suite instead of merging the queues would be 4+4 and is the one to refuse.
+
 **And a reason it might be refused.** Failures currently arrive in phases, so "the suite passed and
 the ratchets are red" is two sentences a reader can act on separately. One queue makes that one
 sentence with two kinds of failure in it, and the gate's output is the thing everyone reads when
