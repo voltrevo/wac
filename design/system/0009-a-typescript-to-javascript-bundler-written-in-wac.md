@@ -694,3 +694,31 @@ is this opcode compared across" stops being something to derive and becomes some
 deliberate that the wasmtime binary is not built by default. That is the same constraint `0279c`
 describes rather than a new one — and this shape at least makes the number honest, because a host
 that is not built is a host the runner cannot list.
+
+### The `--target` group, and what its successor costs
+
+Five files compare Deno against Node by building the same program twice —
+`runtimes`, `echod`, `setexecutable`, `node_net`, `datagram`. They are the reason removing
+`build.ts`'s deno and node targets is not just a port: those targets *are* what the tests compare.
+
+The successor is the shape `bootstrap_test.wac` already demonstrates — **one artefact under several
+hosts** — and the obstacle is not the pattern but where the hosts come from. `bootstrap.sh --host
+deno` takes about 45 seconds, and a test that builds one per file cannot be run on every push.
+
+**The precedent is already in the tree.** `nativeHostWhyNot()` in `packages/wactest/src/built.wac`
+does exactly this for the wasmtime host: the binary lives at a well-known path, something out of band
+builds it, and eleven test files ask for a reason to print when it is absent rather than building a
+Rust crate nobody asked for. `issues/system/0208`.
+
+So the JS hosts want the same treatment: a well-known path, a `denoHostWhyNot` / `nodeHostWhyNot`,
+and `bootstrap.sh --host deno|nodejs -o` filling them.
+
+**And they are cheaper than the host that already has this.** The wasmtime binary needs cargo and
+minutes; `bootstrap.sh --host deno` needs neither — 45 seconds, no cargo, no network. That is the
+difference between "built when somebody asks" and "plausibly built by the gate", which matters
+because `issues/system/0279c` is precisely about comparisons that are credited and skipped.
+
+**What it would buy beyond this migration.** Today the tree compares hosts by building the same
+program once per host and trusting that the two builds differ only in the host. Under this shape the
+artefact is held constant, which is what found six of the nine divergences on 2026-08-29 — every one
+by hand, because no test could do it.
