@@ -36,7 +36,29 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, Change, Exec, FileResult } from "std/platform.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { freshDir, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+
+/**
+ * A program whose *transcript* differs between hosts if a redirect is mishandled.
+ *
+ * `openOutput` says "my standard output is this file now", and under `wac app` the program is a child
+ * of `app-run` — which is exactly the shape `issues/system/0277c` broke: a spawned child's redirect
+ * was skipped, so the bytes went to standard output and the file was left empty. Then the two hosts
+ * disagree about this transcript, which is the whole mechanism.
+ *
+ * It reports what it read back rather than asserting anything itself: a probe that judges is a probe
+ * that can be wrong twice.
+ */
+const string PROBE =
+  "import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  cli.openOutput(\"probe.out\").wait();\n" +
+  "  cli.write(\"redirected\\n\".toBytes());\n" +
+  "  cli.openOutput(\"\").wait();\n" +
+  "  FileResult f = cli.readFile(\"probe.out\").wait();\n" +
+  "  core.log(f.ok ? \"file holds: \" + string.fromBytes(f.bytes) : \"file: MISSING\");\n" +
+  "  return 0;\n" +
+  "}\n";
 
 /** A program with no imports beyond `Core`, so what is being tested is the command and not a graph. */
 const string PROGRAM =
@@ -93,8 +115,63 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
   t.eqStr(trimmed(string.fromBytes(ran.stdout)), "it compiled and it ran",
           host + " printed: " + string.fromBytes(ran.stdout));
 
+  sameAnswerOnBothHosts(core, cli, t, host, dir, out);
+
   cli.remove(dir, true).wait();
   return "";
+}
+
+/**
+ * One artefact, two hosts, one transcript — the comparison the tree could not make.
+ *
+ * **Every host comparison here builds twice.** `packages/platform/test/wac/runtimes_test.wac` and its
+ * neighbours build the same program once per target and check the two agree, so a disagreement has
+ * two possible causes: the host, and everything the two builders do differently. Holding the
+ * *artefact* constant removes the second one.
+ *
+ * That is not a preference. Six host divergences were found on 2026-08-29 by doing exactly this by
+ * hand — `0275c`, `0276c`, `0277c`, `0278c`, `0280c`, `0281c` — and the tests that existed compared
+ * two builds and saw none of them. `0277c` is the sharpest: `box cp README.md out` copies through one
+ * artefact and writes the file to standard output through the other.
+ *
+ * **It costs nothing here**, which is why it lives in this file rather than its own. The 45 seconds
+ * is the JS-hosted `wac` above; running one more artefact under it is milliseconds.
+ *
+ * **The canary is not decoration.** Two hosts that had both lost the capability would agree
+ * perfectly, and `runtimes_test.wac`'s own header records that happening — a case that "passed for a
+ * while while checking the *write* denial and claiming to check the stat". So the transcript is also
+ * checked for the line the probe is known to print.
+ */
+void sameAnswerOnBothHosts(Core core, Cli cli, T t, string host, string dir, string jsWac) {
+  Change wrote = cli.writeFile(dir + "/probe.wac", PROBE.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the probe — " + wrote.message);
+  if (!wrote.ok()) { return; }
+
+  // Built **once**, by the binary running this test, and run by both. That is the whole point.
+  Exec made = cli.exec(binaryPath(cli),
+                       string[]("app", dir + "/probe.wac", "--allow-read", "--allow-write",
+                                "-o", dir + "/probe"),
+                       u8[0]()).wait();
+  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return; }
+
+  // `cd` into the directory so the probe's relative `probe.out` lands somewhere writable, and so both
+  // runs stand in the same place — a difference in *where* they ran would read as a host difference.
+  string native = "cd '" + dir + "' && '" + binaryPath(cli) + "' app-run ./probe 2>&1";
+  // **The JS command is named outright rather than found on PATH.** A `wac app` artefact resolves
+  // its runtime with `command -v wac`, and putting the JS one there would decide *both* runs — the
+  // point is to name the host each time and keep everything else the same.
+  string js = "cd '" + dir + "' && '" + jsWac + "' app-run ./probe 2>&1";
+  Exec a = sh(cli, native);
+  Exec b = sh(cli, js);
+
+  string sa = trimmed(string.fromBytes(a.stdout));
+  string sb = trimmed(string.fromBytes(b.stdout));
+  t.eqStr(sb, sa, host + ": the two hosts disagree about what the program did");
+  t.eqI32(b.status, a.status, host + ": and about its status");
+  // The canary. Both hosts losing the redirect would agree on an empty file and pass the line above.
+  t.isTrue(contains(sa, "file holds: redirected"),
+           "neither host redirected — the comparison above is worth nothing: " + sa);
 }
 
 export string test_bootstrap_host_deno_builds_a_working_wac(Core core, Cli cli) {
