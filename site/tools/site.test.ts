@@ -627,6 +627,49 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
 
 // ── The bootstrap block's two figures ──────────────────────────────────────
 
+Deno.test("site: the coverage-ledger count and the list of packages without one are the tree's", async () => {
+  // **Both halves had drifted.** The page said "36 of the 39 packages" and named three without a
+  // ledger; there are 40 packages and four without one — `packages/ts` had arrived and joined the
+  // list without the sentence noticing. The count happened to still be right, which is the way this
+  // rots: one number moves, the other does not, and nothing reads them together.
+  //
+  // Derived exactly as `tools/coverageAll.ts` derives them, because that is the thing being
+  // described: a package is a directory under `packages/` with a `src/`, and it carries a ledger if
+  // `tasks.json5` has a `coverage:<name>` task. `core` is deliberately outside both counts — the page
+  // says so in the same sentence.
+  const root = new URL("../../", import.meta.url).pathname;
+  const packages: string[] = [];
+  for await (const e of Deno.readDir(`${root}packages`)) {
+    if (!e.isDirectory) continue;
+    try {
+      if ((await Deno.stat(`${root}packages/${e.name}/src`)).isDirectory) packages.push(e.name);
+    } catch { /* no src/ — fixtures or docs, not code a ledger could measure */ }
+  }
+  const tasks = await Deno.readTextFile(`${root}tasks.json5`);
+  const withLedger = packages.filter((p) => tasks.includes(`"coverage:${p}"`));
+  const without = packages.filter((p) => !tasks.includes(`"coverage:${p}"`)).sort();
+  if (packages.length < 10) throw new Error(`only ${packages.length} packages found — did the walk resolve?`);
+
+  const page = await Deno.readTextFile(`${root}site/src/next/Checked.tsx`);
+  const said = page.match(/<Lead>(\d+) of the (\d+) packages carry a coverage ledger<\/Lead>/);
+  if (said === null) throw new Error("Checked.tsx no longer states the ledger count — has the wording changed?");
+  if (Number(said[1]) !== withLedger.length || Number(said[2]) !== packages.length) {
+    throw new Error(
+      `the site says ${said[1]} of ${said[2]} packages carry a ledger; the tree has ` +
+        `${withLedger.length} of ${packages.length}`,
+    );
+  }
+  // The names are the half that went stale silently, so they are checked as names.
+  for (const name of without) {
+    if (!page.includes(`children: "${name}"`)) {
+      throw new Error(
+        `${name} has no coverage task and the site does not name it among the ones without a ` +
+          `ledger — the list is ${without.join(", ")}`,
+      );
+    }
+  }
+});
+
 Deno.test("site: every repository path the site links to is a file in the tree", async () => {
   // **The site deploys on every push and its links are public**, and nothing checked them. Two were
   // dead when this was written: `packages/wacc/test/fixpointEmit.test.ts`, deleted with the

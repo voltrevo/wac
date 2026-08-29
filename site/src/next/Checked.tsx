@@ -225,11 +225,11 @@ export default function Checked() {
           write down why.
         </P>
         <P>
-          <Lead>36 of the 39 packages carry a coverage ledger</Lead> — and so does{" "}
+          <Lead>36 of the 40 packages carry a coverage ledger</Lead> — and so does{" "}
           {m({ children: "core" })}, which is not a package — a file listing every branch point the
-          suite does not reach, each with a sentence saying what would reach it. The three without
-          one are {m({ children: "wacc" })}, which is 36,000 lines and its own project;{" "}
-          {m({ children: "box" })}; and {m({ children: "wac" })}, added days ago.
+          suite does not reach, each with a sentence saying what would reach it. The four without one
+          are {m({ children: "wacc" })}, which is 36,000 lines and its own project;{" "}
+          {m({ children: "box" })}; {m({ children: "wac" })}; and {m({ children: "ts" })}.
         </P>
         <P>
           <Lead>The ratchet runs both ways, and the second direction is the unusual one.</Lead> An
