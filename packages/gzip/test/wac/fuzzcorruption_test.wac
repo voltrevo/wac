@@ -1,6 +1,6 @@
 // The whole corruption sweep: 2,700 corrupted streams, each in a process of its own.
 //
-// test-lane: heavy — 22s, 2,700 corrupted streams at about 8ms a process
+// test-lane: heavy — 49s, 2,700 corrupted streams at about 18ms a process, measured 2026-08-29
 //
 // `fuzz_test.wac` keeps a 24-case sample of this in the regular lane. The split is the only thing that
 // makes the sweep affordable: it was the largest single item in the `wac test` lane, and the reason it

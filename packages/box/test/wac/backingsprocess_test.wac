@@ -20,7 +20,7 @@
 // script says `cd` instead — it is a shell, and the directory is the only thing that case needs from
 // the parent. The two sealed cases never look at one.
 //
-// test-lane: heavy — 18s, three builds and four processes
+// test-lane: heavy — 1s, three builds and four processes, measured 2026-08-29
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
