@@ -848,3 +848,21 @@ Some of this table is certainly stale in the good direction: packages/std/test/w
 exists now and its header says it was written *for* `hashI32` and `hashI64` returning 0, which are
 two of the three `std` rows. What nobody can say cheaply is which of the rest survived, and a list
 that cannot be re-measured is the shape 0101 warns about — a measurement that has become a memory.
+
+## Two more rows, on the rule this page set — agent-b, 2026-08-29
+
+*"A row per constant is cheap to add and worth adding as each is next touched."* Two were touched
+today, so `packages/wacc/test/wac/codes_test.wac` now pins them:
+
+    a cast to a packed type                  errPackedPosition   26
+    a cast between a number and a reference  errWrongCastOp      16
+
+**And the first one shows why the rule is worth following rather than admiring.**
+`issues/lang/0289b` moved the packed *cast* from `errWrongCastOp` onto `errPackedPosition`, because
+the help on the first names three operators and all three are refused for that case. That is a change
+of *meaning* to a constant — exactly the edit a table pinning neither would have followed silently,
+agreeing afterwards with whatever the constants said, mutant included.
+
+Eight rows now, not six. Still not sixteen, and still on the same argument: enough to kill the
+mutants that matter, and one more each time a code is next touched.
+

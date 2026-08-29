@@ -86,7 +86,9 @@ string[] checkWhat() {
     "a call with the wrong number of arguments",
     "a field the struct does not have",
     "a match on something that is not an enum",
-    "an arm binding more names than the variant has");
+    "an arm binding more names than the variant has",
+    "a cast to a packed type",
+    "a cast between a number and a reference");
 }
 string[] checkSrc() {
   return string[](
@@ -96,10 +98,20 @@ string[] checkSrc() {
     "struct S { i32 v; } export i32 f() { S s = S(1); return s.w; }",
     "export i32 f(i32 n) { match (n) { else: { return 0; } } return 1; }",
     "enum E { A, C(i32 p) } export i32 f(E e) { " +
-    "return match (e) { case A: 0, case C(p, q): q }; }");
+    "return match (e) { case A: 0, case C(p, q): q }; }",
+    "export i32 f() { i32 a = 65; u8[] b = u8[](a as u8); return b[0]; }",
+    "export i32 f() { i32 n = 1; string s = n as string; return s.len(); }");
 }
-// errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity
-i32[] checkCode() { return i32[](35, 10, 32, 39, 72, 76); }
+// errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity,
+// errPackedPosition, errWrongCastOp
+//
+// **The last two were added the day `errPackedPosition` changed meaning** — `issues/system/0234a`
+// moved the packed *cast* onto it, so a table that pinned neither would have agreed with whatever the
+// constants said afterwards. That is this table's own argument, from the side where it bites: the
+// mutant it kills is a constant whose body becomes `return 0`, and a code nothing names by value is a
+// code no test can tell from zero. `issues/system/0005` asks for a row per constant as each is next
+// touched, and these two were touched.
+i32[] checkCode() { return i32[](35, 10, 32, 39, 72, 76, 26, 16); }
 
 export string test_each_lexer_diagnostic_carries_the_code_it_is_supposed_to() {
   T t = T.create();
