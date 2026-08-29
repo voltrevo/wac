@@ -272,9 +272,23 @@ in merging them. Every item here is *work reduction*, and each belongs to an iss
 exists.
 
 1. **`commandparity_test.wac`, 71.7s**, and the compile cost behind it — `issues/lang/0153`. The
-   largest single file in the suite, and 2.6x the next in its package. Three hosts each compile a
-   219-file program. That issue now also carries a profile of the compiler and, more usefully, the
-   retraction of what the profile first appeared to show.
+   largest single file in the suite, and 2.6x the next in its package. That issue now also carries a
+   profile of the compiler and, more usefully, the retraction of what the profile first appeared to
+   show.
+
+   **Corrected: this said "three hosts each compile a 219-file program", and that is not the cost.**
+   Building the command is paid once per host and cached — `builtByDeno` keys on the closure of
+   `wacc.wac`, `compiler/`, `build.ts` and `packages/platform/host/`, so a rebuild after an unrelated
+   change is a copy and a runtime start. The file's own header says where the time goes: *"Nearly all
+   of it is the three hosts each compiling the entry a row names"* — 34 invocations across three
+   hosts, each compiling the small program that row points at, at about 2.1s a row.
+
+   That matters because it is a different lever. The one this sentence implied — build the command
+   once and share it — is already done. What is left is either the compiler's own speed on small
+   inputs, which is 0153, or letting the rows share a build cache. **The second is not free and
+   probably not wanted**: this file is a differential between three hosts, and a hit means the second
+   and third host did not do the work the row exists to compare. The rows do repeat entries —
+   `src/hello.wac` is named nine times — so the saving would be real, and so would the loss.
 2. ~~**`buildcache_test.wac`, 105.7s**~~ — **done, 102.2s → 6.6s.** Each case points `WAC_HOME` at a
    fresh directory, which is the point of a build-cache test, and each build went through
    `wac run … wac.wac`, so the compile of the command was cold every time: 10.7s apiece. Per *case*

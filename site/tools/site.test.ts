@@ -604,6 +604,47 @@ Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", a
   }
 });
 
+/**
+ * Every command spelling the site prints in monospace is one the CLI page names.
+ *
+ * `wac uninstall` became `wac self uninstall`, and the site went on printing the old spelling in two
+ * places — one of them a roadmap row claiming it was "done as tasks", which is the arrangement that
+ * was deleted rather than the one that shipped. A reader who typed what the page showed got
+ * `unknown command`.
+ *
+ * **Monospace and backticks only.** The pages say "wac is", "wac has", "wac program" in prose all
+ * over, and a check that read those would be noise. What is marked as code is a claim about what to
+ * type, and that is the claim `spec/cli/wac.md` can answer.
+ *
+ * The word list is the fence: a spelling counts as a command only if the CLI page names some
+ * subcommand of that word. `wac task` is in the page, so `wac task wac:install` passes on its first
+ * two words; that is deliberate, since the task registry is not the CLI page's to enumerate.
+ *
+ * **Every page, read from the directory, rather than `PAGES`.** That list exists so `snippet()` can
+ * find an `EX_*` constant and holds the five pages that declare one — `Roadmap.tsx` is not among
+ * them, and `Roadmap.tsx` is where both stale spellings were. A guard that borrowed the list would
+ * have passed on the day it was written.
+ */
+Deno.test("site: the command spellings the site prints are the ones the CLI page names", async () => {
+  const cli = await Deno.readTextFile(new URL("../../spec/cli/wac.md", import.meta.url).pathname);
+  const next = new URL("../src/next/", import.meta.url);
+  const files = [new URL("../src/snippets.ts", import.meta.url)];
+  for await (const e of Deno.readDir(next)) {
+    if (e.isFile && e.name.endsWith(".tsx")) files.push(new URL(e.name, next));
+  }
+  const seen = new Set<string>();
+  for (const file of files) {
+    const src = await Deno.readTextFile(file);
+    for (const m of src.matchAll(/(?:children: "|`)wac ([a-z][a-z]*)/g)) seen.add(m[1]);
+  }
+  const missing = [...seen].filter((word) => !cli.includes(`wac ${word}`)).sort();
+  if (missing.length > 0) {
+    throw new Error(
+      `the site prints ${missing.map((w) => `\`wac ${w}\``).join(", ")}, which ` +
+        `spec/cli/wac.md does not name — a reader who types that gets "unknown command"`);
+  }
+});
+
 Deno.test("site: the trusted-line count is the size of the three files it names", async () => {
   const root = new URL("../..", import.meta.url).pathname;
   // The path `./bootstrap.sh` actually runs: `rust-ladder` depends on `../rust` for the assembler,

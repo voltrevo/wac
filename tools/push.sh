@@ -90,17 +90,41 @@ guardDenoCache() {
 #
 # 2 GB, because a suite's own artefacts are a few hundred megabytes and the margin is worth more than
 # the cache being kept: clearing it costs the next build some time and nothing else.
+# **The bar is 1 GB, and it was 2 GB for a day.** This disk is shared with the host and its steady
+# state is about 1.6 GB free — `issues/system/0136` printed the same `df` line in August — so a 2 GB
+# bar fired on every single gate. Measured on two consecutive runs: 1634 MB free and 1612 MB free,
+# both cleared, both leaving **1843 MB**. That is 200 MB, against the 605 MB of cache the clear lists,
+# and it is paid for with whatever the next Deno run re-transpiles.
+#
+# 1 GB because the failures this exists to prevent are recorded: 0136 has `tools/push.sh` failing
+# three times at 569 MB free. A bar at roughly twice the observed failure point is a guard; a bar
+# above the machine's resting state is a ritual that makes every gate slower and never reports
+# anything, which is also how a real disk problem would come to be ignored.
+#
+# **And this check is the optimisation, not the guarantee.** A suite that does run out of space says
+# `No space left on device`, and the arm below catches that, clears, and gives it another go — up to
+# three attempts. So the cost of setting this bar too low is one wasted suite in the rare case, and
+# the cost of setting it too high is a cache clear on every gate forever. Those are not symmetrical.
 guardDiskSpace() {
   avail=$(df -P / 2>/dev/null | awk 'NR == 2 { print $4 }')
   [ -z "$avail" ] && return 0
-  [ "$avail" -ge 2097152 ] && return 0
-  echo "== $((avail / 1024)) MB free before the suite — clearing Deno's caches first =="
+  [ "$avail" -ge 1048576 ] && return 0
+  echo "== $((avail / 1024)) MB free before the suite, under the 1024 MB bar =="
   freeDenoCache
 }
 
+# Says what it does and not why it was called: the caller knows whether anything is being retried.
+# It printed "the disk is full and it is not this change: clearing Deno's caches and retrying" from
+# both call sites, so the pre-flight check announced a retry of a suite that had not run yet.
+#
+# **And it lists what is about to go, rather than the three biggest things next to it.** This printed
+# `du | sort -h | tail -3`, whose top line was `npm 366M` — a directory `freeCaches` does not touch
+# and should not, since refilling it needs the network. `runTests.wac free` clears the code cache and
+# the transpile cache, which is why the number underneath said 200 MB against 605 MB listed, and the
+# report was the thing that made 200 MB look like a failure rather than the whole of what was offered.
 freeDenoCache() {
-  echo "== the disk is full and it is not this change: clearing Deno's caches and retrying =="
-  du -sh "$HOME/.cache/deno"/* 2>/dev/null | sort -h | tail -3
+  echo "== clearing Deno's code and transpile caches =="
+  du -sh "$HOME/.cache/deno/v8_code_cache_v2" "$HOME/.cache/deno/gen" 2>/dev/null
   ./native/v8/target/release/wac run --allow-read --allow-write --allow-env tools/runTests.wac -- free
   df -h / | tail -1
 }
@@ -414,6 +438,7 @@ for attempt in 1 2 3; do
       # A failure that is really the shared disk: clear Deno's cache once and give the suite another go,
       # rather than reporting a change as broken when nothing about it was.
       if grep -q "No space left on device" "$log" && [ "$attempt" -lt 3 ]; then
+        echo "== the disk filled during the suite and it is not this change: retrying =="
         freeDenoCache
         continue
       fi

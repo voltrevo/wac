@@ -298,7 +298,7 @@ export default function Roadmap() {
           {m({ children: "packages/wacpkg" })}, 1,687 lines and 44 tests, with{" "}
           {m({ children: "wacfetch" })} to resolve what the lock does not cover.{" "}
           {m({ children: "wac task wac:install" })} builds the seed, checks it is a fixed point, and
-          installs the command; {m({ children: "wac uninstall" })} removes exactly what it put there
+          installs the command; {m({ children: "wac self uninstall" })} removes exactly what it put there
           and never a lockfile or a source file.
         </P>
         <P>
@@ -316,7 +316,7 @@ export default function Roadmap() {
             ["every specifier a quoted path, both compilers", "done"],
             ["`@/`, the project root as a prefix", "done"],
             ["git mappings and `wac.lock` — `packages/wacpkg`", "done"],
-            ["`wac:install` and `wac uninstall`", "done as tasks"],
+            ["`wac task wac:install`, and `wac self uninstall` beside it", "done"],
             ["one module however it is spelled", "half done"],
             ["a package service", "a destination, not a plan"],
           ]}
