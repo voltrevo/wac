@@ -436,6 +436,33 @@ range rather than a blanket: `{ 0xC2, 0x80 }`, `{ 0xE0, 0xA0, 0x80 }`,
 `{ 0xED, 0x9F, 0xBF }`, `{ 0xF0, 0x90, 0x80, 0x80 }` and
 `{ 0xF4, 0x8F, 0xBF, 0xBF }` are all `true`.
 
+`string.toUtf8(bytes)` is the other answer to the same question: rather than
+reporting that the bytes are ill-formed, it gives a string that is not, by
+replacing what it cannot decode with U+FFFD. `s.toUtf8()` does the same for a
+string's own bytes.
+
+```wac
+export i32 replaced() { return string.toUtf8(u8[](0xFF)).toBytes().len(); }
+```
+
+`[§wac-str-toutf8-w7kd2mq]` `replaced()` returns `3` — one U+FFFD, which is
+`{ 0xEF, 0xBF, 0xBD }`. Bytes that are already well-formed come back unchanged,
+so `string.toUtf8(u8[](0xC3, 0xA9))` is `"é"` and `string.toUtf8(b) == b` for any
+`b` where `string.isUtf8(b)`.
+
+`[§wac-str-toutf8-value-t6bz4hx]` `"é".toUtf8()` is `"é"`, and
+`string.fromBytes(u8[](0xFF, 0x41)).toUtf8()` is a two-character string whose
+bytes are `{ 0xEF, 0xBF, 0xBD, 0x41 }` — the replacement and the `A` that
+followed it.
+
+**One replacement per maximal subpart, not one per byte.**
+`[§wac-str-toutf8-maximal-n3qv8jf]` `string.toUtf8(u8[](0xE1, 0x80, 0x41))` is
+four bytes: `{ 0xEF, 0xBF, 0xBD, 0x41 }`. `E1 80` is as much of a well-formed
+three-byte sequence as is there, so it is *one* ill-formed subsequence and gets
+one replacement; the `0x41` after it is an ordinary `A` and is not consumed. A
+rule that replaced each byte would give two. This is the WHATWG rule, chosen
+because it is the one with an oracle: Rust, Python and every browser agree on it.
+
 ### String methods
 
 ```wac

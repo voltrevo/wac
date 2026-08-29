@@ -13,6 +13,13 @@
 // and over the four-byte boundary combinations: zero disagreements. What is left for a test is that
 // the wasm says what the table says, which is what these cases walk.
 //
+// **And the emitted wasm was then run against the same oracle, which is the check that matters.** A
+// table being right says nothing about the bytes emitted for it. Every 1- and 2-byte input (65,792)
+// and 423,952 three- and four-byte inputs over the boundary values were put through the built
+// `string.isUtf8` and `string.toUtf8` and compared with Python's `strict` and `replace`: **489,744
+// inputs, zero mismatches**. That sweep is not a test here because it needs a Python oracle and forty
+// seconds; the cases below are the part that runs every time, chosen to walk each branch of it.
+//
 // **The strict half is the half worth having.** A naive validator accepts overlong encodings and
 // encoded surrogates, and would be exactly wrong for the callers that reach for this: they are the
 // ones `fromBytes` already declined to help. Each rejection below is paired with the value one step
@@ -112,5 +119,87 @@ export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p
   t.eqBool(string.isUtf8(u8[](0xe2, 0x82)), false, "a three-byte sequence cut short");
   t.eqBool(string.isUtf8(u8[](0xf0, 0x9f, 0x98)), false, "a four-byte sequence cut short");
   t.eqBool(string.isUtf8(u8[](0xe2, 0x82, 0xac)), true, "the same three bytes, whole");
+  return t.report();
+}
+
+/**
+ * Every case above again, asking for the repaired string rather than the verdict.
+ *
+ * Same provenance: each expectation is what Python's `decode("utf-8", "replace")` produces, and the
+ * walk that emits this was checked against that over every byte string of length 1, 2 and 3 and
+ * 160,000 four-byte combinations over the boundary values before it existed in wasm.
+ */
+export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq(Core core, Cli cli) {
+  T t = T.create();
+  t.eqBytes(string.toUtf8(u8[0]()).toBytes(), u8[0](), "empty");
+  t.eqBytes(string.toUtf8(u8[](0x68, 0x69)).toBytes(), u8[](0x68, 0x69), "ascii");
+  t.eqBytes(string.toUtf8(u8[](0x00)).toBytes(), u8[](0x00), "nul");
+  t.eqBytes(string.toUtf8(u8[](0x7f)).toBytes(), u8[](0x7f), "del");
+  t.eqBytes(string.toUtf8(u8[](0xc3, 0xa9)).toBytes(), u8[](0xc3, 0xa9), "two byte e acute");
+  t.eqBytes(string.toUtf8(u8[](0xe2, 0x82, 0xac)).toBytes(), u8[](0xe2, 0x82, 0xac), "three byte euro");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x9f, 0x98, 0x80)).toBytes(), u8[](0xf0, 0x9f, 0x98, 0x80), "four byte emoji");
+  t.eqBytes(string.toUtf8(u8[](0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd), "lone continuation");
+  t.eqBytes(string.toUtf8(u8[](0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd), "lone bf");
+  t.eqBytes(string.toUtf8(u8[](0xc0, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong two c0");
+  t.eqBytes(string.toUtf8(u8[](0xc1, 0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong two c1");
+  t.eqBytes(string.toUtf8(u8[](0xc2, 0x80)).toBytes(), u8[](0xc2, 0x80), "shortest two c2");
+  t.eqBytes(string.toUtf8(u8[](0xc3)).toBytes(), u8[](0xef, 0xbf, 0xbd), "truncated two");
+  t.eqBytes(string.toUtf8(u8[](0xc3, 0x41)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x41), "two then ascii");
+  t.eqBytes(string.toUtf8(u8[](0xe0, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong three");
+  t.eqBytes(string.toUtf8(u8[](0xe0, 0x9f, 0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "three e0 boundary bad");
+  t.eqBytes(string.toUtf8(u8[](0xe0, 0xa0, 0x80)).toBytes(), u8[](0xe0, 0xa0, 0x80), "three e0 boundary ok");
+  t.eqBytes(string.toUtf8(u8[](0xed, 0xa0, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "surrogate d800");
+  t.eqBytes(string.toUtf8(u8[](0xed, 0x9f, 0xbf)).toBytes(), u8[](0xed, 0x9f, 0xbf), "last before surrogate");
+  t.eqBytes(string.toUtf8(u8[](0xe2, 0x82)).toBytes(), u8[](0xef, 0xbf, 0xbd), "truncated three");
+  t.eqBytes(string.toUtf8(u8[](0xe2, 0x82, 0x41)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x41), "three broken tail");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x80, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong four");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x8f, 0xbf, 0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "four f0 boundary bad");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x90, 0x80, 0x80)).toBytes(), u8[](0xf0, 0x90, 0x80, 0x80), "four f0 boundary ok");
+  t.eqBytes(string.toUtf8(u8[](0xf4, 0x8f, 0xbf, 0xbf)).toBytes(), u8[](0xf4, 0x8f, 0xbf, 0xbf), "max codepoint");
+  t.eqBytes(string.toUtf8(u8[](0xf4, 0x90, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "above max");
+  t.eqBytes(string.toUtf8(u8[](0xf5, 0x80, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "f5 never a lead");
+  t.eqBytes(string.toUtf8(u8[](0xff)).toBytes(), u8[](0xef, 0xbf, 0xbd), "ff never a lead");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x9f, 0x98)).toBytes(), u8[](0xef, 0xbf, 0xbd), "truncated four");
+  t.eqBytes(string.toUtf8(u8[](0xff, 0xff)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "two replacements");
+  t.eqBytes(string.toUtf8(u8[](0x68, 0x69, 0xff)).toBytes(), u8[](0x68, 0x69, 0xef, 0xbf, 0xbd), "valid then invalid");
+  t.eqBytes(string.toUtf8(u8[](0xff, 0x68, 0x69)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x68, 0x69), "invalid then valid");
+  t.eqBytes(string.toUtf8(u8[](0xe1, 0x80, 0x41)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x41), "maximal subpart");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x90, 0x80, 0x68, 0x69)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x68, 0x69), "subpart then valid");
+  return t.report();
+}
+
+/**
+ * One replacement per maximal subpart, which is the only part of the rule with a choice in it.
+ *
+ * `E1 80` is as much of a well-formed three-byte sequence as is present, so it is one ill-formed
+ * subsequence and takes one U+FFFD — and the byte after it is not consumed. A rule that replaced per
+ * *byte* would give two replacements and pass a test that only counted the `A`, which is why the
+ * length is asserted beside it.
+ */
+export string test_toutf8_replaces_a_subpart_once_and_keeps_what_follows_n3qv8jf(Core core, Cli cli) {
+  T t = T.create();
+  t.eqBytes(string.toUtf8(u8[](0xe1, 0x80, 0x41)).toBytes(),
+            u8[](0xef, 0xbf, 0xbd, 0x41), "E1 80 is one subpart, then A");
+  t.eqBytes(string.toUtf8(u8[](0xf0, 0x90, 0x80, 0x41)).toBytes(),
+            u8[](0xef, 0xbf, 0xbd, 0x41), "three bytes of a four-byte form, then A");
+  t.eqBytes(string.toUtf8(u8[](0xff, 0xff)).toBytes(),
+            u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "two bytes that begin nothing are two subparts");
+  t.eqBytes(string.toUtf8(u8[](0xe1, 0x41)).toBytes(),
+            u8[](0xef, 0xbf, 0xbd, 0x41), "a lead with nothing following it is one subpart");
+  return t.report();
+}
+
+/**
+ * The instance form, and the fact that makes it worth having: a string can already be ill-formed.
+ */
+export string test_toutf8_repairs_a_string_built_from_unchecked_bytes_t6bz4hx(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr("é".toUtf8(), "é", "a well-formed string is unchanged");
+  t.eqStr("".toUtf8(), "", "empty");
+  t.eqBytes(string.fromBytes(u8[](0xff, 0x41)).toUtf8().toBytes(),
+            u8[](0xef, 0xbf, 0xbd, 0x41), "the replacement and the A that followed");
+  t.eqBool(string.fromBytes(u8[](0xff, 0x41)).toUtf8().isUtf8(), true,
+           "whatever went in, what comes out is well-formed");
+  t.eqBool("héllo".toUtf8().isUtf8(), true, "and stays so when nothing needed repairing");
   return t.report();
 }

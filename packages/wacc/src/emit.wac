@@ -4622,6 +4622,12 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     string[] oneBytes = string[1]();
     oneBytes[0] = "u8[]";
     env.addFunc(" bytes_is_utf8", "bool", oneBytes);
+    string[] oneStr2 = string[1]();
+    oneStr2[0] = "string";
+    env.addFunc(" str_to_utf8", "string", oneStr2);
+    string[] oneBytes2 = string[1]();
+    oneBytes2[0] = "u8[]";
+    env.addFunc(" bytes_to_utf8", "string", oneBytes2);
   }
   // **`$trap$message`'s types, here and not later.** The comment on the counter array above is the
   // reason: a type has to exist before the section that declares it is written, and asking for one while
@@ -4640,6 +4646,9 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   env.arrayType("u8[]");
   env.sigType("fn[bool(string)]");
   env.sigType("fn[bool(u8[])]");
+  // `fn[string(u8[])]` is `str_from_bytes`'s and already here; `fn[string(string)]` is nobody's.
+  env.sigType("fn[string(string)]");
+  env.sigType("fn[string(u8[])]");
   // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
   // and the answer can change once the functions it calls have settled. Cheap, and the alternative
   // is a global assigned from a function that was skipped.
@@ -5006,7 +5015,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // after the declared functions, so its ordinal is `lambdaFirst + i`. `design/lang/0002` tier two.
   env.lambdaFirst = count;
   count = count + env.lambdaCount;
-  i32 stringHelpers = needsStrings ? 11 : 0;
+  i32 stringHelpers = needsStrings ? 13 : 0;
   i32 memHelperAt = env.cbSigCount + count + stringHelpers;
   i32 arrayHelpersAt = memHelperAt + 1;
   i32 structHelpersAt = arrayHelpersAt + arrHelpers;
@@ -5606,6 +5615,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     emitStringCompare(funcs, code, env);
     emitIsUtf8(funcs, code, env, "string", env.arrayType("i8[]"));
     emitIsUtf8(funcs, code, env, "u8[]", env.arrayType("u8[]"));
+    emitToUtf8(funcs, code, env, "string", env.arrayType("i8[]"));
+    emitToUtf8(funcs, code, env, "u8[]", env.arrayType("u8[]"));
   }
   // **The string builtins occupy nine indices and this loop does not advance `index` itself**, so the
   // lambdas below would start on top of them. They did, and the wrapper for the first lambda called
@@ -8109,6 +8120,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.u32leb(env.funcIndex[bu]);
             return;
           }
+          if (isStringTypeName(src, lexed, env, obj) && mname == "toUtf8" && args.len() == 1) {
+            i32 bt = env.funcAt(" bytes_to_utf8");
+            if (!haveRequired(env, bt, " bytes_to_utf8")) { return; }
+            emitExprAt(fb, src, lexed, env, args[0], "u8[]");
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[bt]);
+            return;
+          }
           string pown = primTypeName(env, src, lexed, obj);
           if (primStaticType(pown, mname) != "" && args.len() == 1) {
             emitExprAt(fb, src, lexed, env, args[0], primStaticArg(pown, mname));
@@ -8207,6 +8226,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(16);
             fb.u32leb(env.funcIndex[su]);
+            return;
+          }
+          if (ot == "string" && mname == "toUtf8") {
+            i32 st = env.funcAt(" str_to_utf8");
+            if (!haveRequired(env, st, " str_to_utf8")) { return; }
+            emitExpr(fb, src, lexed, env, obj);
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[st]);
             return;
           }
           // `dst.copyFrom(src, srcStart, dstStart, count)` is `array.copy`, whose operands go in a
@@ -8610,6 +8637,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (pst != "") { return pst; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "isUtf8") { return "bool"; }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "toUtf8") { return "string"; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
@@ -8619,6 +8647,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes") { return "u8[]"; }
           if (ot == "string" && mn == "isUtf8") { return "bool"; }
+          if (ot == "string" && mn == "toUtf8") { return "string"; }
           if (ot == "string" && mn == "slice") { return "string"; }
           if (ot == "string" && mn == "indexOf") { return "i32"; }
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
@@ -11778,6 +11807,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isStringTypeName(src, lexed, env, obj) && mn == "isUtf8" && args.len() == 1) {
             return unsupportedValueAt(src, lexed, env, args[0], "u8[]");
           }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "toUtf8" && args.len() == 1) {
+            return unsupportedValueAt(src, lexed, env, args[0], "u8[]");
+          }
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
@@ -11794,6 +11826,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes" && args.len() == 0) { return ""; }
           if (ot == "string" && mn == "isUtf8" && args.len() == 0) { return ""; }
+          if (ot == "string" && mn == "toUtf8" && args.len() == 0) { return ""; }
           if (ot == "string" && mn == "slice" && args.len() == 2) {
             string s1 = unsupportedValueAt(src, lexed, env, args[0], "i32");
             if (s1 != "") { return s1; }
@@ -15567,6 +15600,193 @@ void emitStringSlice(B funcs, B code, Env env) {
   b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(4); b.byte(107);
   b.byte(251); b.u32leb(17); b.u32leb(at); b.u32leb(at);          // array.copy
   b.byte(32); b.u32leb(6);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
+ * The walk `to_utf8` does twice: once to size the output, once to fill it.
+ *
+ * **Twice rather than once into a worst-case buffer.** Every invalid byte can become three, so a
+ * single pass needs `3n` allocated up front and then trimmed — 300 MB in hand to answer a question
+ * about a 100 MB string, for the case where nothing is wrong with it. Counting first costs a second
+ * read of an array that is already warm and allocates exactly what comes out.
+ *
+ * **And not "validate first, copy if clean" either**, which would be one walk for the common case:
+ * that needs this helper to call `is_utf8`, and no emitted helper in this file calls another. Being
+ * the first would be a change to how helper indices are assigned, which is a bigger thing to get
+ * wrong than a second read.
+ *
+ * Locals, by convention, shared by both walks: 1 `n`, 2 `i`, 3 the lead, 4 `lo`, 5 `hi`, 6 `need`,
+ * 7 `k`, 8 `m`, 9 the byte under test, 10 the copy cursor, 11 the output array.
+ */
+void emitUtf8Walk(B b, i32 at, i32 dst, bool writing) {
+  b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(2);      // i = 0
+  b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(8);      // m = 0
+
+  b.byte(2); b.byte(64);
+  b.byte(3); b.byte(64);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(1); b.byte(78);
+  b.byte(13); b.u32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2);
+  b.byte(251); b.u32leb(13); b.u32leb(at);
+  b.byte(33); b.u32leb(3);
+
+  // ASCII, which is the whole of the fast path and most of every real input.
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(128); b.byte(73);
+  b.byte(4); b.byte(64);
+  if (writing) {
+    b.byte(32); b.u32leb(11); b.byte(32); b.u32leb(8); b.byte(32); b.u32leb(3);
+    b.byte(251); b.u32leb(14); b.u32leb(dst);
+  }
+  b.byte(32); b.u32leb(8); b.byte(65); b.i32leb(1); b.byte(106); b.byte(33); b.u32leb(8);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106); b.byte(33); b.u32leb(2);
+  b.byte(12); b.u32leb(1);
+  b.byte(11);
+
+  // Never a lead byte at all: one replacement for one byte, and on to the next.
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(194); b.byte(73);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(244); b.byte(75);
+  b.byte(114);
+  b.byte(4); b.byte(64);
+  emitReplacement(b, dst, writing);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106); b.byte(33); b.u32leb(2);
+  b.byte(12); b.u32leb(1);
+  b.byte(11);
+
+  // What a well-formed sequence with this lead would need, and the range its second byte lies in.
+  b.byte(65); b.i32leb(2); b.byte(33); b.u32leb(6);
+  b.byte(65); b.i32leb(128); b.byte(33); b.u32leb(4);
+  b.byte(65); b.i32leb(191); b.byte(33); b.u32leb(5);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(224); b.byte(79);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(3); b.byte(33); b.u32leb(6);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(224); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(160); b.byte(33); b.u32leb(4); b.byte(11);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(237); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(159); b.byte(33); b.u32leb(5); b.byte(11);
+  b.byte(11);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(240); b.byte(79);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(4); b.byte(33); b.u32leb(6);
+  b.byte(65); b.i32leb(128); b.byte(33); b.u32leb(4);
+  b.byte(65); b.i32leb(191); b.byte(33); b.u32leb(5);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(240); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(144); b.byte(33); b.u32leb(4); b.byte(11);
+  b.byte(32); b.u32leb(3); b.byte(65); b.i32leb(244); b.byte(70);
+  b.byte(4); b.byte(64); b.byte(65); b.i32leb(143); b.byte(33); b.u32leb(5); b.byte(11);
+  b.byte(11);
+
+  // **`k` is the maximal subpart: how many bytes of a well-formed sequence actually follow.** This is
+  // the whole of the WHATWG rule and the only part with a choice in it — one replacement per maximal
+  // subpart rather than one per byte, so `E1 80 41` is `FFFD` then `A`, and not `FFFD FFFD A`. Rust,
+  // Python and every browser agree on it, which is why it is the answer with an oracle.
+  b.byte(65); b.i32leb(1); b.byte(33); b.u32leb(7);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(32); b.u32leb(1); b.byte(72);
+  b.byte(4); b.byte(64);
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(251); b.u32leb(13); b.u32leb(at);
+  b.byte(33); b.u32leb(9);
+  b.byte(32); b.u32leb(9); b.byte(32); b.u32leb(4); b.byte(79);
+  b.byte(32); b.u32leb(9); b.byte(32); b.u32leb(5); b.byte(77);
+  b.byte(113);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(2); b.byte(33); b.u32leb(7);
+  for (i32 step = 2; step <= 3; step++) {
+    b.byte(32); b.u32leb(6); b.byte(65); b.i32leb(step); b.byte(74);
+    b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(step); b.byte(106);
+    b.byte(32); b.u32leb(1); b.byte(72);
+    b.byte(113);
+    b.byte(4); b.byte(64);
+    b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(step); b.byte(106);
+    b.byte(251); b.u32leb(13); b.u32leb(at);
+    b.byte(33); b.u32leb(9);
+    b.byte(32); b.u32leb(9); b.byte(65); b.i32leb(128); b.byte(79);
+    b.byte(32); b.u32leb(9); b.byte(65); b.i32leb(191); b.byte(77);
+    b.byte(113);
+    b.byte(4); b.byte(64);
+    b.byte(65); b.i32leb(step + 1); b.byte(33); b.u32leb(7);
+  }
+  b.byte(11); b.byte(11); b.byte(11); b.byte(11);
+  b.byte(11); b.byte(11);
+
+  // A whole sequence is copied as it stands; anything short of one is a replacement and a skip of
+  // exactly the bytes that formed the subpart.
+  b.byte(32); b.u32leb(7); b.byte(32); b.u32leb(6); b.byte(70);
+  b.byte(4); b.byte(64);
+  if (writing) {
+    b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(10);
+    b.byte(2); b.byte(64);
+    b.byte(3); b.byte(64);
+    b.byte(32); b.u32leb(10); b.byte(32); b.u32leb(6); b.byte(78);
+    b.byte(13); b.u32leb(1);
+    b.byte(32); b.u32leb(11);
+    b.byte(32); b.u32leb(8); b.byte(32); b.u32leb(10); b.byte(106);
+    b.byte(32); b.u32leb(0);
+    b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(10); b.byte(106);
+    b.byte(251); b.u32leb(13); b.u32leb(at);
+    b.byte(251); b.u32leb(14); b.u32leb(dst);
+    b.byte(32); b.u32leb(10); b.byte(65); b.i32leb(1); b.byte(106); b.byte(33); b.u32leb(10);
+    b.byte(12); b.u32leb(0);
+    b.byte(11);
+    b.byte(11);
+  }
+  b.byte(32); b.u32leb(8); b.byte(32); b.u32leb(6); b.byte(106); b.byte(33); b.u32leb(8);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(6); b.byte(106); b.byte(33); b.u32leb(2);
+  b.byte(5);
+  emitReplacement(b, dst, writing);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(7); b.byte(106); b.byte(33); b.u32leb(2);
+  b.byte(11);
+
+  b.byte(12); b.u32leb(0);
+  b.byte(11);
+  b.byte(11);
+}
+
+/** `EF BF BD` — U+FFFD, written when writing and counted either way. */
+void emitReplacement(B b, i32 dst, bool writing) {
+  if (writing) {
+    b.byte(32); b.u32leb(11); b.byte(32); b.u32leb(8);
+    b.byte(65); b.i32leb(239); b.byte(251); b.u32leb(14); b.u32leb(dst);
+    b.byte(32); b.u32leb(11); b.byte(32); b.u32leb(8); b.byte(65); b.i32leb(1); b.byte(106);
+    b.byte(65); b.i32leb(191); b.byte(251); b.u32leb(14); b.u32leb(dst);
+    b.byte(32); b.u32leb(11); b.byte(32); b.u32leb(8); b.byte(65); b.i32leb(2); b.byte(106);
+    b.byte(65); b.i32leb(189); b.byte(251); b.u32leb(14); b.u32leb(dst);
+  }
+  b.byte(32); b.u32leb(8); b.byte(65); b.i32leb(3); b.byte(106); b.byte(33); b.u32leb(8);
+}
+
+/**
+ * `string <t>_to_utf8(<t> b)` — the same bytes with every ill-formed subsequence replaced by U+FFFD.
+ *
+ * **The WHATWG maximal-subpart rule**, which is the answer with an oracle: one replacement per
+ * maximal invalid subsequence rather than one per byte. The reference implementation of this walk was
+ * checked against Python's `decode("utf-8", "replace")` over every byte string of length 1, 2 and 3
+ * and 160,000 four-byte combinations over the boundary values, with no disagreements, before any of
+ * it was emitted.
+ *
+ * The output is exactly as long as it needs to be, which is what the counting pass buys.
+ */
+void emitToUtf8(B funcs, B code, Env env, string arg, i32 at) {
+  i32 dst = env.arrayType("i8[]");
+  funcs.u32leb(env.sigType("fn[string(" + arg + ")]"));
+
+  B b = B.create();
+  b.u32leb(2);
+  b.u32leb(10); b.byte(127);
+  b.u32leb(1); b.byte(99); b.u32leb(dst);
+
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(33); b.u32leb(1);
+
+  emitUtf8Walk(b, at, dst, false);
+  b.byte(32); b.u32leb(8);
+  b.byte(251); b.u32leb(7); b.u32leb(dst);
+  b.byte(33); b.u32leb(11);
+  emitUtf8Walk(b, at, dst, true);
+  b.byte(32); b.u32leb(11);
   b.byte(11);
   code.u32leb(b.len);
   code.bytes(b);
