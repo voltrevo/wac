@@ -99,6 +99,18 @@ found rather than shipped.
 tests are not the obstacle, the host difference they exposed is. A `wac app` artefact is what this
 repository tells people to distribute, and `producer | head` is not an exotic idiom.
 
+## An attempt at the decisive experiment, and why it failed
+
+The obvious next step is to run **one artefact under both hosts** — same wasm, same script — which
+removes the artefact as a variable entirely. It cannot be done yet: `wac app-run` on a
+JavaScript-hosted `wac` cannot start a program as large as `packages/box`'s shell.
+`issues/system/0276c` has that, with one of its two faults already fixed.
+
+So the comparison in this report is between a `build.ts` deno-target build and a `wac app` artefact,
+which differ in *how they were packaged* as well as in which host runs them. The hosts are still the
+likeliest variable — the wasm is the same program either way — but it is worth being exact about what
+has and has not been held constant.
+
 ## Notes
 
 Found by driving the migration rather than by reading either host. Neither implementation looks wrong

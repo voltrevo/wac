@@ -116,6 +116,17 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
       if (base.startsWith("fn[") && typeof v === "function") {
         const j = manifest.callbacks.findIndex((c) => c.type === base);
         if (j < 0) throw new Error(`${base} has no dispatcher in this manifest`);
+        // **The same function twice is one slot.** This pushed unconditionally, so a callback passed
+        // on every call burned a slot each time and a real program ran out: `wac app-run` of
+        // `packages/box`'s shell failed on the *first* run with "at most 16 distinct fn[void(i32)]
+        // functions", where the native host ran it. The word in that message is *distinct*, and it
+        // was not true of what the code did.
+        //
+        // Identity, not equality — two closures over the same body are two functions to the module
+        // and must stay two, or a dispatch would reach the wrong one. `indexOf` is the right
+        // comparison and the arrays are bounded by `slots`, so the scan is over at most sixteen.
+        const seen = slots[j].indexOf(v as CallableFunction);
+        if (seen >= 0) return fn(exports, manifest.callbacks[j].helper)(seen);
         const slot = slots[j].length;
         if (slot >= manifest.callbacks[j].slots) {
           throw new Error(
