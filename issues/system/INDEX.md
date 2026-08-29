@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0285c](open/0285c-a-spawned-applet-copies-nothing-when-the-shells-script-came-from-standard-input.md) | `printf 'cp MERGE.md copied.txt\nwc -c copied.txt\n' \| sh` gives `6667` on the Deno host and **`0`** on the V8 one — the file is created and left empty, `cp` says nothing, the shell carries on. The same script through `-c` is right on both, so it depends on the shell reading its script from **standard input**: a spawned applet inherits that stream, and what it inherits is the unread remainder of the script. Found by adding one `cp` to `v8host_test.wac`'s spawning script — the Deno-against-V8 comparison drives the failing route already but had no script that copied or redirected anything | bug | an empty file and exit 0 |
 | [0284c](open/0284c-the-hosts-word-a-refusal-differently-and-only-one-says-which-capability.md) | A program built without `--allow-read` is told `filesystem read not granted to this application` by the JavaScript hosts and `Not granted to this application` by both Rust ones — which names no capability, and is the same string for all five. A program can be built without several at once, so the shorter sentence leaves the reader to work out which, with nothing in the message, the file name or the status to say. Surfaced by `world_test.wac`, whose case for a withheld capability asserts the informative wording | diagnostic | one refusal, two sentences |
 | [0283b](open/0283b-taking-the-gate-lock-starts-the-cooldown-before-anything-runs.md) | `tools/push.sh` takes the gate lock before it pulls, and taking it writes the 20-minute cooldown — so a conflicting pull locks the agent out having tested nothing | bug | no error — twenty minutes lost per occurrence |
 | [0282c](open/0282c-a-relayed-programs-stderr-does-not-interleave-with-its-stdout.md) | `echo one; nope; echo two` through a `wac app` shell writes `one / two / sh: nope: command not found` where bash — and the same shell through `wac run` — put the diagnostic between the two. Each stream carries the right bytes; their order relative to each other is lost, which is only observable when both go to one place. `relay` waits on both with `waitAny` and takes standard output first when both are ready, and a child writes into **two queues** with nothing recording which write came first — so the order was never carried and reordering the branches would only change which stream wins. Needs one channel with a tag per chunk, or a sequence number. Blocks `packages/sh/test/differential.test.ts` in `design/system/0009` | bug | right bytes, wrong order between streams |
@@ -74,7 +75,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-284 issues, 225 closed.
+285 issues, 225 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
