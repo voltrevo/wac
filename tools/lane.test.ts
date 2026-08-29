@@ -66,6 +66,23 @@ Deno.test("every heavy test says what it costs, in a number", async () => {
       vague.map((e) => e.file).join("\n  ")
     }\nGive megabytes resident, seconds, or cores held. "Slow" is what every test would say.`,
   );
+  // **And when it was true.** A number without a date cannot go stale visibly, and these did:
+  // `issues/system/0230c` found `checked_test.wac` declaring 140s where a run alone reached 1,166s
+  // and had not finished, and two corpus-sized files 8x out the same way. Every one of them had a
+  // number, so the rule above was satisfied by all of them the whole time.
+  //
+  // A date does not make the figure true either. What it does is let a reader see that nobody has
+  // checked it since a month before the corpus grew, which is the question they actually have.
+  const undated = lane.filter((e) => !/measured \d{4}-\d{2}-\d{2}/.test(e.why));
+  assertEquals(
+    undated.map((e) => e.file).join(", "),
+    "",
+    `these named a cost without saying when it was measured:\n  ${
+      undated.map((e) => e.file).join("\n  ")
+    }\nWrite \`measured YYYY-MM-DD\` beside the number. A figure with no date cannot be seen to ` +
+      `have gone stale, and issues/system/0230c is what that costs.`,
+  );
+
   console.log(`  ${lane.length} file(s) in the heavy lane, skipped by a whole-suite run:`);
   for (const e of lane) console.log(`    ${e.file} — ${e.why}`);
 });

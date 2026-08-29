@@ -39,9 +39,16 @@ export const LANE = /^\/\/\s*test-lane:\s*exclusive\b\s*(?:[—-]\s*)?(.*)$/m;
  * seconds, and 370 MB at 0.04 of a core.
  * Sampling the process tree is what tells them apart, and it is worth doing before adding a file.
  *
- * **The reason must name a cost**, because "this is slow" is what every test would say if asked. A
- * number — megabytes resident, seconds, cores held — is what lets the next person judge whether it
- * is still true, and `tools/lane.test.ts` requires one.
+ * **The reason must name a cost, and say when it was measured.** "This is slow" is what every test
+ * would say if asked; a number — megabytes resident, seconds, cores held — is what lets the next
+ * person judge whether it is still true. `tools/lane.test.ts` requires both, and the date is there
+ * because the number alone could not go stale *visibly*: `issues/system/0230c` found this file's own
+ * lane declaring 140s where a run alone reached 1,166 seconds and had not finished, and two
+ * corpus-sized files out by the same factor. Every one of them named a number the whole time.
+ *
+ * So: `// test-lane: heavy — 22s, 2,700 corrupted streams, measured 2026-08-29`. A date does not
+ * make the figure true. It lets a reader see that nobody has checked it since before the corpus
+ * grew, which is the question they actually have.
  */
 export const HEAVY = /^\/\/\s*test-lane:\s*heavy\b\s*(?:[—-]\s*)?(.*)$/m;
 

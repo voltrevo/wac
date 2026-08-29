@@ -231,3 +231,46 @@ would have caught less than half of this drift.
 Found while verifying something unrelated, and it cost a 3 000s bound and then a kill. That is the
 concrete version of this issue's complaint: a declared cost that is 8× low is not a stale document, it
 is a wrong answer to "can I run this while I wait".
+
+
+## Re-measured, and they are wrong in both directions — agent-b, 2026-08-29
+
+Steps 1 and 2 are done for the five that can be measured in under a minute. Each was run three times
+in a row with identical grants, on a box with nothing else of mine on it, and every run was checked
+for the test's own `N passed` line rather than for an exit status:
+
+| file | declared | measured | |
+|---|---:|---:|---|
+| `packages/box/test/wac/backingsprocess_test.wac` | 18s | **1s** | 18x cheaper |
+| `packages/tls/test/wac/certtamper_test.wac` | 5.5s | **2s** | |
+| `tools/programs.test.ts` | 42s | **41s** | accurate |
+| `packages/box/test/fuzz.test.ts` | 21s | **23s** | accurate |
+| `packages/gzip/test/wac/fuzzcorruption_test.wac` | 22s | **49s** | 2.2x dearer |
+
+So the story is not "everything has grown". Two declarations are accurate — both TypeScript — one has
+more than doubled, and two are far *cheaper* than they claim, one of them by eighteen times. A lane
+sized from these is mis-sized in both directions at once.
+
+`names_test.wac` and `corpusemit_test.wac` carry agent-a's 2026-08-21 figures with that date, because
+re-measuring them is 823s and 1,204s and this was not the sitting for it.
+
+**Whether the cheap two still belong is a separate question and I have not answered it.**
+`testLane.ts` is explicit that heavy means *resident*, not slow, and I measured seconds. A one-second
+test that spawns four processes may still be the thing that runs the machine out of memory at four
+workers. Sampling the process tree is what tells them apart, and nobody has.
+
+### The guard checks currency now — step 2
+
+`tools/lane.test.ts` required the reason to name a number, and every one of these satisfied it the
+whole time. It now also requires `measured YYYY-MM-DD`. A date does not make a figure true; it lets a
+reader see that nobody has checked it since before the corpus grew, which is the question they have.
+
+### And a warning about measuring this at all
+
+My first attempt produced 5.5s -> 2s, 22s -> **1s**, 18s -> **1s**, and I nearly wrote that down. The
+1s readings were a run that produced no output at all: it was taken seconds after a push gate
+finished, and the gate rewrites `native/v8/target/release/wac` — so the binary was being replaced
+under the measurement. It exits quickly and says nothing, which reads exactly like a fast test.
+
+**Check for the test's own summary line, not for a timing.** A measurement of a test that did not run
+is the easiest wrong number to publish here, and it is wrong in the flattering direction.
