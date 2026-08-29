@@ -188,6 +188,22 @@ Twenty-one scripts in total have taken it from 1,036 to 880 and from 44 function
 per-script return has not fallen off yet, which is the signal to keep going before writing anything
 down as unreachable.
 
+**The 28 that remain**, so the next person starts from a list rather than a walk — 22 in `exec.wac`,
+2 each in `arith.wac`, `lex.wac` and `refusal.wac`:
+
+    HELD_CAP INTERRUPT_POLL_MS ansiEscape before declaredLocal endJob endsWithColon
+    enterSelf hexValue isBlankAt isName jobOfPid killList mtimeOf nameByte nameStart
+    octalMode of onFs ownership reapJob refused spawnableName statReason stopAll
+    stopStage streamPipeline tryHelp
+
+They read as three groups. **Lexer helpers** — `isName`, `nameByte`, `nameStart`, `hexValue`,
+`isBlankAt`, `endsWithColon`, `ansiEscape` — which are the ones most likely to be one odd script
+away. **Job control's tail** — `reapJob`, `endJob`, `stopAll`, `stopStage`, `killList`, `jobOfPid`,
+`streamPipeline` — which needs a job that outlives the script that started it, so it is the group
+where "cannot be reached by this exercise" may turn out to be the true answer. And **stat detail** —
+`mtimeOf`, `onFs`, `ownership`, `octalMode`, `statReason` — which `ls -l` was aimed at and did not
+reach, so something narrower is wanted there.
+
 What is left is unchanged in kind and smaller in size: keep widening while it is cheap, then write
 rules for what genuinely cannot be reached, then switch the driver from `reports` to `floor` in the
 commit that can prove it. The next obvious probe is the differential corpus itself, which this
