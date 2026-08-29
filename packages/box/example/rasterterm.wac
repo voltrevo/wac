@@ -12,9 +12,10 @@
 // would be a renderer nobody could use for anything else, and `packages/raster` has no dependencies
 // on purpose. A program is allowed to know about both.
 //
-// What it does not do yet: scrollback you can scroll, selection, and a caret that blinks. The grid
-// has the first, the manager step 3 built has the second's hit-testing, and neither is wired here —
-// this is the smallest thing that answers "does the same shell come out the same way on pixels".
+// All three of the things this said it did not do yet are wired now: PgUp and PgDn move `back` over
+// the grid's scrollback, a drag selects, and the caret blinks on the wait's deadline. What is still
+// missing is the end of the selection story — `Grid.selectedText` exists and nothing here calls it,
+// so text can be selected and not copied out.
 
 import { Cli, Core, Event, Page, Pending } from "std/platform.wac";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
