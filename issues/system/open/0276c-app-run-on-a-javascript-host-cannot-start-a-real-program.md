@@ -79,20 +79,22 @@ wacc: unknown command 'seq' — check, compile, build, bindgen, run, test…
 That is the *host* answering, not the shell: a stage re-executed the JavaScript `wac` and handed it
 `seq 1 5` as a command line, rather than re-entering the application.
 
-**The cause is one field.** `spawnSelf` has no source argument — its whole point is that the host
-already has this program, because it is what started it. `entry.ts` supplies that as
-`selfSource: workerSource`, and `workerSource` is the *launcher's* worker bundle. That is right for
-an ordinary built application, where the launcher and the program are the same thing.
+**Where it is not.** `wac app-run` does not use `Cli.load`. `appRun` reads the artefact, finds the
+module in it, and calls `runBytes`, which does `cli.spawn(wasm, …)` — so the application runs as an
+ordinary **wasm child**, started through `moduleEntry` and `host/childWasm.ts`. A fix in `worldFor`
+and `cliOf`, where a *loaded* module's world is built, changes nothing here; that was tried and
+reverted.
 
-Under `app-run` they are not. The launcher's program is the `wac` command; the program actually
-running is a module loaded out of the file it was pointed at. So `selfSource` starts `wac`, with the
-stage's argv, and `wac` says it does not have a command called `seq`.
+**Where it is.** `spawnSelf` carries no source because the host already has the running program.
+`entry.ts` supplies that as `selfSource: workerSource` — the launcher's own worker bundle — and the
+host serves every `OP.SPAWN_SELF` from it, whichever child asked. For a module child that is the
+wrong program: the launcher's bundle is the `wac` command, so the stage starts `wac` with the stage's
+argv.
 
-The machinery for the right answer is already there and already passed in beside it: `moduleEntry` is
-the generic entry for starting a *module* as a child, which is exactly what a loaded module's
-`spawnSelf` needs — that entry plus the app's own bytes. So this is a matter of the world built for a
-loaded module carrying its own `selfSource` rather than inheriting the launcher's, not of new
-machinery.
+So the host has to answer `SPAWN_SELF` with **the asking child's** own source rather than its own.
+`children.ts` already has the module's bytes when it starts one, so this is bookkeeping per child
+rather than new machinery — but it is on the host side of the bridge, not in the world the module is
+handed, which is what the first attempt got wrong.
 
 The native host never meets this because its `spawnSelf` re-enters the program inside the binary.
 
