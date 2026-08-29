@@ -15,6 +15,21 @@ wrong for a fortnight. The point of the page is that the next cut starts from nu
 
 ## The budget
 
+**Measured by the gate itself, 2026-08-29**, which now prints this on every run that reaches the
+push — the three-line lump at the bottom of the old estimate was never measured and turned out to be
+24 seconds:
+
+    pull+seed      1s
+    suite        469s
+    docs          14s
+    site           9s
+    ratchets     129s
+    ------------------
+    total        622s
+
+So it is **ten and a half minutes, not twelve**, and the suite is 75% of it. The estimate this page
+opened with is kept below for the record:
+
     suite                452s   (before 0274b; crypto's chunk has since gone 195s -> 25s)
     coverage ratchets    216s
     seed, doc checks, site, push
@@ -173,6 +188,12 @@ Measured on the ratchets, back to back, against each run's own bound of
 
 Compare the ratios rather than the walls: the second run had a third less work in it.
 
+**The ratchets are done: 216s to 129s.** `coverage:all`'s own footer on that run reads *128s (511s
+of work at 4 workers)*, and 511/4 is 128 — so the packing is exact and there is nothing further to
+win by scheduling them.
+
+**The suite's wall is the number that has not been re-measured since the ordering changed
+
 **What to check next time this page is read.** The suite's wall is the number that has not been
 re-measured since the ordering changed — the 450s above is the *old* scheduler on the new workload.
 The gate prints its own budget now, so the next green run answers it without anybody arranging a
@@ -216,3 +237,41 @@ on the built exercise took 3s and looked like proof that the sweeps were cheap; 
 mistake wearing a different hat, because covdump takes no grants and every test that shells out
 failed in microseconds. The exercise's honest figure is 91s, and running it with `--allow-run`
 removed gives 5s *and* `60 test(s) failed`. Read the failure count before believing a difference.
+
+## The largest thing left is that the gate runs two queues instead of one
+
+Both phases are a pool of independent jobs run at four workers, and they run **one after the other**:
+
+    suite      1260s of work, 62s of it alone   ->  floor 362s, wall 469s
+    ratchets    511s of work                    ->  floor 128s, wall 129s
+                                                    ------------------------
+                                                    598s of the gate's 622s
+
+Neither can go much below its own floor now — the ratchets are packed exactly, and the suite's floor
+is `work/4 + alone`, which is a *work* number and not a scheduling one. But the two floors are added
+together only because the phases are sequential, and nothing makes them so: a coverage ratchet is an
+independent check, not something that reads the suite's result.
+
+One queue over both:
+
+    (1260 + 511 - 62) / 4 + 62  =  489s
+
+against 598s, so **about 110 seconds, or 18% of the gate** — larger than anything else left on this
+page, and it needs no test to get faster.
+
+**What it costs.** `tools/runTests.wac` owns the queue and `tools/coverageAll.ts` owns the drivers;
+merging means the ratchets become queue items with a `Chunk`-shaped label and their failures reported
+the way a lane's are. The ordering file already generalises — a driver is just another key. The real
+question is whether an instrumented build competing with four test chunks makes both slower than the
+arithmetic says, which is a measurement rather than an argument.
+
+**The objection that is not CPU.** Memory is what this container runs out of — `issues/system/0266c`
+is thirty-five refusals in a day from the suite gate's memory floor, and push.sh counts OOM kills
+around every run. But the arithmetic above is *one* queue at four workers, not two queues at four
+each, so the peak is what it already is: four jobs. A version that ran `coverage:all` beside the
+suite instead of merging the queues would be 4+4 and is the one to refuse.
+
+**And a reason it might be refused.** Failures currently arrive in phases, so "the suite passed and
+the ratchets are red" is two sentences a reader can act on separately. One queue makes that one
+sentence with two kinds of failure in it, and the gate's output is the thing everyone reads when
+something is wrong.

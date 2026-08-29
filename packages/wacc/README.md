@@ -682,8 +682,10 @@ place exactly, and an integer literal too wide to call an `i32`.
 ### A second oracle: the spec, not just the implementation
 
 Everything above compares wacc to the reference *implementation*. `spec/` in the `wac` checkout is
-what the language *says* — 409 tagged assertions across 18 files, executed by `wacSpec.test.ts`, one
-test per tag. The rejection ones call `err(...)` with a complete program the language declares
+what the language *says* — 415 tagged assertions across 18 files. They were executed by
+`wacSpec.test.ts`, one test per tag, until that file went with the TypeScript compiler on 2026-08-28;
+`packages/wacc/test/wac/spectags_test.wac` is what holds every clause to a wac test now, and it
+refuses a tag that only the reference's own tests ever checked. The rejection ones call `err(...)` with a complete program the language declares
 illegal, so the spec already contains the corpus rung 3 needs, and a better one than anything written
 here: it is the language's own statement of what is illegal, it grows when the language does, and each
 case carries the tag that governs it.

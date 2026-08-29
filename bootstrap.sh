@@ -332,6 +332,35 @@ if [ "$converged" -eq 0 ]; then
 fi
 say "it is a fixed point after $converged round(s), $(wc -c < "$seed") bytes"
 
+# **A fixed point is not a smoke test** — `issues/system/0273b`. `f(x) = x` holds for a broken `f` as
+# readily as a working one, as long as it is broken the same way twice, and that has happened: an
+# emitter change produced a compiler that compiled itself to a fixed point in one round and then
+# trapped the moment it was asked to compile anything. The reseed said *green*, and every command
+# after it failed with a message about the program being compiled rather than about the compiler —
+# which is the expensive part, because a reseed that reported success is the last place anyone looks.
+#
+# So: compile and run one trivial program, and make it *compute* rather than return a constant, so an
+# emitter that has stopped doing arithmetic fails here rather than three commands later.
+smoke=$(mktemp -d)
+cat > "$smoke/smoke.wac" <<'SMOKE'
+export i32 main() {
+  i32 n = 0;
+  for (i32 i = 0; i < 7; i++) { n = n + i; }
+  return n - 21;
+}
+SMOKE
+if ! "$built" run "$smoke/smoke.wac" > "$smoke/out" 2> "$smoke/err"; then
+  echo "bootstrap: the compiler is a fixed point and cannot compile a seven-line program." >&2
+  echo "    It agreed with itself twice, which is all the check above asks; agreement is not" >&2
+  echo "    correctness. Nothing is installed. What it said:" >&2
+  sed 's/^/    /' "$smoke/err" >&2
+  head -c 400 "$smoke/out" | sed 's/^/    /' >&2
+  rm -rf "$smoke"
+  exit 1
+fi
+rm -rf "$smoke"
+say "and it compiles and runs a program"
+
 if [ "$install" -eq 0 ]; then
   say "built $built — not installed"
   exit 0
