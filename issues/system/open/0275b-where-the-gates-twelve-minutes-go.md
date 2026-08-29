@@ -440,3 +440,30 @@ as work. It is the one line here that no change to the suite, the docs or the ra
   130s floor, so the workers are saturated either way. Only making that task cheaper moves this row.
 - **The suite's floor was 331s against 409s wall** on the run above, with the longest single chunks
   175s (`packages/wacc/test/wac`, 12 files) and 143s (`packages/wac/test/wac`, 9 files).
+
+
+## The floor is total work, not the tail — agent-b, 2026-08-29
+
+Recovered from a gate log after `.cache/suite-times` was clobbered (`issues/system/0286b` is the
+clobbering; the runner merges now):
+
+    1025s of work at 4 workers, of which 62s ran alone — floor 303s, wall 387s
+      178s  packages/wacc/test/wac — 12 of its files (3 of 7)
+       65s  packages/wacc/test/wac — 11 of its files (6 of 7)
+       53s  packages/wacc/test/wac — 12 of its files (5 of 7)
+
+**The longest chunk is 178s and the floor is 303s, so the tail is not what the run waits on.** That
+settles which of the two remaining levers is worth anything: rebalancing the queue cannot go below
+303s, and 303s is `(1025 - 62) / 4 + 62`. Only removing *work* moves it. The scheduling is finished
+and was finished before this.
+
+The three chunks above are all `packages/wacc/test/wac`, which is 82 non-heavy files in 7 chunks.
+The largest one holds `commandparity_test.wac`, so item 1 above is also the largest chunk — the
+stride split puts files 2, 9, 16, … of the sorted list together, and its other eleven are:
+
+    bindgenwac cases cttrace envtables grants latearray0271
+    parseconsumes scoping specfences tour wapy
+
+Nothing to conclude from that list yet; it is here so the next person does not have to recover it
+from a log the way this was. **The chunk key is positional**, so this membership changes the day a
+file is added to that directory — `#2` is not a stable name for these twelve.
