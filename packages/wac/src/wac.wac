@@ -57,7 +57,8 @@ import { aggregatePath, aggregateSource, beside, flagValue, importable, noTraili
 import { renderDiagnostics } from "../../wacc/src/render.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/path.wac";
-import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../../wacc/src/coretext.wac";
+import { coreFile, coreFiles, coreSource, isBuiltinSpec, stdFile, stdFiles }
+  from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
@@ -153,6 +154,42 @@ struct Sources {
 /** What `Sources.missing` says for a `@/` the importing file has no project for — D7. */
 string noProject(string spec, string from) {
   return spec + " needs a project: no " + MANIFEST_NAME() + " above " + from;
+}
+
+/**
+ * What `Sources.why` says for a bare specifier that names no mapping — `issues/system/0234a`.
+ *
+ * **`spec/spec/imports.md` defines three kinds and this is none of them.** A path is relative, `@/`
+ * is the project root, and a bare name may name a mapping declared in the manifest. A bare name that
+ * names no mapping names nothing — so the honest answer is to say so, and the two answers that were
+ * given before were both worse.
+ *
+ * The first was to join it to the importing file's directory, which is what every host did: for
+ * `dep/lib.wac` with a `dep/` mapping and a `src/dep/` directory that is a file *the manifest did not
+ * name*, compiled, exit 0, no diagnostic. The second was the message that arrives when the guess
+ * misses — `"No such file or directory: readfile 'src/dep/packages/json/src/json.wac'"`, GitHub
+ * issue 22, a path the author never wrote and cannot find in their own source.
+ */
+/**
+ * What `Sources.why` says for a "core/" or "std/" specifier that names no built-in.
+ *
+ * **Separated from `noMapping` because the reader's mistake is different and so is the fix.** A bare
+ * `sub/lib.wac` may be a mapping the manifest is missing; a mistyped "core/" module cannot be — `core` and
+ * `std` are served from text inside this compiler and the set is closed, so the useful answer is the
+ * set. Before `issues/system/0234a` this said *"cannot read …/core/nope.wac"*, which named a path
+ * nobody wrote but did at least point at the file; refusing without naming the alternatives would
+ * have been a step back from that, which is the only reason this exists.
+ */
+string noSuchBuiltin(string spec, string[] have) {
+  string names = "";
+  for (i32 i = 0; i < have.len(); i++) { names = names + (names == "" ? "" : ", ") + have[i]; }
+  return spec + " is not one of the modules this compiler carries: " + names;
+}
+
+string noMapping(string spec, string from) {
+  return spec + " is not a path and names no mapping in " + MANIFEST_NAME() + ": " +
+         "an import is `./…`, `../…`, `@/…`, a built-in, or a name the manifest declares (from " +
+         from + ")";
 }
 
 /**
@@ -703,8 +740,18 @@ Sources gather(Fs fs, Cli cli, string entry) {
       // answered *"1 file(s), no diagnostics"* for a program that imports a name it cannot reach.
       // The other wrong answer is resolving it anyway — `@/src/a.wac` against nothing is
       // `src/a.wac`, a real-looking path relative to a directory nobody named.
+      // **Two ways to reach the empty answer and they are different mistakes.** `@/` with no
+      // project above it is the first; a bare specifier that named no mapping is the second, and
+      // saying *"needs a project"* for that one sends the reader to add a manifest they may already
+      // have. `issues/system/0234a`.
       if (next == "") {
-        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", noProject(specs[i], path));
+        string head5 = specs[i].len() >= 5 ? specs[i].slice(0, 5) : "";
+        string head4 = specs[i].len() >= 4 ? specs[i].slice(0, 4) : "";
+        string why = head5 == "core/" ? noSuchBuiltin(specs[i], coreFiles())
+                   : head4 == "std/" ? noSuchBuiltin(specs[i], stdFiles())
+                   : isMappingCandidate(specs[i]) ? noMapping(specs[i], path)
+                   : noProject(specs[i], path);
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", why);
       }
       // **A mapped subdirectory bounds its code, whatever form the specifier took.** Checked here
       // rather than in the `@/` branch because `@/outside/x.wac` and `../outside/x.wac` are the same

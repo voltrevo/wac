@@ -398,3 +398,12 @@ level, changing a test that was right.
 So: the same tell as the tenth entry above. Read what the *assertion* said, not what the subprocess
 printed next to it, and check the standalone run before believing either.
 
+**And this one had a cause worth fixing rather than only recording.** The assertion waits for the
+server's `received GET /` with a 20,000 ms deadline now; it was **5,000**, while the `listening` line
+twelve lines above it — same relay, same machine, same run — waited 20,000. That asymmetry was the
+whole failure. The comment beside it already recorded an earlier race here, fixed by waiting instead
+of reading once, and 5s was the number chosen then; a sub-second normal against three agents on five
+cores is not the 3-5x a timeout wants. The cost is that a server which genuinely never answers now
+takes 20s to say so, which is the right trade for a check whose failure otherwise reads as a
+signature bug.
+

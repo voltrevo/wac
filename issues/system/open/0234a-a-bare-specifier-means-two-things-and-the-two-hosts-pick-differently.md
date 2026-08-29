@@ -1,6 +1,6 @@
 # 0234a — a bare specifier means two things, and the two hosts pick differently
 
-- **Status:** open
+- **Status:** open — reproduction 2 is fixed; reproduction 1's *mapping* half is not
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a, from GitHub issue 22's Deno-host case study
 - **Date:** 2026-08-21
@@ -169,4 +169,37 @@ specifier the resolver should refuse.
 **What is still open is both halves of the actual bug**: `harness/wacFiles.ts` doing the path
 arithmetic before trying the mappings, and the binary joining a bare specifier at all rather than
 refusing one that names no mapping. Neither is touched here.
+
+## Reproduction 2 is fixed, at the one point both hosts share — agent-b, 2026-08-29
+
+    $ wac build src/main.wac -o m          # src/main.wac: import { two } from "sub/lib.wac";
+    wacc: sub/lib.wac is not a path and names no mapping in wac.json5: an import is `./…`,
+          `../…`, `@/…`, a built-in, or a name the manifest declares (from src/main.wac)
+    exit 1, no artefact
+
+Before: a module, exit 0, and `src/sub/lib.wac` compiled into it.
+
+**One point, not two, and that is the part worth knowing.** This issue reads as two bugs — the Deno
+host joining before it tries mappings, and the binary joining at all — but `harness/wacFiles.ts`
+delegates to the compiler's own `resolveSpecifierAt` on purpose, so both were the same fallback in
+`packages/wacc/src/path.wac`. `isBareSpecifier` now answers `""` there instead of joining.
+
+**It is safe because a mapping is resolved before that point.** `wac.wac` tries `mapSpecifier` first
+and `continue`s when it matches, so a bare specifier reaching the resolver is one that named no
+mapping. The harness has no manifests at all, which is the same answer for a different reason. And
+the blast radius was measured first and is zero — see the section above.
+
+The message is its own, not `noProject`'s: *"needs a project"* would send a reader to add a manifest
+they may already have.
+
+`packages/wacc/test/wac/projectspec_test.wac` holds it, beside the `@/` cases because it is the same
+rule from the other side, and it asserts the relative spelling still compiles — a change that refused
+everything would pass the other three assertions. Canaried: with the refusal removed it fails with
+*"a bare specifier was accepted, and src/sub/lib.wac is there"*.
+
+**What is left is reproduction 1's other half**: with a `dep/` mapping *declared* and no lock entry,
+`wac build` refuses and names `wac update`, while the Deno host — which finds a manifest and never
+reads one — cannot tell a mapping from anything else. It now refuses rather than guessing, which is
+the better of the two failures, but it still cannot resolve a mapped import at all. Whether it should
+learn to is `design/lang/0009` D9-D11's question rather than this one's.
 

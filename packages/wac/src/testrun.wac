@@ -169,7 +169,16 @@ export string aggregateSource(string[] files, string[] texts, string up) {
                + "(" + tests[k].params + ") { return impl" + itoa(i) + "_" + tests[k].name
                + "(" + argsOf(tests[k].params) + "); }\n";
     }
-    out = out + "import { " + aliased + " } from \"" + up + files[i] + "\";\n";
+    // **`./` when `up` is empty, because a specifier without it is not a relative path.**
+    // `spec/spec/imports.md` says a path is relative *using* `./` or `../`; a bare `a_test.wac` is a
+    // mapping name or nothing. It resolved anyway — every host joined a bare specifier to the
+    // importing file's directory — and this generated one every time the aggregate was written
+    // *beside* the files it imports, which is the `beside` path taken for a directory outside the
+    // project. `issues/system/0234a` stopped that fallback, and this is the one place in the tree
+    // that was relying on it. Found by the refusal, which is what a refusal is for.
+    string spec = up + files[i];
+    if (spec.len() > 0 && spec.slice(0, 1) != "." && spec.slice(0, 1) != "/") { spec = "./" + spec; }
+    out = out + "import { " + aliased + " } from \"" + spec + "\";\n";
   }
   return out + "\n" + wrappers;
 }

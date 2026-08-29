@@ -246,23 +246,63 @@ measurement.
 
 ## What is left, in the order the numbers suggest
 
-1. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
-2. **Process starts** — `issues/system/0197`, and **already being worked**, so read that before
-   starting anything here. A built app costs ~107ms to spawn against 15ms for the native binary;
-   `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s. `harness/buildApp.ts`
-   is the replacement builder, going through `wac app` at ~20ms, and `design/system/0009` is why
-   `packages/platform/build.ts` is losing its `deno` and `node` targets altogether.
+**Scheduling is done.** Both queues now order by measured cost and both are close to their floors —
+the ratchets within 1% and the suite 362s against 319s — and the section below shows there is nothing
+in merging them. Every item here is *work reduction*, and each belongs to an issue that already
+exists.
 
-   Two of that issue's three "shapes worth measuring" are answered and can be skipped: the cache
-   flags in the shebang are *not* the money (107ms → 90ms) and both have a written reason — a
-   `v8_code_cache_v2` that reached 28 GB and a transpile cache that reached 23 GB, neither of which
-   evicts. The live one is the third, the artefact's size, since start cost is ~50ms fixed plus
-   ~43ms a megabyte.
-3. **Crypto's own speed**, which is now a smaller number than it looked: the chunk is 25s and the
+1. **`commandparity_test.wac`, 71.7s**, and the compile cost behind it — `issues/lang/0153`. The
+   largest single file in the suite, and 2.6x the next in its package. Three hosts each compile a
+   219-file program. That issue now also carries a profile of the compiler and, more usefully, the
+   retraction of what the profile first appeared to show.
+2. **`buildcache_test.wac`, 105.7s**, more than half of `packages/wac`. Per *test*, because each
+   points `WAC_HOME` at a fresh directory — which is the point of a build-cache test and also makes
+   `wac run` recompile the compiler-as-a-program six times. Sharing that compile while keeping each
+   subject's cache fresh is possible and is a decision about what the test proves; see the section
+   above for why it was left.
+3. **Process starts** — `issues/system/0197`, and **already being worked**, so read it before
+   starting anything here. `harness/buildApp.ts` is the replacement builder, going through `wac app`
+   at ~20ms against ~107ms, and `design/system/0009` is why `packages/platform/build.ts` is losing
+   its `deno` and `node` targets. Two of that issue's three shapes are answered and can be skipped:
+   the shebang's cache flags are not the money (107ms → 90ms) and both have a written reason — a
+   code cache that reached 28 GB and a transpile cache that reached 23 GB, neither of which evicts.
+   The live one is the artefact's size, since start cost is ~50ms fixed plus ~43ms a megabyte.
+4. **Crypto's own speed**, now a smaller number than it looked: the suite chunk is 25s and the
    ratchet driver 24s. `issues/system/0209` is one piece of it.
 
-The ratchets' 216s is *not* a separate item: `coverage:platform` is 137s of it and that is 2, and no
-schedule can beat one driver. Skipping them was measured and refused separately.
+The ratchets are not a separate item. They are 133s against a floor of 131s, `coverage:platform` is
+the largest driver, and that is item 3. Skipping them entirely was measured and refused separately.
+
+## One queue instead of two saves nothing, and the arithmetic says so — withdrawn
+
+**This section proposed merging the suite's queue and the ratchets' and costed it at 110 seconds. It
+is worth zero and the mistake is instructive.**
+
+Both phases are pools of independent jobs at four workers, run one after the other. Write `W` for the
+suite's work, `A` for the part that must run alone, `C` for the ratchets':
+
+    serial     (W - A)/4 + A     +     C/4
+    merged     (W - A + C)/4 + A
+
+Expand the first and it *is* the second. Two queues that each already pack to their own floor add
+their floors, and one queue over the union has the same floor — there is nothing in the algebra for a
+merge to recover. With today's numbers both come to **450s**.
+
+**Where the 110s came from.** I compared the merged *floor* against the two measured *walls*, and a
+wall is a floor plus whatever the packing wastes. So what I costed was not the merge at all: it was
+the packing slack, which is real but belongs to whichever queue has it and is recoverable without
+merging anything. `tools/coverageAll.ts` and `chunksOf` are exactly that work, and it is already
+done — the ratchets are within 1% of their floor, and the suite is 362s against 319s.
+
+**What a merge could still buy is that remaining 43s of suite slack**, and only some of it: a single
+queue has more small jobs to fill the gaps a long chunk leaves at the end. That is a much smaller
+prize than this section claimed, against a change to the gate's core, and it shrinks every time the
+suite's own ordering improves. Not recommended.
+
+The measurement that would settle it is cheap and nobody needs to write the merge for it: the suite's
+footer already prints work, alone and floor, and `coverage:all` prints work and wall. Watch the gap
+between the suite's wall and its floor over a few green runs. If it stays near 40s the merge is worth
+at most that; if it collapses, there is nothing there at all.
 
 ## Two traps, because both cost me a measurement
 

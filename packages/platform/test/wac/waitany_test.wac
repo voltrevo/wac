@@ -100,9 +100,18 @@ export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, 
   // when they are listening instead.
   // **A deadline rather than 400,000 looks.** Reading a log is a syscall, so a bound in *looks* is a
   // bound whose patience shrinks as the machine gets busier — which is exactly when a fixture takes
-  // longer to announce itself. Five seconds each, and it sleeps between looks instead of spinning.
-  bool up = waitForLogWithin(core, cli, quick, "listening", 5000) &&
-            waitForLogWithin(core, cli, slow, "listening", 5000);
+  // longer to announce itself. It sleeps between looks instead of spinning.
+  //
+  // **Twenty seconds each, since 2026-08-29, and the argument above is why.** It was five, which is
+  // the same instinct stopped one step short: a *deadline* does not shrink with load, but five
+  // seconds of it is still a bet about how loaded the machine gets, and three agents share five
+  // cores here. Every other wait for a `listening` line in the repository is 20,000; the one
+  // exception left was `packages/tls/test/wac/rsa_interop_test.wac`, at 5,000 beside a 20,000, and
+  // that asymmetry turned a gate red the same day — `issues/system/0203`'s eleventh entry. This is
+  // the same shape before it costs anybody a run: these are *setup* waits, not the thing under test,
+  // so the only thing a short one buys is a faster answer when a fixture is genuinely broken.
+  bool up = waitForLogWithin(core, cli, quick, "listening", 20000) &&
+            waitForLogWithin(core, cli, slow, "listening", 20000);
   t.isTrue(up, "both listeners are accepting — quick said: " + logOf(cli, quick) +
                " slow said: " + logOf(cli, slow));
   if (!up) { stop(cli, quick); stop(cli, slow); return t.report(); }

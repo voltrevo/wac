@@ -16,7 +16,7 @@
 // cannot resolve is a migration that breaks 65 files at once.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
 import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
@@ -254,3 +254,41 @@ export string test_the_cheap_builtin_test_agrees_with_the_files_served() {
   }
   return t.report();
 }
+
+/**
+ * A built-in *prefix* that names no built-in says which ones there are.
+ *
+ * **The set is closed, so the set is the answer.** `core` and `std` are served from text inside the
+ * compiler — there is no file to look for and no manifest that could declare one — so a mistyped one
+ * is a typo with exactly five alternatives, and printing them is the whole of the help a reader
+ * needs.
+ *
+ * Written when `issues/system/0234a` stopped bare specifiers falling through to path arithmetic. That
+ * refusal is right, but its message is about mappings, and for a `core/` prefix a mapping is not the
+ * question — before the change this said *"cannot read …/core/nope.wac"*, which named a path nobody
+ * wrote and yet pointed nearer the truth. Losing that would have been a step back, so this asserts
+ * the replacement rather than trusting it.
+ */
+export string test_a_builtin_prefix_that_names_no_builtin_lists_the_ones_there_are(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "builtin-typo");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  Change w = cli.writeFile(dir + "/m.wac",
+      ("import { x } from \"core/nope.wac\";\nexport i32 main() { return x(); }\n").toBytes()).wait();
+  t.isTrue(w.ok(), "wrote the program — " + w.message);
+
+  Exec r = cli.exec(binaryPath(cli), string[]("check", dir + "/m.wac"), u8[0]()).wait();
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "core/nope.wac was accepted: " + said);
+    t.isTrue(contains(said, "core/option.wac"),
+             "the refusal did not name the modules there are: " + said);
+    t.isTrue(!contains(said, "names no mapping"),
+             "a built-in prefix was refused as a mapping candidate: " + said);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+

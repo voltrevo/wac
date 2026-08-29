@@ -349,3 +349,54 @@ export string test_a_project_specifier_does_not_depend_on_the_working_directory(
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A bare specifier that names no mapping is refused, not joined — `issues/system/0234a`.
+ *
+ * **`spec/spec/imports.md` defines three kinds and this is none of them.** A path is relative, `@/`
+ * is the project root, and a bare name **may name a mapping** the manifest declares.
+ * `[§wac-import-mapped-6np2rkq]` Nothing makes a bare name fall back to path arithmetic — but every
+ * host did it, and `src/sub/lib.wac` is exactly the file that arithmetic finds.
+ *
+ * **The failure it replaces is the one that looks like success.** `wac build` compiled the program,
+ * wrote a module and exited 0, having read a file the manifest never named. The same fallback with a
+ * *declared* mapping picks between two candidates and the two hosts picked differently, which is that
+ * issue's first reproduction; this is its second and the two share a cause.
+ *
+ * Written beside the `@/` cases because they are the same rule from the other side: a specifier the
+ * language does not define must be refused *by name*, so a reader learns what to write rather than
+ * that some file is missing.
+ */
+export string test_a_bare_specifier_that_names_no_mapping_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "barespec");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  t.isTrue(put(cli, dir + "/src/sub/lib.wac", "export i32 two() { return 42; }\n"), "wrote lib");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { two } from \"sub/lib.wac\";\n" +
+               "export i32 main() { return two(); }\n"), "wrote main");
+
+  Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    string said = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
+    t.isTrue(w.status != 0, "a bare specifier was accepted, and src/sub/lib.wac is there: " + said);
+    t.isTrue(contains(said, "names no mapping"), "refused for the wrong reason: " + said);
+    t.isTrue(contains(said, "sub/lib.wac"), "did not name the specifier: " + said);
+  }
+
+  // **The relative spelling of the same import still works**, which is the canary: a change that
+  // refused everything would pass every assertion above.
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { two } from \"./sub/lib.wac\";\n" +
+               "export i32 main() { return two(); }\n"), "rewrote main");
+  Exec ok = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  t.isTrue(ok.ran() && ok.status == 0,
+           "the relative spelling stopped working: " +
+           string.fromBytes(ok.stderr) + string.fromBytes(ok.stdout));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+

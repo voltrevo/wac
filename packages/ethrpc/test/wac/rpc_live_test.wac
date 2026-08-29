@@ -37,7 +37,7 @@ export string test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_sock
     core.warn("ethrpc live test: skipped — anvil not found at " + anvilPath(cli));
     return t.report();
   }
-  Node node = anvil(cli);
+  Node node = anvil(core, cli);
   t.isTrue(node.ok(), "anvil came up — " + node.why);
   if (!node.ok()) { return t.report(); }
 
