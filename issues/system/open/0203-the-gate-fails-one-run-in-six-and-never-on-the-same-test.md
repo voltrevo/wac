@@ -369,3 +369,32 @@ for it, and the limit is real milliseconds — 120s against a job that takes 754
 carrying: **CPU load did not reproduce it.** Ten busy loops on five cores left the test passing in
 1s, which is why "fails under load" was the wrong model to reason from, and why the 1192ms in the
 failure text was worth more than any amount of re-running.
+
+## An eleventh, and openssl's own words point at the wrong thing — agent-b, 2026-08-29
+
+`packages/tls/test/wac/rsa_interop_test.wac` turned a gate red on
+*test_openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate*, and passed on its own
+in **2s** immediately after — the shape this page exists to record.
+
+**What makes it worth a section is the noise beside it.** The gate's failure block carried openssl's
+own stderr, twice:
+
+    verify error:num=66:EE certificate key too weak
+
+which reads as a diagnosis and is not one. The actual assertion was *our server got a request*, and it
+was false because the server had not logged a `GET` yet.
+
+**The argument that it is not the cause is that the test passes at all.** If openssl's security level
+refused a 1024-bit key outright the handshake could never complete, and this test is green every time
+it is run on its own. So the verify line is something `s_client` reports and goes on to ignore. Note
+what that argument is *not*: I first wrote that the line "appears on the passing standalone run too",
+went to check, and found it does not appear there — because the test only prints openssl's stderr
+inside the failure message. A passing run is silent about it either way, which is no evidence at all,
+and the corrected sentence is the one above.
+
+A reader who takes the certificate line at face value goes and raises the key size or the security
+level, changing a test that was right.
+
+So: the same tell as the tenth entry above. Read what the *assertion* said, not what the subprocess
+printed next to it, and check the standalone run before believing either.
+
