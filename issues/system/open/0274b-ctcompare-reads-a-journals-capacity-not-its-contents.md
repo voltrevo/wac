@@ -67,3 +67,40 @@ That is a decision about the host API and is why this stays open rather than clo
 Worth knowing before designing it: the comparison itself is fast. `ctcompare` answered about 8.19
 million events in the **0.7s** that remained once the reading stopped dominating, which is what the
 file's header claimed for it all along.
+
+
+## What a `Cli.call` costs, taken apart — agent-b, 2026-08-29
+
+The half that remains is p256, where the cursor really does reach the end and the loop makes 8.4
+million calls. So: is a call reducible? Measured on that comparison, each step rebuilt and re-run:
+
+| | ns per call |
+| --- | ---: |
+| as found | 1835 |
+| without `sig.params.clone()` and `sig.ret.clone()` | 1757 |
+| without cloning `caps` and `cap_names` into the swapped context | no change |
+| with the resolved export cached instead of a `v8::String` per call | **1622** |
+| calling outside the `TryCatch` instead of inside it | no change |
+| **the whole wrapper with the V8 call skipped** | **14** |
+
+So the wrapper is 14ns and the call is ~1.6µs, and that is V8 crossing into wasm. Two of those steps
+were worth keeping and are; the rest were not where the time was. **Per-call cost is not the thing to
+attack** — 8.4 million crossings at 1.6µs is 13 seconds however tidy the host is.
+
+That settles the shape of the remaining fix: it has to make **fewer calls**, not cheaper ones.
+
+### Two ways, and the second needs no host API
+
+- **A bulk read.** One call returning a range of slots. `cli.call` answers a scalar, so this is a new
+  host entry on both hosts and a `std/platform.wac` addition — the decision this issue was already
+  waiting on.
+- **A range checksum, emitted by the module.** `wacc` gives a traced module a `__cov_hash(from, n)`
+  beside `__cov_get`, and `ctcompare` compares two hashes in **two calls**. Equal journals — which is
+  every passing run — cost nothing. Unequal ones binary-search with about 23 more calls to find the
+  first differing slot, then read a small window the old way to report the site and value. The
+  interface stays scalar, so no host changes at all; the cost is a compiler change and a collision
+  risk a wide enough checksum makes negligible.
+
+The second is cheaper and keeps `Cli.call` as it is. It is written down here rather than done because
+"a trace claims to be the same when a hash agrees" is a claim about a *security* test, and widening
+what counts as proof there is somebody's decision rather than a tidy-up.
