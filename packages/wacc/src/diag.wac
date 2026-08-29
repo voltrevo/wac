@@ -64,6 +64,7 @@ export string parseMessage(i32 code) {
   if (code == 30) { return "a keyword cannot be used as a name"; }
   if (code == 31) { return "'override' is not allowed on an enum method"; }
   if (code == 32) { return "an enum method must take 'this'"; }
+  if (code == 34) { return "this string cannot interpolate"; }
   if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
     // **wapy's structure parser, codes 40-53.** A `.wapy` file's diagnostics arrive as *parse* errors,
   // which is the right phase for most of them — `packages/wacc/src/wapyparse.wac` is a parser. The

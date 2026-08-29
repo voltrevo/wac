@@ -1,0 +1,6 @@
+// expect: refused
+// why: a module path is resolved before anything runs, so the one string that cannot be an
+//      expression is this one — and it used to report six diagnostics, none about interpolation
+// from: design/lang/0013 D7
+import { g } from "./p\{1}.wac";
+export i32 f() { return g(); }
