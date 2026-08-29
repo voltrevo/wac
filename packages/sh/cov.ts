@@ -508,6 +508,10 @@ for (
     // batches in a form that could not work: one outside a function, one mangled by escaping.
     "f() { local x=1; echo $x; }; f", "f() { local a=1 b=2; echo $a$b; }; f",
     "f() { local bad-name=1; }; f", "echo $'\\x41'", "echo $'\\x'", "echo $'\\x4a\\x4b'",
+    // A *short* option nobody has, which is the third arm of `optionRefusal` — the `--badoption`
+    // probes above take the long-option arm and never reach `tryHelp`. `-l` takes the second arm,
+    // the one for a letter GNU has and this does not.
+    "ls -Y", "cat -Y", "wc -Q", "ls -Y /bin/prog",
   ]
 ) {
   m.shOut(script);
