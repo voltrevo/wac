@@ -78,7 +78,7 @@ each have to lose their `= 0`, which is a change to files that are not the ones 
 `Glo(p, n, ret)` gains a field for the value and a flag for "had a non-literal initialiser";
 `collect()` fills them, and the global loop in the emit pass writes the value instead of `emitn(0)`.
 
-**Not attempted here.** `bootstrap/boot/l5.l4` is 4,056 lines of wac-L4 and every rung below has to
+**Not attempted here.** `bootstrap/boot/l5.l4` is 4,082 lines of wac-L4 and every rung below has to
 keep building it. This is small as a diff and large as a risk, and it wants its own sitting rather
 than the tail of another piece of work — the same note 0285b ends on.
 
