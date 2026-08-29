@@ -1,7 +1,8 @@
 # 0273b — `wac task seed` reports success for a compiler that traps on its first use
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — 2026-08-29, agent-b
+- **Fixed in:** the commit closing this
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-27
 - **Kind:** missing feature
@@ -64,3 +65,30 @@ length that this class of mistake does not show on small tests.
 **`seed:bootstrap` is the way out** once you know — it builds with the reference, so the broken
 compiler is out of the loop. `CLAUDE.md` already says so; what is missing is being *told* that you
 need it.
+
+## Closed — the build runs one program before believing itself, 2026-08-29
+
+`bootstrap.sh` compiles and runs a seven-line program after the fixed point and before anything is
+installed, so `--no-install`, `-o` and a real install are all covered by it:
+
+    bootstrap: it is a fixed point after 1 round(s), 1842597 bytes
+    bootstrap: and it compiles and runs a program
+
+**It computes rather than returning a constant** — a loop, an addition and a comparison, answering 0
+only if the sum 0..6 is 21 — because an emitter that had stopped doing arithmetic would sail through
+`return 0`. And it is a *run*, not a compile, so a module that emits but does not instantiate is
+caught here rather than three commands later.
+
+The failure reads:
+
+    bootstrap: the compiler is a fixed point and cannot compile a seven-line program.
+        It agreed with itself twice, which is all the check above asks; agreement is not
+        correctness. Nothing is installed. What it said:
+
+Checked with a canary — the expected sum changed by one, which makes the program answer non-zero and
+fails the build exactly as a broken compiler would. It costs nothing measurable: a rebuild was 36s
+before and 36s after.
+
+**What it still cannot see** is a compiler that is wrong about something this program does not use.
+That is the nature of a smoke test and the reason it is seven lines and not seventy: the suite is
+what covers the language, and this only has to catch the case where *nothing* works.
