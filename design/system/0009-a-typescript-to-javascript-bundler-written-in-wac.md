@@ -200,6 +200,19 @@ debugging rather than fidelity, since a bootstrap that goes wrong hands you an i
 Measured: the bridge's 17 files go in and 214 KB of JavaScript comes out, **byte-identical to the
 route through the `wac` binary**, identical between Node and Deno, and Deno parses it.
 
+**And the whole chain runs with no `wac` binary in it**, which is the claim step 5 rests on:
+
+    ladder (Rust, from hand-written wasm text)
+      -> wacc
+        -> transform.wasm          72,433 bytes, built by `ladder … --with-wacc`
+          -> run.js, under deno or node
+            -> 219,055 bytes of bridge JavaScript
+
+The bundle that route produces is byte-identical to the one built through the binary. What is left
+of step 5 is plumbing: `bootstrap.sh` has to run those four steps and then put the bridge and the
+`wac` command module into one file with a shebang, which is the shape `packages/platform/build.ts`
+already emits for `--target deno`.
+
 ### The byte-at-a-time boundary is not worth fixing
 
 The ladder's drivers move data one byte per call, which looks like waste: 2,086,160 bytes of wacc
