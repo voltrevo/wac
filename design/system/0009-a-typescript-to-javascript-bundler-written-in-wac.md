@@ -154,35 +154,45 @@ something else, with better tools, has already checked the things it cannot.
 | 1 — lexer | **done**, 2026-08-28 — `packages/ts/src/lex.wac` |
 | 2 — type erasure | **done** — `packages/ts/src/strip.wac`, all 22 bridge files |
 | 3 — differential | **done** — identical to `ts.transpileModule` on all 22 |
-| 4 — bundler | **partly** — orders, flattens and refuses; see below |
+| 4 — bundler | **done** — the bridge bundles to 214 KB and Deno parses it |
 | 5 — `--host deno`/`--host nodejs` finish | not started |
 
-Step 3 is the one worth reading the history of. The differential started at **19 of 22 files
-differing** and found eight defects the hand-written cases had not, every one of them two constructs
-spelled identically with only context to separate them. Three were a single shape: after a
-type-level operator — `=>`, `|`, or a second `as` — what follows is more type, and reading it as
-code leaves an object type behind as a statement.
+### D8 — a module is an IIFE, and nothing is renamed
 
-### What step 4 still needs, measured
+Decided after building the alternative. A module becomes
+`const $m3 = (() => { …body… return { … }; })();` and an imported name is read through the module
+that exports it: `fromA()` becomes `$m1.fromA()`.
 
-The bundler orders the graph, deletes `import` statements, removes the `export` keyword and
-**refuses a top-level name collision rather than merging two bindings**. The bridge has six such
-collisions across four names: `CHUNK`, `EMPTY`, `enc`, `join`.
+**That removes renaming entirely.** Two modules may both declare `EMPTY`; they are in different
+scopes. The hygiene is in the one name the bundler invents — `$mN`, chosen to appear nowhere in the
+program — and every other identifier in the output is the one its author wrote.
 
-Renaming them is what a bundler does, and doing it *safely* needs scope analysis rather than token
-substitution. That is measured, not assumed:
+Renaming colliding top-level names was tried first and is worse in a way that is easy to miss:
+`{ EMPTY }` is shorthand for `{ EMPTY: EMPTY }`, so renaming the token changes an object's *keys*.
+The bridge has fifteen such uses. (An earlier draft of this note also claimed shadowing blocked
+renaming. That was wrong — a uniform alpha-rename preserves shadowing — and the real blockers are
+shorthand and keys.)
 
-- `CHUNK` and `EMPTY` appear **15 times as object keys or shorthand properties**, where renaming
-  the token produces a different object — `{ EMPTY }` means `{ EMPTY: EMPTY }`, and renaming half
-  of that is a different program.
-- `enc` is **redeclared in three nested scopes**, where renaming the outer binding would capture
-  the inner one.
+### D9 — cycles are allowed; static evaluation across one is not
 
-So there are two ways forward and the choice is a decision rather than a task:
+Modules initialise in dependency order, so imports exist by the time a body runs — unless the graph
+has a cycle, where some edge must run backwards. Uses *inside functions* are fine and are the point:
+by the time anything calls them, every module exists.
 
-1. **Scope analysis in the bundler** — correct for any input, and the larger piece of work.
-2. **Rename the four in the sources** — four edits, and arguably right anyway: `EMPTY` means three
-   different things in three files, which is a collision of meaning as well as of spelling.
+So the rule is narrow. An imported symbol may not be evaluated in a **static** context, and when it
+is the message names both modules and says to move the use into a function. Nothing else about
+cycles is refused.
+
+"Static" includes a **concise arrow body**: `const go = () => fromB();` evaluates nothing at
+initialisation, and a rule counting braces would say it does, because there are none to count.
+
+### The check that found what the others could not
+
+`deno check` on the bundle. The differential prints *our* output through `ts.transpileModule` to
+normalise layout — which silently strips any TypeScript we failed to strip, so a leftover compares
+equal. `readonly fault: number;` survived every test here until Deno was asked to parse the bundle
+and refused. A JavaScript parser asked about JavaScript is the only question that catches a
+leftover, and it is also the real acceptance test: a JS-hosted `wac` *is* that file.
 
 ## Open
 

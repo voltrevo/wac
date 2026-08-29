@@ -52,6 +52,12 @@ struct Ctx {
   /** Whether a `:` here introduces a type: true inside a signature's parentheses. */
   bool colonIsType;
   i32 pendingTernary;
+  /**
+   * Whether this `{` opened a class body, where `fault: number;` declares a *field* and the `:` is
+   * an annotation — not an object-literal key. A type-only field emits nothing at all, so leaving
+   * it produces `fault: number;` as a statement, which is not JavaScript.
+   */
+  bool isClassBody;
 }
 
 /** Where a token is, for a diagnostic. */
@@ -78,7 +84,7 @@ export Stripped strip(u8[] src) {
   Vec<i32> cutTo = Vec.create();
 
   Vec<Ctx> stack = Vec.create();
-  stack.push(Ctx(0, false, 0));
+  stack.push(Ctx(0, false, 0, false));
 
   string err = "";
   i32 errLine = 0;
@@ -183,7 +189,8 @@ export Stripped strip(u8[] src) {
           }
         }
         bool colonIsType = tx == "(" && opensSignature(src, l, i);
-        stack.push(Ctx(tx == "(" ? '(' : tx == "[" ? '[' : '{', colonIsType, 0));
+        stack.push(Ctx(tx == "(" ? '(' : tx == "[" ? '[' : '{', colonIsType, 0,
+                       tx == "{" && opensClassBody(src, l, i)));
         i = i + 1;
         continue;
       }
@@ -225,7 +232,8 @@ export Stripped strip(u8[] src) {
           i = i + 1;
           continue;
         }
-        if (top(stack).colonIsType || declaresAVariable(src, l, i)) {
+        if (top(stack).colonIsType || declaresAVariable(src, l, i)
+            || (top(stack).isClassBody && declaresAField(src, l, i))) {
           i32 end = pastType(src, l, i + 1, stack);
           if (end < 0) { err = "a type annotation that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
           cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
@@ -286,12 +294,12 @@ u8[] blank(u8[] src, Vec<i32> from, Vec<i32> to) {
 
 // ── Context helpers ───────────────────────────────────────────────────────────
 
-Ctx top(Vec<Ctx> s) { return s.len() > 0 ? s.get(s.len() - 1) : Ctx(0, false, 0); }
+Ctx top(Vec<Ctx> s) { return s.len() > 0 ? s.get(s.len() - 1) : Ctx(0, false, 0, false); }
 
 void bumpTernary(Vec<Ctx> s, i32 by) {
   if (s.len() == 0) { return; }
   Ctx c = s.get(s.len() - 1);
-  s.set(s.len() - 1, Ctx(c.open, c.colonIsType, c.pendingTernary + by));
+  s.set(s.len() - 1, Ctx(c.open, c.colonIsType, c.pendingTernary + by, c.isClassBody));
 }
 
 bool inParens(Vec<Ctx> s) { return top(s).open == '('; }
@@ -544,6 +552,60 @@ bool declaresAVariable(u8[] src, Lexed l, i32 i) {
   if (kindAt(l, i - 1) != kIdent()) { return false; }
   string two = textAt(src, l, i - 2);
   return two == "let" || two == "const" || two == "var";
+}
+
+/**
+ * Whether the `{` at `i` opens a class body.
+ *
+ * Scans back over the heritage clause — `class C extends D` — to the `class` keyword. An
+ * `implements` clause is already erased by the time this runs, so only `extends` is in the way.
+ */
+bool opensClassBody(u8[] src, Lexed l, i32 i) {
+  i32 k = i - 1;
+  i32 depth = 0;
+  while (k >= 0) {
+    if (kindAt(l, k) == kPunct()) {
+      string t = textAt(src, l, k);
+      if (t == ")" || t == "]") { depth = depth + 1; k = k - 1; continue; }
+      if (t == "(" || t == "[") { depth = depth - 1; k = k - 1; continue; }
+      if (depth > 0) { k = k - 1; continue; }
+      if (t == "." || t == "<" || t == ">" || t == ",") { k = k - 1; continue; }
+      return false;
+    }
+    if (depth > 0) { k = k - 1; continue; }
+    string w = textAt(src, l, k);
+    if (w == "class") { return true; }
+    if (w == "extends") { k = k - 1; continue; }
+    // A plain name — the class's own, or a base's. Keep looking.
+    k = k - 1;
+    if (i - k > 8) { return false; }
+  }
+  return false;
+}
+
+/**
+ * A class field: `name: T;` at the top of a class body, where the name follows `{`, `;` or `}`.
+ *
+ * **Modifiers are skipped, because they are still in the token stream.** `readonly fault: number;`
+ * erases the `readonly` in the *cut plan*, not in the tokens, so a look-back of two lands on it
+ * rather than on the brace. That is how `readonly fault: number;` survived into the bundle and made
+ * Deno refuse to parse it — a case neither the hand-written tests nor the differential could see.
+ */
+bool declaresAField(u8[] src, Lexed l, i32 i) {
+  if (i < 2) { return false; }
+  if (kindAt(l, i - 1) != kIdent()) { return false; }
+  i32 k = i - 2;
+  while (k >= 0 && kindAt(l, k) == kIdent() && isMemberModifier(textAt(src, l, k))) { k = k - 1; }
+  if (k < 0) { return false; }
+  if (kindAt(l, k) != kPunct()) { return false; }
+  string two = textAt(src, l, k);
+  return two == "{" || two == ";" || two == "}";
+}
+
+bool isMemberModifier(string w) {
+  return w == "readonly" || w == "static" || w == "declare" || w == "abstract"
+      || w == "override" || w == "public" || w == "private" || w == "protected"
+      || w == "accessor";
 }
 
 /** A postfix `!`: `x!.y`, `x!;`, `x!)`. Not the prefix `!x`. */

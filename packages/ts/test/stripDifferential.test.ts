@@ -177,3 +177,51 @@ Deno.test("and the comparison can fail, which is what makes the one above mean s
     throw new Error("stripping a type must reach the same printed output as not having one");
   }
 });
+
+/**
+ * The bundle Deno will actually parse.
+ *
+ * **The check the other two could not make.** The differential above prints *our* output through
+ * `ts.transpileModule` to normalise layout — and that silently strips any TypeScript we failed to
+ * strip, so leftover type syntax compares equal. `readonly fault: number;` survived every test in
+ * this repository until Deno was asked to parse the bundle and refused.
+ *
+ * So this one asks a JavaScript parser about JavaScript, which is the only question that catches a
+ * leftover. It is also the closest thing to the real acceptance test: a JS-hosted `wac` is exactly
+ * this file, and if Deno will not parse it there is nothing to run.
+ */
+Deno.test("the bundled bridge parses as JavaScript", async () => {
+  if (!await haveBinary()) return;
+
+  const dir = await Deno.makeTempDir({ prefix: "wac-ts-bundle-" });
+  try {
+    const out = `${dir}/bridge.js`;
+    const r = await new Deno.Command(WAC, {
+      args: ["run", "--allow-read", "--allow-write", "packages/ts/src/main.wac",
+             "--bundle", "packages/platform/host/deno.ts", "-o", out],
+      cwd: ROOT,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!r.success) {
+      throw new Error(`the bundler refused:\n${new TextDecoder().decode(r.stderr).trim()}`);
+    }
+
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", "--no-lock", out],
+      cwd: ROOT,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        `Deno will not parse the bundle:\n${new TextDecoder().decode(check.stderr).trim()}`,
+      );
+    }
+    const size = (await Deno.stat(out)).size;
+    if (size < 100_000) throw new Error(`the bundle is ${size} bytes — that is not the bridge`);
+    console.log(`   the bridge bundles to ${Math.round(size / 1024)} KB and Deno parses it`);
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

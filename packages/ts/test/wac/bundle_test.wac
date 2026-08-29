@@ -39,33 +39,77 @@ export string test_the_bridge_flattens(Core core, Cli cli) {
   }
   Bundled b = bundle(paths, texts, "packages/platform/host/deno.ts");
 
-  // **The bridge does not flatten yet, and this asserts the refusal rather than the bundle.**
-  // Six top-level names collide across the 17 files, on four distinct names — `CHUNK`, `EMPTY`,
-  // `enc` and `join`. Renaming them is what a bundler does, and doing it *safely* needs scope
-  // analysis, which is measured rather than assumed: `CHUNK` and `EMPTY` appear 15 times as object
-  // keys or shorthand properties, where a token rename would produce a different object, and `enc`
-  // is redeclared in three nested scopes, where renaming the outer one would capture the inner.
-  //
-  // So the honest state is a refusal that names both files, and this holds it to that. When
-  // renaming lands, this case becomes the bundle and the message below is what it replaces.
-  t.isTrue(b.error != "", "it refuses rather than merging two bindings silently");
-  t.isTrue(b.error.indexOf("packages/platform/host/") >= 0, "and names a file the reader can open");
-  core.log("   the bridge has 6 top-level collisions on 4 names; the first is:");
-  core.log("   " + b.error);
+  t.eqStr(b.error, "", "the bridge flattens from deno.ts");
+  if (b.error != "") { return t.report(); }
+  core.log("   bundled " + itoa(b.out.len() / 1024) + " KB from " + itoa(paths.len()) + " files");
+  t.isTrue(b.out.len() > 100000, "and it is the whole bridge, not a fragment");
+  string out = string.fromBytes(b.out);
+  // Nothing that names another module may survive: a leftover `import` is a runtime failure.
+  t.isTrue(out.indexOf("\nimport ") < 0, "no `import` statement survives");
+  // The four names that used to collide are all still spelled as their authors wrote them, which is
+  // what the IIFE design buys — see `packages/ts/src/bundle.wac`.
+  t.isTrue(out.indexOf("CHUNK$") < 0 && out.indexOf("EMPTY$") < 0, "and no source name was renamed");
   return t.report();
 }
 
-export string test_it_refuses_a_collision_rather_than_merging() {
+export string test_two_modules_that_both_declare_a_name() {
   T t = T.create();
-  // Two modules, each with a top-level `helper`. Flattening them would make one binding out of two
-  // different functions — the failure a bundler must not have.
+  // The case that used to be refused. Each module is its own scope, so `EMPTY` in one is not the
+  // `EMPTY` in the other, and neither source name is touched.
   string[] paths = string[]("a.ts", "b.ts");
   u8[][] texts = u8[][2](fill: u8[0]());
-  texts[0] = "import { x } from \"./b.ts\";\nfunction helper() { return 1; }\n".toBytes();
-  texts[1] = "export const x = 1;\nfunction helper() { return 2; }\n".toBytes();
+  texts[0] = "import { empties } from \"./b.ts\";\nconst EMPTY = \"a\";\nexport const keys = Object.keys(empties());\n".toBytes();
+  texts[1] = "const EMPTY = 1;\nexport function empties() { return { EMPTY }; }\n".toBytes();
   Bundled b = bundle(paths, texts, "a.ts");
-  t.isTrue(b.error.indexOf("helper") >= 0, "it names the colliding declaration");
-  t.isTrue(b.error.indexOf("a.ts") >= 0 && b.error.indexOf("b.ts") >= 0, "and both files");
+  t.eqStr(b.error, "", "it bundles rather than refusing");
+  if (b.error != "") { return t.report(); }
+  string out = string.fromBytes(b.out);
+  // **The shorthand keeps its key.** `{ EMPTY }` inside b is b's own `EMPTY`, untouched; renaming
+  // the token would have made the object `{ EMPTY$b: … }`, which is the whole reason for IIFEs.
+  t.isTrue(out.indexOf("{ EMPTY }") >= 0, "b's shorthand is untouched — got:\n" + out);
+  t.isTrue(out.indexOf("EMPTY$") < 0, "and no source name was renamed");
+  return t.report();
+}
+
+export string test_an_imported_name_is_read_through_its_module() {
+  T t = T.create();
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import { base as b } from \"./b.ts\";\nexport const go = () => b() + 1;\n".toBytes();
+  texts[1] = "export function base() { return 1; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.eqStr(r.error, "", "it bundles");
+  if (r.error != "") { return t.report(); }
+  string out = string.fromBytes(r.out);
+  t.isTrue(out.indexOf(".base()") >= 0, "the renamed import reads through its module — got:\n" + out);
+  t.isTrue(out.indexOf("import") < 0, "and the import statement is gone");
+  return t.report();
+}
+
+export string test_a_cycle_is_allowed_when_nothing_static_crosses_it() {
+  T t = T.create();
+  // Mutually recursive modules, each using the other only inside a function.
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import { fromB } from \"./b.ts\";\nexport function fromA() { return \"A\"; }\nexport const go = () => fromB();\n".toBytes();
+  texts[1] = "import { fromA } from \"./a.ts\";\nexport function fromB() { return fromA() + \"B\"; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.eqStr(r.error, "", "a cycle used only inside functions is fine");
+  return t.report();
+}
+
+export string test_a_static_use_across_a_cycle_is_named() {
+  T t = T.create();
+  // The same cycle, but one module *evaluates* the other's export while initialising.
+  string[] paths = string[]("a.ts", "b.ts");
+  u8[][] texts = u8[][2](fill: u8[0]());
+  texts[0] = "import { fromB } from \"./b.ts\";\nexport function fromA() { return \"A\"; }\nexport const eager = fromB();\n".toBytes();
+  texts[1] = "import { fromA } from \"./a.ts\";\nexport function fromB() { return fromA() + \"B\"; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.isTrue(r.error != "", "it refuses");
+  t.isTrue(r.error.indexOf("fromB") >= 0, "names the symbol");
+  t.isTrue(r.error.indexOf("a.ts") >= 0 && r.error.indexOf("b.ts") >= 0, "and both modules");
+  t.isTrue(r.error.indexOf("inside a function") >= 0, "and says what to do about it");
   return t.report();
 }
 
