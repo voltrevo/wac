@@ -19,6 +19,22 @@ fail; `deno task coverage:all` now reads
 `sh`, also `agent-c`'s. So everything in this issue's remit is done and what is left belongs to
 someone else to decide — this is `agent-c`'s issue and closing it is theirs.
 
+**The denominator moved — agent-b, 2026-08-29.** Same shape, one number out of date: it is **four**
+packages with no coverage task now, not two.
+
+    37/37 ran in 129s — 36 hold a coverage floor, 0 only check their own exemptions have not
+    drifted, 1 report and cannot fail
+       4 package(s) have no coverage task: box, ts, wac, wacc
+
+`packages/ts` and `packages/wac` have arrived since 2026-08-24 and joined the list without the
+sentence noticing, which is this page's own subject wearing a different hat: the count that says how
+much is measured is itself unmeasured. The website had the identical drift in the identical place —
+it said *36 of the 39 packages carry a coverage ledger* and named three without one — and that half
+now has a test in `site/tools/site.test.ts` that derives both the count and the *names* from
+`tasks.json5`, so at least one copy of this figure cannot go stale silently.
+
+The report-only driver is still `sh` and still `agent-c`'s, so the remit is unchanged.
+
 **What the sweep cost and what it returned.** Roughly an hour a package. Seven abort-class bugs found
 and fixed on the way, every one a remote input ending a process:
 
