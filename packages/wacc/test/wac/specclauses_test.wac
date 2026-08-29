@@ -449,3 +449,40 @@ export string test_current_wording_and_count_for_a_bad_struct_member() {
   t.eqI32(wireLines(wire).len(), 3, "the number of diagnostics one bad struct member produces");
   return t.report();
 }
+
+/**
+ * `§wac-arith-ref-3jd8qkr` — arithmetic on a reference is refused, and `string + string` is not.
+ *
+ * **This clause has a history of being false.** The operator sweep on the stack page — sixteen
+ * operators against fifteen types on both sides, 3,600 programs — found 51 cells where the reference
+ * refused and wacc said nothing, and **45 of them were arithmetic on a reference**: `S + S`,
+ * `i32[] - i32[]` and `anyref % anyref` all compiled, because the rule that was there asked about
+ * `bool` and funcrefs only. They are closed, and the sweep is a test rather than an afternoon.
+ *
+ * What was never true is that the *spec clause* had anything holding it. The paragraph it comes from
+ * extends `§wac-struct-eq-k4rm7xq` — which is about `==` on structs — to arrays, enums, nullables,
+ * the ordering operators and then to arithmetic, and only the first sentence carried a tag. A rule
+ * that a sweep once found broken in 45 places is a poor one to leave unnamed.
+ *
+ * The last case is the half that must not refuse. An exception that stops working is as much a
+ * breakage as a rule that stops holding, and it is the easier one to lose while tightening the rule
+ * around it — which is exactly what the 45 were.
+ */
+export string test_arithmetic_on_a_reference_is_refused() {
+  T t = T.create();
+  string[] refused = string[](
+      "struct S { i32 v; }\nexport i32 f() { S a = S(1); S b = S(2); S c = a + b; return 0; }",
+      "export i32 f() { i32[] a = i32[](1); i32[] b = i32[](2); i32[] c = a - b; return 0; }",
+      "export i32 f(anyref a, anyref b) { anyref c = a % b; return 0; }");
+  string[] why = string[]("`S + S`", "`i32[] - i32[]`", "`anyref % anyref`");
+  for (i32 i = 0; i < refused.len(); i++) {
+    string[] d = firstDiagnostic(refused[i]);
+    t.isTrue(d.len() == 4, why[i] + " compiled — arithmetic on a reference is accepted again, which "
+        + "is the shape of the 45 cells the operator sweep found");
+  }
+
+  string[] ok = firstDiagnostic("export string f() { return \"a\" + \"b\"; }");
+  t.eqI32(ok.len(), 0, ok.len() == 0 ? "" : "`\"a\" + \"b\"` was refused — the one exception to the "
+      + "rule above went with the rule: " + ok[0]);
+  return t.report();
+}
