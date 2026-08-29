@@ -94,6 +94,21 @@ entered by its own coverage exercise is a fact about the exercise; whether it is
 the tests is the first thing the ledger's author has to check, because a rule has to say which other
 test drives the code and be right about it.
 
+**And that check has a trap in it, which I walked into far enough to see.** Grepping sh's tests for
+those names finds them — `cd` in three files, `ls` in three, `rm` in one. Every hit I looked at is in
+`packages/sh/test/wac/corpus.wac`, which is the **differential against bash**: scripts like
+`ls /nosuchfile 2> e; … rm -f e`, run on both shells and compared. A differential runs the *system's*
+`ls` and `rm` on both sides, because that is what makes the two comparable — so those hits are
+evidence that the names appear, not that `exec.wac`'s builtin `ls` is ever entered. The coverage run
+says it is not.
+
+So the honest answer for this family is not yet known, and the way to settle it is to ask the
+coverage run rather than the grep: drive the builtin deliberately and see the entry go covered. That
+is one script, and it is the difference between a rule that says *"driven by the differential"* — which
+would be false in the way `packages/fs`'s `remoteRename` was false, named as driven and driven by
+nothing — and a rule that says *"nothing reaches this, and here is why that is acceptable"*, which may
+well be the true one.
+
 ## What it would take, sized
 
 1036 points is the reason this is filed rather than done. The ledger is not one entry per point —
