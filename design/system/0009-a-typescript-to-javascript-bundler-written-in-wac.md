@@ -851,3 +851,44 @@ Two things follow for the trade above. The gap was one **script line**, not one 
 cheap to add where a comparison already exists and impossible to add where it does not. And an
 empty-file assertion would have passed against it — only comparing two hosts caught it, which is the
 capability option 3 preserves for five files and option 1 extends to all of them.
+
+## `0282c` is fixed, which opens a second route for the `workerOnly` group
+
+Recorded 2026-08-29. The section above says that group waits on `issues/system/0161` — converting
+`packages/sh/test/differential.test.ts` to wac so it needs no worker bundle. That is still true and
+is still the better end state, but it is no longer the only way through.
+
+`issues/system/0282c` was *"the reason that file cannot move onto `wac app`"*: a relayed program's
+standard error did not interleave with its standard output, and the whole point of that file is
+comparing a shell against bash, where interleaving is the behaviour under test. That is fixed — a
+launcher hands its child its own streams — so the file could now drive `wac app` artefacts while
+staying TypeScript, which removes its need for `buildApp(workerOnly)` without waiting for 0161.
+
+**And that is a trade rather than a free win, which is why it is written here rather than done.**
+`appRun` exists to avoid a process start per case, and the file has **554** of them. At the 57 ms a
+`wac <module.wasm>` spawn was measured to cost, that is about 32 seconds against 6 in-process — call
+it **26 seconds added to the suite**, which is the gate's dominant cost and the thing
+`issues/system/0275b` is about.
+
+**Re-measured after the launcher stopped relaying, because the 57 ms predated it**: three rounds of
+five spawns gave 51, 47 and 54 ms — mean **51 ms**, against 57. So dropping the relay loop and the
+per-chunk copy through two queues bought about 10%, and the estimate above becomes **~22s** rather
+than 26.
+
+Which is worth saying plainly: it does **not** change which option wins. 22 seconds and 26 seconds
+are the same answer to "is this worth adding to every push", and the decision still turns on that
+question rather than on this number. Recorded so the next person does not re-measure it hoping. Two of that page's own numbers say why it matters: the suite is
+~75% of the gate, and its floor is set by total work rather than by scheduling.
+
+So the three ways to finish this group are now:
+
+1. **`0161`** — convert the file to wac. No worker bundle, no extra spawns, and the migration's
+   stated direction. The most work.
+2. **Move it onto `wac app` as TypeScript.** Available today. Removes one of the four `workerOnly`
+   callers and costs the suite ~26s.
+3. **Leave it**, and accept that `build.ts` keeps a deno target for one test file.
+
+Nothing here picks one, because the cost is paid by everyone who pushes and the decision is about
+what a gate should cost — the same question the `--target` group's trade turns on, which is worth
+noticing: both of the remaining groups now reduce to *how much wall clock is a cross-checked
+comparison worth*, rather than to anything about bundlers.

@@ -62,7 +62,7 @@ fresh checkout.
 
 `wac:install` writes four things under `$WAC_HOME` (default `$HOME/.wac`) — `bin/wac`, `cache/git/`,
 `env`, `install.json5` — and adds one marked line to whichever of `.bashrc`, `.zshrc`
-and `.profile` already exist. Running it again is how you upgrade. `wac uninstall` removes exactly those and never
+and `.profile` already exist. Running it again is how you upgrade. `wac self uninstall` removes exactly those and never
 a manifest, a lockfile, a source file or a build product.
 
 **There is no release, no package manager entry and no prebuilt binary.** If that matters to you,
@@ -110,7 +110,7 @@ wac check src/main.wac                             # …and it is on PATH like a
 ```
 
 Same `$WAC_HOME` layout as the native install, same one marked line in your shell profile, same
-`wac uninstall` to take it away. `$WAC_HOME/bin/wac` is a JavaScript file with a shebang instead of a
+`wac self uninstall` to take it away. `$WAC_HOME/bin/wac` is a JavaScript file with a shebang instead of a
 67 MB binary, and nothing that runs it needs to know which. `install.json5` records which you have.
 
 `--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,

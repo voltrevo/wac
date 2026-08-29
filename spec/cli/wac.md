@@ -51,7 +51,7 @@ wac tracestat mod.wasm               # one traced run's size, and what it wanted
 wac app     main.wac -o thing        # an executable that runs itself, calling out to `wac`
 wac app-run thing [args…]            # ...what `./thing` execs; not normally typed
 wac audit   main.wac [--verbose]     # what each dependency can reach, and through what
-wac uninstall [--keep-cache]         # remove an installed `wac`, and nothing else
+wac self uninstall [--keep-cache]    # remove an installed `wac`, and nothing else
 wac update  [project]                # fetch what the lock does not cover, and lock it
 ```
 
@@ -369,7 +369,7 @@ what an instrument that reports its hits and not its denominator costs.
 
 ### Taking it away
 
-`[§wac-cli-uninstall-7kq3mvp]` `wac uninstall` removes the binary, the cache, the `env` file, the
+`[§wac-cli-uninstall-7kq3mvp]` `wac self uninstall` removes the binary, the cache, the `env` file, the
 metadata and the marked line in each shell profile — and **nothing else**. Not a manifest, not a
 lockfile, not a source file, not a build product: those live in projects rather than under
 `$WAC_HOME`, and a package manager that tidies your working directory is one nobody trusts twice.
