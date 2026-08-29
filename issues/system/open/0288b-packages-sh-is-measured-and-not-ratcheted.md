@@ -231,6 +231,12 @@ Its comment says what it is for — *"Only the two programs under `/bin` exist, 
 `$WACPATH` search decide"* — so it is a fake built for path resolution, and every field `ls -l` would
 read is a constant zero or false. Nothing a script says can vary them.
 
+**Tried, and it is not the paths.** The obvious next guess is that `ls -l` reached nothing because
+the paths it was given do not exist in the fake — `present` has exactly five, all under `/bin`. Four
+scripts listing those instead (`ls -l /bin/prog`, `ls -ld`, two paths, a bare `ls`) moved the total by
+**2 points and no entries at all**, so they were dropped rather than kept for the noise. It really is
+the `Stat` value and not the path.
+
 **This group is the one that differs from the other two**, and the distinction is what a ledger entry
 would have to get right. Job control is unreachable *by design*: the fake is stateless because a
 stateful one would hang the read loop, and the real coverage is named elsewhere. Stat detail is
