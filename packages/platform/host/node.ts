@@ -342,7 +342,7 @@ export function nodeWorld(
       env: (wanted & GRANT_ENV) !== 0 && opts.env !== undefined,
     };
     const h = nextHandle++;
-    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs) => {
+    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs, childSelf) => {
       const enc = new TextEncoder();
       // The child's stdio is the parent's queues. Everything else about its world — files, sockets,
       // the clock — is this world's, narrowed by `give`.
@@ -375,7 +375,12 @@ export function nodeWorld(
         // Its parent's filesystem, on a handle of its own — wac-mono 0116, and see `deno.ts` for
         // why this is passed unconditionally rather than as a grant.
         parentFs,
-        selfSource: opts.selfSource,
+        // **Its own source, not this one's.** A program's "self" is what it was started as, and
+        // passing `opts.selfSource` down was right only while every child was a bundle spawned from
+        // the same one. A wasm child is not: under `wac app-run` the launcher's program is the `wac`
+        // command and the application is a module, so the child's `spawnSelf` re-ran `wac` with the
+        // caller's argv. `issues/system/0276c`.
+        selfSource: childSelf,
         // And the entry for a child that is a module, so that a grandchild can start one too.
         moduleEntry: opts.moduleEntry,
         cwd: childCwd === "" ? opts.cwd : childCwd,

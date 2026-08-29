@@ -311,3 +311,111 @@ i32 indexOf(string s, string want) {
   }
   return -1;
 }
+
+/**
+ * A flag whose second half lives in another command is refused, not half-honoured.
+ *
+ * `--coverage` reached the *shared* compile — which is above the per-command dispatch — so the module
+ * came out instrumented, and then this arm wrote only the executable. The `.cov` table naming the
+ * counters is `wac build`'s, and `covdump` will not read an app anyway because of the two shell lines
+ * on the front. So the entire effect of the flag was the instrumentation it silently paid for.
+ *
+ * **The assertion is on the message, not on the status**, because `2` is also what an unknown flag
+ * and a missing `-o` return: a test that only checked the code would pass on a build that had merely
+ * become unable to parse its own command line. `issues/system/0274c`.
+ */
+export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-buildonly");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
+
+  // The three that reach the shared compile and change what it emits. `--js` is refused too, but by
+  // the generic message: it is `bindgen`'s flag, so pointing at `wac build` would be a wrong hint.
+  string[] flags = string[]("--coverage", "--trace", "--trace-slots");
+  for (i32 i = 0; i < flags.len(); i++) {
+    Exec made = cli.exec(binaryPath(cli),
+                         string[]("app", dir + "/hello.wac", flags[i], "-o", dir + "/thing"),
+                         u8[0]()).wait();
+    t.isTrue(made.ran(), "wac app did not run — " + made.error);
+    t.eqI32(made.status, 2, flags[i] + " was accepted: " + string.fromBytes(made.stderr));
+    string said = string.fromBytes(made.stderr);
+    t.isTrue(contains(said, flags[i]), flags[i] + " is not named in the refusal: " + said);
+    // It must point at the command that *can* finish the job, or the reader is told no and not where
+    // to go — which for `--coverage` is the difference between a dead end and a working build.
+    t.isTrue(contains(said, "wac build"), "the refusal does not name `wac build`: " + said);
+    // And nothing may be left behind: a refused build that wrote the executable anyway would be the
+    // same silent half-job in a new place.
+    FileResult f = cli.readFile(dir + "/thing").wait();
+    t.isTrue(!f.ok, flags[i] + " wrote an executable despite refusing");
+  }
+
+  // A flag belonging to a *third* command gets the ordinary refusal, naming what `app` does take.
+  Exec js = cli.exec(binaryPath(cli),
+                     string[]("app", dir + "/hello.wac", "--js", "-o", dir + "/thing"),
+                     u8[0]()).wait();
+  t.eqI32(js.status, 2, "--js was accepted: " + string.fromBytes(js.stderr));
+  t.isTrue(contains(string.fromBytes(js.stderr), "--allow-read"),
+           "the refusal does not say what `app` takes: " + string.fromBytes(js.stderr));
+
+  // The canary: the same build without the flag succeeds, so the refusals above are about the
+  // flag rather than about the entry, the directory or the binary.
+  Exec fine = build(cli, dir + "/hello.wac", "", dir + "/thing");
+  t.eqI32(fine.status, 0, "the same build without a flag failed: " + string.fromBytes(fine.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A reader that stops ends the program, rather than leaving it writing into a closed pipe.
+ *
+ * **`relay` discarded what `write` answered.** A `wac app` artefact runs its program as a *child* and
+ * relays the child's two streams; `write` returns false when the far end has gone, which is the whole
+ * of what a broken pipe means and the only signal there is. Ignoring it meant `./thing | head -2`
+ * relayed for ever: `head` exits, the relay keeps draining, and the child — writing into a queue that
+ * always accepts — never finds out. `issues/system/0278c`.
+ *
+ * **Through `/bin/sh`, because the pipe has to be the operating system's.** The shell's own
+ * pipelines are a different mechanism with its own stopping rule (`issues/system/0275c` was that
+ * one), and a case written with them would pass while this stayed broken — which is exactly what
+ * happened: every other route stopped correctly, so it read as a shell bug for a while.
+ *
+ * The program is `yes`-shaped rather than bounded on purpose. A producer that ends on its own cannot
+ * tell "the reader was noticed" from "the writer finished", and a bounded one passed throughout.
+ */
+export string test_a_closed_reader_stops_the_program(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-brokenpipe");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+
+  Change wrote = cli.writeFile(dir + "/forever.wac",
+    ("import { Core, Cli } from \"std/platform.wac\";\n" +
+     "export i32 main(Core core, Cli cli) {\n" +
+     // Unbounded, and the loop is the assertion: on a host that reports the closed reader this
+     // returns, and on one that does not it never leaves the `while`.
+     "  while (true) { if (!cli.write(\"y\\n\".toBytes())) { return 0; } }\n" +
+     "  return 0;\n" +
+     "}\n").toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the program — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  Exec made = build(cli, dir + "/forever.wac", "", dir + "/forever");
+  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  // `timeout` is the detector rather than a safety margin: the failure is *not returning*, so a case
+  // without one hangs the suite instead of failing it. Ten seconds against a case that answers in
+  // well under one.
+  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin "
+                   + "timeout 10 sh -c '\"" + dir + "/forever\" | head -2'");
+  t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
+  t.isTrue(ran.status != 124, "the program never stopped writing into a closed pipe");
+  t.eqStr(trimmed(string.fromBytes(ran.stdout)), "y\ny",
+          "head took two lines: " + string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

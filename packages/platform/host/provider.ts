@@ -17,9 +17,13 @@
 import { type Bridge, SLOTS } from "./layout.ts";
 import {
   cancel,
-  collect,
-  // The same function under a second name, so `cliOf` can shadow `collect` for a narrowed world
-  // and still reach the real one. `issues/system/0242c`.
+  // **One name for it, and the local shadow below is a different one.** This was imported twice —
+  // as `collect` and as `realCollect` — so that `cliOf` could declare `const collect` shadowing the
+  // first and still reach the second. That is legal TypeScript and `packages/ts` cannot bundle it:
+  // it reads an imported name through its exporting module *everywhere it appears*, so a local of
+  // the same name is indistinguishable from the import, and it refuses rather than guess. The
+  // shadowing itself is unchanged — `cliOf` still declares `collect` — it simply no longer collides
+  // with an import. `issues/system/0242c`, `design/system/0009`.
   collect as realCollect,
   hostCall,
   HostCallError,
@@ -100,8 +104,8 @@ export function coreOf(
 ): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };
-  const i64 = (id: number) => readI64le(collect(b, unpack(id)));
-  const bytes = (id: number) => collect(b, unpack(id));
+  const i64 = (id: number) => readI64le(realCollect(b, unpack(id)));
+  const bytes = (id: number) => realCollect(b, unpack(id));
 
   const asI64 = (t: Ticket) => cls.Pending$i64.of(pack(t), i64, settled, drop);
   const asBytes = (t: Ticket) => cls.Pending$u8Arr.of(pack(t), bytes, settled, drop);
@@ -976,10 +980,10 @@ export function worldFor(
 export function pageOf(b: Bridge, cls: PageClasses): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };
-  const ok = (id: number) => { collect(b, unpack(id)); return true; };
-  const text = (id: number) => unstr(collect(b, unpack(id)));
+  const ok = (id: number) => { realCollect(b, unpack(id)); return true; };
+  const text = (id: number) => unstr(realCollect(b, unpack(id)));
   const event = (id: number) => {
-    const parts = unstr(collect(b, unpack(id))).split("\u0000");
+    const parts = unstr(realCollect(b, unpack(id))).split("\u0000");
     return cls.Event.of(
       parts[0] ?? "",
       parts[1] ?? "",
@@ -989,7 +993,7 @@ export function pageOf(b: Bridge, cls: PageClasses): unknown {
     );
   };
   const picked = (id: number) => {
-    const out = collect(b, unpack(id));
+    const out = realCollect(b, unpack(id));
     const nameLen = readI32le(out.subarray(1));
     const errLen = readI32le(out.subarray(5 + nameLen));
     return cls.Picked.of(

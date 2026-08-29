@@ -567,28 +567,6 @@ bool namesCli(JsonObject e) {
   return false;
 }
 
-/**
- * The first flag-looking argument `test` does not know, or "".
- *
- * **Flags in any position**, which is `run`'s opposite and the native command's rule: `wac test
- * packages/fs/ --allow-write` counted the grant as a *file* once, printed a phantom entry that read
- * like a failing test, and ran without the capability — `packages/wac/test/wac/testcli_test.wac` is that. A test
- * target is a path and a path is not a flag, so there is no tail here for `--` to protect.
- */
-export string unknownTestFlag(Cli cli, i32 argc, string entry) {
-  for (i32 i = 1; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
-    if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
-    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--allow-run" && a != "--filter" && a != "--ignore" && a != "--coverage"
-        && a != "--verbose") {
-      return a;
-    }
-    // A value-carrying flag's value is not a flag, whatever it looks like.
-    if (a == "--filter" || a == "--ignore") { i = i + 1; }
-  }
-  return "";
-}
 
 /** Whether `name` holds `part`. `--filter` matches a substring, as the native command's does. */
 bool holds(string name, string part) {

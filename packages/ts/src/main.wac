@@ -1,0 +1,123 @@
+// `ts` as a command: read TypeScript, write JavaScript.
+//
+//     wac run --allow-read packages/ts/src/main.wac path/to/file.ts
+//     wac run --allow-read --allow-write packages/ts/src/main.wac in.ts -o out.js
+//
+// The transform itself is `strip.wac`; this is argv and I/O. It exists so the differential in
+// `packages/ts/test/stripDifferential.test.ts` can run the wac transform against TypeScript's own
+// and compare — which is `design/system/0009` D5, the check that makes D4's strictness trustworthy.
+//
+// **Not what the ladder calls.** In the bootstrap there is no `Cli` and no argv: the host reads the
+// file and feeds the bytes in, exactly as `bootstrap/drivers/` already does. This is the same
+// `strip` behind a command line, for the machines that have one.
+
+import { Change, Cli, Core, FileResult } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Stripped, strip } from "./strip.wac";
+import { Bundled, Import, bundle, importsIn, resolve } from "./bundle.wac";
+import { Vec } from "core/vec.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  if (argc < 1) {
+    core.warn("usage: ts [--bundle] <file.ts> [-o <out.js>]");
+    core.warn("       strips TypeScript's types, leaving JavaScript in the same bytes");
+    return 2;
+  }
+
+  string input = "";
+  string out = "";
+  bool doBundle = false;
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--bundle") { doBundle = true; continue; }
+    if (a == "-o") {
+      if (i + 1 >= argc) { core.warn("ts: -o wants a path to write"); return 2; }
+      out = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+      continue;
+    }
+    if (input == "") { input = a; continue; }
+    core.warn("ts: unexpected argument '" + a + "'");
+    return 2;
+  }
+  if (input == "") { core.warn("ts: no input file"); return 2; }
+
+  if (doBundle) { return bundleFrom(core, cli, input, out); }
+
+  FileResult f = cli.readFile(input).wait();
+  if (!f.ok) {
+    core.warn("ts: cannot read " + input + " — " + f.error);
+    return 1;
+  }
+
+  Stripped s = strip(f.bytes);
+  if (s.error != "") {
+    // The position is the source's, which is the whole point of erasing to spaces: a line and
+    // column here name the TypeScript the reader has open.
+    core.warn("ts: " + input + ":" + itoa(s.line) + ":" + itoa(s.col) + ": " + s.error);
+    return 1;
+  }
+
+  if (out == "") {
+    cli.write(s.out);
+    return 0;
+  }
+  Change wrote = cli.writeFile(out, s.out).wait();
+  if (!wrote.ok()) {
+    core.warn("ts: cannot write " + out + " — " + wrote.message);
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * Walk the import graph from `entry`, strip every file, and flatten the result.
+ *
+ * The reading is here rather than in `bundle.wac` on purpose: in the ladder there is no `Cli`, and
+ * the host hands the file set in. This is the same `bundle` behind a command line.
+ */
+i32 bundleFrom(Core core, Cli cli, string entry, string out) {
+  Vec<string> paths = Vec.create();
+  Vec<u8[]> texts = Vec.create();
+  Vec<string> queue = Vec.create();
+  queue.push(entry);
+  while (queue.len() > 0) {
+    string p = queue.get(queue.len() - 1);
+    queue.remove(queue.len() - 1);
+    bool have = false;
+    for (i32 i = 0; i < paths.len(); i++) { if (paths.get(i) == p) { have = true; } }
+    if (have) { continue; }
+    FileResult f = cli.readFile(p).wait();
+    if (!f.ok) {
+      core.warn("ts: cannot read " + p + " — " + f.error);
+      return 1;
+    }
+    Stripped s = strip(f.bytes);
+    if (s.error != "") {
+      core.warn("ts: " + p + ":" + itoa(s.line) + ":" + itoa(s.col) + ": " + s.error);
+      return 1;
+    }
+    paths.push(p);
+    texts.push(s.out);
+    Import[] imports = importsIn(s.out);
+    for (i32 i = 0; i < imports.len(); i++) { queue.push(resolve(p, imports[i].spec)); }
+  }
+
+  string[] ps = string[paths.len()](fill: "");
+  u8[][] ts = u8[][texts.len()](fill: u8[0]());
+  for (i32 i = 0; i < paths.len(); i++) { ps[i] = paths.get(i); ts[i] = texts.get(i); }
+
+  Bundled b = bundle(ps, ts, entry);
+  if (b.error != "") {
+    core.warn("ts: " + b.error);
+    return 1;
+  }
+  if (out == "") { cli.write(b.out); return 0; }
+  Change wrote = cli.writeFile(out, b.out).wait();
+  if (!wrote.ok()) {
+    core.warn("ts: cannot write " + out + " — " + wrote.message);
+    return 1;
+  }
+  return 0;
+}

@@ -1,0 +1,544 @@
+// Flattening a module graph into one file.
+//
+// `design/system/0009` step 4, and the other half of what `bootstrap.sh --host deno|nodejs` needs:
+// the bridge is 22 files and a single-file host must be one.
+//
+// ## Each module is an IIFE, and nothing is renamed
+//
+// A module becomes `const $m3 = (() => { …body… return { …exports… }; })();`, and an imported name
+// in the body is read through the module that exports it: `fromA()` becomes `$m1.fromA()`.
+//
+// That removes renaming from this file entirely. Two modules may both declare `EMPTY` — they are in
+// different scopes, so nothing collides and **no source name is touched**. The hygiene is in the one
+// name this file invents, `$mN`, chosen to appear nowhere in the program; every other identifier in
+// the output is exactly the identifier the author wrote.
+//
+// Renaming colliding top-level names was the alternative and is worse in a way that is easy to miss:
+// `{ EMPTY }` is shorthand for `{ EMPTY: EMPTY }`, so renaming the token silently changes an
+// object's *keys*. The bridge has fifteen such uses.
+//
+// ## What is given up, and the diagnostic that replaces it
+//
+// Modules initialise in dependency order, so a module's imports exist by the time its body runs —
+// **unless the graph has a cycle**, where some edge must run backwards.
+//
+// Uses inside functions are fine, and are the point: by the time anything calls them every module
+// exists. So the rule is narrow — an imported symbol may not be evaluated in a **static** context —
+// and when it is broken the message names the two modules that import each other.
+//
+// "Static" means not inside a function body, and that includes a **concise arrow body**:
+// `const go = () => fromB();` evaluates nothing at initialisation, and a rule counting braces would
+// say it does, because there are none to count.
+
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  Lexed, kEof, kIdent, kPunct, kStr,
+  kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
+} from "./lex.wac";
+
+/** The bundle, or the first thing that stopped it. */
+export struct Bundled {
+  u8[] out;
+  string error;
+}
+
+/** One `import { … } from "…"`: where it is, what it binds, and what it names. */
+export struct Import {
+  i32 from;
+  i32 to;
+  string spec;
+  /** Flattened pairs — `names[2k]` is the exported name, `names[2k+1]` the local one. */
+  string[] names;
+  /**
+   * `import * as ns from "…"` — the local name, or "".
+   *
+   * **The easiest form under this design**, which is worth saying because it is the hardest one for
+   * a bundler that renames: a namespace object is exactly what each module's IIFE already returns,
+   * so the whole of it is `const ns = $m3;`.
+   */
+  string namespace;
+}
+
+/**
+ * Bundle `entry` out of a file set.
+ *
+ * `paths[i]` holds `texts[i]`, already stripped of types. Paths are compared as written: the host
+ * knows what a path means and this does not.
+ */
+export Bundled bundle(string[] paths, u8[][] texts, string entry) {
+  i32 at = indexOf(paths, entry);
+  if (at < 0) { return Bundled(u8[0](), "the entry " + entry + " is not in the file set"); }
+
+  Vec<i32> order = Vec.create();
+  Vec<i32> state = Vec.create();
+  Vec<i32> backFrom = Vec.create();
+  Vec<i32> backTo = Vec.create();
+  for (i32 i = 0; i < paths.len(); i++) { state.push(0); }
+
+  string err = visit(paths, texts, at, order, state, backFrom, backTo);
+  if (err != "") { return Bundled(u8[0](), err); }
+
+  string prefix = hygienicPrefix(texts);
+  string[] ns = string[paths.len()](fill: "");
+  for (i32 k = 0; k < order.len(); k++) { ns[order.get(k)] = prefix + itoa(k); }
+
+  Vec<i32> out = Vec.create();
+
+  // **External imports are hoisted, because an ESM `import` must be top-level.** A module asking for
+  // `node:worker_threads` is asking the runtime, not the file set, so the statement is reproduced at
+  // the top of the bundle and the binding it makes is visible to every IIFE below — which is the
+  // same module and the same binding it would have had unbundled.
+  Vec<string> hoisted = Vec.create();
+  for (i32 k = 0; k < order.len(); k++) {
+    Import[] imports = importsIn(texts[order.get(k)]);
+    for (i32 i = 0; i < imports.len(); i++) {
+      if (!isExternal(imports[i].spec)) { continue; }
+      string stmt = textOfRange(texts[order.get(k)], imports[i].from, imports[i].to);
+      if (indexOfVec(hoisted, stmt) < 0) { hoisted.push(stmt); }
+    }
+  }
+  for (i32 i = 0; i < hoisted.len(); i++) { pushString(out, hoisted.get(i) + "\n"); }
+  if (hoisted.len() > 0) { pushString(out, "\n"); }
+
+  for (i32 k = 0; k < order.len(); k++) {
+    i32 m = order.get(k);
+    string body = moduleBody(paths, texts, ns, m, backFrom, backTo);
+    if (body.len() > 6 && body.slice(0, 6) == "ERROR:") {
+      return Bundled(u8[0](), body.slice(6, body.len()));
+    }
+    // **Top-level `await` needs an `async` IIFE, and only the entry may have one.** A module body
+    // goes inside an arrow function, so `await runLauncher(…)` at the top of a file became an
+    // `await` in a non-async arrow — *Unexpected reserved word*, at the last line of a 3 MB bundle.
+    //
+    // The entry can be made async because nothing imports it: `await (async () => {…})()` at the top
+    // level of an ES module is ordinary, and its return value is not read. Any *other* module is
+    // refused rather than wrapped, because making it async turns `$mN` into a promise and every
+    // `$mN.name` a reader wrote would silently answer `undefined` — the wrong-answer shape again.
+    bool tla = hasTopLevelAwait(texts[m]);
+    if (tla && m != at) {
+      return Bundled(u8[0](), paths[m] + " uses `await` at the top level, and is imported by "
+                            + "something. Only the entry may do that: wrapping any other module "
+                            + "would make what it exports a promise.");
+    }
+    string open = tla ? " = await (async () => {\n" : " = (() => {\n";
+    pushString(out, "// -- " + paths[m] + "\nconst " + ns[m] + open);
+    pushString(out, body);
+    pushString(out, "\nreturn { " + exportList(texts[m]) + " };\n})();\n\n");
+  }
+  u8[] bytes = u8[out.len()]();
+  for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i); }
+  return Bundled(bytes, "");
+}
+
+/**
+ * Depth-first, recording back-edges rather than refusing them.
+ *
+ * A cycle is legitimate as long as nothing *static* crosses it. Recording which edges close one is
+ * what lets the diagnostic name the pair when something does.
+ */
+string visit(string[] paths, u8[][] texts, i32 m, Vec<i32> order, Vec<i32> state,
+             Vec<i32> backFrom, Vec<i32> backTo) {
+  if (state.get(m) == 2) { return ""; }
+  if (state.get(m) == 1) { return ""; }
+  state.set(m, 1);
+  Import[] imports = importsIn(texts[m]);
+  for (i32 i = 0; i < imports.len(); i++) {
+    if (isExternal(imports[i].spec)) { continue; }
+    string want = resolve(paths[m], imports[i].spec);
+    i32 to = indexOf(paths, want);
+    if (to < 0) {
+      return paths[m] + " imports \"" + imports[i].spec + "\", which resolves to " + want
+           + " and is not in the file set";
+    }
+    if (state.get(to) == 1) { backFrom.push(m); backTo.push(to); continue; }
+    string e = visit(paths, texts, to, order, state, backFrom, backTo);
+    if (e != "") { return e; }
+  }
+  state.set(m, 2);
+  order.push(m);
+  return "";
+}
+
+/**
+ * A prefix that begins no identifier in any module.
+ *
+ * The only name this file invents, so the only place hygiene can be lost. `$m` reads as what it is;
+ * if a module already has an identifier starting with it, another `$` is added until none does.
+ */
+string hygienicPrefix(u8[][] texts) {
+  string p = "$m";
+  while (used(texts, p)) { p = p + "$"; }
+  return p;
+}
+
+bool used(u8[][] texts, string p) {
+  for (i32 t = 0; t < texts.len(); t++) {
+    Lexed l = lex(texts[t]);
+    for (i32 i = 0; i < tokenCount(l) - 1; i++) {
+      if (kindAt(l, i) != kIdent()) { continue; }
+      if (lenAt(l, i) < p.len()) { continue; }
+      if (textAt(texts[t], l, i).slice(0, p.len()) == p) { return true; }
+    }
+  }
+  return false;
+}
+
+/**
+ * One module's body: imports deleted, `export` removed, imported names read through their module.
+ *
+ * Answers `ERROR:…` when a static use of an imported symbol crosses a cycle.
+ */
+string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
+                  Vec<i32> backFrom, Vec<i32> backTo) {
+  u8[] src = texts[m];
+  Lexed l = lex(src);
+  Import[] imports = importsIn(src);
+
+  Vec<string> local = Vec.create();
+  Vec<string> reads = Vec.create();
+  Vec<i32> fromModule = Vec.create();
+  for (i32 i = 0; i < imports.len(); i++) {
+    if (isExternal(imports[i].spec)) { continue; }
+    i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
+    for (i32 k = 0; k + 1 < imports[i].names.len(); k = k + 2) {
+      local.push(imports[i].names[k + 1]);
+      reads.push(ns[to] + "." + imports[i].names[k]);
+      fromModule.push(to);
+    }
+  }
+
+  // **A local that shadows an import is refused, not rewritten.** Every occurrence of an imported
+  // name is read through the exporting module, which is only sound while the name means the import
+  // *everywhere in the file*. `packages/platform/host/provider.ts` imports `collect` and then
+  // declares `const collect` — its comment says so: *"`collect`, shadowed for this world only"* —
+  // and rewriting produced `const $m4.collect = …`, which is not a declaration at all.
+  //
+  // Refusing rather than guessing is `design/system/0009` D4, and the alternative here is worse than
+  // usual. Skipping only the *binding* occurrence would leave the uses inside that scope pointing at
+  // the import, so the shadowed `collect` — which exists to refuse a denied call — would be bypassed
+  // silently. A bundle that runs and does the wrong thing is the outcome this whole file is built to
+  // avoid, and this is exactly the shape of it.
+  //
+  // The real fix is scope analysis: rewrite only *free* occurrences, and rename the local otherwise.
+  // Until then this names the file and the identifier, which is enough to act on.
+  {
+    i32 tn = tokenCount(l);
+    for (i32 i = 0; i + 1 < tn; i++) {
+      if (kindAt(l, i) != kIdent()) { continue; }
+      string kw = textAt(src, l, i);
+      if (kw != "const" && kw != "let" && kw != "var" && kw != "function" && kw != "class") {
+        continue;
+      }
+      if (kindAt(l, i + 1) != kIdent()) { continue; }
+      string bound = textAt(src, l, i + 1);
+      if (indexOfVec(local, bound) < 0) { continue; }
+      return "ERROR:" + paths[m] + " declares `" + bound + "` and also imports it — this bundler "
+           + "reads an imported name through its module everywhere it appears, so a local that "
+           + "shadows one cannot be told apart from it. Rename the local, or import under another "
+           + "name.";
+    }
+  }
+
+  Vec<i32> out = Vec.create();
+  i32 written = 0;
+  i32 n = tokenCount(l);
+  i32 fnDepth = 0;
+  Vec<i32> braceFn = Vec.create();
+  // The innermost open bracket, so shorthand is recognised only where it exists.
+  Vec<i32> brackets = Vec.create();
+  i32 arrowsPending = 0;
+
+  for (i32 i = 0; i < n - 1; i++) {
+    i32 s = startAt(l, i);
+    i32 e = s + lenAt(l, i);
+
+    if (kindAt(l, i) == kPunct()) {
+      string t = textAt(src, l, i);
+      if (t == "(" || t == "[") { brackets.push(t == "(" ? 40 : 91); }
+      else if (t == ")" || t == "]") { if (brackets.len() > 0) { brackets.remove(brackets.len() - 1); } }
+      if (t == "=>") { arrowsPending = arrowsPending + 1; }
+      else if (t == "{") {
+        brackets.push(123);
+        bool isFn = arrowsPending > 0 || precededByParams(src, l, i);
+        braceFn.push(isFn ? 1 : 0);
+        if (isFn) { fnDepth = fnDepth + 1; arrowsPending = 0; }
+      } else if (t == "}") {
+        if (brackets.len() > 0) { brackets.remove(brackets.len() - 1); }
+        if (braceFn.len() > 0) {
+          i32 wasFn = braceFn.get(braceFn.len() - 1);
+          braceFn.remove(braceFn.len() - 1);
+          if (wasFn == 1 && fnDepth > 0) { fnDepth = fnDepth - 1; }
+        }
+      } else if (t == ";" && arrowsPending > 0) {
+        arrowsPending = 0;
+      }
+    }
+
+    bool inImport = false;
+    for (i32 k = 0; k < imports.len(); k++) {
+      if (s >= imports[k].from && e <= imports[k].to) { inImport = true; }
+    }
+    if (inImport) {
+      copyThrough(out, src, written, s);
+      blankInto(out, src, s, e);
+      written = e;
+      continue;
+    }
+
+
+    if (kindAt(l, i) != kIdent()) { continue; }
+    string w = textAt(src, l, i);
+
+    if (w == "export" && !(i > 0 && kindAt(l, i - 1) == kPunct() && textAt(src, l, i - 1) == ".")) {
+      copyThrough(out, src, written, s);
+      blankInto(out, src, s, e);
+      written = e;
+      continue;
+    }
+
+    i32 li = indexOfVec(local, w);
+    if (li < 0) { continue; }
+    if (i > 0 && kindAt(l, i - 1) == kPunct() && textAt(src, l, i - 1) == ".") { continue; }
+    bool keyPosition = i + 1 < n && kindAt(l, i + 1) == kPunct() && textAt(src, l, i + 1) == ":"
+                       && i > 0 && kindAt(l, i - 1) == kPunct()
+                       && (textAt(src, l, i - 1) == "{" || textAt(src, l, i - 1) == ",");
+    if (keyPosition) { continue; }
+
+    if (fnDepth == 0 && arrowsPending == 0
+        && crossesBackEdge(backFrom, backTo, m, fromModule.get(li))) {
+      return "ERROR:" + paths[m] + ":" + itoa(lineAt(l, i)) + ":" + itoa(colAt(l, i))
+           + ": `" + w + "` is evaluated here, before the module it comes from has been built. "
+           + paths[m] + " and " + paths[fromModule.get(li)] + " import each other, so one of them "
+           + "runs first. Move the use inside a function, where every module already exists.";
+    }
+
+    copyThrough(out, src, written, s);
+    // **Only inside `{ }`.** `f(a, NAME, b)` has the same neighbours as `{ a, NAME, b }` and is an
+    // argument list, not an object: expanding it there emitted `f(a, NAME: $m0.NAME, b)`, which is
+    // not a program. The enclosing bracket is the whole difference.
+    bool inObject = brackets.len() > 0 && brackets.get(brackets.len() - 1) == 123;
+    bool shorthand = inObject && i > 0 && kindAt(l, i - 1) == kPunct()
+                     && (textAt(src, l, i - 1) == "{" || textAt(src, l, i - 1) == ",")
+                     && i + 1 < n && kindAt(l, i + 1) == kPunct()
+                     && (textAt(src, l, i + 1) == "}" || textAt(src, l, i + 1) == ",");
+    pushString(out, shorthand ? w + ": " + reads.get(li) : reads.get(li));
+    written = e;
+  }
+  copyThrough(out, src, written, src.len());
+
+  u8[] b = u8[out.len()]();
+  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
+
+  // `import * as ns from "./x.ts"` becomes `const ns = $m3;` — the IIFE's return value *is* the
+  // namespace object, so there is nothing to construct. Written over the blanked statement, which
+  // is always long enough to hold it: the binding is shorter than the import that made it.
+  for (i32 i = 0; i < imports.len(); i++) {
+    if (imports[i].namespace == "" || isExternal(imports[i].spec)) { continue; }
+    i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
+    if (to < 0) { continue; }
+    writeOver(b, imports[i].from, "const " + imports[i].namespace + " = " + ns[to] + ";");
+  }
+  return string.fromBytes(b);
+}
+
+/** Write `what` over `b` at `at`, stopping at a line break. */
+void writeOver(u8[] b, i32 at, string what) {
+  u8[] w = what.toBytes();
+  for (i32 i = 0; i < w.len() && at + i < b.len(); i++) {
+    if (b[at + i] == '\n') { return; }
+    b[at + i] = w[i];
+  }
+}
+
+/** The bytes `[from, to)` as a string. */
+string textOfRange(u8[] src, i32 from, i32 to) {
+  u8[] b = u8[to - from]();
+  for (i32 i = from; i < to; i++) { b[i - from] = src[i]; }
+  return string.fromBytes(b);
+}
+
+/** Whether a specifier names a file in the set, or something the runtime resolves — `node:fs`. */
+export bool isExternal(string spec) {
+  return spec.len() == 0 || spec.slice(0, 1) != ".";
+}
+
+/** Whether an edge between these two modules closes a cycle. */
+bool crossesBackEdge(Vec<i32> backFrom, Vec<i32> backTo, i32 from, i32 to) {
+  for (i32 i = 0; i < backFrom.len(); i++) {
+    if (backFrom.get(i) == from && backTo.get(i) == to) { return true; }
+    if (backFrom.get(i) == to && backTo.get(i) == from) { return true; }
+  }
+  return false;
+}
+
+/** Whether the `{` at `i` follows a parameter list, so it opens a function body. */
+bool precededByParams(u8[] src, Lexed l, i32 i) {
+  if (i == 0) { return false; }
+  if (!(kindAt(l, i - 1) == kPunct() && textAt(src, l, i - 1) == ")")) { return false; }
+  i32 depth = 0;
+  for (i32 k = i - 1; k >= 0; k--) {
+    if (kindAt(l, k) != kPunct()) { continue; }
+    string t = textAt(src, l, k);
+    if (t == ")") { depth = depth + 1; continue; }
+    if (t == "(") {
+      depth = depth - 1;
+      if (depth == 0) {
+        if (k == 0) { return false; }
+        string head = textAt(src, l, k - 1);
+        return head != "if" && head != "while" && head != "for" && head != "switch"
+            && head != "catch" && head != "with";
+      }
+    }
+  }
+  return false;
+}
+
+
+/**
+ * Whether a module has `await` outside every function — the thing an IIFE cannot carry unasked.
+ *
+ * **Brace depth, which is a deliberate approximation.** An `await` at depth 0 is top-level and an
+ * `await` inside any `{ … }` is treated as somebody else's. That misses the rarer shapes — an
+ * initialiser like `const x = { a: await f() }` sits at depth 1 and is still top-level — and the cost
+ * of missing one is a bundle a JavaScript parser rejects, which is loud. Claiming one that is not
+ * there would be worse: it would make a module async for no reason, and that is the silent kind.
+ */
+bool hasTopLevelAwait(u8[] src) {
+  Lexed l = lex(src);
+  i32 n = tokenCount(l);
+  i32 depth = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (kindAt(l, i) == kPunct()) {
+      string p = textAt(src, l, i);
+      if (p == "{") { depth = depth + 1; }
+      if (p == "}") { depth = depth - 1; }
+      continue;
+    }
+    if (depth == 0 && kindAt(l, i) == kIdent() && textAt(src, l, i) == "await") { return true; }
+  }
+  return false;
+}
+
+/** The names a module exports, for the object its IIFE returns. */
+string exportList(u8[] src) {
+  Lexed l = lex(src);
+  Vec<string> names = Vec.create();
+  i32 n = tokenCount(l);
+  for (i32 i = 0; i < n - 1; i++) {
+    if (kindAt(l, i) != kIdent() || textAt(src, l, i) != "export") { continue; }
+    i32 j = i + 1;
+    while (j < n && kindAt(l, j) == kIdent()
+           && (textAt(src, l, j) == "async" || textAt(src, l, j) == "const"
+               || textAt(src, l, j) == "let" || textAt(src, l, j) == "var"
+               || textAt(src, l, j) == "function" || textAt(src, l, j) == "class")) {
+      j = j + 1;
+    }
+    while (j < n && kindAt(l, j) == kPunct() && textAt(src, l, j) == "*") { j = j + 1; }
+    if (j < n && kindAt(l, j) == kIdent()) { names.push(textAt(src, l, j)); }
+  }
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) { out = out + (out == "" ? "" : ", ") + names.get(i); }
+  return out;
+}
+
+export Import[] importsIn(u8[] src) {
+  Lexed l = lex(src);
+  Vec<Import> out = Vec.create();
+  i32 n = tokenCount(l);
+  i32 i = 0;
+  while (i < n - 1) {
+    if (kindAt(l, i) != kIdent() || textAt(src, l, i) != "import") { i = i + 1; continue; }
+    i32 from = startAt(l, i);
+    Vec<string> names = Vec.create();
+    string spec = "";
+    string nsName = "";
+    i32 k = i + 1;
+    bool ok = false;
+    // `import * as ns from "…"`
+    if (k + 2 < n && kindAt(l, k) == kPunct() && textAt(src, l, k) == "*"
+        && kindAt(l, k + 1) == kIdent() && textAt(src, l, k + 1) == "as"
+        && kindAt(l, k + 2) == kIdent()) {
+      nsName = textAt(src, l, k + 2);
+      k = k + 3;
+      if (k < n && kindAt(l, k) == kIdent() && textAt(src, l, k) == "from") { k = k + 1; }
+      if (k < n && kindAt(l, k) == kStr()) {
+        string q = textAt(src, l, k);
+        spec = q.slice(1, q.len() - 1);
+        ok = true;
+      }
+    } else if (k < n && kindAt(l, k) == kPunct() && textAt(src, l, k) == "{") {
+      k = k + 1;
+      while (k < n && !(kindAt(l, k) == kPunct() && textAt(src, l, k) == "}")) {
+        if (kindAt(l, k) == kIdent()) {
+          string first = textAt(src, l, k);
+          string localName = first;
+          if (k + 2 < n && kindAt(l, k + 1) == kIdent() && textAt(src, l, k + 1) == "as"
+              && kindAt(l, k + 2) == kIdent()) {
+            localName = textAt(src, l, k + 2);
+            k = k + 2;
+          }
+          names.push(first);
+          names.push(localName);
+        }
+        k = k + 1;
+      }
+      k = k + 1;
+      if (k < n && kindAt(l, k) == kIdent() && textAt(src, l, k) == "from") { k = k + 1; }
+      if (k < n && kindAt(l, k) == kStr()) {
+        string q = textAt(src, l, k);
+        spec = q.slice(1, q.len() - 1);
+        ok = true;
+      }
+    }
+    if (!ok) { i = i + 1; continue; }
+    i32 to = startAt(l, k) + lenAt(l, k);
+    if (k + 1 < n && kindAt(l, k + 1) == kPunct() && textAt(src, l, k + 1) == ";") {
+      to = startAt(l, k + 1) + 1;
+    }
+    out.push(Import(from, to, spec, names.toArray(), nsName));
+    i = k + 1;
+  }
+  return out.toArray();
+}
+
+export string resolve(string from, string spec) {
+  if (spec.len() < 2 || spec.slice(0, 1) != ".") { return spec; }
+  i32 cut = -1;
+  for (i32 i = 0; i < from.len(); i++) { if (from.slice(i, i + 1) == "/") { cut = i; } }
+  string dir = cut < 0 ? "" : from.slice(0, cut);
+  string rest = spec;
+  while (rest.len() >= 3 && rest.slice(0, 3) == "../") {
+    i32 up = -1;
+    for (i32 i = 0; i < dir.len(); i++) { if (dir.slice(i, i + 1) == "/") { up = i; } }
+    dir = up < 0 ? "" : dir.slice(0, up);
+    rest = rest.slice(3, rest.len());
+  }
+  if (rest.len() >= 2 && rest.slice(0, 2) == "./") { rest = rest.slice(2, rest.len()); }
+  return dir == "" ? rest : dir + "/" + rest;
+}
+
+i32 indexOf(string[] xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == want) { return i; } }
+  return -1;
+}
+
+i32 indexOfVec(Vec<string> xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs.get(i) == want) { return i; } }
+  return -1;
+}
+
+void copyThrough(Vec<i32> out, u8[] src, i32 written, i32 to) {
+  for (i32 i = written; i < to && i < src.len(); i++) { out.push(src[i]); }
+}
+
+void blankInto(Vec<i32> out, u8[] src, i32 from, i32 to) {
+  for (i32 i = from; i < to && i < src.len(); i++) {
+    out.push(src[i] == '\n' || src[i] == '\r' ? src[i] : ' ');
+  }
+}
+
+void pushString(Vec<i32> out, string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { out.push(b[i]); }
+}

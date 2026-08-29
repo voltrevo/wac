@@ -31,10 +31,16 @@ import { Vec } from "core/vec.wac";
  * Where the flag lists live — **both, concatenated**, because they are moving.
  *
  * `unknownTestFlag` was in the compiler's example until `issues/system/0257c` began taking the
- * command out of it, and `unknownFlagBefore` is next. A guard that names one file goes quiet the day
+ * command out of it, and `unknownFlagBefore` followed. A guard that names one file goes quiet the day
  * its subject moves: this one did, on the extraction that moved the test runner, and said "found the
  * flags `test` accepts — got 0" rather than passing. That assertion is why this file names two paths
  * instead of chasing one.
+ *
+ * **Both of those functions are gone as of 2026-08-29**, and so is the shared `unknownFlag` they sat
+ * beside — three lists for three commands while nine others validated nothing, so `wac check
+ * --nonsense` exited 0. There is one table now, `flagsFor(cmd)`, and this file reads the arm for the
+ * command it is asking about. That is a better subject than either function was: it is where a flag
+ * is *declared* rather than one of the places one was checked.
  */
 const string CLI = "packages/wac/src/wac.wac";
 const string CMD_DIR = "packages/wac/src";
@@ -95,6 +101,33 @@ string bodyAfter(string src, string head) {
   i32 rel = tail.indexOf("\n}");
   if (rel < 0) { return ""; }
   return tail.slice(0, rel);
+}
+
+
+/**
+ * `flagsFor`'s arm for one command, out of the CLI source.
+ *
+ * **Two steps, because `if (cmd == "test") {` occurs all over the dispatcher** and `indexOf` finds
+ * the first — which is an arm that runs the tests, not the arm that says what flags they take. So the
+ * table is isolated first and the command looked up inside it.
+ *
+ * The arm ends at a `}` indented by two, not at column zero: that one closes `flagsFor` itself and
+ * would swallow every later command's flags into this one's answer — the exact "per table rather than
+ * per row" confusion this file exists to refuse.
+ */
+string branchFor(string src, string cmd) {
+  i32 at = src.indexOf("string[] flagsFor(string cmd) {");
+  if (at < 0) { return ""; }
+  string table = src.slice(at, src.len());
+  i32 end = table.indexOf("\n}");
+  if (end < 0) { return ""; }
+  table = table.slice(0, end);
+
+  i32 arm = table.indexOf("if (cmd == \"" + cmd + "\"");
+  if (arm < 0) { return ""; }
+  string tail = table.slice(arm, table.len());
+  i32 rel = tail.indexOf("\n  }");
+  return rel < 0 ? tail : tail.slice(0, rel);
 }
 
 /** Every `"--flag"` literal in `region`, in the order it appears, without repeats. */
@@ -180,9 +213,9 @@ export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, 
   if (cliSrc.len() == 0 || paritySrc.len() == 0) { return t.report(); }
 
   string table = bodyAfter(paritySrc, "string[][] cases() {");
-  string[] accepted = flagsIn(bodyAfter(cliSrc, "string unknownTestFlag("));
+  string[] accepted = flagsIn(branchFor(cliSrc, "test"));
   string[] rowed = flagsFor(table, "test");
-  string[] acceptedRun = flagsIn(bodyAfter(cliSrc, "string unknownFlagBefore("));
+  string[] acceptedRun = flagsIn(branchFor(cliSrc, "run"));
   string[] rowedRun = flagsFor(table, "run");
 
   // **Both halves are read, and both are asserted to be non-empty.** A parser that found nothing

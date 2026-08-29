@@ -484,6 +484,15 @@ struct HostState {
     inherits: bool,
     /// The directory a child was started in.
     cwd_override: Option<String>,
+    /// Whether this program resolves its own paths, or a parent resolves them for it.
+    ///
+    /// **True unless a parent is serving its filesystem.** A child spawned with `serveFs` sends every
+    /// file operation up the channel and the parent answers it, so the path it sends has already been
+    /// resolved by whoever handed it over — resolving it again against this program's own directory
+    /// is what broke `v8host_test.wac`'s image differential when `cwd_override` was folded in blind.
+    /// A child *without* that channel reaches the host itself, and then its directory is the only
+    /// base there is. `issues/system/0281c`.
+    resolves_own_paths: bool,
     /// Which ticket carries each child's exit code, by the handle its parent holds.
     child_exits: HashMap<i32, i32>,
     /// Each child's input queue, so `closeFeed` can end it.
@@ -923,12 +932,13 @@ fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
 
 /// **One body for the parent and for a child**, because a child is this same program with a
 /// different world: its own arguments, possibly narrower grants, and streams instead of a terminal.
+
 /// A V8 isolate belongs to one thread, so a child gets a thread and an isolate of its own — and
 /// `HOST` is a `thread_local!`, which is why that costs nothing here.
-fn run_as(m: &Manifest, wasm: &[u8], as_child: AsChild) -> i32 {
-    run_as_with(m, wasm, "", as_child)
-}
-
+///
+/// **`manifest_text` is not decoration.** A child re-parses it to build the world for its own child,
+/// so a caller that has it must pass it — `run_as` was a two-line wrapper that passed `""`, and
+/// `issues/system/0280c` is what that cost. It had one caller and is gone.
 fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild) -> i32 {
     // Taken before `as_child` is unpacked into the host's state below, which is where it stops
     // being available.
@@ -1099,6 +1109,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             child_input: as_child.input.clone(),
             inherits: as_child.inherits,
             cwd_override: as_child.cwd.clone(),
+            // `fs_req` is `Some` exactly when the parent agreed to serve this child's filesystem —
+            // see `AsChild::fs_req`, whose own note says `None` covers both a `serveFs false` child
+            // and a program nobody spawned.
+            resolves_own_paths: as_child.fs_req.is_none(),
             child_exits: HashMap::new(),
             child_feeds: HashMap::new(),
             wasm: wasm.to_vec(),
@@ -1439,6 +1453,34 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
     });
     if captured {
         return true;
+    }
+    // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
+    // the program saying *my output is a file now*, which is not standard output — so whether
+    // something spawned this program is a fact about the stream it no longer writes to.
+    //
+    // This came after the queue until 2026-08-29, so a spawned child's redirect was skipped
+    // entirely: `box cp README.md out` printed the file to standard output and left `out` empty,
+    // exiting 0. `wac app-run` and `wac run` both make the program a child, so that was every
+    // file-writing applet on this host. `issues/system/0277c`.
+    //
+    // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
+    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
+    // redirects, as it does on the host: a child that says its output is a file gets a file."* That
+    // was aligned to what the host does, and this host did not do it.
+    //
+    // Standard error is deliberately untouched: it is where a program says what went wrong, and
+    // sending that into the file being written would hide it — `native/src/main.rs` makes the same
+    // point and is right about it.
+    if !to_stderr {
+        let redirected = HOST.with(|h| {
+            let mut b = h.borrow_mut();
+            let s = b.as_mut()?;
+            let f = s.output.as_mut()?;
+            Some(f.write_all(bytes).and_then(|_| f.flush()).is_ok())
+        });
+        if let Some(ok) = redirected {
+            return ok;
+        }
     }
     let to_parent = HOST.with(|h| {
         let b = h.borrow();
@@ -1873,7 +1915,22 @@ fn framed_path(path: &str) -> String {
     let base = HOST.with(|h| {
         let b = h.borrow();
         let s = b.as_ref()?;
-        s.frames.last().map(|f| f.cwd.clone())
+        // **The frame's `cwd`, then this program's own — but only if it resolves its own paths.**
+        // A frame is an applet running in process and its directory always wins. Below that, a
+        // spawned child's directory is the base for a path *it* built, which is what makes
+        // `cd sub; cat f.txt` find the file: the applet is a child of the shell and stands where the
+        // shell stands. It is not the base for a child whose parent resolves paths on its behalf.
+        // `issues/system/0281c`.
+        //
+        // **And never for the empty path**, which is the standard-input convention rather than a
+        // relative path: an applet reading stdin asks for `""`, and `Fs.onHost` knows it. The line
+        // below that turns an empty path into the directory predates this and is the frame's, where
+        // nothing reaches it that way — routing children into it made `cat` with no argument answer
+        // *Is a directory*, which is the whole of what `packages/box/test/shell.test.ts`'s three
+        // standard-input cases were reporting.
+        s.frames.last().map(|f| f.cwd.clone()).or_else(|| {
+            if s.resolves_own_paths && !path.is_empty() { s.cwd_override.clone() } else { None }
+        })
     });
     let cwd = match base {
         Some(d) if !d.is_empty() => d,
@@ -2109,7 +2166,15 @@ fn dispatch(
                         return;
                     }
                 };
-                let code = run_as(&manifest, &wasm, child);
+                // **`run_as_with`, so the manifest text reaches the child.** `run_as` passes `""`,
+                // and a child re-parses this string to build the world for *its* own child — so an
+                // empty one made every **grandchild** fail: `serde_json::from_str("")` is an error,
+                // and the arm above answers 127 before anything starts.
+                //
+                // `init` starting services out of an image is the ordinary case. Each service came
+                // back 127 and the boot still ended `init: all services have stopped`, because a
+                // service that never started has stopped. `issues/system/0280c`.
+                let code = run_as_with(&manifest, &wasm, &manifest_text, child);
                 // **Both streams end when the child does**, or a parent reading them waits for ever.
                 out.finish();
                 err.finish();
@@ -2782,7 +2847,31 @@ fn dispatch(
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             HOST.with(|h| {
                 if let Some(st) = h.borrow().as_ref() {
-                    st.sockets.lock().unwrap().remove(&handle);
+                    // **Ending the queue is what stops the child**, and dropping the entry is not
+                    // that. This removed the handle and nothing else — so the *parent's* `Arc` went
+                    // and the child's stayed, the stream was never marked done, and the child's
+                    // `write` kept answering `true` to a pipe nobody was reading. `yes | head -2`
+                    // printed both lines and then never returned. `issues/system/0275c`.
+                    //
+                    // `streams.rs` states the contract this restores: *"`false` is what `write`
+                    // answers to a closed pipe, and what a program like `yes` is written to
+                    // notice."* And `native/src/main.rs` — the wasmtime host — has done exactly
+                    // this since `issues/system/0123`, which is where the wording below comes from:
+                    // ending the queues is what the child's *parent* needs, and a reader parked on
+                    // its output has to find out.
+                    if let Some(Sock::Queue(q)) = st.sockets.lock().unwrap().remove(&handle) {
+                        q.finish();
+                    }
+                    // Its input too: a child parked reading what nobody will send is stopped just as
+                    // surely as one writing where nobody reads, and `closeFeed` is the capability
+                    // for ending *only* that — see its note on why the two are not one thing.
+                    if let Some(feed) = st.child_feeds.get(&handle) {
+                        feed.finish();
+                    }
+                    // **The child's handle stays in `child_exits`.** Its status is still worth
+                    // asking for — a parent that stops a child and wants to know it is gone asks
+                    // `exitCode` next — which is the wasmtime host's rule and the JavaScript hosts'.
+                    //
                     // **And anything parked for it.** A handle is reused, so a datagram left over
                     // from a closed socket would be answered to whatever opens next —
                     // `issues/system/0207` is about not losing packets, not about inventing them.

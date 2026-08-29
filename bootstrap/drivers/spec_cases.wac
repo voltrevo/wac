@@ -15,6 +15,7 @@
 
 u8[] inbuf;
 u8[] built;
+u8[] glue;
 u8[] declined;
 
 export i32 drv_alloc(i32 n) {
@@ -105,6 +106,30 @@ export i32 drv_pushFile() {
 export i32 drv_buildFiles() {
   built = emitFiles(paths, sources, string.fromBytes(namebuf));
   return built.len();
+}
+
+/**
+ * The JavaScript binding layer for what `drv_buildFiles` just built.
+ *
+ * **The other half of a self-contained JavaScript command** — `design/system/0009` step 5. The module
+ * alone is not runnable: something has to instantiate it and hand it its capabilities, and that
+ * something calls through the glue this writes. `packages/platform/build.ts` gets it from
+ * `waccArtifacts`; this path had no way to ask for it, so `bootstrap.sh --host deno` could build a
+ * module and not a command.
+ *
+ * The module is passed rather than recompiled, which is `bindgenFiles`'s own reason for taking one:
+ * compiling twice to answer one question is what makes a self-hosted build slower than the one it
+ * replaces. `built` is exactly what the caller just asked for.
+ *
+ * `"js"` rather than `"ts"`, because the bootstrap has no TypeScript and that is the whole point.
+ */
+export i32 drv_bindgen() {
+  glue = bindgenFiles(built, paths, sources, string.fromBytes(namebuf), "js").toBytes();
+  return glue.len();
+}
+
+export i32 drv_glueByteAt(i32 i) {
+  return glue[i];
 }
 
 // Which half of the link failed: whether the entry's source was found at all, and whether two

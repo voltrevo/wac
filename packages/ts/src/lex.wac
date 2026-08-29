@@ -1,0 +1,497 @@
+// Tokens of TypeScript and JavaScript, for a transform that erases types and flattens modules.
+//
+// `design/system/0009` is why this exists: `bootstrap.sh --host deno|nodejs` needs
+// `packages/platform/host/` as one JavaScript file, and it must produce that with no network and no
+// tools — so the transform is a wac program the ladder runs.
+//
+// ## What a token is
+//
+// Flat quintuples — `(kind, start, len, line, col)` — in one `i32[]`, which is what
+// `packages/wacc/src/lex.wac` does and what `wapytok.wac` documents. A token here spans only
+// *significant* text: whitespace and comments are skipped rather than emitted, because the consumer
+// blanks ranges of the original bytes rather than re-printing a token stream. Trivia therefore takes
+// care of itself, and nothing can accidentally reformat a file.
+//
+// ## The two hard cases, and why neither is optional
+//
+// **`/` is division or a regular expression**, decided by what came before it. Guessing wrong does
+// not fail loudly: it swallows the rest of a line as a regex, or reads a regex body as operators,
+// and the damage appears somewhere else entirely. `regexCanStart` below is the whole rule.
+//
+// **A template literal nests arbitrarily.** `` `a${ `b${c}` }d` `` is one token by the grammar and
+// three levels deep, so the scanner counts braces inside `${…}` and re-enters the template when it
+// finds the matching `}`. A scanner that stops at the first `}` truncates the string.
+//
+// Both are the reason `design/system/0009` D2 asks for a lexer rather than a pattern.
+
+import { Vec } from "core/vec.wac";
+
+// ── Kinds ─────────────────────────────────────────────────────────────────────
+//
+// Deliberately few. A stripper needs to know *what shape* a token is, never which keyword it is —
+// keywords are identifiers here, and the consumer compares their text when it cares.
+
+/** End of input. Always the last token. */
+export i32 kEof() { return 0; }
+/** An identifier, a keyword, or a private name (`#x`). */
+export i32 kIdent() { return 1; }
+/** A numeric literal, including bigint and separators. */
+export i32 kNum() { return 2; }
+/** A single- or double-quoted string. */
+export i32 kStr() { return 3; }
+/** A whole template literal, `${…}` and any nesting included. */
+export i32 kTemplate() { return 4; }
+/** A regular expression literal with its flags. */
+export i32 kRegex() { return 5; }
+/** Anything else: operators, brackets, `;`, `,`, `=>`, `...`. */
+export i32 kPunct() { return 6; }
+
+/** How many `i32`s one token occupies. */
+export i32 tokenStride() { return 5; }
+
+/** A lexed file: the quintuples, and the first error if there was one. */
+export struct Lexed {
+  i32[] tokens;
+  /** Empty when it lexed. Otherwise what stopped it, ready to print. */
+  string error;
+  /** Byte offset of the error, or -1. */
+  i32 errorAt;
+}
+
+// ── Character classes ─────────────────────────────────────────────────────────
+
+bool isDigit(i32 c) { return c >= '0' && c <= '9'; }
+
+bool isHex(i32 c) {
+  return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+/**
+ * Whether a byte may start an identifier.
+ *
+ * ASCII plus `_`, `$`, and **any byte with the high bit set**. The last is deliberate and is not
+ * laziness: a UTF-8 continuation or lead byte can only appear inside an identifier, a string, a
+ * comment or a template here, and the first is the only one this predicate is asked about. Treating
+ * the whole non-ASCII range as identifier material means `café` lexes as one token without this
+ * file carrying a Unicode table it would have to keep current.
+ */
+bool isIdentStart(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c >= 128;
+}
+
+bool isIdentPart(i32 c) { return isIdentStart(c) || isDigit(c); }
+
+bool isLineBreak(i32 c) { return c == '\n' || c == '\r'; }
+
+/** Space, tab, form feed, vertical tab, and the line breaks. */
+bool isSpace(i32 c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 11 || c == 12;
+}
+
+// ── The scanner ───────────────────────────────────────────────────────────────
+
+/**
+ * A `{` that is open, and whether the `}` closing it ends a *block*.
+ *
+ * This is what makes `}` decidable. After a block's `}` a regular expression may start — `if (a) {}
+ * /re/.test(b)` — and after an object literal's it may not, because the literal is a value and `/`
+ * after a value is division. The two are spelled identically and only context tells them apart.
+ */
+struct Brace {
+  bool isBlock;
+}
+
+/**
+ * Whether a `/` at this point starts a regular expression rather than a division.
+ *
+ * The rule is about the previous *significant* token. A regex may not follow a value, and every
+ * other case is a position where an expression is expected:
+ *
+ *   - after a number, string, template or regex — division;
+ *   - after `)` — division, *unless* the matching `(` was the head of `if`, `for`, `while` or
+ *     `with`, where what follows is a statement and `if (a) /re/.test(b)` is legal;
+ *   - after `]` — division, since it closes an index or an array literal, both values;
+ *   - after `}` — see `Brace`;
+ *   - after `++` or `--` — division, because those are postfix here;
+ *   - after an identifier — division, unless the identifier is a keyword that an expression may
+ *     follow. `return /re/` is the common one and `typeof`, `case`, `in`, `of`, `delete`, `void`,
+ *     `instanceof`, `new`, `do`, `else`, `throw`, `yield` and `await` are the rest.
+ *
+ * Anything else is a punctuator in operator position, and an operator is followed by an expression.
+ */
+bool keywordAllowsRegex(string w) {
+  return w == "return" || w == "typeof" || w == "instanceof" || w == "in" || w == "of"
+      || w == "delete" || w == "void" || w == "new" || w == "do" || w == "else"
+      || w == "case" || w == "throw" || w == "yield" || w == "await";
+}
+
+/** Whether `{` here opens a block rather than an object literal. */
+bool braceIsBlock(i32 prevKind, string prevText, bool afterControlHead) {
+  // At the very start of a file, and after `)` of a control head, a `{` is a block.
+  if (prevKind == kEof()) { return true; }
+  if (afterControlHead) { return true; }
+  if (prevKind == kIdent()) {
+    // `else {`, `do {`, `try {`, `finally {`, and a declaration's body. An identifier that is not a
+    // keyword — `x {` — is not legal JavaScript anyway, so the answer does not matter.
+    return prevText != "return" && prevText != "typeof" && prevText != "case"
+        && prevText != "in" && prevText != "of" && prevText != "new" && prevText != "delete"
+        && prevText != "void" && prevText != "instanceof" && prevText != "await"
+        && prevText != "yield" && prevText != "throw";
+  }
+  if (prevKind == kPunct()) {
+    // `=> {` is a body; `; {` and `} {` are blocks. Everything else — `= {`, `( {`, `, {`, `: {`,
+    // `[ {`, an operator — introduces a value, so it is an object literal.
+    return prevText == "=>" || prevText == ";" || prevText == "}" || prevText == "{" || prevText == ")";
+  }
+  // After a value, a `{` cannot legally appear; call it a literal and move on.
+  return false;
+}
+
+/**
+ * Lex `src`.
+ *
+ * Never throws and never guesses: a construct it cannot read sets `error` and stops, which is
+ * `design/system/0009` D4. The tokens up to that point are still returned, because a diagnostic that
+ * can say *where* is worth more than one that says only *that*.
+ */
+export Lexed lex(u8[] src) {
+  Vec<i32> out = Vec.create();
+  Vec<Brace> braces = Vec.create();
+  // Whether the innermost open `(` was a control head — see `regexCanStart`.
+  Vec<bool> parens = Vec.create();
+
+  i32 i = 0;
+  i32 line = 1;
+  i32 col = 1;
+  i32 prevKind = kEof();
+  string prevText = "";
+  // Set when the token before an open brace was the `)` of `if (…)`, `for (…)`, `while (…)`.
+  bool afterControlHead = false;
+  // The identifier two tokens back, so `)` can tell a control head from a call.
+  string beforeParen = "";
+
+  string err = "";
+  i32 errAt = -1;
+
+  while (i < src.len() && err == "") {
+    i32 c = src[i];
+
+    // Whitespace, tracking position.
+    if (isSpace(c)) {
+      if (c == '\n') { line = line + 1; col = 1; i = i + 1; continue; }
+      if (c == '\r') {
+        // CRLF counts once.
+        if (i + 1 < src.len() && src[i + 1] == '\n') { i = i + 1; }
+        line = line + 1; col = 1; i = i + 1; continue;
+      }
+      col = col + 1; i = i + 1; continue;
+    }
+
+    // Comments. Skipped, not emitted: the consumer works on the original bytes.
+    if (c == '/' && i + 1 < src.len() && src[i + 1] == '/') {
+      while (i < src.len() && !isLineBreak(src[i])) { i = i + 1; col = col + 1; }
+      continue;
+    }
+    if (c == '/' && i + 1 < src.len() && src[i + 1] == '*') {
+      i32 at = i;
+      i = i + 2; col = col + 2;
+      bool closed = false;
+      while (i < src.len()) {
+        if (src[i] == '*' && i + 1 < src.len() && src[i + 1] == '/') {
+          i = i + 2; col = col + 2; closed = true; break;
+        }
+        if (src[i] == '\n') { line = line + 1; col = 1; } else { col = col + 1; }
+        i = i + 1;
+      }
+      if (!closed) { err = "unterminated block comment"; errAt = at; }
+      continue;
+    }
+
+    i32 start = i;
+    i32 startLine = line;
+    i32 startCol = col;
+    i32 kind = kPunct();
+
+    if (isIdentStart(c) || (c == '#' && i + 1 < src.len() && isIdentStart(src[i + 1]))) {
+      // A private name `#x` is one identifier token, so `this.#x` reads like any member access.
+      if (c == '#') { i = i + 1; col = col + 1; }
+      while (i < src.len() && isIdentPart(src[i])) { i = i + 1; col = col + 1; }
+      kind = kIdent();
+    } else if (isDigit(c) || (c == '.' && i + 1 < src.len() && isDigit(src[i + 1]))) {
+      kind = kNum();
+      i32 n = scanNumber(src, i);
+      col = col + (n - i);
+      i = n;
+    } else if (c == '"' || c == '\'') {
+      kind = kStr();
+      i32 n = scanString(src, i);
+      if (n < 0) { err = "unterminated string literal"; errAt = start; }
+      else {
+        // A string may not contain a raw newline, so the column advances by its length.
+        col = col + (n - i);
+        i = n;
+      }
+    } else if (c == '`') {
+      kind = kTemplate();
+      i32 n = scanTemplate(src, i);
+      if (n < 0) { err = "unterminated template literal"; errAt = start; }
+      else {
+        // A template may span lines, so position is recounted over its bytes.
+        for (i32 k = i; k < n; k++) {
+          if (src[k] == '\n') { line = line + 1; col = 1; } else { col = col + 1; }
+        }
+        i = n;
+      }
+    } else if (c == '/' && regexCanStart(prevKind, prevText, afterControlHead)) {
+      kind = kRegex();
+      i32 n = scanRegex(src, i);
+      if (n < 0) { err = "unterminated regular expression"; errAt = start; }
+      else { col = col + (n - i); i = n; }
+    } else {
+      i32 n = scanPunct(src, i);
+      col = col + (n - i);
+      i = n;
+    }
+
+    if (err != "") { break; }
+
+    string text = textOf(src, start, i);
+
+    // Bracket bookkeeping, before the token is recorded, so `)` and `}` answer for themselves.
+    bool nextAfterControlHead = false;
+    if (kind == kPunct()) {
+      if (text == "(") {
+        parens.push(prevKind == kIdent()
+                    && (prevText == "if" || prevText == "for" || prevText == "while"
+                        || prevText == "with"));
+      } else if (text == ")") {
+        bool wasControl = parens.len() > 0 ? parens.get(parens.len() - 1) : false;
+        if (parens.len() > 0) { parens.remove(parens.len() - 1); }
+        nextAfterControlHead = wasControl;
+      } else if (text == "{") {
+        braces.push(Brace(braceIsBlock(prevKind, prevText, afterControlHead)));
+      } else if (text == "}") {
+        if (braces.len() > 0) { braces.remove(braces.len() - 1); }
+      }
+    }
+
+    out.push(kind);
+    out.push(start);
+    out.push(i - start);
+    out.push(startLine);
+    out.push(startCol);
+
+    prevKind = kind;
+    prevText = text;
+    afterControlHead = nextAfterControlHead;
+  }
+
+  out.push(kEof());
+  out.push(src.len());
+  out.push(0);
+  out.push(line);
+  out.push(col);
+
+  i32[] toks = i32[out.len()](fill: 0);
+  for (i32 k = 0; k < out.len(); k++) { toks[k] = out.get(k); }
+  return Lexed(toks, err, errAt);
+}
+
+bool regexCanStart(i32 prevKind, string prevText, bool afterControlHead) {
+  if (prevKind == kEof()) { return true; }
+  if (prevKind == kNum() || prevKind == kStr() || prevKind == kTemplate() || prevKind == kRegex()) {
+    return false;
+  }
+  if (prevKind == kIdent()) { return keywordAllowsRegex(prevText); }
+  // A punctuator. The three that close a value forbid a regex; `)` depends on what it closed.
+  if (prevText == ")") { return afterControlHead; }
+  if (prevText == "]") { return false; }
+  if (prevText == "}") { return true; }
+  if (prevText == "++" || prevText == "--") { return false; }
+  return true;
+}
+
+/** The bytes `[from, to)` as a string. */
+string textOf(u8[] src, i32 from, i32 to) {
+  u8[] b = u8[to - from]();
+  for (i32 k = from; k < to; k++) { b[k - from] = src[k]; }
+  return string.fromBytes(b);
+}
+
+/**
+ * Past a numeric literal starting at `i`.
+ *
+ * Covers decimal, `0x`/`0o`/`0b`, exponents, a trailing `n` for bigint, and `_` separators. It does
+ * not validate: `0x` with no digits is the caller's problem to notice, and a lexer that refuses it
+ * would refuse it in a comment-stripped copy of a file that runs.
+ */
+i32 scanNumber(u8[] src, i32 i) {
+  i32 n = i;
+  if (src[n] == '0' && n + 1 < src.len()
+      && (src[n + 1] == 'x' || src[n + 1] == 'X' || src[n + 1] == 'o' || src[n + 1] == 'O'
+          || src[n + 1] == 'b' || src[n + 1] == 'B')) {
+    n = n + 2;
+    while (n < src.len() && (isHex(src[n]) || src[n] == '_')) { n = n + 1; }
+    if (n < src.len() && src[n] == 'n') { n = n + 1; }
+    return n;
+  }
+  while (n < src.len() && (isDigit(src[n]) || src[n] == '_')) { n = n + 1; }
+  if (n < src.len() && src[n] == '.') {
+    n = n + 1;
+    while (n < src.len() && (isDigit(src[n]) || src[n] == '_')) { n = n + 1; }
+  }
+  if (n < src.len() && (src[n] == 'e' || src[n] == 'E')) {
+    i32 save = n;
+    n = n + 1;
+    if (n < src.len() && (src[n] == '+' || src[n] == '-')) { n = n + 1; }
+    if (n < src.len() && isDigit(src[n])) {
+      while (n < src.len() && (isDigit(src[n]) || src[n] == '_')) { n = n + 1; }
+    } else {
+      // `1e` with no exponent is not an exponent — back out, so `1e` lexes as `1` then `e`.
+      n = save;
+    }
+  }
+  if (n < src.len() && src[n] == 'n') { n = n + 1; }
+  return n;
+}
+
+/** Past a quoted string, or -1 if it does not close on its line. */
+i32 scanString(u8[] src, i32 i) {
+  i32 quote = src[i];
+  i32 n = i + 1;
+  while (n < src.len()) {
+    i32 c = src[n];
+    if (c == '\\') { n = n + 2; continue; }
+    if (c == quote) { return n + 1; }
+    // A raw line break ends a string literal and is an error rather than a continuation.
+    if (isLineBreak(c)) { return -1; }
+    n = n + 1;
+  }
+  return -1;
+}
+
+/**
+ * Past a whole template literal, `${…}` included, or -1.
+ *
+ * The nesting is the point: inside `${…}` anything may appear, including another template, so this
+ * counts braces and re-enters. It also has to skip strings and comments inside the substitution,
+ * because a `}` in either of those is not the one that closes it.
+ */
+i32 scanTemplate(u8[] src, i32 i) {
+  i32 n = i + 1;
+  while (n < src.len()) {
+    i32 c = src[n];
+    if (c == '\\') { n = n + 2; continue; }
+    if (c == '`') { return n + 1; }
+    if (c == '$' && n + 1 < src.len() && src[n + 1] == '{') {
+      n = n + 2;
+      i32 depth = 1;
+      while (n < src.len() && depth > 0) {
+        i32 d = src[n];
+        if (d == '\\') { n = n + 2; continue; }
+        if (d == '{') { depth = depth + 1; n = n + 1; continue; }
+        if (d == '}') { depth = depth - 1; n = n + 1; continue; }
+        if (d == '`') {
+          i32 inner = scanTemplate(src, n);
+          if (inner < 0) { return -1; }
+          n = inner;
+          continue;
+        }
+        if (d == '"' || d == '\'') {
+          i32 s = scanString(src, n);
+          if (s < 0) { return -1; }
+          n = s;
+          continue;
+        }
+        if (d == '/' && n + 1 < src.len() && src[n + 1] == '/') {
+          while (n < src.len() && !isLineBreak(src[n])) { n = n + 1; }
+          continue;
+        }
+        if (d == '/' && n + 1 < src.len() && src[n + 1] == '*') {
+          n = n + 2;
+          while (n + 1 < src.len() && !(src[n] == '*' && src[n + 1] == '/')) { n = n + 1; }
+          n = n + 2;
+          continue;
+        }
+        n = n + 1;
+      }
+      if (depth > 0) { return -1; }
+      continue;
+    }
+    n = n + 1;
+  }
+  return -1;
+}
+
+/**
+ * Past a regular expression literal and its flags, or -1.
+ *
+ * A `/` inside a character class does not end the pattern — `/[/]/` is one regex — so the scan
+ * tracks whether it is inside `[…]`.
+ */
+i32 scanRegex(u8[] src, i32 i) {
+  i32 n = i + 1;
+  bool inClass = false;
+  while (n < src.len()) {
+    i32 c = src[n];
+    if (c == '\\') { n = n + 2; continue; }
+    if (isLineBreak(c)) { return -1; }
+    if (c == '[') { inClass = true; n = n + 1; continue; }
+    if (c == ']') { inClass = false; n = n + 1; continue; }
+    if (c == '/' && !inClass) {
+      n = n + 1;
+      while (n < src.len() && isIdentPart(src[n])) { n = n + 1; }
+      return n;
+    }
+    n = n + 1;
+  }
+  return -1;
+}
+
+/**
+ * Past one punctuator, longest match first.
+ *
+ * The order matters and the list is the whole of JavaScript's: `>>>=` must be tried before `>>>`,
+ * and `...` before `.`. A `<` is one token here — the stripper is what decides whether it opened a
+ * type argument list, because that is a parsing question and this is not a parser.
+ */
+i32 scanPunct(u8[] src, i32 i) {
+  string[] four = string[]( ">>>=" );
+  string[] three = string[]( "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??=" );
+  string[] two = string[]( "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.", "++", "--",
+                           "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>" );
+  for (i32 k = 0; k < four.len(); k++) {
+    if (matches(src, i, four[k])) { return i + 4; }
+  }
+  for (i32 k = 0; k < three.len(); k++) {
+    if (matches(src, i, three[k])) { return i + 3; }
+  }
+  for (i32 k = 0; k < two.len(); k++) {
+    if (matches(src, i, two[k])) { return i + 2; }
+  }
+  return i + 1;
+}
+
+bool matches(u8[] src, i32 i, string what) {
+  u8[] w = what.toBytes();
+  if (i + w.len() > src.len()) { return false; }
+  for (i32 k = 0; k < w.len(); k++) {
+    if (src[i + k] != w[k]) { return false; }
+  }
+  return true;
+}
+
+// ── Reading a lexed file ──────────────────────────────────────────────────────
+
+export i32 tokenCount(Lexed l) { return l.tokens.len() / tokenStride(); }
+
+export i32 kindAt(Lexed l, i32 i)  { return l.tokens[i * tokenStride()]; }
+export i32 startAt(Lexed l, i32 i) { return l.tokens[i * tokenStride() + 1]; }
+export i32 lenAt(Lexed l, i32 i)   { return l.tokens[i * tokenStride() + 2]; }
+export i32 lineAt(Lexed l, i32 i)  { return l.tokens[i * tokenStride() + 3]; }
+export i32 colAt(Lexed l, i32 i)   { return l.tokens[i * tokenStride() + 4]; }
+
+/** The source text of token `i`. */
+export string textAt(u8[] src, Lexed l, i32 i) {
+  return textOf(src, startAt(l, i), startAt(l, i) + lenAt(l, i));
+}

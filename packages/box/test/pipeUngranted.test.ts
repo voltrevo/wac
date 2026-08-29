@@ -18,7 +18,7 @@
 // Built with `{}` deliberately. Every other box test grants something, which is why sixty commands over
 // a sealed shell never showed this.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 import "../../../harness/spawnRetry.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {

@@ -2631,13 +2631,19 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
         if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
         return true;
     }
-    // A spawned child writes to its parent's queues, never to the terminal. **Before** the redirected
-    // output below, because a child that was told to write to a file was told so by its own
-    // `openOutput` and this is about where its streams go when it was not.
-    if let Some(streams) = caller.data().as_child.as_ref() {
-        let to = if to_stderr { streams.stderr.clone() } else { streams.stdout.clone() };
-        return to.write(bytes);
-    }
+    // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
+    // the program saying *my output is a file now*, which is not standard output — so whether
+    // something spawned this program is a fact about the stream it no longer writes to.
+    //
+    // These were the other way round until 2026-08-29, under a comment arguing that a child's queues
+    // came first *"because a child that was told to write to a file was told so by its own
+    // `openOutput`"* — which describes the case the branch above it then skipped. A spawned child's
+    // redirect never ran: `box cp README.md out` printed the file to standard output and left `out`
+    // empty, exiting 0. `issues/system/0277c`.
+    //
+    // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
+    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
+    // redirects, as it does on the host: a child that says its output is a file gets a file."*
     if !to_stderr {
         // A redirected output is only standard output's: the error stream is where a program says
         // what went wrong, and sending that to the file being written would hide it.
@@ -2652,6 +2658,12 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
                 }
             };
         }
+    }
+    // A spawned child writes to its parent's queues, never to the terminal — when it has not
+    // redirected itself above.
+    if let Some(streams) = caller.data().as_child.as_ref() {
+        let to = if to_stderr { streams.stderr.clone() } else { streams.stdout.clone() };
+        return to.write(bytes);
     }
     write_raw(bytes, to_stderr)
 }

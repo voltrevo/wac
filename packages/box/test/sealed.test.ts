@@ -40,7 +40,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
  * for.
  */
 Deno.test("a program built with no grants cannot reach the host", async () => {
-  const { buildApp } = await import("../../platform/build.ts");
+  const { buildApp } = await import("../../../harness/buildApp.ts");
   const built = await Deno.makeTempFile({ prefix: "box-sealed-" });
   try {
     await buildApp(SEALED, built, {});
@@ -86,7 +86,7 @@ Deno.test("a program built with no grants cannot reach the host", async () => {
  * open, which is what a terminal is and what `stdin: "null"` — every other test in this repo — is not.
  */
 Deno.test("an applet runs when the shell cannot spawn and its own input stays open", async () => {
-  const { buildApp } = await import("../../platform/build.ts");
+  const { buildApp } = await import("../../../harness/buildApp.ts");
   const built = await Deno.makeTempFile({ prefix: "box-sealed-stdin-" });
   try {
     await buildApp(SEALED, built, {});

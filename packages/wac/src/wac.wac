@@ -48,12 +48,12 @@ import { Built } from "../../wacc/src/emit.wac";
 import { field, linesOf } from "../../wacc/src/text.wac";
 import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
-import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
+import { grantAfterEntry, grantsBefore, programArgs, relay, runModule }
          from "./runprog.wac";
 import { appRun, writeApp } from "./app.wac";
 import { aggregatePath, aggregateSource, beside, flagValue, importable, noTrailingSlash, runTests,
          sigsWithCounters,
-         commonDir, testTargets, unknownTestFlag, withoutIgnored } from "./testrun.wac";
+         commonDir, testTargets, withoutIgnored } from "./testrun.wac";
 import { renderDiagnostics } from "../../wacc/src/render.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/path.wac";
@@ -399,7 +399,7 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
   // p.wac` was 814 ms then 91 ms, and `wac run p.wac --check` was 803 ms then 822 ms, because `--check`
   // read as a flag this command does not have. The run arm below refuses a genuinely unknown flag
   // *before* the entry, with a message naming it, so nothing is let through by narrowing this.
-  string unknown = cmd == "run" ? unknownFlagBefore(cli, argc, entry) : unknownFlag(cli, argc);
+  string unknown = unknownFlagFor(cli, argc, cmd);
   if (unknown != "") { return ""; }
   // **A bound of zero turns the cache off, lookup included.** Sweeping to nothing is not the same as
   // being off: entries written before still answer, so a caller who set this because they suspect a
@@ -913,6 +913,19 @@ string[] allArgs(Cli cli, i32 argc) {
   return out;
 }
 
+/**
+ * Whether this flag is followed by a value rather than standing alone.
+ *
+ * **Skipping the flag without its value leaves the value looking like the entry.**
+ * `--filter passes src/x_test.wac` reported *cannot read passes* — a sentence about a file, about a
+ * pattern, which is `issues/system/0177`'s mistake one level along. Two things need the same answer
+ * now: finding the positional arguments, and finding where a command's own flags stop.
+ */
+bool takesValue(string flag) {
+  return flag == "-o" || flag == "--trace-slots" || flag == "--filter" || flag == "--ignore"
+      || flag == "--from";
+}
+
 string[] positionals(Cli cli, i32 argc) {
   string[] out = string[argc](fill: "");
   i32 n = 0;
@@ -922,7 +935,7 @@ string[] positionals(Cli cli, i32 argc) {
     // **Three flags carry a value**, and skipping the flag without its value leaves the value looking
     // like the entry. `--filter passes src/x_test.wac` reported *cannot read passes* — a sentence
     // about a file, about a pattern — which is `issues/system/0177`'s mistake one level along.
-    if (a == "-o" || a == "--trace-slots" || a == "--filter" || a == "--ignore") {
+    if (takesValue(a)) {
       i = i + 2;
       continue;
     }
@@ -970,17 +983,146 @@ bool hasFlag(Cli cli, i32 argc, string flag) {
 }
 
 /** The first argument that looks like a flag and is not one, or "". */
-string unknownFlag(Cli cli, i32 argc) {
-  for (i32 i = 1; i < argc; i++) {
+/**
+ * The flags a command takes, in the order its usage line names them.
+ *
+ * **One list per command, because the shared one was wrong in both directions.** Until 2026-08-29
+ * `unknownFlag` held a single set — every `--allow-*`, `--quiet`, `--js`, `--coverage`, `--trace`,
+ * `--trace-slots`, `--no-cache` — and two arms consulted it. So `wac app --coverage` was accepted and
+ * came out instrumented with no table to read it (`issues/system/0274c`), and `wac check --nonsense`
+ * exited **0**, because `check` never asked at all. Nine commands validated nothing.
+ *
+ * The table is shaped like `forCommand` in `grants.wac` deliberately: both answer a per-command
+ * question about the command line, and having one of them be a table and the other a shared list is
+ * how the two drift. This one is the flags; that one is the authority.
+ *
+ * **An empty list means the command takes no flags**, which is a real answer and not a gap — `wac
+ * covdump` takes export names and `wac validate` takes modules. `run`, `task`, `sh` and `app-run`
+ * have flags of their own *and* pass a tail to somebody else; `flagStop` is where that tail begins.
+ */
+string[] flagsFor(string cmd) {
+  if (cmd == "build") {
+    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "-o", "--quiet", "--coverage", "--trace", "--trace-slots", "--no-cache");
+  }
+  if (cmd == "test") {
+    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "--coverage", "--filter", "--ignore", "--verbose");
+  }
+  // The grants and the destination, and nothing that needs a second command to finish — which is the
+  // whole of `issues/system/0274c`.
+  if (cmd == "app") {
+    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "-o");
+  }
+  // The grants govern the *program* these two start rather than this process, which is why they are
+  // the only flags either takes: everything else on the line belongs to whatever is being run.
+  if (cmd == "run") {
+    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run");
+  }
+  if (cmd == "sh") {
+    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "-c");
+  }
+  // `--js` asks for the glue rather than the bindings, so it is `bindgen`'s alone: on `check` or
+  // `compile` it was accepted and read by nobody.
+  if (cmd == "bindgen") { return string[]("--js", "--quiet"); }
+  if (cmd == "compile") { return string[]("--quiet"); }
+  if (cmd == "audit") { return string[]("--verbose"); }
+  if (cmd == "ctcompare") { return string[]("--all"); }
+  if (cmd == "self") { return string[]("--from", "--no-profile", "--keep-cache"); }
+  // `check` says one sentence about one file. `validate`, `covdump`, `tracestat`, `update`, `task`
+  // and `app-run` take arguments and no flags.
+  return string[0](fill: "");
+}
+
+/**
+ * Where a command's own arguments stop and somebody else's begin.
+ *
+ * **Four commands hand a tail on**, and scanning past it would report the *program's* flag as this
+ * one's. `run` was the case that proved it: `unknownFlag` scanned the whole line, so `wac run p.wac
+ * --check` read `--check` as a flag `run` does not have, which turned the build cache off for
+ * exactly the invocations that most want it — 814 ms against 91. The rule is per command because the
+ * boundary is: `run`'s tail starts at the entry, `sh`'s after `-c`, `task`'s at `--`, and
+ * `app-run`'s after the file.
+ */
+i32 flagStop(Cli cli, i32 argc, string cmd) {
+  if (cmd != "run" && cmd != "sh" && cmd != "task" && cmd != "app-run") { return argc; }
+  i32 i = 1;
+  while (i < argc) {
     string a = string.fromBytes(cli.arg(i).wait());
-    if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
-    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage"
-        && a != "--trace" && a != "--trace-slots" && a != "--no-cache") {
-      return a;
-    }
+    // **`task` has two boundaries and needs both.** `--` is one, for the explicit form. The task
+    // *name* is the other, and leaving it out broke `wac task gen:core --check` — a spelling
+    // `CLAUDE.md` documents and the doc lane runs — by reading `--check` as a flag `wac task` does
+    // not have. Everything after the name belongs to the command the task names, exactly as
+    // everything after `run`'s entry belongs to the program.
+    if (cmd == "task" && a == "--") { return i; }
+    // The script and the module are the tail's first element rather than a flag's value, so the stop
+    // is *after* them: `-c` and its script are both this command's, everything following is not.
+    if (cmd == "sh" && a == "-c") { return i + 2 < argc ? i + 2 : argc; }
+    if (takesValue(a)) { i = i + 2; continue; }
+    if (a.len() > 0 && a.slice(0, 1) == "-") { i = i + 1; continue; }
+    // The first argument that is not a flag: `run` and `app-run` take one and pass the rest on.
+    return i + 1;
+  }
+  return argc;
+}
+
+/**
+ * The first flag on the line that `cmd` does not take, or `""`.
+ *
+ * Reports the flag by name so the caller can say which one, and pairs with `flagsFor` for the *did
+ * mean* half — a refusal that lists what the command does take is the difference between being told
+ * no and being told where to go.
+ */
+string unknownFlagFor(Cli cli, i32 argc, string cmd) {
+  string[] ok = flagsFor(cmd);
+  i32 stop = flagStop(cli, argc, cmd);
+  for (i32 i = 1; i < stop; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a.len() < 1 || a.slice(0, 1) != "-") { continue; }
+    // A negative number is an argument, not a flag: `-1` reaching this as an unknown flag would be a
+    // refusal about arithmetic.
+    if (a.len() > 1 && a.slice(1, 2) >= "0" && a.slice(1, 2) <= "9") { continue; }
+    bool found = false;
+    for (i32 j = 0; j < ok.len(); j++) { if (a == ok[j]) { found = true; } }
+    if (!found) { return a; }
   }
   return "";
+}
+
+/**
+ * The whole refusal for a flag `cmd` does not take.
+ *
+ * **A misspelt grant is a different mistake from an unknown flag**, and saying so is not `sh`'s
+ * privilege. `wac sh --allow-everything` has always answered *is not a grant — read, write, net, env,
+ * run*, because its own parser reads grant words; every other command answered *unknown flag*, which
+ * is true and unhelpful — the reader mistyped one of five words, not one of eleven flags.
+ *
+ * The distinction is on the *word*, not on the command: `--allow-everything` is nobody's grant, while
+ * `--allow-read` is a real one that `wac check` simply does not take, and those two want different
+ * sentences.
+ */
+string flagRefusal(string cmd, string flag) {
+  if (flag.len() > 8 && flag.slice(0, 8) == "--allow-" && !isGrantWord(flag)) {
+    return "wac: '" + flag + "' is not a grant — read, write, net, env, run";
+  }
+  return "wac: unknown flag '" + flag + "' — " + flagsWord(cmd);
+}
+
+/** Whether this is one of the five grants, whatever command it was written on. */
+bool isGrantWord(string flag) {
+  return flag == "--allow-read" || flag == "--allow-write" || flag == "--allow-net"
+      || flag == "--allow-env" || flag == "--allow-run";
+}
+
+/** What to print after naming a flag a command does not take. */
+string flagsWord(string cmd) {
+  string[] ok = flagsFor(cmd);
+  if (ok.len() == 0) { return "`wac " + cmd + "` takes no flags"; }
+  string list = "";
+  for (i32 i = 0; i < ok.len(); i++) { list = list + (list == "" ? "" : ", ") + ok[i]; }
+  return "`wac " + cmd + "` takes " + list;
 }
 
 /**
@@ -1117,6 +1259,25 @@ export i32 main(Core core, Cli cli) {
     return runModule(core, cli, argc, cmd);
   }
 
+  // **The commands that validated nothing at all.** `build`, `app`, `run` and `test` each check their
+  // own flags further down, at the point they have the entry; these nine had no check anywhere, so
+  // `wac check --nonsense x.wac` exited **0** and `wac audit --js` was read by nobody.
+  //
+  // Here rather than in each arm because there is nothing to wait for: none of them needs the entry
+  // resolved to know what flags it takes. And it is gated on a *known command* so that ordering stays
+  // right — `wac frobnicate --x` is an unknown command, and reporting the flag first would answer the
+  // second question.
+  if (cmd == "check" || cmd == "compile" || cmd == "bindgen" || cmd == "audit"
+      || cmd == "validate" || cmd == "covdump" || cmd == "tracestat" || cmd == "ctcompare"
+      || cmd == "update" || cmd == "task" || cmd == "app-run" || cmd == "self"
+      || cmd == "sh") {
+    string early = unknownFlagFor(cli, argc, cmd);
+    if (early != "") {
+      core.warn(flagRefusal(cmd, early));
+      return 2;
+    }
+  }
+
   // **`validate` needs the engine and nothing else**, so it is up here with the other two commands
   // that skip the compile. It was the host's until 2026-08-26 for want of `Cli.validated`, which is
   // the one thing about a module only a host can answer — see that field's note. The command around
@@ -1226,7 +1387,7 @@ export i32 main(Core core, Cli cli) {
       // Any other `--` word is a flag this command does not have, and saying so beats reading it as a
       // path and reporting that a file called `--vebose` cannot be read.
       if (a.len() > 2 && a.slice(0, 2) == "--") {
-        core.warn("wac: unknown flag '" + a + "' — ctcompare takes --all");
+        core.warn(flagRefusal("ctcompare", a));
         return 2;
       }
       if (seen < 2) { both[seen] = a; }
@@ -1661,10 +1822,9 @@ export i32 main(Core core, Cli cli) {
     // they are a *ceiling* intersected with what this process holds — the cached bytes only have to be
     // the same program, and the key already says they are.
     if (hit.ok && hit.bytes.len() > 8 && cmd == "run") {
-      string badFlagRun = unknownFlagBefore(cli, argc, entry);
+      string badFlagRun = unknownFlagFor(cli, argc, "run");
       if (badFlagRun != "") {
-        core.warn("wac: unknown flag '" + badFlagRun + "' — --allow-read, --allow-write, --allow-net, "
-                  + "--allow-env, --allow-run");
+        core.warn(flagRefusal("run", badFlagRun));
         return 2;
       }
       string misplacedRun = grantAfterEntry(cli, argc, entry);
@@ -1686,10 +1846,9 @@ export i32 main(Core core, Cli cli) {
       // refuses a `--coverage` line, and `WAC_PROFILE` turns that on.
       string cachedManifest = manifestIn(hit.bytes);
       if (cachedManifest != "") {
-        string badFlagHit = unknownTestFlag(cli, argc, entry);
+        string badFlagHit = unknownFlagFor(cli, argc, "test");
         if (badFlagHit != "") {
-          core.warn("wac: unknown flag '" + badFlagHit + "' — --allow-read, --allow-write, "
-                    + "--allow-net, --allow-env, --allow-run, --filter");
+          core.warn(flagRefusal("test", badFlagHit));
           return 2;
         }
         return runTests(core, cli, target, hit.bytes, cachedManifest, grantsIn(cli, argc),
@@ -1894,10 +2053,9 @@ export i32 main(Core core, Cli cli) {
   // `__cov_init`/`__cov_len`/`__cov_get`, which `call` accepts — three of its four shapes — so this is
   // work rather than a gap in the boundary.
   if (cmd == "test") {
-    string badFlag = unknownTestFlag(cli, argc, entry);
+    string badFlag = unknownFlagFor(cli, argc, "test");
     if (badFlag != "") {
-      core.warn("wac: unknown flag '" + badFlag + "' — --allow-read, --allow-write, --allow-net, "
-                + "--allow-env, --allow-run, --filter");
+      core.warn(flagRefusal("test", badFlag));
       return 2;
     }
     // **`--coverage` for one file.** The shared compile above has already emitted an instrumented
@@ -1942,10 +2100,9 @@ export i32 main(Core core, Cli cli) {
   // for now: `commandparity_test.wac` compares the two, and agreement measured is what has to come
   // before deleting either. Step 4 of that issue's order.
   if (cmd == "run") {
-    string badFlag = unknownFlagBefore(cli, argc, entry);
+    string badFlag = unknownFlagFor(cli, argc, "run");
     if (badFlag != "") {
-      core.warn("wac: unknown flag '" + badFlag + "' — --allow-read, --allow-write, --allow-net, "
-                + "--allow-env, --allow-run");
+      core.warn(flagRefusal("run", badFlag));
       return 2;
     }
     string misplaced = grantAfterEntry(cli, argc, entry);
@@ -1988,10 +2145,29 @@ export i32 main(Core core, Cli cli) {
   // output is not a module — `-o thing.wasm` and `-o thing` mean the same to `build` and very
   // different things to somebody handed the result.
   if (cmd == "app") {
-    string bad = unknownFlag(cli, argc);
+    // **A flag this command cannot finish is refused rather than half-honoured.** `unknownFlag` below
+    // is one list shared by every command, so `app` accepted `--coverage`, `--trace`, `--trace-slots`
+    // and `--js` — while the message it prints on a rejected flag names only the five grants, so it
+    // advertised five and took nine. `--coverage` was the one that mattered: `covered` is decided in
+    // the shared compile above, so the module really did come out instrumented, and then this arm
+    // wrote only the executable. The `.cov` table naming the counters is written by `build`'s arm, and
+    // `covdump` refuses an app anyway — *is not a wasm module*, because of the two lines on the front.
+    // So the whole of the feature was the instrumentation overhead.
+    //
+    // Refused rather than completed because completing it is three decisions, not a patch: what writes
+    // the table, how `covdump` reads past the preamble, and how a *running* app dumps its counters.
+    // `wac build --coverage` answers all three today and is what to reach for. `issues/system/0274c`.
+    string bad = unknownFlagFor(cli, argc, "app");
     if (bad != "") {
-      core.warn("wac: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, "
-                + "--allow-env, --allow-run");
+      // **`--coverage` gets its own sentence**, because it is the one somebody types on purpose. The
+      // generic refusal would list what `app` takes and leave them to guess that the answer is a
+      // different command; this names it.
+      if (bad == "--coverage" || bad == "--trace" || bad == "--trace-slots") {
+        core.warn("wac: `wac app` does not take '" + bad + "' — it writes an executable, and the "
+                  + "table that flag's counters need is written by `wac build --coverage`");
+      } else {
+        core.warn(flagRefusal("app", bad));
+      }
       return 2;
     }
     string dest = outStem(cli, argc);
@@ -2018,9 +2194,9 @@ export i32 main(Core core, Cli cli) {
   }
 
   if (cmd == "build") {
-    string bad = unknownFlag(cli, argc);
+    string bad = unknownFlagFor(cli, argc, "build");
     if (bad != "") {
-      core.warn("wacc: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, --allow-env, --allow-run");
+      core.warn(flagRefusal("build", bad));
       return 2;
     }
     string stem = outStem(cli, argc);

@@ -1,0 +1,191 @@
+// The lexer, and mostly the two cases that make it a lexer rather than a pattern.
+//
+//     wac test packages/ts/test/wac/lex_test.wac
+//
+// `design/system/0009` D2 and D3. Every case below that is not plainly about tokens is about
+// `/` — division or a regular expression — because getting that wrong is the failure that does not
+// announce itself: the scanner swallows a line as a regex, or reads a regex body as operators, and
+// what breaks is somewhere else entirely.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import {
+  Lexed, kEof, kIdent, kNum, kPunct, kRegex, kStr, kTemplate,
+  kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
+} from "../../src/lex.wac";
+
+/** The kinds of every token but the final `kEof`, as a string, so a whole stream is one assertion. */
+string kinds(string src) {
+  u8[] b = src.toBytes();
+  Lexed l = lex(b);
+  string out = "";
+  for (i32 i = 0; i < tokenCount(l) - 1; i++) {
+    i32 k = kindAt(l, i);
+    string name = k == kIdent() ? "id" : k == kNum() ? "num" : k == kStr() ? "str"
+                : k == kTemplate() ? "tpl" : k == kRegex() ? "re" : "p";
+    out = out + (out == "" ? "" : " ") + name;
+  }
+  return out;
+}
+
+/** The text of every token but the final `kEof`, separated by `|`. */
+string texts(string src) {
+  u8[] b = src.toBytes();
+  Lexed l = lex(b);
+  string out = "";
+  for (i32 i = 0; i < tokenCount(l) - 1; i++) {
+    out = out + (out == "" ? "" : "|") + textAt(b, l, i);
+  }
+  return out;
+}
+
+/** The lex error, or "". */
+string errOf(string src) { return lex(src.toBytes()).error; }
+
+export string test_the_ordinary_tokens() {
+  T t = T.create();
+  t.eqStr(kinds("const x = 1;"), "id id p num p", "a declaration");
+  t.eqStr(kinds("a.b(c, d)"), "id p id p id p id p", "a call");
+  t.eqStr(texts("a=>b"), "a|=>|b", "`=>` is one token, not `=` then `>`");
+  t.eqStr(texts("a>>>=b"), "a|>>>=|b", "the longest punctuator wins");
+  t.eqStr(texts("a...b"), "a|...|b", "`...` before `.`");
+  t.eqStr(texts("this.#x"), "this|.|#x", "a private name is one identifier");
+  return t.report();
+}
+
+export string test_numbers() {
+  T t = T.create();
+  t.eqStr(texts("0x1F"), "0x1F", "hex");
+  t.eqStr(texts("1_000_000"), "1_000_000", "separators");
+  t.eqStr(texts("1e10"), "1e10", "an exponent");
+  t.eqStr(texts("1.5e-3"), "1.5e-3", "a signed exponent");
+  t.eqStr(texts("10n"), "10n", "bigint");
+  t.eqStr(texts(".5"), ".5", "a leading dot");
+  // **`1e` is not an exponent**, and backing out is the point: without it the scanner eats the `e`
+  // and the identifier after it disappears into the number.
+  t.eqStr(texts("1e"), "1|e", "`1e` is a number and an identifier");
+  return t.report();
+}
+
+export string test_strings_and_templates() {
+  T t = T.create();
+  t.eqStr(kinds("'a'"), "str", "single quotes");
+  t.eqStr(kinds("\"a\""), "str", "double quotes");
+  t.eqStr(texts("'a\\'b'"), "'a\\'b'", "an escaped quote does not end it");
+  t.eqStr(kinds("`plain`"), "tpl", "a template with no substitution");
+  // **The nesting case.** One token, three levels. A scanner that stops at the first `}` returns
+  // half a string and lexes the rest of the file as code.
+  t.eqStr(kinds("`a${`b${c}`}d`"), "tpl", "a template nested two deep is one token");
+  t.eqStr(texts("`a${`b${c}`}d`"), "`a${`b${c}`}d`", "and it spans the whole literal");
+  t.eqStr(kinds("`a${ {x:1} }b`"), "tpl", "an object literal inside a substitution");
+  t.eqStr(kinds("`a${ '}' }b`"), "tpl", "a `}` inside a string inside a substitution");
+  return t.report();
+}
+
+export string test_a_slash_after_a_value_is_division() {
+  T t = T.create();
+  t.eqStr(kinds("a / b"), "id p id", "after an identifier");
+  t.eqStr(kinds("1 / 2"), "num p num", "after a number");
+  t.eqStr(kinds("'s' / 2"), "str p num", "after a string");
+  t.eqStr(kinds("f(a) / b"), "id p id p p id", "after the `)` of a call");
+  t.eqStr(kinds("a[0] / b"), "id p num p p id", "after the `]` of an index");
+  t.eqStr(kinds("a++ / b"), "id p p id", "after a postfix `++`");
+  return t.report();
+}
+
+export string test_a_slash_in_expression_position_is_a_regex() {
+  T t = T.create();
+  t.eqStr(kinds("/re/"), "re", "at the start of a file");
+  t.eqStr(kinds("return /re/"), "id re", "after `return`");
+  t.eqStr(kinds("typeof /re/"), "id re", "after `typeof`");
+  t.eqStr(kinds("a = /re/"), "id p re", "after an operator");
+  t.eqStr(kinds("f(/re/)"), "id p re p", "after `(`");
+  t.eqStr(kinds("[/re/]"), "p re p", "after `[`");
+  t.eqStr(kinds("a, /re/"), "id p re", "after a comma");
+  return t.report();
+}
+
+export string test_the_two_cases_that_need_a_stack() {
+  T t = T.create();
+  // **`)` is division or not depending on what its `(` opened.** These two lines differ only in
+  // whether the identifier before the `(` was `if`, and they must lex differently.
+  t.eqStr(kinds("if (a) /re/.test(b)"), "id p id p re p id p id p",
+          "after the `)` of an `if` head, a regex may start");
+  t.eqStr(kinds("g(a) / b / c"), "id p id p p id p id",
+          "after the `)` of a call, the same shape is two divisions");
+  t.eqStr(kinds("while (a) /re/.test(b)"), "id p id p re p id p id p", "`while` too");
+  t.eqStr(kinds("for (a) /re/.test(b)"), "id p id p re p id p id p", "and `for`");
+  // A `}` closes a block far more often than an object literal, and after a block a regex may start.
+  t.eqStr(kinds("function f() {} /re/.test(a)"), "id id p p p p re p id p id p",
+          "after a block's `}`, a regex may start");
+  return t.report();
+}
+
+export string test_a_regex_body_is_not_read_as_operators() {
+  T t = T.create();
+  // A `/` inside a character class does not close the pattern.
+  t.eqStr(texts("var x = /[/]/;"), "var|x|=|/[/]/|;", "a slash inside a class");
+  t.eqStr(texts("var x = /a\\/b/g;"), "var|x|=|/a\\/b/g|;", "an escaped slash, and flags");
+  t.eqStr(kinds("/re/gi"), "re", "flags are part of the token");
+  return t.report();
+}
+
+export string test_comments_are_skipped_not_emitted() {
+  T t = T.create();
+  t.eqStr(kinds("a // b\nc"), "id id", "a line comment");
+  t.eqStr(kinds("a /* b */ c"), "id id", "a block comment");
+  t.eqStr(kinds("a /* * / */ c"), "id id", "a `*` and a `/` inside a block comment");
+  t.eqStr(kinds("a /*\n*/ c"), "id id", "a block comment spanning lines");
+  // A comment is not a value, so a `/` after one is decided by what came before the comment.
+  t.eqStr(kinds("a /* x */ / b"), "id p id", "division survives a comment between the operands");
+  return t.report();
+}
+
+export string test_positions_are_the_source_positions() {
+  T t = T.create();
+  u8[] b = "a\nbb\n  ccc".toBytes();
+  Lexed l = lex(b);
+  t.eqI32(lineAt(l, 0), 1, "first token's line");
+  t.eqI32(colAt(l, 0), 1, "first token's column");
+  t.eqI32(lineAt(l, 1), 2, "second line");
+  t.eqI32(colAt(l, 1), 1, "at the start of it");
+  t.eqI32(lineAt(l, 2), 3, "third line");
+  t.eqI32(colAt(l, 2), 3, "indented by two");
+  t.eqI32(startAt(l, 2), 7, "and the byte offset is the offset");
+  t.eqI32(lenAt(l, 2), 3, "with the right length");
+  return t.report();
+}
+
+export string test_a_template_spanning_lines_keeps_the_count_right() {
+  T t = T.create();
+  // The scanner recounts position over a template's bytes rather than adding its length, because a
+  // template is the one token that may contain a newline. Getting this wrong shifts every line
+  // after it, which is invisible until a diagnostic points at the wrong place.
+  u8[] b = "`a\nb`\nx".toBytes();
+  Lexed l = lex(b);
+  t.eqI32(lineAt(l, 0), 1, "the template starts on line 1");
+  t.eqI32(lineAt(l, 1), 3, "and `x` is on line 3, not line 2");
+  return t.report();
+}
+
+export string test_what_it_refuses() {
+  T t = T.create();
+  t.eqStr(errOf("'unterminated"), "unterminated string literal", "a string with no closing quote");
+  t.eqStr(errOf("'a\nb'"), "unterminated string literal", "a raw newline ends a string");
+  t.eqStr(errOf("`unterminated"), "unterminated template literal", "an unclosed template");
+  t.eqStr(errOf("`a${b"), "unterminated template literal", "an unclosed substitution");
+  t.eqStr(errOf("/* unterminated"), "unterminated block comment", "an unclosed block comment");
+  t.eqStr(errOf("var x = /re"), "unterminated regular expression", "an unclosed regex");
+  t.eqStr(errOf("var x = 1;"), "", "and nothing wrong with a file that is fine");
+  return t.report();
+}
+
+export string test_it_stops_rather_than_guessing() {
+  T t = T.create();
+  // `design/system/0009` D4: an error is where it stopped, so a diagnostic can point at it.
+  Lexed l = lex("var x = 1;\nvar y = 'oops".toBytes());
+  t.isTrue(l.error != "", "it reports");
+  t.isTrue(l.errorAt > 10, "and says where — after the first line, at " + itoa(l.errorAt));
+  t.isTrue(tokenCount(l) > 4, "keeping the tokens it did read");
+  return t.report();
+}

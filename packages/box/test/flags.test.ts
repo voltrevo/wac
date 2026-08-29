@@ -137,7 +137,7 @@ Deno.test("implementedFlags is what the applets read, not what they were meant t
 });
 
 Deno.test("the two sentences reach a caller", async () => {
-  const { buildApp } = await import("../../platform/build.ts");
+  const { buildApp } = await import("../../../harness/buildApp.ts");
   const built = await Deno.makeTempFile({ prefix: "wac-box-flags-" });
   try {
     await buildApp(BOX, built, { read: true });

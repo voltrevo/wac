@@ -20,7 +20,7 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 import { testBounded } from "../../../harness/deadline.ts";
 import { loadNow } from "../../../harness/bounded.ts";
 

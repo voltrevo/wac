@@ -1,0 +1,924 @@
+// Erasing TypeScript's types, leaving JavaScript that occupies the same bytes.
+//
+// `design/system/0009` D1: type syntax is replaced with **spaces**, never deleted, so every line and
+// column of the output matches the input and a stack trace from the result points at the TypeScript
+// that produced it. Newlines inside an erased range survive for the same reason — a multi-line type
+// annotation must not shorten the file.
+//
+// D4: a construct this cannot read is an error naming it and its position. Never a guess, never a
+// silent pass-through. A bundle that runs and misbehaves is the worst outcome available, because the
+// bridge it produces is what every capability call goes through.
+//
+// ## Why `:` is the whole problem
+//
+// Four different things are spelled `:` and only one is a type:
+//
+//     function f(a: T)      a type annotation
+//     ({ a: 1 })            an object literal's key
+//     c ? a : b             a conditional
+//     outer: for (…)        a label
+//
+// Bracket depth separates the first from the second. What separates it from the third is a **pending
+// `?` at the same depth**: a `:` is a conditional's if and only if a `?` opened one and has not been
+// closed. `Ctx` below carries that, one frame per open bracket, which is also what makes
+// `x?: T` — an optional parameter — distinguishable from `c ? x : y`.
+
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  Lexed, kEof, kIdent, kNum, kPunct, kRegex, kStr, kTemplate,
+  kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
+} from "./lex.wac";
+
+/** What a strip produced: the JavaScript, or the first thing it would not read. */
+export struct Stripped {
+  /** The input with type syntax blanked. Empty when `error` is set. */
+  u8[] out;
+  string error;
+  i32 line;
+  i32 col;
+}
+
+/**
+ * One open bracket, and what a `:` inside it would mean.
+ *
+ * `pendingTernary` is the count of `?` seen at this depth that have not been matched by a `:`. It is
+ * a count rather than a flag because conditionals nest — `a ? b ? c : d : e` — and a flag would
+ * close the outer one on the inner one's colon.
+ */
+struct Ctx {
+  /** `(`, `[`, `{`, or 0 for the file itself. */
+  i32 open;
+  /** Whether a `:` here introduces a type: true inside a signature's parentheses. */
+  bool colonIsType;
+  i32 pendingTernary;
+  /**
+   * Whether this `{` opened a class body, where `fault: number;` declares a *field* and the `:` is
+   * an annotation — not an object-literal key. A type-only field emits nothing at all, so leaving
+   * it produces `fault: number;` as a statement, which is not JavaScript.
+   */
+  bool isClassBody;
+}
+
+/** Where a token is, for a diagnostic. */
+struct At {
+  i32 line;
+  i32 col;
+}
+
+/**
+ * Strip `src`.
+ *
+ * The output is the same length as the input. Everything this erases becomes spaces except line
+ * breaks, which survive so that positions do not move.
+ */
+export Stripped strip(u8[] src) {
+  Lexed l = lex(src);
+  if (l.error != "") {
+    return Stripped(u8[0](), l.error, 0, 0);
+  }
+
+  // The blanking plan: byte offsets to erase, applied at the end. Collected rather than applied as
+  // we go so that a refusal leaves nothing half-done.
+  Vec<i32> cutFrom = Vec.create();
+  Vec<i32> cutTo = Vec.create();
+
+  Vec<Ctx> stack = Vec.create();
+  stack.push(Ctx(0, false, 0, false));
+
+  string err = "";
+  i32 errLine = 0;
+  i32 errCol = 0;
+  i32 n = tokenCount(l);
+  i32 i = 0;
+  while (i < n - 1 && err == "") {
+    i32 k = kindAt(l, i);
+    string tx = textAt(src, l, i);
+
+    if (k == kIdent()) {
+      // ── Whole declarations that vanish ────────────────────────────────────
+      if (tx == "interface" && startsDeclaration(src, l, i)) {
+        i32 end = pastBracedDeclaration(src, l, i);
+        if (end < 0) { err = "an `interface` that does not close"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+      if (tx == "type" && isTypeAlias(src, l, i)) {
+        i32 end = pastStatement(src, l, i);
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+      if (tx == "declare" && startsDeclaration(src, l, i)) {
+        err = "`declare` is not erasable — it has no JavaScript to leave behind";
+        errLine = lineAt(l, i); errCol = colAt(l, i);
+        break;
+      }
+      if (tx == "enum" && startsDeclaration(src, l, i)) {
+        err = "`enum` is not erasable — it emits a runtime object";
+        errLine = lineAt(l, i); errCol = colAt(l, i);
+        break;
+      }
+      if (tx == "namespace" && startsDeclaration(src, l, i)) {
+        err = "`namespace` is not erasable — it emits a runtime object";
+        errLine = lineAt(l, i); errCol = colAt(l, i);
+        break;
+      }
+
+      // ── `import type` / `export type`, whole ─────────────────────────────
+      if ((tx == "import" || tx == "export") && i + 1 < n && kindAt(l, i + 1) == kIdent()
+          && textAt(src, l, i + 1) == "type") {
+        i32 end = pastStatement(src, l, i);
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+
+      // ── `import { type X }` — one specifier, not the whole clause ────────
+      //
+      // **The clause form above does not cover this one**, and the difference is not cosmetic: an
+      // inline `type` left standing is read by the *bundler* as an imported binding called `type`,
+      // so every later use of that identifier is rewritten to reach through the exporting module.
+      // In `packages/platform/host/driver.ts` that turned an object literal's method parameter into
+      // `fromWasm($m11.type, v)`, which is not JavaScript — and Deno's parser is what said so, four
+      // steps downstream of the actual mistake.
+      //
+      // **`type` is only a modifier when an identifier follows it.** `import { type as x }` imports
+      // a binding that happens to be named `type`, and erasing that would delete a real import. The
+      // token after decides, which is exactly how TypeScript reads it.
+      if (tx == "type" && inImportOrExport(src, l, i) && inBraces(stack)
+          && i + 1 < n && kindAt(l, i + 1) == kIdent() && textAt(src, l, i + 1) != "as") {
+        i32 end = pastSpecifier(src, l, i + 1);
+        i32 from = startAt(l, i);
+        // **A comma goes with it, and which one matters.** Erasing `type Bound` out of
+        // `{ type Bound, shapeOf }` without its comma leaves `{ , shapeOf }`, which parses as
+        // nothing at all. So the following comma is taken when there is one.
+        //
+        // When there is not — the specifier is last — the *preceding* one is taken instead.
+        // `{ shapeOf, }` is legal JavaScript, so this is not about correctness; it is that
+        // `ts.transpileModule` writes `{ shapeOf }`, and `test/stripDifferential.test.ts` compares
+        // against exactly that. Leaving the trailing comma made the differential red on
+        // `entryBrowser.ts`, which is the oracle doing its job.
+        // **Exactly one separator per specifier removed**, or the clause is left malformed in one
+        // direction or the other. Both mistakes were made here before this comment was:
+        //
+        //   `{ type A, b }`                    take the one after   → `{ b }`
+        //   `{ b, type A }`                    take the one before  → `{ b }`
+        //   `{ b, type A, type C }`            one each             → `{ b }`
+        //
+        // The third is why the search backwards skips what is already erased. Taking the following
+        // comma for `type A` consumes the separator that `type C` would otherwise reach back for, so
+        // a naive `i - 1` finds a comma that is *already blank* and spends nothing — leaving
+        // `{ b, }`. That is `entryBrowser.ts`, and the differential is what reported it.
+        //
+        // Cuts are appended in increasing order by this forward walk, so the last one's end is a
+        // high-water mark and anything starting below it is gone.
+        if (end < n && textAt(src, l, end) == ",") {
+          end = end + 1;
+        } else {
+          // The range, not just its end: a token *before* the last cut also starts below its end,
+          // so testing the end alone walks straight past the live comma this is looking for.
+          i32 last = cutTo.len() - 1;
+          i32 low = last >= 0 ? cutFrom.get(last) : 0;
+          i32 high = last >= 0 ? cutTo.get(last) : 0;
+          i32 b = i - 1;
+          while (b > 0 && startAt(l, b) >= low && startAt(l, b) < high) { b = b - 1; }
+          if (b > 0 && textAt(src, l, b) == ",") { from = startAt(l, b); }
+        }
+        cut(cutFrom, cutTo, from, endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+
+      // ── Modifiers that are pure type syntax ──────────────────────────────
+      if (tx == "readonly" || tx == "abstract" || tx == "override"
+          || tx == "public" || tx == "private" || tx == "protected") {
+        // A parameter property — `constructor(private x)` — is *not* erasable: it declares a field.
+        if ((tx == "private" || tx == "public" || tx == "protected") && inParens(stack)) {
+          err = "a parameter property is not erasable — it declares a field as well as a parameter";
+          errLine = lineAt(l, i); errCol = colAt(l, i);
+          break;
+        }
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, i));
+        i = i + 1;
+        continue;
+      }
+      if (tx == "implements") {
+        i32 end = pastImplements(src, l, i);
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+
+      // ── `as` / `satisfies` and their type ────────────────────────────────
+      //
+      // **Not in an import or export.** `import { collect as realCollect }` renames a binding; it
+      // is not a type assertion, and erasing it silently drops the local name so every use of it
+      // becomes undefined. The two are spelled identically and only the enclosing statement says
+      // which — hence `inSpecifiers`.
+      //
+      // **And a rename is always *inside* the clause's braces**, which is the second half of that
+      // and was missing. `inImportOrExport` scans back to the statement's first word, so
+      // `export const OP = { … } as const;` — where the `as` sits at depth 0, the brace having
+      // closed — answered *rename* on the strength of the `export` and left `} as const;` in the
+      // output. `packages/platform/host/ops.ts:104` is that line, and it reached a JavaScript
+      // parser before anything here objected: the differential could not see it, because it prints
+      // our output through `ts.transpileModule` to normalise layout and that removes leftover
+      // TypeScript on the way. Third time that blindness has cost a bug — see the note on
+      // `test/stripDifferential.test.ts`'s third case.
+      //
+      // **And braces are not the only place a rename lives.** `import * as ns from "…"` puts one at
+      // depth 0, so requiring braces erased `as ns from "./m.js"` as though it were a cast — which
+      // deleted the *specifier*, so the import walk never saw the module and the bundle silently came
+      // out without it. That is why the `*` is named here beside the braces.
+      bool renaming = inImportOrExport(src, l, i)
+                   && (inBraces(stack) || (i > 0 && textAt(src, l, i - 1) == "*"));
+      if ((tx == "as" || tx == "satisfies") && !renaming) {
+        i32 end = pastType(src, l, i + 1, stack);
+        if (end < 0) { err = "a type after `" + tx + "` that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+
+      i = i + 1;
+      continue;
+    }
+
+    if (k == kPunct()) {
+      if (tx == "(" || tx == "[" || tx == "{") {
+        // **Parentheses that exist only for a cast go with the cast.** `(e as X)?.code` should
+        // leave `e?.code`, not `(e)?.code`, which is what TypeScript's own output does and was the
+        // last difference the differential reported.
+        //
+        // Decided here rather than at the `as` so that a *chain* works — `(x as unknown as T)` is
+        // two assertions and the first does not end at the `)`.
+        if (tx == "(" && groupingNotCall(src, l, i) && wrapsOnlyACast(src, l, i)) {
+          i32 close = matchParen(src, l, i);
+          if (close > 0) {
+            cut(cutFrom, cutTo, startAt(l, i), endOf(l, i));
+            cut(cutFrom, cutTo, startAt(l, close), endOf(l, close));
+          }
+        }
+        bool colonIsType = tx == "(" && opensSignature(src, l, i);
+        stack.push(Ctx(tx == "(" ? '(' : tx == "[" ? '[' : '{', colonIsType, 0,
+                       tx == "{" && opensClassBody(src, l, i)));
+        i = i + 1;
+        continue;
+      }
+      if (tx == ")" || tx == "]" || tx == "}") {
+        if (stack.len() > 1) { stack.remove(stack.len() - 1); }
+        // A return type follows the `)` of a signature — **unless a conditional is open here**,
+        // where the `:` is its second half. `(a ? f(x) : c)` is the case: `f(x)` ends in a `)`
+        // followed by a `:`, which is exactly the shape of `(a: T): R`, and only the pending `?`
+        // in the enclosing context tells them apart. Erasing here deleted the else branch.
+        if (tx == ")" && i + 1 < n && kindAt(l, i + 1) == kPunct()
+            && textAt(src, l, i + 1) == ":" && top(stack).pendingTernary == 0
+            && returnTypeFollows(src, l, i)) {
+          i32 end = pastType(src, l, i + 2, stack);
+          if (end < 0) { err = "a return type that does not end"; errLine = lineAt(l, i + 1); errCol = colAt(l, i + 1); break; }
+          cut(cutFrom, cutTo, startAt(l, i + 1), endOf(l, end - 1));
+          i = end;
+          continue;
+        }
+        i = i + 1;
+        continue;
+      }
+      if (tx == "?") {
+        // `x?: T` and `x?.y` are not conditionals. Everything else opens one.
+        bool optionalMark = i + 1 < n && kindAt(l, i + 1) == kPunct()
+                            && (textAt(src, l, i + 1) == ":" || textAt(src, l, i + 1) == ")"
+                                || textAt(src, l, i + 1) == ",");
+        if (optionalMark && top(stack).colonIsType) {
+          cut(cutFrom, cutTo, startAt(l, i), endOf(l, i));
+          i = i + 1;
+          continue;
+        }
+        bumpTernary(stack, 1);
+        i = i + 1;
+        continue;
+      }
+      if (tx == ":") {
+        if (top(stack).pendingTernary > 0) {
+          bumpTernary(stack, -1);
+          i = i + 1;
+          continue;
+        }
+        if (top(stack).colonIsType || declaresAVariable(src, l, i)
+            || (top(stack).isClassBody && declaresAField(src, l, i))) {
+          i32 end = pastType(src, l, i + 1, stack);
+          if (end < 0) { err = "a type annotation that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
+          cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+          i = end;
+          continue;
+        }
+        i = i + 1;
+        continue;
+      }
+      if (tx == "!" && isNonNullAssertion(src, l, i)) {
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, i));
+        i = i + 1;
+        continue;
+      }
+      if (tx == "<" && opensTypeArguments(src, l, i)) {
+        i32 end = pastAngles(src, l, i);
+        if (end < 0) { err = "a type argument list that does not close"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
+        cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
+        i = end;
+        continue;
+      }
+      i = i + 1;
+      continue;
+    }
+
+    i = i + 1;
+  }
+
+  if (err != "") { return Stripped(u8[0](), err, errLine, errCol); }
+  return Stripped(blank(src, cutFrom, cutTo), "", 0, 0);
+}
+
+// ── Applying the plan ─────────────────────────────────────────────────────────
+
+void cut(Vec<i32> from, Vec<i32> to, i32 a, i32 b) { from.push(a); to.push(b); }
+
+/** The byte just past token `i`. */
+i32 endOf(Lexed l, i32 i) { return startAt(l, i) + lenAt(l, i); }
+
+/**
+ * The input with every planned range turned to spaces.
+ *
+ * Line breaks survive inside a range: a type annotation may span lines, and shortening the file
+ * would move every position after it — which is the one thing D1 exists to prevent.
+ */
+u8[] blank(u8[] src, Vec<i32> from, Vec<i32> to) {
+  u8[] out = u8[src.len()]();
+  for (i32 i = 0; i < src.len(); i++) { out[i] = src[i]; }
+  for (i32 r = 0; r < from.len(); r++) {
+    i32 a = from.get(r);
+    i32 b = to.get(r);
+    for (i32 i = a; i < b && i < out.len(); i++) {
+      if (out[i] != '\n' && out[i] != '\r') { out[i] = ' '; }
+    }
+  }
+  return out;
+}
+
+// ── Context helpers ───────────────────────────────────────────────────────────
+
+Ctx top(Vec<Ctx> s) { return s.len() > 0 ? s.get(s.len() - 1) : Ctx(0, false, 0, false); }
+
+void bumpTernary(Vec<Ctx> s, i32 by) {
+  if (s.len() == 0) { return; }
+  Ctx c = s.get(s.len() - 1);
+  s.set(s.len() - 1, Ctx(c.open, c.colonIsType, c.pendingTernary + by, c.isClassBody));
+}
+
+bool inParens(Vec<Ctx> s) { return top(s).open == '('; }
+
+/** Whether the innermost open bracket is a `{` — an import clause's, among other things. */
+bool inBraces(Vec<Ctx> s) { return top(s).open == '{'; }
+
+// ── Deciding what a token is ──────────────────────────────────────────────────
+
+/**
+ * Whether token `i` sits inside an `import` or `export` statement, where `as` renames a binding.
+ *
+ * **Derived rather than tracked, because a tracked flag leaked.** It was set at the `import` and
+ * cleared at the `;` — and `import type { … }` is erased as a *whole statement*, so the `;` was
+ * jumped over and never seen. Every `as` in the rest of the file was then read as a rename and left
+ * alone, which in `entryBrowser.ts` meant an entire `as unknown as { … }` survived into the output.
+ *
+ * A backward scan cannot leak. It costs a walk per `as`, which is rare, and the alternative is a
+ * flag that is correct only if every branch remembers to clear it.
+ */
+bool inImportOrExport(u8[] src, Lexed l, i32 i) {
+  i32 depth = 0;
+  for (i32 k = i - 1; k >= 0; k--) {
+    if (kindAt(l, k) == kPunct()) {
+      string t = textAt(src, l, k);
+      if (t == ")" || t == "]" || t == "}") { depth = depth + 1; continue; }
+      if (t == "(" || t == "[") {
+        if (depth > 0) { depth = depth - 1; }
+        continue;
+      }
+      if (t == "{") {
+        if (depth > 0) { depth = depth - 1; continue; }
+        // **A `{` at depth zero is a statement boundary unless it is a specifier list.**
+        // `import { a, b as c }` must be walked through to reach the keyword; a function body must
+        // not, or the scan escapes the statement and finds the enclosing `export function` — which
+        // made every cast inside an exported function read as an import rename, and left
+        // `(globalThis as unknown as { … })` entirely unstripped.
+        if (k > 0) {
+          string before = textAt(src, l, k - 1);
+          if (before == "import" || before == "export" || before == "type") { continue; }
+        }
+        return false;
+      }
+      if (t == "}") { depth = depth + 1; continue; }
+      // A `;` at depth 0 ends the previous statement, so this one did not start with `import`.
+      if (t == ";" && depth == 0) { return false; }
+      continue;
+    }
+    if (depth != 0) { continue; }
+    string w = textAt(src, l, k);
+    if (w == "import" || w == "export") { return true; }
+  }
+  return false;
+}
+
+/**
+ * Whether the `(` at `i` wraps exactly one expression whose only operator is a cast.
+ *
+ * True for `(x as T)`, `(x as unknown as T)` and `(exports["k"] as T)`; false for `(a + b as T)`,
+ * where dropping the parentheses would rebind what follows and change the program. The test is that
+ * every token at depth zero is either part of a cast — an `as` or `satisfies` and its type — or
+ * part of a primary chain: a name, a literal, a `.`, or a bracketed group.
+ */
+bool wrapsOnlyACast(u8[] src, Lexed l, i32 i) {
+  i32 close = matchParen(src, l, i);
+  if (close < 0) { return false; }
+  bool sawCast = false;
+  i32 depth = 0;
+  i32 k = i + 1;
+  while (k < close) {
+    i32 kk = kindAt(l, k);
+    string t = textAt(src, l, k);
+    if (kk == kPunct()) {
+      if (t == "(" || t == "[" || t == "{") { depth = depth + 1; k = k + 1; continue; }
+      if (t == ")" || t == "]" || t == "}") { depth = depth - 1; k = k + 1; continue; }
+      if (depth > 0) { k = k + 1; continue; }
+      if (t == ".") { k = k + 1; continue; }
+      return false;
+    }
+    if (depth > 0) { k = k + 1; continue; }
+    if (t == "as" || t == "satisfies") {
+      i32 after = pastTypeSimple(src, l, k + 1, close);
+      if (after < 0) { return false; }
+      sawCast = true;
+      k = after;
+      continue;
+    }
+    // A name or a literal in the chain.
+    k = k + 1;
+  }
+  return sawCast;
+}
+
+/** Past a type, bounded by `stop`. A cut-down `pastType` for `wrapsOnlyACast`, which has a bound. */
+i32 pastTypeSimple(u8[] src, Lexed l, i32 i, i32 stop) {
+  i32 depth = 0;
+  i32 k = i;
+  while (k < stop) {
+    if (kindAt(l, k) == kPunct()) {
+      string t = textAt(src, l, k);
+      if (t == "(" || t == "[" || t == "{" || t == "<") { depth = depth + 1; k = k + 1; continue; }
+      if (t == ")" || t == "]" || t == "}" || t == ">") {
+        if (depth == 0) { return k; }
+        depth = depth - 1;
+        k = k + 1;
+        continue;
+      }
+      if (depth == 0 && (t == "," || t == ";" || t == "=")) { return k; }
+    } else if (depth == 0) {
+      string w = textAt(src, l, k);
+      if (w == "as" || w == "satisfies") { return k; }
+    }
+    k = k + 1;
+  }
+  return stop;
+}
+
+/**
+ * Whether the `(` at `i` groups an expression rather than opening a call or a signature.
+ *
+ * `f(x as T)` and `(x as T)` are the same three tokens with a different thing in front, and only
+ * this tells them apart. Reading a call's parentheses as a cast's removed them — turning
+ * `Uint8Array.from(items as ArrayLike<number>)` into `Uint8Array.from items`, which is not a
+ * program.
+ */
+bool groupingNotCall(u8[] src, Lexed l, i32 i) {
+  if (i == 0) { return true; }
+  i32 pk = kindAt(l, i - 1);
+  string pt = textAt(src, l, i - 1);
+  // After a value or a closing bracket, a `(` is a call. After `new`, it is the constructor's
+  // arguments. Everything else — an operator, a comma, a keyword, an opening bracket — is a group.
+  if (pk == kNum() || pk == kStr() || pk == kTemplate()) { return false; }
+  if (pk == kIdent()) { return pt == "return" || pt == "typeof" || pt == "await" || pt == "case"
+                            || pt == "in" || pt == "of" || pt == "delete" || pt == "void"
+                            || pt == "instanceof" || pt == "yield" || pt == "throw"; }
+  if (pt == "]") { return false; }
+  if (pt == ")") {
+    // A `)` closing an `if`, `while` or `for` head is followed by a *statement*, so a `(` there
+    // groups rather than calls: `if (cov !== undefined) (app as X).__cov_init?.();`. The lexer
+    // makes the same distinction for the same reason — see `regexCanStart`.
+    i32 depth = 0;
+    for (i32 k = i - 1; k >= 0; k--) {
+      if (kindAt(l, k) != kPunct()) { continue; }
+      string t = textAt(src, l, k);
+      if (t == ")") { depth = depth + 1; continue; }
+      if (t == "(") {
+        depth = depth - 1;
+        if (depth == 0) {
+          if (k == 0) { return false; }
+          string head = textAt(src, l, k - 1);
+          return head == "if" || head == "while" || head == "for" || head == "with";
+        }
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+/** The previous significant token's text, or "". */
+string prevText(u8[] src, Lexed l, i32 i) {
+  return i > 0 ? textAt(src, l, i - 1) : "";
+}
+
+/**
+ * Whether an identifier at `i` begins a declaration rather than being used as a name.
+ *
+ * `interface`, `type`, `enum` and `declare` are not reserved words in JavaScript, so `type` is a
+ * perfectly good variable and `x.type` is a property. A declaration is one that starts a statement:
+ * nothing before it, or a `;`, `{`, `}`, or an `export`.
+ */
+bool startsDeclaration(u8[] src, Lexed l, i32 i) {
+  if (i == 0) { return true; }
+  string p = prevText(src, l, i - 1 + 1 - 1);
+  string prev = textAt(src, l, i - 1);
+  return prev == ";" || prev == "{" || prev == "}" || prev == "export" || prev == "default";
+}
+
+/** `type X = …` — a type alias, as against the identifier `type`. */
+bool isTypeAlias(u8[] src, Lexed l, i32 i) {
+  if (!startsDeclaration(src, l, i)) { return false; }
+  if (i + 2 >= tokenCount(l)) { return false; }
+  if (kindAt(l, i + 1) != kIdent()) { return false; }
+  // `type X =` or `type X<…> =`
+  string after = textAt(src, l, i + 2);
+  return after == "=" || after == "<";
+}
+
+/**
+ * Whether the `(` at `i` opens a signature's parameter list, where a `:` is a type.
+ *
+ * True after a function-ish head: `function f(`, `f(` in a class body, `(` of an arrow, and the
+ * `constructor(`. False for a call's parentheses and for a grouping.
+ *
+ * The arrow case cannot be decided from the left — `(a: T) => x` and `f(a)` differ only after the
+ * `)` — so this looks *forward* for the `=>` that would make it one.
+ */
+bool opensSignature(u8[] src, Lexed l, i32 i) {
+  string prev = i > 0 ? textAt(src, l, i - 1) : "";
+  // `function f(`, `constructor(`, a method name in a class body, `set x(`.
+  if (i >= 2 && kindAt(l, i - 1) == kIdent()) {
+    string before = textAt(src, l, i - 2);
+    if (before == "function" || before == "class" || before == "new") { return true; }
+  }
+  if (prev == "function" || prev == "constructor") { return true; }
+  // An arrow's parameter list: find the matching `)` and see whether `=>` follows.
+  i32 close = matchParen(src, l, i);
+  if (close >= 0) {
+    if (close + 1 < tokenCount(l) && textAt(src, l, close + 1) == "=>") { return true; }
+    // A return type between them: `(a: T): R => x`
+    if (close + 1 < tokenCount(l) && textAt(src, l, close + 1) == ":") { return true; }
+  }
+  // A method in a class or an object type: `name(` at the start of a member. Conservative — a call
+  // is far commoner, and a wrong `true` would erase an argument.
+  return false;
+}
+
+/** The token index of the `)` matching the `(` at `i`, or -1. */
+i32 matchParen(u8[] src, Lexed l, i32 i) {
+  i32 depth = 0;
+  i32 n = tokenCount(l);
+  for (i32 k = i; k < n; k++) {
+    if (kindAt(l, k) != kPunct()) { continue; }
+    string t = textAt(src, l, k);
+    if (t == "(") { depth = depth + 1; }
+    else if (t == ")") {
+      depth = depth - 1;
+      if (depth == 0) { return k; }
+    }
+  }
+  return -1;
+}
+
+/** Whether the `:` after a `)` is a return type rather than a conditional's second half. */
+bool returnTypeFollows(u8[] src, Lexed l, i32 i) {
+  // Look back for the `(` this `)` closed, and ask whether it opened a signature.
+  i32 depth = 0;
+  for (i32 k = i; k >= 0; k--) {
+    if (kindAt(l, k) != kPunct()) { continue; }
+    string t = textAt(src, l, k);
+    if (t == ")") { depth = depth + 1; }
+    else if (t == "(") {
+      depth = depth - 1;
+      if (depth == 0) { return opensSignature(src, l, k); }
+    }
+  }
+  return false;
+}
+
+/** `let x: T`, `const x: T`, `var x: T`, and a class field `x: T`. */
+bool declaresAVariable(u8[] src, Lexed l, i32 i) {
+  if (i < 2) { return false; }
+  if (kindAt(l, i - 1) != kIdent()) { return false; }
+  string two = textAt(src, l, i - 2);
+  return two == "let" || two == "const" || two == "var";
+}
+
+/**
+ * Whether the `{` at `i` opens a class body.
+ *
+ * Scans back over the heritage clause — `class C extends D` — to the `class` keyword. An
+ * `implements` clause is already erased by the time this runs, so only `extends` is in the way.
+ */
+bool opensClassBody(u8[] src, Lexed l, i32 i) {
+  i32 k = i - 1;
+  i32 depth = 0;
+  while (k >= 0) {
+    if (kindAt(l, k) == kPunct()) {
+      string t = textAt(src, l, k);
+      if (t == ")" || t == "]") { depth = depth + 1; k = k - 1; continue; }
+      if (t == "(" || t == "[") { depth = depth - 1; k = k - 1; continue; }
+      if (depth > 0) { k = k - 1; continue; }
+      if (t == "." || t == "<" || t == ">" || t == ",") { k = k - 1; continue; }
+      return false;
+    }
+    if (depth > 0) { k = k - 1; continue; }
+    string w = textAt(src, l, k);
+    if (w == "class") { return true; }
+    if (w == "extends") { k = k - 1; continue; }
+    // A plain name — the class's own, or a base's. Keep looking.
+    k = k - 1;
+    if (i - k > 8) { return false; }
+  }
+  return false;
+}
+
+/**
+ * A class field: `name: T;` at the top of a class body, where the name follows `{`, `;` or `}`.
+ *
+ * **Modifiers are skipped, because they are still in the token stream.** `readonly fault: number;`
+ * erases the `readonly` in the *cut plan*, not in the tokens, so a look-back of two lands on it
+ * rather than on the brace. That is how `readonly fault: number;` survived into the bundle and made
+ * Deno refuse to parse it — a case neither the hand-written tests nor the differential could see.
+ */
+bool declaresAField(u8[] src, Lexed l, i32 i) {
+  if (i < 2) { return false; }
+  if (kindAt(l, i - 1) != kIdent()) { return false; }
+  i32 k = i - 2;
+  while (k >= 0 && kindAt(l, k) == kIdent() && isMemberModifier(textAt(src, l, k))) { k = k - 1; }
+  if (k < 0) { return false; }
+  if (kindAt(l, k) != kPunct()) { return false; }
+  string two = textAt(src, l, k);
+  return two == "{" || two == ";" || two == "}";
+}
+
+bool isMemberModifier(string w) {
+  return w == "readonly" || w == "static" || w == "declare" || w == "abstract"
+      || w == "override" || w == "public" || w == "private" || w == "protected"
+      || w == "accessor";
+}
+
+/** A postfix `!`: `x!.y`, `x!;`, `x!)`. Not the prefix `!x`. */
+bool isNonNullAssertion(u8[] src, Lexed l, i32 i) {
+  if (i == 0) { return false; }
+  i32 pk = kindAt(l, i - 1);
+  string pt = textAt(src, l, i - 1);
+  bool afterValue = pk == kIdent() || pk == kNum() || pk == kStr() || pk == kTemplate()
+                 || pt == ")" || pt == "]";
+  if (!afterValue) { return false; }
+  // `a != b` and `a !== b` never reach here — the lexer makes those one token.
+  return true;
+}
+
+/**
+ * Whether a `<` at `i` opens type arguments rather than being a comparison.
+ *
+ * `design/system/0009` D3. Two cases are certain and the rest is refused rather than guessed:
+ * after `new Identifier`, and after an identifier where the angles close before any token that
+ * cannot appear in a type.
+ */
+bool opensTypeArguments(u8[] src, Lexed l, i32 i) {
+  if (i == 0) { return false; }
+  if (kindAt(l, i - 1) != kIdent()) { return false; }
+  // A generic declaration — `function f<T>(`, `class C<T>`, `interface I<T>` — or a call.
+  return pastAngles(src, l, i) > 0;
+}
+
+/**
+ * The token just past the `>` matching the `<` at `i`, or -1 if this is not a type argument list.
+ *
+ * A type may contain nested angles, parentheses, brackets and braces, so those are counted. A token
+ * that cannot appear in a type — a statement keyword, a `;`, an assignment — means the `<` was a
+ * comparison, and the answer is -1 rather than a guess.
+ */
+i32 pastAngles(u8[] src, Lexed l, i32 i) {
+  i32 angle = 0;
+  i32 other = 0;
+  i32 n = tokenCount(l);
+  for (i32 k = i; k < n; k++) {
+    i32 kk = kindAt(l, k);
+    if (kk != kPunct()) {
+      if (kk == kRegex()) { return -1; }
+      continue;
+    }
+    string t = textAt(src, l, k);
+    if (t == "<") { angle = angle + 1; continue; }
+    if (t == ">") {
+      angle = angle - 1;
+      if (angle == 0 && other == 0) { return k + 1; }
+      continue;
+    }
+    if (t == ">>") {
+      // `Map<string, Array<T>>` closes two at once.
+      angle = angle - 2;
+      if (angle <= 0 && other == 0) { return k + 1; }
+      continue;
+    }
+    if (t == ">>>") {
+      angle = angle - 3;
+      if (angle <= 0 && other == 0) { return k + 1; }
+      continue;
+    }
+    if (t == "(" || t == "[" || t == "{") { other = other + 1; continue; }
+    if (t == ")" || t == "]" || t == "}") {
+      other = other - 1;
+      if (other < 0) { return -1; }
+      continue;
+    }
+    if (other > 0) { continue; }
+    // Punctuation that appears inside a type argument list at depth 0.
+    if (t == "," || t == "." || t == "|" || t == "&" || t == "=>" || t == "?" || t == ":"
+        || t == "[" || t == "]") {
+      continue;
+    }
+    return -1;
+  }
+  return -1;
+}
+
+/**
+ * The token just past a type starting at `i`, or -1.
+ *
+ * A type ends at the first delimiter seen at bracket depth zero: `,`, `)`, `]`, `}`, `;`, `=`, or a
+ * `{` that begins a body. Everything else — unions, intersections, function types, conditionals,
+ * literals, generics — is inside brackets or is an ordinary token.
+ */
+i32 pastType(u8[] src, Lexed l, i32 i, Vec<Ctx> stack) {
+  i32 depth = 0;
+  i32 angle = 0;
+  i32 n = tokenCount(l);
+  i32 k = i;
+  // Whether anything of the type has been consumed yet. A `{` *first* is an object type —
+  // `let x: { a: number }` — and a `{` after a complete type is a body: `function f(): void {`.
+  // Without the distinction the scan walks into the function body and erases it.
+  bool started = false;
+  while (k < n) {
+    i32 kk = kindAt(l, k);
+    if (kk == kEof()) { return depth == 0 ? k : -1; }
+    if (kk != kPunct()) {
+      // **`as` and `satisfies` end a type rather than continuing one.** They are identifiers, so a
+      // scan that treats every identifier as type material walks straight through the second half
+      // of a double cast: `x as unknown as { … }` is two assertions, and reading it as one stops at
+      // the `{`, leaves the object type behind, and then strips its insides as though they were
+      // code. `entryBrowser.ts` is where that showed.
+      if (depth == 0 && angle == 0 && started) {
+        string w = textAt(src, l, k);
+        if (w == "as" || w == "satisfies") { return k; }
+      }
+      started = true;
+      k = k + 1;
+      continue;
+    }
+    string t = textAt(src, l, k);
+    if (t == "{" && depth == 0 && started) { return k; }
+    if (t == "(" || t == "[" || t == "{") { depth = depth + 1; started = true; k = k + 1; continue; }
+    if (t == ")" || t == "]" || t == "}") {
+      if (depth == 0) { return k; }
+      depth = depth - 1;
+      k = k + 1;
+      continue;
+    }
+    // **An infix type operator means the type is not complete**, so what follows it is more type.
+    // `started` is what tells a `{` that begins an object type from a `{` that begins a body, and
+    // after `|`, `&` or `=>` the answer is always "type". Missing this left `{ ready: true }` in
+    // `as Result | { ready: true }` behind as code — the third time this same shape has bitten,
+    // after a function type's result and a double cast.
+    if (depth == 0 && angle == 0 && (t == "|" || t == "&")) {
+      started = false;
+      k = k + 1;
+      continue;
+    }
+    if (t == "<") { angle = angle + 1; k = k + 1; continue; }
+    if (t == ">") { if (angle > 0) { angle = angle - 1; } k = k + 1; continue; }
+    if (t == ">>") { angle = angle - 2; if (angle < 0) { angle = 0; } k = k + 1; continue; }
+    if (depth == 0 && angle == 0) {
+      if (t == "," || t == ";" || t == "=") { return k; }
+      // **`=>` is a function type's arrow only when a parameter list precedes it.**
+      // `let f: (a) => B` continues; `(a): R => body` does not, and reading the second as a type
+      // erases the arrow function's body. What tells them apart is the token before: a `)` closes
+      // the parameters of a function *type*, and anything else ends the type.
+      if (t == "=>") {
+        if (k > i && kindAt(l, k - 1) == kPunct() && textAt(src, l, k - 1) == ")") {
+          k = k + 1;
+          // **Back to the start of a type, not the middle of one.** What follows a function type's
+          // arrow is its *result*, and a result may be an object type — `(…) => { stop(): void }`.
+          // Leaving `started` true made the `{` read as a body, so the type ended at it and
+          // `{ stop(): void },` survived into the output as code. `children.ts` is where that showed.
+          started = false;
+          continue;
+        }
+        return k;
+      }
+    }
+    started = true;
+    k = k + 1;
+  }
+  return -1;
+}
+
+/** Past a whole `interface X { … }`. */
+i32 pastBracedDeclaration(u8[] src, Lexed l, i32 i) {
+  i32 n = tokenCount(l);
+  i32 k = i;
+  while (k < n && !(kindAt(l, k) == kPunct() && textAt(src, l, k) == "{")) { k = k + 1; }
+  if (k >= n) { return -1; }
+  i32 depth = 0;
+  while (k < n) {
+    if (kindAt(l, k) == kPunct()) {
+      string t = textAt(src, l, k);
+      if (t == "{") { depth = depth + 1; }
+      else if (t == "}") {
+        depth = depth - 1;
+        if (depth == 0) { return k + 1; }
+      }
+    }
+    k = k + 1;
+  }
+  return -1;
+}
+
+/** Past a statement ending in `;`, or at the last token of the line if there is none. */
+/**
+ * One import or export specifier, from its name to the token after it.
+ *
+ * `Bound`, `Bound as B` — that is the whole grammar, so this is two steps rather than a scan. It is
+ * deliberately *not* bounded by the closing brace: a caller that has already decided this is a
+ * specifier is asking where it ends, and a malformed clause should run into the brace and be
+ * reported by the parser that reads the output rather than silently half-erased here.
+ */
+i32 pastSpecifier(u8[] src, Lexed l, i32 i) {
+  i32 n = tokenCount(l);
+  i32 k = i + 1;
+  if (k + 1 < n && kindAt(l, k) == kIdent() && textAt(src, l, k) == "as") { k = k + 2; }
+  return k;
+}
+
+i32 pastStatement(u8[] src, Lexed l, i32 i) {
+  i32 n = tokenCount(l);
+  i32 depth = 0;
+  i32 startLine = lineAt(l, i);
+  for (i32 k = i; k < n - 1; k++) {
+    if (kindAt(l, k) == kPunct()) {
+      string t = textAt(src, l, k);
+      if (t == "(" || t == "[" || t == "{") { depth = depth + 1; }
+      else if (t == ")" || t == "]" || t == "}") { depth = depth - 1; }
+      else if (t == ";" && depth == 0) { return k + 1; }
+    }
+    // No semicolon: the statement ends where the line does — unless either side of the break says
+    // it does not. `type A =\n  | B\n  | C;` breaks after `B`, and it is the `|` *beginning the
+    // next line* that says the type continues. Asking only about the token before the break stopped
+    // this one line early and left `| C;` behind as code.
+    if (depth == 0 && k + 1 < n && lineAt(l, k + 1) > lineAt(l, k)
+        && !continuesAType(src, l, k) && !continuesAType(src, l, k + 1)) {
+      return k + 1;
+    }
+  }
+  return n - 1;
+}
+
+/** Whether a type alias continues onto the next line — `type X =\n  | A\n  | B;`. */
+bool continuesAType(u8[] src, Lexed l, i32 k) {
+  if (kindAt(l, k) != kPunct()) { return false; }
+  string t = textAt(src, l, k);
+  return t == "=" || t == "|" || t == "&" || t == "," || t == "<" || t == "(" || t == "extends";
+}
+
+/** Past an `implements A, B<C>` clause, up to the class body's `{`. */
+i32 pastImplements(u8[] src, Lexed l, i32 i) {
+  i32 n = tokenCount(l);
+  i32 angle = 0;
+  for (i32 k = i; k < n; k++) {
+    if (kindAt(l, k) != kPunct()) { continue; }
+    string t = textAt(src, l, k);
+    if (t == "<") { angle = angle + 1; continue; }
+    if (t == ">") { if (angle > 0) { angle = angle - 1; } continue; }
+    if (t == "{" && angle == 0) { return k; }
+  }
+  return n - 1;
+}

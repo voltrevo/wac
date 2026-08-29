@@ -27,8 +27,20 @@ import {
 /** What a host holds: the module's exports, plus the constructors it builds capabilities with. */
 export type Driven = {
   exports: Record<string, unknown>;
-  /** `Core.of(...)`, `Pending$i64.of(...)` — the shape `entry.ts` expects of a bundle. */
-  classes: Record<string, { of(...a: unknown[]): unknown; create?(): unknown }>;
+  /**
+   * `Core.of(...)`, `Pending$i64.of(...)` — the shape `entry.ts` expects of a bundle.
+   *
+   * **And an enum's variants, which are constructors too**: `Read.Failed(why)` is how a host answers
+   * with one. They are indexed here beside `of` and `create` rather than in a table of their own,
+   * because a caller reaching for `cls.Read.Failed` does not care which kind of type it was.
+   */
+  classes: Record<
+    string,
+    { of?(...a: unknown[]): unknown; create?(): unknown } & Record<
+      string,
+      ((...a: unknown[]) => unknown) | undefined
+    >
+  >;
   /** Convert a value the module returned into something JavaScript can read. */
   fromWasm(type: string, v: unknown): unknown;
   /** And the other way, for what a capability answers with. */
@@ -116,6 +128,17 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
       if (base.startsWith("fn[") && typeof v === "function") {
         const j = manifest.callbacks.findIndex((c) => c.type === base);
         if (j < 0) throw new Error(`${base} has no dispatcher in this manifest`);
+        // **The same function twice is one slot.** This pushed unconditionally, so a callback passed
+        // on every call burned a slot each time and a real program ran out: `wac app-run` of
+        // `packages/box`'s shell failed on the *first* run with "at most 16 distinct fn[void(i32)]
+        // functions", where the native host ran it. The word in that message is *distinct*, and it
+        // was not true of what the code did.
+        //
+        // Identity, not equality — two closures over the same body are two functions to the module
+        // and must stay two, or a dispatch would reach the wrong one. `indexOf` is the right
+        // comparison and the arrays are bounded by `slots`, so the scan is over at most sixteen.
+        const seen = slots[j].indexOf(v as CallableFunction);
+        if (seen >= 0) return fn(exports, manifest.callbacks[j].helper)(seen);
         const slot = slots[j].length;
         if (slot >= manifest.callbacks[j].slots) {
           throw new Error(
@@ -137,14 +160,25 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
   for (const s of manifest.structs) {
     const ctor = s.methods.find((m) => m.name === "of" && m.isStatic);
     const make = s.methods.find((m) => m.name === "create" && m.isStatic);
-    if (ctor === undefined && make === undefined) continue;
-    const entry: { of(...a: unknown[]): unknown; create?(): unknown } = {
-      of: (...a: unknown[]) => {
-        if (ctor === undefined) throw new Error(`${s.name} has no \`of\``);
-        return fn(exports, ctor.export)(...ctor.params.map((t, i) => driven.toWasm(t, a[i])));
-      },
-    };
+    // **An enum has neither `of` nor `create` and is still constructible.** Skipping on that pair
+    // alone left `cls.Read` undefined, and `provider.ts` answering a read with `cls.Read.Failed(…)`
+    // died on *Cannot read properties of undefined*. `wac app-run` on a JavaScript host could not
+    // start `packages/box`'s shell for this reason — the manifest had the variants all along, with a
+    // `make` export each, and nothing read them. `issues/system/0276c`.
+    if (ctor === undefined && make === undefined && s.variants.length === 0) continue;
+    const entry: Driven["classes"][string] = {};
+    if (ctor !== undefined) {
+      entry.of = (...a: unknown[]) =>
+        fn(exports, ctor.export)(...ctor.params.map((t, i) => driven.toWasm(t, a[i])));
+    }
     if (make !== undefined) entry.create = () => fn(exports, make.export)();
+    for (const v of s.variants) {
+      // The payload's types come from the manifest too, so a variant carrying a string is marshalled
+      // the same way a method parameter of that type would be. A variant with no payload is a call
+      // with no arguments, which falls out of the same line.
+      entry[v.name] = (...a: unknown[]) =>
+        fn(exports, v.make)(...v.fields.map((f, i) => driven.toWasm(f.type, a[i])));
+    }
     driven.classes[hostName(s.name)] = entry;
   }
   return driven;

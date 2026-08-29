@@ -1,11 +1,27 @@
-// Build a wac application into one executable JavaScript file.
+// **This file needs rethinking, and most of it should not exist.** `design/system/0009`.
 //
-//   wac task app:build packages/platform/example/wc.wac -o wc
-//   ./wc --allow-read -- README.md
+// What is genuinely here is the **browser** build: a page must carry its own host, because there is
+// no PATH in a browser to find a `wac` on. Nothing else can build one and nothing else should.
 //
-// The result is self-contained: the wasm is base64 inside it, the bindgen wrappers are
-// inside it, and so is the whole host — bridge, worker, capability providers. Nothing is
-// read from this repo at run time, so the file can be copied anywhere Deno exists.
+// **The `deno` and `node` targets go.** They make a *self-contained* command — the bridge embedded,
+// needing only the runtime — and once `bootstrap.sh --host deno` has given somebody a `wac`,
+// `wac app` makes a smaller artefact for the same job: a shell preamble that runs `command -v wac`
+// and execs `wac app-run "$0"`, caring not at all whether that `wac` is native, Deno-hosted or
+// Node-hosted.
+//
+// What follows from removing them is work, not an obstacle. `buildApp` has about twenty callers
+// across twelve files in `packages/box/test/`; those tests build an application in order to test
+// **box**, so they get one from `wac app` instead — which is better, because it exercises the
+// command that ships rather than a second builder standing beside it. And
+// `packages/box/test/node_shell.test.ts` exists to test the *Node-hosted path*, so it follows that
+// path to wherever `bootstrap.sh --host nodejs` puts it. A test is not a reason to keep the thing
+// it tests.
+//
+// **One change is worth making whatever happens to the targets.** The bundling below shells out to
+// `deno bundle`, which fetches `@esbuild/<platform>` from npm on first use — the only reason a
+// hosted build needs a network at all. `packages/ts` removes that. The coupling to expect is that
+// the sources generated here import through `import.meta.resolve`, so their specifiers are `file://`
+// URLs rather than relative paths, and the bundler treats anything non-relative as external.
 //
 // The shebang asks for the permissions the *launcher* needs, which are not the ones the
 // application gets. Deno must be allowed to read the file it is running and to spawn a
@@ -167,109 +183,19 @@ export type Grants = {
 };
 
 /**
- * Node's `net`, given the promise shape the world expects.
+ * Node's `net`, given the promise shape the world expects — as an import rather than inlined.
  *
- * Emitted into the launcher only when the network is granted, so a program without it has
- * no `node:net` import at all — the same discipline as everything else here: an ungranted
+ * Emitted into the launcher only when the network is granted, so a program without it has no
+ * `node:net` import at all: the same discipline as everything else here, where an ungranted
  * capability is absent rather than refused at the call.
  *
- * Data is queued rather than dropped. A `recv` that has not been called yet must not lose
- * bytes the peer has already sent, so the socket is paused between reads and a waiter is
- * parked only when the queue is empty.
+ * **The 93 lines behind it moved to `host/nodeNet.js` on 2026-08-29**, because
+ * `bootstrap.sh --host nodejs` needs exactly the same code and cannot read TypeScript. The choice
+ * was a second copy of a socket adapter or one module both can import; a copy would drift, and the
+ * drift would show up as a program that hangs rather than one that fails to build. The bundler
+ * inlines it either way, so what a built program contains is unchanged.
  */
-const NODE_NET = `
-import * as nodeNetMod from "node:net";
-import * as nodeDgramMod from "node:dgram";
-
-function wrapSock(sock) {
-  const queue = [];
-  let ended = false;
-  let waiting = null;
-  const pump = () => {
-    if (waiting === null) return;
-    if (queue.length > 0) { const w = waiting; waiting = null; w(queue.shift()); return; }
-    if (ended) { const w = waiting; waiting = null; w(new Uint8Array(0)); }
-  };
-  sock.on("data", (c) => { queue.push(new Uint8Array(c)); pump(); });
-  sock.on("end", () => { ended = true; pump(); });
-  sock.on("close", () => { ended = true; pump(); });
-  sock.on("error", () => { ended = true; pump(); });
-  return {
-    recv: () => new Promise((res) => { waiting = res; pump(); }),
-    send: (b) => new Promise((res, rej) => sock.write(b, (e) => (e ? rej(e) : res()))),
-    close: () => sock.destroy(),
-    // end() sends FIN and leaves the readable side open, which is what a half-close is;
-    // destroy() above tears down both. See issues/system 0215. No backticks in this comment:
-    // it is inside the template literal that generates the launcher, and one would close it.
-    closeSend: () => sock.end(),
-    // Who is at the other end, for a server that wants to log it or refuse it. Node gives an
-    // IPv4-mapped form for a v6 socket ("::ffff:127.0.0.1"), which is the same address said longer,
-    // so it is unwrapped here rather than at every call site.
-    peer: (sock.remoteAddress ?? "").replace(/^::ffff:/, ""),
-    // This end's port. A socket that asked the kernel for a free one has to be able to say which it
-    // got, or asking is the same as not being able to.
-    port: sock.localPort ?? 0,
-  };
-}
-
-const nodeNet = {
-  connect: (host, port) =>
-    new Promise((res, rej) => {
-      const s = nodeNetMod.createConnection({ host, port }, () => res(wrapSock(s)));
-      s.once("error", rej);
-    }),
-  listen: (address, port) =>
-    new Promise((res) => {
-      const pending = [];
-      let waiting = null;
-      const server = nodeNetMod.createServer((s) => {
-        const w = wrapSock(s);
-        if (waiting !== null) { const k = waiting; waiting = null; k(w); } else { pending.push(w); }
-      });
-      // No address means every interface, as in the Deno host and as this did before there was an
-      // address to pass. See the listen capability in platform.wac.
-      server.listen(address === "" ? { port } : { host: address, port }, () => res({
-        accept: () => new Promise((k) => {
-          if (pending.length > 0) { k(pending.shift()); return; }
-          waiting = k;
-        }),
-        close: () => server.close(),
-        // The port it was actually given, which is what makes port 0 usable.
-        port: (server.address() ?? {}).port ?? 0,
-      }));
-    }),
-  // **Datagrams.** \`udp4\` rather than \`udp6\`: the capability takes an address and this system
-  // has no way to say which family is meant, so it binds the one every test and every corpus
-  // script uses. A v6 datagram socket is a thing to add when something asks for one, not a
-  // default to guess at. design/system 0007.
-  bindDatagram: (address, port) =>
-    new Promise((res, rej) => {
-      const s = nodeDgramMod.createSocket("udp4");
-      const queue = [];
-      let waiting = null;
-      const pump = () => {
-        if (waiting === null || queue.length === 0) return;
-        const w = waiting;
-        waiting = null;
-        w(queue.shift());
-      };
-      // The sender is queued *with* the payload. Two queues would let a program pair one
-      // datagram's bytes with another's sender and neither half would look wrong.
-      s.on("message", (msg, from) => {
-        queue.push({ bytes: new Uint8Array(msg), peer: from.address, port: from.port });
-        pump();
-      });
-      s.once("error", rej);
-      s.bind(port, address === "" ? undefined : address, () => res({
-        receive: () => new Promise((k) => { waiting = k; pump(); }),
-        sendTo: (b, host, p) =>
-          new Promise((k, j) => s.send(b, p, host, (e) => (e ? j(e) : k()))),
-        close: () => s.close(),
-        port: s.address().port ?? 0,
-      }));
-    }),
-};
-`;
+const NODE_NET = `import { nodeNet } from ${JSON.stringify(import.meta.resolve("./host/nodeNet.js"))};\n`;
 
 /** Which runtime the built program is for. */
 export type Target = "deno" | "node" | "browser";

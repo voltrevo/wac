@@ -1,0 +1,163 @@
+// A store-only zip, read and written.
+//
+// `design/system/0009`: the transform's whole interface is `u8[]` in, `u8[]` out — so the file set
+// has to arrive as one blob, and this is the format it arrives in.
+//
+// **Zip rather than something simpler**, and the reason is debugging rather than fidelity: a
+// bootstrap that goes wrong hands you an intermediate, and `unzip -l` reads this one. A bespoke
+// length-prefixed format would be twenty lines shorter and inspectable by nothing.
+//
+// **Store only.** No compression, because the transform's caller is a build and not a network, and
+// an inflater here would be a second copy of `packages/gzip`. Method 8 is refused by name.
+//
+// Reading walks the local file headers rather than the central directory. That is enough for an
+// archive this program wrote or a host wrote for it, and the central directory is the part a
+// general reader needs for archives that have been appended to.
+
+import { Vec } from "core/vec.wac";
+import { crc32 } from "../../gzip/src/crc32.wac";
+
+/** One member of an archive. */
+export struct Entry {
+  string name;
+  u8[] data;
+}
+
+/** What a read produced, or why it stopped. */
+export struct Archive {
+  Entry[] entries;
+  string error;
+}
+
+i32 u16At(u8[] b, i32 at) { return b[at] | (b[at + 1] << 8); }
+
+i32 u32At(u8[] b, i32 at) {
+  return b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24);
+}
+
+/**
+ * Read a store-only zip.
+ *
+ * Walks local headers from the start. Stops cleanly at the central directory, which is where the
+ * members end.
+ */
+export Archive read(u8[] b) {
+  Vec<Entry> out = Vec.create();
+  i32 at = 0;
+  while (at + 30 <= b.len()) {
+    i32 sig = u32At(b, at);
+    // `PK\003\004` — a local file header. Anything else is the central directory or the end.
+    if (sig != 0x04034b50) { break; }
+    i32 method = u16At(b, at + 8);
+    if (method != 0) {
+      return Archive(Entry[0](fill: Entry("", u8[0]())),
+                     "the archive is compressed (method " + itoa32(method)
+                     + "); this reads store-only zips");
+    }
+    i32 size = u32At(b, at + 18);
+    i32 nameLen = u16At(b, at + 26);
+    i32 extraLen = u16At(b, at + 28);
+    i32 nameAt = at + 30;
+    i32 dataAt = nameAt + nameLen + extraLen;
+    if (dataAt + size > b.len()) {
+      return Archive(Entry[0](fill: Entry("", u8[0]())), "the archive is truncated");
+    }
+    u8[] name = u8[nameLen]();
+    for (i32 i = 0; i < nameLen; i++) { name[i] = b[nameAt + i]; }
+    u8[] data = u8[size]();
+    for (i32 i = 0; i < size; i++) { data[i] = b[dataAt + i]; }
+    out.push(Entry(string.fromBytes(name), data));
+    at = dataAt + size;
+  }
+  return Archive(out.toArray(), "");
+}
+
+/** Write a store-only zip: local headers, then a central directory, then the end record. */
+export u8[] write(Entry[] entries) {
+  Vec<i32> out = Vec.create();
+  Vec<i32> offsets = Vec.create();
+  Vec<i32> crcs = Vec.create();
+
+  for (i32 i = 0; i < entries.len(); i++) {
+    offsets.push(out.len());
+    u8[] name = entries[i].name.toBytes();
+    // `as~` because a CRC uses the whole 32 bits and the top one is not a sign here — the value is
+    // written back out as four bytes, so the bit pattern is what matters and not the number.
+    i32 c = crc32(entries[i].data) as~ i32;
+    crcs.push(c);
+    put32(out, 0x04034b50);
+    put16(out, 20);                 // version needed
+    put16(out, 0);                  // flags
+    put16(out, 0);                  // method: store
+    put16(out, 0);                  // time
+    put16(out, 0);                  // date
+    put32(out, c);
+    put32(out, entries[i].data.len());
+    put32(out, entries[i].data.len());
+    put16(out, name.len());
+    put16(out, 0);                  // extra
+    for (i32 k = 0; k < name.len(); k++) { out.push(name[k]); }
+    for (i32 k = 0; k < entries[i].data.len(); k++) { out.push(entries[i].data[k]); }
+  }
+
+  i32 dirAt = out.len();
+  for (i32 i = 0; i < entries.len(); i++) {
+    u8[] name = entries[i].name.toBytes();
+    put32(out, 0x02014b50);
+    put16(out, 20);                 // version made by
+    put16(out, 20);                 // version needed
+    put16(out, 0);
+    put16(out, 0);
+    put16(out, 0);
+    put16(out, 0);
+    put32(out, crcs.get(i));
+    put32(out, entries[i].data.len());
+    put32(out, entries[i].data.len());
+    put16(out, name.len());
+    put16(out, 0);                  // extra
+    put16(out, 0);                  // comment
+    put16(out, 0);                  // disk
+    put16(out, 0);                  // internal attrs
+    put32(out, 0);                  // external attrs
+    put32(out, offsets.get(i));
+    for (i32 k = 0; k < name.len(); k++) { out.push(name[k]); }
+  }
+
+  i32 dirSize = out.len() - dirAt;
+  put32(out, 0x06054b50);
+  put16(out, 0);
+  put16(out, 0);
+  put16(out, entries.len());
+  put16(out, entries.len());
+  put32(out, dirSize);
+  put32(out, dirAt);
+  put16(out, 0);                    // comment length
+
+  u8[] b = u8[out.len()]();
+  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
+  return b;
+}
+
+void put16(Vec<i32> out, i32 v) {
+  out.push(v & 255);
+  out.push((v >> 8) & 255);
+}
+
+void put32(Vec<i32> out, i32 v) {
+  out.push(v & 255);
+  out.push((v >> 8) & 255);
+  out.push((v >> 16) & 255);
+  out.push((v >> 24) & 255);
+}
+
+/** `itoa` without the dependency, for the one message that needs a number. */
+string itoa32(i32 n) {
+  if (n == 0) { return "0"; }
+  string s = "";
+  i32 v = n;
+  while (v > 0) {
+    s = string.fromCodepoint(48 + (v % 10)) + s;
+    v = v / 10;
+  }
+  return s;
+}

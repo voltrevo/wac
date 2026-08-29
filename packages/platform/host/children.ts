@@ -385,6 +385,20 @@ export function spawnChild(
     input: ByteQueue,
     err: ByteQueue,
     parentFs: { req: ByteQueue; rep: ByteQueue },
+    /**
+     * What re-runs *this* child, for its own `spawnSelf`.
+     *
+     * **Not the parent's source, which is what every host passed until 2026-08-29.** `spawnSelf`
+     * carries no program because the host already has the running one — and a host that answered it
+     * from the *launcher's* bundle was right only while the launcher and the program were the same
+     * thing. Under `wac app-run` they are not: the launcher's program is the `wac` command and the
+     * application is a wasm child, so a pipeline stage started `wac` with the stage's argv and came
+     * back as *unknown command 'seq'*. `issues/system/0276c`.
+     *
+     * It is supplied here rather than derived by the host because the wrapping is this function's:
+     * a module child's source is `wrapModule`'s output, which the caller never sees.
+     */
+    selfSource: string,
   ) => { stop(): void },
   makeBridge: () => { sab: SharedArrayBuffer },
   makeWorker: (source: string) => WorkerLike = blobWorker,
@@ -447,7 +461,7 @@ export function spawnChild(
   }
 
   const bridge = makeBridge();
-  const responder = startWorld(bridge.sab, args, out, input, err, { req: fsReq, rep: fsRep });
+  const responder = startWorld(bridge.sab, args, out, input, err, { req: fsReq, rep: fsRep }, source);
 
   const worker = makeWorker(source);
   let stopped = false;

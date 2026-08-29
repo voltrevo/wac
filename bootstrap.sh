@@ -199,23 +199,84 @@ build_native() {
   built="$crate/target/release/wac"
 }
 
+# **How a moved seed becomes a new command**, which differs by host and is the only thing the
+# fixed-point loop below needs to know about one. A native host relinks the crate that carries the
+# module; a JavaScript host has no crate and assembles the single file again.
+relink() {
+  ( cd "$crate" && cargo build --release --quiet )
+}
+
 build_js() {
-  runner=$1
+  runner=$1                                  # deno | node — the runtime the command will run on
+
+  work="$(mktemp -d)"
+  cleanup="$work"
+
+  # **The bundler, built by the ladder from source.** This is what the whole design turns on:
+  # `packages/ts` is written in wac, so the thing that turns TypeScript into JavaScript is built by
+  # the same five rungs that build the compiler, and nothing here needs npm or a network.
+  say "building the bundler with the ladder"
+  "$runner" $RUNFLAGS bootstrap/hosts/$runner.js packages/wacc/src/api.wac \
+    --with-wacc packages/ts/src/transform.wac -o "$work/transform.wasm" \
+    || die "the ladder could not build packages/ts"
+
+  # The command, and — since `drv_bindgen` — the binding layer that makes the module callable.
+  # `build.ts` gets the second from `waccArtifacts`; this path had no way to ask for it, which is
+  # why `--host $runner` could build a module and not a command.
   say "building the wac command with $runner"
-  # The module is not the problem — `hosts/$runner.js --with-wacc` writes a wac command byte for
-  # byte identical to the Rust host's. What is missing is the half that *runs* it: a JavaScript
-  # file that instantiates the module and hands it its capabilities. That bridge is
-  # `packages/platform/host/`, 8,521 lines of TypeScript, and it has to be plain JavaScript before
-  # it can go in a single file without a bundler. See `bootstrap/MIGRATION.md`.
-  die "--host $host cannot finish yet: it can build the module, but the platform bridge it needs to
-    run is still TypeScript. Use --host v8." 
+  "$runner" $RUNFLAGS bootstrap/hosts/$runner.js packages/wacc/src/api.wac \
+    --with-wacc packages/wac/src/wac.wac $GRANTS -o "$work/wacc.wasm" --glue "$work/app.gen.js" \
+    || die "the ladder could not build the wac command"
+
+  seed="$work/wacc.wasm"
+  transform="$work/transform.wasm"
+  built="$work/wac"
+  target="$runner"
+  assemble_js || die "the command would not assemble"
+}
+
+# The grants `$GRANTS` names, as the record the launcher is handed. One list spelled twice — the
+# shebang wants flags and `runLauncher` wants an object — so this derives the second from the first
+# rather than letting them drift.
+grantsJson() {
+  r=false; w=false; n=false; e=false; u=false
+  case "$GRANTS" in *--allow-read*)  r=true ;; esac
+  case "$GRANTS" in *--allow-write*) w=true ;; esac
+  case "$GRANTS" in *--allow-net*)   n=true ;; esac
+  case "$GRANTS" in *--allow-env*)   e=true ;; esac
+  case "$GRANTS" in *--allow-run*)   u=true ;; esac
+  printf '{"read":%s,"write":%s,"net":%s,"env":%s,"run":%s}' "$r" "$w" "$n" "$e" "$u"
+}
+
+assemble_js() {
+  rm -rf "$work/asm"
+  "$runner" $RUNFLAGS bootstrap/js/assembleCommand.js \
+    "$work/asm" "$transform" "$work/app.gen.js" "$built" "$(grantsJson)" "$target"
 }
 
 case "$host" in
   v8)       build_native native/v8 ;;
   wasmtime) build_native native ;;
-  deno)   build_js deno ;;
-  nodejs) build_js node ;;
+  deno)
+    RUNFLAGS="run -A --no-check"
+    build_js deno
+    # **No crate to relink, so a moved seed becomes a command by being assembled again** — and the
+    # glue is regenerated first, because it describes the module's exports and the module has just
+    # moved. `bindgen --js` is the command's own: from here the fixed point is checked with the
+    # thing being checked, exactly as the native path does.
+    relink() {
+      "$built" bindgen --js packages/wac/src/wac.wac "$work/app.gen.js" >/dev/null \
+        && assemble_js
+    }
+    ;;
+  nodejs)
+    RUNFLAGS=""
+    build_js node
+    relink() {
+      "$built" bindgen --js packages/wac/src/wac.wac "$work/app.gen.js" >/dev/null \
+        && assemble_js
+    }
+    ;;
 esac
 
 # ---------------------------------------------------------------- check, then install
@@ -258,8 +319,7 @@ while [ "$n" -le "$MAX_ROUNDS" ]; do
     || die "the compiler it built cannot rebuild its own command — refusing to install it"
   if cmp -s "$prev" "$rounds/$n/wacc.wasm"; then converged=$n; break; fi
   cp "$rounds/$n/wacc.wasm" "$seed"
-  ( cd "$crate" && cargo build --release --quiet ) \
-    || die "the seed moved but the binary would not relink — refusing to install it"
+  relink || die "the seed moved but the command would not rebuild — refusing to install it"
   prev="$rounds/$n/wacc.wasm"
   n=$((n + 1))
 done

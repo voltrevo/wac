@@ -23,6 +23,7 @@ below were already current — see the note at the end of "The two \"not applica
 | `platform` | 6,522 | 30 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20. Re-checked on 2026-08-24 and it holds — see below |
 | `wacc` | 2,281 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
 | `webrtc`, `raster`, `stream` | 909 + 217 + 296 | 1 + 1 + 1 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
+| `ts` | 354 | 2 | **the subject is a TypeScript compiler's answer**, which is the one thing a wac test cannot be. `stripDifferential` runs `packages/ts` against `ts.transpileModule` out of `site/node_modules`, and that oracle exists precisely because the wac side must not be trusted about TypeScript; `tinyInterface` asks Deno and Node to parse what came out. Both stay for the same reason `wacc`'s oracle rows do — see `design/system/0009` |
 
 **The classification is checked now, and the arithmetic is deliberately not.**
 `tools/wac/testtsclassified_test.wac` fails if a package under `packages/` holds a `.test.ts` and this

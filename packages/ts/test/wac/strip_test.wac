@@ -1,0 +1,241 @@
+// Erasing types, and — mostly — not erasing things that merely look like types.
+//
+//     wac test packages/ts/test/wac/strip_test.wac
+//
+// Two properties are asserted about nearly every case, because either one alone is satisfiable by
+// something useless:
+//
+//   - **the JavaScript that survives is right**, checked by comparing the non-space text;
+//   - **the output is the same length as the input**, which is `design/system/0009` D1 — types
+//     become spaces so that every line and column still points at the TypeScript.
+//
+// The cases that matter most are the ones where a `:` or a `<` is *not* a type. A stripper that
+// erases an object literal's key, or a ternary's second half, produces JavaScript that parses and
+// does the wrong thing — which is the failure D4 exists to make impossible.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Stripped, strip } from "../../src/strip.wac";
+
+/**
+ * The stripped output with runs of whitespace collapsed.
+ *
+ * **Both sides of an assertion go through this**, the expected JavaScript included — stripping
+ * already-JavaScript is a no-op, so `js(expected)` normalises spacing the same way. Without that,
+ * every case would be asserting where the spaces left by an erased type landed, which is not what
+ * any of them are about.
+ */
+string js(string src) {
+  Stripped s = strip(src.toBytes());
+  if (s.error != "") { return "ERROR: " + s.error; }
+  string out = "";
+  bool space = false;
+  i32 last = 0;
+  u8[] b = s.out;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { space = true; continue; }
+    // A space is kept only where it *separates* two words. Anywhere else it is formatting, and an
+    // erased type leaves exactly one — so without this every case would be asserting where the
+    // hole landed rather than what the code says.
+    if (space && wordByte(last) && wordByte(c)) { out = out + " "; }
+    space = false;
+    last = c;
+    out = out + string.fromCodepoint(c);
+  }
+  return out;
+}
+
+/** Whether a byte can sit inside an identifier or a number, so two of them need a space between. */
+bool wordByte(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+      || c == '_' || c == '$';
+}
+
+/** Whether the output is byte-for-byte as long as the input — D1. */
+bool sameLength(string src) {
+  Stripped s = strip(src.toBytes());
+  return s.error == "" && s.out.len() == src.toBytes().len();
+}
+
+string errOf(string src) { return strip(src.toBytes()).error; }
+
+export string test_annotations_go_and_the_code_stays() {
+  T t = T.create();
+  t.eqStr(js("let x: number = 1;"), js("let x = 1;"), "a variable");
+  t.eqStr(js("function f(a: string, b: number) {}"), js("function f(a, b) {}"), "parameters");
+  t.eqStr(js("const g = (a: T): R => a;"), js("const g = (a) => a;"), "an arrow, with a return type");
+  t.eqStr(js("let m: Map<string, number[]> = new Map();"), js("let m = new Map();"), "a generic type");
+  t.eqStr(js("let u: A | B & C = x;"), js("let u = x;"), "a union and an intersection");
+  t.eqStr(js("let fn: (a: X) => Y = g;"), js("let fn = g;"), "a function type");
+  // **The body must survive a return type.** Nothing asserted this until a return type was found
+  // walking into `{ … }` and erasing it — `sameLength` cannot see that, because a body erased to
+  // spaces is exactly as long as the body.
+  t.eqStr(js("function f(a: string): void { g(a); }"), js("function f(a) { g(a); }"),
+          "a body after a return type");
+  t.eqStr(js("function f(): { a: number } { return o; }"), js("function f() { return o; }"),
+          "and one after a return type that is itself an object type");
+  return t.report();
+}
+
+export string test_positions_do_not_move() {
+  T t = T.create();
+  t.isTrue(sameLength("let x: number = 1;"), "a simple annotation");
+  t.isTrue(sameLength("function f(a: string): void {}"), "parameters and a return type");
+  t.isTrue(sameLength("interface I { a: number }\nlet y = 1;"), "an interface");
+  // **The multi-line case is the one that matters.** A type spanning lines must leave its newlines
+  // behind, or everything after it reports one line too high.
+  string multi = "let x: {\n  a: number;\n  b: string;\n} = y;\nlet z = 1;";
+  t.isTrue(sameLength(multi), "a type spanning four lines");
+  Stripped s = strip(multi.toBytes());
+  i32 lines = 0;
+  for (i32 i = 0; i < s.out.len(); i++) { if (s.out[i] == '\n') { lines = lines + 1; } }
+  t.eqI32(lines, 4, "and the newlines inside it survive");
+  return t.report();
+}
+
+export string test_whole_declarations_vanish() {
+  T t = T.create();
+  t.eqStr(js("interface I { a: number; }\nlet x = 1;"), js("let x = 1;"), "an interface");
+  t.eqStr(js("type A = string;\nlet x = 1;"), js("let x = 1;"), "a type alias");
+  t.eqStr(js("type A =\n  | B\n  | C;\nlet x = 1;"), js("let x = 1;"), "one spanning lines");
+  t.eqStr(js("import type { A } from \"./a.ts\";\nlet x = 1;"), js("let x = 1;"), "an import of types");
+  t.eqStr(js("export type { A };\nlet x = 1;"), js("let x = 1;"), "an export of types");
+  return t.report();
+}
+
+export string test_a_type_specifier_inside_an_import_clause() {
+  T t = T.create();
+  // **The inline form, which the whole-clause rule above does not reach.** Left standing, `type` is
+  // read by the bundler as an imported *binding*, so every later use of that identifier is rewritten
+  // to reach through the exporting module — in `packages/platform/host/driver.ts` that turned an
+  // object literal's method parameter into `fromWasm($m11.type, v)`. Deno's parser is what caught it,
+  // four steps downstream of the mistake, which is why there is a case here now.
+  t.eqStr(js("import { type A, b } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "a type specifier first");
+  // Last, where the comma taken is the one *before* it. `{ b, }` is legal JavaScript, so this is not
+  // about correctness — it is that `ts.transpileModule` writes `{ b }`, and the differential compares
+  // against exactly that. Leaving the trailing comma made it red on `entryBrowser.ts`.
+  t.eqStr(js("import { b, type A } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "and last, where the comma taken is the preceding one");
+  t.eqStr(js("import { type A as B, c } from \"./m.ts\";"), js("import { c } from \"./m.ts\";"),
+          "one that renames");
+  t.eqStr(js("export { type A, b };"), js("export { b };"), "and on the way out");
+  // **A run of them, which is what `entryBrowser.ts` contains.** Taking the *following* comma each
+  // time strands the separator that joined the run to the value before it — the first version of
+  // this left `{ b, }` here, and the differential is what said so.
+  t.eqStr(js("import { b, type A, type C } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "two type specifiers after a value");
+  t.eqStr(js("import { type A, type C, b } from \"./m.ts\";"), js("import { b } from \"./m.ts\";"),
+          "and two before one");
+
+  // **`type` is only a modifier when an identifier follows it.** This imports a binding that happens
+  // to be named `type`; erasing it would delete a real import, which is the failure the other
+  // direction. The token after decides, exactly as TypeScript reads it.
+  t.eqStr(js("import { type as renamed } from \"./m.ts\";"),
+          js("import { type as renamed } from \"./m.ts\";"),
+          "a binding actually named `type` survives");
+
+  t.isTrue(sameLength("import { type A, b } from \"./m.ts\";"), "and positions do not move");
+  return t.report();
+}
+
+export string test_a_colon_that_is_not_a_type() {
+  T t = T.create();
+  // **The object literal.** Erasing here would delete the value and leave `{ a }`.
+  t.eqStr(js("const o = { a: 1, b: 2 };"), js("const o = { a: 1, b: 2 };"), "an object literal");
+  t.eqStr(js("f({ a: 1 });"), js("f({ a: 1 });"), "one passed to a call");
+  t.eqStr(js("const o = { a: { b: 1 } };"), js("const o = { a: { b: 1 } };"), "nested");
+  // **The conditional.** Erasing here would delete the else branch.
+  t.eqStr(js("const x = c ? a : b;"), js("const x = c ? a : b;"), "a ternary");
+  t.eqStr(js("f(c ? a : b);"), js("f(c ? a : b);"), "one inside a call");
+  t.eqStr(js("const x = c ? d ? e : f : g;"), js("const x = c ? d ? e : f : g;"), "nested ternaries");
+  return t.report();
+}
+
+export string test_an_optional_parameter_is_not_a_ternary() {
+  T t = T.create();
+  t.eqStr(js("function f(a?: T) {}"), js("function f(a) {}"), "an optional parameter");
+  t.eqStr(js("function f(a?: T, b?: U) {}"), js("function f(a, b) {}"), "two of them");
+  // The same `?` shape, in a place where it *is* a conditional.
+  t.eqStr(js("f(a ? b : c);"), js("f(a ? b : c);"), "and a ternary inside a call is untouched");
+  return t.report();
+}
+
+export string test_as_and_the_non_null_assertion() {
+  T t = T.create();
+  t.eqStr(js("const x = y as string;"), js("const x = y;"), "`as`");
+  t.eqStr(js("const x = y as Map<string, number>;"), js("const x = y;"), "`as` with a generic");
+  t.eqStr(js("const x = y satisfies T;"), js("const x = y;"), "`satisfies`");
+  t.eqStr(js("const x = y!.z;"), js("const x = y.z;"), "a non-null assertion");
+  t.eqStr(js("const x = f()!;"), js("const x = f();"), "one after a call");
+  // **`as` at depth 0 in an `export` statement is still a cast.** `inImportOrExport` scans back to
+  // the statement's first word, so this answered *rename* on the strength of the `export` and left
+  // `} as const;` in the output — `packages/platform/host/ops.ts:104`, found by a JavaScript parser
+  // rather than by anything here. A rename is always *inside* the clause's braces.
+  t.eqStr(js("export const OP = { A: 1 } as const;"), js("export const OP = { A: 1 };"),
+          "`as const` after a closed brace in an export");
+  t.eqStr(js("export const r = { c: 3 as T };"), js("export const r = { c: 3 };"),
+          "and one inside the braces, which already worked");
+  t.eqStr(js("import { a as b } from \"./m.ts\";"), js("import { a as b } from \"./m.ts\";"),
+          "while a real rename is untouched");
+  t.eqStr(js("export { d as e };"), js("export { d as e };"), "on the way out too");
+  // **A namespace import puts a rename at depth 0**, so a rule that asked only for braces erased
+  // `as lib from "./m.js"` as a cast. That deleted the *specifier*, so the import walk never queued
+  // the module and the bundle came out without it — valid JavaScript with a free variable in it.
+  t.eqStr(js("import * as lib from \"./m.js\";"), js("import * as lib from \"./m.js\";"),
+          "a namespace import keeps its rename and its specifier");
+
+  // A prefix `!` is not an assertion and must survive.
+  t.eqStr(js("const x = !y;"), js("const x = !y;"), "a logical not");
+  t.eqStr(js("if (!a) { b(); }"), js("if (!a) { b(); }"), "one in a condition");
+  return t.report();
+}
+
+export string test_type_arguments_go_and_comparisons_stay() {
+  T t = T.create();
+  t.eqStr(js("const m = new Map<string, number>();"), js("const m = new Map();"), "after `new`");
+  t.eqStr(js("const s = new Set<number>();"), js("const s = new Set();"), "another");
+  t.eqStr(js("const p = new Promise<void>((r) => r());"), js("const p = new Promise((r) => r());"),
+          "with a callback after it");
+  // **A comparison must survive.** This is `design/system/0009` D3 from the other side: reading
+  // `a < b` as a type argument list would delete real code.
+  t.eqStr(js("const x = a < b;"), js("const x = a < b;"), "a comparison");
+  t.eqStr(js("if (a < b && c > d) { e(); }"), js("if (a < b && c > d) { e(); }"), "two of them");
+  t.eqStr(js("for (let i = 0; i < n; i++) {}"), js("for (let i = 0; i < n; i++) {}"), "a loop bound");
+  return t.report();
+}
+
+export string test_modifiers() {
+  T t = T.create();
+  t.eqStr(js("class C { readonly a = 1; }"), js("class C { a = 1; }"), "`readonly`");
+  t.eqStr(js("class C { private a = 1; }"), js("class C { a = 1; }"), "a private field");
+  t.eqStr(js("class C implements I { a = 1; }"), js("class C { a = 1; }"), "an `implements` clause");
+  t.eqStr(js("class C implements I, J<K> { a = 1; }"), js("class C { a = 1; }"), "two, one generic");
+  return t.report();
+}
+
+export string test_what_it_refuses_rather_than_guessing() {
+  T t = T.create();
+  // `design/system/0009` D4. Each of these emits a runtime value, so erasing it would change what
+  // the program does — and a stripper that quietly did so is the failure mode worth refusing.
+  t.isTrue(errOf("enum E { A }").indexOf("enum") >= 0, "an enum is refused, by name");
+  t.isTrue(errOf("namespace N { }").indexOf("namespace") >= 0, "a namespace, by name");
+  t.isTrue(errOf("declare const x: number;").indexOf("declare") >= 0, "a `declare`, by name");
+  t.isTrue(errOf("class C { constructor(private x) {} }").indexOf("parameter property") >= 0,
+           "a parameter property, which declares a field as well as a parameter");
+  // And the lexer's own refusals reach the caller rather than being swallowed.
+  t.isTrue(errOf("const s = 'unterminated").indexOf("unterminated") >= 0, "a lex error surfaces");
+  return t.report();
+}
+
+export string test_the_identifiers_that_are_not_keywords() {
+  T t = T.create();
+  // `type`, `interface`, `enum` and `declare` are ordinary identifiers in JavaScript, so a
+  // stripper that matched on the word alone would delete real code.
+  t.eqStr(js("const type = 1;"), js("const type = 1;"), "`type` as a variable");
+  t.eqStr(js("x.type = 1;"), js("x.type = 1;"), "as a property");
+  t.eqStr(js("const o = { type: 'a' };"), js("const o = { type: 'a' };"), "as a key");
+  t.eqStr(js("f(type, interface);"), js("f(type, interface);"), "as arguments");
+  return t.report();
+}

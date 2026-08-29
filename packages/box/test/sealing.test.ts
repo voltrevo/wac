@@ -51,7 +51,7 @@
 // The others held, and two of them held because somebody had already thought about it: `ownsStdin` is
 // false unless an entry point *is* a shell, and its doc names this server by name.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 import { type Bounded, bounded, boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
