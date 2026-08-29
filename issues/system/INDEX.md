@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0284c](open/0284c-the-hosts-word-a-refusal-differently-and-only-one-says-which-capability.md) | A program built without `--allow-read` is told `filesystem read not granted to this application` by the JavaScript hosts and `Not granted to this application` by both Rust ones — which names no capability, and is the same string for all five. A program can be built without several at once, so the shorter sentence leaves the reader to work out which, with nothing in the message, the file name or the status to say. Surfaced by `world_test.wac`, whose case for a withheld capability asserts the informative wording | diagnostic | one refusal, two sentences |
 | [0283b](open/0283b-taking-the-gate-lock-starts-the-cooldown-before-anything-runs.md) | `tools/push.sh` takes the gate lock before it pulls, and taking it writes the 20-minute cooldown — so a conflicting pull locks the agent out having tested nothing | bug | no error — twenty minutes lost per occurrence |
 | [0282c](open/0282c-a-relayed-programs-stderr-does-not-interleave-with-its-stdout.md) | `echo one; nope; echo two` through a `wac app` shell writes `one / two / sh: nope: command not found` where bash — and the same shell through `wac run` — put the diagnostic between the two. Each stream carries the right bytes; their order relative to each other is lost, which is only observable when both go to one place. `relay` waits on both with `waitAny` and takes standard output first when both are ready, and a child writes into **two queues** with nothing recording which write came first — so the order was never carried and reordering the branches would only change which stream wins. Needs one channel with a tag per chunk, or a sequence number. Blocks `packages/sh/test/differential.test.ts` in `design/system/0009` | bug | right bytes, wrong order between streams |
 | [0279c](open/0279c-the-conformance-ledger-credits-fifteen-opcodes-to-tests-that-skip.md) | `conformance_test.wac` is the ledger of what a second host must answer the same way, and it derives which hosts each cited test *drives* rather than trusting a written list. It does not know a cited test can **skip**: three files needing the wasmtime host — which `CLAUDE.md` says is not built by default — carry 30 citations between them, and for **15 opcodes that is the only comparison there is**, including `OPEN_OUTPUT` and `SPAWN_SELF`. Those are `0277c` and `0276c`, both found by hand the same day. `CLOSE_SOCKET` shows the hole is per *host* rather than per opcode: cited twice so it counts as doubly covered, but the second citation compares Deno against Node and the bug was in v8. The push gate is such a checkout — its own output says `cargo did not build native, so nothing was compared`, five times a run | missing feature | a coverage number counting comparisons that did not happen |
@@ -74,7 +75,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-283 issues, 224 closed.
+284 issues, 224 closed.
 
 The count is checked against the directory by compiler/wacSpec.test.ts, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
