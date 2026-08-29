@@ -13,7 +13,7 @@
 //
 // The corpus is imported from `packages/sh/test/corpus.ts` rather than copied, so it cannot go stale.
 
-import { buildApp } from "../packages/platform/build.ts";
+import { buildApp } from "../harness/buildApp.ts";
 import { announceHeavy } from "./suiteGate.ts";
 
 // Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds

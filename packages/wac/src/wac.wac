@@ -388,6 +388,17 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
     //
     // There is no stem to key on and none is needed: `run` writes no file, so the entry and the sources
     // are the whole of what decides the bytes.
+  } else if (cmd == "app") {
+    // **`app` caches, and its key is *smaller* than `build`'s.** `build` has to eat the output's base
+    // name because that name goes into the manifest, so two destinations are two artefacts. `wac app`
+    // takes its manifest name from the entry — `writeApp` uses `baseName(stem(entry))` — so the
+    // destination never reaches the bytes, and two builds of one entry to two names are byte-identical.
+    // Measured: 246065 bytes both. `issues/system/0283c`.
+    //
+    // The key below already says so, since only `build` eats `stem`. What was missing was this arm:
+    // every `wac app` was a full compile, including the identical one a moment earlier — and that is
+    // the command this repository distributes with and the one the suite now builds programs with.
+    if (stem == "") { return ""; }
   } else if (cmd != "build" || stem == "") {
     return "";
   }
@@ -1856,7 +1867,25 @@ export i32 main(Core core, Cli cli) {
                         hasFlag(cli, argc, "--verbose"), profileDir);
       }
     }
-    if (hit.ok && hit.bytes.len() > 8 && cmd != "test") {
+    // **An `app` hit is the module plus two shell lines**, which is all an app is — so this rebuilds
+    // the artefact rather than writing the module, and the grants come off the command line exactly
+    // as the miss below reads them. `issues/system/0283c`.
+    if (hit.ok && hit.bytes.len() > 8 && cmd == "app") {
+      string appBad = unknownFlagFor(cli, argc, "app");
+      if (appBad != "") { core.warn(flagRefusal("app", appBad)); return 2; }
+      string appDest = outStem(cli, argc);
+      if (appDest != "") {
+        i32 g = grantsIn(cli, argc);
+        string w = "";
+        if ((g & GRANT_READ) != 0) { w = w + (w == "" ? "" : " ") + "--allow-read"; }
+        if ((g & GRANT_WRITE) != 0) { w = w + (w == "" ? "" : " ") + "--allow-write"; }
+        if ((g & GRANT_NET) != 0) { w = w + (w == "" ? "" : " ") + "--allow-net"; }
+        if ((g & GRANT_ENV) != 0) { w = w + (w == "" ? "" : " ") + "--allow-env"; }
+        if ((g & GRANT_RUN) != 0) { w = w + (w == "" ? "" : " ") + "--allow-run"; }
+        return writeApp(core, cli, hit.bytes, appDest, w);
+      }
+    }
+    if (hit.ok && hit.bytes.len() > 8 && cmd != "test" && cmd != "app") {
       string stemHit = outStem(cli, argc);
       Change wroteHit = fs.writeFile(stemHit + ".wasm", hit.bytes);
       if (!wroteHit.ok()) {
@@ -2186,11 +2215,15 @@ export i32 main(Core core, Cli cli) {
     if ((appGrants & GRANT_NET) != 0) { words = words + (words == "" ? "" : " ") + "--allow-net"; }
     if ((appGrants & GRANT_ENV) != 0) { words = words + (words == "" ? "" : " ") + "--allow-env"; }
     if ((appGrants & GRANT_RUN) != 0) { words = words + (words == "" ? "" : " ") + "--allow-run"; }
-    return writeApp(core, cli,
-                    withManifestSection(wasm, manifestWire(wasm, types, sigs, entry,
-                                                           baseName(stem(entry)) + ".wasm",
-                                                           appGrants)),
-                    dest, words);
+    // **The sealed module is what is remembered**, not the file written from it: an app is that module
+    // behind two shell lines, so a hit rebuilds the artefact with `writeApp` exactly as a miss does.
+    // Storing the finished file instead would put the preamble in the cache, and the preamble is the
+    // one part that costs nothing. `issues/system/0283c`.
+    u8[] sealed = withManifestSection(wasm, manifestWire(wasm, types, sigs, entry,
+                                                        baseName(stem(entry)) + ".wasm",
+                                                        appGrants));
+    rememberBuild(cli, cachePath, sealed, dest);
+    return writeApp(core, cli, sealed, dest, words);
   }
 
   if (cmd == "build") {

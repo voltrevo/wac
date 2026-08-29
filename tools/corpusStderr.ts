@@ -33,7 +33,7 @@ import { announceHeavy } from "./suiteGate.ts";
 // programs and runs them, and nothing else made it visible. issues/system 0142.
 const doneHeavy = announceHeavy("corpus:stderr");
 globalThis.addEventListener("unload", () => doneHeavy());
-import { buildApp } from "../packages/platform/build.ts";
+import { buildApp } from "../harness/buildApp.ts";
 import "../harness/spawnRetry.ts";
 
 /**
