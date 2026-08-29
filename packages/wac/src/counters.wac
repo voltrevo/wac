@@ -186,7 +186,7 @@ export Counters read(Core core, Cli cli, string path, Exercise[] also, bool trac
   // which was most of the whole suite's critical path.
   //
   // Not for `covdump`, where the journal is a counter table and every slot is a real number — hence
-  // the flag rather than a guess. `issues/system/0290b`.
+  // the flag rather than a guess. `issues/system/0274b`.
   i32 cap = n.value;
   i32 upto = cap - 1;
   if (traced && cap > 1) {
