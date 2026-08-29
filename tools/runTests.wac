@@ -77,8 +77,8 @@ import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std/platform
 import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, has, splitLines }
   from "../packages/wactest/src/strings.wac";
-import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, warningsSoFar,
-         clearWarnings, envOf } from "./wac/suitegate.wac";
+import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, markRun,
+         warningsSoFar, clearWarnings, envOf } from "./wac/suitegate.wac";
 import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles }
   from "./wac/suitehouse.wac";
 
@@ -1490,6 +1490,11 @@ export i32 main(Core core, Cli cli) {
   dropUnreachableTranspiles(core, cli);
   // Before anything runs, so a previous suite's warnings are not counted as this one's.
   clearWarnings(cli);
+
+  // **The cooldown starts here, not where the lock was taken** — `issues/system/0283b`. Everything
+  // above this point can still exit without having run a test, and an agent should not be locked out
+  // for twenty minutes by a pull that conflicted.
+  markRun(core, cli);
 
   i32 code = o.heavyOnly ? heavyLane(core, cli, o, f) : lanes(core, cli, o, f);
 

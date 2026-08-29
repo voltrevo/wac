@@ -693,8 +693,10 @@ Deno.test("site: the coverage-ledger count and the list of packages without one 
 
 Deno.test("site: every repository path the site links to is a file in the tree", async () => {
   // **The site deploys on every push and its links are public**, and nothing checked them. Two were
-  // dead when this was written: `packages/wacc/test/fixpointEmit.test.ts`, deleted with the
-  // TypeScript reference, and an issue linked at `issues/lang/open/…` after it moved to `closed/`.
+  // dead when this was written: a fixpointEmit test under packages/wacc, deleted with the TypeScript
+  // reference, and an issue linked under issues/lang/open after it had moved to closed. Both are
+  // named without backticks on purpose — `tools/wac/links_test.wac` reads a backticked repository
+  // path as a claim that the file exists, and a comment about a deleted file would fail it.
   // Both are 404s on GitHub for anyone who follows them, and both had been that way for a while.
   //
   // `tools/wac/links_test.wac` is the same idea for backticked paths in markdown and does not see
