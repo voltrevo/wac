@@ -311,3 +311,49 @@ i32 indexOf(string s, string want) {
   }
   return -1;
 }
+
+/**
+ * A flag whose second half lives in another command is refused, not half-honoured.
+ *
+ * `--coverage` reached the *shared* compile — which is above the per-command dispatch — so the module
+ * came out instrumented, and then this arm wrote only the executable. The `.cov` table naming the
+ * counters is `wac build`'s, and `covdump` will not read an app anyway because of the two shell lines
+ * on the front. So the entire effect of the flag was the instrumentation it silently paid for.
+ *
+ * **The assertion is on the message, not on the status**, because `2` is also what an unknown flag
+ * and a missing `-o` return: a test that only checked the code would pass on a build that had merely
+ * become unable to parse its own command line. `issues/system/0274c`.
+ */
+export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-buildonly");
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
+
+  string[] flags = string[]("--coverage", "--trace", "--js");
+  for (i32 i = 0; i < flags.len(); i++) {
+    Exec made = cli.exec(binaryPath(cli),
+                         string[]("app", dir + "/hello.wac", flags[i], "-o", dir + "/thing"),
+                         u8[0]()).wait();
+    t.isTrue(made.ran(), "wac app did not run — " + made.error);
+    t.eqI32(made.status, 2, flags[i] + " was accepted: " + string.fromBytes(made.stderr));
+    string said = string.fromBytes(made.stderr);
+    t.isTrue(contains(said, flags[i]), flags[i] + " is not named in the refusal: " + said);
+    // It must point at the command that *can* finish the job, or the reader is told no and not where
+    // to go — which for `--coverage` is the difference between a dead end and a working build.
+    t.isTrue(contains(said, "wac build"), "the refusal does not name `wac build`: " + said);
+    // And nothing may be left behind: a refused build that wrote the executable anyway would be the
+    // same silent half-job in a new place.
+    FileResult f = cli.readFile(dir + "/thing").wait();
+    t.isTrue(!f.ok, flags[i] + " wrote an executable despite refusing");
+  }
+
+  // The canary: the same build without the flag succeeds, so the three refusals above are about the
+  // flag rather than about the entry, the directory or the binary.
+  Exec fine = build(cli, dir + "/hello.wac", "", dir + "/thing");
+  t.eqI32(fine.status, 0, "the same build without a flag failed: " + string.fromBytes(fine.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

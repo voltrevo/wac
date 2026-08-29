@@ -970,6 +970,22 @@ bool hasFlag(Cli cli, i32 argc, string flag) {
 }
 
 /** The first argument that looks like a flag and is not one, or "". */
+/**
+ * The first flag present that only `build`, `test` or `bindgen` can finish, or `""`.
+ *
+ * Separate from `unknownFlag` because these are not unknown — they are spelled right, they reach the
+ * shared compile, and they change what it emits. What is missing is the second half, which lives in
+ * another command's arm. A caller who typed one has a wrong *expectation* rather than a typo, so the
+ * message names the command that does the job instead of listing the flags that are allowed.
+ */
+string buildOnlyFlag(Cli cli, i32 argc) {
+  for (i32 i = 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--coverage" || a == "--trace" || a == "--trace-slots" || a == "--js") { return a; }
+  }
+  return "";
+}
+
 string unknownFlag(Cli cli, i32 argc) {
   for (i32 i = 1; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
@@ -1970,6 +1986,24 @@ export i32 main(Core core, Cli cli) {
   // output is not a module — `-o thing.wasm` and `-o thing` mean the same to `build` and very
   // different things to somebody handed the result.
   if (cmd == "app") {
+    // **A flag this command cannot finish is refused rather than half-honoured.** `unknownFlag` below
+    // is one list shared by every command, so `app` accepted `--coverage`, `--trace`, `--trace-slots`
+    // and `--js` — while the message it prints on a rejected flag names only the five grants, so it
+    // advertised five and took nine. `--coverage` was the one that mattered: `covered` is decided in
+    // the shared compile above, so the module really did come out instrumented, and then this arm
+    // wrote only the executable. The `.cov` table naming the counters is written by `build`'s arm, and
+    // `covdump` refuses an app anyway — *is not a wasm module*, because of the two lines on the front.
+    // So the whole of the feature was the instrumentation overhead.
+    //
+    // Refused rather than completed because completing it is three decisions, not a patch: what writes
+    // the table, how `covdump` reads past the preamble, and how a *running* app dumps its counters.
+    // `wac build --coverage` answers all three today and is what to reach for. `issues/system/0274c`.
+    string only = buildOnlyFlag(cli, argc);
+    if (only != "") {
+      core.warn("wac: `wac app` does not take '" + only + "' — it writes an executable, and the "
+                + "table that flag's counters need is written by `wac build --coverage`");
+      return 2;
+    }
     string bad = unknownFlag(cli, argc);
     if (bad != "") {
       core.warn("wac: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, "
