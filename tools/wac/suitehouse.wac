@@ -232,6 +232,13 @@ export void dropUnreachableTranspiles(Core core, Cli cli) {
  * for it, and a line costs about thirty bytes; a sweep that decided which keys are still real would
  * need this file to know how the queue is chunked today, which is the second implementation that goes
  * wrong.
+ *
+ * **The ratchets' equivalent answers the other way, and is also right.** `tools/coverageAll.ts` seeds
+ * its merge from the packages that exist *now*, so a package that loses its coverage task loses its
+ * row — it can, because the set of packages is a directory listing it already has. The set of chunks
+ * is not: it is whatever `chunksOf` produced this run, for the directories this run was asked about,
+ * and a narrowed run knows about almost none of them. Dropping what it cannot see is how a narrowed
+ * run would erase the file all over again.
  */
 export string mergedTimes(string existing, string[] fresh) {
   string out = "";

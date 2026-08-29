@@ -155,8 +155,34 @@ about a value it does not carry.
 
 Cases in `bootstrap/ts/l5.test.ts` beside the other three global ones.
 
-## What is still open
+## What is still open, and the wall is higher than the README says
 
 The original want — a **table**. `const i32[] LIT_KEYS = i32[](32, 160, 174);` needs the initialiser
 to run, which is the `start` section and a function per initialiser that `bootstrap/README.md`
 predicted. Nothing above touches that; it makes the wall legible rather than moving it.
+
+**And wac-L0 has no `start`.** The assembler's whole vocabulary is in `bootstrap/rust/src/lib.rs`,
+and it is: `type func param result local export import global memory data`, the instructions, and
+nothing else. So the README's sentence — *"doing it properly needs a `start` section and a function
+per initialiser"* — describes work in **two** places, and it names the cheaper one.
+
+That matters more than the extra file suggests. The assembler is one of the three things the ladder
+asks a person to read and trust — 1,217 lines of Rust, counted on the website beside the L1
+interpreter and the flattener — and it is implemented twice, in Rust and in JavaScript, precisely so
+neither is taken on faith. Adding a section grows the trusted base and both implementations have to
+agree about it.
+
+So the options are not "do the rung work":
+
+1. **Add `start` to wac-L0**, in both assemblers, and emit an init function from wac-L5. Honest and
+   general, and it is a change to the root of the trust argument for the sake of a lookup table.
+2. **Initialise from the entry instead.** No new directive: wac-L5 emits an `__init` function and the
+   program's entry calls it first. Cheaper, and it makes "the module was entered" the moment globals
+   become valid, which is a semantics this rung would then owe the next reader — a module whose
+   exports are called by a host that never enters through the entry gets zeroes.
+3. **Leave it.** Nothing needs a table today; `design/lang/0013`'s `Cn` category is deferred for
+   reasons of its own. The cost is that the next table hits the same wall, having read a README
+   sentence that understates it — which this section is here to fix.
+
+Not obvious, and the first one touches a file this repository is deliberately careful about, so it is
+a decision rather than an afternoon.

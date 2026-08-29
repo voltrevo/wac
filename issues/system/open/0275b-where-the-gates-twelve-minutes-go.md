@@ -517,3 +517,18 @@ The rest reach the chunk's 159.3s between them. Each of those is doing what it s
 compiles a few hundred programs and is near the floor for that — so there is no single slow test to
 find here. The chunk is large because `commandparity_test.wac` is, and that file is large for the
 reason above rather than for one of its own.
+
+
+**Why the ratchets are a second pass and not folded into the suite**, since it is the next thing
+anyone will ask. The gate runs the suite plain and then re-runs a subset instrumented — 318s then
+133s of the 479s. Folding them means running *everything* under instrumentation, and instrumented
+running is the slower of the two by enough that the merged figure would be worse than the sum: only
+36 packages have a coverage driver, and the ones that do not would start paying for a table nobody
+reads. The split is also what lets the ratchets be the phase that can be skipped when a change cannot
+affect coverage, which they are not today but could be.
+
+The largest driver is `coverage:tor` at 87.9s, which is more than the next four together. It is the
+largest package in the repository — 15,913 lines, 313 tests across 47 files — and its own header says
+21 of its seconds are two tests that put the real C tor on the other end. So the ratchet phase's floor
+is that one driver, and it is expensive for a reason that is written down rather than for a reason
+anybody has looked into.
