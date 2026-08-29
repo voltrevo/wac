@@ -39,7 +39,7 @@
 // agreed on *everything* would most likely mean `boxsh` had quietly started spawning too, and this
 // whole comparison would be measuring nothing.
 
-import { buildApp } from "../packages/platform/build.ts";
+import { buildApp } from "../harness/buildApp.ts";
 import { announceHeavy } from "./suiteGate.ts";
 
 // Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds

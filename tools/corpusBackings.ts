@@ -42,7 +42,7 @@
 // difference worth reading, and now that is true: before it, six lines of expected noise were the
 // output every time, which is exactly how a seventh goes unread.
 
-import { buildApp } from "../packages/platform/build.ts";
+import { buildApp } from "../harness/buildApp.ts";
 import { announceHeavy } from "./suiteGate.ts";
 
 // Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
