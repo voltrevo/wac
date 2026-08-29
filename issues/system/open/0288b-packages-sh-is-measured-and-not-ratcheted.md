@@ -178,6 +178,16 @@ Nothing real is touched by them. `cov.ts` fakes the capabilities inside wac, whi
 and `mkdir -p /tmp/covprobe` are safe to write here — checked, and `/tmp/covprobe` does not exist
 afterwards.
 
+A second batch followed the same afternoon, aimed at the entries the first left behind — long-form
+listing, the refusal paths every builtin shares, and the job-control half that needs an actual job:
+
+    after batch one   958 uncovered, 36 never entered, 68.8%
+    after batch two   880 uncovered, 28 never entered, 71.3%
+
+Twenty-one scripts in total have taken it from 1,036 to 880 and from 44 functions to 28. The
+per-script return has not fallen off yet, which is the signal to keep going before writing anything
+down as unreachable.
+
 What is left is unchanged in kind and smaller in size: keep widening while it is cheap, then write
 rules for what genuinely cannot be reached, then switch the driver from `reports` to `floor` in the
 commit that can prove it. The next obvious probe is the differential corpus itself, which this

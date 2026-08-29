@@ -483,6 +483,12 @@ for (
   const script of [
     "cd /tmp && ls", "ls", "ls /nosuchfile", "mkdir -p /tmp/covprobe && ls /tmp/covprobe",
     "rm -f /tmp/covprobe/x", "cd /", "jobs", "kill -0 1",
+    // A second batch, aimed at the entries the first left behind: long-form listing (mode, owner
+    // and time), the refusal paths every builtin shares, and the job-control half that needs a job.
+    "ls -l /tmp", "ls -la /", "ls --badoption", "ls --help", "cd --badoption",
+    "sleep 0 &", "sleep 0 & wait", "sleep 1 & jobs; kill %1", "true & wait %1",
+    "for i in a b; do continue; done", "for i in a b; do break; done",
+    "f() { return 3; }; f; echo $?", "local x=1",
   ]
 ) {
   m.shOut(script);
