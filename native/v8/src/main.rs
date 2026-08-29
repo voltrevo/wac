@@ -1428,6 +1428,34 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
     if captured {
         return true;
     }
+    // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
+    // the program saying *my output is a file now*, which is not standard output — so whether
+    // something spawned this program is a fact about the stream it no longer writes to.
+    //
+    // This came after the queue until 2026-08-29, so a spawned child's redirect was skipped
+    // entirely: `box cp README.md out` printed the file to standard output and left `out` empty,
+    // exiting 0. `wac app-run` and `wac run` both make the program a child, so that was every
+    // file-writing applet on this host. `issues/system/0277c`.
+    //
+    // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
+    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
+    // redirects, as it does on the host: a child that says its output is a file gets a file."* That
+    // was aligned to what the host does, and this host did not do it.
+    //
+    // Standard error is deliberately untouched: it is where a program says what went wrong, and
+    // sending that into the file being written would hide it — `native/src/main.rs` makes the same
+    // point and is right about it.
+    if !to_stderr {
+        let redirected = HOST.with(|h| {
+            let mut b = h.borrow_mut();
+            let s = b.as_mut()?;
+            let f = s.output.as_mut()?;
+            Some(f.write_all(bytes).and_then(|_| f.flush()).is_ok())
+        });
+        if let Some(ok) = redirected {
+            return ok;
+        }
+    }
     let to_parent = HOST.with(|h| {
         let b = h.borrow();
         let Some(s) = b.as_ref() else { return None };

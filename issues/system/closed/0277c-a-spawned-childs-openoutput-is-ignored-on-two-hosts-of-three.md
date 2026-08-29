@@ -1,6 +1,6 @@
 # 0277 — a spawned child's `openOutput` is ignored on two hosts of three
 
-- **Status:** open — the hosts disagree and each has a comment defending itself
+- **Status:** closed — fixed 2026-08-29 on both Rust hosts
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** bug
@@ -56,7 +56,34 @@ That last sentence does not hold together. The case it describes — *told so by
 — is exactly the case it then skips: the redirect is set, and the branch above returns before
 anything looks at it.
 
-## Recommendation
+## It was not a decision after all
+
+Filed as one, because three hosts disagreed and two had comments defending themselves. Then
+`packages/platform/test/wac/frameoutput_test.wac` turned up, and it is **the same question already
+answered** — one layer in, for a `Frame`'s capture rather than a parent's queue. `issues/system/0166`
+is that ruling, and `packages/platform/src/frame.wac:290` states it:
+
+> **`openOutput` redirects, as it does on the host**: a child that says its output is a file gets a
+> file. It did not until `issues/system/0166` — the capture kept the bytes, so `cp`, `sponge`,
+> `split` and `wget` each wrote an empty file in process and exited 0. The comment here used to claim
+> the capture was "the host's behaviour too", and that was simply false; measuring both routes is
+> what settled it.
+
+`cp` writing an empty file and exiting 0 is exactly the failure above, on the other route. And *"as
+it does on the host"* is what makes this unambiguous: the frame layer was aligned to what the host
+does, and two of the three hosts did not do it.
+
+So the rule is settled and was unapplied at a second site. Both Rust hosts now put a redirected
+output before the parent's queue, for **standard output only** — the wasmtime host's separate point
+holds and is kept, that the error stream must not go into the file being written.
+
+    box cp README.md out    before: stdout 11394, out 0 bytes, exit 0
+                            after:  stdout 0, out 11394 bytes, exit 0   — the Deno host's answer
+
+Green after: 19 box wac files, 123 platform, 61 box and sh Deno tests, `app_test.wac` 7 of 7, and
+`frameoutput_test.wac` — the test for the ruling this follows — 3 of 3.
+
+## What was recommended before measuring
 
 Deno's order, on all three. `openOutput` is the program saying *my output is a file now*, and
 whether something spawned it is a fact about its standard output rather than about the file. The
