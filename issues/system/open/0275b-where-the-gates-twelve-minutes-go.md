@@ -283,6 +283,56 @@ mistake wearing a different hat, because covdump takes no grants and every test 
 failed in microseconds. The exercise's honest figure is 91s, and running it with `--allow-run`
 removed gives 5s *and* `60 test(s) failed`. Read the failure count before believing a difference.
 
+## One queue instead of two saves nothing, and the arithmetic says so — withdrawn
+
+**This section proposed merging the suite's queue and the ratchets' and costed it at 110 seconds. It
+is worth zero and the mistake is instructive.**
+
+Both phases are pools of independent jobs at four workers, run one after the other. Write `W` for the
+suite's work, `A` for the part that must run alone, `C` for the ratchets':
+
+    serial     (W - A)/4 + A     +     C/4
+    merged     (W - A + C)/4 + A
+
+Expand the first and it *is* the second. Two queues that each already pack to their own floor add
+their floors, and one queue over the union has the same floor — there is nothing in the algebra for a
+merge to recover. With today's numbers both come to **450s**.
+
+**Where the 110s came from.** I compared the merged *floor* against the two measured *walls*, and a
+wall is a floor plus whatever the packing wastes. So what I costed was not the merge at all: it was
+the packing slack, which is real but belongs to whichever queue has it and is recoverable without
+merging anything. `tools/coverageAll.ts` and `chunksOf` are exactly that work, and it is already
+done — the ratchets are within 1% of their floor, and the suite is 362s against 319s.
+
+**What a merge could still buy is that remaining 43s of suite slack**, and only some of it: a single
+queue has more small jobs to fill the gaps a long chunk leaves at the end. That is a much smaller
+prize than this section claimed, against a change to the gate's core, and it shrinks every time the
+suite's own ordering improves. Not recommended.
+
+The measurement that would settle it is cheap and nobody needs to write the merge for it: the suite's
+footer already prints work, alone and floor, and `coverage:all` prints work and wall. Watch the gap
+between the suite's wall and its floor over a few green runs. If it stays near 40s the merge is worth
+at most that; if it collapses, there is nothing there at all.
+
+## Two traps, because both cost me a measurement
+
+**A plain `wac test <dir>` does not skip the heavy lane.** Two attempts at timing `packages/wacc`
+spent their whole budget inside `corpusemit_test.wac`, which is declared at 1,204s. `--ignore` takes
+a comma-separated list of paths rather than acting as a switch, so it is
+`--ignore packages/wacc/test/wac/corpusemit_test.wac,packages/wacc/test/wac/names_test.wac`; passed
+bare it swallows the directory that follows it and the run does nothing, quickly.
+
+**Cold and warm differ by 2×**, and a run taken seconds after a gate is neither: the gate rewrites
+`native/v8/target/release/wac`, so a measurement started against it can be timing a binary that is
+being replaced. Three of my first readings were of tests that never ran, and all three were fast.
+Check for the test's own `N passed` line, not for a timing.
+
+**Dropping a grant drops the work, so a subtraction across grants measures nothing.** `wac covdump`
+on the built exercise took 3s and looked like proof that the sweeps were cheap; it was the same
+mistake wearing a different hat, because covdump takes no grants and every test that shells out
+failed in microseconds. The exercise's honest figure is 91s, and running it with `--allow-run`
+removed gives 5s *and* `60 test(s) failed`. Read the failure count before believing a difference.
+
 ## The largest thing left is that the gate runs two queues instead of one
 
 Both phases are a pool of independent jobs run at four workers, and they run **one after the other**:
