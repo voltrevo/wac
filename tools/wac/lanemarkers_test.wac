@@ -163,3 +163,60 @@ export string test_every_tree_the_runner_walks_for_markers_still_exists(Core cor
           + "there: " + empty);
   return t.report();
 }
+
+/**
+ * **Every marker names a lane the runner knows, and names it exactly.**
+ *
+ * `laneOf` is asked for one lane at a time — `laneOf(line, "exclusive")`, then `laneOf(line,
+ * "heavy")` — and a line matching neither is not a marker as far as `declarations` is concerned. It
+ * is still a marker to whoever wrote it, so `// test-lane: heavey` is a file asking in writing to be
+ * kept out of the parallel pass and being put there anyway, silently. That is the failure the test
+ * above exists for, arriving by spelling instead of by directory.
+ *
+ * **And exactly, because the match is a prefix.** `startsWith(line, "// test-lane: heavy")` is also
+ * true of `// test-lane: heavyish`, so a lane that merely begins with a known one is read as that one
+ * — the opposite failure, and quieter, because the file does get treated as *something*.
+ *
+ * `normal` is a lane and is deliberately in the list. It is the default, so `declarations` is right
+ * to ignore it, and `packages/wacc/test/wac/checked_test.wac` says it on purpose: that file *was*
+ * heavy, and the marker is how a reader learns it was demoted rather than never considered. A guard
+ * that refused it would push that sentence into a plain comment where nothing can check it at all.
+ */
+export string test_every_lane_marker_names_a_lane_the_runner_knows(Core core, Cli cli) {
+  T t = T.create();
+  string[] known = string[]("heavy", "exclusive", "normal");
+
+  // Both halves of the suite declare lanes, so both are read: `.test.ts` for the Deno pass and
+  // `.wac` for the wac one.
+  string[] files = sourceFiles(core, cli, string[](".ts", ".wac"), string[]("site", "node_modules"));
+  t.isTrue(files.len() > 100, "only " + itoa(files.len()) + " file(s) found — did the walk resolve?");
+
+  i32 markers = 0;
+  i32 bad = 0;
+  string first = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult f = cli.readFile(files[i]).wait();
+    if (!f.ok) { t.fail("cannot read " + files[i] + " — " + f.error); continue; }
+    string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+    for (i32 k = 0; k < lines.len(); k++) {
+      string head = "// test-lane: ";
+      if (!startsWith(lines[k], head)) { continue; }
+      markers = markers + 1;
+      string rest = lines[k].slice(head.len(), lines[k].len());
+      // The lane is the word: up to the first space, which is what separates it from the reason.
+      i32 sp = rest.indexOf(" ");
+      string lane = sp < 0 ? rest : rest.slice(0, sp);
+      bool ok = false;
+      for (i32 j = 0; j < known.len(); j++) { if (known[j] == lane) { ok = true; } }
+      if (ok) { continue; }
+      bad = bad + 1;
+      if (first == "") { first = files[i] + ": `" + lane + "`"; }
+    }
+  }
+
+  t.isTrue(markers > 5, "only " + itoa(markers) + " lane marker(s) seen — the reader is not reading");
+  t.eqI32(bad, 0, bad == 0 ? "" : "a lane marker names something the runner does not answer to, so "
+      + "the file asked in writing to be kept out of the parallel pass and was put there anyway — "
+      + first);
+  return t.report();
+}
