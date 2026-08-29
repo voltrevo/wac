@@ -455,11 +455,23 @@ nothing else changed, `packages/box/test/box.test.ts` failed four ways and hung 
 Only the third was expected. The others say the two artefacts differ in ways these tests can see, and
 until that is understood the swap is a change that trades a working suite for a smaller `build.ts`.
 
-**One difference is already known and is probably not the whole of it.** `harness/buildApp.ts`
-prepends the checkout's `native/v8/target/release` to `PATH`, because a `wac app` artefact finds its
-runtime with `command -v wac`. `packages/box`'s tests are largely *about* what a program can reach —
-several of them run applets by name and one asserts what an ungranted build cannot do — so a new
-directory on `PATH` is not obviously inert there.
+**Two of the four are `issues/system/0277c`**, found by running the two artefacts side by side:
+
+    ./box-deno cp README.md /tmp/out    exit 0   stdout 0       /tmp/out 11394
+    ./box-app  cp README.md /tmp/out    exit 0   stdout 11394   /tmp/out 0
+
+`cp` writes through `Cli.openOutput`, and on the two Rust hosts a **spawned child's** redirect is
+skipped — its bytes go to the parent's queue, which prints them. `wac app-run` and `wac run` both
+make the program a child; `build.ts`'s artefact is the launcher's own worker and not a child of
+anything, which is the whole of why one works. The Deno host fixed this order once already and says
+so at `host/deno.ts:620`.
+
+So the migration did not break `cp`. It revealed that `cp` works when built one particular way, and
+that is the sentence this note had backwards.
+
+**What is still unexplained:** the network applets, and the hang in the batch containing `yes`. The
+hang is suspicious given `0275c` was a `yes` that would not stop, but that fix is in and the case
+still hung, so it is a second thing rather than the same one.
 
 ### What the third failure means on its own
 
