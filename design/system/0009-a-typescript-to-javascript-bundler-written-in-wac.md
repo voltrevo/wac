@@ -870,10 +870,14 @@ staying TypeScript, which removes its need for `buildApp(workerOnly)` without wa
 it **26 seconds added to the suite**, which is the gate's dominant cost and the thing
 `issues/system/0275b` is about.
 
-**Re-measure that 57 ms before trusting the 26.** It was taken earlier the same day, before the
-launcher stopped relaying: `wac <prog.wasm>` no longer starts a relay loop or copies every chunk
-through two queues, so the per-spawn cost has moved and the direction is down. The comparison it
-feeds is close enough that the number could change which option wins. Two of that page's own numbers say why it matters: the suite is
+**Re-measured after the launcher stopped relaying, because the 57 ms predated it**: three rounds of
+five spawns gave 51, 47 and 54 ms — mean **51 ms**, against 57. So dropping the relay loop and the
+per-chunk copy through two queues bought about 10%, and the estimate above becomes **~22s** rather
+than 26.
+
+Which is worth saying plainly: it does **not** change which option wins. 22 seconds and 26 seconds
+are the same answer to "is this worth adding to every push", and the decision still turns on that
+question rather than on this number. Recorded so the next person does not re-measure it hoping. Two of that page's own numbers say why it matters: the suite is
 ~75% of the gate, and its floor is set by total work rather than by scheduling.
 
 So the three ways to finish this group are now:
