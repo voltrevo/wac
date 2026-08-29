@@ -469,9 +469,13 @@ so at `host/deno.ts:620`.
 So the migration did not break `cp`. It revealed that `cp` works when built one particular way, and
 that is the sentence this note had backwards.
 
-**What is still unexplained:** the network applets, and the hang in the batch containing `yes`. The
-hang is suspicious given `0275c` was a `yes` that would not stop, but that fix is in and the case
-still hung, so it is a second thing rather than the same one.
+**The hang was `issues/system/0278c`, and it is fixed.** It was a second thing, as suspected: `relay`
+in `packages/wac/src/runprog.wac` discarded what `cli.write` answered, so `./box yes | ./box head -2`
+relayed into a closed pipe for ever. Three layers and the failure at the outermost reached none of
+the others — the reader gone, the relay writing into a closed pipe, the producer writing into a queue
+that always accepts.
+
+**What is still unexplained:** the network applets. One failure of the four, and the smallest.
 
 ### What the third failure means on its own
 

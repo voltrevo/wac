@@ -252,7 +252,26 @@ export i32 relay(Core core, Cli cli, Child kid) {
     if (which < 0) { break; }
     if (reading && which == 0) {
       match (out.wait()) {
-        case Data(bytes): { cli.write(bytes); out = cli.recv(kid.handle); }
+        case Data(bytes): {
+          // **A write that did not land stops the child**, which is the whole of what a broken pipe
+          // means and what `write`'s bool is for. This discarded it, so `wac app-run prog | head -2`
+          // relayed into a closed pipe for ever: `head` exits, this keeps draining, and the child —
+          // which is writing into a queue that always accepts — never finds out. `box yes | box head
+          // -2` printed two lines and then hung, and every other route stops correctly, which is why
+          // it read as a shell bug rather than as this one. `issues/system/0278c`.
+          //
+          // `closeSocket` is what stops it, the same capability `packages/sh` uses for a pipeline
+          // stage with nowhere left to write, and the same one `issues/system/0275c` taught the
+          // native host to honour.
+          if (!cli.write(bytes)) {
+            cli.closeSocket(kid.handle);
+            if (kid.errHandle >= 0) { cli.closeSocket(kid.errHandle); }
+            reading = false;
+            readingErr = false;
+          } else {
+            out = cli.recv(kid.handle);
+          }
+        }
         case End: { reading = false; }
         case Failed(why): { core.warn("wac: " + why); reading = false; }
       }
