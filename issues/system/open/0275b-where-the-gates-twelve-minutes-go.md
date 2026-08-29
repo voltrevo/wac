@@ -64,6 +64,39 @@ One push in eight, on the gate's safety path, and a push is a *batch* of commits
 rarer still. The comment beside the predicate in `tools/push.sh` now says this so the measurement is
 not spent twice.
 
+## The ratchets, taken apart
+
+`coverage:crypto` is 100s standalone, and almost none of it is coverage:
+
+    build the instrumented exercise      9s
+    run it, and the two sweeps           1s   (145 trap cases + 35 probes)
+    read counters, report, ratchet      <1s
+    the exercise's own body             91s
+
+So the ledger machinery is a tenth of it and **the driver is the package's tests, run a second
+time**. `packages/crypto/test/cov_exercise.wac` enumerates the same 152 test functions the suite
+runs, so crypto's expensive work happens twice per gate — 195s in the suite chunk, 91s again here.
+
+What the 91s is *not*: external oracles. Under a shim that timed every child, the whole exercise
+spawned **51 node, 5 deno and 1 openssl, for 3.4s in total**. The other 88s is wac computing crypto,
+spread over the algorithms rather than pooled in one file the way `constanttime_test.wac` was — it is
+about what the suite's per-file timings add up to, once the per-file process and compile overhead the
+chunk pays is taken off. `issues/system/0209` is the nearest thing filed, though it is about one
+ratio rather than about the total.
+
+`coverage:platform` is 85s and splits differently: **159 `deno` spawns at 277ms each, 44s**, which is
+`issues/system/0197` — a built app costs ~107ms to start and these also run one. The rest is the
+builds those tests do.
+
+**So there is no coverage-shaped win here.** The three costs are the three already filed, and the
+only lever specific to the ratchets is the duplication above, which is not a small change: the
+exercise is one serial module and the suite's crypto chunk is many files over four workers, so
+running the exercise *as* the chunk would trade 90s of total work for a worse floor.
+
+**And the phases cannot overlap.** Running the ratchets beside the suite is the obvious 263s, but
+`nproc` is 5 and three agents share them; the suite already runs four workers. There is no idle
+core to put them on, and taking one would slow the other two agents rather than this gate.
+
 ## What was cut, and what it bought
 
     total work   1490s -> 1283s
@@ -78,12 +111,14 @@ into a loaded module, which is why the total fell further than crypto did.
 ## What is left, in the order the numbers suggest
 
 1. **`p256`'s 136s** — `issues/system/0274b`. Needs fewer host calls, not cheaper ones.
-2. **The ratchets' 263s** — not by skipping. Nobody has asked whether the *drivers* are slow for the
-   reason the tests were: `coverage:crypto` is 108s and `coverage:platform` 82s, and neither has been
-   taken apart the way the suite's chunks have.
-3. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
-4. **Process starts** — `issues/system/0197`. A built app costs ~107ms to spawn against 15ms for the
-   native binary, and `packages/box` spawns 1,701 of them.
+2. **`commandparity`'s 78s and the compile cost behind it** — `issues/lang/0153`.
+3. **Process starts** — `issues/system/0197`. A built app costs ~107ms to spawn against 15ms for the
+   native binary; `packages/box` spawns 1,701 of them and `coverage:platform` 159, for 44s.
+4. **Crypto's own speed.** 195s of the suite and 88s of the ratchets, with no single file to blame
+   now that `constanttime_test.wac` is fixed. `issues/system/0209` is one piece of it.
+
+The ratchets' 263s is *not* on this list any more: the section above measures it, and every second of
+it belongs to 2, 3 or 4. Skipping them was measured and refused separately.
 
 ## Two traps, because both cost me a measurement
 
@@ -94,3 +129,9 @@ spent their whole budget inside `corpusemit_test.wac`, which is declared at 1,20
 `native/v8/target/release/wac`, so a measurement started against it can be timing a binary that is
 being replaced. Three of my first readings were of tests that never ran, and all three were fast.
 Check for the test's own `N passed` line, not for a timing.
+
+**Dropping a grant drops the work, so a subtraction across grants measures nothing.** `wac covdump`
+on the built exercise took 3s and looked like proof that the sweeps were cheap; it was the same
+mistake wearing a different hat, because covdump takes no grants and every test that shells out
+failed in microseconds. The exercise's honest figure is 91s, and running it with `--allow-run`
+removed gives 5s *and* `60 test(s) failed`. Read the failure count before believing a difference.
