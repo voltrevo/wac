@@ -65,29 +65,44 @@ export struct Grid {
    */
   i32 selAnchor;
   i32 selHead;
+  /**
+   * Whether the pointer has moved since the selection was begun.
+   *
+   * **A press that never moves selects nothing**, which is what a terminal does and what this got
+   * wrong: `selectFrom` sets the anchor and the head to the same cell, and `selected` answered true
+   * for it, so a plain click left one cell drawn inverted for good — a fill in the foreground
+   * colour, on a screen where nothing had been selected. `issues/system/0178`.
+   *
+   * Set by `selectTo` rather than by comparing the two indices, because a drag that returns to the
+   * cell it started on *has* selected that cell, and comparing would call that nothing.
+   */
+  bool selDragged;
 
   Grid create(i32 cols, i32 rows, i32 scrollbackMax) {
     i32 c = cols < 1 ? 1 : cols;
     i32 r = rows < 1 ? 1 : rows;
     i32 m = scrollbackMax < 0 ? 0 : scrollbackMax;
-    return Grid(c, r, i32[c * r](), 0, 0, i32[0](), 0, m, -1, -1);
+    return Grid(c, r, i32[c * r](), 0, 0, i32[0](), 0, m, -1, -1, false);
   }
 
   /** Begin a selection at a viewport cell, discarding any previous one. */
   void selectFrom(this, i32 col, i32 row) {
     this.selAnchor = row * this.cols + col;
     this.selHead = this.selAnchor;
+    this.selDragged = false;
   }
 
   /** Extend the selection to a viewport cell. Does nothing if none was begun. */
   void selectTo(this, i32 col, i32 row) {
     if (this.selAnchor < 0) { return; }
     this.selHead = row * this.cols + col;
+    this.selDragged = true;
   }
 
   void clearSelection(this) {
     this.selAnchor = -1;
     this.selHead = -1;
+    this.selDragged = false;
   }
 
   /**
@@ -98,7 +113,7 @@ export struct Grid {
    * and what makes a selection paste as text rather than as a column.
    */
   bool selected(const this, i32 col, i32 row) {
-    if (this.selAnchor < 0 || this.selHead < 0) { return false; }
+    if (this.selAnchor < 0 || this.selHead < 0 || !this.selDragged) { return false; }
     i32 at = row * this.cols + col;
     i32 lo = this.selAnchor < this.selHead ? this.selAnchor : this.selHead;
     i32 hi = this.selAnchor < this.selHead ? this.selHead : this.selAnchor;

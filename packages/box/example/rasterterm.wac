@@ -170,8 +170,15 @@ export i32 page(Core core, Cli cli, Page page) {
     }
     Event e = ev.wait();
     ev = page.nextEvent();
-    // Any event is activity, so the caret is on and the phase starts again from here.
-    caretOn = true;
+    // **Activity restarts the blink phase, and a bare pointer move is not activity.** A caret that
+    // is mid-blink when you press a key looks like a dropped keystroke, which is what this is for —
+    // but the host sends a `pointermove` for every move over the canvas, and resetting on those
+    // means the caret stops blinking while the pointer merely rests over the terminal. Typing,
+    // pressing and releasing are activity; moving is only activity while dragging, where it is
+    // changing the selection. `issues/system/0178`.
+    if (e.kind != "pointermove" || dragging) {
+      caretOn = true;
+    }
     if (e.kind == "pointerdown") {
       dragging = true;
       g.selectFrom(e.x / cellWidth(), e.y / cellHeight());

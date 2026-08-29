@@ -66,3 +66,34 @@ still go red here. The setup is inside the guard now, and the message says how l
 
 That narrows who can see it; it does not explain a caret lit for 1.6 s on a box that can sample in
 1 ms. The mechanism above is untouched, which is why this is filed rather than closed.
+
+## Two real defects on this path, and neither is this — agent-b, 2026-08-29
+
+Took the issue's own advice and drove the terminal's model directly instead of the browser. Two
+things are wrong, both now fixed, and I cannot show that either is the flake — so this stays open.
+
+**A click leaves a cell selected, for good.** `Grid.selectFrom` sets `selAnchor` and `selHead` to the
+same cell and `selected()` answered true for it, so a press with no drag left one cell drawn
+inverted — `grid.wac` fills a selected cell entirely with the *foreground* colour. A terminal selects
+on a drag, not on a click. Fixed with a `selDragged` flag set by `selectTo`, rather than by comparing
+the two indices, because a drag that returns to the cell it began on has selected that cell.
+`raster_test.wac` covers it and the assertion fails without the fix.
+
+**But it cannot be what this issue sees.** `caretLit()` samples `getImageData(0, 0, 640, 16)` — row
+0 and nothing else — and reports true when any cell there is over 96 of its 128 pixels in the
+foreground colour, which is what a filled cell is. The terminal is 80×24 with no CSS sizing, so the
+canvas is its intrinsic 640×384 and `page.click("#screen")` lands at (320, 192), which is cell
+(40, 12). The stray selection is twelve rows below anything the test looks at.
+
+**A bare pointer move counted as activity.** The loop set `caretOn = true` for *every* event before
+deciding what the event was, and `pointermove` is subscribed — so the caret stopped blinking while
+the pointer merely rested over the terminal, and started again only once the moves stopped. Now only
+typing, pressing, releasing and a move *while dragging* restart the phase.
+
+This one fits the shape of the failure — sixty consecutive lit samples is what a continuously reset
+phase looks like — and I could not confirm it, because it needs the browser to deliver moves during
+the sampling loop and nothing in the test moves the mouse after the click. Worth re-running the live
+test a few times now; if it stops failing, this was it.
+
+**What is still not ruled out** is the issue's own second mechanism, the sampling aliasing with the
+phase, and any host-side source of moves after a click. What *is* ruled out is the selection.

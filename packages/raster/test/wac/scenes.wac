@@ -397,6 +397,34 @@ export i32 gridSelectedBackwards(i32 cols, i32 rows, i32 c0, i32 r0, i32 c1, i32
   return g.selected(col, row) ? 1 : 0;
 }
 
+/**
+ * A press that never moves, then the same press with one move — `issues/system/0178`.
+ *
+ * A click in a terminal selects nothing; a drag selects. `selectFrom` sets the anchor and the head
+ * to one cell, and `selected` used to answer true for it, so a plain click left a cell drawn
+ * inverted with nothing selected. The second half is the case that says the fix is not just
+ * "anchor equals head means nothing": a drag that returns to the cell it began on has selected that
+ * cell, and it must still count.
+ */
+export i32[] gridPressWithoutDrag(i32 cols, i32 rows, i32 col, i32 row) {
+  Grid pressed = Grid.create(cols, rows, 0);
+  pressed.selectFrom(col, row);
+  i32 afterPress = pressed.selected(col, row) ? 1 : 0;
+  i32 textAfterPress = pressed.selectedText(0).len();
+
+  Grid dragged = Grid.create(cols, rows, 0);
+  dragged.selectFrom(col, row);
+  dragged.selectTo(col, row);
+  i32 afterDragToItself = dragged.selected(col, row) ? 1 : 0;
+
+  Grid moved = Grid.create(cols, rows, 0);
+  moved.selectFrom(col, row);
+  moved.selectTo(col + 1, row);
+  i32 afterMove = moved.selected(col, row) ? 1 : 0;
+
+  return i32[](afterPress, textAfterPress, afterDragToItself, afterMove);
+}
+
 /** The length of the selected text with no selection begun, and after clearing one. */
 export i32[] gridSelectionAbsent(i32 cols, i32 rows, i32[] cps) {
   Grid g = Grid.create(cols, rows, 0);
