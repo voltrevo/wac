@@ -372,10 +372,10 @@ Two smaller drifts in the same file: its summary advertises `--host {rust,deno,n
 `rust` is now explicitly refused in favour of `v8` and `wasmtime`, and `deno`/`nodejs` do not finish.
 
 
-## Step 5, done for Deno
+## Step 5, done
 
-`bootstrap.sh --host deno` builds a working `wac` in about 45 seconds, on a machine with **Deno and
-nothing else** — no cargo, no npm, no network, no existing compiler.
+`bootstrap.sh --host deno` and `--host nodejs` each build a working `wac` in about 45 seconds, on a
+machine with **that runtime and nothing else** — no cargo, no npm, no network, no existing compiler.
 
     $ bash bootstrap.sh --host deno -o ./wac
     bootstrap: building the bundler with the ladder
@@ -385,8 +385,9 @@ nothing else** — no cargo, no npm, no network, no existing compiler.
     $ ./wac run --allow-read hello.wac
     hello from a JavaScript-hosted wac
 
-3.4 MB, and the module inside it is **byte-identical to the native seed** — same 1,828,660 bytes —
-which is the useful part: the two hosts differ in what they are, not in what they compile.
+3.4 MB on Deno and 3.3 MB on Node, and the module inside each is **byte-identical to the native
+seed** — all three 1,828,660 bytes — which is the useful part: the hosts differ in what they are, not
+in what they compile.
 
 ### What closed it
 
@@ -415,46 +416,22 @@ top level of the entry module. The last three were introduced or exposed by fixi
 is the argument for `tools/wac/bootstrapdeno_test.wac` running the whole thing rather than checking
 parts — the parts were green while the whole was broken.
 
-### Node is not done
+### Node is not the same build run twice
 
-`--host nodejs` still refuses, and says why: its worker entry is `entryNode.ts`, its launcher is
-`runLauncherNode`, and it carries `node:worker_threads` and `node:fs/promises` where the Deno target
-reaches `Deno.*` directly. `build.ts` has all of it; it is a second `assembleCommand` rather than a
-new idea.
+It is three *different* bundles. Its launcher is `runLauncherNode` and takes `node:worker_threads`,
+`node:fs/promises` and `process` as arguments where Deno's reaches `Deno.*` directly; its worker
+finds its parent through `worker_threads.parentPort` rather than `self`; its child entry is
+`childWasmNode.ts`; and its shebang is a bare `#!/usr/bin/env node`, because Node has no permission
+system and the capability world inside the module is the whole boundary there.
 
-## What the Node target still needs
+**The network moved to make this possible.** `build.ts` carried 93 lines of `node:net` and
+`node:dgram` adapter inside a template literal, spliced into the generated launcher. The bootstrap
+needs exactly that code and cannot read TypeScript, so it is `packages/platform/host/nodeNet.js` now
+and both import it. A second copy of a socket adapter would drift, and the drift would show up as a
+program that hangs rather than one that fails to build.
 
+One thing worth writing down because it cost a build: `assembleCommand.js` uses `import.meta.url`, so
+**Node loads it as an ES module**, where `require` does not exist. `packages/ts/host/run.js` gets away
+with a bare `require` only because it has no ESM syntax at all. `createRequire` is the fix, and the
+failure arrived after the ladder had already done its work — a late place to find out.
 
-
-Written down because the blocker moved on 2026-08-29 and the old one is no longer true.
-
-**Done, and holding.** The ladder builds the bundler from source with no `wac` binary in the loop —
-`hosts/deno.js packages/wacc/src/api.wac --with-wacc packages/ts/src/transform.wac -o transform.wasm`
-gives 74 KB — and `packages/ts/host/run.js` drives it to turn `packages/platform/host/` into 311 KB
-of JavaScript that Deno parses. `test/stripDifferential.test.ts` asserts it for **both** entry points,
-which is not redundancy: `ops.ts` is reachable from `entry.ts` and not from `deno.ts`, and it held one
-of the three bugs that had to be fixed to get here.
-
-**What is left is assembly.** `packages/platform/build.ts` already does all of this for the `deno` and
-`node` targets, in TypeScript, which the bootstrap cannot run — that is why it is flagged rather than
-deleted, and the shape to copy is `buildApp`'s.
-
-1. **The module's binding glue.** `build.ts` gets it from `waccArtifacts`; the ladder path has no
-   equivalent, because `bootstrap/js/wacc.js` drives wacc for `emit` only. `bindgenFiles(wasm, paths,
-   sources, entry, lang)` in `packages/wacc/src/api.wac:373` is the export that produces it, so this
-   is a driver call rather than a compiler change — every value crosses as an `i32`, a byte at a
-   time, exactly as the existing calls do.
-2. **Three generated entries, each bundled.** The launcher (`runLauncher(workerSource, grants,
-   moduleEntry)`), the worker, and the child — `build.ts` lines 743–812. They are short generated
-   strings that import from the bridge and from the glue.
-3. **A shebang**, which for Deno carries the grants as `--allow-*` flags and for Node carries
-   nothing, because Node has no permission system and the capability world is the whole boundary.
-
-One thing to carry over rather than rediscover: `build.ts` writes those entries with
-`import.meta.resolve`, so their specifiers are `file://` URLs. `packages/ts` treats a non-relative
-specifier as external and hoists it, so the bootstrap's copies want plain relative paths.
-
-**And one shortcut that is not one.** `run.js` takes an explicit file list rather than walking
-imports, so the caller supplies the set. Passing the whole of `packages/platform/host/` works — the
-bundle is 318 KB against 311 KB and parses either way — which means no TypeScript import walker is
-needed in plain JavaScript to get this finished.

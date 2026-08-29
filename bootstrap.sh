@@ -207,15 +207,7 @@ relink() {
 }
 
 build_js() {
-  runner=$1
-  if [ "$runner" != deno ]; then
-    # The Node target is a different three bundles, not the same three run by `node`: its worker
-    # entry is `entryNode.ts`, its launcher is `runLauncherNode`, and it reaches `node:worker_threads`
-    # and `node:fs/promises` where this one reaches `Deno.*` directly. `packages/platform/build.ts`
-    # has all of it. Writing it here without running it would be worse than saying so.
-    die "--host nodejs cannot finish yet: the Deno target is done and this one needs its own
-    launcher, worker and child entries. See design/system/0009. Use --host deno or --host v8."
-  fi
+  runner=$1                                  # deno | node — the runtime the command will run on
 
   work="$(mktemp -d)"
   cleanup="$work"
@@ -224,21 +216,22 @@ build_js() {
   # `packages/ts` is written in wac, so the thing that turns TypeScript into JavaScript is built by
   # the same five rungs that build the compiler, and nothing here needs npm or a network.
   say "building the bundler with the ladder"
-  deno run -A --no-check bootstrap/hosts/deno.js packages/wacc/src/api.wac \
+  "$runner" $RUNFLAGS bootstrap/hosts/$runner.js packages/wacc/src/api.wac \
     --with-wacc packages/ts/src/transform.wac -o "$work/transform.wasm" \
     || die "the ladder could not build packages/ts"
 
   # The command, and — since `drv_bindgen` — the binding layer that makes the module callable.
   # `build.ts` gets the second from `waccArtifacts`; this path had no way to ask for it, which is
-  # why `--host deno` could build a module and not a command.
-  say "building the wac command with deno"
-  deno run -A --no-check bootstrap/hosts/deno.js packages/wacc/src/api.wac \
+  # why `--host $runner` could build a module and not a command.
+  say "building the wac command with $runner"
+  "$runner" $RUNFLAGS bootstrap/hosts/$runner.js packages/wacc/src/api.wac \
     --with-wacc packages/wac/src/wac.wac $GRANTS -o "$work/wacc.wasm" --glue "$work/app.gen.js" \
     || die "the ladder could not build the wac command"
 
   seed="$work/wacc.wasm"
   transform="$work/transform.wasm"
   built="$work/wac"
+  target="$runner"
   assemble_js || die "the command would not assemble"
 }
 
@@ -257,14 +250,15 @@ grantsJson() {
 
 assemble_js() {
   rm -rf "$work/asm"
-  deno run -A --no-check bootstrap/js/assembleCommand.js \
-    "$work/asm" "$transform" "$work/app.gen.js" "$built" "$(grantsJson)"
+  "$runner" $RUNFLAGS bootstrap/js/assembleCommand.js \
+    "$work/asm" "$transform" "$work/app.gen.js" "$built" "$(grantsJson)" "$target"
 }
 
 case "$host" in
   v8)       build_native native/v8 ;;
   wasmtime) build_native native ;;
   deno)
+    RUNFLAGS="run -A --no-check"
     build_js deno
     # **No crate to relink, so a moved seed becomes a command by being assembled again** — and the
     # glue is regenerated first, because it describes the module's exports and the module has just
@@ -275,7 +269,14 @@ case "$host" in
         && assemble_js
     }
     ;;
-  nodejs) build_js node ;;
+  nodejs)
+    RUNFLAGS=""
+    build_js node
+    relink() {
+      "$built" bindgen --js packages/wac/src/wac.wac "$work/app.gen.js" >/dev/null \
+        && assemble_js
+    }
+    ;;
 esac
 
 # ---------------------------------------------------------------- check, then install

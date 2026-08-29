@@ -1,6 +1,6 @@
 // Assembling a self-contained `wac` out of a module, its glue and the bridge.
 //
-//     deno run -A bootstrap/js/assembleCommand.js <work> <transform.wasm> <glue.js> <out> <grants>
+//     deno run -A bootstrap/js/assembleCommand.js <work> <transform.wasm> <glue.js> <out> <grants> [deno|node]
 //
 // `design/system/0009` step 5, and the last piece of `bootstrap.sh --host deno`. Everything before
 // this is the ladder: it builds wacc from five rungs of hand-written source, compiles the `wac`
@@ -29,38 +29,49 @@
 //   childwasm  the generic entry for a *module* started by `spawn`, program-independent
 //   launcher   the bridge plus the two strings above, and the only one with a shebang
 //
-// Deno only. The Node target needs `entryNode.ts`, `runLauncherNode` and `node:worker_threads`
-// rather than these three, and inventing that without running it would be worse than saying so.
+// **Both targets, and they are three *different* bundles rather than the same three run twice.** Node
+// has no permission system, so its shebang states nothing and the capability world is the whole
+// boundary; it reaches `node:worker_threads` and `node:fs/promises` where Deno reaches `Deno.*`
+// directly; and its network is `host/nodeNet.js`, built out of `node:net` and `node:dgram`, because
+// `Deno.connect` has no Node equivalent. `packages/platform/build.ts` makes the same distinction in
+// the same three places.
 
 const DENO = typeof Deno !== "undefined";
+
+// **`createRequire`, not a bare `require`.** This file uses `import.meta.url`, so Node loads it as an
+// ES module — and `require` does not exist in one. The first version called `require("fs")` and died
+// with *require is not defined in ES module scope* after the ladder had already done its work,
+// which is a late place to find out. `packages/ts/host/run.js` gets away with a bare
+// `require` because it has no ESM syntax at all and Node therefore treats it as CommonJS.
+const req = DENO ? null : (await import("node:module")).createRequire(import.meta.url);
 
 function args() {
   return DENO ? Deno.args : process.argv.slice(2);
 }
 
 function readText(p) {
-  return DENO ? Deno.readTextFileSync(p) : require("fs").readFileSync(p, "utf8");
+  return DENO ? Deno.readTextFileSync(p) : req("fs").readFileSync(p, "utf8");
 }
 
 function writeText(p, s) {
   if (DENO) Deno.writeTextFileSync(p, s);
-  else require("fs").writeFileSync(p, s);
+  else req("fs").writeFileSync(p, s);
 }
 
 function listDir(p) {
   return DENO
     ? [...Deno.readDirSync(p)].map((e) => e.name)
-    : require("fs").readdirSync(p);
+    : req("fs").readdirSync(p);
 }
 
 function mkdirp(p) {
   if (DENO) Deno.mkdirSync(p, { recursive: true });
-  else require("fs").mkdirSync(p, { recursive: true });
+  else req("fs").mkdirSync(p, { recursive: true });
 }
 
 function chmodX(p) {
   if (DENO) Deno.chmodSync(p, 0o755);
-  else require("fs").chmodSync(p, 0o755);
+  else req("fs").chmodSync(p, 0o755);
 }
 
 function die(msg) {
@@ -95,7 +106,7 @@ function bundle(runner, transform, work, entry) {
     if (!r.success) die(`bundling ${entry} failed:\n${new TextDecoder().decode(r.stderr)}`);
     return new TextDecoder().decode(r.stdout);
   }
-  const { execFileSync } = require("child_process");
+  const { execFileSync } = req("child_process");
   try {
     return execFileSync(runner, argv, { maxBuffer: 1 << 30 }).toString();
   } catch (e) {
@@ -103,9 +114,14 @@ function bundle(runner, transform, work, entry) {
   }
 }
 
-const [work, transform, glue, out, grantsJson] = args();
-if (!out) die("usage: assembleCommand.js <work> <transform.wasm> <glue.js> <out> <grants-json>");
+const [work, transform, glue, out, grantsJson, targetArg] = args();
+if (!out) die("usage: assembleCommand.js <work> <transform.wasm> <glue.js> <out> <grants> [target]");
 const grants = JSON.parse(grantsJson ?? "{}");
+// The *target* is what the built command will run on, and the *runner* is what is building it. They
+// are usually the same and need not be: a Deno process can assemble a Node command, and the
+// bootstrap does exactly that when `deno` is what is on the machine.
+const target = targetArg === "node" ? "node" : "deno";
+if (target !== "deno" && target !== "node") die(`unknown target ${target}`);
 
 const ROOT = new URL("../..", import.meta.url).pathname;
 const RUN_JS = `${ROOT}packages/ts/host/run.js`;
@@ -117,15 +133,25 @@ for (const name of listDir(HOST)) {
   if (name.endsWith(".ts")) writeText(`${work}/${name}`, readText(`${HOST}/${name}`));
 }
 writeText(`${work}/app.gen.js`, readText(glue));
+// `nodeNet.js` is the one `.js` in the bridge; the copy loop above takes `.ts` only.
+writeText(`${work}/nodeNet.js`, readText(`${HOST}/nodeNet.js`));
 
 // The worker imports the application *and* the bridge's worker loop. The loop is imported first on
 // purpose: it installs the message handler as a side effect of being evaluated, and the application
 // below it has a top-level await that would otherwise suspend before any handler exists.
+//
+// Node's takes `wt` as its first argument because a worker there reaches its parent through
+// `worker_threads.parentPort`, where Deno's is `self`.
 writeText(
   `${work}/worker.ts`,
-  `import { runAsWorkerEntry } from "./entry.ts";\n` +
-    `import * as app from "./app.gen.js";\n` +
-    `await runAsWorkerEntry(app, undefined);\n`,
+  target === "node"
+    ? `import { runAsWorkerEntryNode } from "./entryNode.ts";\n` +
+      `import * as wt from "node:worker_threads";\n` +
+      `import * as app from "./app.gen.js";\n` +
+      `runAsWorkerEntryNode(wt, app);\n`
+    : `import { runAsWorkerEntry } from "./entry.ts";\n` +
+      `import * as app from "./app.gen.js";\n` +
+      `await runAsWorkerEntry(app, undefined);\n`,
 );
 
 // Program-independent — the same text for every build — but a built application cannot *find* it:
@@ -133,18 +159,44 @@ writeText(
 // name is refused. `issues/system/0144`.
 writeText(
   `${work}/childwasm.ts`,
-  `import { childMain } from "./childWasm.ts";\n` +
-    `await childMain(globalThis.__wacChildBytes);\n`,
+  target === "node"
+    ? `import { childMainNode } from "./childWasmNode.ts";\n` +
+      `import * as wt from "node:worker_threads";\n` +
+      `await childMainNode(wt, globalThis.__wacChildBytes);\n`
+    : `import { childMain } from "./childWasm.ts";\n` +
+      `await childMain(globalThis.__wacChildBytes);\n`,
 );
 
 const worker = "//wac-worker 1\n" + bundle(RUNNER, transform, work, "worker.ts");
 const child = bundle(RUNNER, transform, work, "childwasm.ts");
 
+// **The network import is present only when the network is granted**, which is the same discipline
+// as the shebang: an ungranted capability is absent rather than refused at the call. `nodeNet` is a
+// file rather than 93 inlined lines precisely so this and `build.ts` share one copy.
+//
+// The sixth argument is passed as `undefined` rather than omitted when there is no network grant.
+// It used to be left off, which is fine while it is last and silently hands the next argument added
+// to the network the day one is.
 writeText(
   `${work}/launcher.ts`,
-  `import { runLauncher } from "./entry.ts";\n` +
-    `await runLauncher(${JSON.stringify(worker)}, ${JSON.stringify(grants)}, ` +
-    `${JSON.stringify(child)});\n`,
+  target === "node"
+    ? (grants.net ? `import { nodeNet } from "./nodeNet.js";\n` : "") +
+      `import { runLauncherNode } from "./entryNode.ts";\n` +
+      `import * as wt from "node:worker_threads";\n` +
+      `import { readFile, writeFile, stat, lstat, chmod, readdir, mkdir, rm, rename, open } ` +
+      `from "node:fs/promises";\n` +
+      `await runLauncherNode(\n` +
+      `  wt,\n` +
+      `  { readFile, writeFile, stat, lstat, chmod, readdir, mkdir, rm, rename, open },\n` +
+      `  process,\n` +
+      `  ${JSON.stringify(worker)},\n` +
+      `  ${JSON.stringify(grants)},\n` +
+      `  ${grants.net ? "nodeNet" : "undefined"},\n` +
+      `  ${JSON.stringify(child)},\n` +
+      `);\n`
+    : `import { runLauncher } from "./entry.ts";\n` +
+      `await runLauncher(${JSON.stringify(worker)}, ${JSON.stringify(grants)}, ` +
+      `${JSON.stringify(child)});\n`,
 );
 const launcher = bundle(RUNNER, transform, work, "launcher.ts");
 
@@ -155,14 +207,23 @@ const launcher = bundle(RUNNER, transform, work, "launcher.ts");
 // runs, keyed on contents, and never evicts; a built command is a unique multi-megabyte script, so
 // each one leaves an entry that can never be hit again. That cache had reached 28 GB on one machine
 // — 97% of a shared disk — before anybody looked. wac-mono 0068.
-const flags = ["--no-code-cache"];
-if (grants.read) flags.push("--allow-read");
-if (grants.write) flags.push("--allow-write");
-// `--unstable-net` rides with the network grant: `Deno.listenDatagram` is the whole datagram
-// capability on this host and does not exist without it. design/system 0007.
-if (grants.net) flags.push("--allow-net", "--unstable-net");
-if (grants.env) flags.push("--allow-env");
-if (grants.run) flags.push("--allow-run");
+// **Node's shebang states nothing**, and that is not an oversight: Node has no permission system, so
+// the capability world inside the module is the whole boundary there. A Deno one names exactly the
+// grants and nothing else.
+let shebang;
+if (target === "node") {
+  shebang = "#!/usr/bin/env node\n";
+} else {
+  const flags = ["--no-code-cache"];
+  if (grants.read) flags.push("--allow-read");
+  if (grants.write) flags.push("--allow-write");
+  // `--unstable-net` rides with the network grant: `Deno.listenDatagram` is the whole datagram
+  // capability on this host and does not exist without it. design/system 0007.
+  if (grants.net) flags.push("--allow-net", "--unstable-net");
+  if (grants.env) flags.push("--allow-env");
+  if (grants.run) flags.push("--allow-run");
+  shebang = `#!/usr/bin/env -S deno run ${flags.join(" ")}\n`;
+}
 
-writeText(out, `#!/usr/bin/env -S deno run ${flags.join(" ")}\n${launcher}`);
+writeText(out, `${shebang}${launcher}`);
 chmodX(out);
