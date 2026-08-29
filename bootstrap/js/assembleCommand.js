@@ -19,6 +19,11 @@
 // the same shape for `bootstrap/js/flatten.js` against `harness/wacFiles.ts`. The mitigation is that
 // this one runs on every `--host deno` build, so it cannot rot quietly.
 //
+// The *bundling* itself is not duplicated: `packages/ts/host/bundle.js` is the one implementation
+// and `run.js`, this file and `build.ts` all call it. This spawned `run.js` as a subprocess for a
+// few hours on the argument that calling it as anybody else would keeps it honest — which was a
+// worse trade than it sounded: a subprocess per bundle, three per build, to avoid an import.
+//
 // ## The three bundles
 //
 // A launcher carries a worker as a *string* and starts it from a blob URL. That is not indirection
@@ -36,6 +41,8 @@
 // `Deno.connect` has no Node equivalent. `packages/platform/build.ts` makes the same distinction in
 // the same three places.
 
+import { bundleFiles } from "../../packages/ts/host/bundle.js";
+
 const DENO = typeof Deno !== "undefined";
 
 // **`createRequire`, not a bare `require`.** This file uses `import.meta.url`, so Node loads it as an
@@ -47,6 +54,10 @@ const req = DENO ? null : (await import("node:module")).createRequire(import.met
 
 function args() {
   return DENO ? Deno.args : process.argv.slice(2);
+}
+
+function readBytes(p) {
+  return DENO ? Deno.readFileSync(p) : new Uint8Array(req("fs").readFileSync(p));
 }
 
 function readText(p) {
@@ -84,34 +95,20 @@ function die(msg) {
 }
 
 /**
- * Bundle one entry by running `packages/ts/host/run.js` over the working directory.
- *
- * **A subprocess rather than an import**, so there is one implementation of "drive the transform"
- * rather than two. `run.js` is the host `design/system/0009` specifies — bytes in, bytes out — and
- * calling it the way anybody else would is what keeps it honest.
+ * Bundle one entry out of the working directory.
  *
  * Every file in `work` is handed over, not just the ones this entry reaches. The bundler emits what
  * the entry imports, so the extra files cost bytes in the zip and nothing in the output — and it
  * saves writing a TypeScript import walker in plain JavaScript to answer a question the bundler
  * already answers.
  */
-function bundle(runner, transform, work, entry) {
+function bundle(transformWasm, work, entry) {
   const files = listDir(work)
     .filter((n) => n.endsWith(".ts") || n.endsWith(".js"))
-    .map((n) => `${work}/${n}`);
-  const argv = [`${RUN_JS}`, transform, `${work}/${entry}`, ...files];
-
-  if (DENO) {
-    const r = new Deno.Command(runner, { args: ["run", "-A", "--no-check", ...argv], stdout: "piped", stderr: "piped" }).outputSync();
-    if (!r.success) die(`bundling ${entry} failed:\n${new TextDecoder().decode(r.stderr)}`);
-    return new TextDecoder().decode(r.stdout);
-  }
-  const { execFileSync } = req("child_process");
-  try {
-    return execFileSync(runner, argv, { maxBuffer: 1 << 30 }).toString();
-  } catch (e) {
-    return die(`bundling ${entry} failed:\n${e.stderr ?? e.message}`);
-  }
+    .map((n) => [`${work}/${n}`, readBytes(`${work}/${n}`)]);
+  const r = bundleFiles(transformWasm, files, `${work}/${entry}`);
+  if (!r.ok) die(`bundling ${entry} failed:\n${r.error}`);
+  return new TextDecoder().decode(r.bytes);
 }
 
 const [work, transform, glue, out, grantsJson, targetArg] = args();
@@ -124,9 +121,7 @@ const target = targetArg === "node" ? "node" : "deno";
 if (target !== "deno" && target !== "node") die(`unknown target ${target}`);
 
 const ROOT = new URL("../..", import.meta.url).pathname;
-const RUN_JS = `${ROOT}packages/ts/host/run.js`;
 const HOST = `${ROOT}packages/platform/host`;
-const RUNNER = DENO ? "deno" : "node";
 
 mkdirp(work);
 for (const name of listDir(HOST)) {
@@ -167,8 +162,9 @@ writeText(
       `await childMain(globalThis.__wacChildBytes);\n`,
 );
 
-const worker = "//wac-worker 1\n" + bundle(RUNNER, transform, work, "worker.ts");
-const child = bundle(RUNNER, transform, work, "childwasm.ts");
+const transformWasm = readBytes(transform);
+const worker = "//wac-worker 1\n" + bundle(transformWasm, work, "worker.ts");
+const child = bundle(transformWasm, work, "childwasm.ts");
 
 // **The network import is present only when the network is granted**, which is the same discipline
 // as the shebang: an ungranted capability is absent rather than refused at the call. `nodeNet` is a
@@ -198,7 +194,7 @@ writeText(
       `await runLauncher(${JSON.stringify(worker)}, ${JSON.stringify(grants)}, ` +
       `${JSON.stringify(child)});\n`,
 );
-const launcher = bundle(RUNNER, transform, work, "launcher.ts");
+const launcher = bundle(transformWasm, work, "launcher.ts");
 
 // **The shebang states exactly the capabilities granted and nothing else**, which is only possible
 // because the worker starts from a blob URL rather than from this file — see the note at the top.
