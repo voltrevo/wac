@@ -9,16 +9,18 @@
 // TypeScript in `host/child.ts` written long before closures existed, and nothing in the wac
 // implementation was derived from it beyond the behaviours its comments name.
 //
-// ## Both halves run on the Deno host, and that is the whole of what this asserts
+// ## Both halves, on both hosts
 //
-// `build.ts` builds them and the built artefacts run them, which is exactly what the TypeScript did.
-// **Run the same two programs under `wac run` and they disagree** — the native host does not apply a
-// pushed child's `cwd`, so the child is told `note.txt: No such file or directory` in the directory
-// that has it. `issues/system/0199`.
-//
+// `build.ts` builds them and the built artefacts run them on the Deno host, which is what the
+// TypeScript did. This file used to stop there, and said why: *"Run the same two programs under `wac
+// run` and they disagree — the native host does not apply a pushed child's `cwd`… `issues/system/0199`.
 // So the stronger test — the same differential with the binary running both halves — is not here and
-// would be red. It is worth having and is a second pair of runs in this file on the day 0199 closes.
-// Until then this file says what its TypeScript said, and no more: read it as a claim about one host.
+// would be red. It is worth having and is a second pair of runs in this file on the day 0199 closes."*
+//
+// **0199 closed and the second pair was added** — `test_the_two_frames_agree_on_the_binary_as_well`
+// below — and this header went on describing their absence, which is how a note that names its own
+// next step goes stale: the step is taken and the sentence announcing it is not the sentence anybody
+// edits. Read the tests rather than this paragraph if the two ever disagree again.
 //
 // Host-side until 2026-08-19, `issues/system/0161`.
 

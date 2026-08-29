@@ -17,6 +17,7 @@
 // paragraph existed to explain the pump. `daemon.start` redirects to a file, so the log is a
 // `readFile` away and nothing can fill.
 
+import { binaryPath } from "../../../wactest/src/host.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
@@ -27,6 +28,13 @@ import { encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+
+/** The directory holding a path, so a built artefact can find `wac` on PATH. */
+string dirOf(string p) {
+  i32 cut = -1;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return cut < 0 ? "." : p.slice(0, cut);
+}
 
 string DESCRIPTOR(Cli cli) {
   return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptor");
@@ -138,8 +146,11 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   t.isTrue(whyDir == "", whyDir);
   string bin = dir + "/dird";
 
-  Exec built = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/tor/src/dird.wac",
+  // **`wac app` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is removing
+  // that builder's non-browser targets, and this wanted an executable rather than anything only it
+  // could make. One fewer thing here needs Deno at all.
+  Exec built = cli.exec(binaryPath(cli),
+    string[]("app", "packages/tor/src/dird.wac",
              "--allow-read", "--allow-net", "-o", bin), u8[0]()).wait();
   t.eqI32(built.status, 0, "dird built — " + string.fromBytes(built.stderr));
   if (built.status != 0) { return t.report(); }
@@ -155,8 +166,13 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   cli.writeFile(dir + "/desc", routerdesc.toBytes()).wait();
 
   // Port 0 asks the OS for a free one, which two agents running the suite at once cannot collide on.
+  // **Through `env`, because the artefact finds its runtime on PATH** with `command -v wac`, and
+  // `Cli.exec` passes no environment — so `/bin/sh` starts from its own default, which this
+  // checkout's binary is not on. A `PATH=` prefix will not do: `start` wraps the line as
+  // `{ exec <line>; }` and `exec` takes a command rather than an assignment.
   Daemon d = start(cli,
-    quoted(bin) + " " + quoted(dir + "/consensus") + " " + quoted(dir + "/cert") + " " +
+    "env PATH=" + quoted(dirOf(binaryPath(cli)) + ":/usr/bin:/bin") + " " +
+      quoted(bin) + " " + quoted(dir + "/consensus") + " " + quoted(dir + "/cert") + " " +
       quoted(dir + "/desc") + " 0",
     dir + "/log");
   t.isTrue(d.ok(), "dird started — " + d.error);

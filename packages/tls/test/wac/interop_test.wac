@@ -21,6 +21,7 @@
 // reachable through `Deno.connectTls`; it is the oracle, and `rustlsclient.ts` says so. `s_client` is
 // reached with `Cli.exec`, whose stdin is exactly what the TypeScript's piped writer was for.
 
+import { binaryPath } from "../../../wactest/src/host.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
@@ -29,6 +30,13 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
 import { openssl35, have } from "./openssl.wac";
+
+/** The directory holding a path, so a built artefact can find `wac` on PATH. */
+string dirOf(string p) {
+  i32 cut = -1;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return cut < 0 ? "." : p.slice(0, cut);
+}
 
 const string DATA = "packages/tls/test/data";
 const string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
@@ -47,14 +55,17 @@ Ours serveOnce(Core core, Cli cli, string name) {
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string bin = dir + "/tlsserved";
-  Exec built = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/tls/test/wac/tlsserved.wac",
+  // **`wac app` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is removing
+  // that builder's non-browser targets, and this wanted an executable rather than anything only it
+  // could make. One fewer thing here needs Deno at all.
+  Exec built = cli.exec(binaryPath(cli),
+    string[]("app", "packages/tls/test/wac/tlsserved.wac",
              "--allow-read", "--allow-net", "-o", bin), u8[0]()).wait();
   if (!built.ran() || built.status != 0) {
     return Ours(Daemon(-1, "", ""), -1, dir,
                 "tlsserved did not build: " + string.fromBytes(built.stderr));
   }
-  Daemon d = start(cli, quoted(bin) + " 0 --body " + quoted(BODY), dir + "/log");
+  Daemon d = start(cli, "env PATH=" + quoted(dirOf(binaryPath(cli)) + ":/usr/bin:/bin") + " " + quoted(bin) + " 0 --body " + quoted(BODY), dir + "/log");
   if (!d.ok()) { return Ours(d, -1, dir, "tlsserved did not start: " + d.error); }
   const string MARK = "listening on 127.0.0.1:";
   if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
