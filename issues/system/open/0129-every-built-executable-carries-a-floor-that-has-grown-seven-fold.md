@@ -449,8 +449,13 @@ before believing it.
 
 `issues/lang/0153` measured what this costs in the other currency. A hello-world that imports nothing
 builds in **53 ms** and is 2.6 KB; the same program with one `import … from "std/platform.wac"` builds
-in **1 100 ms** and is 241.3 KB. About 150 ms of that second is the front end — the rest is emitting
-the floor.
+in **1 100 ms**. About 150 ms of that second is the front end.
+
+**And the rest is not proportional to the module.** The same source declaring `main(Core core)`
+instead of `main(Core core, Cli cli)` emits **77.0 KB** rather than 241.3 KB — this issue's
+capability-surface point, seen from the compiler — and still takes 1 113 ms. So the work is over the
+closure rather than over the output, and a smaller executable would not, on this evidence, be a
+faster build.
 
 So the bundling question this issue leaves open is not only about what a user downloads. The same
 bytes are emitted from source on every build, and `issues/system/0275b` traces the suite's largest
