@@ -134,7 +134,13 @@ Deno.test("a driven module takes capabilities, which is the conversion a host ca
       };
     });
 
-    const built = driven.classes["Core"].of(...args);
+    // **`of` is optional on the type now**, because an *enum* has variant constructors and neither
+    // `of` nor `create` — see `drive()`. Asserted rather than cast: a manifest whose `Core` has no
+    // `of` is a real failure and one this test should say out loud, where a `!` would report it as
+    // "cannot read properties of undefined" three lines later.
+    const coreClass = driven.classes["Core"];
+    if (coreClass?.of === undefined) throw new Error("the manifest describes no `Core.of`");
+    const built = coreClass.of(...args);
     const main = driven.exports["main"] as CallableFunction;
     const code = main(built);
 
