@@ -435,3 +435,46 @@ One thing worth writing down because it cost a build: `assembleCommand.js` uses 
 with a bare `require` only because it has no ESM syntax at all. `createRequire` is the fix, and the
 failure arrived after the ladder had already done its work — a late place to find out.
 
+
+
+## The `build.ts` strip: attempted, reverted, and what it found
+
+`issues/system/0275c` was the stated blocker and it is fixed, so the migration was tried on
+2026-08-29: eleven of the twelve files in `packages/box/test/` moved from `packages/platform/build.ts`
+to `harness/buildApp.ts`, which builds with `wac app`. It was reverted the same day.
+
+**A `wac app` artefact is not a drop-in for a `build.ts` deno one.** With the swap in place and
+nothing else changed, `packages/box/test/box.test.ts` failed four ways and hung a fifth:
+
+    box's write-path applets: cp and tee                             FAILED
+    cp writes beside its target and renames, and none of the tier…   FAILED
+    bin/: one applet alone states only the grants it needs           FAILED
+    box's network applets: a wac server and a wac client…            FAILED
+    box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes    hung, 8m+
+
+Only the third was expected. The others say the two artefacts differ in ways these tests can see, and
+until that is understood the swap is a change that trades a working suite for a smaller `build.ts`.
+
+**One difference is already known and is probably not the whole of it.** `harness/buildApp.ts`
+prepends the checkout's `native/v8/target/release` to `PATH`, because a `wac app` artefact finds its
+runtime with `command -v wac`. `packages/box`'s tests are largely *about* what a program can reach —
+several of them run applets by name and one asserts what an ungranted build cannot do — so a new
+directory on `PATH` is not obviously inert there.
+
+### What the third failure means on its own
+
+`bin/: one applet alone states only the grants it needs` measured the claim by comparing **shebangs**,
+and a `wac app` preamble is byte-identical whatever the grants: `app_test.wac` asserts exactly that,
+because the capability belongs inside the module past the `\0asm` where a text editor cannot reach
+it. So the property survives the move and its *evidence* does not. It reads from what `wac app`
+prints when it writes the artefact — `[no capabilities]`, `--allow-read --allow-write`.
+
+`packages/box/README.md` states the same claim in the same terms — *"its shebang would say `deno run`
+with no flags"* — so it moves with the test rather than after it.
+
+### Where that leaves the strip
+
+Blocked on understanding the four unexplained failures, not on `0275c`. The honest order is to make
+one migrated file pass for the right reason before moving eleven, and `bin.test.ts` is the one to
+start from: it already builds both ways, and the case that runs a `wac app` artefact under the native
+host is the regression test for `0275c`.
