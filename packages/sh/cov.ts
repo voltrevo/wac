@@ -503,6 +503,11 @@ for (
     "chmod 644 /bin/prog", "chmod 0755 /bin/prog", "chmod x /bin/prog", "chown me /bin/prog",
     "[ /bin/prog -nt /bin/echo ]", "[ /bin/prog -ot /bin/echo ]", "[ /nosuch -nt /bin/echo ]",
     "cat /nosuchfile", "cd /nosuchdir",
+    // `local` is only valid inside a function — the bare `local x=1` above reaches the refusal and
+    // not the builtin — and `$'\x41'` is where the lexer decodes a hex escape. Both were in earlier
+    // batches in a form that could not work: one outside a function, one mangled by escaping.
+    "f() { local x=1; echo $x; }; f", "f() { local a=1 b=2; echo $a$b; }; f",
+    "f() { local bad-name=1; }; f", "echo $'\\x41'", "echo $'\\x'", "echo $'\\x4a\\x4b'",
   ]
 ) {
   m.shOut(script);
