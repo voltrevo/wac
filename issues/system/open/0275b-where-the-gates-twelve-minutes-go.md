@@ -467,3 +467,37 @@ stride split puts files 2, 9, 16, … of the sorted list together, and its other
 Nothing to conclude from that list yet; it is here so the next person does not have to recover it
 from a log the way this was. **The chunk key is positional**, so this membership changes the day a
 file is added to that directory — `#2` is not a stable name for these twelve.
+
+
+## Re-measured after buildcache, and half the work is one directory — agent-b, 2026-08-29
+
+The gate that landed the `buildcache_test.wac` change, read from its own footer and from
+`.cache/suite-times`:
+
+    883s of work at 4 workers, of which 46s ran alone — floor 255s, wall 318s
+    total 479s: pull+seed 1s, suite 318s, docs 17s, site 9s, ratchets 133s
+
+Against the run before it — 1025s of work, floor 303s, wall 387s. So 142s of work came out and 69s of
+wall with it, and the run is now 63s above its own floor.
+
+**Where the 838s of queued work sits** (the other 46s ran alone and is not in the times file, which
+records queued chunks only):
+
+    402.9s  48.1%  packages/wacc/test/wac
+     94.9s  11.3%  packages/platform/test/wac
+     65.9s   7.9%  packages/wac/test/wac
+     42.5s   5.1%  packages/tor/test/wac
+      ...everything else under 3% each
+
+**Half the suite is the compiler's own tests**, and its largest chunk is 159.3s — still below the
+255s floor, so the tail is still not the constraint and only work removal moves the run.
+
+What that work *is* has a measurement now, in `issues/lang/0153`: a program importing
+`std/platform.wac` costs about a second to build, ~80% of which is paid by the import alone rather
+than by anything the program does with it. wacc's tests compile programs. So the concentration above
+is not really "the compiler's tests are slow" — it is the platform-import cost, multiplied by how
+many programs this package compiles.
+
+Which makes the two live levers `issues/lang/0153` (that second) and `issues/system/0287b` (the build
+cache being off on every host but `native/v8`, so two thirds of `commandparity_test.wac`'s
+invocations cannot hit it even when the same fixture is compiled nine times).
