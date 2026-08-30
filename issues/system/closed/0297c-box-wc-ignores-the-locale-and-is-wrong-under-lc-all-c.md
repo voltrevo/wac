@@ -1,6 +1,7 @@
 # 0297 — box's `wc -w` ignores the locale, and is wrong in the one the repo compares in
 
-- **Status:** open
+- **Status:** closed — fixed 2026-08-30
+- **Fixed in:** `packages/box/src/lib/locale.wac` (new), `lib/words.wac`, `applets/wc.wac`
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -71,3 +72,31 @@ Asked while migrating `box.test.ts` under `0193`: the `wc -w` case would not lif
 machinery because the capture pins the locale. The obstacle looked like a property of the capture tool.
 It is a missing behaviour in `wc` — the same shape as `0296c`'s chmod gap, where a test that could not
 be written turned out to be naming something the platform could not do.
+
+## Fixed 2026-08-30
+
+`utf8Locale(cli)` reads `LC_ALL`, then `LC_CTYPE`, then `LANG` in POSIX precedence and answers whether
+the charset after the `.` is UTF-8. `wc` reads it once per run and walks bytes or scalars accordingly,
+with `isWordSeparatorC` for the C rule — ASCII whitespace only, and nothing over 0x7F, since the two
+bytes of U+00A0 are two ordinary characters there.
+
+    input a<U+00A0>b        real   box
+    LC_ALL=C                  1     1
+    LC_ALL=C.UTF-8            2     2
+    LC_ALL=en_GB.UTF-8        2     2
+    nothing set               1     1
+
+**Making an applet locale-aware couples its output to a capability**, which is the part worth
+remembering. A program not granted `env` cannot read `LC_CTYPE`, so it falls back to C and counts
+bytes — correct under POSIX, and *different from the real tool beside it*, which has the ambient
+environment. `box.test.ts`'s `wc -w` differential built its box with `{ read: true }` and went red on
+the first non-ASCII case: it had been comparing box-without-an-environment against wc-with-one, which
+only agreed while box ignored the environment entirely. It grants `env` now, and that is part of what
+the test asserts rather than an incidental flag.
+
+**A latent version of the same thing is left alone deliberately.** The vector capture pins `LC_ALL=C`,
+while the in-process replay inherits the test process's environment and grants — so a non-ASCII `wc`
+case added to `appletCases()` would depend on both. Every `wc` case there today is ASCII, where the
+two locales agree, so nothing is wrong now. The fix is for the replay to run with a stated locale
+rather than an inherited one, and `childCli` passes `parent.env` straight through with no way to
+substitute — the same attenuation gap `0296c` notes for grants.

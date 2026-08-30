@@ -699,7 +699,12 @@ Deno.test("wc -w splits words where wc(1) splits them, including the code points
   // this pass without the fix, which is exactly how the gap survived.
   const dir = await Deno.makeTempDir({ prefix: "wac-box-words-" });
   try {
-    const runner = await appRunner(BOX, { read: true });
+    // **`env` is granted, and that is part of the claim now.** `wc` reads `LC_CTYPE`/`LC_ALL` since
+    // `issues/system/0297c`, so a box built without the environment falls back to the C locale and
+    // counts bytes — correct POSIX behaviour, and not what the real `wc` beside it is doing, which has
+    // the ambient `C.UTF-8`. Withholding it here compares two different questions and the answers
+    // differ on the very first non-ASCII case.
+    const runner = await appRunner(BOX, { read: true, env: true });
     const wcOut = (args: string[]) => {
       const r = new Deno.Command("wc", { args, stdout: "piped", stderr: "null" }).outputSync();
       return new TextDecoder().decode(r.stdout);
