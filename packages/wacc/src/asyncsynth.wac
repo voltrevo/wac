@@ -28,10 +28,11 @@ import { kIdent, kInt, kAssign, kVoid } from "./kinds.wac";
 
 /** The names that do not depend on the function being lowered. */
 string[] fixedWords() {
-  return string[]("Pending", "wait", "then", "sched",
+  return string[]("Pending", "wait", "then", "sched", "detach",
                   "__wacState", "__wacDone", "__wacAnswer", "__wacStep",
-                  "=", "i32", "bool", "void", "id",
-                  "__wacResolve", "__wacSettled", "__wacDrop");
+                  "=", "i32", "bool", "void", "id", "v",
+                  "__wacResolve", "__wacSettled", "__wacDrop",
+                  "__wacArmed", "__wacWaitAt", "__wacNoStep", "__wacStepFn", "__wacMachine");
 }
 
 /** Index of each fixed word. A caller names it rather than counting. */
@@ -39,26 +40,79 @@ export i32 synthPending() { return 0; }
 export i32 synthWait()    { return 1; }
 export i32 synthThen()    { return 2; }
 export i32 synthSched()   { return 3; }
-export i32 synthState()   { return 4; }
-export i32 synthDone()    { return 5; }
-export i32 synthRes()     { return 6; }
-export i32 synthStep()    { return 7; }
+export i32 synthDetach()  { return 4; }
+export i32 synthState()   { return 5; }
+export i32 synthDone()    { return 6; }
+export i32 synthRes()     { return 7; }
+export i32 synthStep()    { return 8; }
 /** `=`. An `Assign` holds its operator's **token index**, which the emitter reads the kind out of —
  *  so a made-up one has to be a real token spelling a real `=`, not a sentinel. */
-export i32 synthAssign()  { return 8; }
-export i32 synthI32()     { return 9; }
-export i32 synthBool()    { return 10; }
-export i32 synthVoid()    { return 11; }
-export i32 synthId()      { return 12; }
-export i32 synthResolve() { return 13; }
-export i32 synthSettled() { return 14; }
-export i32 synthDrop()    { return 15; }
+export i32 synthAssign()  { return 9; }
+export i32 synthI32()     { return 10; }
+export i32 synthBool()    { return 11; }
+export i32 synthVoid()    { return 12; }
+export i32 synthId()      { return 13; }
+/** The parameter of the handler a suspension registers — `(T v) => …`. */
+export i32 synthV()       { return 14; }
+export i32 synthResolve() { return 15; }
+export i32 synthSettled() { return 16; }
+export i32 synthDrop()    { return 17; }
+/**
+ * Where the machine records what it has registered, so a waiter can take it back.
+ *
+ * A suspension that carries a scheduler registers a continuation, and a `wait` that arrives
+ * afterwards must **detach it before stepping** or the answer is delivered twice — once where the
+ * caller waited and once when `run` dispatches. `__wacWaitAt` is the state to jump to when that
+ * happens: the one that takes the answer by waiting rather than by being handed it.
+ *
+ * **The scheduler is not recorded, deliberately.** Keeping it would mean naming the type `Sched` in
+ * the generated code, and then every file with an `async` function in it would have to import a type
+ * its author never mentions. The state that waits knows which slot it is, so it detaches through its
+ * own ticket instead — `__wacUpK!.sched!.detach(__wacUpK!.id)` — and only the *fact* that something
+ * is armed has to be remembered here.
+ */
+export i32 synthArmed()    { return 18; }
+export i32 synthWaitAt()   { return 19; }
+/**
+ * The step and its continuations refer to each other, so one of them has to be reached indirectly.
+ *
+ * A handler has to call the step to drive the machine on; the step's own body registers the
+ * handlers. Whichever is written second is the one the other cannot name — a lambda's initialiser is
+ * not a scope its own name is in, and a local declared later is not in scope at all. So the step
+ * lives in a **cell**, filled with `__wacNoStep` until the real one is assigned into it, and the
+ * handlers read it out. `__wacStepFn` holds the lambda on the way in, because a lambda written
+ * straight into an array element is *"in a position the walk does not type yet"*.
+ */
+export i32 synthNoStep()   { return 20; }
+export i32 synthStepFn()   { return 21; }
+/** Holds the machine lambda on its way into the cell — a lambda cannot be written into one. */
+export i32 synthMachine()  { return 22; }
 
 /** How many words come before the generated suspension slots. */
-export i32 synthFixedCount() { return 16; }
+export i32 synthFixedCount() { return 23; }
 
-/** The slot for await number `k`, as an index into `synthWords(ups)`. */
-export i32 synthSlot(i32 k) { return synthFixedCount() + k; }
+/**
+ * The ticket slot for await number `k`.
+ *
+ * **Two families now, not one.** A suspension needs somewhere to keep the ticket *and* somewhere to
+ * keep the answer, because the answer can arrive two ways: handed to a registered continuation, or
+ * taken by a `wait`. Both write the same cell, and the state that carries on reads it — which is what
+ * makes the two drivers one machine rather than two.
+ */
+export i32 synthSlot(i32 k) { return synthFixedCount() + 3 * k; }
+
+/** The value slot for await number `k` — where its answer lands, however it arrives. */
+export i32 synthVal(i32 k) { return synthFixedCount() + 3 * k + 1; }
+
+/**
+ * The continuation await number `k` registers.
+ *
+ * **One per slot, declared in the function rather than at the suspension.** The obvious place to
+ * build it is the arm that suspends — but that arm is inside `__wacStep`'s own initialiser, where
+ * `__wacStep` is not yet in scope, and the handler has to call it to advance the machine. So each
+ * slot's handler is a local of the enclosing function, declared after the step it calls.
+ */
+export i32 synthHand(i32 k) { return synthFixedCount() + 3 * k + 2; }
 
 /**
  * The numeral `k`, as an index into `synthWords(ups)`.
@@ -69,7 +123,7 @@ export i32 synthSlot(i32 k) { return synthFixedCount() + k; }
  * states `0..ups`, so the tail carries numerals up to `ups + 1` and a wrong count here would be a
  * silently wrong state number rather than a failure.
  */
-export i32 synthNum(i32 ups, i32 k) { return synthFixedCount() + (ups < 0 ? 0 : ups) + k; }
+export i32 synthNum(i32 ups, i32 k) { return synthFixedCount() + 3 * (ups < 0 ? 0 : ups) + k; }
 
 /** `0`, for indexing a cell. */
 export i32 synthZero(i32 ups) { return synthNum(ups, 0); }
@@ -98,10 +152,14 @@ export string[] synthWords(i32 ups, i32 states) {
   string[] fixed = fixedWords();
   i32 n = ups < 0 ? 0 : ups;
   i32 nums = synthNumCount(states);
-  string[] out = string[fixed.len() + n + nums]();
+  string[] out = string[fixed.len() + 3 * n + nums]();
   for (i32 i = 0; i < fixed.len(); i++) { out[i] = fixed[i]; }
-  for (i32 i = 0; i < n; i++) { out[fixed.len() + i] = "__wacUp" + numOf(i); }
-  for (i32 i = 0; i < nums; i++) { out[fixed.len() + n + i] = numOf(i); }
+  for (i32 i = 0; i < n; i++) {
+    out[fixed.len() + 3 * i] = "__wacUp" + numOf(i);
+    out[fixed.len() + 3 * i + 1] = "__wacVal" + numOf(i);
+    out[fixed.len() + 3 * i + 2] = "__wacHand" + numOf(i);
+  }
+  for (i32 i = 0; i < nums; i++) { out[fixed.len() + 3 * n + i] = numOf(i); }
   return out;
 }
 

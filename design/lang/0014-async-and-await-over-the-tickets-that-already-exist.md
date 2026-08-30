@@ -471,7 +471,7 @@ already the state slot.
 | 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
 | 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
 | 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
-| 4 | **A2, A3 and D6's loops pass 2026-08-30** — `packages/platform/test/wac/asyncsyntax_test.wac` 10/10, through real `async`/`await`. The body is flattened into a state machine: `if`, `while`, `for`, nested blocks, `break` and `continue` all suspend correctly. Still declined by name: a suspension in a loop *condition*, one nested in a larger expression, one whose value is discarded |
+| 4 | **A2, A3, D6's loops and drain-driving pass 2026-08-30** — `packages/platform/test/wac/asyncsyntax_test.wac` 13/13. Bodies flatten to a state machine (`if`, `while`, `for`, blocks, `break`, `continue`); a suspension on a **linked** ticket registers, so `drain` alone finishes a machine and two interleave; a `wait` detaches first so the body never runs twice. Declined by name: a suspension in a loop condition, one nested in a larger expression, one whose value is discarded |
 | 5 | not started |
 
 ## Open

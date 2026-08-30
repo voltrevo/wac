@@ -169,3 +169,56 @@ export string test_two_loops_in_flight_keep_their_own_counters(Core core, Cli cl
   t.eqI32(b.wait(), sizeOf(cli, "MERGE.md") + sizeOf(cli, "CLAUDE.md"), "and the two-file loop");
   return t.report();
 }
+
+// ── Driven by `drain` rather than by a wait — D1's other half ─────────────────
+
+/**
+ * Suspends `n` times on a **linked** ticket, writing a digit each time it resumes.
+ *
+ * `core.delay` is one of the four `Core` links itself, which is what makes registration possible:
+ * `then` traps on a ticket that carries no scheduler, so a machine awaiting an unlinked one can only
+ * be driven by a wait. That is D2's *host-backed → block*, and it is why this case uses `delay`.
+ */
+async i32 ticks(Core core, i32 n, i32[] log, i32 me) {
+  for (i32 i = 0; i < n; i++) {
+    i64 at = await core.delay(1);
+    log[0] = log[0] * 10 + me;
+  }
+  return n;
+}
+
+export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
+  T t = T.create();
+  i32[] log = i32[1]();
+  Pending<i32> p = ticks(core, 2, log, 1);
+  t.isFalse(p.isDone(), "eager stopped at the first await");
+  t.eqI32(core.drain(), 2, "two suspensions, two continuations");
+  t.isTrue(p.isDone(), "and the drain finished it, with nobody waiting");
+  t.eqI32(p.wait(), 2, "the answer was already there");
+  return t.report();
+}
+
+export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
+  T t = T.create();
+  // **The property A1 exists for.** Run to completion one after the other the log reads 1122;
+  // interleaved it reads 1212. Two clients being served at once is this, with sockets.
+  i32[] log = i32[1]();
+  Pending<i32> a = ticks(core, 2, log, 1);
+  Pending<i32> b = ticks(core, 2, log, 2);
+  core.drain();
+  t.eqI32(log[0], 1212, "the two machines took turns");
+  t.isTrue(a.isDone() && b.isDone(), "and both finished");
+  return t.report();
+}
+
+export string test_a_wait_takes_the_continuation_back(Core core, Cli cli) {
+  T t = T.create();
+  // Registered *and* waited on. Without the detach the body would run twice — once where the wait
+  // drove it and once when `run` dispatched the continuation still sitting in the scheduler.
+  i32[] log = i32[1]();
+  Pending<i32> p = ticks(core, 1, log, 7);
+  t.eqI32(p.wait(), 1, "waiting drove it");
+  t.eqI32(log[0], 7, "the body ran once, not twice");
+  t.eqI32(core.drain(), 0, "and nothing was left registered");
+  return t.report();
+}
