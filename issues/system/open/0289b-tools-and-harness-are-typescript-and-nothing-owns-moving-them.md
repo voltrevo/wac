@@ -178,6 +178,24 @@ giving it a sibling that answers paths and texts, costs no seed rebuild and no n
 the cheap route; `gather` is the complete one, and which is right depends on whether a tool ever
 needs to compile a program that uses `@/`.
 
+**Done 2026-08-30 as `sourcesOf`, and it unblocked one of the two.** `wac task size` is
+`tools/wac/size.wac`: same wasm bytes and the same 12,319-line closure as the TypeScript, byte for
+byte, so the walk is the walk.
+
+**`bench:compile` is not unblocked, and reading it for the port is what showed why.** It does not
+time *a* build; it times the phases of the build as `harness/waccBuild.ts` makes them, in that order,
+and `benchCompile.test.ts` asserts that every `api.*` call in that harness file is either timed here
+or carries a `bench-exempt` line saying why — a guard added because the list silently drifted twice
+and once reported 106s for a build that no longer cost that. So a wac port has to answer *which build
+it measures*: the TypeScript harness's sequence, which is the one the guard is written against and
+which nobody runs to build anything, or `wac build`'s, which is the one people use. Those are
+different programs now. `--mem` is a second question — it re-invokes itself one phase per process to
+get peak memory, because a collection during phase 3 shows up as phase 4 using less, and nothing in
+`std/platform.wac` reports peak RSS.
+
+So the remaining count behind "no `wacFiles`" is one task, not two, and what is left of it is a
+decision about the subject rather than a missing function.
+
 **Goes when the TypeScript goes:** `check`, which is `deno check` over the remaining `.ts`.
 
 **Somebody else's package:** `coverage:sh`.
