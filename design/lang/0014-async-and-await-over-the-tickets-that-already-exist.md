@@ -517,6 +517,14 @@ rather than requiring a `Core` parameter the function may not have. An unlinked 
 under `wait` — which is the *host-backed → block* row of D2's table — and cannot advance under
 `drain`, because there was nowhere to register it.
 
+**Answered 2026-08-30: `Cli` should carry the scheduler**, and the attempt is `issues/lang/0298c`.
+The change is `Core.of`'s shape applied to `Cli`'s thirty-one ticket-returning capabilities, and it
+type-checks and emits on its own — but built into the whole `wac.wac` graph the emitter writes a
+module the engine refuses, so `bootstrap.sh` refuses the compiler. The lead is the 1024-lambda cap,
+unconfirmed. Until it lands, `.linkedTo(core)` stays written in A1 and `relayd`.
+
+The reasoning below is what it was before the answer.
+
 That is coherent but it leaves a silent stall, which is the failure D7 exists to prevent, and it
 means **A1 must say `.linkedTo(core)`** or the tickets it awaits must arrive linked. Both of A1's
 functions take a `Core`, so the criterion is writable either way. Which of the two is right is a
