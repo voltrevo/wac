@@ -1961,6 +1961,30 @@ export struct Cli {
   fn[Pending<Change>(string, bool)] setExecutable;
 
   /**
+   * Set a file's permission bits — `issues/system/0296c`.
+   *
+   * **The widening `setExecutable` above was written narrow against.** Its note gives three reasons for
+   * one bit, and the third is that *"widening later is additive; narrowing later removes something
+   * callers depend on"* — this is that widening, and the two reasons for the narrow form still hold, so
+   * it stays: git wants exactly the execute bit, and a caller who wants that should say so rather than
+   * computing a mode.
+   *
+   * `mode` is the low twelve bits, as `chmod(2)` takes them: `0o755`, `0o600`, and the three
+   * set-user/group/sticky bits above them. Nothing here interprets symbolic forms — `u+x` is the
+   * *shell's* spelling, and `applets/chmod.wac` is what turns one into a number.
+   *
+   * **A host with no modes answers `FAULT_UNSUPPORTED`**, as it does for `setExecutable`: a browser's
+   * OPFS has no permission bits, so the capability is present and the backing refuses. That is the
+   * distinction this vocabulary has had since `0117`, and it is why a general mode is answerable here
+   * rather than merely absent.
+   *
+   * What this was wanted for: a test cannot make a directory unreadable, so it cannot ask what `find`
+   * and `du` do with one — `box.test.ts` builds that fixture with `Deno.chmod` and could not be
+   * written in wac at all.
+   */
+  fn[Pending<Change>(string, i32)] chmod;
+
+  /**
    * Streaming input: `openInput` chooses the source, `readChunk` pulls from it.
    *
    * Everything else here answers with the whole of something, which is fine for a
@@ -2506,6 +2530,7 @@ export struct Cli {
     fn[Pending<Change>(string, bool)] remove,
     fn[Pending<Change>(string, string)] rename,
     fn[Pending<Change>(string, bool)] setExecutable,
+    fn[Pending<Change>(string, i32)] chmod,
     fn[Pending<Change>(string)] openInput,
     fn[Read()] readChunk,
     fn[Pending<string>()] outputError,
@@ -2543,6 +2568,7 @@ export struct Cli {
       (string a0, bool a1) => remove(a0, a1).on(sched),
       (string a0, string a1) => rename(a0, a1).on(sched),
       (string a0, bool a1) => setExecutable(a0, a1).on(sched),
+      (string a0, i32 a1) => chmod(a0, a1).on(sched),
       (string a0) => openInput(a0).on(sched), readChunk, () => outputError().on(sched),
       (string a0) => openOutput(a0).on(sched), (string a0, i32 a1) => connect(a0, a1).on(sched),
       (string a0, i32 a1) => listen(a0, a1).on(sched), (i32 a0) => accept(a0).on(sched),

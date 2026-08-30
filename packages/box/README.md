@@ -1,6 +1,6 @@
 # box — a busybox, written in wac
 
-65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. No TypeScript: `src/` is
+66 applets in one program, chosen by the first argument — 65 tools and `help`, which prints the list. No TypeScript: `src/` is
 wac and the only thing outside it is the test suite.
 
 It exists to exercise `packages/platform`'s capability world more widely than a single
@@ -16,7 +16,7 @@ cat README.md | ./box sort -u | ./box wc -l
 ```
 
 ```
-base32 base64 basename cat cp crc32 cut date diff dirname du echo false find fold fsdump get
+base32 base64 basename cat chmod cp crc32 cut date diff dirname du echo false find fold fsdump get
 gets grep gunzip gzip head hex httpd id init json ls mkdir mv nc nl paste ps rev rm rmdir
 seq serve sha256sum sha512sum shuf sort split sponge stat strings tac tail tar tee touch tr
 true uniq unzstd urldecode urlencode uuid wc wget whoami yes zstd
@@ -57,7 +57,7 @@ half-written destination.
 **It also shows what a multicall binary costs.** `box`'s grants are the *union* of what
 its applets need, so `box echo` carries the filesystem access `box cat` wants. Built as
 separate executables, each would state its own: `wc` needs nothing at all and its shebang
-would say `deno run` with no flags. One binary with 65 entry points is the shape
+would say `deno run` with no flags. One binary with 66 entry points is the shape
 BusyBox has to take; it is not the shape this model is best at.
 
 ## In a browser
@@ -320,7 +320,7 @@ It also caught that a missing final newline is not handled uniformly by the real
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
 
-**The applet count is compared too.** "65 applets" in the first line is a digit rather than a word
+**The applet count is compared too.** "66 applets" in the first line is a digit rather than a word
 because it kept going stale: it said fifty-nine when the dispatcher had sixty, and before that
 forty-two in one paragraph and something else in another. `test/box.test.ts` reads it out of this
 README and counts `box.wac`'s branches, so adding an applet and forgetting the sentence is a failing

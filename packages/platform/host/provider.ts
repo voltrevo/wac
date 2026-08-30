@@ -227,6 +227,7 @@ export function cliOf(
     [OP.REMOVE]: GRANT_WRITE,
     [OP.RENAME]: GRANT_WRITE,
     [OP.SET_EXECUTABLE]: GRANT_WRITE,
+    [OP.CHMOD]: GRANT_WRITE,
     [OP.OPEN_OUTPUT]: GRANT_WRITE,
     [OP.CONNECT]: GRANT_NET,
     [OP.LISTEN]: GRANT_NET,
@@ -643,6 +644,10 @@ export function cliOf(
     // Same `flagged` encoding as `mkdir` and `remove`: one bool, one path. The bool is "should it be
     // executable", not "toggle" — a toggle would make the result depend on what was there.
     (path: string, on: boolean) => T.change(send(OP.SET_EXECUTABLE, flagged(on, path))),
+    /*= chmod */
+    // The mode ahead of the path, the same shape `listen` uses for a port — a bool would not carry it,
+    // which is the whole difference from `setExecutable` above.
+    (path: string, mode: number) => T.change(send(OP.CHMOD, headed(i32le(mode), str(path)))),
 
     /*= openInput */
     // `change`, not `outcome`, for the same reason `openOutput` uses it: a category the caller can put

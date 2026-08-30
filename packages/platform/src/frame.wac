@@ -308,6 +308,7 @@ export Cli childCli(Frame f, const Cli parent) {
     (string p, bool recursive) => parent.remove(f.path(p), recursive),
     (string from, string to) => parent.rename(f.path(from), f.path(to)),
     (string p, bool on) => parent.setExecutable(f.path(p), on),
+    (string p, i32 mode) => parent.chmod(f.path(p), mode),
     // **Redirection is recorded as well as passed on.** The parent opens the file, and from then on
     // the reads below have to defer to it rather than to the frame's bytes. An empty path is how a
     // caller says "back to standard input", which puts the frame back in charge.

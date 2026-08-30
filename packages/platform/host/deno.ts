@@ -1139,6 +1139,14 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       // destination for a source it could not read would send the reader to the wrong half.
       return changed(() => onPath(from, () => onPath(to, () => Deno.rename(from, to))));
     },
+    [OP.CHMOD]: (p) => {
+      if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
+      const mode = readI32le(p) & 0o7777;
+      const path = P(unstr(p.subarray(4)));
+      // The mode as given, unlike `SET_EXECUTABLE` below which reads it and changes one bit. A caller
+      // that wants the narrow thing asks for the narrow thing. `issues/system/0296c`.
+      return changed(() => onPath(path, () => Deno.chmod(path, mode)));
+    },
     [OP.SET_EXECUTABLE]: (p) => {
       if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
       const path = P(unstr(p.subarray(1)));

@@ -871,6 +871,15 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       if (no !== null) return no;
       return changeBytes(FAULT_UNSUPPORTED, "a page's filesystem has no mode bits");
     },
+    // The same answer for the whole mode, and for the same reason. `Cli.setExecutable`'s note gives
+    // "a browser's OPFS has no mode bits at all" as one of three reasons it was one bit rather than a
+    // mode — the point being that `FAULT_UNSUPPORTED` says *the backing refuses* rather than *nobody
+    // implemented this*. That distinction is what lets the wider call exist here at all.
+    [OP.CHMOD]: () => {
+      const no = writeRefused();
+      if (no !== null) return no;
+      return changeBytes(FAULT_UNSUPPORTED, "a page's filesystem has no mode bits");
+    },
 
     [OP.OPEN_INPUT]: async (p) => {
       const path = unstr(p);
