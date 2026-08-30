@@ -67,6 +67,28 @@ const i32 WORKERS = 4;
 string timesPath() { return ".cache/coverage-times"; }
 string staleTimesPath() { return ".cache/coverage-times.json"; }
 
+/** How long a wait sleeps before re-checking. Short enough that a missed edge costs nothing. */
+i32 pollMs() { return 250; }
+
+/**
+ * How long the sweep may make **no progress at all** before it gives up and says so.
+ *
+ * This is a detector, not a margin. The slowest single driver measured here is `platform` at 130s
+ * alone and `tor` at 217s with another agent's gate on the machine, so this is about four times the
+ * worst seen — `issues/system/0289b` has the numbers.
+ *
+ * **It exists because a run of this held the suite lock for five minutes and had to be killed.** The
+ * cause was `isSweep` below — a thirty-eighth job that was itself a whole sweep — and the reason it
+ * cost so much to find is that the sweep had no way to say what it was waiting for. It printed `ok`
+ * thirty-seven times and then nothing, which reads as a hang whatever is actually happening.
+ *
+ * So the bound is not really about that bug, which is fixed: it is about the shape. An unbounded wait
+ * here is an unbounded hold on a lock every agent needs, and any future driver that wedges would cost
+ * the same again. Bounded, it names the packages it was still waiting on and exits, which is a
+ * failure somebody can read.
+ */
+i64 stallMs() { return 900000 as i64; }
+
 /** The checkout's binary, not `wac` on PATH — an installed build is a different compiler. */
 export string binary() { return "./native/v8/target/release/wac"; }
 
@@ -94,7 +116,7 @@ export string[] packagesOf(Task[] tasks) {
     string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
     i32 at = 0;
     for (i32 i = 0; i < tasks.len(); i++) {
-      if (!startsWith(tasks[i].name, "coverage:") || tasks[i].name == "coverage:all") { continue; }
+      if (!startsWith(tasks[i].name, "coverage:") || isSweep(tasks[i].name)) { continue; }
       if (pass == 1) { out[at] = tasks[i].name.slice(9, tasks[i].name.len()); }
       at = at + 1;
     }
@@ -102,6 +124,25 @@ export string[] packagesOf(Task[] tasks) {
     n = at;
   }
   return string[0](fill: "");
+}
+
+/**
+ * The `coverage:` tasks that are **sweeps rather than packages**, and must never be dispatched as one.
+ *
+ * `coverage:all` was the only exclusion, because it was the only sweep. Adding `coverage:union` on
+ * 2026-08-30 made a second one, and this function dispatched it: the sweep ran 37 drivers plus a
+ * *nested whole-union run*, which is another 37 drivers one at a time. The visible symptom is not a
+ * crash — it is a run that prints `ok` for all 37 real packages and then appears to hang, holding the
+ * suite lock, because a thirty-eighth job nobody counted is still going. It took a `ps` showing a
+ * `wac task coverage:union` child to see it; the arithmetic never showed, because 37 distinct `ok`
+ * lines is exactly what 38 dispatched jobs with one outstanding looks like.
+ *
+ * Named here rather than derived. The tempting rule — "a package is a `coverage:` task whose name is
+ * a directory under `packages/`" — is wrong for `core`, whose tree is at the repository root and
+ * which is why `driverOf` reads the command instead of assuming the path.
+ */
+export bool isSweep(string task) {
+  return task == "coverage:all" || task == "coverage:union";
 }
 
 /** The command for `coverage:<pkg>`, or `""`. */
@@ -307,6 +348,9 @@ export i32 main(Core core, Cli cli) {
   i64[] slotStart = i64[workers]();
   bool[] busy = bool[workers]();
   i32 next = 0;
+  // Only a completion counts as progress; a poll that timed out is the ordinary case while a long
+  // driver runs, and must not keep the stall bound alive.
+  i64 lastProgress = nowMs(core);
 
   for (i32 s = 0; s < workers && next < dispatch.len(); s++) {
     live[s] = cli.exec(binary(), string[]("task", "coverage:" + dispatch[next]), u8[0]());
@@ -329,8 +373,34 @@ export i32 main(Core core, Cli cli) {
       slotOf[at] = s;
       at = at + 1;
     }
-    i32 which = core.waitAny(ids, -1);
-    if (which < 0) { continue; }
+    // **A deadline rather than for ever, and this is not caution.** `waitAny` waits on the
+    // completion counter the host bumps, so it answers an *edge*; a driver that settles between the
+    // bookkeeping below and the next call to this has already bumped the counter, and an unbounded
+    // wait then sleeps for a transition that has been and gone. With a deadline the next poll sees
+    // it. `tools/runTests.wac` waits with one for the same reason and says so.
+    //
+    // It hung exactly once, in the gate, and the ordering is why it did not hang before: dispatched
+    // alphabetically the last two drivers were `platform` and `tor`, thirteen seconds apart, and
+    // nothing raced. Longest-first puts those two first, so the *tail* is a dozen short packages
+    // finishing within a second of each other — the ordering this file added is what made its own
+    // race reachable. 37 of 37 printed `ok`, then the process sat in a futex at zero CPU.
+    i32 which = core.waitAny(ids, pollMs());
+    if (which < 0) {
+      if (nowMs(core) - lastProgress <= stallMs()) { continue; }
+      string stuck = "";
+      for (i32 i = 0; i < nBusy; i++) {
+        i32 s = slotOf[i];
+        stuck = stuck + (stuck == "" ? "" : ", ") + dispatch[slotItem[s]]
+              + " (" + seconds(nowMs(core) - slotStart[s]) + ")";
+      }
+      core.warn("coverage:all: no driver has finished in " + wholeSeconds(stallMs())
+                + "s — giving up rather than holding the suite lock.");
+      core.warn("   " + itoa(done) + " of " + itoa(dispatch.len())
+                + " finished; still waiting on: " + stuck);
+      core.warn("   Run those by hand — `wac task coverage:<pkg>` — and see issues/system/0289b.");
+      unannounce(cli, heavy);
+      return 1;
+    }
 
     i32 slot = slotOf[which];
     Exec r = live[slot].wait();
@@ -342,7 +412,13 @@ export i32 main(Core core, Cli cli) {
     if (!r.ran()) { output = output + "error: " + r.error + "\n"; }
     results[indexIn(packages, pkg)] = Result(pkg, status, ms, output, "");
     done = done + 1;
-    core.log((status == 0 ? "ok  " : "FAIL") + "  coverage:" + pkg + "  " + seconds(ms));
+    lastProgress = nowMs(core);
+    // **`n of m` on every line**, because the alternative is what happened on 2026-08-30: a run
+    // dispatched 38 jobs, printed 37 and appeared to hang, and nothing on screen distinguished
+    // "finished" from "one job left". A count is one field and it makes a stuck run legible at a
+    // glance rather than after a `ps`.
+    core.log((status == 0 ? "ok  " : "FAIL") + "  coverage:" + pkg + "  " + seconds(ms)
+             + "  (" + itoa(done) + " of " + itoa(dispatch.len()) + ")");
 
     busy[slot] = false;
     if (next < dispatch.len()) {
