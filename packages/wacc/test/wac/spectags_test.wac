@@ -184,7 +184,7 @@ void namedByCase(string text, Strs into) {
  *
  * wacc implements wapy now — `wapylex.wac`, `wapyparse.wac`, `wapyprint.wac`, `wapyrewrite.wac`,
  * `wapytok.wac` — and every one of the nine was already named by a test that checks it, eight in
- * `wapy_test.wac` beside this file and one in `wapyRoundTrip.test.ts`. So the skip was not merely
+ * `wapy_test.wac` beside this file and one in `wapyroundtrip_test.wac`. So the skip was not merely
  * out of date: it was excusing clauses that were held, on a premise that had stopped being true, and
  * the total it printed was nine short of the truth in the *pessimistic* direction. An exemption
  * costs nothing to keep and says nothing when it stops applying, which is the whole hazard.

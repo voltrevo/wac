@@ -315,7 +315,7 @@ days. But the count is not the finding — **the distribution is**:
 |---|---|---|
 | `platform` | 31 | "the subject is TypeScript in every one" |
 | `box`, `sh` | 17 + 4 | another agent's packages |
-| `wacc` | 4 | `bindgen`, `jsBindgen`, `jsxBoundary`, `wapyRoundTrip` — every one a JavaScript boundary or a differential whose other half is JavaScript |
+| `wacc` | 3 | `bindgen`, `jsBindgen`, `jsxBoundary` — each a JavaScript boundary, and the subject is the generated JavaScript itself. `wapyRoundTrip` was a fourth in this row and did not belong: its other half is **wacc**, not JavaScript, and it is `packages/wacc/test/wac/wapyroundtrip_test.wac` as of 2026-08-30 |
 | `ts` | 2 | "the subject is a TypeScript compiler's answer" |
 | `webrtc`, `raster`, `stream` | 1 each | a real browser, a real canvas, a `TransformStream` |
 

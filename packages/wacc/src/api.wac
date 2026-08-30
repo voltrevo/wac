@@ -38,7 +38,7 @@ export string dump(u8[] src) {
  * A wac source rendered as **wapy** — the direction wacc did not have.
  *
  * `dumpWapy` above reads wapy and this writes it, so a `.wac` file can be turned into the other
- * surface and read back. That round trip is what `packages/wacc/test/wapyRoundTrip.test.ts` does
+ * surface and read back. That round trip is what `packages/wacc/test/wac/wapyroundtrip_test.wac` does
  * over every tracked file, and it is not circular: `wapyprint.wac` and `wapyparse.wac` are both
  * written from `spec/spec/wapy.md` rather than from each other.
  */
@@ -53,7 +53,7 @@ export string wapyOf(u8[] src) {
  *
  * `spec/spec/wapy.md` says the two are one language in two layouts, and the only way to hold that to
  * account is to read a program written both ways and compare what came back. This is the surface
- * that lets a caller outside wac do it — `packages/wacc/test/wapyRoundTrip.test.ts` renders every
+ * that lets a caller outside wac do it — `packages/wacc/test/wac/wapyroundtrip_test.wac` renders every
  * tracked `.wac` file to wapy and asks for both.
  */
 export string dumpWapy(u8[] src) {

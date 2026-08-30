@@ -809,7 +809,7 @@ WapyRes takeMatch(W w, i32 i, i32 hi, bool isSwitch) {
       // value, and reading `_` as an ordinary expression instead builds a case testing a variable
       // nobody declared — accepted here and refused three phases later, or worse, matched.
       // compiler/wapyPrint.ts emits it (`c.value === "default" ? "_" : …`) and this frontend did
-      // not read it back, which is what `packages/wacc/test/wapyRoundTrip.test.ts` found on the
+      // not read it back, which is what `packages/wacc/test/wac/wapyroundtrip_test.wac` found on the
       // first corpus it was pointed at: five `spec/cases`, `spec/tour.wac` and `json`'s printer.
       bool isDefault = jf + 2 == upto && kindOf(w, jf + 1) == kIdent()
                     && textOf(w, jf + 1) == "_";
