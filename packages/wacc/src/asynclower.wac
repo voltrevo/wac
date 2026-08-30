@@ -1,0 +1,147 @@
+// Rewriting an `async` function into ordinary wac — `design/lang/0014` step 4.
+//
+// The body becomes a **flattened state machine**: a `while (true)` over a `switch` on a state
+// variable, where each `await` ends one arm and begins the next. The machine and its locals live in
+// the enclosing function, and the step is a lambda — so the locals that outlive a suspension are
+// *captured*, which `design/lang/0002` makes by reference, and there is no frame struct to build.
+// That was the discovery that made this small: the captured local **is** the state slot.
+//
+// What comes out is this, for `async R f(…) { T x = await e; return g(x); }`:
+//
+//     Pending<R> f(…) {
+//       i32[] __wacState = i32[1]();
+//       bool[] __wacDone = bool[1]();
+//       R[] __wacRes = R[1]();
+//       T[] x = T[1]();
+//       Pending<T>? __wacUp0 = null;
+//       fn[bool()] __wacStep = () => {
+//         while (true) {
+//           switch (__wacState[0]) {
+//             case 0: { __wacUp0 = e; __wacState[0] = 1; return false; }
+//             case 1: { x[0] = __wacUp0!.wait(); __wacRes[0] = g(x[0]);
+//                       __wacDone[0] = true; return true; }
+//             default: { return true; }
+//           }
+//         }
+//       };
+//       __wacStep();                       // eager — D1, runs to the first await and stops
+//       fn[R(i32)] __wacResolve = (i32 id) => {
+//         while (!__wacDone[0]) { __wacStep(); }
+//         return __wacRes[0];
+//       };
+//       …
+//       return Pending<R>(0 - 1, __wacResolve, __wacSettled, __wacDrop, null);
+//     }
+//
+// **Every local is a one-element array.** `T[1]()` works for any `T` including a struct, which is
+// what makes this uniform — there is no default value to invent, and a hoisted local needs none.
+// The cost is that every mention of `x` in the body becomes `x[0]`, which is a rewrite rather than a
+// judgement, and it must reach inside lambdas: a lambda capturing `x` captures the array now.
+//
+// **The three ticket functions are bound to locals first, never written inline.** A lambda written
+// directly as an argument is *"in a position the walk does not type yet"* — four refused at once
+// when `asynclower_test.wac` was written by hand, which is where that was learnt.
+//
+// This cut is `wait`-driven: nothing registers with a scheduler, so a machine advances when somebody
+// waits on its ticket. Registration is the next increment and is one statement in the suspend arm.
+
+import {
+  Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
+  StmtKind, Ty, TyKind,
+} from "./ast.wac";
+import { Lexed } from "./lex.wac";
+import { AsyncPlan, planBody, planSuspends } from "./asyncplan.wac";
+import {
+  synthTail, synthTokens, synthTok, synthPending, synthWait, synthZero, synthState, synthDone,
+  synthRes, synthStep, synthSlot,
+} from "./asyncsynth.wac";
+
+/** Where the machine's names live, once the tail has been installed. */
+struct Names {
+  i32 first;     // the first synthetic token
+  i32 line;
+  i32 col;
+}
+
+i32 nPending(Names n) { return synthTok(n.first, synthPending()); }
+i32 nWait(Names n)    { return synthTok(n.first, synthWait()); }
+i32 nZero(Names n)    { return synthTok(n.first, synthZero()); }
+i32 nState(Names n)   { return synthTok(n.first, synthState()); }
+i32 nDone(Names n)    { return synthTok(n.first, synthDone()); }
+i32 nRes(Names n)     { return synthTok(n.first, synthRes()); }
+i32 nStep(Names n)    { return synthTok(n.first, synthStep()); }
+i32 nUp(Names n, i32 k) { return synthTok(n.first, synthSlot(k)); }
+
+// ── Small builders ───────────────────────────────────────────────────────────
+
+Expr eIdent(i32 tok, Names n) { return Expr(ExprKind.Ident(tok), n.line, n.col); }
+Expr eInt(i32 tok, Names n) { return Expr(ExprKind.IntLit(tok), n.line, n.col); }
+Expr eIndex(Expr arr, Expr ix, Names n) { return Expr(ExprKind.Index(arr, ix), n.line, n.col); }
+Expr eUnwrap(Expr e, Names n) { return Expr(ExprKind.Unwrap(e), n.line, n.col); }
+Expr eMember(Expr o, i32 tok, Names n) { return Expr(ExprKind.Member(o, tok), n.line, n.col); }
+Expr eCall(Expr callee, Expr[] args, Names n) {
+  return Expr(ExprKind.Call(callee, args, Ty[0]()), n.line, n.col);
+}
+Expr eNull(Names n) { return Expr(ExprKind.NullLit, n.line, n.col); }
+Expr eBool(bool v, Names n) { return Expr(ExprKind.BoolLit(v), n.line, n.col); }
+
+/** `x[0]` — the read of a hoisted local. */
+Expr eCell(i32 nameTok, Names n) {
+  return eIndex(eIdent(nameTok, n), eInt(nZero(n), n), n);
+}
+
+/** `x[0] = e;` */
+Stmt sSetCell(i32 nameTok, Expr v, Names n) {
+  Lvalue lv = Lvalue(LvalueKind.LIndex(Lvalue(LvalueKind.LIdent(nameTok), n.line, n.col),
+                                       eInt(nZero(n), n)), n.line, n.col);
+  return Stmt(StmtKind.Assign(lv, 0 - 1, v), n.line, n.col);
+}
+
+/** `name = e;` — a plain assignment, for the nullable suspension slots. */
+Stmt sSet(i32 nameTok, Expr v, Names n) {
+  return Stmt(StmtKind.Assign(Lvalue(LvalueKind.LIdent(nameTok), n.line, n.col), 0 - 1, v),
+              n.line, n.col);
+}
+
+Ty tArr(Ty el, Names n) { return Ty(TyKind.Arr(el), n.line, n.col); }
+Ty tNullable(Ty el, Names n) { return Ty(TyKind.Nullable(el), n.line, n.col); }
+Ty tPendingOf(Ty el, Names n) {
+  Ty[] args = Ty[1](fill: el);
+  return Ty(TyKind.Named(nPending(n), args), n.line, n.col);
+}
+Ty tNamed(i32 tok, Names n) { return Ty(TyKind.Named(tok, Ty[0]()), n.line, n.col); }
+
+/** `T[] name = T[1]();` — a cell, whatever `T` is. */
+Stmt sCellDecl(i32 nameTok, Ty el, Names n) {
+  Expr size = eInt(synthOneTok(n), n);
+  Expr mk = Expr(ExprKind.ArrNew(el, size, null, Expr[0]()), n.line, n.col);
+  return Stmt(StmtKind.Var(tArr(el, n), nameTok, mk, false), n.line, n.col);
+}
+
+/**
+ * The `1` for `T[1]()`.
+ *
+ * There is no `1` in the tail: an `ArrNew` of size one is the only place a literal other than the
+ * index is needed, and `IntLit` reads its value from the token's text — so the index token, whose
+ * text is `0`, would build a zero-length array. Rather than carry a second literal, the size is
+ * written as `0 + 1`… which it is not: it is simpler to give the tail a `1`. Kept as its own
+ * function so the reason is here rather than at four call sites.
+ */
+i32 synthOneTok(Names n) { return synthTok(n.first, synthOne()); }
+
+/** `Pending<T>? name = null;` — a suspension slot. */
+Stmt sSlotDecl(i32 nameTok, Ty el, Names n) {
+  return Stmt(StmtKind.Var(tNullable(tPendingOf(el, n), n), nameTok, eNull(n), false),
+              n.line, n.col);
+}
+
+Stmt sReturn(Expr? v, Names n) { return Stmt(StmtKind.Return(v), n.line, n.col); }
+Stmt sExpr(Expr e, Names n) { return Stmt(StmtKind.ExprStmt(e), n.line, n.col); }
+
+/** `__wacDone[0] = true; return true;` — how every path out of the body ends. */
+Stmt[] sFinish(Names n) {
+  Stmt[] out = Stmt[2]();
+  out[0] = sSetCell(nDone(n), eBool(true, n), n);
+  out[1] = sReturn(eBool(true, n), n);
+  return out;
+}

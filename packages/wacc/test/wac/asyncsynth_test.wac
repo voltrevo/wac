@@ -11,11 +11,12 @@
 // code the second time round, which is why this one hides behind a `//`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { lex, Lexed } from "../../src/lex.wac";
+import { lex, Lexed, tokenStride } from "../../src/lex.wac";
 import { tokenTextOf } from "../../src/emit.wac";
+import { kIdent, kInt, kAssign, kVoid } from "../../src/kinds.wac";
 import {
   synthTail, synthBase, synthOffset, synthTokens, synthTok, synthWords,
-  synthPending, synthStep, synthSlot, synthZero,
+  synthPending, synthStep, synthSlot, synthZero, synthNum, synthAssign, synthVoid,
 } from "../../src/asyncsynth.wac";
 
 /** How many suspension slots the cases below ask for — three awaits' worth. */
@@ -59,7 +60,9 @@ export string test_a_synthetic_token_reads_back_as_its_spelling() {
           "and the last, which is where a length mistake would show");
   // **`0` is lexed as an integer, not an identifier.** An `IntLit` reads its value out of its own
   // token, so a kind mismatch here would not fail — it would put a silent zero somewhere else.
-  t.eqStr(tokenTextOf(src, with, synthTok(first, synthZero())), "0", "the index literal");
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthZero(UPS))), "0", "the index literal");
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthNum(UPS, UPS))), "3",
+          "and the numeral for the last state, which only exists because it was counted");
   return t.report();
 }
 
@@ -91,5 +94,22 @@ export string test_every_word_has_a_distinct_offset_in_order() {
     prev = at;
   }
   t.eqI32(synthOffset(src, UPS, w.len()), 0 - 1, "asking past the end says so");
+  return t.report();
+}
+
+export string test_a_synthetic_tokens_kind_is_not_always_an_identifier() {
+  T t = T.create();
+  // **The three that would be wrong silently.** An `IntLit` reads its value out of its token, an
+  // `Assign` reads its operator's kind out of one, and `void` is its own kind rather than an
+  // identifier. None of the three fails at the point of the mistake: a numeral lexed as an
+  // identifier is an unresolved name much later, an `=` lexed as an identifier is an assignment the
+  // emitter reads as something else, and `void` as an identifier is a type nobody declared.
+  u8[] src = synthTail(SRC.toBytes(), UPS);
+  Lexed with = synthTokens(lex(src), src, UPS, 1, 1);
+  i32 first = lex(src).tokenCount;
+  t.eqI32(with.tokens[synthTok(first, synthAssign()) * tokenStride()], kAssign(), "`=` is an assign");
+  t.eqI32(with.tokens[synthTok(first, synthVoid()) * tokenStride()], kVoid(), "`void` is its own kind");
+  t.eqI32(with.tokens[synthTok(first, synthZero(UPS)) * tokenStride()], kInt(), "a numeral is an int");
+  t.eqI32(with.tokens[synthTok(first, synthPending()) * tokenStride()], kIdent(), "a name is an ident");
   return t.report();
 }

@@ -24,12 +24,14 @@
 // as its largest async function needs.
 
 import { Lexed, tokenStride } from "./lex.wac";
-import { kIdent, kInt } from "./kinds.wac";
+import { kIdent, kInt, kAssign, kVoid } from "./kinds.wac";
 
 /** The names that do not depend on the function being lowered. */
 string[] fixedWords() {
-  return string[]("Pending", "wait", "then", "sched", "0",
-                  "__wacState", "__wacDone", "__wacRes", "__wacStep");
+  return string[]("Pending", "wait", "then", "sched",
+                  "__wacState", "__wacDone", "__wacRes", "__wacStep",
+                  "=", "i32", "bool", "void", "id",
+                  "__wacResolve", "__wacSettled", "__wacDrop");
 }
 
 /** Index of each fixed word. A caller names it rather than counting. */
@@ -37,17 +39,45 @@ export i32 synthPending() { return 0; }
 export i32 synthWait()    { return 1; }
 export i32 synthThen()    { return 2; }
 export i32 synthSched()   { return 3; }
-export i32 synthZero()    { return 4; }
-export i32 synthState()   { return 5; }
-export i32 synthDone()    { return 6; }
-export i32 synthRes()     { return 7; }
-export i32 synthStep()    { return 8; }
+export i32 synthState()   { return 4; }
+export i32 synthDone()    { return 5; }
+export i32 synthRes()     { return 6; }
+export i32 synthStep()    { return 7; }
+/** `=`. An `Assign` holds its operator's **token index**, which the emitter reads the kind out of —
+ *  so a made-up one has to be a real token spelling a real `=`, not a sentinel. */
+export i32 synthAssign()  { return 8; }
+export i32 synthI32()     { return 9; }
+export i32 synthBool()    { return 10; }
+export i32 synthVoid()    { return 11; }
+export i32 synthId()      { return 12; }
+export i32 synthResolve() { return 13; }
+export i32 synthSettled() { return 14; }
+export i32 synthDrop()    { return 15; }
 
 /** How many words come before the generated suspension slots. */
-export i32 synthFixedCount() { return 9; }
+export i32 synthFixedCount() { return 16; }
 
 /** The slot for await number `k`, as an index into `synthWords(ups)`. */
 export i32 synthSlot(i32 k) { return synthFixedCount() + k; }
+
+/**
+ * The numeral `k`, as an index into `synthWords(ups)`.
+ *
+ * **Numerals are generated too, and that is not fussiness.** `IntLit` reads its value out of the
+ * token's text, so every number the machine writes down needs its own spelling: the `1` of `T[1]()`,
+ * the `0` of `x[0]`, and one per state for `__wacState[0] = k;`. A machine with `ups` suspensions has
+ * states `0..ups`, so the tail carries numerals up to `ups + 1` and a wrong count here would be a
+ * silently wrong state number rather than a failure.
+ */
+export i32 synthNum(i32 ups, i32 k) { return synthFixedCount() + (ups < 0 ? 0 : ups) + k; }
+
+/** `0`, for indexing a cell. */
+export i32 synthZero(i32 ups) { return synthNum(ups, 0); }
+/** `1`, for the `T[1]()` that makes one. */
+export i32 synthOne(i32 ups) { return synthNum(ups, 1); }
+
+/** How many numerals the tail carries for `ups` suspensions — states `0..ups`, plus the `1`. */
+export i32 synthNumCount(i32 ups) { return (ups < 0 ? 0 : ups) + 2; }
 
 /**
  * Every spelling the tail carries, for a file needing `ups` suspension slots.
@@ -59,9 +89,11 @@ export i32 synthSlot(i32 k) { return synthFixedCount() + k; }
 export string[] synthWords(i32 ups) {
   string[] fixed = fixedWords();
   i32 n = ups < 0 ? 0 : ups;
-  string[] out = string[fixed.len() + n]();
+  i32 nums = synthNumCount(n);
+  string[] out = string[fixed.len() + n + nums]();
   for (i32 i = 0; i < fixed.len(); i++) { out[i] = fixed[i]; }
   for (i32 i = 0; i < n; i++) { out[fixed.len() + i] = "__wacUp" + numOf(i); }
+  for (i32 i = 0; i < nums; i++) { out[fixed.len() + n + i] = numOf(i); }
   return out;
 }
 
@@ -145,13 +177,40 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 line, i32 col) {
   for (i32 i = 0; i < have * stride; i++) { out[i] = lexed.tokens[i]; }
   for (i32 i = 0; i < w.len(); i++) {
     i32 at = (have + i) * stride;
-    out[at] = i == synthZero() ? kInt() : kIdent();
+    // **The kind matters and is not always `kIdent`.** An `IntLit` reads its value out of the
+    // token, an `Assign` reads its operator's kind out of one, and `void` is its own kind rather
+    // than an identifier — each of those would be wrong *silently* if this were uniform.
+    i32 k = kIdent();
+    if (i >= synthNum(ups, 0)) { k = kInt(); }
+    else if (i == synthAssign()) { k = kAssign(); }
+    else if (i == synthVoid()) { k = kVoid(); }
+    out[at] = k;
     out[at + 1] = synthOffset(src, ups, i);
     out[at + 2] = w[i].toBytes().len();
     out[at + 3] = line;
     out[at + 4] = col;
   }
   return Lexed(out, have + w.len(), lexed.errors, lexed.errorCount, lexed.parsed);
+}
+
+/**
+ * What token `t` says.
+ *
+ * **A second copy of `emit.wac`'s `tokenTextOf`, and it has to be.** The emitter imports the async
+ * lowering to run it, so the lowering cannot import the emitter back — and the rewrite has to compare
+ * a name against the ones it is hoisting, which is a question about text rather than about token
+ * indices: two different tokens spell the same name, and the same token index means different things
+ * in different files.
+ */
+export string textAt(u8[] src, Lexed lexed, i32 t) {
+  if (t < 0 || t >= lexed.tokenCount) { return ""; }
+  i32 at = t * tokenStride();
+  i32 start = lexed.tokens[at + 1];
+  i32 len = lexed.tokens[at + 2];
+  if (start < 0 || len < 0 || start + len > src.len()) { return ""; }
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
+  return string.fromBytes(out);
 }
 
 /** The token index of word `which`, given the count before they were appended. */
