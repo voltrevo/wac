@@ -18,7 +18,7 @@ that is not obvious — I had to read `tools/suiteGate.ts`'s header to find one 
 
 | where | files | lines | of which `*.test.ts` |
 |---|---|---|---|
-| `tools/**/*.ts` | 33 | 7,573 | 12 files, 1,817 |
+| `tools/**/*.ts` | 31 | 7,246 | 11 files, 1,712 |
 | `harness/**/*.ts` | 35 | 5,809 | 14 files, 1,667 |
 
 `tools/mutate/` is 13 of those files and 2,941 of those lines — a third of `tools/`, in a
@@ -27,7 +27,7 @@ first and had to correct it; anyone re-deriving these should use `find` rather t
 
 For scale on the other side: `tools/*.wac` and `tools/wac/*.wac` are already 43 files and 13,050
 lines, so this is not a new idea being proposed — it is a migration two thirds done in one directory
-and untouched in the other. **18 of the 76 entries in `tasks.json5` still spawn `deno`**, and 44
+and untouched in the other. **16 of the 76 entries in `tasks.json5` still spawn `deno`**, and 44
 invoke the `wac` binary. That count is the tracking number for this issue: it goes to zero, or to
 whatever the carve-out below leaves, and it can be read in one grep.
 
@@ -413,7 +413,7 @@ and nothing else**. That is a testable statement about this repository and nobod
 this is the check, done by reading rather than by guarding — a guard here would have to grade a
 determination per call site, which is the thing `0161` says a guard must not do.
 
-**Eighteen `deno` entries remain in `tasks.json5`, of 76**, counted as
+**Sixteen `deno` entries remain in `tasks.json5`, of 76**, counted as
 `grep -cE '^  "[^"]+": "deno '`. Both looser spellings are wrong and I used each once: a plain
 `grep -c 'deno '` counts two comment lines, and a `[a-z:]*` key pattern silently drops
 `bench:zstd-speed` and `bench:json-lookup` for their hyphens. By role:
@@ -421,9 +421,13 @@ determination per call site, which is the thing `0161` says a guard must not do.
 | role | entries | verdict |
 |---|---|---|
 | blocked on `0183`, agent-c's | `mutate`, `mutate:diff`, `mutate:operators` | not available |
-| blocked on a TypeScript library | `corpus:hosts`, `corpus:stderr` | not available |
 | **a decision, not a translation** | `bench:hash`, `bench:zstd`, `bench:zstd-speed`, `bench:json`, `bench:json-lookup` | **the operator's** |
 | the subject is Deno, npm or the browser | `serve`, `app:build`, `site:map`, `wasmopt`, `verify:fmt`, `gen:unicode`, `check`, `bench` | carve-out |
+
+*(The row that stood here on 2026-08-30 read `corpus:hosts`, `corpus:stderr` — blocked on a
+TypeScript library. Both were ported the same day: the first because its blocker was mine and
+wrong, the second because the library turned out to be a five-line regex. Three plus five plus
+eight is sixteen.)*
 
 **And the TypeScript that wac itself reaches is small and in role.** Grepping wac sources for a
 `deno` spawn finds twelve test files, and what they run is `harness/ladderRun.ts` — the bootstrap
