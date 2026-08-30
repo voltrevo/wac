@@ -402,19 +402,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     );
     await Deno.remove(deep, { recursive: true });
 
-    // An unreadable directory is not an empty one. `find` printed a partial listing and exited 0,
-    // and `du` undercounted the total and exited 0 — a wrong number that looks like an answer.
-    // GitHub wac-mono#20.
-    const unreadable = await Deno.makeTempDir({ prefix: "wac-box-unread-" });
-    await Deno.mkdir(`${unreadable}/shut`);
-    await Deno.writeTextFile(`${unreadable}/shut/inside`, "x");
-    await Deno.chmod(`${unreadable}/shut`, 0o000);
-    const found = (await box(["find", unreadable]));
-    const counted = (await box(["du", unreadable]));
-    await Deno.chmod(`${unreadable}/shut`, 0o755);
-    await Deno.remove(unreadable, { recursive: true });
-    assertEquals(found.code, 1, "find over an unreadable subtree fails");
-    assertEquals(counted.code, 1, "and so does du");
+    // **Moved to `packages/box/test/wac/unreadable_test.wac`.** `find` and `du` over a subtree they
+    // cannot enter — GitHub wac-mono#20, where both printed a partial answer and exited 0 — is a wac
+    // test now. It was here only because the *fixture* needed `Deno.chmod`: making a directory
+    // unreadable is a mode, and `Cli` carried `setExecutable`, which is one bit. `issues/system/0296c`
+    // widened it, so the test went where the rest of box's are, and gained a root check the version
+    // here depended on silently.
 
     // A read that fails is not an end of input. `readChunk` answers with bytes and cannot say
     // "broken", so every filter treated a half-read as a whole one and exited 0 — the failure mode
