@@ -6,7 +6,7 @@
 //
 // So this file parses `vectors.txt` — written by `tools/wac/shvectors.wac` from the wac corpus — and
 // exports what the remaining consumers need: `tools/wac/designclaims_test.wac`, which checks the counts the
-// READMEs state, and `tools/corpusStderr.ts`, which compares standard error against the oracle's.
+// READMEs state, and `tools/wac/corpusstderr.wac`, which compares standard error against the oracle's.
 //
 // The scripts and the split come out of the same file the replays read, so there is one source and one
 // derived artefact rather than two lists that have to be kept level.

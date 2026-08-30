@@ -1,0 +1,184 @@
+// Our standard error against bash's, for the whole shell corpus.
+//
+//   wac task corpus:stderr [--from N] [--count N]
+//
+// **Nothing compared standard error until this existed.** `packages/sh/test/differential.test.ts`
+// runs every corpus script through bash and through this shell and asserts stdout and the exit
+// status, with stderr discarded — so the messages were never even captured. `packages/box`'s half
+// captures them and uses them only to decorate a failure. So a repository that measures GNU's exact
+// wording tool by tool (`cannotOpen` has five sentences, each read off the tool it belongs to) had no
+// differential over the thing those sentences are.
+//
+// Measured, the first time it ran: 735 of 821 scripts print nothing on either side, 28 matched, and
+// **58 differed**. After the shell learned to name itself and its arithmetic learned to name the
+// token it stopped at, 67 match and 19 differ. Forty of those were one fact — a builtin's diagnostic
+// did not name the shell, so this said `[: too many arguments` where bash says
+// `bash: line 1: [: too many arguments`. That is fixed (`prefixed` in `packages/sh/src/exec.wac`),
+// and what is left is `packages/sh/test/wac/knownstderr.wac`.
+//
+// ## The one thing normalised, and why only that
+//
+// bash names itself and the line: `bash: line 1: `, `bash: -c: line 1: `, and `environment: line 1: `
+// inside a function it was given on the command line. We are not bash and our name is `sh`, so that
+// prefix is mapped to `sh: ` rather than stripped — mapped, because stripping would hide a diagnostic
+// where *we* forgot to name ourselves, which is exactly the bug this found.
+//
+// Nothing else is normalised. Every remaining difference is a real one and is pinned, with the
+// reason, so a *new* divergence fails and a *fixed* one fails too — a pin that has gone stale is a
+// thing somebody should delete, not a thing to leave passing.
+//
+// ## In wac since 2026-08-30
+//
+// From tools/corpusStderr.ts — `issues/system/0289b`, and the knot that issue sized. It could not
+// move while three TypeScript tests imported `sameName` and `KNOWN` from it, which read as 1,474
+// lines that had to move together. They did not: `sameName` is five lines and now has a wac copy with
+// a guard that the two agree, `KNOWN` moved outright to `packages/sh/test/wac/knownstderr.wac` with
+// its last two readers, and this file was left needing nothing from TypeScript at all.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { trimmed } from "../../packages/wactest/src/strings.wac";
+import { scratch } from "../../packages/wactest/src/host.wac";
+import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
+import { announce, unannounce } from "./suitegate.wac";
+import { Vec } from "core/vec.wac";
+import { corpus } from "../../packages/sh/test/wac/corpus.wac";
+import { Diff, known } from "../../packages/sh/test/wac/knownstderr.wac";
+import { sameName } from "../../packages/sh/test/wac/shname.wac";
+
+/** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
+const i32 KILLED = 124;
+
+/** What one script printed on standard error. */
+struct Said {
+  string err;
+  bool hung;
+}
+
+/**
+ * The environment every child gets, and it is total.
+ *
+ * **`C.UTF-8`, not `C`** — the locale this machine actually has, and the one every applet is measured
+ * against. `box`'s `wc -w` counts by code point since `issues/system/0143`, so pinned to `C` the real
+ * `wc` answers 1 where ours answers 2 for `a\u{a0}b`, and a corpus script feeding non-ASCII to it
+ * would fail on the locale rather than on the shell. `issues/system/0145`.
+ *
+ * This checkout's `wac` goes on the front of PATH, because a `wac app` artefact is a shell preamble
+ * that runs `command -v wac` and would not start under `clearEnv` without one.
+ */
+string[] childEnv(Cli cli, string dir, string binDir) {
+  u8[]? path = cli.env("PATH").wait();
+  string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
+  return string[]("LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+}
+
+/**
+ * One script on one shell.
+ *
+ * 124 is `timeout`'s, not a shell's — a bound that fired has no stderr to compare, so it is skipped
+ * and counted rather than reported as a difference in wording.
+ */
+Said run(Cli cli, string cmd, string script, string dir, string binDir) {
+  Exec r = cli.execWithIn("timeout", string[]("10", cmd, "-c", script), u8[0](),
+                          childEnv(cli, dir, binDir), true, false, dir).wait();
+  if (!r.ran()) { return Said("could not run timeout: " + r.error, false); }
+  return Said(string.fromBytes(r.stderr), r.status == KILLED);
+}
+
+/** The pinned row for `script`, or `-1`. */
+i32 pinnedAt(Diff[] rows, string script) {
+  for (i32 i = 0; i < rows.len(); i++) { if (rows[i].script == script) { return i; } }
+  return 0 - 1;
+}
+
+/** `--name N`, or `fallback` when it is absent or has nothing after it. */
+i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--" + name && i + 1 < argc) {
+      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+    }
+  }
+  return fallback;
+}
+
+string binDirOf(Cli cli) {
+  string p = wacBinary(cli);
+  i32 cut = 0;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return p.slice(0, cut);
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] scripts = corpus();
+  i32 argc = cli.argCount().wait();
+  i32 from = flagOf(cli, argc, "from", 0);
+  i32 count = flagOf(cli, argc, "count", scripts.len());
+  i32 last = from + count < scripts.len() ? from + count : scripts.len();
+
+  // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: it builds a
+  // program and runs it twice per script. `issues/system/0142`. Removed by hand at each exit, since
+  // wac has no `unload` listener; a note stranded by a trap is swept by the next reader.
+  string note = announce(core, cli, "corpus:stderr");
+
+  string binDir = binDirOf(cli);
+  string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusstderr-wacsh",
+                          string[]("--allow-read", "--allow-write", "--allow-env"));
+  string base = scratch(cli, "corpus-stderr");
+  cli.mkdir(base, true).wait();
+
+  Diff[] rows = known();
+  i32 agree = 0;
+  Vec<string> hung = Vec<string>.create();
+  Vec<string> fresh = Vec<string>.create();
+  Vec<string> stale = Vec<string>.create();
+
+  for (i32 i = from; i < last; i++) {
+    string script = scripts[i];
+    string a = base + "/a" + itoa(i);
+    string b = base + "/b" + itoa(i);
+    cli.mkdir(a, true).wait();
+    cli.mkdir(b, true).wait();
+    Said bashRan = run(cli, "bash", script, a, binDir);
+    Said oursRan = run(cli, shell, script, b, binDir);
+    string theirs = trimmed(sameName(bashRan.err));
+    string ours = trimmed(oursRan.err);
+    cli.remove(a, true).wait();
+    cli.remove(b, true).wait();
+
+    // A bound that fired has no sentence to compare. Counted on its own so a loaded machine reads as
+    // a loaded machine rather than as forty new wording differences.
+    if (bashRan.hung || oursRan.hung) { hung.push(script); continue; }
+
+    i32 at = pinnedAt(rows, script);
+    if (theirs == ours) {
+      agree = agree + 1;
+      if (at >= 0) {
+        stale.push("\"" + script + "\"\n  pinned as different; it now agrees — delete the row");
+      }
+      continue;
+    }
+    if (at < 0) {
+      fresh.push("\"" + script + "\"\n  bash: \"" + theirs + "\"\n  ours: \"" + ours + "\"");
+      continue;
+    }
+    if (trimmed(rows[at].bash) != theirs || trimmed(rows[at].ours) != ours) {
+      stale.push("\"" + script + "\"\n  pinned bash: \"" + rows[at].bash + "\"\n  actual bash: \""
+                 + theirs + "\"\n  pinned ours: \"" + rows[at].ours + "\"\n  actual ours: \""
+                 + ours + "\"");
+    }
+  }
+
+  cli.remove(base, true).wait();
+  unannounce(cli, note);
+
+  core.log(itoa(agree) + " of " + itoa(last - from - hung.len())
+           + " scripts print the same on standard error as bash");
+  if (hung.len() > 0) {
+    core.log("  " + itoa(hung.len()) + " did not finish inside the bound and were not compared:");
+    for (i32 i = 0; i < hung.len(); i++) { core.log("      \"" + hung.get(i) + "\""); }
+  }
+  for (i32 i = 0; i < fresh.len(); i++) { core.log("new difference:\n" + fresh.get(i)); }
+  for (i32 i = 0; i < stale.len(); i++) { core.log("stale pin:\n" + stale.get(i)); }
+  return fresh.len() > 0 || stale.len() > 0 ? 1 : 0;
+}

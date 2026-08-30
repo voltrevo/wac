@@ -3220,7 +3220,7 @@ Output ls(Shell sh, Vec<string> argv) {
  *
  * **bash prefixes every diagnostic *it* emits, including its builtins'**, and this did not: bash says
  * `bash: line 1: [: too many arguments` where this said `[: too many arguments`. Measured across the
- * whole corpus rather than noticed by reading — `tools/corpusStderr.ts` compares our standard error
+ * whole corpus rather than noticed by reading — `tools/wac/corpusstderr.wac` compares our standard error
  * against bash's for all 821 scripts, and forty of the fifty differences were this one fact.
  *
  * The line is the builtin/program one the shell already knows. A *program* prints its own name and

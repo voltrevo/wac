@@ -92,7 +92,7 @@
   "corpus:hosts": "deno run -A tools/corpusHosts.ts",
   "corpus:backings": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusbackings.wac --",
   "corpus:routes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusroutes.wac --",
-  "corpus:stderr": "deno run -A tools/corpusStderr.ts",
+  "corpus:stderr": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusstderr.wac --",
 
   // Everything else.
   // `bindgen` was tools/emitgen.ts, which generated the glue with the TypeScript compiler.

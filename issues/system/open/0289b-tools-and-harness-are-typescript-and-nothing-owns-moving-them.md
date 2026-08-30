@@ -230,7 +230,7 @@ file after the six ports of that day, nothing left in it is available:
 
 - `mutate.ts`, `mutate.test.ts`, `tools/mutate/`, `suiteGuard.ts`, `profile.test.ts`,
   `lane.test.ts` — behind `issues/system/0183`, **claimed by agent-c**.
-- `corpusStderr.ts` — a library to three TypeScript tests. `corpusHosts.ts` — behind
+- tools/corpusStderr.ts — a library to three TypeScript tests. `corpusHosts.ts` — behind
   `buildNative`. `suiteGate.ts` and its test — a remnant serving those two and `mutate`.
 - `fuzz.ts`, `fuzzBoundary.ts`, `bench.ts`, `wasmopt.ts`, `syncBootstrap.ts`, `_spawncmp.ts`,
   `discovery.ts`/`discovery.test.ts` — carve-outs where Deno, npm or the JavaScript bootstrap
@@ -258,7 +258,7 @@ when the thing being asserted about would not exist without it.
 **`suiteGate.ts` is a 67-line remnant, and its blocker shrank with the ports.** The live gate is
 `tools/wac/suitegate.wac`, 574 lines, which `tools/push.sh` calls by name — the TypeScript file is
 what is left over for the tools that still announce themselves in TypeScript, and after the four
-ports above those are exactly three: `mutate.ts`, `corpusHosts.ts` and `corpusStderr.ts`, plus its
+ports above those are exactly three: `mutate.ts`, `corpusHosts.ts` and tools/corpusStderr.ts, plus its
 own test. Nothing else imports it. So it is not work of its own at all: it is deleted by the same
 three moves as everything else in this section, and the row above should not be read as a separate
 task.
@@ -270,8 +270,8 @@ eight importers**, most of them `packages/platform`'s own TypeScript tests. So i
 infrastructure that moves with its subsystem, and the `129` in the table is the size of the tool
 rather than the size of the work.
 
-**`corpus:stderr` is not next, and looked like it was.** `tools/corpusStderr.ts` is a *library* as
-well as a tool: `packages/sh/test/stderr.test.ts` imports `KNOWN` and `sameName` from it, and
+**`corpus:stderr` is not next, and looked like it was.** tools/corpusStderr.ts is a *library* as
+well as a tool: `packages/sh/test/wac/stderr_test.wac` imports `KNOWN` and `sameName` from it, and
 `packages/sh/test/differential.test.ts` and `packages/box/test/jobs.test.ts` import `sameName`. A wac
 file cannot be imported by TypeScript, so it moves when those three do and not before — the same
 shape as `coverageOrder.ts` above, which this issue already records as the trap. `corpusBackings.ts`
@@ -286,7 +286,7 @@ actually available to port:
 | what | lines | state |
 |---|---|---|
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
-| `corpus:stderr` | 198 | **blocked on its three TypeScript importers**, not on `0290b` — see below |
+| ~~`corpus:stderr`~~ | — | **done, 2026-08-30** — the knot was untied and it is `tools/wac/corpusstderr.wac` |
 | `corpus:hosts` | 129 | **blocked on `buildNative`**, not on `0290b` — see below |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
@@ -424,13 +424,13 @@ thing for the five benchmarks to measure, now that there are two native hosts.
 
 ### The `corpus:stderr` knot, sized — and it is smaller than it looks
 
-`tools/corpusStderr.ts` cannot move alone because three TypeScript tests import from it, which reads as
+tools/corpusStderr.ts cannot move alone because three TypeScript tests import from it, which reads as
 1,474 lines that have to move together:
 
 | file | lines | needs |
 |---|---|---|
-| `tools/corpusStderr.ts` | 198 | — |
-| `packages/sh/test/stderr.test.ts` | 163 | `KNOWN`, `sameName` |
+| tools/corpusStderr.ts | 198 | — |
+| `packages/sh/test/wac/stderr_test.wac` | 163 | `KNOWN`, `sameName` |
 | `packages/sh/test/differential.test.ts` | 892 | `sameName` |
 | `packages/box/test/jobs.test.ts` | 221 | `sameName` |
 
@@ -440,7 +440,7 @@ constant lives in a file that also happens to be a tool".
 
 The move that unties it, in the order that keeps everything green:
 
-1. Lift `sameName` and `KNOWN` out of `tools/corpusStderr.ts` into a module of their own that the three
+1. Lift `sameName` and `KNOWN` out of tools/corpusStderr.ts into a module of their own that the three
    TypeScript tests import. Nothing changes behaviourally and the tool is then free.
 2. Port the tool half to wac, with its own `sameName`.
 3. **Assert the two agree**, because step 2 makes a second copy of a rule and this repository has
