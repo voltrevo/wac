@@ -257,3 +257,44 @@ it unblocks ~6,500 lines in one go.
 
 That is also the second time in one afternoon that reading a file's own header reversed a decision I
 had made from its name and its size.
+
+## Step 5's premise is wrong: `harness/` is not waiting for `0161`, it is permanent — 2026-08-30
+
+Step 5 above says to let `0161` empty `packages/**/*.test.ts` and then delete most of `harness/`
+rather than translate it. `0161` invites re-deriving its totals, so I did:
+
+    find packages -name '*.test.ts' | wc -l          61
+    find packages -name '*.test.ts' | xargs wc -l    16,518
+
+against the 64 files and 17,244 lines it recorded on 2026-08-24. Three files and ~700 lines in six
+days. But the count is not the finding — **the distribution is**:
+
+| package | files | `0161`'s determination |
+|---|---|---|
+| `platform` | 31 | "the subject is TypeScript in every one" |
+| `box`, `sh` | 17 + 4 | another agent's packages |
+| `wacc` | 4 | `bindgen`, `jsBindgen`, `jsxBoundary`, `wapyRoundTrip` — every one a JavaScript boundary or a differential whose other half is JavaScript |
+| `ts` | 2 | "the subject is a TypeScript compiler's answer" |
+| `webrtc`, `raster`, `stream` | 1 each | a real browser, a real canvas, a `TransformStream` |
+
+That is 61 of 61. Every remaining file is covered by a determination `0161` has already made, and
+none of those determinations is "not yet done" — they are reasons to keep it. `wacc`'s four are worth
+naming because `0161` records it dropping from eleven to four when the reference compiler was
+deleted: what went were the differentials that had lost their oracle, and what is left is the JS
+boundary, which cannot lose one.
+
+**So the Deno pass does not shrink to nothing, and `harness/` is what runs it.** The pool, the
+deadline, the port allocator, the reaper, `wacBind`, `appRun` — those exist to run 61 files that are
+staying. Step 5 was written expecting a workload scheduled to disappear; it is not scheduled to
+disappear.
+
+That changes the question rather than the answer. It is no longer "when does `harness/` become
+deletable" but "how much of `harness/` is duplicated by the wac side that now exists" — `runTests.wac`
+already reimplements the lane split and the queue, `packages/wactest/src/built.wac` has the build
+cache and now `sourcesOf`, and `tools/wac/programs.wac` has program discovery. Those pairs are the
+thing to look at, and each is a separate question about which copy is the real one.
+
+**Caveat, and `0161` supplies it about itself.** The `platform` row carries a standing warning —
+*"Nothing convertible left" was said on 2026-08-19 and was wrong once* — so 31 files is a
+determination to re-check rather than a fact to build on. What is said here is what follows from the
+determinations as they stand today, not a claim that they are all correct.

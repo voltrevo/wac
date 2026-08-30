@@ -38,6 +38,11 @@ is generated from this directory. Do not edit it by hand:
     wac task gen:core            # write it
     wac task gen:core --check    # fail if it is out of step
 
+**And run the first of those after editing anything in here.** The compiler reads the *embedding*,
+never this directory, so an edit to `platform.wac` does nothing whatever until it is regenerated —
+`./bootstrap.sh` will not do it for you, and what you get instead is *"that file does not export this
+name"* pointing at your import. `issues/system/0291b`.
+
 ## What it costs
 
 **107,419 bytes of seed for 105,318 bytes of source** — 1.02×, measured across the move rather than
