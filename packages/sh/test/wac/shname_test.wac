@@ -1,0 +1,82 @@
+// What `sameName` maps, and that the TypeScript copy of it still says the same thing.
+//
+//     wac test --allow-read packages/sh/test/wac/shname_test.wac
+//
+// The rule exists twice — here and in `packages/sh/test/shname.ts` — because two TypeScript tests
+// need it and cannot import wac. That is the arrangement this repository has been bitten by before:
+// `packages/platform/test/faults_agree.test.ts` exists because the fault numbering lives on both
+// sides of the bridge, and `packages/platform/test/wac/hostfaults_test.wac` compares the two Rust
+// hosts by reading their sources. This is the same shape, one level down.
+//
+// **The agreement is checked by reading, because there is nothing else to read it with.** A wac test
+// cannot call the TypeScript's function, so it does the next honest thing: it finds the regex literal
+// in that file and compares it, character for character, with `pattern()`. That catches the failure
+// that matters — somebody edits one copy — and does not pretend to catch a rewrite that changes both
+// spellings to the same meaning.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { pattern, sameName } from "./shname.wac";
+
+export string test_bash_naming_itself_becomes_our_name() {
+  T t = T.create();
+  t.eqStr(sameName("bash: line 1: x: command not found"), "sh: x: command not found",
+          "the plain form");
+  t.eqStr(sameName("bash: -c: line 1: unexpected EOF"), "sh: unexpected EOF", "the `-c` form");
+  t.eqStr(sameName("environment: line 12: bad"), "sh: bad", "inside a function given on the line");
+  return t.report();
+}
+
+export string test_bash_invoked_by_path_is_still_bash() {
+  T t = T.create();
+  // `\S*bash`, which is why: `packages/box/test/jobs.test.ts` gets `/usr/bin/bash:` and the first
+  // version of this rule did not match it.
+  t.eqStr(sameName("/usr/bin/bash: line 3: nope"), "sh: nope", "named by path");
+  return t.report();
+}
+
+export string test_only_at_the_start_of_a_line() {
+  T t = T.create();
+  // Anchored, so a mention of bash inside a message is left alone — otherwise a diagnostic *about*
+  // bash would be rewritten into a claim about us.
+  t.eqStr(sameName("sh: saw bash: line 1: in the output"), "sh: saw bash: line 1: in the output",
+          "not in the middle");
+  return t.report();
+}
+
+export string test_each_line_is_mapped_and_the_rest_are_kept() {
+  T t = T.create();
+  t.eqStr(sameName("bash: line 1: a\nbash: line 2: b"), "sh: a\nsh: b", "both lines");
+  t.eqStr(sameName("bash: line 1: a\nplain\nbash: line 3: c"), "sh: a\nplain\nsh: c",
+          "a line that does not match is untouched");
+  return t.report();
+}
+
+export string test_text_with_no_prefix_comes_back_unchanged() {
+  T t = T.create();
+  t.eqStr(sameName(""), "", "empty");
+  t.eqStr(sameName("nothing to do here"), "nothing to do here", "no prefix");
+  t.eqStr(sameName("a\n\nb"), "a\n\nb", "blank lines survive");
+  return t.report();
+}
+
+/**
+ * The two copies still spell the same rule.
+ *
+ * Reading the TypeScript rather than calling it, because a wac test cannot call it. The literal
+ * there is a JavaScript regex — `/…/gm` — so the comparison is against its body, with the wac string
+ * escaping (`\\S`, `\\d`) reduced to what the regex source actually holds.
+ */
+export string test_the_typescript_copy_spells_the_same_rule(Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile("packages/sh/test/shname.ts").wait();
+  t.isTrue(f.ok, "packages/sh/test/shname.ts could not be read — it holds the other copy");
+  if (!f.ok) { return t.report(); }
+
+  string ts = string.fromBytes(f.bytes);
+  t.isTrue(contains(ts, "/" + pattern() + "/gm"),
+           "the TypeScript's regex is not `/" + pattern() + "/gm` any more, so the two copies of this"
+           + " rule have drifted. Change both, or read `shname.wac`'s header for why there are two.");
+  return t.report();
+}
