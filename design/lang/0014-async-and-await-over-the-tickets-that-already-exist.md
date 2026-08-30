@@ -178,6 +178,38 @@ that chain can ever advance. That is decidable at the moment it happens.
 **Because D2 is what makes it detectable.** A general pump would silently interleave instead; plain
 blocking would hang. Narrowing what `wait` may run is what turns the failure into a sentence.
 
+#### What it actually does today, and why the sentence is not written yet
+
+**It does not hang. It answers a default, silently** — measured 2026-08-30 by awaiting a ticket that
+is unsettled, carries no scheduler, and whose resolver has nothing to consult:
+
+    about to wait on a chain nothing can advance
+    it answered zero
+
+That is worse than the hang this clause assumed, and it raises the stakes rather than lowering them:
+a hang is at least a symptom.
+
+**And it is not blocked on `trap "…"`,** which this document claimed. `issues/lang/0147` is closed —
+`wac run` prints *trapped: the ring is full* today — and the note in `Pending.then` saying otherwise
+was written while it was open.
+
+What blocks it is that **the machine cannot tell the two cases apart**. Both look identical at the
+moment of the wait:
+
+| | `sched` | `isDone()` before | `isDone()` after `wait` |
+| --- | --- | --- | --- |
+| a host ticket, answer not yet arrived | null | false | **false** |
+| a ticket nothing can ever answer | null | false | false |
+
+The obvious check — *after waiting, is it settled?* — fails because a host ticket is **not** settled
+after being waited on either: the slot is spent and `settled` answers false again. So neither before
+nor after distinguishes them.
+
+Making it decidable is a change to `Pending`'s contract, and the smallest one is a ticket knowing
+whether anything outside the program can answer it. `resolve` being able to say *nobody will* would do
+it, as would a host-backed ticket being distinguishable from a program-made one. Either is a decision
+about the type every capability returns, which is why this is recorded rather than taken.
+
 ## Acceptance criteria
 
 Each of these compiles, runs, and answers as described. They are the document's definition of done.
@@ -478,7 +510,7 @@ already the state slot.
 | 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
 | 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
 | 4 | **done 2026-08-30 for A1–A4** — `asyncsyntax_test.wac` 15/15 and `asyncserver_test.wac` 1/1. A1 runs: two clients accepted while the first is open, both echoed, under one `drain`, with `async void`, a suspending `while`, a `match`, and an early `return` out of the loop. Declined by name: a suspension in a loop or `if` **condition**, in a `match` subject or arm, nested in a larger expression, or one whose value is discarded |
-| 5 | not started |
+| 5 | **spec and corpus done 2026-08-30** — `spec/spec/async.md` with eleven clauses, seven cases in `spec/cases/`. A6 (`relayd`) not started |
 
 ## Open
 
