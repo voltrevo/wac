@@ -218,7 +218,7 @@ actually available to port:
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
 | the five `corpus:*` | 821 | blocked: `0290b` → `0291c` |
 | `ignoredFlags.ts` | 144 | blocked: `0290b` → `0291c` |
-| **`fuzz.ts` + `fuzzBoundary.ts`** | **954** | **available** |
+| `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
 | `suiteGate.ts` + test | 116 | waits for the eight announcers, which are the rows above |
@@ -230,13 +230,30 @@ actually available to port:
 | `discovery.test.ts` | 84 | carve-out already named above |
 | `lane.test.ts`, `programs.test.ts`, `profile.test.ts`, `mutate.test.ts` | 816 | test TypeScript machinery; they go with their subjects |
 
-**So the whole unblocked remainder of `tools/` is `fuzz.ts` and `fuzzBoundary.ts`.** Everything else
-is behind one compiler bug, is a carve-out, or moves when the thing it tests moves.
+### Correction, an hour later: the two fuzzers are carve-outs too
 
-That is worth saying plainly because the raw count invites the opposite conclusion. 38 files reads
-like weeks of translation; it is one 954-line job, and then the work is `0291c` — a compiler bug
-somebody else filed, which unblocks ~6,500 lines in one go.
+I wrote the row above from the file list — no task, not in `0290b`'s set, therefore available — and
+then read their headers, which say otherwise. Both are the permitted use of Deno.
 
-`fuzz.ts` is a good next port for a reason beyond being available: **its oracle is the generated tree,
-not a second interpreter** — "31 of 36 disagreements were mine" is why — so it needs no host to be
-right, only `packages/wacc/src/api.wac` to compile and `spawn` to run what it compiled. Both exist.
+**`fuzzBoundary.ts` by its first line**: *"A round-trip fuzzer for the JavaScript boundary."* Its
+subject is the bindgen marshalling between wac and JavaScript — element-by-element arrays of
+references, boxed nullable primitives, packed elements crossing as i32. There is no version of that
+test without JavaScript in it.
+
+**`fuzz.ts` because of where its arithmetic comes from.** Its header is careful that the oracle is
+"the generated tree, not a second interpreter", and that is true about the *structure* — but the
+numbers are JavaScript's: `evalIn` computes `x + y`, `x & y` and the rest in `BigInt` and truncates
+with `BigInt.asIntN(64, …)`. That is an implementation of integer arithmetic independent of the one
+under test. Compiled to wac, the oracle's `x + y` would be an `i64.add` emitted by the same wacc that
+emitted the program it is checking, on the same host — so a wrong emission for a primitive would
+appear identically on both sides and read as agreement. It would still catch parse, typecheck and
+context-dependent emission bugs; it would go blind to exactly the class the wrapping arithmetic is
+there for.
+
+**So the unblocked remainder of `tools/` is nothing.** Every one of the 38 files is behind
+`issues/lang/0291c`, is a carve-out, or moves when its subject moves. The raw count says weeks of
+translation; the determination says the next lever is a compiler bug somebody else filed, and fixing
+it unblocks ~6,500 lines in one go.
+
+That is also the second time in one afternoon that reading a file's own header reversed a decision I
+had made from its name and its size.
