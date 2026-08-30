@@ -196,3 +196,46 @@ bool contains(string letters, i32 c) {
   }
   return false;
 }
+
+/**
+ * What `<applet> --help` prints — `issues/system/0297c`'s neighbour, and box's own advice.
+ *
+ * **Every operand error here already ends with `Try 'cut --help' for more information.`**, and until
+ * now following that advice answered *long options are not implemented: --help*. A program that names
+ * a flag in its diagnostics and then refuses it is telling the caller something untrue, which is the
+ * one thing `refuseFlags`'s careful wording exists to avoid.
+ *
+ * **Generated from the tables above rather than written per applet.** A hand-written usage line for
+ * sixty applets is sixty things to drift from the flags actually implemented; `implementedFlags` is
+ * what the parser enforces, so printing it is the one summary that cannot be wrong. The cost is that
+ * this does not describe *operands* — GNU's `--help` does — and saying nothing beats saying something
+ * unmeasured.
+ *
+ * Standard output and status 0, as GNU does: `--help` is an answer, not a refusal, and a caller that
+ * pipes it should get it.
+ */
+export i32 appletHelp(Core core, string name) {
+  string mine = implementedFlags(name);
+  string free = acceptedFlags(name);
+  core.log("usage: " + name + (mine == "" ? "" : " [-" + mine + "]") + " [operand...]");
+  if (mine != "") { core.log("flags: " + spaced(mine)); }
+  // Named separately because "accepted" is not "implemented": GNU's own `--help` says of `id -a`
+  // *"ignore, for compatibility with other versions"*, and that is exactly what these do.
+  if (free != "") { core.log("accepted and ignored, as the real tool does: " + spaced(free)); }
+  if (!flagsChecked(name)) {
+    core.log("this applet's flags are not enumerated here; see " + name + "(1)");
+  }
+  core.log("box implements a subset of " + name + "(1). `box` lists every applet.");
+  return 0;
+}
+
+/** `bcdf` as `-b -c -d -f`, which is how a person reads a flag list. */
+string spaced(string letters) {
+  u8[] b = letters.toBytes();
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (i > 0) { out = out + " "; }
+    out = out + "-" + string.fromBytes(u8[1](fill: b[i]));
+  }
+  return out;
+}

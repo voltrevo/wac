@@ -90,6 +90,7 @@ import { wget } from "./applets/wget.wac";
 import { yes } from "./applets/yes.wac";
 import { zstd } from "./applets/zstd.wac";
 import { Fs } from "../../fs/src/fs.wac";
+import { appletHelp } from "./lib/flags.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 1) { return usage(core); }
@@ -122,6 +123,17 @@ export const i32 UNKNOWN = -1;
  * choosing half.
  */
 export i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
+  // **`--help` is answered here, once, for every applet.** It is the one long option they all share,
+  // it needs no per-applet table, and box's own diagnostics promise it — every operand error ends
+  // "Try 'x --help' for more information." Answered before dispatch so an applet cannot forget it,
+  // and only for a name that exists, so `box nope --help` is still an unknown applet rather than help
+  // for something there is none of.
+  if (a.longOpt == "--help") {
+    string[] all = appletNames();
+    for (i32 i = 0; i < all.len(); i++) {
+      if (all[i] == applet) { return appletHelp(core, applet); }
+    }
+  }
   if (applet == "base32")    { return base32(core, cli, fs, a); }
   if (applet == "base64")    { return base64(core, cli, fs, a); }
   if (applet == "basename")  { return basename(core, cli, fs, a); }
