@@ -268,6 +268,8 @@ export function unpackExec(
   stdin: Uint8Array;
   clearEnv: boolean;
   inherit: boolean;
+  /** Where the child runs. `""` means wherever this process already is — `issues/system/0290b`. */
+  cwd: string;
 } {
   const clearEnv = p[0] === 1;
   const inherit = p[1] === 1;
@@ -287,9 +289,16 @@ export function unpackExec(
   const nEnv = dv.getInt32(envAt, true);
   const envJoined = dec.decode(q.subarray(envAt + 4, envAt + 4 + nEnv));
   const env = envJoined.length === 0 ? [] : envJoined.split("\u0000");
+  // **After the environment and before the input**, which is where `provider.ts` writes it. A field
+  // added to the *end* would have been indistinguishable from a shorter stdin to a host that had not
+  // been rebuilt; this arrives under its own opcode instead, so an old host fails and names itself
+  // rather than reading the directory as the head of standard input. `issues/system/0290b`.
+  const cwdAt = envAt + 4 + nEnv;
+  const nCwd = dv.getInt32(cwdAt, true);
+  const cwd = dec.decode(q.subarray(cwdAt + 4, cwdAt + 4 + nCwd));
   // Copied, like `unpackPush`'s: `p` is a view into the ring and the write to the child happens
   // after the next call may have overwritten it.
-  return { path, args, env, stdin: q.slice(envAt + 4 + nEnv), clearEnv, inherit };
+  return { path, args, env, stdin: q.slice(cwdAt + 4 + nCwd), clearEnv, inherit, cwd };
 }
 
 /**

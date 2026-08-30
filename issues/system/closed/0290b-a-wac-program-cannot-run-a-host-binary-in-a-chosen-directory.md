@@ -1,7 +1,6 @@
 # 0290b — a wac program cannot run a host binary in a chosen directory, and 24 call sites need to
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
 - **Reported by:** agent-b
 - **Date:** 2026-08-30
 - **Kind:** missing feature
@@ -246,3 +245,39 @@ Smaller than the eight decoders suggest, because two of them share and one refus
 
 The empty-means-inherit rule keeps every existing behaviour: `execWith` passes `""` and nothing that
 does not ask for a directory can notice the change.
+
+## Done — 2026-08-30
+
+`Cli.execWithIn` is the capability; `execWith` and `exec` are methods over it. Demonstrated on both
+native hosts with the same program, built once:
+
+    exec        ran=y status=0 err=[] out=[/home/claude/agent-b/workspaces/wac]
+    execWithIn  ran=y status=0 err=[] out=[/tmp]
+
+on `native/target/release/wac` and `native/v8/target/release/wac` alike.
+
+**What it touched**, which is the shape argued for above:
+
+- `std/platform.wac` — the capability widened and renamed, with `execWith` written as a method
+  passing `""`. **No call site moved**: the 35 `execWith` callers and 398 `exec` callers are
+  untouched, and only the two stubs that sit in the field changed — `noExec` in
+  `packages/wac/src/grants.wac` and the forward in `packages/platform/src/frame.wac`.
+- `packages/platform/host/ops.ts` — `EXEC_WITH_IN: 59`. **58 is retired and not reused**, and it is
+  *not left in the table*: `conformance_test.wac` reads that table as the surface, so an opcode with
+  no capability behind it reads as one the native hosts dropped. The number is recorded in 59's
+  docstring instead, which is where a reader of the wire format will be.
+- `packages/platform/host/child.ts` — the directory decoded between the environment and the input,
+  once, for the two hosts that share `unpackExec`.
+- `deno.ts`, `node.ts` — passed through; both spawn APIs already take a `cwd`, and `undefined` is
+  each one's spelling of "wherever this process already is".
+- `browser.ts` — one line: it answers 59 the way it answered 58, *"a page cannot run a host program"*.
+- both Rust hosts — one parameter and a `cmd.current_dir()`, guarded on empty.
+- `packages/platform/README.md`'s capability table and `conformance_test.wac`'s ledger entry, both of
+  which the suite checks and both of which failed first. That is the "several registries" tax and it
+  was collected on schedule.
+
+**What is not done**: nothing in the tree passes a directory yet. The nine tools in
+`issues/system/0289b` that want one are the reason this exists, and porting them is that issue's
+work. A `cwd` case in `conformance_test.wac`'s citation would be worth adding when the first of them
+lands — today the ledger's entry for 59 is the same evidence it had for 58, which covers the
+capability but not the parameter.

@@ -96,7 +96,25 @@ export const OP = {
    * an opcode it does not serve fails and names itself. `Cli.exec` is a method that calls this one,
    * so each host still implements exactly one of them.
    */
-  EXEC_WITH: 58,
+  /**
+   * `Cli.execWithIn` — a host program, run to completion, in a directory. `issues/system/0290b`.
+   *
+   * **58 was `EXEC_WITH`, and is not reused.** `Cli.execWith` is a method over this one now, so
+   * nothing sends 58; the number is left alone rather than given to something else, because a
+   * per-agent binary or a worker bundle built before this still sends it and should fail rather than
+   * be misread. It is not listed here because `conformance_test.wac` reads this table as *the
+   * surface* — an opcode with no capability behind it reads as one the native hosts dropped.
+   *
+   * A new number rather than a longer payload on 58, for the reason 58 itself is not a longer
+   * payload on 44: a host that had not been rebuilt would read the directory as the head of standard
+   * input, silently, where an opcode it does not serve fails and names itself. This repository has
+   * three per-agent binaries that go stale on their own and a wasmtime host that is not built by
+   * default, so "a host that had not been rebuilt" is the ordinary case rather than a hypothetical.
+   *
+   * `Cli.execWith` is a method that calls this one with `""`, so each host still implements exactly
+   * one of the three.
+   */
+  EXEC_WITH_IN: 59,
   // **`Cli.load`, `Cli.call` and `Cli.unload` have no opcode**, and that is the design rather than an
   // omission. A loaded module lives in the *caller's own realm* and its capabilities are built against
   // the caller's own bridge — so nothing about it crosses to the launcher, and the three are

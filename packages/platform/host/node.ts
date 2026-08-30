@@ -815,8 +815,8 @@ export function nodeWorld(
     },
 
     /** `Cli.exec` — a host program, run to completion. `issues/system/0165`. */
-    [OP.EXEC_WITH]: async (p) => {
-      const { path, args, env, stdin, clearEnv, inherit } = unpackExec(p);
+    [OP.EXEC_WITH_IN]: async (p) => {
+      const { path, args, env, stdin, clearEnv, inherit, cwd } = unpackExec(p);
       if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
       try {
         const { spawn } = await import("node:child_process");
@@ -827,6 +827,9 @@ export function nodeWorld(
           const child = spawn(path, args, {
             stdio: inherit ? ["pipe", "inherit", "inherit"] : ["pipe", "pipe", "pipe"],
             env: clearEnv ? envRecord(env) : { ...process.env, ...envRecord(env) },
+            // Empty means "wherever this process already is" — `undefined` is Node's spelling of
+            // it, as it is Deno's. `issues/system/0290b`.
+            cwd: cwd === "" ? undefined : cwd,
           });
           const out: Uint8Array[] = [];
           const err: Uint8Array[] = [];

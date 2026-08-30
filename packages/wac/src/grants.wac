@@ -222,7 +222,7 @@ Pending<Child> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, i32 inheri
   return ready(Child.of(0 - 1, 0 - 1, 0 - 1, DENIED));
 }
 Pending<Exec> noExec(string path, string[] args, u8[] stdin, string[] env, bool clearEnv,
-                     bool inherit) {
+                     bool inherit, string cwd) {
   return ready(Exec.of(0, u8[0](), u8[0](), DENIED));
 }
 
@@ -284,7 +284,7 @@ export Cli narrowed(const Cli parent, Asked a) {
     parent.cwd,
     parent.pushChild,
     parent.popChild,
-    a.run ? parent.execWith : noExec,
+    a.run ? parent.execWithIn : noExec,
     parent.load,
     parent.call,
     parent.unload,

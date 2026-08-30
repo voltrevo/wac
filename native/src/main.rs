@@ -1361,7 +1361,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "setExecutable") => Cap::SetExecutable,
-        ("Cli", "execWith") => Cap::Exec,
+        ("Cli", "execWithIn") => Cap::Exec,
         // A **module** rather than a program: its exports called, in a store of its own that shares
         // this one's authority. `issues/system/0240c`.
         ("Cli", "load") => Cap::Load,
@@ -2319,6 +2319,8 @@ fn dispatch(
                 .collect();
             let clear_env = matches!(arg(5), Val::I32(n) if n != 0);
             let inherit = matches!(arg(6), Val::I32(n) if n != 0);
+            // Empty means "wherever this process already is", matching `spawn`'s `cwd`.
+            let cwd = String::from_utf8_lossy(&read_string(caller, &params[7])?).into_owned();
             if !caller.data().grants.run {
                 let refused = Outcome::Exec(
                     0,
@@ -2341,7 +2343,7 @@ fn dispatch(
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             std::thread::spawn(move || {
-                table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit));
+                table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit, cwd));
             });
             return pending_for(caller, Kind::Exec, id, results);
         }
@@ -3230,11 +3232,17 @@ fn run_host_program(
     env: Vec<String>,
     clear_env: bool,
     inherit: bool,
+    cwd: String,
 ) -> Outcome {
     // An argument *vector*, never a shell line: a value containing a space or a semicolon
     // arrives whole. A caller who wants a shell names `/bin/sh -c`.
     let mut cmd = std::process::Command::new(&path);
     cmd.args(&argv).stdin(std::process::Stdio::piped());
+    // **Empty means "wherever this process already is"**, which is `spawn`'s rule for the same
+    // parameter — so a caller with no opinion keeps the behaviour it had. `issues/system/0290b`.
+    if !cwd.is_empty() {
+        cmd.current_dir(&cwd);
+    }
     // **`inherit` is the real file descriptor**: the child writes to this process's own stdout and
     // stderr, so there is nothing here to collect and the answer below carries none.
     if inherit {
