@@ -29,7 +29,7 @@ import { kIdent, kInt, kAssign, kVoid } from "./kinds.wac";
 /** The names that do not depend on the function being lowered. */
 string[] fixedWords() {
   return string[]("Pending", "wait", "then", "sched",
-                  "__wacState", "__wacDone", "__wacRes", "__wacStep",
+                  "__wacState", "__wacDone", "__wacAnswer", "__wacStep",
                   "=", "i32", "bool", "void", "id",
                   "__wacResolve", "__wacSettled", "__wacDrop");
 }
@@ -202,7 +202,7 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 line, i32 col) {
  * indices: two different tokens spell the same name, and the same token index means different things
  * in different files.
  */
-export string textAt(u8[] src, Lexed lexed, i32 t) {
+export string synthTextAt(u8[] src, Lexed lexed, i32 t) {
   if (t < 0 || t >= lexed.tokenCount) { return ""; }
   i32 at = t * tokenStride();
   i32 start = lexed.tokens[at + 1];

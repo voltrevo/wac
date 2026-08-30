@@ -15,6 +15,7 @@ import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, to
          literalBodyStart, literalBodyEnd,
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
+import { Lowered, lowerProgram } from "./asynclower.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
@@ -331,8 +332,17 @@ void writeValType(B out, Env env, string t) {
   // `issues/lang/0170a`'s third item is that `""` and its relatives travel as if they were answers.
   // A bare unresolved name now falls to the refusal below and is named.
   if (!isWritableValType(t)) {
-    env.declineFor(t == "" ? "a value whose type this emitter could not work out"
-                           : "a value of a type this emitter cannot write: " + t);
+    // **And where**, because the type alone has repeatedly not been enough. `$cell$…` names a
+    // captured local's storage, and knowing *which lambda* was being emitted is the difference
+    // between reading the answer and guessing at it — three wrong hypotheses and three full ladder
+    // rebuilds went past before this line existed.
+    string at = "";
+    if (env.emittingLambda >= 0 && env.emittingLambda < env.lambdaCount) {
+      at = " (emitting the lambda at " + numText(env.lambdaLine[env.emittingLambda])
+         + ":" + numText(env.lambdaCol[env.emittingLambda]) + ")";
+    }
+    env.declineFor(t == "" ? "a value whose type this emitter could not work out" + at
+                           : "a value of a type this emitter cannot write: " + t + at);
     out.byte(127);
     return;
   }
@@ -4481,6 +4491,20 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
 Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                    string[] filePaths, bool checked, bool covered, Env envIn,
                    u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
+  // **`async` is lowered here, before anything looks at a declaration.** Every emit path and every
+  // description walk funnels through this function, so rewriting once here is what keeps them all
+  // seeing the same program — `design/lang/0014` step 4. A file with nothing to lower is handed back
+  // untouched, including its source and tokens, so the common case pays a walk and nothing else.
+  for (i32 li = 0; li < progs.len(); li++) {
+    if (progs[li] is null) { continue; }
+    if (li >= lexeds.len() || (lexeds[li] is null) || li >= srcs.len()) { continue; }
+    Lowered lo = lowerProgram(progs[li]!, srcs[li], lexeds[li]!);
+    if (!lo.changed) { continue; }
+    progs[li] = lo.prog;
+    srcs[li] = lo.src;
+    lexeds[li] = lo.lexed;
+  }
+
   // **Nothing is lexed or parsed here.** Every caller hands over the graph — a lone source is the
   // graph of one file, built by `oneFile` — and every walk reads `Env.mergedDecls`. This used to
   // lex and parse a concatenation of the whole program for a declaration list nobody read.
