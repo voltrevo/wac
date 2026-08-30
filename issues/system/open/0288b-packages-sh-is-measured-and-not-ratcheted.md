@@ -16,7 +16,7 @@ nothing reaches has no entry — except one:
     | packages/sh/ | 3068 | 2032 | 66.2 |
     1036 branch points never executed
 
-`packages/sh/cov.ts` prints that table and exits 0. `tools/wac/coverageall.wac` classifies a driver by
+`packages/sh/test/cov_exercise.wac` prints that table and exits 0. `tools/wac/coverageall.wac` classifies a driver by
 whether it ratchets, and calls this one **`reports`**; every other package is a **`floor`**.
 
 So sh's coverage is measured on every gate — 6.5s of the ratchet phase — and measured is all it is.
@@ -59,7 +59,7 @@ fix is to give sh a ledger rather than to fix a sentence about not having one.
 long tail that four files share. `parse.wac` and `printf.wac` are already above 90% and would need a
 handful of entries between them.
 
-And `refusal.wac` — 3 of 19 — is the file whose *name* matches the explanation `packages/sh/cov.ts`
+And `refusal.wac` — 3 of 19 — is the file whose *name* matches the explanation `packages/sh/test/cov_exercise.wac`
 already gives for why this package is hard to cover: the interesting branches are the refusals, every
 place a peer, a file or a script can be wrong, which a differential against bash cannot reach because
 the two agree on what works and disagree on what this declines to do. That is one rule covering
@@ -84,7 +84,7 @@ They are not scattered. Resolved to names, they fall into four families:
 * **filesystem builtins** — `cd`, `ls`, `mkdir`, `rm`, `mtimeOf`, `onFs`, `ownership`, `octalMode`,
   `statReason`.
 * **refusals** — `refused`, `optionRefusal`, `tryHelp`, `gnuHas`, and all four of `refusal.wac`'s
-  uncovered entries. This is the family `packages/sh/cov.ts` already explains in prose.
+  uncovered entries. This is the family `packages/sh/test/cov_exercise.wac` already explains in prose.
 * **lexer helpers** — `isName`, `nameByte`, `nameStart`, `isAllDigits`, `isBlankAt`, `hexValue`,
   `endsWithColon`, `ansiEscape`, `declaredLocal`, `localVar`, `spawnableName`, `enterSelf`.
 
@@ -116,7 +116,7 @@ and a rule saying *"driven by the differential"* would be true for this family r
 the opposite of what the paragraph above was warning about, which is why it was worth asking instead
 of assuming in either direction.
 
-That reframes the whole issue. sh's 66.2% is **coverage of `packages/sh/cov.ts`'s script list**, not
+That reframes the whole issue. sh's 66.2% is **coverage of `packages/sh/test/cov_exercise.wac`'s script list**, not
 of what the tests reach: the differential corpus is a separate body of scripts that the coverage run
 never executes. So an unknown share of the 1,036 is already exercised by tests that the measurement
 cannot see, and the cheapest route to a ledger may not be writing rules at all — it may be running
@@ -125,7 +125,7 @@ the corpus under instrumentation and finding out how many of the 1,036 survive.
 That is worth doing *before* the rules, because a rule is a claim about why something is unreachable
 and most of these may simply not be unreachable.
 
-**Measured, with eight lines.** Adding these to `SCRIPTS` in `packages/sh/cov.ts`, temporarily and
+**Measured, with eight lines.** Adding these to `SCRIPTS` in `packages/sh/test/cov_exercise.wac`, temporarily and
 not committed:
 
     "cd /tmp && ls", "ls", "ls /nosuchfile", "mkdir -p /tmp/covprobe && ls /tmp/covprobe",
@@ -153,7 +153,7 @@ trusting the 1,036 in the heading above.
 cover most of the 1036 and write an entry for the remainder.
 
 The shape is likely to be favourable. `packages/sh/src/exec.wac` is 1946 points at 55.5% and
-`refusal.wac` is 19 at 15.8%, and `packages/sh/cov.ts`'s own header says why: the interesting
+`refusal.wac` is 19 at 15.8%, and `packages/sh/test/cov_exercise.wac`'s own header says why: the interesting
 branches are refusals — *"every place a peer, a file or a script can be wrong"* — which a differential
 against bash cannot reach by construction, because bash and this agree on what works and disagree on
 what this declines to do. That is a rule-shaped explanation rather than a thousand sentences.
@@ -170,7 +170,7 @@ from `reports` to `floor`, in one commit that the gate can prove.
 
 ## First step taken: the eight scripts are in — agent-b, 2026-08-29
 
-They are in `packages/sh/cov.ts` now rather than sitting in this issue as advice, with the reasoning
+They are in `packages/sh/test/cov_exercise.wac` now rather than sitting in this issue as advice, with the reasoning
 at the site. **The baseline every figure above is written against has therefore moved**: the package
 is 2,110 of 3,068 — **68.8%**, 958 uncovered, 36 functions never entered.
 
@@ -257,7 +257,7 @@ and the callers describe what reaches them, and only the second one tells you wh
 cover most of the 1036 and write an entry for the remainder.
 
 The shape is likely to be favourable. `packages/sh/src/exec.wac` is 1946 points at 55.5% and
-`refusal.wac` is 19 at 15.8%, and `packages/sh/cov.ts`'s own header says why: the interesting
+`refusal.wac` is 19 at 15.8%, and `packages/sh/test/cov_exercise.wac`'s own header says why: the interesting
 branches are refusals — *"every place a peer, a file or a script can be wrong"* — which a differential
 against bash cannot reach by construction, because bash and this agree on what works and disagree on
 what this declines to do. That is a rule-shaped explanation rather than a thousand sentences.
@@ -274,7 +274,7 @@ from `reports` to `floor`, in one commit that the gate can prove.
 
 ## First step taken: the eight scripts are in — agent-b, 2026-08-29
 
-They are in `packages/sh/cov.ts` now rather than sitting in this issue as advice, with the reasoning
+They are in `packages/sh/test/cov_exercise.wac` now rather than sitting in this issue as advice, with the reasoning
 at the site. **The baseline every figure above is written against has therefore moved**: the package
 is 2,110 of 3,068 — **68.8%**, 958 uncovered, 36 functions never entered.
 
@@ -383,3 +383,29 @@ their sentence already written somewhere else. What made the difference was not 
 **read the callers, not the names**, and **run the construct through `wac sh -c` before believing it
 is unreachable** — two of the earlier batches had the right idea in a form that silently did
 something else.
+
+
+## The driver is wac now, and the ledger is still the job — agent-b, 2026-08-30
+
+packages/sh/cov.ts became `packages/sh/test/cov_exercise.wac` (the 846 scripts) and
+`packages/sh/test/cov_ledger.wac` (the driver). It was the last TypeScript coverage driver in the
+repository — the other thirty-six packages already ran a wac one — so this belongs to
+`issues/system/0289b` as much as to this issue.
+
+**It changes nothing about the measurement, which is how the move was checked.** Both report
+`3068 | 2280 | 74.3` and `788 branch points never executed`, identical. That number is the whole
+verification: the scripts were moved by machine rather than by eye, and a transcription slip would
+have shown up as a different set of branches reached.
+
+**It still reports and does not ratchet**, so `tools/wac/coverageall.wac` still counts it among the
+drivers that cannot fail — that classification reads the call to the shared ratchet, not the
+language. Adding a floor now would be worse than the gap it papers over: 788 unreached points is
+not a translation job but 788 judgements, and a ledger entry is a claim that nothing *can* reach
+the code.
+
+What the move does buy is that the entries are now writable at all. `tools/wac/covledger.wac`'s
+`ratchet` takes the `Pin` and `Rule` lists this file has been sizing since 2026-08-29, and until
+today sh could not have passed them anything even if every entry had been written.
+
+**Also deleted: harness/wacCoverage.ts**, 220 lines, whose own header said sh's driver was the
+only caller left. It was.

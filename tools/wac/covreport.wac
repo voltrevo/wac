@@ -4,7 +4,7 @@
 //       -- packages/codec/test/cov_exercise.wac packages/codec/ [--verbose]
 //
 // **This is the shared half of twenty drivers.** Each package's `cov.ts` was exercises plus its own
-// copy of the reporting, through `harness/wacCoverage.ts`; what is left per package is the exercises
+// copy of the reporting, through harness/wacCoverage.ts; what is left per package is the exercises
 // alone — a wac program whose `main` runs the shapes the tests run — and this reads the counters and
 // says what was missed. `issues/system/0161`.
 //
@@ -19,7 +19,7 @@
 // ## What is counted, which is the part with a decision in it
 //
 // A point is counted when its file starts with `prefix` and is **not** a test file — `/test/` in the
-// path, or a `_test.wac` name. That is `harness/wacCoverage.ts`'s rule kept exactly: a test's
+// path, or a `_test.wac` name. That is harness/wacCoverage.ts's rule kept exactly: a test's
 // uncovered branches are its *assertions that did not fire*, which is the outcome you want and not a
 // gap in the package. `packages/url` read 95.7% with fifteen passing checks reported as gaps before
 // that rule existed. The count of skipped files is printed, so this cannot quietly drop a real one.

@@ -182,7 +182,7 @@ export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cl
   bool outside = ratchet(core, cli, twoPoints(dir), 2, oneEach(), "/tmp/wac-nothing/", noPins(), noRules());
   t.isTrue(!outside, "a point outside the prefix is not counted");
 
-  // And a `/test/` path is excluded by the same rule `harness/wacCoverage.ts` had: a test's uncovered
+  // And a `/test/` path is excluded by the same rule harness/wacCoverage.ts had: a test's uncovered
   // branches are its assertions that did not fire, which is an outcome rather than a gap.
   //
   // **This is the rule that broke the first version of this file**, which used the test's own lines as

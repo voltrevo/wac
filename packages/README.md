@@ -317,7 +317,7 @@ no worrying about how `-0.0` or NaN survive the trip.
 
 `wac task coverage:<package>` reports branch coverage for the nineteen packages that have one, driven
 by a `cov.ts` in the package itself. **Coverage needs an exercise, and an exercise only measures the
-code it drives**, so each package supplies its own; `harness/wacCoverage.ts` is the shared half. The
+code it drives**, so each package supplies its own; harness/wacCoverage.ts is the shared half. The
 repo-level `wac task coverage:gzip` covers gzip only, which is
 [0002](../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
 

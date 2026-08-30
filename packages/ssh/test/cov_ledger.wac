@@ -21,7 +21,7 @@
 // `cov.ts` instrumented `test/wac/probe.wac` and called it; those exercises are carried over unchanged.
 // What is new is two things it could not do:
 //
-//   - **the tests.** `harness/wacCoverage.ts`'s `runTestExports` skips any test whose `fn.length > 0`,
+//   - **the tests.** harness/wacCoverage.ts's `runTestExports` skips any test whose `fn.length > 0`,
 //     because `instrument` cannot supply a capability — and 29 of the 32 non-exclusive tests take one.
 //     `wac covdump` runs the ordinary program path (`issues/system/0221`), so `main` has a real `Core`
 //     and `Cli` and calls them;

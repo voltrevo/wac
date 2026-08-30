@@ -157,7 +157,7 @@ Seven of the 37 were **false positives** — live code called dead — and nine 
   `gzipDynamic`, `dumpErrors`, `lexTokens` and `lexErrors`. The fix is `.name` rather than `.name(`, for
   exactly the reason the wac side already counts a bare name.
 - **Which TypeScript to search.** The old rule was "any file that mentions `wacBind` or `entry:`", which
-  `cov.ts` fails — it gets its module from `instrument()` in `harness/wacCoverage.ts`. The new rule is
+  `cov.ts` fails — it gets its module from `instrument()` in harness/wacCoverage.ts. The new rule is
   **locality**: the package the export is declared in, plus `harness/` and `tools/`, which drive
   everything. Propagating "mentions `wacBind`" through the import graph was the other candidate and is
   worse — every test importing `buildApp` would qualify, because `packages/platform/build.ts` binds, and

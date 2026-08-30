@@ -14,7 +14,7 @@
 //
 // ## `cov.ts` beside `core/README.md` until 2026-08-20 — `issues/system/0161`
 //
-// It was the last caller of `harness/wacCoverage.ts`, which is deleted with it. Nothing here needed a
+// It was the last caller of harness/wacCoverage.ts, which is deleted with it. Nothing here needed a
 // JavaScript host: `instrument` existed to reach a wac module's exports from TypeScript, and a wac
 // exercise reaches them by importing them.
 //

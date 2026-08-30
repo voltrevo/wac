@@ -210,7 +210,7 @@ said, never whether the claim about it is still true.
 ## Done: `crypto`, and the driver could not call its own tests — 2026-08-20
 
 **1140 of 1173 points, against the TypeScript's 974 of 1053.** More points seen *and* fewer missed, and
-one thing explains it: `harness/wacCoverage.ts`'s `runTestExports` skips any test whose `fn.length > 0`,
+one thing explains it: harness/wacCoverage.ts's `runTestExports` skips any test whose `fn.length > 0`,
 because `instrument` and `wacBind` cannot supply a capability. **64 of this package's 152 returning tests
 were unreachable from its own coverage driver**, and it made up the difference with about six hundred
 lines of hand-built probe calls. `wac covdump` runs the ordinary program path (`issues/system/0221`), so
@@ -289,7 +289,7 @@ And three instances of the phrasing defect that prompted this issue: gzip's `unr
 right words in the wrong order — which also had it classified as holding no floor when it is the
 strictest of the five.
 
-`packages/sh/cov.ts` is the sixth driver and belongs to another agent; it is out of scope here, and
+packages/sh/cov.ts is the sixth driver and belongs to another agent; it is out of scope here, and
 `tools/wac/coverageall.wac` counts it among the sixteen that report and cannot fail.
 
 ## Notes

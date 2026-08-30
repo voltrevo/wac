@@ -74,7 +74,7 @@ interface other packages would have to meet.
 
 ## Progress — 2026-07-31, agent-c
 
-Option 2 is largely done, by agent-b in 0e1dd85: `harness/wacCoverage.ts` holds the
+Option 2 is largely done, by agent-b in 0e1dd85: harness/wacCoverage.ts holds the
 shared half, and each package supplies a `cov.ts` with its own exercise. I have added
 packages/crypto/cov.ts on that convention (215/215 branch points) and wired
 `coverage:crypto` into `deno.json` and the root README.

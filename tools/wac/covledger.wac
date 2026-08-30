@@ -131,7 +131,7 @@ export string[] linesOf(string s) {
   return out;
 }
 
-/** `harness/wacCoverage.ts`'s rule, kept exactly: a test's own branches are not the package's. */
+/** harness/wacCoverage.ts's rule, kept exactly: a test's own branches are not the package's. */
 export bool isTest(string file) {
   return contains(file, "/test/") || endsWith(file, "_test.wac");
 }
@@ -547,7 +547,7 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
  *
  * **This was got wrong from the day `covreport.wac` was written**, and `core/` is where it showed:
  * `core/test/cov_exercise.wac` emits 848 points under `core/` at 159 distinct positions, and counting
- * them raw read 35.3% where `harness/wacCoverage.ts` — which keyed on `(file, line, col, kind)` and
+ * them raw read 35.3% where harness/wacCoverage.ts — which keyed on `(file, line, col, kind)` and
  * unioned — read 100%. Every package converted before then was measured raw; the ones with no repeated
  * instantiation are unaffected, which is why nothing caught it until a tree that is nothing but
  * generics arrived.

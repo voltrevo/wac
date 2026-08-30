@@ -12,7 +12,7 @@
 // `0205` is about fifteen coverage drivers that end with `report(…)` and exit 0 whatever they
 // measured — "a package that lost half its coverage was reported as passing, in a block that reads
 // like a gate". Its stated blocker was that a floor is only honest where the driver can reach what the
-// tests reach, and `crypto`'s could not: `harness/wacCoverage.ts` skipped every test taking a
+// tests reach, and `crypto`'s could not: harness/wacCoverage.ts skipped every test taking a
 // capability.
 //
 // That blocker is gone. `wac covdump` runs the ordinary program path (`issues/system/0221`), so a wac

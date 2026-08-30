@@ -64,7 +64,7 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 
 | caller | what it uses the compiler for | move? |
 |---|---|---|
-| `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
+| harness/wacCoverage.ts | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
 | tools/coverage.ts | the same, as a command | with the above |
 | `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **done** — wacc by default, `WAC_TEST_FROM=reference` back |
 | `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **done** — and it had to be, since it measures what a build ships |
@@ -160,7 +160,7 @@ The operator's rule — the reference is for the bootstrap and nothing else — 
 on the ledgers" and into "broken until moved". `packages/zstd` uses `issues/lang/0069`'s bit methods,
 so the reference cannot compile it, so `deno task coverage:zstd` could not run at all.
 
-`harness/wacCoverage.ts` defaults to wacc, with `WAC_COV_FROM=reference` to go back.
+harness/wacCoverage.ts defaults to wacc, with `WAC_COV_FROM=reference` to go back.
 
 **The two compilers do not measure the same thing**, which matters more than the switch:
 
