@@ -203,13 +203,17 @@ export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
 
 export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
   T t = T.create();
-  // **The property A1 exists for.** Run to completion one after the other the log reads 1122;
-  // interleaved it reads 1212. Two clients being served at once is this, with sockets.
+  // **The property A1 exists for**, and the assertion is the property rather than one spelling of
+  // it. Run to completion one after the other the log reads 1122 or 2211; interleaved it reads 1212
+  // or 2121 — and **which of those two is a race**, decided by whichever 1ms timer the host answers
+  // first. Pinning 1212 passed here and failed in the suite, where the machine is busier. What is
+  // being claimed is that neither machine finished before the other started.
   i32[] log = i32[1]();
   Pending<i32> a = ticks(core, 2, log, 1);
   Pending<i32> b = ticks(core, 2, log, 2);
   core.drain();
-  t.eqI32(log[0], 1212, "the two machines took turns");
+  t.isTrue(log[0] == 1212 || log[0] == 2121,
+           "the two machines took turns rather than running one after the other");
   t.isTrue(a.isDone() && b.isDone(), "and both finished");
   return t.report();
 }

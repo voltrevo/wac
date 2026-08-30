@@ -68,7 +68,7 @@ string[] knownBad() {
     "packages/wac/src/grants.wac",
     "spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac",
     "packages/platform/test/wac/asynclower_test.wac",
-    "packages/platform/test/wac/asyncchain_test.wac");
+    "packages/platform/test/wac/asyncchain_probe.wac");
 }
 
 /** Why each is listed, index for index with `knownBad`. */
