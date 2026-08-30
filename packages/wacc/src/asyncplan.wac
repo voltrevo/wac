@@ -1,0 +1,285 @@
+// What an `async` function's body would lower to, decided before any of it is written —
+// `design/lang/0014` step 4.
+//
+// The rewrite needs three facts about a body: **where the suspension points are**, **whether the
+// shape is one this cut can flatten**, and **which locals outlive a suspension**. All three are
+// questions about the AST alone, so they are answered here, on their own, with their own tests —
+// rather than discovered halfway through generating code, where a wrong answer becomes a module that
+// validates and misbehaves.
+//
+// **The walks are exhaustive on purpose.** An `else` arm would make a new `ExprKind` invisible here,
+// and the cost of that is exact: `Await` itself was added on 2026-08-30 and five matches had to be
+// told about it, one of them `findLambdasExpr`, where missing it would have lost a lambda and
+// produced an invalid module rather than a diagnostic. A walk that decides whether a body contains an
+// `await` is the last place to accept a silent default.
+//
+// ## What this cut can flatten
+//
+// A suspension may be a statement of the top-level block, in one of three shapes — `T x = await e;`,
+// `await e;`, and `return await e;`. Anything else is declined **by name**, because a lowering that
+// silently mis-flattens is worse than one that refuses: an `await` nested inside a larger expression
+// needs the expression's evaluation order split around it, and an `await` inside a loop needs the
+// loop's back edge as a state, which is the next increment rather than this one.
+
+import {
+  Arm, Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind,
+} from "./ast.wac";
+
+/** What the rewrite needs to know about one `async` function. */
+export struct AsyncPlan {
+  /** Whether this cut can flatten it. When false, `why` says what stopped it. */
+  bool ok;
+  /** The refusal, in the words the reader should see. Empty when `ok`. */
+  string why;
+  /** Indices into the body of the statements that suspend, in order. */
+  i32[] suspendAt;
+  /** Name tokens of the top-level locals that must outlive a suspension. */
+  i32[] hoist;
+}
+
+/** How many suspension points, which is how many slots the tail must carry. */
+export i32 planSuspends(AsyncPlan p) { return p.suspendAt.len(); }
+
+// ── Does this contain an `await`? ─────────────────────────────────────────────
+
+/** Whether `e` contains an `await` anywhere inside it. */
+export bool awaitInExpr(Expr e) {
+  match (e.kind) {
+    case Await(operand): { return true; }
+    case MatchExpr(subject, arms): {
+      if (awaitInExpr(subject)) { return true; }
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (awaitInBody(arms[i].body)) { return true; }
+      }
+      return false;
+    }
+    case IntLit(tok): { return false; }
+    case FloatLit(tok): { return false; }
+    case StrLit(tok): { return false; }
+    case Jsx(tagTok, closeTok, attrs, kids): {
+      for (i32 i = 0; i < attrs.len(); i++) {
+        if (awaitInExpr(attrs[i].value)) { return true; }
+      }
+      for (i32 i = 0; i < kids.len(); i++) {
+        if (awaitInExpr(kids[i])) { return true; }
+      }
+      return false;
+    }
+    case JsxText(startOff, endOff): { return false; }
+    case BoolLit(value): { return false; }
+    case NullLit: { return false; }
+    case Ident(tok): { return false; }
+    case Unary(op, operand): { return awaitInExpr(operand); }
+    case Binary(op, left, right): { return awaitInExpr(left) || awaitInExpr(right); }
+    case Cast(op, operand, target): { return awaitInExpr(operand); }
+    case Is(left, target, other, negated): {
+      if (awaitInExpr(left)) { return true; }
+      return (other is not null) && awaitInExpr(other!);
+    }
+    case Ternary(cond, then, els): {
+      return awaitInExpr(cond) || awaitInExpr(then) || awaitInExpr(els);
+    }
+    case Call(callee, args, typeArgs): {
+      if (awaitInExpr(callee)) { return true; }
+      for (i32 i = 0; i < args.len(); i++) {
+        if (awaitInExpr(args[i])) { return true; }
+      }
+      return false;
+    }
+    case Index(arr, index): { return awaitInExpr(arr) || awaitInExpr(index); }
+    case Member(obj, nameTok): { return awaitInExpr(obj); }
+    case Unwrap(operand): { return awaitInExpr(operand); }
+    case Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) {
+        if (awaitInExpr(args[i])) { return true; }
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        if (awaitInExpr(named[i].value)) { return true; }
+      }
+      return false;
+    }
+    case TypeName(qualifier): { return false; }
+    case Incr(target, op, prefix): { return awaitInLvalue(target); }
+    case ArrNew(elem, size, fill, elements): {
+      if ((size is not null) && awaitInExpr(size!)) { return true; }
+      if ((fill is not null) && awaitInExpr(fill!)) { return true; }
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (awaitInExpr(elements[i])) { return true; }
+      }
+      return false;
+    }
+    // **A lambda's body is not this function's.** An `await` in there is refused by the checker
+    // already — code 211, `issues/lang/0294c` — so it cannot be a suspension of *this* machine and
+    // must not be counted as one.
+    case Lambda(params, body): { return false; }
+  }
+}
+
+bool awaitInLvalue(Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return false; }
+    case LField(base, nameTok): { return awaitInLvalue(base); }
+    case LIndex(base, index): { return awaitInLvalue(base) || awaitInExpr(index); }
+    case LUnwrap(base): { return awaitInLvalue(base); }
+  }
+}
+
+/** Whether `s` contains an `await` anywhere inside it. */
+export bool awaitInStmt(Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): { return awaitInExpr(init); }
+    case Assign(target, op, rhs): { return awaitInLvalue(target) || awaitInExpr(rhs); }
+    case IncrStmt(target, op): { return awaitInLvalue(target); }
+    case If(cond, then, els): {
+      return awaitInExpr(cond) || awaitInBody(then) || awaitInBody(els);
+    }
+    case While(cond, body): { return awaitInExpr(cond) || awaitInBody(body); }
+    case For(init, cond, update, body): {
+      if ((init is not null) && awaitInStmt(init!)) { return true; }
+      if ((cond is not null) && awaitInExpr(cond!)) { return true; }
+      if ((update is not null) && awaitInStmt(update!)) { return true; }
+      return awaitInBody(body);
+    }
+    case DoWhile(body, cond): { return awaitInBody(body) || awaitInExpr(cond); }
+    case Switch(subject, cases): {
+      if (awaitInExpr(subject)) { return true; }
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (!(cases[i].value is null) && awaitInExpr(cases[i].value!)) { return true; }
+        if (awaitInBody(cases[i].body)) { return true; }
+      }
+      return false;
+    }
+    case Return(value): { return (value is not null) && awaitInExpr(value!); }
+    case Break: { return false; }
+    case Continue: { return false; }
+    case Trap(value): { return (value is not null) && awaitInExpr(value!); }
+    case Match(subject, arms): {
+      if (awaitInExpr(subject)) { return true; }
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (awaitInBody(arms[i].body)) { return true; }
+      }
+      return false;
+    }
+    case Block(body): { return awaitInBody(body); }
+    case ExprStmt(expr): { return awaitInExpr(expr); }
+  }
+}
+
+/** Whether any statement in `body` contains an `await`. */
+export bool awaitInBody(Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    if (awaitInStmt(body[i])) { return true; }
+  }
+  return false;
+}
+
+// ── The plan ─────────────────────────────────────────────────────────────────
+
+/**
+ * Whether `s` is a suspension this cut can flatten — one of the three statement shapes.
+ *
+ * The `await` must be the **whole** of the initialiser, the expression, or the returned value.
+ * `T x = f(await e);` is not one of these: the call's arguments would have to be evaluated around a
+ * suspension, which is a rewrite of the expression rather than a split of the block.
+ */
+bool isSuspension(Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): { return isAwait(init); }
+    case ExprStmt(expr): { return isAwait(expr); }
+    case Return(value): { return (value is not null) && isAwait(value!); }
+    else: { return false; }
+  }
+}
+
+bool isAwait(Expr e) {
+  match (e.kind) {
+    case Await(operand): { return true; }
+    else: { return false; }
+  }
+}
+
+/**
+ * The plan for one `async` body, or the reason there is none.
+ *
+ * Every top-level `Var` is hoisted, not only those measured to cross a suspension. Liveness would be
+ * a second analysis with its own way of being wrong, and hoisting one that did not need it costs a
+ * one-element array — while missing one that did costs a local that silently resets on resume. The
+ * cheap direction is the safe one here.
+ */
+export AsyncPlan planBody(Stmt[] body) {
+  i32[] at = i32[body.len()]();
+  i32 n = 0;
+  i32[] hoist = i32[body.len()]();
+  i32 h = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    if (isSuspension(body[i])) {
+      at[n] = i;
+      n = n + 1;
+    } else if (awaitInStmt(body[i])) {
+      return AsyncPlan(false, declineFor(body[i]), i32[0](), i32[0]());
+    }
+    match (body[i].kind) {
+      case Var(type, nameTok, init, isConst): { hoist[h] = nameTok; h = h + 1; }
+      else: { }
+    }
+  }
+  i32[] outAt = i32[n]();
+  for (i32 i = 0; i < n; i++) { outAt[i] = at[i]; }
+  i32[] outH = i32[h]();
+  for (i32 i = 0; i < h; i++) { outH[i] = hoist[i]; }
+  return AsyncPlan(true, "", outAt, outH);
+}
+
+/**
+ * Why a statement holding an `await` is not a suspension this cut can flatten.
+ *
+ * Named by shape rather than reported as one message, because the two cases need different things
+ * next: an `await` in a loop wants the loop's back edge as a state, which is the increment after
+ * this; an `await` nested in a larger expression wants that expression split around it, which is a
+ * different piece of work again.
+ */
+string declineFor(Stmt s) {
+  match (s.kind) {
+    case While(cond, body): { return "an `await` inside a `while`"; }
+    case For(init, cond, update, body): { return "an `await` inside a `for`"; }
+    case DoWhile(body, cond): { return "an `await` inside a `do`"; }
+    case If(cond, then, els): { return "an `await` inside an `if`"; }
+    case Switch(subject, cases): { return "an `await` inside a `switch`"; }
+    case Match(subject, arms): { return "an `await` inside a `match`"; }
+    case Block(body): { return "an `await` inside a nested block"; }
+    case Assign(target, op, rhs): { return "an `await` on the right of an assignment"; }
+    else: { return "an `await` nested inside a larger expression"; }
+  }
+}
+
+/** The plan for every `async` function in `prog`, as one line each — for tests and for reading. */
+export string describePlans(Program prog) {
+  string out = "";
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (!isAsync) { continue; }
+        AsyncPlan p = planBody(body);
+        if (!p.ok) {
+          out = out + "declined: " + p.why + "\n";
+        } else {
+          out = out + "ok suspends=" + numOf(planSuspends(p))
+                    + " hoist=" + numOf(p.hoist.len()) + "\n";
+        }
+      }
+      else: { }
+    }
+  }
+  return out;
+}
+
+string numOf(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) {
+    out = string.fromCodepoint(48 + v % 10) + out;
+    v = v / 10;
+  }
+  return out;
+}

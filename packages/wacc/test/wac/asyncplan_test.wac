@@ -1,0 +1,102 @@
+// What the `async` lowering decides before it writes anything — `design/lang/0014` step 4.
+//
+// The plan is three facts about a body: where it suspends, whether this cut can flatten the shape,
+// and which locals outlive a suspension. Asked here on parsed sources, with no emission involved, so
+// a wrong answer shows up as a wrong sentence rather than as a module that validates and misbehaves.
+//
+// The refusals matter as much as the acceptances and get as many cases. A lowering that silently
+// mis-flattens is worse than one that declines, and each refusal names a *shape* rather than sharing
+// one message, because the two obvious ones need different work next: an `await` in a loop wants the
+// back edge as a state, and an `await` nested in an expression wants that expression split around it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { lex } from "../../src/lex.wac";
+import { P, parseProgram } from "../../src/parse.wac";
+import { Program } from "../../src/ast.wac";
+import { describePlans } from "../../src/asyncplan.wac";
+
+string planOf(string src) {
+  u8[] bytes = src.toBytes();
+  P p = P.create(bytes, lex(bytes));
+  return describePlans(parseProgram(p));
+}
+
+export string test_one_await_is_one_suspension() {
+  T t = T.create();
+  // A2's shape. One suspension, and the local it binds is hoisted so it survives the resume.
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  FileResult a = await cli.readFile(\"x\");\n"
+                 + "  return a.ok ? 1 : 0;\n"
+                 + "}\n"),
+          "ok suspends=1 hoist=1\n", "one await, one hoisted local");
+  return t.report();
+}
+
+export string test_two_awaits_and_a_branch_between_them() {
+  T t = T.create();
+  // A3. The `if` holds no `await`, so it is an ordinary statement and does not stop anything —
+  // which is the distinction between *a branch in the body* and *an await inside a branch*.
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  FileResult a = await cli.readFile(\"x\");\n"
+                 + "  if (!a.ok) { return 0 - 1; }\n"
+                 + "  FileResult b = await cli.readFile(\"y\");\n"
+                 + "  return a.n + b.n;\n"
+                 + "}\n"),
+          "ok suspends=2 hoist=2\n", "two awaits, two hoisted locals");
+  return t.report();
+}
+
+export string test_an_async_function_with_no_await_still_plans() {
+  T t = T.create();
+  // It still becomes a machine — the caller receives a ticket either way, D3 — it just never
+  // suspends. Worth pinning, because "no awaits" is the case a lowering is most likely to skip.
+  t.eqStr(planOf("async i32 f() { return 7; }\n"), "ok suspends=0 hoist=0\n", "no awaits");
+  return t.report();
+}
+
+export string test_the_shapes_this_cut_declines_are_named_apart() {
+  T t = T.create();
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  for (i32 i = 0; i < 3; i++) { FileResult a = await cli.readFile(\"x\"); }\n"
+                 + "  return 0;\n"
+                 + "}\n"),
+          "declined: an `await` inside a `for`\n", "the loop, which is the next increment");
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  while (true) { FileResult a = await cli.readFile(\"x\"); }\n"
+                 + "}\n"),
+          "declined: an `await` inside a `while`\n", "and the other loop");
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  if (true) { FileResult a = await cli.readFile(\"x\"); }\n"
+                 + "  return 0;\n"
+                 + "}\n"),
+          "declined: an `await` inside an `if`\n", "a branch");
+  // **Not a block split but an expression split**, which is why it is a different sentence.
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  i32 n = g(await cli.readFile(\"x\"));\n"
+                 + "  return n;\n"
+                 + "}\n"),
+          "declined: an `await` nested inside a larger expression\n", "nested in a call");
+  return t.report();
+}
+
+export string test_an_await_in_a_nested_lambda_is_not_this_machines() {
+  T t = T.create();
+  // The checker already refuses this — code 211, and `issues/lang/0294c` is why there is no async
+  // lambda yet. What matters here is that the plan does not *count* it: a lambda's body is a
+  // different function, so an `await` in it can never be a suspension of this one. Counting it would
+  // have produced a machine with a state nothing reaches.
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  fn[void()] g = () => { FileResult a = await cli.readFile(\"x\"); };\n"
+                 + "  return 0;\n"
+                 + "}\n"),
+          "ok suspends=0 hoist=1\n", "the lambda's await belongs to the lambda");
+  return t.report();
+}
+
+export string test_a_plain_function_has_no_plan() {
+  T t = T.create();
+  // The control: without `async` there is nothing to lower, and a body full of awaits would be a
+  // checker error rather than a plan. An empty answer is what says the walk is keyed on `isAsync`.
+  t.eqStr(planOf("i32 f() { return 1; }\n"), "", "not async, so no plan");
+  return t.report();
+}
