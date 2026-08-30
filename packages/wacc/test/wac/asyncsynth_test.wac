@@ -15,8 +15,11 @@ import { lex, Lexed } from "../../src/lex.wac";
 import { tokenTextOf } from "../../src/emit.wac";
 import {
   synthTail, synthBase, synthOffset, synthTokens, synthTok, synthWords,
-  synthPending, synthThen, synthDrop,
+  synthPending, synthStep, synthSlot, synthZero,
 } from "../../src/asyncsynth.wac";
+
+/** How many suspension slots the cases below ask for — three awaits' worth. */
+const i32 UPS = 3;
 
 const string SRC = "i32 main() { return 0; }\n";
 
@@ -25,12 +28,12 @@ export string test_the_tail_is_appended_once_and_found_again() {
   u8[] a = SRC.toBytes();
   t.eqI32(synthBase(a), 0 - 1, "a source without the tail says so");
 
-  u8[] b = synthTail(a);
+  u8[] b = synthTail(a, UPS);
   t.isTrue(b.len() > a.len(), "the tail was appended");
   t.isTrue(synthBase(b) > 0, "and is found again");
 
   // Idempotent, because a source that has been through the frontend twice is a thing that happens.
-  u8[] c = synthTail(b);
+  u8[] c = synthTail(b, UPS);
   t.eqI32(c.len(), b.len(), "appending twice appends once");
   t.eqI32(synthBase(c), synthBase(b), "and the base does not move");
   return t.report();
@@ -38,19 +41,25 @@ export string test_the_tail_is_appended_once_and_found_again() {
 
 export string test_a_synthetic_token_reads_back_as_its_spelling() {
   T t = T.create();
-  u8[] src = synthTail(SRC.toBytes());
+  u8[] src = synthTail(SRC.toBytes(), UPS);
   Lexed lexed = lex(src);
   i32 first = lexed.tokenCount;
-  Lexed with = synthTokens(lexed, src, 1, 1);
+  Lexed with = synthTokens(lexed, src, UPS, 1, 1);
 
   // **The point of the whole file.** `tokenTextOf` is what every later phase uses, so asking it is
   // asking the question that matters rather than a proxy for it.
   t.eqStr(tokenTextOf(src, with, synthTok(first, synthPending())), "Pending",
           "the first word");
-  t.eqStr(tokenTextOf(src, with, synthTok(first, synthThen())), "then",
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthStep())), "__wacStep",
           "one in the middle, which is where an off-by-one in the offset walk would show");
-  t.eqStr(tokenTextOf(src, with, synthTok(first, synthDrop())), "drop",
-          "and the last, which is where a length mistake would");
+  // **A generated slot, which is the part that is not a fixed list.** One per `await`, distinct
+  // because they hold tickets of different types.
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthSlot(0))), "__wacUp0", "the first slot");
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthSlot(UPS - 1))), "__wacUp2",
+          "and the last, which is where a length mistake would show");
+  // **`0` is lexed as an integer, not an identifier.** An `IntLit` reads its value out of its own
+  // token, so a kind mismatch here would not fail — it would put a silent zero somewhere else.
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthZero())), "0", "the index literal");
   return t.report();
 }
 
@@ -59,7 +68,7 @@ export string test_the_tail_is_invisible_to_the_lexer() {
   // If the tail lexed as code, these two counts would differ — and the failure would arrive much
   // later, as a parse error on a line the file does not have.
   Lexed plain = lex(SRC.toBytes());
-  Lexed tailed = lex(synthTail(SRC.toBytes()));
+  Lexed tailed = lex(synthTail(SRC.toBytes(), UPS));
   t.eqI32(tailed.tokenCount, plain.tokenCount, "the tail produced no tokens of its own");
   t.eqI32(tailed.errorCount, plain.errorCount, "and no errors");
   return t.report();
@@ -67,13 +76,13 @@ export string test_the_tail_is_invisible_to_the_lexer() {
 
 export string test_every_word_has_a_distinct_offset_in_order() {
   T t = T.create();
-  u8[] src = synthTail(SRC.toBytes());
-  string[] w = synthWords();
+  u8[] src = synthTail(SRC.toBytes(), UPS);
+  string[] w = synthWords(UPS);
   // The offsets are walked from a list rather than written down, so the property worth pinning is
   // the walk's: strictly increasing, and each far enough past the last to hold it.
   i32 prev = 0 - 1;
   for (i32 i = 0; i < w.len(); i++) {
-    i32 at = synthOffset(src, i);
+    i32 at = synthOffset(src, UPS, i);
     t.isTrue(at > prev, "word " + w[i] + " comes after the one before it");
     if (i > 0) {
       t.isTrue(at - prev >= w[i - 1].toBytes().len() + 1,
@@ -81,6 +90,6 @@ export string test_every_word_has_a_distinct_offset_in_order() {
     }
     prev = at;
   }
-  t.eqI32(synthOffset(src, w.len()), 0 - 1, "asking past the end says so");
+  t.eqI32(synthOffset(src, UPS, w.len()), 0 - 1, "asking past the end says so");
   return t.report();
 }

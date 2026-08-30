@@ -2,9 +2,9 @@
 // step 4.
 //
 // Every later phase learns what a token says by reading `tokenText`, which reads bytes out of the
-// source. So a node the rewrite invents — `Pending`, `.then`, `.wait` — still needs a span, and the
-// span has to point at real bytes. The answer, and the prior art, is `wapytok.wac`: append the
-// spellings once to the source and point synthetic tokens into them.
+// source. So a node the rewrite invents — `Pending`, `.wait`, the machine's own state variable —
+// still needs a span, and the span has to point at real bytes. The answer, and the prior art, is
+// `wapytok.wac`: append the spellings once to the source and point synthetic tokens into them.
 //
 // **Behind a `//`, and that is not cosmetic.** `Lexed`'s own note says to lex again for a second
 // parse, so a source carrying this tail can be re-lexed; wapy hit exactly that and reported its tail
@@ -14,48 +14,77 @@
 // about it.
 //
 // **The spans are honest about what they are.** A synthetic token takes the line and column of the
-// `async` or `await` that produced it, following `wapytok`'s rule: a diagnostic about lowered code
-// then points at the word the reader wrote, which is the closest thing to true available. Pointing
-// into a comment at the end of the file would be worse than useless.
+// `async` that produced it, following `wapytok`'s rule: a diagnostic about lowered code then points
+// at the word the reader wrote, which is the closest thing to true available. Pointing into a
+// comment at the end of the file would be worse than useless.
+//
+// **The suspension slots are generated, one per `await`.** A machine with three awaits needs three
+// places to keep the ticket it is suspended at, and they must be distinct names because they are
+// distinct types. So the tail is built for a file rather than fixed, and a file is asked for as many
+// as its largest async function needs.
 
 import { Lexed, tokenStride } from "./lex.wac";
-import { kIdent } from "./kinds.wac";
+import { kIdent, kInt } from "./kinds.wac";
 
-/**
- * The names the lowering needs, in the order their tokens are installed.
- *
- * Kept as one list because the offsets are computed from it rather than written down: a table of
- * hand-counted byte offsets is the kind of thing that is right until somebody adds a word in the
- * middle, and `wapyparse.wac` has four of them for exactly four synthetics. This has more.
- */
-export string[] synthWords() {
-  return string[]("Pending", "of", "map", "then", "wait", "isDone", "cancel", "detach",
-                  "sched", "id", "resolve", "settled", "drop");
+/** The names that do not depend on the function being lowered. */
+string[] fixedWords() {
+  return string[]("Pending", "wait", "then", "sched", "0",
+                  "__wacState", "__wacDone", "__wacRes", "__wacStep");
 }
 
-/** Index of each word within `synthWords`, so a caller names it rather than counting. */
+/** Index of each fixed word. A caller names it rather than counting. */
 export i32 synthPending() { return 0; }
-export i32 synthOf()      { return 1; }
-export i32 synthMap()     { return 2; }
-export i32 synthThen()    { return 3; }
-export i32 synthWait()    { return 4; }
-export i32 synthIsDone()  { return 5; }
-export i32 synthCancel()  { return 6; }
-export i32 synthDetach()  { return 7; }
-export i32 synthSched()   { return 8; }
-export i32 synthId()      { return 9; }
-export i32 synthResolve() { return 10; }
-export i32 synthSettled() { return 11; }
-export i32 synthDrop()    { return 12; }
+export i32 synthWait()    { return 1; }
+export i32 synthThen()    { return 2; }
+export i32 synthSched()   { return 3; }
+export i32 synthZero()    { return 4; }
+export i32 synthState()   { return 5; }
+export i32 synthDone()    { return 6; }
+export i32 synthRes()     { return 7; }
+export i32 synthStep()    { return 8; }
 
-/** The marker the tail opens with, so `isInstalled` can recognise its own work. */
+/** How many words come before the generated suspension slots. */
+export i32 synthFixedCount() { return 9; }
+
+/** The slot for await number `k`, as an index into `synthWords(ups)`. */
+export i32 synthSlot(i32 k) { return synthFixedCount() + k; }
+
+/**
+ * Every spelling the tail carries, for a file needing `ups` suspension slots.
+ *
+ * One list, because the byte offsets are walked from it rather than written down: a table of
+ * hand-counted offsets is right until somebody adds a word in the middle, and `wapyparse.wac` keeps
+ * four such offsets for exactly four synthetics. This has more, and a variable number of them.
+ */
+export string[] synthWords(i32 ups) {
+  string[] fixed = fixedWords();
+  i32 n = ups < 0 ? 0 : ups;
+  string[] out = string[fixed.len() + n]();
+  for (i32 i = 0; i < fixed.len(); i++) { out[i] = fixed[i]; }
+  for (i32 i = 0; i < n; i++) { out[fixed.len() + i] = "__wacUp" + numOf(i); }
+  return out;
+}
+
+/** Decimal, without pulling `packages/fmt` into the compiler's own dependencies. */
+string numOf(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) {
+    out = string.fromCodepoint(48 + v % 10) + out;
+    v = v / 10;
+  }
+  return out;
+}
+
+/** The marker the tail opens with, so the tail can recognise its own work. */
 string synthMarker() { return "// wac:async-synth "; }
 
 /** A source with the tail appended, or the same bytes when it is already there. */
-export u8[] synthTail(u8[] src) {
+export u8[] synthTail(u8[] src, i32 ups) {
   if (synthBase(src) >= 0) { return src; }
   string tail = "\n" + synthMarker();
-  string[] w = synthWords();
+  string[] w = synthWords(ups);
   for (i32 i = 0; i < w.len(); i++) {
     if (i > 0) { tail = tail + " "; }
     tail = tail + w[i];
@@ -92,31 +121,32 @@ export i32 synthBase(u8[] src) {
  * Walked from the base rather than indexed, because the words have different lengths and one space
  * between them — the same reason the list above is the single source of the offsets.
  */
-export i32 synthOffset(u8[] src, i32 which) {
+export i32 synthOffset(u8[] src, i32 ups, i32 which) {
   i32 at = synthBase(src);
   if (at < 0) { return 0 - 1; }
-  string[] w = synthWords();
+  string[] w = synthWords(ups);
   if (which < 0 || which >= w.len()) { return 0 - 1; }
   for (i32 i = 0; i < which; i++) { at = at + w[i].toBytes().len() + 1; }
   return at;
 }
 
 /**
- * `lexed` with one identifier token per word appended, spanning `line`/`col`.
+ * `lexed` with one token per word appended, spanning `line`/`col`.
  *
  * The tokens go on the end, so every index the parser already handed to the AST still means what it
- * meant. `firstSynthTok` is where they start.
+ * meant. `"0"` is lexed as an integer rather than an identifier, because an `IntLit` reads its value
+ * out of its token and a kind mismatch there would be a silent zero somewhere else.
  */
-export Lexed synthTokens(Lexed lexed, u8[] src, i32 line, i32 col) {
-  string[] w = synthWords();
+export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 line, i32 col) {
+  string[] w = synthWords(ups);
   i32 stride = tokenStride();
   i32 have = lexed.tokenCount;
   i32[] out = i32[(have + w.len()) * stride]();
   for (i32 i = 0; i < have * stride; i++) { out[i] = lexed.tokens[i]; }
   for (i32 i = 0; i < w.len(); i++) {
     i32 at = (have + i) * stride;
-    out[at] = kIdent();
-    out[at + 1] = synthOffset(src, i);
+    out[at] = i == synthZero() ? kInt() : kIdent();
+    out[at + 1] = synthOffset(src, ups, i);
     out[at + 2] = w[i].toBytes().len();
     out[at + 3] = line;
     out[at + 4] = col;
