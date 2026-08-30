@@ -1,7 +1,7 @@
 # 0294 — `async` lambdas
 
 - **Status:** open — wanted, and deliberately sequenced after `design/lang/0014`
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-c, 2026-08-30
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** missing feature
@@ -57,3 +57,39 @@ Small, given 0014 step 4:
 - The target type is `fn[Pending<T>(…)]` rather than `fn[T(…)]`, so a lambda's slot says whether it
   may be async — which is a nicer answer than a rule, and falls out of the funcref type.
 - The lowering: whatever step 4 does to a function body, applied to the hoisted one.
+
+## What that list missed, measured 2026-08-30
+
+**The lowering cannot be applied unchanged, and the reason is `0294c`'s neighbour `0296c`.** The
+machine's `__wacStep` is a closure *inside* the function being lowered, capturing whatever the body
+names — including its parameters. In a function that is the working case. In a lambda it becomes an
+inner lambda capturing the **enclosing lambda's parameter**, which is exactly the shape `0296c` says
+emits a module the engine rejects. `0294c`'s own motivating example hits it on its first line, since
+`s.handle` is read either side of a suspension.
+
+That would make this blocked on `0296c`. It is not, and the difference was worth measuring rather
+than reasoning about:
+
+| shape | result |
+| --- | --- |
+| inner lambda names the enclosing **lambda's parameter** | invalid module — `0296c`, still live |
+| enclosing lambda copies it to a **declared cell**, inner lambda reads it | works |
+| inner lambda **writes** a declared cell in a lambda body | works |
+
+So the lowering hoists an async lambda's parameters into declared cells before building the machine,
+and the inner closure captures a declaration rather than a parameter. `notePromoted` keys a cell by
+the position of a declaration and a parameter has none — which is `0296c`'s root cause, and is why
+giving it a declaration is enough. One extra step the function path never needed.
+
+Two more that the "small, given step 4" estimate did not cover:
+
+- **`numsNeeded` and the suspension-word walk both filter on `case Func` with `isAsync`.** An async
+  lambda inside a *plain* function contributes states and suspensions neither would count, and
+  undersizing those synthetic tokens is what trapped the compiler during step 4 rather than
+  producing a diagnostic. Both walks have to descend into every function body.
+- **`lowerProgram` skips non-async functions entirely**, so it would never find such a lambda.
+
+What does *not* move, checked: `asyncplan`'s `awaitInExpr` already answers `false` for a lambda body
+— *"a lambda's body is not this function's"* — and that stays correct, because an async lambda's
+suspensions belong to its own machine. The checker's signature comparison does not move either: the
+slot genuinely is `fn[Pending<T>(…)]`, so only the *body's* return type unwraps.

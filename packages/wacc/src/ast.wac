@@ -199,8 +199,13 @@ export enum ExprKind {
    * There is no return type and no name. The return type comes from the `fn[…]` this is checked
    * against, which the language always supplies: wac has no `var`, so a lambda is written into an
    * assignment, an argument or a `return`, and never floats.
+   *
+   * `isAsync` is `async (T x) => { … }`, and it means here what it means on a function: the body may
+   * `await`, and the value handed to the slot is a `Pending<R>` rather than an `R`. The slot is what
+   * says whether that is allowed — a lambda's return type is never written, so `fn[Pending<R>(…)]` is
+   * both the permission and the type. `issues/lang/0294c`.
    */
-  Lambda(Param[] params, Stmt[] body),
+  Lambda(Param[] params, Stmt[] body, bool isAsync),
 }
 
 // ── Lvalues ───────────────────────────────────────────────────────────────────

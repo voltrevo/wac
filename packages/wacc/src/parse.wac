@@ -1456,7 +1456,12 @@ Expr parsePrimary(P p) {
 
   // A lambda, before grouping — `(` opens both, and only what follows the matching `)` tells them
   // apart. `design/lang/0002` tier two.
-  if (p.at1(kLparen()) && atLambda(p)) { return parseLambda(p); }
+  if (p.at1(kLparen()) && atLambdaFrom(p, 0)) { return parseLambda(p); }
+
+  // `async (…) => …`. Checked before `async` could be anything else in expression position, which
+  // today it cannot be: it is a keyword, so no expression starts with it and there is nothing to
+  // disambiguate against. The scan starts past it, since `atLambdaFrom` wants the `(`.
+  if (p.at1(kAsync()) && p.kindAt(1) == kLparen() && atLambdaFrom(p, 1)) { return parseLambda(p); }
 
   // Grouping. The reference returns the inner expression unwrapped, so the
   // parentheses leave no trace in the tree.
@@ -2179,9 +2184,16 @@ Stmt parseMatchStmt(P p) {
  * The token cap is a runaway guard rather than a limit on the language. A parameter list that long
  * does not exist; a parenthesised expression that long answers `false`, which is what it is anyway.
  */
-bool atLambda(P p) {
+/**
+ * Whether the `(` at `from` opens a lambda's parameter list rather than a grouping.
+ *
+ * Takes a start offset because `async (…) => …` has a keyword in front of the `(`, and the scan has
+ * to begin at the parenthesis whichever spelling it came from. `atLambda(p)` was this function with
+ * the offset fixed at zero.
+ */
+bool atLambdaFrom(P p, i32 from) {
   i32 depth = 0;
-  for (i32 k = 0; k < 4096; k++) {
+  for (i32 k = from; k < 4096; k++) {
     i32 kind = p.kindAt(k);
     if (kind == kEof() || kind == kSemi() || kind == kLbrace()) { return false; }
     if (kind == kLparen()) { depth = depth + 1; }
@@ -2206,6 +2218,9 @@ bool atLambda(P p) {
 Expr parseLambda(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
+  // Eaten before the `(`, the same order `async` is written in on a function: after any `export` and
+  // before what the thing answers with.
+  bool isAsync = p.eat(kAsync());
   p.expect(kLparen());
   ParamList ps = ParamList.create();
   parseParams(p, ps);
@@ -2214,11 +2229,11 @@ Expr parseLambda(P p) {
   i32 acol = p.colAt(0);
   p.expect(kFatArrow());
   if (p.at1(kLbrace())) {
-    return Expr(ExprKind.Lambda(ps.take(), parseBlock(p)), line, col);
+    return Expr(ExprKind.Lambda(ps.take(), parseBlock(p), isAsync), line, col);
   }
   StmtList body = StmtList.create();
   body.push(Stmt(StmtKind.Return(parseExpr(p)), aline, acol));
-  return Expr(ExprKind.Lambda(ps.take(), body.take()), line, col);
+  return Expr(ExprKind.Lambda(ps.take(), body.take(), isAsync), line, col);
 }
 
 void parseParams(P p, ParamList out) {

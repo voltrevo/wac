@@ -275,6 +275,16 @@ export i32 errAwaitOutsideAsync() { return 211; }
  * The type is named, because *what did I await then* is the whole question — `design/lang/0014` A5.
  */
 export i32 errAwaitNotPending() { return 212; }
+/**
+ * `async` on a lambda whose slot does not want a ticket — `issues/lang/0294c`.
+ *
+ * A function writes its own return type, so `async i32 f()` says both things at once. A lambda never
+ * writes one: the `fn[…]` it is assigned to supplies it, so `fn[Pending<i32>(…)]` is what both
+ * permits `async` and says what the ticket carries. `fn[i32(…)] g = async () => …;` is asking for a
+ * value from something that answers with a ticket, and the honest place to say so is the lambda
+ * rather than the `await` inside it.
+ */
+export i32 errAsyncLambdaSlot() { return 213; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -4174,8 +4184,8 @@ void checkExpr(C c, Expr e) {
     // times as it was asked. `checkExpr` walks each expression once, which is what makes it the
     // place a refusal belongs. The seam for implementing this is `c.expected` — already the
     // target-type channel a literal is checked through — plus a scope holding the parameters.
-    case Lambda(params, body): {
-      checkLambda(c, want, wantUnknown, e, params, body);
+    case Lambda(params, body, lamAsync): {
+      checkLambda(c, want, wantUnknown, e, params, body, lamAsync);
     }
     case Binary(op, left, right): {
       checkExpr(c, left);
@@ -5416,7 +5426,8 @@ string funcrefReturn(string t) {
  * same, and one comparison reports arity and parameter types together in the words the rest of this
  * checker uses: *expected fn(i32) -> i32, found fn() -> i32*.
  */
-void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stmt[] body) {
+void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stmt[] body,
+                 bool isAsync) {
   // Nothing wanted a funcref here. A lambda has no type of its own to fall back on, so this is the
   // one shape that cannot be reported as a mismatch by the caller: `typeOfExpr` answers unknown for
   // a lambda, and unknown is assignable to everything, which is exactly how `i32 g = () => 42;` was
@@ -5444,23 +5455,42 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
     return;
   }
 
+  // **An `async` lambda's slot is the permission and the type.** The signature comparison above is
+  // untouched, because `fn[Pending<R>(…)]` is genuinely what the value is — what changes is only
+  // what the *body* answers with, which is `R`. That is D3's rule for functions read backwards: a
+  // function writes the body's type and the caller derives the ticket, and a lambda derives the
+  // body's type from the ticket the slot names, because a lambda's return type is never written.
+  //
+  // So `async` on a slot that does not want a ticket is refused here rather than at the `await`,
+  // where the error would be about the wrong thing entirely.
+  string bodyRet = ret;
+  if (isAsync) {
+    string[] rargs = genericArgs(ret);
+    if (!isPendingType(ret) || rargs.len() != 1) {
+      c.reportWith(errAsyncLambdaSlot(), e.line, e.col, expectedFound("a Pending<…>", ret));
+      return;
+    }
+    bodyRet = rargs[0];
+  }
+
   // The body, with the parameters visible and `return` answering to the target's return type.
   //
   // Saved and restored rather than cleared: a lambda inside a lambda would otherwise leave the outer
   // one's returns checked against nothing when the inner one finished.
   string outer = c.lambdaReturn;
-  c.lambdaReturn = ret;
+  c.lambdaReturn = bodyRet;
   // **A lambda is not the async function it sits in.** `design/lang/0002` settles that its `return`
   // returns from the lambda, so an `await` in here would have to suspend *this* function — and this
   // one is a plain funcref. Cleared for the same reason `lambdaReturn` is replaced rather than left:
   // both answer *which function am I in*, and inside a lambda the answer changed.
   //
-  // There are no `async` lambdas yet, so this is always false; when there are, it becomes the
-  // lambda's own flag and nothing else here moves. Without it, `async i32 f(Pending<i32> p) { fn[void()]
-  // g = () => { i32 z = await p; }; … }` was accepted, and would have reached step 4's lowering as a
-  // program it has no way to lower.
+  // It is the lambda's **own** flag rather than the enclosing function's, which is what makes
+  // `async` on the lambda the thing that grants `await` in it. Set to `false` for a plain one, and
+  // the enclosing function being async does not leak in: `async i32 f(Pending<i32> p) { fn[void()]
+  // g = () => { i32 z = await p; }; … }` was accepted while this read the outer answer, and would
+  // have reached the lowering as a program it has no way to lower.
   bool outerAsync = c.inAsync;
-  c.inAsync = false;
+  c.inAsync = isAsync;
   c.pushScope(body);
   for (i32 i = 0; i < params.len(); i++) {
     c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
@@ -5478,9 +5508,13 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   // failure arrived as `unreachable` at runtime, from a call site that looks fine. The rule is the
   // function's, applied to the return type the funcref names. `issues/lang/0170a`.
   //
-  // `ret == ""` is a lambda in a slot this checker cannot name, where an empty answer means "not
+  // `bodyRet == ""` is a lambda in a slot this checker cannot name, where an empty answer means "not
   // known" rather than "returns nothing" — the same exemption every rule here takes.
-  if (ret != "" && returnsAValue(ret) && !alwaysLeaves(body)) {
+  //
+  // **`bodyRet`, not `ret`**, or an `async void` lambda is told it owes a value: its slot is
+  // `fn[Pending<void>()]`, and a `Pending<void>` is a value even though the body answers with
+  // nothing. The rule is about what the body returns, so it asks what the body returns.
+  if (bodyRet != "" && returnsAValue(bodyRet) && !alwaysLeaves(body)) {
     c.report(errMissingReturn(), e.line, e.col);
   }
   c.popScope();

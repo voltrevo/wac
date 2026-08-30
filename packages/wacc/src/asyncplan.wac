@@ -126,7 +126,7 @@ export bool awaitInExpr(Expr e) {
     // **A lambda's body is not this function's.** An `await` in there is refused by the checker
     // already — code 211, `issues/lang/0294c` — so it cannot be a suspension of *this* machine and
     // must not be counted as one.
-    case Lambda(params, body): { return false; }
+    case Lambda(params, body, lamAsync): { return false; }
   }
 }
 

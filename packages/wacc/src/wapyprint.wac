@@ -375,7 +375,7 @@ void wapyPrintExpr(Wp w, Expr e) {
       w.s(")");
     }
 
-    case Lambda(params, body): {
+    case Lambda(params, body, lamAsync): {
       // **wac's parameter spelling, not wapy's.** A lambda is an expression, and
       // `spec/spec/wapy.md` says expressions are wac's unchanged — so it is `(i32 a)` here rather
       // than `(a: i32)`. Written the wapy way, the parser reads `a` as the *type* and has no name.

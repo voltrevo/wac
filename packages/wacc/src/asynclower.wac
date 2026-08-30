@@ -144,9 +144,15 @@ i32 freshCol(Ctx c) {
   return c.col2[0];
 }
 
-/** A synthesised lambda, at a column no other has. */
+/**
+ * A synthesised lambda, at a column no other has.
+ *
+ * Never `async`: these are the machine's own parts — the step, the three ticket functions — and they
+ * are what an `async` body has already been turned *into*. One that was async would ask to be
+ * lowered again.
+ */
 Expr eLambda(Ctx c, Param[] ps, Stmt[] body) {
-  return Expr(ExprKind.Lambda(ps, body), c.line, freshCol(c));
+  return Expr(ExprKind.Lambda(ps, body, false), c.line, freshCol(c));
 }
 
 Expr eId(Ctx c, i32 tok) { return Expr(ExprKind.Ident(tok), c.line, c.col); }
@@ -359,8 +365,9 @@ Expr subExpr(Ctx c, Expr e) {
     }
     // **Inside, but as a lambda.** The names it captures are cells now, so the substitution goes in;
     // its `return`s are its own, so `inLambda` stops the finish rewrite at the boundary.
-    case Lambda(params, body): {
-      return Expr(ExprKind.Lambda(params, subBody(c, body, true, 0 - 1, 0 - 1)), e.line, e.col);
+    case Lambda(params, body, lamAsync): {
+      return Expr(ExprKind.Lambda(params, subBody(c, body, true, 0 - 1, 0 - 1), lamAsync),
+                  e.line, e.col);
     }
     case MatchExpr(subject, arms): {
       Arm[] out = Arm[arms.len()](fill: arms.len() > 0 ? arms[0]
