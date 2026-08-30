@@ -136,3 +136,45 @@ than re-read**, because it is the one whose answer changes as `0161` progresses.
 - **A generated artefact is the best possible oracle.** Where the TypeScript wrote a checked-in file,
   the port is verifiable byte for byte. Where it only printed, the port needs a test written from
   scratch, and that is the slower half.
+
+## Every remaining `deno` task, classified — 2026-08-30
+
+The tracking number at the top is a count, and a count cannot say whether what is left *should* go.
+Read one by one, most of what remains is either the carve-out this issue already names or blocked on
+one of two specific things. This is the list, so nobody re-derives it:
+
+**Deno is the oracle or the host — these stay.** Six, and each is the permitted use rather than a
+leftover:
+
+| task | why |
+|---|---|
+| `gen:unicode` | `packages/unicode/tools/gentables.ts` asks JavaScript's `toLowerCase`, `toUpperCase` and `RegExp`'s `u` mode what every code point is. Its header states the design: the tables are *derived from the authority* rather than transcribed from it. A wac generator would be deriving wac's tables from wac |
+| `verify:fmt` | 500,000 random doubles through wac's `ftoaBytes`, compared against JavaScript's own number formatting. That formatting **is** the specification `ftoa` implements |
+| `bench` | measures the cost of the JS boundary itself — "bindgen copies an array with one exported wasm call per element" — which is the subject, not an accident of the host |
+| `serve` | `packages/server`'s JavaScript host |
+| `app:build` | the **browser** build. Its own header: "a page must carry its own host, because there is no PATH in a browser to find a `wac` on". The `deno` and `node` targets in it are already `design/system/0009`'s |
+| `site:map` | the npm/vite subtree |
+
+**Blocked on `issues/system/0290b`** — a wac program cannot run a host binary in a chosen directory:
+`corpus:through`, `corpus:hosts`, `corpus:backings`, `corpus:routes`, `corpus:stderr`, `mutate`,
+`mutate:diff`, `mutate:operators`, `flags:ignored`. Nine of them, and it is one missing parameter.
+
+**Blocked on a second thing, which has no issue yet: there is no wac equivalent of `wacFiles`.**
+`size` and `bench:compile` both want a program's whole import closure *with its sources*, to hand to
+`packages/wacc/src/api.wac`'s `emitFiles` — which exists and is exactly the API the TypeScript used.
+What is missing is the reading half. `gather` in `packages/wac/src/wac.wac` does it and is private to
+the CLI; `closureOf` in `packages/wactest/src/built.wac` walks the same graph but answers mtimes
+rather than text. So the fix is to factor one of them out, and it touches the seed app, which is why
+it is named here rather than done in passing.
+
+**Goes when the TypeScript goes:** `check`, which is `deno check` over the remaining `.ts`.
+
+**Somebody else's package:** `coverage:sh`.
+
+**Five package benchmarks** — `bench:hash`, `bench:zstd`, `bench:zstd-speed`, `bench:json`,
+`bench:json-lookup` — all measure wac code through `wacBind`, so they are the same shape as `bench`
+above. Whether the JS boundary is still the right thing to measure now that there are two native
+hosts is a decision, not a translation.
+
+**So the honest remainder is nine tasks behind one missing parameter, two behind one missing
+function, and one that dissolves.** The rest is the carve-out working as intended.
