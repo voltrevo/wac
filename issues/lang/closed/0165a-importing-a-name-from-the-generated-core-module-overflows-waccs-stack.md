@@ -77,7 +77,7 @@ operands deep. A recursive walk over that is already deep, and the plausible sto
 import edge adds a frame or two to whatever the compiler does per edge and tips it over.
 
 That is a guess about the *cause*; the two spellings above are the fact. Worth checking whether the
-depth is what matters by chunking `asWac` in `tools/genCore.ts` to emit several statements rather
+depth is what matters by chunking `asWac` in tools/genCore.ts to emit several statements rather
 than one expression, and seeing whether the failing spelling then compiles.
 
 **Related but not the same:** `issues/lang/0147` (closed) is about a `trap` message being dropped.
@@ -87,7 +87,7 @@ thing in the output.
 ## Fixed
 
 The guess in *Where to start* was right, and the experiment it suggested is the fix. `asWac` in
-`tools/genCore.ts` emitted the whole file as one `+` chain — for `std/platform.wac` a right-nested
+tools/genCore.ts emitted the whole file as one `+` chain — for `std/platform.wac` a right-nested
 expression **1,939 operands deep** — and every recursive walk over it recurses once per operand. It
 compiled, with no headroom: one more import edge to a module already in the graph was enough.
 

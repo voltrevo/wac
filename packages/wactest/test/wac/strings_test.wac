@@ -5,7 +5,7 @@
 // needle, the empty haystack, a separator joined onto nothing, and a trailing newline.
 
 import { T } from "../../src/assert.wac";
-import { isSpace, trimmed, contains, has, joined, splitLines, startsWith,
+import { isSpace, trimmed, contains, has, joined, splitLines, splitKeepingEmpty, startsWith,
          endsWith } from "../../src/strings.wac";
 
 export string test_contains_finds_a_substring_at_either_end_and_in_the_middle() {
@@ -96,5 +96,26 @@ export string test_splitlines_drops_the_empty_line_a_trailing_newline_would_add(
   t.eqI32(splitLines("").len(), 0, "nothing is no lines");
   t.eqI32(splitLines("\n").len(), 0, "and a lone newline is no lines either");
   t.eqStr(joined(splitLines("only"), "|"), "only", "a string with no newline is one line");
+  return t.report();
+}
+
+export string test_splitkeepingempty_keeps_every_line_the_other_one_drops() {
+  T t = T.create();
+  // The pair to the test above, written as the same inputs, because the two differ only in what
+  // they do with a blank line and reading them side by side is how a caller picks one.
+  t.eqI32(splitKeepingEmpty("one\ntwo\nthree").len(), 3, "three lines, as splitLines");
+  t.eqI32(splitKeepingEmpty("one\ntwo\n").len(), 3, "a trailing newline is a third, empty line");
+  t.eqI32(splitKeepingEmpty("\n\none\n\n").len(), 5, "and blank lines anywhere else are lines");
+  t.eqStr(joined(splitKeepingEmpty("\n\none\n\n"), "|"), "||one||", "in their places");
+
+  // The two callers both index by line number, so an off-by-one here is an off-by-one there.
+  t.eqI32(splitKeepingEmpty("").len(), 1, "the empty string is one empty line, not none");
+  t.eqI32(splitKeepingEmpty("\n").len(), 2, "and a lone newline is two");
+  t.eqStr(joined(splitKeepingEmpty("only"), "|"), "only", "a string with no newline is one line");
+
+  // Round-tripping is the property `tools/wac/gencore.wac` needs: it re-emits a source file line by
+  // line, so anything this loses is a line the embedded copy of `core` would not have.
+  string src = "a\n\nb\n";
+  t.eqStr(joined(splitKeepingEmpty(src), "\n"), src, "joining the pieces back gives the original");
   return t.report();
 }

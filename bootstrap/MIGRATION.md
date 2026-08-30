@@ -379,8 +379,8 @@ What broke on deletion and what it became:
 | what | why it pointed there | now |
 |---|---|---|
 | tools/wac/referencecallers_test.wac | it policed which files could reach the reference | deleted with the thing it policed |
-| `tools/genCore.ts` | generated `core`'s declarations into *both* compilers so they could not drift | one output |
-| `tools/wac/genCore_test.wac` | asserted the omission that made two embeddings worth having | that difference has nowhere to be |
+| tools/genCore.ts | generated `core`'s declarations into *both* compilers so they could not drift | one output, and ported to `tools/wac/gencore.wac` on 2026-08-30 |
+| tools/wac/genCore_test.wac | asserted the omission that made two embeddings worth having | that difference has nowhere to be; renamed `tools/wac/gencore_test.wac` |
 | `selfhostemit_test`'s cache key | walked `compiler/` to date stage A | walks `bootstrap/`; it had gone quiet and the test just got slower |
 | `site/tools/site.test.ts` | measured `compiler/`'s line count against the front page | measures wacc |
 | the front page | "the seed — building wacc is the only job it has left" | wac is self-hosted and there is no seed |

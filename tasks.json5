@@ -100,7 +100,7 @@
   "bindgen": "./native/v8/target/release/wac bindgen",
   "flags:ignored": "deno run -A tools/ignoredFlags.ts",
   "size": "deno run -A tools/size.ts",
-  "gen:core": "deno run -A tools/genCore.ts",
+  "gen:core": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/gencore.wac",
   "gen:unicode": "deno run -A packages/unicode/tools/gentables.ts",
   "gen:bls-fpkernel": "python3 packages/bls/tools/genfpkernel.py",
   "dead": "./native/v8/target/release/wac run --allow-read tools/wac/deadexports.wac",

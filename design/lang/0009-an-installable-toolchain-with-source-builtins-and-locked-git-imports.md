@@ -261,7 +261,7 @@ regenerated list, and then the normal path works again. Twice now, and it is a p
 design rather than a mistake — worth knowing before the third.)*
 
 *(2026-08-18: settled and built. **The file is the unit of omission** — `core/read.wac` goes to both
-compilers, `core/jsx.wac` to wacc alone, and `tools/genCore.ts` holds the two lists. The alternative
+compilers, `core/jsx.wac` to wacc alone, and `tools/wac/gencore.wac` holds the two lists. The alternative
 was a marker inside one shared file, which is a third thing to invent, to parse and to keep true for
 a distinction a directory already draws; and D3 makes `core` a source tree regardless, so this is on
 that path rather than beside it.*
@@ -373,7 +373,7 @@ depends on an unbuilt language feature:
   what D4's two lines actually show: `Option` is fetched by path *because* it is not in `"core"`.
 
 **The third.** It needs nothing that does not exist, it keeps the built-in small for the program
-that wants one type out of it, and it is what step 2 already built — `tools/genCore.ts` concatenates
+that wants one type out of it, and it is what step 2 already built — `tools/wac/gencore.wac` concatenates
 the root files per compiler, and `read.wac` and `jsx.wac` are two files only so the wacc-only
 omission has somewhere to live. Step 3 adds siblings beside them rather than changing what the root
 is.

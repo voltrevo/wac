@@ -87,3 +87,28 @@ export string[] splitLines(string s) {
   }
   return out;
 }
+
+/**
+ * `s` cut at every newline, **keeping** empty lines — `split("\n")` rather than `splitLines`.
+ *
+ * The other answer to the same question, and which one a caller wants is decided by whether a blank
+ * line means anything to it. It does whenever the index is the point: a line number is an index into
+ * this array, and re-emitting a file means emitting its blank lines too. `splitLines` above is right
+ * for prose and wrong for both of those.
+ *
+ * `n` starts at 1 because a string with no newline in it is one line, and `"a\n"` is two — the
+ * second empty. A caller re-emitting a file wants that last empty dropped, and can drop it; a caller
+ * that got it dropped for free cannot tell a file that ended with a newline from one that did not.
+ */
+export string[] splitKeepingEmpty(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { out[at] = s.slice(from, i); at = at + 1; from = i + 1; }
+  }
+  out[at] = s.slice(from, s.len());
+  return out;
+}

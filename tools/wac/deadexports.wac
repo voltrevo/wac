@@ -23,6 +23,7 @@ import { sortStrings } from "./covledger.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
+import { splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
 
 /** Where wac declarations are looked for. `tools/` holds no wac library code, only programs. */
 string[] wacRoots() { return string[]("packages", "harness"); }
@@ -115,25 +116,6 @@ export string[] codeLines(string text) {
     i = i + 1;
   }
   return splitKeepingEmpty(string.fromBytes(out));
-}
-
-/**
- * Split on newlines, keeping empty lines.
- *
- * `packages/wactest/src/strings.wac`'s `splitLines` drops them, which is the right answer for prose
- * and the wrong one here: a line number is an index into this array.
- */
-string[] splitKeepingEmpty(string text) {
-  i32 n = 1;
-  for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
-  i32 at = 0;
-  i32 from = 0;
-  for (i32 i = 0; i < text.len(); i++) {
-    if (text.slice(i, i + 1) == "\n") { out[at] = text.slice(from, i); at = at + 1; from = i + 1; }
-  }
-  out[at] = text.slice(from, text.len());
-  return out;
 }
 
 /** The whole file, or `""` — a file that cannot be read is not a file with no exports. */
