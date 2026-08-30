@@ -103,7 +103,7 @@
   "gen:core": "deno run -A tools/genCore.ts",
   "gen:unicode": "deno run -A packages/unicode/tools/gentables.ts",
   "gen:bls-fpkernel": "python3 packages/bls/tools/genfpkernel.py",
-  "dead": "deno run -A tools/deadexports.ts",
+  "dead": "./native/v8/target/release/wac run --allow-read tools/wac/deadexports.wac",
   "mutate": "deno run -A tools/mutate.ts",
   "mutate:diff": "deno run -A tools/mutate.ts --diff --operators",
   "mutate:operators": "deno run -A tools/mutate.ts --operators",

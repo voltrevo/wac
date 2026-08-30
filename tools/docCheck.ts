@@ -10,7 +10,7 @@
 //
 // ## The failure this deliberately accepts
 //
-// **A warning nobody reads is the same as no check.** `tools/siblingpath.test.ts` describes that
+// **A warning nobody reads is the same as no check.** `tools/wac/siblingpath_test.wac` describes that
 // shape from the other side: the same bug "is found where it is loud and survives where it is
 // quiet". So warning is the default and not the only mode —
 //

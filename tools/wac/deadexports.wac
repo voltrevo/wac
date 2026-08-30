@@ -1,0 +1,710 @@
+// Exported wac functions that nothing calls.
+//
+//     wac task dead            # report them, exit 0
+//     wac task dead --strict   # exit 1 if there are any
+//     wac task dead --quiet    # exit code only
+//
+// **Ported from tools/deadexports.ts**, whose header carries the argument for the check and every
+// rule below; this file carries the reasons that are about *this* implementation. The port is
+// `issues/system/0161`'s direction rather than that issue's list: wac was a Deno project and Deno is
+// meant to be a bootstrap host and an oracle a wac test calls, not the language the tooling is
+// written in.
+//
+// **The two regexes the original leans on are not available here, and that is the interesting part.**
+// `packages/regex` refuses lookahead and lookbehind rather than mis-parsing them, and the caller
+// search is built on `(?<![\w.])name\s*\(` — "the name, not preceded by a word character or a dot".
+// The dot is the whole point: `x.name(` is a method on a value and not a call of the free function,
+// and `\b` cannot say that. So those two predicates are written out by hand here, which is shorter
+// than the regex and says what it means.
+
+import { Core, Cli, FileResult, Stat } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { sortStrings } from "./covledger.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
+import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
+
+/** Where wac declarations are looked for. `tools/` holds no wac library code, only programs. */
+string[] wacRoots() { return string[]("packages", "harness"); }
+
+/** And where a TypeScript caller may be, which is everywhere wac is plus the tooling that drives it. */
+string[] tsRoots() { return string[]("packages", "harness", "tools"); }
+
+/** One declaration: the name, the file it is in, and the line it is on (1-based). */
+export struct Decl {
+  string name;
+  string file;
+  i32 line;
+}
+
+/** A file that opted out, and what it said. */
+struct Exempt {
+  string file;
+  string reason;
+}
+
+/**
+ * Files under `base/rel` ending with `ext`, appended to `out` as paths relative to `base`.
+ *
+ * Relative because a fixture is the point: the report reads the same whether the root is this
+ * repository or a temporary directory holding four files, which is what lets the test in
+ * `deadexports_test.wac` state its cases as trees rather than as paths.
+ *
+ * `node_modules`, `.git` and `.cache` are skipped, as the original skips them — the first is npm's
+ * and the last two hold copies of files that are already in the walk.
+ */
+export void walk(Cli cli, string base, string rel, string ext, Vec<string> out) {
+  string[]? names = cli.readDir(base + "/" + rel).wait();
+  if (names is null) { return; }
+  string[] all = names!;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == "node_modules" || all[i] == ".git" || all[i] == ".cache") { continue; }
+    string next = rel + "/" + all[i];
+    Stat s = cli.stat(base + "/" + next).wait();
+    if (!s.exists) { continue; }
+    if (s.isDir) { walk(cli, base, next, ext, out); continue; }
+    if (next.len() > ext.len() && next.slice(next.len() - ext.len(), next.len()) == ext) {
+      out.push(next);
+    }
+  }
+}
+
+/**
+ * `text` with string literals, block comments and line comments blanked, split into lines.
+ *
+ * One scan rather than the original's three regex passes, and it answers the same thing: every byte
+ * that is not code becomes a space, and newlines are kept so line numbers survive. That last part is
+ * not cosmetic — the caller search skips a declaration's own line *by number*, so a pass that ate a
+ * newline would make every later declaration its own caller. The original's header records three
+ * genuinely dead exports that stopped being reported when it was first written the other way.
+ */
+export string[] codeLines(string text) {
+  u8[] b = text.toBytes();
+  u8[] out = u8[b.len()](fill: ' ');
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 c = b[i];
+    if (c == '\n') { out[i] = c; i = i + 1; continue; }
+    // A line comment: everything to the newline is not code.
+    if (c == '/' && i + 1 < b.len() && b[i + 1] == '/') {
+      while (i < b.len() && b[i] != '\n') { i = i + 1; }
+      continue;
+    }
+    // A block comment, which may span lines — so the newlines inside it are kept and the rest is not.
+    if (c == '/' && i + 1 < b.len() && b[i + 1] == '*') {
+      i = i + 2;
+      while (i < b.len() && !(b[i] == '*' && i + 1 < b.len() && b[i + 1] == '/')) {
+        if (b[i] == '\n') { out[i] = b[i]; }
+        i = i + 1;
+      }
+      i = i + 2;
+      continue;
+    }
+    // A string literal cannot span lines, so its contents are blanked and the quotes are kept.
+    if (c == '"') {
+      out[i] = c;
+      i = i + 1;
+      while (i < b.len() && b[i] != '"' && b[i] != '\n') {
+        if (b[i] == '\\' && i + 1 < b.len()) { i = i + 1; }
+        i = i + 1;
+      }
+      if (i < b.len() && b[i] == '"') { out[i] = b[i]; i = i + 1; }
+      continue;
+    }
+    out[i] = c;
+    i = i + 1;
+  }
+  return splitKeepingEmpty(string.fromBytes(out));
+}
+
+/**
+ * Split on newlines, keeping empty lines.
+ *
+ * `packages/wactest/src/strings.wac`'s `splitLines` drops them, which is the right answer for prose
+ * and the wrong one here: a line number is an index into this array.
+ */
+string[] splitKeepingEmpty(string text) {
+  i32 n = 1;
+  for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { out[at] = text.slice(from, i); at = at + 1; from = i + 1; }
+  }
+  out[at] = text.slice(from, text.len());
+  return out;
+}
+
+/** The whole file, or `""` — a file that cannot be read is not a file with no exports. */
+string readAll(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/**
+ * A compiled pattern, or a trap naming it.
+ *
+ * These are constants of this file and a failure here is a bug in it rather than in the tree, so
+ * there is nothing for a caller to do about one.
+ */
+Program mustCompile(Core core, string pattern) {
+  Program? p = compile(pattern.toBytes());
+  if (p is null) { core.warn("deadexports: cannot compile /" + pattern + "/"); trap; }
+  return p!;
+}
+
+/** The first capture of `p` in `line`, or `""`. */
+string firstCapture(Program p, string line) {
+  u8[] b = line.toBytes();
+  i32[] caps = i32[slotCount(p)]();
+  i32 at = search(p, b, 0, caps, 1000000);
+  if (at == NO_MATCH()) { return ""; }
+  if (caps.len() < 4 || caps[2] < 0) { return ""; }
+  return line.slice(caps[2], caps[3]);
+}
+
+/**
+ * The type that may precede a name in a declaration.
+ *
+ * `[A-Za-z_]\w*` already covers `i32` and the rest, so the original's alternation with the primitive
+ * names is redundant — it is kept in shape here so the two patterns read as the same pattern, and
+ * because a reader comparing them against the TypeScript should not have to decide whether a
+ * difference is deliberate.
+ */
+string typeAhead() { return "(?:[A-Za-z_][A-Za-z0-9_]*(?:\\[\\])*)(?:\\[\\])*"; }
+
+/** A file whose exports exist to be called from TypeScript, not from wac. */
+bool isProbe(string f) {
+  return f.indexOf("/test/") >= 0 || f.indexOf("/size/") >= 0
+      || (f.len() > 16 && f.slice(f.len() - 16, f.len()) == "client_entry.wac");
+}
+
+/**
+ * The reason a file gives for exempting itself, or `""` when it does not.
+ *
+ * Hand-rolled where the original has `/\/\/\s*dead-exports:\s*exempt\s*(?:[—-]\s*)?(.*)$/m`, for two
+ * reasons that are both about the engine rather than the rule. The `m` flag is refused here, so `$`
+ * would mean end-of-input instead of end-of-line — a difference that would silently swallow the rest
+ * of the file into the reason. And `[—-]` is an em dash in a byte-oriented matcher, where a character
+ * class over its three UTF-8 bytes is not the class it looks like.
+ *
+ * Answers `" "` rather than `""` for a marker with no reason, so that "exempt with nothing said" and
+ * "not exempt" stay different answers; the report trims it back.
+ */
+string exemptReason(string text) {
+  string[] lines = splitKeepingEmpty(text);
+  for (i32 i = 0; i < lines.len(); i++) {
+    i32 at = lines[i].indexOf("dead-exports:");
+    if (at < 0) { continue; }
+    string rest = lines[i].slice(at + 13, lines[i].len());
+    i32 ex = rest.indexOf("exempt");
+    if (ex < 0) { continue; }
+    // Everything before it has to be blank, or a sentence merely *mentioning* the marker exempts the
+    // file that mentions it — which is how a check like this stops meaning anything.
+    if (trimmedOf(rest.slice(0, ex)) != "") { continue; }
+    string why = trimmedOf(rest.slice(ex + 6, rest.len()));
+    if (why.len() > 0 && (why.slice(0, 1) == "-")) { why = trimmedOf(why.slice(1, why.len())); }
+    if (why.len() > 2 && why.slice(0, 3) == "\u{2014}") { why = trimmedOf(why.slice(3, why.len())); }
+    return why == "" ? " " : why;
+  }
+  return "";
+}
+
+/**
+ * Whitespace off both ends — spaces, tabs, **newlines and carriage returns**.
+ *
+ * The newlines are the ones that matter, and leaving them out cost an afternoon: an import list that
+ * spans lines starts with a newline after its `{`, so the first name in it came back as `"\n  fpZero"`
+ * and matched nothing. That is the *first* name of every multi-line import in the tree, which is most
+ * of them, and it reported four hundred and forty-three live exports as dead.
+ */
+string trimmedOf(string s) {
+  i32 a = 0;
+  i32 b = s.len();
+  while (a < b && isSpaceAt(s, a)) { a = a + 1; }
+  while (b > a && isSpaceAt(s, b - 1)) { b = b - 1; }
+  return s.slice(a, b);
+}
+
+bool isSpaceAt(string s, i32 i) {
+  string c = s.slice(i, i + 1);
+  return c == " " || c == "\t" || c == "\n" || c == "\r";
+}
+
+bool isWordByte(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/** Whether `s` at `at` begins the word `return`, with a non-word byte before and after it. */
+bool returnBefore(u8[] b, i32 at) {
+  if (at < 6) { return false; }
+  if (!(b[at - 6] == 'r' && b[at - 5] == 'e' && b[at - 4] == 't' && b[at - 3] == 'u'
+        && b[at - 2] == 'r' && b[at - 1] == 'n')) { return false; }
+  return at == 6 || !isWordByte(b[at - 7]);
+}
+
+/**
+ * Every name used as a call or as a value on `line`, appended to `out`.
+ *
+ * This is the pair of regexes the original cannot express here, written as a scan:
+ *
+ *   - a **call** is the name with no word byte and no `.` before it, then spaces, then `(`. The dot
+ *     is why `\b` will not do — `x.name(` is a method on a value, not a call of the free function;
+ *   - a **value** is a `=`, `,`, `(`, `[`, `?`, `:` or the word `return`, then spaces, then the name,
+ *     with no word byte and no `(` after it.
+ *
+ * The value shape is narrow on purpose, and the original's header says what widening it cost: a bare
+ * name anywhere counted `i32 masked = …` as a use of an exported `masked`, and `#wrap` in a CSS string
+ * as a use of `wrap`. Trading false positives for false negatives is the wrong direction for a check
+ * whose whole job is to find things nothing uses.
+ */
+void namesUsedOn(string line, Vec<string> out) {
+  u8[] b = line.toBytes();
+  i32 i = 0;
+  while (i < b.len()) {
+    if (!isWordByte(b[i]) || (b[i] >= '0' && b[i] <= '9')) { i = i + 1; continue; }
+    i32 start = i;
+    while (i < b.len() && isWordByte(b[i])) { i = i + 1; }
+    i32 end = i;
+    // What is immediately before the name, and what follows the spaces after it.
+    bool wordOrDotBefore = start > 0 && (isWordByte(b[start - 1]) || b[start - 1] == '.');
+    i32 after = end;
+    while (after < b.len() && (b[after] == ' ' || b[after] == '\t')) { after = after + 1; }
+    bool callsIt = !wordOrDotBefore && after < b.len() && b[after] == '(';
+    // The delimiter before, past any spaces.
+    i32 before = start;
+    while (before > 0 && (b[before - 1] == ' ' || b[before - 1] == '\t')) { before = before - 1; }
+    bool delimited = before > 0 && (b[before - 1] == '=' || b[before - 1] == ',' || b[before - 1] == '('
+                                    || b[before - 1] == '[' || b[before - 1] == '?'
+                                    || b[before - 1] == ':');
+    bool afterOk = end >= b.len() || !(isWordByte(b[end]) || b[end] == '(');
+    bool valuesIt = (delimited || returnBefore(b, before)) && afterOk;
+    if (callsIt || valuesIt) { out.push(line.slice(start, end)); }
+  }
+}
+
+/** Whether `haystack` holds `needle`. */
+bool holds(Vec<string> haystack, string needle) {
+  for (i32 i = 0; i < haystack.len(); i++) { if (haystack.get(i) == needle) { return true; } }
+  return false;
+}
+
+/** The word ending at `end`, or `""`. */
+string wordEndingAt(u8[] b, i32 end) {
+  i32 a = end;
+  while (a > 0 && isWordByte(b[a - 1])) { a = a - 1; }
+  return a == end ? "" : string.fromBytes(b).slice(a, end);
+}
+
+/** The word starting at `at`, or `""`. */
+string wordStartingAt(u8[] b, i32 at) {
+  i32 e = at;
+  while (e < b.len() && isWordByte(b[e])) { e = e + 1; }
+  return e == at ? "" : string.fromBytes(b).slice(at, e);
+}
+
+/**
+ * Every `X as Y` in `text`, appended as parallel entries.
+ *
+ * Collected once over every file rather than once per name, which is the same answer and not the same
+ * cost: the original asks this question inside the caller search, so it is a scan of every file for
+ * every declaration — two and a half thousand times over eleven hundred files. Here it is eleven
+ * hundred scans, and the aliases are looked up.
+ */
+void collectAliases(string text, Vec<string> orig, Vec<string> local) {
+  u8[] b = text.toBytes();
+  i32 i = 0;
+  while (i + 4 <= b.len()) {
+    if (b[i] == ' ' && b[i + 1] == 'a' && b[i + 2] == 's' && b[i + 3] == ' ') {
+      i32 before = i;
+      while (before > 0 && (b[before - 1] == ' ')) { before = before - 1; }
+      string from = wordEndingAt(b, before);
+      i32 after = i + 4;
+      while (after < b.len() && b[after] == ' ') { after = after + 1; }
+      string to = wordStartingAt(b, after);
+      if (from != "" && to != "") { orig.push(from); local.push(to); }
+    }
+    i = i + 1;
+  }
+}
+
+/**
+ * Every `import { … } from "…"` in `text`, as parallel entries of imported name, local name and path.
+ *
+ * Scanned rather than matched because an import may span lines — `[^}]*` in the original crosses them
+ * — and because the local name needs the `as` split anyway.
+ */
+void parseImports(string text, Vec<string> names, Vec<string> locals, Vec<string> froms) {
+  i32 pos = 0;
+  while (pos < text.len()) {
+    string rest = text.slice(pos, text.len());
+    i32 imp = rest.indexOf("import");
+    if (imp < 0) { return; }
+    i32 base = pos + imp;
+    string tail = text.slice(base, text.len());
+    i32 open = tail.indexOf("{");
+    i32 close = tail.indexOf("}");
+    if (open < 0 || close < 0 || close < open) { pos = base + 6; continue; }
+    // **`from` is looked for after the brace, not from the start of the import.** An import list
+    // holding a name that begins with it — `fromHex`, `fromI64` — otherwise supplies the first
+    // match, the keyword appears to precede the `}`, and the whole import is discarded. Three of
+    // this port's last four disagreements with the original were that, and all three were names
+    // whose own spelling broke the parser reading them.
+    i32 relFrom = tail.slice(close, tail.len()).indexOf("from");
+    if (relFrom < 0) { pos = base + 6; continue; }
+    i32 fromAt = close + relFrom;
+    string inner = tail.slice(open + 1, close);
+    string after = tail.slice(fromAt + 4, tail.len());
+    i32 q1 = after.indexOf("\"");
+    if (q1 < 0) { pos = base + 6; continue; }
+    string q = after.slice(q1 + 1, after.len());
+    i32 q2 = q.indexOf("\"");
+    if (q2 < 0) { pos = base + 6; continue; }
+    string path = q.slice(0, q2);
+    // Each `,`-separated part is a name, or a name and the local it arrives under.
+    i32 partFrom = 0;
+    for (i32 i = 0; i <= inner.len(); i++) {
+      bool end = i == inner.len();
+      if (!end && inner.slice(i, i + 1) != ",") { continue; }
+      string part = trimmedOf(inner.slice(partFrom, i));
+      partFrom = i + 1;
+      if (part == "") { continue; }
+      i32 sep = part.indexOf(" as ");
+      string name = sep < 0 ? part : trimmedOf(part.slice(0, sep));
+      string local = sep < 0 ? part : trimmedOf(part.slice(sep + 4, part.len()));
+      names.push(name);
+      locals.push(local);
+      froms.push(path);
+    }
+    pos = base + fromAt + 4;
+  }
+}
+
+/** `packages/<name>/…` -> `<name>`; anything else -> `""`. */
+string packageOf(string path) {
+  if (!(path.len() > 9 && path.slice(0, 9) == "packages/")) { return ""; }
+  string rest = path.slice(9, path.len());
+  i32 slash = rest.indexOf("/");
+  return slash < 0 ? "" : rest.slice(0, slash);
+}
+
+/** The last path segment. */
+string baseName(string path) {
+  i32 cut = 0 - 1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  return cut < 0 ? path : path.slice(cut + 1, path.len());
+}
+
+/**
+ * Whether this line is an import or export *list* rather than code.
+ *
+ * `import {` and `export {`, or the closing `…} from "…"` of one that spans lines. A name in one of
+ * these is not a use of it: a stale import is exactly as dead as no import.
+ */
+bool importListLine(string t) {
+  if (t.len() > 6 && t.slice(0, 6) == "import") {
+    string rest = trimmedOf(t.slice(6, t.len()));
+    if (rest.len() > 0 && rest.slice(0, 1) == "{") { return true; }
+  }
+  if (t.len() > 6 && t.slice(0, 6) == "export") {
+    string rest = trimmedOf(t.slice(6, t.len()));
+    if (rest.len() > 0 && rest.slice(0, 1) == "{") { return true; }
+  }
+  i32 brace = t.indexOf("}");
+  if (brace >= 0) {
+    string after = trimmedOf(t.slice(brace + 1, t.len()));
+    if (after.len() > 4 && after.slice(0, 4) == "from") { return true; }
+  }
+  return false;
+}
+
+/** Whether `text` holds `.name` with a non-word byte after it — the original's `\.name\b`. */
+bool hasDotName(string text, string name) {
+  string want = "." + name;
+  i32 from = 0;
+  while (from < text.len()) {
+    i32 at = text.slice(from, text.len()).indexOf(want);
+    if (at < 0) { return false; }
+    i32 abs = from + at;
+    i32 end = abs + want.len();
+    if (end >= text.len() || !isWordByte(text.toBytes()[end])) { return true; }
+    from = abs + 1;
+  }
+  return false;
+}
+
+/** Whether `text` names `name` as a bridge entry — `entry: "name"`, either quote. */
+bool hasEntryNamed(string text, string name) {
+  i32 from = 0;
+  while (from < text.len()) {
+    i32 at = text.slice(from, text.len()).indexOf("entry:");
+    if (at < 0) { return false; }
+    i32 abs = from + at + 6;
+    while (abs < text.len() && (text.slice(abs, abs + 1) == " ")) { abs = abs + 1; }
+    if (abs < text.len()) {
+      string q = text.slice(abs, abs + 1);
+      if (q == "\"" || q == "'") {
+        string rest = text.slice(abs + 1, text.len());
+        if (rest.len() >= name.len() + 1 && rest.slice(0, name.len()) == name
+            && rest.slice(name.len(), name.len() + 1) == q) { return true; }
+      }
+    }
+    from = from + at + 6;
+  }
+  return false;
+}
+
+/** Whether a sorted array holds `needle`. */
+bool sortedHolds(string[] a, i32 n, string needle) {
+  i32 lo = 0;
+  i32 hi = n - 1;
+  while (lo <= hi) {
+    i32 mid = (lo + hi) / 2;
+    if (a[mid] == needle) { return true; }
+    if (a[mid] < needle) { lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return false;
+}
+
+/** What one scan found. Vectors rather than arrays because every one of them is built by appending. */
+export struct Scan {
+  Vec<Decl> decls;
+  bool[] declLive;
+  Vec<Decl> privates;
+  bool[] privLive;
+  Vec<string> files;
+  Vec<string> exemptFile;
+  Vec<string> exemptWhy;
+  i32 dead;
+  i32 privDead;
+}
+
+/** Every exported wac function under `base` that nothing calls, and the private ones too. */
+export Scan scanAt(Core core, Cli cli, string base) {
+  Vec<string> files = Vec.create();
+  string[] roots = wacRoots();
+  for (i32 i = 0; i < roots.len(); i++) { walk(cli, base, roots[i], ".wac", files); }
+
+  Program exportPat = mustCompile(core, "^\\s*export\\s+" + typeAhead()
+      + "\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
+  Program privatePat = mustCompile(core, "^" + typeAhead()
+      + "\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
+
+  Vec<string> exemptFile = Vec.create();
+  Vec<string> exemptWhy = Vec.create();
+  Vec<Decl> decls = Vec.create();
+  Vec<Decl> privates = Vec.create();
+  Vec<string> aliasOrig = Vec.create();
+  Vec<string> aliasLocal = Vec.create();
+  Vec<string> srcs = Vec.create();
+  Vec<string> keep = Vec.create();
+
+  // Pass one: what each file declares, what it exempts, and every `X as Y` anywhere.
+  for (i32 i = 0; i < files.len(); i++) {
+    string f = files.get(i);
+    string text = readAll(cli, base + "/" + f);
+    collectAliases(text, aliasOrig, aliasLocal);
+    // **Every file is searched for callers; only some are searched for declarations.** A probe
+    // exists to be called from TypeScript, so its own exports are not the subject — but it is wac,
+    // and a call in it is a call. Dropping probes from the caller search reported 350 dead where
+    // there are 42: `packages/bignum`'s `toStr` is called by its own `test/wac/big_test.wac` and by
+    // nothing else, which is exactly the shape this would have condemned.
+    srcs.push(text);
+    if (isProbe(f)) { continue; }
+    string why = exemptReason(text);
+    if (why != "") { exemptFile.push(f); exemptWhy.push(why); continue; }
+    keep.push(f);
+    string[] lines = splitKeepingEmpty(text);
+    for (i32 k = 0; k < lines.len(); k++) {
+      string e = firstCapture(exportPat, lines[k]);
+      if (e != "") { decls.push(Decl(e, f, k + 1)); }
+      string q = firstCapture(privatePat, lines[k]);
+      if (q != "") { privates.push(Decl(q, f, k + 1)); }
+    }
+  }
+
+  // Pass two: where names are used. A declaration's own file answers by line, because the
+  // declaration's own line does not count; another file answers by whether it imported the name.
+  bool[] declLive = bool[decls.len()](fill: false);
+  bool[] privLive = bool[privates.len()](fill: false);
+  Vec<string> satisfied = Vec.create();
+  for (i32 i = 0; i < files.len(); i++) {
+    string f = files.get(i);
+    string[] code = codeLines(srcs.get(i));
+    Vec<string> used = Vec.create();
+    Vec<i32> usedLine = Vec.create();
+    for (i32 k = 0; k < code.len(); k++) {
+      string bare = code[k];
+      if (trimmedOf(bare) == "") { continue; }
+      // An import naming it is not a call — a stale import is exactly as dead. Only the *list*
+      // forms: `import {`, `export {`, and the `…} from "…"` tail of one that spans lines. Skipping
+      // every line that begins `export ` instead would drop the body of every one-line exported
+      // function, and with it every call those bodies make.
+      string t = trimmedOf(bare);
+      if (importListLine(t)) { continue; }
+      i32 was = used.len();
+      namesUsedOn(bare, used);
+      while (usedLine.len() < used.len()) { usedLine.push(k + 1); }
+    }
+
+    // Its own declarations, by line.
+    for (i32 d = 0; d < decls.len(); d++) {
+      if (decls.get(d).file != f) { continue; }
+      for (i32 u = 0; u < used.len(); u++) {
+        if (usedLine.get(u) == decls.get(d).line) { continue; }
+        if (used.get(u) == decls.get(d).name) { declLive[d] = true; }
+      }
+      if (!declLive[d]) {
+        for (i32 x = 0; x < aliasOrig.len(); x++) {
+          if (aliasOrig.get(x) != decls.get(d).name) { continue; }
+          for (i32 u = 0; u < used.len(); u++) {
+            if (usedLine.get(u) != decls.get(d).line && used.get(u) == aliasLocal.get(x)) {
+              declLive[d] = true;
+            }
+          }
+        }
+      }
+    }
+    for (i32 d = 0; d < privates.len(); d++) {
+      if (privates.get(d).file != f) { continue; }
+      for (i32 u = 0; u < used.len(); u++) {
+        if (usedLine.get(u) != privates.get(d).line && used.get(u) == privates.get(d).name) {
+          privLive[d] = true;
+        }
+      }
+    }
+
+    // And what this file imports and then uses, keyed by the name and the file it came from.
+    Vec<string> iNames = Vec.create();
+    Vec<string> iLocals = Vec.create();
+    Vec<string> iFroms = Vec.create();
+    parseImports(srcs.get(i), iNames, iLocals, iFroms);
+    for (i32 m = 0; m < iNames.len(); m++) {
+      if (!holds(used, iLocals.get(m))) { continue; }
+      satisfied.push(iNames.get(m) + "|" + baseName(iFroms.get(m)));
+    }
+  }
+
+  string[] sat = string[satisfied.len()](fill: "");
+  for (i32 i = 0; i < satisfied.len(); i++) { sat[i] = satisfied.get(i); }
+  sortStrings(sat, sat.len());
+
+  i32 candidates = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    if (declLive[d]) { continue; }
+    if (sortedHolds(sat, sat.len(), decls.get(d).name + "|" + baseName(decls.get(d).file))) {
+      declLive[d] = true;
+      continue;
+    }
+    candidates = candidates + 1;
+  }
+
+  // The TypeScript rule, asked only of what has no wac caller. The original asks it of every
+  // declaration; asking it of the survivors is the same answer over a hundredth of the work, because
+  // a name with a wac caller is live whatever TypeScript says about it.
+  Vec<string> tsFiles = Vec.create();
+  string[] tr = tsRoots();
+  for (i32 i = 0; i < tr.len(); i++) { walk(cli, base, tr[i], ".ts", tsFiles); }
+  Vec<string> tsText = Vec.create();
+  Vec<string> tsPkg = Vec.create();
+  bool[] tsOpen = bool[tsFiles.len()](fill: false);
+  for (i32 i = 0; i < tsFiles.len(); i++) {
+    string text = readAll(cli, base + "/" + tsFiles.get(i));
+    tsText.push(text);
+    tsPkg.push(packageOf(tsFiles.get(i)));
+    tsOpen[i] = text.indexOf("wacBind") >= 0 || text.indexOf("entry:") >= 0;
+  }
+
+  i32 dead = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    if (declLive[d]) { continue; }
+    string home = packageOf(decls.get(d).file);
+    bool named = false;
+    for (i32 i = 0; i < tsFiles.len() && !named; i++) {
+      if (hasEntryNamed(tsText.get(i), decls.get(d).name)) { named = true; continue; }
+      bool near = tsPkg.get(i) == "" || tsPkg.get(i) == home || tsOpen[i];
+      if (near && hasDotName(tsText.get(i), decls.get(d).name)) { named = true; }
+    }
+    if (named) { declLive[d] = true; continue; }
+    dead = dead + 1;
+  }
+  i32 privDead = 0;
+  for (i32 d = 0; d < privates.len(); d++) { if (!privLive[d]) { privDead = privDead + 1; } }
+
+  return Scan(decls, declLive, privates, privLive, files, exemptFile, exemptWhy, dead, privDead);
+}
+
+/** The report, as the command line prints it. Returned rather than printed so a test can read it. */
+export string report(Scan s) {
+  string out = "";
+  // Printed in both cases, and before the verdict, so that "no dead exports" can never be a scan that
+  // exempted everything. An exemption nobody sees is the same thing as a check nobody runs.
+  if (s.exemptFile.len() > 0) {
+    out = out + itoa(s.exemptFile.len()) + " file(s) exempt by their own note:\n";
+    for (i32 i = 0; i < s.exemptFile.len(); i++) {
+      string why = trimmedOf(s.exemptWhy.get(i));
+      out = out + "  " + s.exemptFile.get(i) + " — " + (why == "" ? "no reason given" : why) + "\n";
+    }
+    out = out + "\n";
+  }
+
+  if (s.dead == 0) {
+    out = out + "no dead exports across " + itoa(s.decls.len()) + " exported functions in "
+        + itoa(s.files.len()) + " files";
+  } else {
+    // The blank line after the header is the original's, where it is one element of an array joined
+    // with newlines and already ends with one. Kept so the two outputs differ only where the answers do.
+    out = out + itoa(s.dead) + " exported function(s) that no wac code calls:\n\n";
+    out = out + listing(s.decls, s.declLive, s.files);
+    out = out + "\nEach is either a name worth using at the call sites — usually clearer than the\n"
+        + "literal it was written instead of — or one worth deleting. A constant no code\n"
+        + "consults documents nothing and cannot be wrong in a way a test would notice.";
+  }
+
+  if (s.privDead > 0) {
+    out = out + "\n\n" + itoa(s.privDead)
+        + " unexported function(s) that their own file never calls:\n"
+        + listing(s.privates, s.privLive, s.files)
+        + "\nA private function is only reachable from its own file, so there is no second answer here:\n"
+        + "either a call site is missing or the function is.";
+  }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  Scan s = scanAt(core, cli, ".");
+  bool quiet = false;
+  bool strict = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--quiet") { quiet = true; }
+    if (a == "--strict") { strict = true; }
+  }
+  if (!quiet) { core.log(report(s)); }
+  // Reporting only unless asked otherwise — the original's reason, unchanged: a check that turns
+  // somebody else's tree red the day it lands is a check that gets deleted rather than acted on.
+  return (s.dead + s.privDead) == 0 || !strict ? 0 : 1;
+}
+
+/**
+ * The dead ones among `all`, grouped by file in path order, each line `    :<line> <name>`.
+ *
+ * Walks `files` rather than sorting the declarations, because that array is already in path order —
+ * the walk sorts each directory's names — so grouping is a filter rather than a sort.
+ */
+string listing(Vec<Decl> all, bool[] live, Vec<string> files) {
+  string out = "";
+  for (i32 f = 0; f < files.len(); f++) {
+    bool named = false;
+    for (i32 d = 0; d < all.len(); d++) {
+      if (live[d] || all.get(d).file != files.get(f)) { continue; }
+      if (!named) { out = out + "  " + files.get(f) + "\n"; named = true; }
+      string n = itoa(all.get(d).line);
+      while (n.len() < 4) { n = n + " "; }
+      out = out + "    :" + n + " " + all.get(d).name + "\n";
+    }
+  }
+  return out;
+}

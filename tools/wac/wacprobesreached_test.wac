@@ -1,7 +1,7 @@
 // A probe file is reached by something.
 //
 // A `*probe*.wac` under `test/wac/` exists to be called from somewhere else — that is its whole
-// purpose, and it is why `tools/deadexports.ts` exempts these files by name: every export is meant to
+// purpose, and it is why `tools/wac/deadexports.wac` exempts these files by name: every export is meant to
 // be unused *from wac*, so the dead-export check would report all of them.
 //
 // **That exemption is also a blind spot.** A probe whose caller is deleted keeps compiling, keeps being

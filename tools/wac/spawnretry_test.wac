@@ -1,0 +1,103 @@
+// A test that builds an application and spawns it imports the ETXTBSY retry.
+//
+//     wac test --allow-read tools/wac/spawnretry_test.wac
+//
+// **Ported from tools/spawnretry.test.ts**, which it replaces. `wac-mono 0074`: a freshly written executable is still
+// open for writing when the spawn reaches it, and the kernel answers `Text file busy`. It is a race,
+// so it fails one run in some number and never the same one, and the fix — `harness/spawnRetry.ts` —
+// only helps a file that imports it.
+//
+// Two ways to get this check wrong, both of which it made first:
+//
+//   - An import specifier *is* a string literal, so the same stripping that stops a comment counting
+//     as a use erases the thing being looked for. That version reported 57 files, 49 of which import
+//     it on the line the report pointed past. So the *use* is looked for in stripped code and the
+//     *import* in the raw text.
+//   - Requiring `harness/` in the path misses `harness/appRun.test.ts`, which is in that directory and
+//     writes `./spawnRetry.ts`. So the specifier is matched on its basename.
+//
+// Both failed by over-reporting, which is the safe direction and why they were caught at all. A check
+// of this genre that failed the other way would have said "all clear" and been believed.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { codeLines, walk } from "./deadexports.wac";
+
+/** Whether `text` holds `needle` with a non-word byte on each side. */
+bool holdsWord(string text, string needle) {
+  i32 from = 0;
+  while (from < text.len()) {
+    i32 at = text.slice(from, text.len()).indexOf(needle);
+    if (at < 0) { return false; }
+    i32 abs = from + at;
+    bool okBefore = abs == 0 || !wordByte(text, abs - 1);
+    i32 end = abs + needle.len();
+    bool okAfter = end >= text.len() || !wordByte(text, end);
+    if (okBefore && okAfter) { return true; }
+    from = abs + 1;
+  }
+  return false;
+}
+
+bool wordByte(string s, i32 i) {
+  string c = s.slice(i, i + 1);
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
+}
+
+/** Whether a line is an import whose specifier ends in `spawnRetry.ts`. */
+bool importsRetry(string text) {
+  i32 from = 0;
+  while (from < text.len()) {
+    i32 at = text.slice(from, text.len()).indexOf("spawnRetry.ts");
+    if (at < 0) { return false; }
+    // Back to the start of the line, and require it to be an import — the specifier is a string, so
+    // this is asked of the raw text where the string still exists.
+    i32 lineStart = 0;
+    for (i32 i = from + at; i > 0; i = i - 1) {
+      if (text.slice(i - 1, i) == "\n") { lineStart = i; i = 0; }
+    }
+    string line = text.slice(lineStart, from + at);
+    i32 imp = line.indexOf("import");
+    if (imp >= 0) { return true; }
+    from = from + at + 13;
+  }
+  return false;
+}
+
+export string test_a_test_that_builds_and_spawns_imports_the_retry(Core core, Cli cli) {
+  T t = T.create();
+  Vec<string> all = Vec.create();
+  walk(cli, ".", ".", ".test.ts", all);
+
+  string missing = "";
+  i32 atRisk = 0;
+  i32 gaps = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all.get(i);
+    // `site` is the npm subtree and `target` is cargo's; neither builds a wac application.
+    if (f.indexOf("/site/") >= 0 || f.indexOf("/target/") >= 0) { continue; }
+    FileResult r = cli.readFile(f).wait();
+    if (!r.ok) { t.fail("cannot read " + f + " — " + r.error); continue; }
+    string text = string.fromBytes(r.bytes);
+    string[] lines = codeLines(text);
+    string code = "";
+    for (i32 k = 0; k < lines.len(); k++) { code = code + lines[k] + "\n"; }
+    if (!holdsWord(code, "buildApp")) { continue; }
+    if (code.indexOf("new Deno.Command") < 0) { continue; }
+    atRisk = atRisk + 1;
+    if (importsRetry(text)) { continue; }
+    gaps = gaps + 1;
+    if (gaps <= 5) { missing = missing + "\n  " + f; }
+  }
+
+  // **The check's own reach, asserted.** A search that matched nothing would report success for ever,
+  // which is the failure this genre is most prone to: it cannot tell "everything is fine" from "I
+  // looked at nothing". A floor rather than an exact count, so adding a test file does not fail this.
+  t.isTrue(atRisk >= 10, "only " + itoa(atRisk) + " files were found to build and spawn, which is "
+      + "fewer than there have ever been — the search has stopped finding them");
+  t.eqI32(gaps, 0, gaps == 0 ? "" : "these build an application and spawn it without importing the "
+      + "ETXTBSY retry, so they will fail one run in some number and never the same one:" + missing);
+  return t.report();
+}
