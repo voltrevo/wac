@@ -1,0 +1,86 @@
+// The instrument the `async` lowering is built on — `design/lang/0014` step 4.
+//
+// A rewrite invents names the reader never wrote, and every later phase learns what a token says by
+// reading bytes out of the source. So before any lowering exists, the question worth answering is
+// the narrow one: **does a synthetic token read back as its own spelling?** If it does not, every
+// diagnostic and every name lookup downstream is wrong in a way that looks like a lowering bug.
+//
+// Three things have to hold, and each is one test below: the spellings land in the source, a token
+// pointed at one reads back, and doing it twice does not do it twice. The third is not hypothetical —
+// `Lexed`'s own note says to lex again for a second parse, and wapy's tail was lexed as a line of
+// code the second time round, which is why this one hides behind a `//`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { lex, Lexed } from "../../src/lex.wac";
+import { tokenTextOf } from "../../src/emit.wac";
+import {
+  synthTail, synthBase, synthOffset, synthTokens, synthTok, synthWords,
+  synthPending, synthThen, synthDrop,
+} from "../../src/asyncsynth.wac";
+
+const string SRC = "i32 main() { return 0; }\n";
+
+export string test_the_tail_is_appended_once_and_found_again() {
+  T t = T.create();
+  u8[] a = SRC.toBytes();
+  t.eqI32(synthBase(a), 0 - 1, "a source without the tail says so");
+
+  u8[] b = synthTail(a);
+  t.isTrue(b.len() > a.len(), "the tail was appended");
+  t.isTrue(synthBase(b) > 0, "and is found again");
+
+  // Idempotent, because a source that has been through the frontend twice is a thing that happens.
+  u8[] c = synthTail(b);
+  t.eqI32(c.len(), b.len(), "appending twice appends once");
+  t.eqI32(synthBase(c), synthBase(b), "and the base does not move");
+  return t.report();
+}
+
+export string test_a_synthetic_token_reads_back_as_its_spelling() {
+  T t = T.create();
+  u8[] src = synthTail(SRC.toBytes());
+  Lexed lexed = lex(src);
+  i32 first = lexed.tokenCount;
+  Lexed with = synthTokens(lexed, src, 1, 1);
+
+  // **The point of the whole file.** `tokenTextOf` is what every later phase uses, so asking it is
+  // asking the question that matters rather than a proxy for it.
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthPending())), "Pending",
+          "the first word");
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthThen())), "then",
+          "one in the middle, which is where an off-by-one in the offset walk would show");
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthDrop())), "drop",
+          "and the last, which is where a length mistake would");
+  return t.report();
+}
+
+export string test_the_tail_is_invisible_to_the_lexer() {
+  T t = T.create();
+  // If the tail lexed as code, these two counts would differ — and the failure would arrive much
+  // later, as a parse error on a line the file does not have.
+  Lexed plain = lex(SRC.toBytes());
+  Lexed tailed = lex(synthTail(SRC.toBytes()));
+  t.eqI32(tailed.tokenCount, plain.tokenCount, "the tail produced no tokens of its own");
+  t.eqI32(tailed.errorCount, plain.errorCount, "and no errors");
+  return t.report();
+}
+
+export string test_every_word_has_a_distinct_offset_in_order() {
+  T t = T.create();
+  u8[] src = synthTail(SRC.toBytes());
+  string[] w = synthWords();
+  // The offsets are walked from a list rather than written down, so the property worth pinning is
+  // the walk's: strictly increasing, and each far enough past the last to hold it.
+  i32 prev = 0 - 1;
+  for (i32 i = 0; i < w.len(); i++) {
+    i32 at = synthOffset(src, i);
+    t.isTrue(at > prev, "word " + w[i] + " comes after the one before it");
+    if (i > 0) {
+      t.isTrue(at - prev >= w[i - 1].toBytes().len() + 1,
+               "and leaves room for " + w[i - 1]);
+    }
+    prev = at;
+  }
+  t.eqI32(synthOffset(src, w.len()), 0 - 1, "asking past the end says so");
+  return t.report();
+}
