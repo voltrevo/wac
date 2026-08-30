@@ -18,8 +18,8 @@ that is not obvious — I had to read `tools/suiteGate.ts`'s header to find one 
 
 | where | files | lines | of which `*.test.ts` |
 |---|---|---|---|
-| `tools/**/*.ts` | 36 | 8,048 | 12 files, 1,817 |
-| `harness/**/*.ts` | 36 | 6,026 | 14 files, 1,667 |
+| `tools/**/*.ts` | 33 | 7,573 | 12 files, 1,817 |
+| `harness/**/*.ts` | 35 | 5,809 | 14 files, 1,667 |
 
 `tools/mutate/` is 13 of those files and 2,941 of those lines — a third of `tools/`, in a
 subdirectory, and `ls tools/*.ts` does not show it. I counted `tools/` at 33 files and 6,470 lines
@@ -27,7 +27,7 @@ first and had to correct it; anyone re-deriving these should use `find` rather t
 
 For scale on the other side: `tools/*.wac` and `tools/wac/*.wac` are already 43 files and 13,050
 lines, so this is not a new idea being proposed — it is a migration two thirds done in one directory
-and untouched in the other. **23 of the 76 entries in `tasks.json5` still spawn `deno`**, and 44
+and untouched in the other. **18 of the 76 entries in `tasks.json5` still spawn `deno`**, and 44
 invoke the `wac` binary. That count is the tracking number for this issue: it goes to zero, or to
 whatever the carve-out below leaves, and it can be read in one grep.
 
@@ -386,3 +386,68 @@ reproduction rather than reading it.
 So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts — **done, `0290b`** —
 then port nine tools that all want a scratch directory to run something in, of which four are done. `mutate` additionally has
 `issues/system/0183`, which is its own thing.
+
+## Deno measured against the rule it is supposed to obey — agent-b, 2026-08-30
+
+The standing instruction is that **Deno should be a bootstrap host and an oracle called by wac tests,
+and nothing else**. That is a testable statement about this repository and nobody had checked it, so
+this is the check, done by reading rather than by guarding — a guard here would have to grade a
+determination per call site, which is the thing `0161` says a guard must not do.
+
+**Eighteen `deno` entries remain in `tasks.json5`, of 76**, counted as
+`grep -cE '^  "[^"]+": "deno '`. Both looser spellings are wrong and I used each once: a plain
+`grep -c 'deno '` counts two comment lines, and a `[a-z:]*` key pattern silently drops
+`bench:zstd-speed` and `bench:json-lookup` for their hyphens. By role:
+
+| role | entries | verdict |
+|---|---|---|
+| blocked on `0183`, agent-c's | `mutate`, `mutate:diff`, `mutate:operators` | not available |
+| blocked on a TypeScript library | `corpus:hosts`, `corpus:stderr` | not available |
+| **a decision, not a translation** | `bench:hash`, `bench:zstd`, `bench:zstd-speed`, `bench:json`, `bench:json-lookup` | **the operator's** |
+| the subject is Deno, npm or the browser | `serve`, `app:build`, `site:map`, `wasmopt`, `verify:fmt`, `gen:unicode`, `check`, `bench` | carve-out |
+
+**And the TypeScript that wac itself reaches is small and in role.** Grepping wac sources for a
+`deno` spawn finds twelve test files, and what they run is `harness/ladderRun.ts` — the bootstrap
+ladder, which is the *first* permitted role — and `harness/appRunMany.ts`, a batch runner for a built
+program, which is the second. The rest are oracles by construction: `packages/platform/test/wac/node_net_test.wac` against Node's
+networking, `packages/tls/test/wac/interop_test.wac` against a real TLS peer.
+
+**Two harness files looked dead and were not**, which is worth recording because the method that
+found them wrong is the one to use next time. `harness/appRunMany.ts` and `harness/ladderRun.ts` have **zero
+importers** — no TypeScript file names either. They are alive because *wac* spawns them by path, and
+a spawn is a dependency an import graph cannot see. Deleting on an importer count would have removed
+both.
+
+So the honest position for `tools/` and `harness/`: what remains is either in a role the rule allows,
+behind somebody else's issue, or waiting on one decision — whether the JS boundary is still the right
+thing for the five benchmarks to measure, now that there are two native hosts.
+
+### The `corpus:stderr` knot, sized — and it is smaller than it looks
+
+`tools/corpusStderr.ts` cannot move alone because three TypeScript tests import from it, which reads as
+1,474 lines that have to move together:
+
+| file | lines | needs |
+|---|---|---|
+| `tools/corpusStderr.ts` | 198 | — |
+| `packages/sh/test/stderr.test.ts` | 163 | `KNOWN`, `sameName` |
+| `packages/sh/test/differential.test.ts` | 892 | `sameName` |
+| `packages/box/test/jobs.test.ts` | 221 | `sameName` |
+
+**But `sameName` is five lines** — one regex mapping bash's `bash: line 1: ` prefix onto `sh: `, and
+three of the four want nothing else. So the knot is not "move 1,474 lines"; it is "one small shared
+constant lives in a file that also happens to be a tool".
+
+The move that unties it, in the order that keeps everything green:
+
+1. Lift `sameName` and `KNOWN` out of `tools/corpusStderr.ts` into a module of their own that the three
+   TypeScript tests import. Nothing changes behaviourally and the tool is then free.
+2. Port the tool half to wac, with its own `sameName`.
+3. **Assert the two agree**, because step 2 makes a second copy of a rule and this repository has
+   already been bitten by exactly that — `packages/platform/test/faults_agree.test.ts` exists because
+   the fault numbering lives on both sides of the bridge, and `packages/platform/test/wac/hostfaults_test.wac` compares the two
+   Rust hosts by reading their sources. A wac test that reads the TypeScript's pattern and checks it
+   against its own is the same shape and the same cost.
+
+What it is *not* is a translation of 1,474 lines, which is how the row above reads and how I read it
+before measuring.
