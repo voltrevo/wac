@@ -225,6 +225,36 @@ somebody's else's claim or a TypeScript library that moves with its importers. T
 kind of remainder from the one at the top of this issue and it is worth saying plainly: the next
 lever is not another capability.
 
+**`tools/` is at its floor as of 2026-08-30, and the floor is not a carve-out list.** Read file by
+file after the six ports of that day, nothing left in it is available:
+
+- `mutate.ts`, `mutate.test.ts`, `tools/mutate/`, `suiteGuard.ts`, `profile.test.ts`,
+  `lane.test.ts` — behind `issues/system/0183`, **claimed by agent-c**.
+- `corpusStderr.ts` — a library to three TypeScript tests. `corpusHosts.ts` — behind
+  `buildNative`. `suiteGate.ts` and its test — a remnant serving those two and `mutate`.
+- `fuzz.ts`, `fuzzBoundary.ts`, `bench.ts`, `wasmopt.ts`, `syncBootstrap.ts`, `_spawncmp.ts`,
+  `discovery.ts`/`discovery.test.ts` — carve-outs where Deno, npm or the JavaScript bootstrap
+  *is* the subject. Checked rather than inherited: `syncBootstrap` imports `bootstrap/hosts/deno.js`
+  and `_spawncmp` imports three files from `packages/platform/host/`.
+- `checkTypes.ts`, `typecheck.test.ts`, `benchCompile*` — dissolve with the TypeScript they check,
+  or wait on a decision about which build they measure.
+
+So the next thing that moves here is not a port. It is `0183` being answered, or somebody deciding
+to move `packages/sh`'s three TypeScript tests so `corpusStderr` can follow them.
+
+**Twice now a row here has hidden a portable test inside a TypeScript-subject group, so check the
+rows rather than trusting them.** `programs.test.ts` sat in the row above as "tests TypeScript
+machinery" and did not: it compiled every wac program in the repository, through a Deno bridge only
+because nothing else could call the compiler. `wapyRoundTrip.test.ts` sat in `0161`'s wacc row as a
+"JavaScript boundary" and did not: its other half is wacc. Both moved on 2026-08-30 and neither
+needed anything that did not already exist.
+
+The shared shape is worth naming, because it will be the next one too: **a test written in
+TypeScript because that was the only language that could reach the subject is not a test *about*
+TypeScript.** The tell is the import list — `waccApi`, `wacFiles`, `buildApp` — a bridge to
+something written in wac. A row saying "the subject is TypeScript" earns that description only
+when the thing being asserted about would not exist without it.
+
 **`suiteGate.ts` is a 67-line remnant, and its blocker shrank with the ports.** The live gate is
 `tools/wac/suitegate.wac`, 574 lines, which `tools/push.sh` calls by name — the TypeScript file is
 what is left over for the tools that still announce themselves in TypeScript, and after the four
@@ -268,7 +298,7 @@ actually available to port:
 | `syncBootstrap.ts` | 115 | carve-out: `bootstrap/` machinery, and `bootstrap/` is a designated host |
 | `_spawncmp.ts` | 66 | carve-out: imports `packages/platform/host/*`; its subject is the JS host |
 | `discovery.test.ts` | 84 | carve-out already named above |
-| `lane.test.ts`, `programs.test.ts`, `profile.test.ts`, `mutate.test.ts` | 816 | test TypeScript machinery; they go with their subjects |
+| `lane.test.ts`, `profile.test.ts`, `mutate.test.ts` | 711 | test TypeScript machinery; they go with their subjects — `lane.test.ts`'s is `harness/testLane.ts`, whose only non-test reader is `tools/mutate/known.ts`, so it goes when `mutate` does |
 
 ### Correction, an hour later: the two fuzzers are carve-outs too
 

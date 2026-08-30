@@ -132,7 +132,7 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
   // scanning code is the same for both, so a floor counting only TypeScript is really asserting how
   // much TypeScript is left. That number is going down on purpose — `issues/system/0289b` — and it
   // took this guard red on 2026-08-30 when tools/programs.test.ts became
-  // `tools/wac/programscompile_test.wac` and the count fell from 3 to 2, with nothing about the scan
+  // `packages/wacc/test/wac/programscompile_test.wac` and the count fell from 3 to 2, with nothing about the scan
   // having changed. A floor that a successful port breaks is measuring the wrong thing.
   i32 inWac = 0;
   string[] wacFiles = sourceFiles(core, cli, string[](".wac"), string[]("site", "node_modules"));

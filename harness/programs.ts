@@ -1,7 +1,7 @@
 // Every runnable program in this repo, found the way `MAP.md` finds them.
 //
 // **This is the TypeScript copy, and it is no longer the definition.** `tools/wac/programs.wac` is what
-// `tools/wac/map.wac` writes the map from and what `tools/wac/programscompile_test.wac` compiles from,
+// `tools/wac/map.wac` writes the map from and what `packages/wacc/test/wac/programscompile_test.wac` compiles from,
 // and this file serves the TypeScript that still wants the list. The two agree — both demand
 // `export i32 main(` at the start of a line — and nothing checks that they do.
 //

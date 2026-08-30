@@ -1,6 +1,6 @@
 // Every program in this repo compiles.
 //
-//     wac test --allow-read --allow-run tools/wac/programscompile_test.wac
+//     wac test --allow-read --allow-run packages/wacc/test/wac/programscompile_test.wac
 //
 // wac-mono 0079: the suite compiled only the programs a test drives — `packages/box` and `packages/sh`
 // build theirs per case — and none of the other thirty. So a program could stop compiling and
@@ -31,18 +31,24 @@
 // `sourcesOf` in `packages/wactest/src/built.wac`. So this compiles every program in the same process
 // that is running the test.
 //
+// **It lives under `packages/` and not in `tools/wac/`, which is where its TypeScript sat.** Those
+// files are run by `wac task docs` — `wac test tools/` — a blocking gate phase documented at 8s, and
+// the `wac test` lane walks `packages/` and `core/` only (`laneRoots`). So a heavy marker there does
+// nothing and the cost lands on every push. `tools/lane.test.ts` is what said so, by failing with
+// `declared heavy wac tests in directories the lane never visits`.
+//
 // test-lane: heavy — compiles every program in the repository; 42s of CPU measured 2026-08-30, which is
 // the TypeScript's 41s and not an improvement: the work is the compiling, and dropping the bridge does
 // not change it. Memory undeclared rather than inherited — `issues/system/0230c` is about costs copied
 // forward instead of measured, and 1020 MB was the Deno process's
 
-import { T } from "../../packages/wactest/src/assert.wac";
+import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
-import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { contains } from "../../packages/wactest/src/strings.wac";
-import { Sources, sourcesOf } from "../../packages/wactest/src/built.wac";
-import { blockedFiles, diagnoseFiles } from "../../packages/wacc/src/api.wac";
-import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Sources, sourcesOf } from "../../../wactest/src/built.wac";
+import { blockedFiles, diagnoseFiles } from "../../src/api.wac";
+import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "../../../../tools/wac/programs.wac";
 
 /**
  * A floor on how many programs were found, so the test cannot pass by finding none.
