@@ -170,6 +170,37 @@ fi
 cd "$root"
 say "building from $(git -C . rev-parse --short HEAD 2>/dev/null || echo 'a tree with no git') on $host"
 
+# ------------------------------------------------------- the embedded core/ and std/
+#
+# **The compiler carries `core/*.wac` and `std/platform.wac` inside it**, as
+# `packages/wacc/src/coretext.wac` — `isBuiltinSpec` there answers true for those specifiers, so an
+# import of them never touches the disk. This script does not regenerate that file, so an edit to
+# `std/platform.wac` has no effect whatever until `wac task gen:core` runs, and what you get instead
+# is `that file does not export this name` pointing at your import, about a file that plainly does
+# export it. `issues/system/0291b`.
+#
+# **Checked here because the check that exists runs too late.** `tools/wac/gencore_test.wac` asks the
+# same question in the suite, which `tools/push.sh` reaches *after* the build — so it can only report
+# a failure the build has already had. A guard whose value is being the sentence that explains
+# something has to run before the thing it explains.
+#
+# Only when a binary is already here to ask with. A fresh clone has none, and cannot have edited
+# `std/` and rebuilt either, so there is nothing for it to catch — the same shape as the wasmtime
+# host's "only when it exists" further down.
+for wac_have in native/v8/target/release/wac native/target/release/wac; do
+  [ -x "$wac_have" ] || continue
+  if ! "$wac_have" task gen:core --check >/dev/null 2>&1; then
+    echo "bootstrap: packages/wacc/src/coretext.wac is out of step with core/ and std/." >&2
+    echo "   The compiler carries those files, so your edit to one of them will not be in the" >&2
+    echo "   build — and the failure it causes names your import rather than this. Run:" >&2
+    echo "       wac task gen:core" >&2
+    echo "   issues/system/0291b. Refusing rather than regenerating: this writes a checked-in file" >&2
+    echo "   and that is a commit you should be making on purpose." >&2
+    exit 1
+  fi
+  break
+done
+
 # ---------------------------------------------------------------- the ladder
 #
 # Five rungs. The lowest is hand-written wasm assembly text; each compiles the next; the fifth

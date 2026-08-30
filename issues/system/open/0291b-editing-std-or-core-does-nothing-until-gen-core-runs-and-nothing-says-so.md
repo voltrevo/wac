@@ -68,6 +68,18 @@ task with, which is why `bootstrap.sh` is a shell script in the first place. So 
 when a binary already exists — which is the case that matters, since a fresh clone cannot have edited
 `std/` and rebuilt.
 
+**Done, 2026-08-30.** `bootstrap.sh` asks the question immediately after it settles on a root and
+before the ladder, using whichever of the two native binaries is already there and skipping when
+neither is — the same "only when it exists" shape the wasmtime rebuild uses further down. It refuses
+rather than regenerating, because regenerating writes a checked-in file and that is a commit somebody
+should make on purpose. Both branches were run: a tree with one export added to `std/platform.wac`
+exits 1 with the message before the ladder starts, and a clean tree bootstraps through to its fixed
+point and exits 0.
+
+**What is left is the first fault** — the diagnostic. *"that file does not export this name"* is still
+what a reader meets if they get past `bootstrap.sh` some other way, or edit `core/` while running
+`wac build` directly, and it is still the opposite of the truth.
+
 ## What it is not
 
 Not `issues/lang/0291c`. That is a capability with a seventh parameter dropping the module's entry
