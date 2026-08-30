@@ -1,0 +1,21 @@
+// expect: refused
+// why: await is only a thing inside an async function, and the fix is on the declaration
+// spec: §wac-await-inside-3nq7wbe
+struct Sch { bool detach(this, i32 id) { return false; } }
+struct Pending<T> {
+  i32 id;
+  fn[T(i32)] resolve;
+  fn[bool(i32)] settled;
+  fn[void(i32)] drop;
+  Sch? sched;
+  T wait(const this) { return this.resolve(this.id); }
+  void then(this, fn[void(T)] f) { }
+}
+Pending<i32> ready(i32 v) {
+  i32[] cell = i32[1](fill: v);
+  fn[i32(i32)] r = (i32 id) => cell[0];
+  fn[bool(i32)] s = (i32 id) => true;
+  fn[void(i32)] d = (i32 id) => { };
+  return Pending<i32>(0, r, s, d, null);
+}
+export i32 answer() { return await ready(1); }

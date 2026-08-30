@@ -1,0 +1,28 @@
+// expect: answers answer = 7
+// why: a return inside a flattened loop leaves the function, not the loop
+// from: design/lang/0014
+struct Sch { bool detach(this, i32 id) { return false; } }
+struct Pending<T> {
+  i32 id;
+  fn[T(i32)] resolve;
+  fn[bool(i32)] settled;
+  fn[void(i32)] drop;
+  Sch? sched;
+  T wait(const this) { return this.resolve(this.id); }
+  void then(this, fn[void(T)] f) { }
+}
+Pending<i32> ready(i32 v) {
+  i32[] cell = i32[1](fill: v);
+  fn[i32(i32)] r = (i32 id) => cell[0];
+  fn[bool(i32)] s = (i32 id) => true;
+  fn[void(i32)] d = (i32 id) => { };
+  return Pending<i32>(0, r, s, d, null);
+}
+async i32 firstSeven(i32 n) {
+  for (i32 i = 0; i < n; i++) {
+    i32 v = await ready(7);
+    return v;
+  }
+  return 0;
+}
+export i32 answer() { return firstSeven(5).wait(); }

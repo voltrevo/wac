@@ -1,0 +1,24 @@
+// expect: refused
+// why: a lambda is a different function, and its return returns from the lambda
+struct Sch { bool detach(this, i32 id) { return false; } }
+struct Pending<T> {
+  i32 id;
+  fn[T(i32)] resolve;
+  fn[bool(i32)] settled;
+  fn[void(i32)] drop;
+  Sch? sched;
+  T wait(const this) { return this.resolve(this.id); }
+  void then(this, fn[void(T)] f) { }
+}
+Pending<i32> ready(i32 v) {
+  i32[] cell = i32[1](fill: v);
+  fn[i32(i32)] r = (i32 id) => cell[0];
+  fn[bool(i32)] s = (i32 id) => true;
+  fn[void(i32)] d = (i32 id) => { };
+  return Pending<i32>(0, r, s, d, null);
+}
+async i32 bad(Pending<i32> p) {
+  fn[void()] g = () => { i32 z = await p; };
+  return 0;
+}
+export i32 answer() { return bad(ready(1)).wait(); }
