@@ -164,3 +164,36 @@ The fold-two-flags-into-an-i32 alternative is still worth considering on its own
 choice about the signature rather than a way round a compiler bug, and the counted cost above — 35
 call sites, 8 with a real flag, 398 untouched behind `Cli.exec` — is the cost of the *fold*, not of
 the parameter. Adding a parameter touches only the declaration, the two stubs and `Cli.exec`.
+
+### It is a new opcode, not a longer payload — and that is `EXEC_WITH`'s own argument
+
+`execWith` is `OP.EXEC_WITH = 58` in `packages/platform/host/ops.ts`, and its payload crosses a
+bridge that eight implementations decode: `native/src/main.rs`, `native/v8/src/main.rs`, and
+`browser.ts`, `child.ts`, `ops.ts`, `provider.ts`, `node.ts`, `deno.ts`. So "one more parameter" on
+the wac side is one more *field on the wire*, and the opcode's own docstring says what that costs:
+
+> A new number rather than a longer payload on 44, for the reason `CLOSE_SEND` is not a flag: a host
+> that had not been rebuilt would read the environment as the head of stdin, silently, where an
+> opcode it does not serve fails and names itself.
+
+That is exactly this situation one step later. `execWith` gained `env` and `clearEnv` by becoming
+opcode 58 rather than by widening 44; giving it a `cwd` by widening 58 would reintroduce the failure
+they avoided — a stale host reading the directory as the head of something else, with no diagnostic.
+The repository has three per-agent binaries that go stale on their own (`issues/system/0160`, `0208`)
+and a wasmtime host that is not built by default, so "a host that had not been rebuilt" is the normal
+case here rather than a hypothetical.
+
+**So: `EXEC_WITH_IN: 59`**, with `Cli.execWith` calling it and the six-parameter form kept as the
+method that passes `""`. Same shape as `exec` calling `execWith` today, which is why "each host still
+implements exactly one of them" is already true and stays true.
+
+**Registries a new opcode touches**, so nobody finds them one at a time:
+
+- `packages/platform/host/ops.ts` — the number and its docstring.
+- the eight implementations above.
+- `std/platform.wac` — the capability, its constructor, and `Cli.exec`'s call.
+- **`conformance_test.wac`** — `issues/system/0279c` is that the ledger credits opcodes to tests that
+  skip, so a new opcode wants a citation that actually drives every host rather than one that reads
+  as covered.
+- `wac task gen:core` after `std/platform.wac`, which is `issues/system/0291b` and now refused by
+  `bootstrap.sh` rather than silent.
