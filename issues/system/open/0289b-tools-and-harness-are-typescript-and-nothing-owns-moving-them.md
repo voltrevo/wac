@@ -162,10 +162,21 @@ leftover:
 **Blocked on a second thing, which has no issue yet: there is no wac equivalent of `wacFiles`.**
 `size` and `bench:compile` both want a program's whole import closure *with its sources*, to hand to
 `packages/wacc/src/api.wac`'s `emitFiles` — which exists and is exactly the API the TypeScript used.
-What is missing is the reading half. `gather` in `packages/wac/src/wac.wac` does it and is private to
-the CLI; `closureOf` in `packages/wactest/src/built.wac` walks the same graph but answers mtimes
-rather than text. So the fix is to factor one of them out, and it touches the seed app, which is why
-it is named here rather than done in passing.
+What is missing is the reading half.
+
+**And it is smaller than it first looks.** The obvious source is `gather` in
+`packages/wac/src/wac.wac`, which is private to the CLI and carries project roots (`@/`) and import
+maps and a cluster of helpers — extracting it touches the seed app's graph and wants a pass of its
+own. But neither blocked tool needs any of that: checked 2026-08-30, none of
+`packages/tor/size/*.wac`, `packages/tor/src/client_entry.wac`, or anything under `packages/tor/src`,
+`packages/tls/src` or `packages/crypto/src` writes a single `@/` import. A plain import walk that
+keeps the text is enough for both.
+
+`closureOf` in `packages/wactest/src/built.wac` is already that walk — it reads every file in the
+closure to find its imports and then throws the text away, keeping only mtimes. Widening it, or
+giving it a sibling that answers paths and texts, costs no seed rebuild and no new resolver. That is
+the cheap route; `gather` is the complete one, and which is right depends on whether a tool ever
+needs to compile a program that uses `@/`.
 
 **Goes when the TypeScript goes:** `check`, which is `deno check` over the remaining `.ts`.
 

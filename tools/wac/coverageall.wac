@@ -52,6 +52,7 @@ import { contains, startsWith, endsWith, joined, splitLines }
        from "../../packages/wactest/src/strings.wac";
 import { Task, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
 import { sortStrings } from "./covledger.wac";
+import { wacBinary } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
 
 /**
@@ -88,9 +89,6 @@ i32 pollMs() { return 250; }
  * failure somebody can read.
  */
 i64 stallMs() { return 900000 as i64; }
-
-/** The checkout's binary, not `wac` on PATH — an installed build is a different compiler. */
-export string binary() { return "./native/v8/target/release/wac"; }
 
 /** What one package's driver did. */
 struct Result {
@@ -353,7 +351,7 @@ export i32 main(Core core, Cli cli) {
   i64 lastProgress = nowMs(core);
 
   for (i32 s = 0; s < workers && next < dispatch.len(); s++) {
-    live[s] = cli.exec(binary(), string[]("task", "coverage:" + dispatch[next]), u8[0]());
+    live[s] = cli.exec(wacBinary(cli), string[]("task", "coverage:" + dispatch[next]), u8[0]());
     slotItem[s] = next;
     slotStart[s] = nowMs(core);
     busy[s] = true;
@@ -422,7 +420,7 @@ export i32 main(Core core, Cli cli) {
 
     busy[slot] = false;
     if (next < dispatch.len()) {
-      live[slot] = cli.exec(binary(), string[]("task", "coverage:" + dispatch[next]), u8[0]());
+      live[slot] = cli.exec(wacBinary(cli), string[]("task", "coverage:" + dispatch[next]), u8[0]());
       slotItem[slot] = next;
       slotStart[slot] = nowMs(core);
       busy[slot] = true;

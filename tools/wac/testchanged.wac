@@ -45,7 +45,7 @@ import { Vec } from "core/vec.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
 import { refuseIfNested } from "./suitegate.wac";
-import { binary } from "./coverageall.wac";
+import { wacBinary } from "../../packages/wactest/src/built.wac";
 import { sortStrings } from "./covledger.wac";
 
 /**
@@ -185,6 +185,6 @@ export i32 main(Core core, Cli cli) {
 
   // Inherited rather than captured: this is the loop you watch, and a runner that says nothing for
   // five minutes and then everything is the thing `issues/system/0231c` is about.
-  Exec r = cli.execWith(binary(), args, u8[0](), string[](), false, true).wait();
+  Exec r = cli.execWith(wacBinary(cli), args, u8[0](), string[](), false, true).wait();
   return r.ran() ? r.status : 1;
 }
