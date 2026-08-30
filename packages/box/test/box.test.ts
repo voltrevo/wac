@@ -593,27 +593,18 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
   }
 });
 
-Deno.test("box works as a filter, and its applets need only what they use", async () => {
-  const input = new TextEncoder().encode("one two\nthree\n");
-  // No grants at all: reading standard input is not a capability, so a pipeline works
-  // even where the filesystem was withheld.
-  const piped = await runFilter(BOX, ["wc"], input);
-  assertEquals(piped.code, 0, piped.err);
-  // Against the real `wc` rather than a literal: the columns are padded now, and a literal is how the
-  // padding came to be missing in the first place — somebody wrote down what this printed.
-  const realWc = new Deno.Command("wc", { stdin: "piped", stdout: "piped", stderr: "null" }).spawn();
-  const w = realWc.stdin.getWriter();
-  await w.write(input);
-  await w.close();
-  const { stdout: realOut } = await realWc.output();
-  assertEquals(new TextDecoder().decode(piped.out), new TextDecoder().decode(realOut));
-
-  const hashed = await runFilter(BOX, ["sha256sum"], input);
-  assertEquals(new TextDecoder().decode(hashed.out).trim().endsWith("  -"), true, "stdin is '-'");
-
-  // But a file still needs the grant, and says so — in `faultWords`' phrase for `FAULT_NOT_GRANTED`,
-  // which is what an applet prints when the category has words. "Permission denied" would be wrong here:
-  // nothing denied anything, the program was never handed a filesystem.
+Deno.test("a file still needs the grant, and says so", async () => {
+  // **What is left of "box works as a filter".** The filter half — `wc` and `sha256sum` over standard
+  // input, against the real tools — is `appletCases()` now, replayed in process by
+  // `packages/box/test/wac/applets_test.wac` against expectations captured once. Reading standard input
+  // is not a capability, so none of it needed a built program.
+  //
+  // This half does. The claim is about an application handed **no filesystem**, and in process the frame
+  // inherits the suite's own capabilities — so an in-process version would asserted nothing. It is one of
+  // the things `issues/system/0193` lists as staying: the grants a *built* applet asks for.
+  //
+  // "Not granted to this application" is `faultWords`' phrase for `FAULT_NOT_GRANTED`. "Permission
+  // denied" would be wrong: nothing denied anything, the program was never handed a filesystem.
   const denied = await runFilter(BOX, ["cat", "README.md"], new Uint8Array());
   assertEquals(denied.code, 1);
   assertEquals(denied.err.includes("Not granted to this application"), true, denied.err);

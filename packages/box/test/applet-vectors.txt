@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 39
+count: 42
 S 5
 seq 5
 X 0
@@ -673,6 +673,30 @@ printf 'a,b,c\nd,e,f\n' | grep -c a
 X 0
 O 2
 1
+
+E 0
+
+S 30
+printf 'one two\nthree\n' | wc
+X 0
+O 24
+      2       3      14
+
+E 0
+
+S 33
+printf 'one two\nthree\n' | wc -l
+X 0
+O 2
+2
+
+E 0
+
+S 37
+printf 'one two\nthree\n' | sha256sum
+X 0
+O 68
+6481b98de00b3b8c0eccd56b3877aa72d7cbb9c2b97142fa35f7177f9456926d  -
 
 E 0
 

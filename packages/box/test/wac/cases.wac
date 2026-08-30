@@ -306,7 +306,17 @@ export string[] appletCases() {
     "printf 'a,b,c\\nd,e,f\\n' | sort -r",
     // nor here, where swallowing it would search for the pattern
     "printf 'a,b,c\\nd,e,f\\n' | grep -n a",
-    "printf 'a,b,c\\nd,e,f\\n' | grep -c a"
+    "printf 'a,b,c\\nd,e,f\\n' | grep -c a",
+
+    // **box as a filter**, from `box.test.ts`. Standard input is not a capability, so these say what a
+    // pipeline answers with no filesystem behind it at all. Against the real tool rather than a literal
+    // because `wc`'s columns are padded, and a literal is how the padding came to be missing — somebody
+    // wrote down what this printed.
+    "printf 'one two\\nthree\\n' | wc",
+    "printf 'one two\\nthree\\n' | wc -l",
+    // `-` is what an applet names standard input, which is the whole assertion: the digest is the same
+    // either way, and the *name* beside it is what says the bytes came from stdin.
+    "printf 'one two\\nthree\\n' | sha256sum"
   );
 }
 
