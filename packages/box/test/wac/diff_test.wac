@@ -1,0 +1,159 @@
+// `diff -u`, against the real one — the widest differential box has, in this process.
+//
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/diff_test.wac
+//
+// From `box.test.ts`. `diff` is the one applet that is an *algorithm* rather than plumbing, so it gets
+// compared shape by shape rather than on a handful of inputs — that is what caught the hunk header for
+// an empty side, where a zero-length side starts at line 0 and not 1, which is the sort of convention
+// no amount of reasoning produces.
+//
+// ## Live rather than captured, and why that is not a failure to convert it
+//
+// The other applets replay against expectations `tools/wac/appletvectors.wac` recorded once. `diff`
+// cannot: GNU writes the file's **mtime** into its `---`/`+++` header, so a capture taken at one moment
+// never matches a replay whose fixture was written at another. The Deno version filtered those two
+// lines and so does this.
+//
+// What that costs is one process per case rather than two. box's `diff` runs *here*, through the same
+// `Shell` route `example/boxsh.wac` wires up; only the oracle is spawned. The version this replaces
+// built a 900 KB application first and spawned it fourteen times as well.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture } from "./cases.wac";
+import { Ran, layFixtures, runCase } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-diff"; }
+
+/** `1\n2\n…\nn\n`, the spine every case below is a variation of. */
+string seq(i32 n) {
+  string out = "";
+  for (i32 i = 1; i <= n; i++) { out = out + itoa(i) + "\n"; }
+  return out;
+}
+
+/** `seq(n)` with the line at `at` replaced by `val`, or dropped when `val` is "". */
+string seqEdit(i32 n, i32 at, string val) {
+  string out = "";
+  for (i32 i = 1; i <= n; i++) {
+    if (i == at) {
+      if (val != "") { out = out + val + "\n"; }
+      continue;
+    }
+    out = out + itoa(i) + "\n";
+  }
+  return out;
+}
+
+/** `seq(n)` with `val` inserted before the line at `at`. */
+string seqInsert(i32 n, i32 at, string val) {
+  string out = "";
+  for (i32 i = 1; i <= n; i++) {
+    if (i == at) { out = out + val + "\n"; }
+    out = out + itoa(i) + "\n";
+  }
+  return out;
+}
+
+/** `n` down to 1, which shares no line position with `seq(n)`. */
+string seqReversed(i32 n) {
+  string out = "";
+  for (i32 i = n; i >= 1; i--) { out = out + itoa(i) + "\n"; }
+  return out;
+}
+
+/**
+ * Everything after the `---`/`+++` pair, which is where the answer is.
+ *
+ * GNU puts a timestamp on those two lines and box does not — a real divergence, and one the Deno
+ * version filtered too. Every hunk header below them must match, and those are the part that carries
+ * the line arithmetic.
+ */
+string body(string all) {
+  string out = "";
+  string rest = all;
+  while (rest.len() > 0) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    string head = line.len() >= 3 ? line.slice(0, 3) : "";
+    if (head != "---" && head != "+++") { out = out + line + "\n"; }
+    if (nl < 0) { break; }
+    rest = rest.slice(nl + 1, rest.len());
+  }
+  return out;
+}
+
+/** One shape, both ways. */
+bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string b) {
+  cli.writeFile(dir + "/a", a.toBytes()).wait();
+  cli.writeFile(dir + "/b", b.toBytes()).wait();
+
+  Ran mine = runCase(core, cli, dir, "diff a b");
+  Exec real = cli.exec("diff", string[]("-u", dir + "/a", dir + "/b"), u8[0]()).wait();
+  if (!real.ran()) {
+    t.isTrue(false, "the real diff would not start: " + real.error);
+    return false;
+  }
+  string ours = body(mine.out);
+  t.eqStr(ours, body(string.fromBytes(real.stdout)), what);
+  // 0 the same, 1 different, 2 trouble — as the real one does.
+  t.eqI32(mine.status, real.status, what + ": exit status");
+  return true;
+}
+
+export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  // **A floor first.** Every comparison below is `eqStr` against the real tool, and two empty strings
+  // are equal — so a `diff` that printed nothing at all, or a `body` that filtered everything, would
+  // pass fourteen times. This asks that the simplest case actually produced a hunk.
+  oneCase(t, core, cli, dir, "one change", seq(8), seqEdit(8, 3, "X"));
+  Ran floor = runCase(core, cli, dir, "diff a b");
+  t.isTrue(body(floor.out).indexOf("@@") >= 0,
+           "the comparison has something in it — got: " + floor.out);
+  oneCase(t, core, cli, dir, "two distant hunks", seq(30), twoDistant());
+  // Closer than twice the context, so they must merge into one hunk rather than two.
+  oneCase(t, core, cli, dir, "two close changes merge", seq(30), twoClose());
+  oneCase(t, core, cli, dir, "a deletion", seq(30), seqEdit(30, 13, ""));
+  oneCase(t, core, cli, dir, "an insertion", seq(30), seqInsert(30, 13, "inserted"));
+  oneCase(t, core, cli, dir, "change on the first line", seq(30), seqEdit(30, 1, "one"));
+  oneCase(t, core, cli, dir, "change on the last line", seq(30), seqEdit(30, 30, "thirty"));
+  oneCase(t, core, cli, dir, "truncated", seq(30), seq(5));
+  oneCase(t, core, cli, dir, "appended", seq(30), seq(40));
+  oneCase(t, core, cli, dir, "fully reversed", seq(20), seqReversed(20));
+  // The three empty cases: the hunk header's line numbers are the whole point, because a zero-length
+  // side starts at line 0 rather than 1.
+  oneCase(t, core, cli, dir, "new file is empty", seq(30), "");
+  oneCase(t, core, cli, dir, "old file is empty", "", seq(30));
+  oneCase(t, core, cli, dir, "both empty", "", "");
+  oneCase(t, core, cli, dir, "identical", seq(30), seq(30));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** `seq(30)` with lines 5 and 25 changed — far enough apart to stay two hunks. */
+string twoDistant() {
+  string out = "";
+  for (i32 i = 1; i <= 30; i++) {
+    if (i == 5) { out = out + "five\n"; continue; }
+    if (i == 25) { out = out + "twentyfive\n"; continue; }
+    out = out + itoa(i) + "\n";
+  }
+  return out;
+}
+
+/** `seq(30)` with lines 5 and 7 changed — close enough that the hunks merge. */
+string twoClose() {
+  string out = "";
+  for (i32 i = 1; i <= 30; i++) {
+    if (i == 5) { out = out + "five\n"; continue; }
+    if (i == 7) { out = out + "seven\n"; continue; }
+    out = out + itoa(i) + "\n";
+  }
+  return out;
+}
