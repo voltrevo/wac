@@ -73,7 +73,7 @@ Two shapes, in increasing order of work:
 1. **A second prefix per ledger.** Let a ledger declare files outside its own tree that it also
    accounts for, so `packages/quic`'s ledger can hold entries about `packages/tls/src/handshake.wac`.
    Cheap, and it puts the entry in the wrong place: the file's own package is where a reader looks.
-2. **A union pass in `tools/coverageAll.ts`.** Every driver already runs there. Collecting each one's
+2. **A union pass in `tools/wac/coverageall.wac`.** Every driver already runs there. Collecting each one's
    point set, unioning per file, and reporting files whose union is better than any single driver's
    reading would name exactly the shared files and say by how much. That number — *this file reads 67%
    from its own package and 86% across all of them* — is the one a reader wants, and it is the one
@@ -171,5 +171,5 @@ owner has no table in this run are skipped now.
 
 Every ledger takes `--points`, so the full sweep is `deno run -A tools/coverageUnion.ts` with no
 arguments. It runs the drivers one at a time and is a report somebody asks for rather than something
-on the push path: `coverageAll.ts` is untouched and a package's own floor still fails exactly when it
+on the push path: `tools/wac/coverageall.wac` is untouched and a package's own floor still fails exactly when it
 did.

@@ -263,7 +263,7 @@ export string test_nothing_spawns_a_task_through_deno(Core core, Cli cli) {
   }
   t.eqStr(wrong, "",
           "`deno task` is not a command any more, so this spawn fails wherever it runs." +
-          "\n  Spawn the checkout's binary with `[\"task\", …]`, as `tools/coverageAll.ts` does," +
+          "\n  Spawn the checkout's binary with `[\"task\", …]`, as `tools/wac/coverageall.wac` does," +
           "\n  or spawn the task's body directly when the caller cannot have a binary — which is" +
           "\n  what `site/tools/syncDemos.ts` does, because `pages.yml` builds nothing native.");
   t.isTrue(looked > 50, "only " + itoa(looked) + " TypeScript files scanned — the walk has moved");

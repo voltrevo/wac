@@ -550,7 +550,7 @@ test.
 This issue was filed because a summary line read `19/19 passed` over drivers that could not fail. The
 line is honest about that now. It is **not** honest about what it is a sweep of.
 
-`tools/coverageAll.ts` derives `PACKAGES` from the `coverage:` tasks in `deno.json`, and its own header
+`tools/wac/coverageall.wac` derives `PACKAGES` from the `coverage:` tasks in `deno.json`, and its own header
 gives the reason — "deriving it means adding a task is the whole of adding it to the sweep", which is
 right. The consequence nobody had written down is that a package with **no task at all** is not
 reported as having no driver. It is not reported. It does not exist to the file.
@@ -668,7 +668,7 @@ this issue was filed about.
 declare types and nothing else — an enum of three variants, and the tree JSX builds — so they hold no
 branch points and there is nothing to cover. Worth recording because it looks identical to the failure
 found twice today: `packages/http`'s `proxy.wac` was absent with eighty-six points in it, and
-`coverageAll.ts` counted 21 packages of 38. The way to tell a real short denominator from an empty file
+`tools/wac/coverageall.wac` counted 21 packages of 38. The way to tell a real short denominator from an empty file
 is to open it, not to count rows.
 
 **And a third measured-versus-guessed correction.** I wrote "dropping the trap sweep costs eleven

@@ -1,0 +1,577 @@
+// Every package's coverage task, in one run, with the failures named.
+//
+//   wac task coverage:all
+//   wac task coverage:all --verbose    # each failing task's output, in full
+//
+// ## Why this exists
+//
+// There were eighteen `coverage:*` tasks and, until this file, no way to run them but by hand, one at
+// a time. So nobody did — and three of them had been exiting 1 for days without anyone noticing:
+//
+//   - `zstd`, four exemptions pinned to lines the code had moved off;
+//   - `gzip`, two of the same;
+//   - `crypto`, one of the same, plus `sha1.wac` compiled into the run and never once called — 41
+//     branch points reading 0%, which is a hole in the driver rather than in the tests.
+//
+// Each of those tasks was working exactly as designed. The check that catches a moved exemption is
+// good, and it fired, and it printed the right thing every time. It just printed it where nothing was
+// looking. **How long it took to notice is the number that matters**: `fs` exited 1 for three days,
+// on every run nobody made, while the package's README stated a figure from before the file it was
+// missing existed.
+//
+// `tools/push.sh` runs this before the push now.
+//
+// **A green ratchet does not defend a percentage.** What it fails on is a point that is neither
+// driven nor recorded — so code can arrive with its exemptions written down and the number falls
+// while the task stays green, which is how four package READMEs came to state a figure that was years
+// of ticks old in repository time. A figure quoted in prose is dated for that reason.
+//
+// **In wac since 2026-08-30**, from tools/coverageAll.ts — `issues/system/0289b`. Two things the port
+// improves rather than preserves, both of which the TypeScript's own comments asked for:
+//
+//   - **The task registry is parsed by the parser that dispatches it.** That file hand-rolled a strip
+//     of comments and trailing commas and fed the result to `JSON.parse`, with a comment saying
+//     `packages/json`'s real parser was "reachable from wac, which this file is not yet". It is now:
+//     `packages/wac/src/tasks.wac`'s `tasksIn` is what `wac task` itself reads the registry with, so
+//     this cannot disagree with the dispatcher about what a task is. The hand-rolled version had
+//     already cost one gate: it read `deno.json` and got `Object.keys(undefined)` the day the tasks
+//     moved to `tasks.json5`.
+//   - **tools/coverageOrder.ts comes with it.** It was a separate module because coverageAll.ts
+//     spawns its drivers at the top level and so could not be imported without running — nine lines of
+//     ordering with a two-minute sweep as their only test. A wac function is testable where it is, so
+//     `dispatchOrder` is below and `coverageall_test.wac` covers it directly.
+//
+// The times file changed format with the language. It was `.cache/coverage-times.json`; it is
+// `.cache/coverage-times` and one `name<tab>millis` per line, which is what the suite's own times file
+// has used since it moved. One run after this lands dispatches alphabetically, which is what a fresh
+// checkout has always done, and the stale `.json` is removed rather than left looking live.
+
+import { Core, Cli, Exec, Pending, FileResult, Stat } from "std/platform.wac";
+import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
+import { contains, startsWith, endsWith, joined, splitLines }
+       from "../../packages/wactest/src/strings.wac";
+import { Task, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
+import { sortStrings } from "./covledger.wac";
+import { announce, unannounce } from "./suitegate.wac";
+
+/**
+ * Four at a time, because nineteen packages one after another is 38s of every push.
+ *
+ * `tools/push.sh` runs this after the suite and before the push, so nothing else is on the machine —
+ * and each of these is one driver over one package's probes, not the gigabyte-scale builds the heavy
+ * lane holds back. Four is the width measured for the suite's own passes; the same number here needs
+ * no separate argument.
+ */
+const i32 WORKERS = 4;
+
+string timesPath() { return ".cache/coverage-times"; }
+string staleTimesPath() { return ".cache/coverage-times.json"; }
+
+/** The checkout's binary, not `wac` on PATH — an installed build is a different compiler. */
+string binary() { return "./native/v8/target/release/wac"; }
+
+/** What one package's driver did. */
+struct Result {
+  string pkg;
+  i32 status;
+  i64 ms;
+  string output;
+  string kind;
+}
+
+/**
+ * Every `coverage:*` package there is, read from `tasks.json5` rather than listed here.
+ *
+ * **It was a literal, and it had drifted.** Nineteen names against twenty-one tasks: `raster` and
+ * `wacpkg` existed, were never swept, and so had ratchets that nothing enforced — a sweep that
+ * silently covers less than it claims reads exactly like one that covers everything, until the
+ * package it skipped regresses. Both passed when this was found, which is the only reason it cost
+ * nothing. Deriving it means adding a task is the whole of adding it to the sweep.
+ */
+string[] packagesOf(Task[] tasks) {
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    i32 at = 0;
+    for (i32 i = 0; i < tasks.len(); i++) {
+      if (!startsWith(tasks[i].name, "coverage:") || tasks[i].name == "coverage:all") { continue; }
+      if (pass == 1) { out[at] = tasks[i].name.slice(9, tasks[i].name.len()); }
+      at = at + 1;
+    }
+    if (pass == 1) { sortStrings(out, out.len()); return out; }
+    n = at;
+  }
+  return string[0](fill: "");
+}
+
+/** The command for `coverage:<pkg>`, or `""`. */
+string commandFor(Task[] tasks, string pkg) {
+  for (i32 i = 0; i < tasks.len(); i++) {
+    if (tasks[i].name == "coverage:" + pkg) { return tasks[i].command; }
+  }
+  return "";
+}
+
+/**
+ * Where a package's driver actually is, read out of the *command* rather than assumed.
+ *
+ * `packages/<pkg>/cov.ts` is wrong for `core`, whose tree is at the repository root — and the version
+ * of this that assumed it reported `core` as having no driver at all while a `cov.ts` sat there. The
+ * same assumption would be wrong for the next tree that moves. The command names its own file, so
+ * that is what is read.
+ *
+ * `covreport.wac` is skipped because it is the shared *reporter* several wac drivers are run through,
+ * not any one package's driver — the first `.ts` or `.wac` that is not it is the answer.
+ */
+export string driverOf(string command) {
+  string[] words = splitOn(command, " ");
+  for (i32 i = 0; i < words.len(); i++) {
+    string w = words[i];
+    if (!endsWith(w, ".ts") && !endsWith(w, ".wac")) { continue; }
+    if (endsWith(w, "covreport.wac")) { continue; }
+    return w;
+  }
+  return "";
+}
+
+/** `s` cut at every `sep`, keeping nothing empty — the words of a command line. */
+string[] splitOn(string s, string sep) {
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    i32 at = 0;
+    i32 from = 0;
+    for (i32 i = 0; i <= s.len(); i++) {
+      if (i < s.len() && s.slice(i, i + 1) != sep) { continue; }
+      if (i > from) {
+        if (pass == 1) { out[at] = s.slice(from, i); }
+        at = at + 1;
+      }
+      from = i + 1;
+    }
+    if (pass == 1) { return out; }
+    n = at;
+  }
+  return string[0](fill: "");
+}
+
+/**
+ * The packages this sweep does **not** know about, which is a different thing from "no driver".
+ *
+ * `packagesOf` is derived from the `coverage:` tasks, and the comment there says why. True, and it has
+ * one consequence nobody had written down — a package with **no task at all** is not reported as
+ * having no driver. It is not reported. It does not exist to this file.
+ *
+ * So the summary line said "17 hold a coverage floor" over 21 packages while 18 more sat on disk with
+ * no measurement of any kind, and the number read like a near-complete answer. `issues/system/0205`
+ * is about floors; this is about the set they are floors over, and it is the same shape as
+ * `packages/http`'s `proxy.wac`, which was absent from that package's report rather than uncovered.
+ * The denominator is the one number that cannot warn you it is wrong, so it is printed.
+ *
+ * **Counted, not failed.** A package acquiring a driver is work, and a sweep that went red the moment
+ * this was noticed would have gone red for everyone, on somebody else's push, over a fact that has
+ * been true all along. It is a line of output and a name list.
+ */
+string[] unmeasured(Cli cli, string[] known) {
+  string[]? names = cli.readDir("packages").wait();
+  if (names is null) { return string[0](fill: ""); }
+  string[] here = names!;
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    i32 at = 0;
+    for (i32 i = 0; i < here.len(); i++) {
+      bool isKnown = false;
+      for (i32 k = 0; k < known.len(); k++) { if (known[k] == here[i]) { isKnown = true; } }
+      if (isKnown) { continue; }
+      // No `src/` — a package of fixtures or docs, not code this could measure.
+      if (!cli.stat("packages/" + here[i] + "/src").wait().isDir) { continue; }
+      if (pass == 1) { out[at] = here[i]; }
+      at = at + 1;
+    }
+    if (pass == 1) { sortStrings(out, out.len()); return out; }
+    n = at;
+  }
+  return string[0](fill: "");
+}
+
+/**
+ * The packages to run, longest-first, from the previous run's measurements.
+ *
+ * **The tail is the whole wall time, and alphabetical order put the tail last.** A run's best possible
+ * wall is `max(longest driver, work / workers)`; measured on 2026-08-29, back to back:
+ *
+ *     alphabetical    696s of work, longest 94s  ->  ideal 174s, actual 204s   (17% over)
+ *     longest-first   471s of work, longest 89s  ->  ideal 118s, actual 119s   ( 1% over)
+ *
+ * Compare the two ratios and not the two walls. The second run had a third less work in it — these
+ * share a machine with two other agents and with each other's warm caches — so 204s against 119s
+ * flatters this considerably. What the change bought is the distance from each run's own bound, and
+ * that went from 30s to 1s.
+ *
+ * `packages` arrives alphabetical and is left that way by the caller: it is what the report is sorted
+ * back into, and a reader scanning for a red should not have the rows move because a machine was busy.
+ *
+ * **A package with no recorded time goes first**, which is the safe end. An unknown is usually a new
+ * package and short, so putting it first costs nothing; putting it last risks re-creating the exact
+ * problem this fixes, for a package nobody has timed yet. With no file at all every package is
+ * unknown, they all compare equal, and the result is the alphabetical order that arrived — which is
+ * what a fresh checkout did before any of this existed. A stable sort is what makes that true, so this
+ * is an insertion sort rather than anything cleverer.
+ */
+export string[] dispatchOrder(string[] packages, string[] names, i64[] millis) {
+  string[] out = string[packages.len()](fill: "");
+  i64[] key = i64[packages.len()]();
+  for (i32 i = 0; i < packages.len(); i++) {
+    i64 t = recordedMs(packages[i], names, millis);
+    // Unknown sorts before every timed one, and equal to every other unknown.
+    i64 k = t < (0 as i64) ? 9000000000000000 : t;
+    i32 at = i;
+    while (at > 0 && key[at - 1] < k) {
+      key[at] = key[at - 1];
+      out[at] = out[at - 1];
+      at = at - 1;
+    }
+    key[at] = k;
+    out[at] = packages[i];
+  }
+  return out;
+}
+
+/** What `name` took last time, or -1. */
+i64 recordedMs(string name, string[] names, i64[] millis) {
+  for (i32 i = 0; i < names.len(); i++) { if (names[i] == name) { return millis[i]; } }
+  return -1 as i64;
+}
+
+/** The times file's text. Missing or unreadable is not an error — it is the first run. */
+string readTimes(Cli cli) {
+  FileResult f = cli.readFile(timesPath()).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // Announced so another agent's suite gate can see this: it builds programs and runs them, and
+  // nothing else made it visible. `issues/system/0142`.
+  string heavy = announce(core, cli, "coverage:all");
+
+  FileResult reg = cli.readFile(tasksFile()).wait();
+  if (!reg.ok) {
+    core.warn("coverage:all: cannot read " + tasksFile());
+    unannounce(cli, heavy);
+    return 1;
+  }
+  Task[] tasks = tasksIn(reg.bytes);
+  string[] packages = packagesOf(tasks);
+  if (packages.len() == 0) {
+    core.warn("coverage:all: no `coverage:` tasks in " + tasksFile() + " — did the registry move?");
+    unannounce(cli, heavy);
+    return 1;
+  }
+
+  string[] rows = splitLines(readTimes(cli));
+  string[] tNames = string[rows.len()](fill: "");
+  i64[] tMillis = i64[rows.len()]();
+  i32 tN = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    i32 tab = rows[i].indexOf("\t");
+    if (tab < 0) { continue; }
+    tNames[tN] = rows[i].slice(0, tab);
+    tMillis[tN] = atoi(rows[i].slice(tab + 1, rows[i].len())) as i64;
+    tN = tN + 1;
+  }
+
+  string[] dispatch = dispatchOrder(packages, tNames, tMillis);
+
+  i64 startedAll = nowMs(core);
+  Result[] results = Result[dispatch.len()](fill: Result("", 0, 0 as i64, "", ""));
+  i32 done = 0;
+
+  // The queue. Each slot holds one ticket; when any of them answers, its line is printed and the slot
+  // takes the next package. `waitAny` answers the *index* in the list it was handed, so the list is
+  // rebuilt each turn from the slots that are still busy.
+  //
+  // **Each line is printed when its package finishes, so they arrive out of order.** That is why the
+  // package name is on every line: the order was never what identified them. The summary and the
+  // failure reports below read `results`, which is filled in `packages` order, so what a reader scans
+  // for a red is stable even though the log is not.
+  i32 workers = WORKERS < dispatch.len() ? WORKERS : dispatch.len();
+  Pending<Exec>[] live = Pending<Exec>[workers]();
+  i32[] slotItem = i32[workers]();
+  i64[] slotStart = i64[workers]();
+  bool[] busy = bool[workers]();
+  i32 next = 0;
+
+  for (i32 s = 0; s < workers && next < dispatch.len(); s++) {
+    live[s] = cli.exec(binary(), string[]("task", "coverage:" + dispatch[next]), u8[0]());
+    slotItem[s] = next;
+    slotStart[s] = nowMs(core);
+    busy[s] = true;
+    next = next + 1;
+  }
+
+  while (true) {
+    i32 nBusy = 0;
+    for (i32 s = 0; s < workers; s++) { if (busy[s]) { nBusy = nBusy + 1; } }
+    if (nBusy == 0) { break; }
+    i32[] ids = i32[nBusy]();
+    i32[] slotOf = i32[nBusy]();
+    i32 at = 0;
+    for (i32 s = 0; s < workers; s++) {
+      if (!busy[s]) { continue; }
+      ids[at] = live[s].id;
+      slotOf[at] = s;
+      at = at + 1;
+    }
+    i32 which = core.waitAny(ids, -1);
+    if (which < 0) { continue; }
+
+    i32 slot = slotOf[which];
+    Exec r = live[slot].wait();
+    string pkg = dispatch[slotItem[slot]];
+    i64 ms = nowMs(core) - slotStart[slot];
+    string output = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+    // A driver that could not be started is a failure, and its `error` is the only thing that says so.
+    i32 status = r.ran() ? r.status : 1;
+    if (!r.ran()) { output = output + "error: " + r.error + "\n"; }
+    results[indexIn(packages, pkg)] = Result(pkg, status, ms, output, "");
+    done = done + 1;
+    core.log((status == 0 ? "ok  " : "FAIL") + "  coverage:" + pkg + "  " + seconds(ms));
+
+    busy[slot] = false;
+    if (next < dispatch.len()) {
+      live[slot] = cli.exec(binary(), string[]("task", "coverage:" + dispatch[next]), u8[0]());
+      slotItem[slot] = next;
+      slotStart[slot] = nowMs(core);
+      busy[slot] = true;
+      next = next + 1;
+    }
+  }
+
+  for (i32 i = 0; i < results.len(); i++) {
+    results[i] = Result(results[i].pkg, results[i].status, results[i].ms, results[i].output,
+                        kindOf(cli, driverOf(commandFor(tasks, results[i].pkg))));
+  }
+
+  writeTimes(cli, packages, results, tNames, tMillis);
+
+  i32 failed = 0;
+  i64 work = 0 as i64;
+  for (i32 i = 0; i < results.len(); i++) {
+    if (results[i].status != 0) { failed = failed + 1; }
+    work = work + results[i].ms;
+  }
+  i64 elapsed = nowMs(core) - startedAll;
+
+  core.log("\n" + itoa(results.len() - failed) + "/" + itoa(results.len()) + " ran in "
+           + wholeSeconds(elapsed) + "s (" + wholeSeconds(work) + "s of work at " + itoa(workers)
+           + " workers) — " + itoa(countKind(results, "floor")) + " hold a coverage floor, "
+           + itoa(countKind(results, "entries")) + " only check their own exemptions have not drifted, "
+           + itoa(countKind(results, "reports")) + " report and cannot fail"
+           + (countKind(results, "no driver") > 0
+              ? ", " + itoa(countKind(results, "no driver")) + " have no driver at all" : ""));
+
+  // **And which drivers cannot fail**, because the line above counts them and a count does not name.
+  // `1 report and cannot fail` sat in every gate's output; one is a number that reads as a rounding
+  // rather than as a package, and the sweep is the only thing that knows which. `issues/system/0288b`
+  // is what that one turned out to be. Everything that is not a floor, not only the `reports` ones: an
+  // `entries` driver can fail, but only when an exemption it already carries has drifted, so coverage
+  // falling past it is as silent there.
+  string weak = "";
+  for (i32 i = 0; i < results.len(); i++) {
+    if (results[i].kind == "floor" || results[i].pkg == "") { continue; }
+    weak = weak + (weak == "" ? "" : ", ") + results[i].pkg + " (" + results[i].kind + ")";
+  }
+  if (weak != "") { core.log("   no coverage floor: " + weak); }
+
+  // And what it is a sweep *of*, which the line above cannot say because it counts only what it ran.
+  string[] unswept = unmeasured(cli, packages);
+  if (unswept.len() > 0) {
+    core.log("   " + itoa(unswept.len())
+             + " package(s) have no coverage task and are not in the numbers above: "
+             + joined(unswept, ", "));
+  }
+
+  for (i32 i = 0; i < results.len(); i++) {
+    if (results[i].status == 0) { continue; }
+    core.log("\n── coverage:" + results[i].pkg + " (exit " + itoa(results[i].status) + ")");
+    string[] lines = splitLines(results[i].output);
+    i32 shown = 0;
+    for (i32 k = 0; k < lines.len(); k++) {
+      if (!verbose && !isFailureLine(lines[k])) { continue; }
+      core.log("   " + stripAnsi(lines[k]));
+      shown = shown + 1;
+    }
+    if (!verbose && shown == 0) {
+      core.log("   (nothing matched the known failure shapes — re-run with --verbose)");
+    }
+  }
+
+  unannounce(cli, heavy);
+  return failed > 0 ? 1 : 0;
+}
+
+/** Where `pkg` goes in the report, which is `packages` order and not dispatch order. */
+i32 indexIn(string[] packages, string pkg) {
+  for (i32 i = 0; i < packages.len(); i++) { if (packages[i] == pkg) { return i; } }
+  return 0;
+}
+
+/**
+ * The lines worth repeating from a failing driver's output.
+ *
+ * **`is listed as unreach` and not the whole sentence**, because the whole sentence was one word too
+ * specific. `packages/crypto`'s driver said "is listed as unreached but was covered" and gzip's
+ * `cov.ts` said "unreachable" — so a stale gzip entry of that kind exited 1 and had its only
+ * explanation filtered out here. What reached the screen was the *continuation* line, "That reason no
+ * longer holds — drop the entry.", which matched on `no longer holds` by accident: a reason with its
+ * subject removed, naming no file and no line.
+ */
+export bool isFailureLine(string line) {
+  return contains(line, "no longer holds")
+      || contains(line, "is listed as unreach")
+      || contains(line, "branch point(s) uncovered")
+      || startsWith(line, "error");
+}
+
+/** `line` without its colour escapes, which a log file should not carry. */
+export string stripAnsi(string line) {
+  string out = "";
+  i32 i = 0;
+  while (i < line.len()) {
+    if (line.slice(i, i + 1) != "\u{1b}") { out = out + line.slice(i, i + 1); i = i + 1; continue; }
+    // `ESC [ … m` — skip to the terminator rather than guessing its length.
+    i32 k = i + 1;
+    if (k < line.len() && line.slice(k, k + 1) == "[") {
+      while (k < line.len() && line.slice(k, k + 1) != "m") { k = k + 1; }
+      i = k + 1;
+      continue;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+/**
+ * How many of these can actually fail — and it is five of twenty-one.
+ *
+ * **The summary used to read `19/19 passed`, which is not what happened.** Only `crypto`, `fs`,
+ * `gzip`, `ssh` and `zstd` end their driver with a failure path; the others finish with `report(...)`
+ * and exit 0 whatever they measured. So a run where a package lost half its coverage says `passed`
+ * about it, and the paragraph `tools/push.sh` prints underneath — "a package above is below its
+ * recorded coverage" — is true of five of them.
+ *
+ * Read from each driver rather than hardcoded, so the number follows the drivers instead of aging into
+ * another wrong figure. Whether the other sixteen *should* assert a floor is a decision about each
+ * package, not something to infer here; naming the count is what stops the summary claiming it either
+ * way.
+ *
+ * **Either driver, and "no driver" is its own answer.** A package's driver is `cov.ts` until it moves
+ * to `test/cov_exercise.wac`, and reading only the first meant a converted package fell through into
+ * "reports" — right for one with no failure path, and a silent wrong answer for one that has it.
+ *
+ * **A wac driver is exercises and nothing else *unless it ratchets*.** The marker is the call to
+ * `tools/wac/covledger.wac`'s shared two-way ratchet — not a `return 1;` somewhere in the file, which
+ * would be a classification pretending to be a measurement. "floor" rather than "entries", and that is
+ * the stronger of the two: the shared ratchet fails when a point nothing reaches has no entry *and*
+ * when an entry it carries has been covered or has drifted.
+ */
+string kindOf(Cli cli, string path) {
+  if (path == "") { return "no driver"; }
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return "no driver"; }
+  string src = string.fromBytes(f.bytes);
+  if (endsWith(path, ".wac")) { return callsRatchet(src) ? "floor" : "reports"; }
+  if (!contains(src, "Deno.exit(1)")) { return "reports"; }
+  // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
+  // entry — a coverage floor. The other fails only when an entry it already carries has drifted onto
+  // the wrong line, which is rot-proofing for the ledger and says nothing about whether coverage fell.
+  return contains(src, "branch point(s) uncovered") ? "floor" : "entries";
+}
+
+/**
+ * A call to the shared ratchet, and not a name that merely ends in one.
+ *
+ * The TypeScript wrote `/\bratchet\(/`, and the boundary is the whole of it: `myRatchet(` or
+ * `subratchet(` would classify a driver as holding a coverage floor when it holds nothing of the
+ * kind, and the summary would over-count the checks that can actually fail. No driver has such a name
+ * today — checked — so this is written out rather than left to a substring that happens to agree.
+ * `packages/regex` refuses lookbehind, which is the right call and is why the predicate is by hand.
+ */
+export bool callsRatchet(string src) {
+  for (i32 i = 0; i + 8 <= src.len(); i++) {
+    if (src.slice(i, i + 8) != "ratchet(") { continue; }
+    if (i == 0) { return true; }
+    if (!isWordByte(src.slice(i - 1, i))) { return true; }
+  }
+  return false;
+}
+
+/** A byte `\b` would refuse to break on: a letter, a digit or `_`. */
+bool isWordByte(string c) {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
+}
+
+i32 countKind(Result[] results, string kind) {
+  i32 n = 0;
+  for (i32 i = 0; i < results.len(); i++) { if (results[i].kind == kind) { n = n + 1; } }
+  return n;
+}
+
+/**
+ * The times file, written whatever happened.
+ *
+ * A red package still took its time, and a run that fails is exactly the one somebody repeats — so the
+ * ordering it leaves behind should be the measured one rather than the one from before the package
+ * grew. Unwritable is not worth a word: the only cost is that the next run dispatches alphabetically.
+ *
+ * Seeded from the packages that exist *now*, not from the whole of last run's file: a package that
+ * loses its task would otherwise keep a time in here forever, and a stale key is the kind of thing
+ * that reads as a measurement later. A package that did not run this time keeps its old number, which
+ * is the point of the file.
+ *
+ * `tools/wac/suitehouse.wac`'s `mergedTimes` keeps stale keys instead, and the difference is not an
+ * inconsistency: this can drop them because the live set is a directory listing it already has. The
+ * set of suite chunks is not — it is whatever the queue built for the directories that run was asked
+ * about, which for a narrowed run is almost none of them.
+ */
+void writeTimes(Cli cli, string[] packages, Result[] results, string[] names, i64[] millis) {
+  string out = "";
+  for (i32 i = 0; i < packages.len(); i++) {
+    i64 fresh = -1 as i64;
+    for (i32 k = 0; k < results.len(); k++) {
+      if (results[k].pkg == packages[i]) { fresh = results[k].ms; }
+    }
+    i64 t = fresh >= (0 as i64) ? fresh : recordedMs(packages[i], names, millis);
+    if (t < (0 as i64)) { continue; }
+    out = out + packages[i] + "\t" + itoa64(t) + "\n";
+  }
+  cli.mkdir(".cache", true).wait();
+  cli.writeFile(timesPath(), out.toBytes()).wait();
+  // The file this replaced, so an orphan does not sit there looking like a live cache — which is the
+  // "reads as a measurement later" problem this function is already careful about.
+  cli.remove(staleTimesPath(), false).wait();
+}
+
+i64 nowMs(Core core) { return core.nowMillis().wait(); }
+
+/** `12.3s`, as each package's line reports it. */
+string seconds(i64 ms) {
+  i64 tenths = (ms + (50 as i64)) / (100 as i64);
+  return itoa64(tenths / (10 as i64)) + "." + itoa64(tenths % (10 as i64)) + "s";
+}
+
+/**
+ * Whole seconds, for the two figures in the summary.
+ *
+ * **Summed, not elapsed, for the second one, and it says so.** These overlap now, so the sum is the
+ * work done rather than the time taken — reporting it as elapsed would make a 4x speedup look like no
+ * change at all.
+ */
+string wholeSeconds(i64 ms) { return itoa64((ms + (500 as i64)) / (1000 as i64)); }

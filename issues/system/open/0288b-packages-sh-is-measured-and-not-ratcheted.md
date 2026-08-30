@@ -16,7 +16,7 @@ nothing reaches has no entry — except one:
     | packages/sh/ | 3068 | 2032 | 66.2 |
     1036 branch points never executed
 
-`packages/sh/cov.ts` prints that table and exits 0. `tools/coverageAll.ts` classifies a driver by
+`packages/sh/cov.ts` prints that table and exits 0. `tools/wac/coverageall.wac` classifies a driver by
 whether it ratchets, and calls this one **`reports`**; every other package is a **`floor`**.
 
 So sh's coverage is measured on every gate — 6.5s of the ratchet phase — and measured is all it is.
@@ -38,7 +38,7 @@ as a named package. The line does not say *which*.
 `site/src/next/Checked.tsx` says *"36 of the 40 packages carry a coverage ledger"* and names the four
 without one: `wacc`, `box`, `wac`, `ts`. `sh` is not among them, because the guard behind that
 sentence derives "carries a ledger" from **having a `coverage:` task** — which is how
-`tools/coverageAll.ts` derives its own list, and is the right derivation for what that file does.
+`tools/wac/coverageall.wac` derives its own list, and is the right derivation for what that file does.
 
 It is one package's worth of generous. There are 35 `test/cov_ledger.wac` files and 36 tasks, and the
 sentence beside the number describes a ledger as *"a file listing every branch point the suite does

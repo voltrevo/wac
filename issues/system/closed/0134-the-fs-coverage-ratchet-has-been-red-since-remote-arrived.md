@@ -52,7 +52,7 @@ green means something.
 `src/remote.wac` arrived on 2026-08-09 with the `Remote` backing
 ([0116](0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md)) — 92 branch points
 the probe never calls — and `fs.wac` grew the arms that dispatch to it. Nothing said so, because
-`deno task coverage:*` is deliberately not in the gate: `tools/coverageAll.ts` explains why, and its
+`deno task coverage:*` is deliberately not in the gate: `tools/wac/coverageall.wac` explains why, and its
 own header is the prediction that came true — "a check nobody runs rots back into the state above".
 
 The whole-repo sweep today, for whoever picks this up:
@@ -87,7 +87,7 @@ Three kinds, and only the first is mechanical:
 
 **Do not put `coverage:all` in the gate to fix this.** Two of the three reds are somebody else's, and
 a red check in the gate fails every other agent's push for something they did not do. That is
-`coverageAll.ts`'s own reasoning and it still holds.
+`tools/wac/coverageall.wac`'s own reasoning and it still holds.
 
 ## What was done
 

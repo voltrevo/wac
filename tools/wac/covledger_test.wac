@@ -15,7 +15,7 @@
 // uncovered case reported nothing to account for. The fixture was wrong in exactly the way the thing
 // under test exists to catch.
 //
-// **Every case checks a phrase `tools/coverageAll.ts` greps for**, because those strings are the
+// **Every case checks a phrase `tools/wac/coverageall.wac` greps for**, because those strings are the
 // interface and getting one wrong is invisible: the task still exits 1 and the reason is dropped.
 
 import { T } from "../../packages/wactest/src/assert.wac";
@@ -102,7 +102,7 @@ export string test_an_uncovered_point_with_no_entry_is_named(Core core, Cli cli)
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", noPins(), noRules());
   t.isTrue(failed, "an uncovered point nothing speaks for must fail the run");
 
-  // And says which one, by name: `tools/coverageAll.ts` repeats these lines verbatim.
+  // And says which one, by name: `tools/wac/coverageall.wac` repeats these lines verbatim.
   string[] out = string[4](fill: "");
   t.eqI32(uncoveredLines(twoPoints(dir), 2, oneEach(), dir + "/", out), 1, "one line uncovered");
   t.eqStr(out[0], f + ":2", "and it is the second line");

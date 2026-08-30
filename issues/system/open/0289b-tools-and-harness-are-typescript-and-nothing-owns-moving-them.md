@@ -65,12 +65,22 @@ The five `corpus:*` tools are self-contained despite the two imports that look l
 `designClaims.test.ts` as convertible-but-not-done. Both are done — `tools/wac/docsignatures_test.wac`
 and `tools/wac/designclaims_test.wac` exist and the TypeScript is gone.
 
-**2. `coverageAll.ts` (307), `coverageUnion.ts` (147) — and `coverageOrder.ts` (41) goes with them.**
-`coverageOrder.ts` looks like the ideal first port: 9 lines of logic, its own test, no I/O. It is
-not a leaf. It is a *library*, imported only by `coverageAll.ts`, and a TypeScript file cannot import
-a wac module — so porting it alone would leave two copies of the ordering rule or a broken import.
-Named here because it is the trap this ordering exists to record: **size is not the same as
-independence, and the entry points are what move.**
+**2. `coverageAll.ts` (307) — done 2026-08-30, `tools/wac/coverageall.wac`. `coverageUnion.ts` (147)
+is what is left.** `coverageOrder.ts` (41) went with it, and *that* is the part worth recording: it
+looks like the ideal first port — 9 lines of logic, its own test, no I/O — and it is not a leaf. It is
+a *library*, imported only by `coverageAll.ts`, and a TypeScript file cannot import a wac module, so
+porting it alone would have left two copies of the ordering rule or a broken import. **Size is not the
+same as independence, and the entry points are what move.**
+
+The two sweeps were run back to back and agree on every judgement they make: `37/37`, `36 hold a
+coverage floor, 0 only check their own exemptions have not drifted, 1 report and cannot fail`,
+`no coverage floor: sh (reports)`, and the same four unswept packages. The timings differ by 3% in
+the port's favour, which is noise on a machine three agents share and is not claimed as anything.
+
+It also gained the parser and the tests the TypeScript's own comments asked for — `tasksIn`, which is
+what `wac task` reads the registry with, instead of a hand-rolled strip that had already broken once;
+and cases for `driverOf`, the ratchet-call classifier, the failure-line filter and the ANSI strip,
+none of which had a test, because the only way to exercise them was a two-minute sweep.
 
 **3. Then `tools/suiteGate.ts` can be deleted, and not before.** Its header names its own exit
 condition: what is left in it is the *writer* of `/tmp/wac-heavy-<pid>`, because the eight tools that

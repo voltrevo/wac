@@ -169,7 +169,7 @@ twice, which is exactly what 0274b did here.
 
 ### One thing was schedulable, and it was the dispatch order
 
-`tools/coverageAll.ts` pulled packages off an **alphabetically sorted** list, so the longest driver
+`tools/wac/coverageall.wac` pulled packages off an **alphabetically sorted** list, so the longest driver
 started around the halfway mark and every other worker finished waiting for it. A run's best possible
 wall is `max(longest driver, work / workers)`; measured back to back on 2026-08-29:
 
@@ -238,7 +238,7 @@ the answer to a question this page had got wrong: the "95s of scheduling loss" i
 smallest of the numbers here"* was small only because one chunk was big enough to hide behind. Take
 the big chunk away and the tail is the whole story.
 
-Both queues ordered by a proxy. `tools/coverageAll.ts` pulled packages off an alphabetically sorted
+Both queues ordered by a proxy. `tools/wac/coverageall.wac` pulled packages off an alphabetically sorted
 list; `chunksOf` in `tools/runTests.wac` sorted chunks by file count, which its own comment called
 "a weak proxy for cost". A file count cannot see that twelve `packages/wacc` files are 183s and
 another twelve are 79s. Both now order by the previous run's measurements — `.cache/coverage-times.json`
@@ -338,7 +338,7 @@ merge to recover. With today's numbers both come to **450s**.
 **Where the 110s came from.** I compared the merged *floor* against the two measured *walls*, and a
 wall is a floor plus whatever the packing wastes. So what I costed was not the merge at all: it was
 the packing slack, which is real but belongs to whichever queue has it and is recoverable without
-merging anything. `tools/coverageAll.ts` and `chunksOf` are exactly that work, and it is already
+merging anything. `tools/wac/coverageall.wac` and `chunksOf` are exactly that work, and it is already
 done — the ratchets are within 1% of their floor, and the suite is 362s against 319s.
 
 **What a merge could still buy is that remaining 43s of suite slack**, and only some of it: a single
@@ -391,7 +391,7 @@ One queue over both:
 against 598s, so **about 110 seconds, or 18% of the gate** — larger than anything else left on this
 page, and it needs no test to get faster.
 
-**What it costs.** `tools/runTests.wac` owns the queue and `tools/coverageAll.ts` owns the drivers;
+**What it costs.** `tools/runTests.wac` owns the queue and `tools/wac/coverageall.wac` owns the drivers;
 merging means the ratchets become queue items with a `Chunk`-shaped label and their failures reported
 the way a lane's are. The ordering file already generalises — a driver is just another key. The real
 question is whether an instrumented build competing with four test chunks makes both slower than the

@@ -87,7 +87,7 @@ sitting.
 
 ## See also
 
-- `tools/coverageAll.ts` — runs all eighteen and names the failures; written for this.
+- `tools/wac/coverageall.wac` — runs all eighteen and names the failures; written for this.
 - wac-mono 0102 — one of gzip's, which turned out to be a promise the code cannot keep.
 
 ## Closed 2026-08-12 — green, and in the gate

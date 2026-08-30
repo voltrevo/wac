@@ -1851,7 +1851,7 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
   - **The ledgers are not.** packages/crypto/cov.ts is 1,100 lines and most of it is a reasoned list
     of points that *cannot* be reached and why, one entry at a time; gzip's had its own. All five have
     moved — `issues/system/0222` — and the content moved with them rather than being regenerated.
-  - `tools/coverageAll.ts` greps the output for `branch point(s) uncovered`, `no longer holds` and
+  - `tools/wac/coverageall.wac` greps the output for `branch point(s) uncovered`, `no longer holds` and
     `is listed as unreached but was covered`, so the phrasing is a contract between twenty producers
     and one consumer.
 
