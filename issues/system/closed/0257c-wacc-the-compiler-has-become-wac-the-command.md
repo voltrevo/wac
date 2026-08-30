@@ -18,7 +18,7 @@ Two sentences from the operator, and the second sharpens the first:
 **Both are about one structural mistake.** There is no `wac` entry in this repository. The seed, the
 native binary and every hosted build are made from packages/wacc/example/wacc.wac — the *compiler's*
 example — so the compiler's CLI is the unified command, and the seed artefact is even called
-`wacc.wasm`. `tools/seedFresh.test.ts` says it in passing: "the seed is built from
+`wacc.wasm`. `tools/wac/seedfresh_test.wac` says it in passing: "the seed is built from
 packages/wacc/example/wacc.wac — whose closure is `src/`, yes, but also the example itself".
 
 That produced the wrong answer I gave twice, in `docs/your-own-project.md` and in `issues/system/0230a`:
@@ -83,7 +83,7 @@ Under that rule:
 
 ## What it touches, which is why this is written down before it is done
 
-`tools/seed.sh` (`ENTRY=`), `tools/push.sh`, `tools/seedFresh.test.ts`, `packages/platform/build.ts`,
+`tools/seed.sh` (`ENTRY=`), `tools/push.sh`, `tools/wac/seedfresh_test.wac`, `packages/platform/build.ts`,
 `native/v8/build.rs` (the three embedded payloads and the `wacc.wasm` name),
 `packages/wacc/test/wac/commandparity_test.wac` (`ENTRY`), `docs/your-own-project.md`, and
 `issues/system/0230a`. The seed is built from this entry, so a half-finished move is a checkout that

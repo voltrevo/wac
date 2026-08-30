@@ -12,7 +12,7 @@
 //
 // ## Freshness
 //
-// mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: the built module is rebuilt when any
+// mtimes, the rule `tools/wac/seedfresh_test.wac` uses for the seed: the built module is rebuilt when any
 // file **the program is made of** — or the binary that builds it — is newer.
 //
 // It used to be the newest file under trees the caller named, and this comment defended that as
@@ -137,18 +137,38 @@ string resolvedFrom(string fromPath, string spec) {
 const i32 CLOSURE_CAP = 1024;
 
 /**
- * The newest modification time among `entry` and every file it imports, transitively.
+ * What one walk of a program's import closure found.
  *
- * A file that cannot be read answers `now`, so an artefact is rebuilt rather than trusted when the walk
- * cannot see what it is made of — the safe direction, since the alternative is asserting against
- * yesterday's build.
+ * `complete` is false when a file in the closure could not be read, which is the case `newestInClosure`
+ * turns into "newer than anything". It is separate from `newest` because a caller reporting to a human
+ * has to tell "nothing has changed" from "I could not look".
+ *
+ * `count` is here because a walk that did not resolve returns a closure of one file and is
+ * indistinguishable, from the time alone, from a walk that resolved and found nothing newer — so a
+ * caller asserting freshness has no way to notice that it has stopped asserting anything.
  */
-export i64 newestInClosure(Cli cli, string entry) {
+export struct Closure {
+  i64 newest;
+  string what;
+  i32 count;
+  bool complete;
+}
+
+/**
+ * `entry` and every file it imports, transitively: how many, which was modified last, and when.
+ *
+ * The walk `newestInClosure` below is a view of. Split out because two callers want different parts of
+ * one walk — the build cache wants the time, and a freshness check reporting to a human wants the file
+ * name to put in the message and the count to prove the walk resolved.
+ */
+export Closure closureOf(Cli cli, string entry) {
   string[] seen = string[CLOSURE_CAP](fill: "");
   seen[0] = entry;
   i32 n = 1;
   i32 at = 0;
   i64 newest = 0 as i64;
+  string what = "";
+  i32 files = 0;
   while (at < n) {
     string path = seen[at];
     at = at + 1;
@@ -156,9 +176,10 @@ export i64 newestInClosure(Cli cli, string entry) {
     // `std/…` and `core/…` resolve to nothing on disk: they live in the compiler, and the binary's own
     // mtime below is what covers them.
     if (!s.isFile) { continue; }
-    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+    files = files + 1;
+    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; what = path; }
     FileResult f = cli.readFile(path).wait();
-    if (!f.ok) { return nowMillis(cli); }
+    if (!f.ok) { return Closure(newest, what, files, false); }
     string[] specs = importsOf(string.fromBytes(f.bytes));
     for (i32 i = 0; i < specs.len(); i++) {
       string next = resolvedFrom(path, specs[i]);
@@ -170,7 +191,19 @@ export i64 newestInClosure(Cli cli, string entry) {
       n = n + 1;
     }
   }
-  return newest;
+  return Closure(newest, what, files, true);
+}
+
+/**
+ * The newest modification time among `entry` and every file it imports, transitively.
+ *
+ * A file that cannot be read answers `now`, so an artefact is rebuilt rather than trusted when the walk
+ * cannot see what it is made of — the safe direction, since the alternative is asserting against
+ * yesterday's build.
+ */
+export i64 newestInClosure(Cli cli, string entry) {
+  Closure c = closureOf(cli, entry);
+  return c.complete ? c.newest : nowMillis(cli);
 }
 
 /** A stand-in for "newer than anything", used when the closure cannot be read. */
@@ -213,7 +246,7 @@ export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/re
  * --release`, in two languages, with five skip messages and two freshness checks that differed in
  * whether they walked `target/` — so the same 2.6s cargo no-op was paid per file, and one of the
  * checks rebuilt every run. `wac task seed`, and `wac task seed:native` for just this crate, own the
- * build now; `tools/seedFresh.test.ts` fails when the binary is older than its sources.
+ * build now; `tools/wac/seedfresh_test.wac` fails when the binary is older than its sources.
  * `issues/system/0208`.
  *
  * The reason is returned rather than warned, so the caller can put it in its own skip line — the four
@@ -229,7 +262,7 @@ export string nativeHostWhyNot(Cli cli) {
   // forever: `native/v8/seed/*.wasm` is the *seed's output*, written by every `wac task seed`, and it
   // lives under `native/` without being inside a `target/`. So every seed made the wasmtime binary look older
   // than its sources, six callers skipped their native halves, and the two that *assert* the native
-  // half ran failed in the gate. The list is `tools/seedFresh.test.ts`'s, which had it right, and it
+  // half ran failed in the gate. The list is `tools/wac/seedfresh_test.wac`'s, which had it right, and it
   // is `native/`'s crate — `native/v8` is the other one.
   string[] inputs = string[]("native/src", "native/manifest/src", "native/Cargo.toml",
                              "native/Cargo.lock", "native/build.rs");

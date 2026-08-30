@@ -98,7 +98,7 @@ bool copyOver(Cli cli, string from, string to) {
  * cases writing `net.txt` in one place would race — and pays for it in file copies rather than
  * process starts.
  *
- * Freshness is mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: anything newer than the
+ * Freshness is mtimes, the rule `tools/wac/seedfresh_test.wac` uses for the seed: anything newer than the
  * built launcher under the sources these are made from, or under the builder itself, and all four are
  * built again. It is coarser than an import walk on purpose — after any edit in those trees the first
  * case rebuilds and the other twelve reuse, which is the shape that matters here.

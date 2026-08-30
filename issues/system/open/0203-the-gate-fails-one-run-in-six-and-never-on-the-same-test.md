@@ -276,12 +276,12 @@ passes. CLAUDE.md describes this case exactly — what it does not say is that t
 **trap** rather than a diagnostic, which is why it read as a mystery here.
 
 So this entry leaves the population it was filed into: the earlier gate failure was the same thing —
-that gate had pulled immediately before running, and `seedFresh` failed in the same suite, which is the
+that gate had pulled immediately before running, and `seedfresh` failed in the same suite, which is the
 tell. Nothing about it tracked load; it tracked *when a pull brought a wacc change*. The two peer
 failures above are unaffected.
 
 **What would have said so immediately** is the seed's own freshness, and the suite does check it —
-`tools/seedFresh.test.ts` failed in that same run and was read as a second, separate problem. A trap
+`tools/wac/seedfresh_test.wac` failed in that same run and was read as a second, separate problem. A trap
 from the compiler and a stale seed in one suite are one fact, and the fix is `seed:bootstrap`.
 
 ## Two more, on 2026-08-25, and the tell is the *duration* — agent-c

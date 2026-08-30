@@ -71,12 +71,20 @@ Two moved — `duplicatedLine` and `wacProbesReached`, both repo-wide text guard
 repository rather than TypeScript. Two more were looked at and **stay for reasons that are not "the
 subject is TypeScript"**, which is worth writing down because that is the interesting case:
 
-- **`seedFresh.test.ts` (87) stays because of *when* it runs.** `tools/wac/*` is not in the wac lane —
-  `LANE_ROOTS` is `packages` and `core` — so those files run only in `deno task docs`, which
+- ~~**`seedFresh.test.ts` (87) stays because of *when* it runs.**~~ `tools/wac/*` is not in the wac
+  lane — `LANE_ROOTS` is `packages` and `core` — so those files run only in `deno task docs`, which
   `tools/push.sh` runs *after* the suite and does not reach when the suite is red. A stale seed makes
   the suite fail in ways that say nothing about a seed, and this check's whole value is being the
   sentence that explains it. Moving it would delay the explanation past the failure it explains. The
   port itself is easy: `packages/wactest/src/built.wac`'s `newestInClosure` is `wacFiles` already.
+
+  **Wrong, and ported on 2026-08-30 — `tools/wac/seedfresh_test.wac`.** The argument above is about
+  the *lane*, and this file's call sites were never in one: `tools/push.sh` runs it **directly**, at
+  line 236 before the suite and again in the retry loop, and it now runs the wac version at those
+  same two lines. So nothing was delayed past the failure it explains. The lesson is the one this
+  issue keeps re-learning one level down — ask which caller actually reaches the code before
+  believing a constraint about how it is reached. It was also 237 lines by then rather than 87,
+  because a second and a third artefact had been added to it.
 - **`discovery.test.ts` (85) stays because its subject is `deno test`'s own collection rule** — which
   files the runner will import and therefore execute, including the bare `test.ts` that cost a host
   reboot. Its second case exists to guard the first against Deno changing that rule. A wac test could

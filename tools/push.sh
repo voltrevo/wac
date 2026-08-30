@@ -214,9 +214,9 @@ fi
 # back. The content ends up byte-identical and the mtime does not, so there is no diff to look at and
 # nothing about the tree says the seed is behind. `issues/system/0160`.
 #
-# The same condition as the one in the loop, and for the same reason: `tools/seedFresh.test.ts` owns
-# the question, so this cannot drift from the definition because it *is* the definition.
-# **And the wasmtime host, for the same reason one step earlier.** `seedFresh.test.ts` checks three
+# The same condition as the one in the loop, and for the same reason: `tools/wac/seedfresh_test.wac`
+# owns the question, so this cannot drift from the definition because it *is* the definition.
+# **And the wasmtime host, for the same reason one step earlier.** `seedfresh_test.wac` checks three
 # things and `wac task seed` rebuilds only one of them: it builds `native/v8`, so a merge touching
 # `native/src/` leaves `native/target/release/wac` behind and the suite fails on *"the wasmtime host,
 # if built, is not older than the Rust it is built from"*. The retry path below already rebuilds it
@@ -233,7 +233,7 @@ if [ -f native/target/release/wac ] && ! (cd native && cargo build --release >/d
   exit 1
 fi
 
-if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
+if ! "$WAC" test --allow-read --allow-env tools/wac/seedfresh_test.wac >/dev/null 2>&1; then
   echo "== the seed is older than the tree — rebuilding before the suite =="
   # **Kept, not discarded.** This was `>/dev/null 2>&1` and the advice below was "run it by hand to
   # see why", which is a round trip for output that had already been produced and thrown away. The
@@ -706,13 +706,13 @@ for attempt in 1 2 3; do
   # The seed is built from the whole import closure of `packages/wac/src/wac.wac`, which reaches
   # `packages/bytes`, `packages/platform`, `packages/fs` and more — so a merge touching
   # `packages/bytes/src/buf.wac` aged the seed, this condition said no, and the retry failed on
-  # `seedFresh` after 364 seconds. Naming the directories means keeping a copy of that closure here and
+  # `seedfresh` after 364 seconds. Naming the directories means keeping a copy of that closure here and
   # being wrong the first time somebody adds an import.
   #
-  # `tools/seedFresh.test.ts` already owns the question — it compares both artefacts against everything
+  # `tools/wac/seedfresh_test.wac` already owns the question — it compares both artefacts against everything
   # they are built from — and answering it costs about 200ms. So the condition is that test, and it
   # cannot drift from the definition because it *is* the definition.
-  if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
+  if ! "$WAC" test --allow-read --allow-env tools/wac/seedfresh_test.wac >/dev/null 2>&1; then
     echo "   the merge aged the seed or a host — rebuilding"
     if ! "$WAC" task seed > "$log.seed" 2>&1; then
       echo "== the seed would not rebuild after the merge: not retrying =="

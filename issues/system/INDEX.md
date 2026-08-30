@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0289b](open/0289b-tools-and-harness-are-typescript-and-nothing-owns-moving-them.md) | `tools/` and `harness/` are **15,437 lines of TypeScript in 82 files** and no issue owns moving them — `0161` covers `packages/**/*.test.ts` and says in as many words that these two directories are "a different project". The order matters and is not obvious: `coverageOrder.ts` looks like the ideal first port and is a *library* that must move with its importer; `suiteGate.ts` cannot be deleted until the eight tools that announce themselves have moved. Three of `0161`'s recorded blockers no longer hold — `docSignatures` and `designClaims` were already ported, and `seedFresh` was kept for a lane argument that does not apply to its call sites, since `push.sh` invokes it directly; it is `tools/wac/seedfresh_test.wac` as of 2026-08-30. `tools/mutate/` is 2,941 of those lines and `ls tools/*.ts` does not show it | missing feature | not implemented |
 | [0288b](open/0288b-packages-sh-is-measured-and-not-ratcheted.md) | `packages/sh` has a coverage task and no ledger, so its 1,036 uncovered points hold no floor and the gate's summary counts it without naming it | bug | no error |
 | [0287b](open/0287b-the-build-cache-is-off-on-every-host-but-one.md) | only `native/v8` sets `WAC_COMPILER_ID`, so `cacheKey` refuses to key a build on any other host and the spec says it caches | bug | no error |
 | [0286b](open/0286b-a-one-package-test-run-spends-the-twenty-minute-push-budget.md) | `wac task test <package>` stamps the cooldown, so 1.3s of work refuses the next push for twenty minutes | bug | no error |
@@ -78,7 +79,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-288 issues, 227 closed.
+289 issues, 227 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on

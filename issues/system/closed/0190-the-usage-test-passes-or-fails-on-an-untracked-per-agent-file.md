@@ -105,7 +105,7 @@ when it was built:
     -rw-rw-rw- 820954 Aug 15 00:01 sh.wasm      # two days old
     -rw-rw-rw- 776837 Aug 17 23:20 wacc.wasm    # rebuilt by `deno task seed`
 
-`tools/seedFresh.test.ts` watches `wacc.wasm` against the sources it is built from — that guard exists
+`tools/wac/seedfresh_test.wac` watches `wacc.wasm` against the sources it is built from — that guard exists
 because of `issues/system/0160`, "the binary's seed goes stale in silence" — and it does not watch
 `sh.wasm` at all. So `wac sh` runs whatever shell was last built into the binary, and nothing says how
 old it is.

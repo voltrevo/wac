@@ -75,7 +75,7 @@ string built(Cli cli) { return root(cli) + "/" + BUILT; }
  * printed nothing and the rebuild never triggered**. Only `Cargo.toml` was ever watched.
  *
  * `wac task seed` owns this build now, `seed:native` does just this crate, and
- * `tools/seedFresh.test.ts` fails when the binary is older than its sources — over the whole crate,
+ * `tools/wac/seedfresh_test.wac` fails when the binary is older than its sources — over the whole crate,
  * recursively. `issues/system/0208`.
  */
 string nativeBinary(Cli cli) {
