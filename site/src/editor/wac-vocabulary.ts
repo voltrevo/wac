@@ -24,6 +24,7 @@ export const KEYWORDS = new Set<string>([
   "if", "else", "while", "for", "do", "switch", "case", "default",
   "break", "continue", "return", "trap", "true", "false", "null",
   "is", "not", "as", "void", "fn", "enum", "match",
+  "async", "await",
 ]);
 
 /**
