@@ -298,3 +298,19 @@ thing to look at, and each is a separate question about which copy is the real o
 *"Nothing convertible left" was said on 2026-08-19 and was wrong once* — so 31 files is a
 determination to re-check rather than a fact to build on. What is said here is what follows from the
 determinations as they stand today, not a claim that they are all correct.
+
+## The nine unblock — 2026-08-30
+
+`issues/lang/0291c` closed as not reproducing, so `0290b` is not blocked, so the nine tasks behind it
+are not blocked: the five `corpus:*`, `mutate`, `mutate:diff`, `mutate:operators` and `flags:ignored`.
+
+The chain was three deep and two of its links were wrong. `0290b` said the fix needed a seventh
+parameter on `execWith` and could not have one, because `0291c` said a seventh parameter drops the
+module's entry point. `0291c` said that because its reproduction edited `std/platform.wac` without
+regenerating the compiler's embedded copy of it, which is `issues/system/0291b`. Each link was
+recorded honestly and each was checked by the person after; what settled it was running the
+reproduction rather than reading it.
+
+So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts, then port nine
+tools that all want a scratch directory to run something in. `mutate` additionally has
+`issues/system/0183`, which is its own thing.

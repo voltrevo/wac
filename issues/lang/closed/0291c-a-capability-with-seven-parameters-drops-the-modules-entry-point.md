@@ -1,6 +1,6 @@
 # 0291 — a capability with seven parameters silently drops the module's entry point
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-c
 - **Date:** 2026-08-29
 - **Kind:** bug
@@ -179,3 +179,59 @@ docstring calls the sharing *"the whole hazard"* — safe only because `exportSi
 moves. `test/wac/describewac_test.wac` compares the folded call against the two separate ones and is
 the check that would notice; running the seventh-parameter reproduction against *that test* is a
 cheaper experiment than the whole bootstrap, and it is the one I would do next.
+
+## Ran it with `gen:core`, and it does not reproduce — agent-b, 2026-08-30
+
+The reproduction above says "change nothing else". The thing that also has to change is the
+compiler's **embedded copy** of `std/platform.wac`, and nothing in `./bootstrap.sh` did it — which is
+`issues/system/0291b`, filed and fixed today. Without that step the eleven call sites and both stubs
+are seven-parameter code compiled against a six-parameter `Cli`, because an import of
+`"std/platform.wac"` is served `packages/wacc/src/coretext.wac` and never touches the disk.
+
+So I did the same edit and added the one step:
+
+    spawn: six parameters -> seven, in both places platform.wac declares it
+    noSpawn, fakeSpawn, and all eleven call sites updated to match
+    wac task gen:core          <- the step
+    ./bootstrap.sh --no-install
+
+    bootstrap: building the wac command with it
+    wacc built packages/wac/src/wac.wac: 1741592 bytes
+    wrote native/v8/seed/wacc.wasm with a wac.manifest section
+    bootstrap: fixed point, round 1 of at most 4
+    bootstrap: it is a fixed point after 1 round(s), 1857049 bytes
+    bootstrap: and it compiles and runs a program
+    bootstrap: built native/v8/target/release/wac — not installed
+
+Exit 0. The fixed point is the strong part: reaching it means the compiler built with a
+seven-parameter capability rebuilt **wacc itself**, which is the operation this issue says fails.
+
+And the symptom specifically. This issue's evidence is `"exports": []` in the manifest beside 1473
+wasm exports. Building the seed app with the seven-parameter compiler:
+
+    "exports": [
+        {
+          "name": "main",
+          "params": [ "Core", "Cli" ],
+          "ret": "i32"
+        }
+      ]
+
+`main` is there. `wac check` answers normally, and `packages/rlp`'s tests pass on the new compiler.
+Everything was reverted afterwards; this was an experiment, not a change.
+
+**What was actually seen, then.** Editing `std/platform.wac` and running `./bootstrap.sh` — exactly
+the recipe above minus `gen:core` — built a compiler whose `Cli` still had six parameters while every
+caller had seven. That is a whole-graph type mismatch arriving with no diagnostic, which is a fair
+description of what this issue records, and it also explains why `issues/lang/0290c` — a funcref whose
+type does not match its struct field, emitted rather than refused — turned up in the same afternoon's
+work from the same edit. The two were filed as independent; on this reading they are the same cause
+seen from two sides, and 0290c is the one that is really about the compiler.
+
+**Closing this, and reopening is cheap if I am wrong**: the recipe is above and the only difference is
+one command. As of today `./bootstrap.sh` refuses to build against a stale embedding, so the state
+this was found in can no longer be reached by accident.
+
+**Two issues unblock.** `issues/system/0290b` wanted a seventh parameter on `execWith` and recorded
+itself as blocked here; it is not. `issues/system/0282c` wanted one on `spawn` and took a
+fold-two-flags-into-an-i32 workaround to stay at six; it does not need it.

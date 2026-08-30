@@ -141,3 +141,26 @@ between it and a broken tree.
 So the fold is 35 mechanical edits and 8 judgements, against 9 tasks unblocked. That is the size of
 the commit rather than an argument against it — but it does mean the change lands in one piece across
 five hosts, and `0291c` is the reason it cannot land as the smaller one.
+
+## Not blocked after all — 2026-08-30
+
+`issues/lang/0291c` is closed: it does not reproduce. Its recipe edits `std/platform.wac` and runs
+`./bootstrap.sh`, and nothing regenerated the compiler's embedded copy of that file — so seven
+parameters were being compiled against a six-parameter `Cli`. That is `issues/system/0291b`, fixed
+the same day. With `wac task gen:core` in the recipe, a seven-parameter `spawn` bootstraps to its
+fixed point in one round and the seed app's manifest lists `main(Core, Cli)`.
+
+So **`execWith` can simply take a seventh parameter**, and the two sections above are wrong about the
+shape of the fix — not about the fix. The straightforward version is back:
+
+    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWith;
+    //                path    args      stdin  env       clearEnv inherit cwd
+
+with empty meaning "this program's directory", matching `spawn`'s `cwd` exactly — same name, same
+meaning, same empty-is-inherit rule. `Cli.exec` keeps its arity by passing `""`.
+
+The fold-two-flags-into-an-i32 alternative is still worth considering on its own merits, because
+`cli.execWith(path, args, stdin, env, false, false)` is a call site nobody can read. But it is now a
+choice about the signature rather than a way round a compiler bug, and the counted cost above — 35
+call sites, 8 with a real flag, 398 untouched behind `Cli.exec` — is the cost of the *fold*, not of
+the parameter. Adding a parameter touches only the declaration, the two stubs and `Cli.exec`.
