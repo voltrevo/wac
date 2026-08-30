@@ -155,16 +155,16 @@ export string[] synthWords(i32 ups, i32 states) {
   string[] out = string[fixed.len() + 3 * n + nums]();
   for (i32 i = 0; i < fixed.len(); i++) { out[i] = fixed[i]; }
   for (i32 i = 0; i < n; i++) {
-    out[fixed.len() + 3 * i] = "__wacUp" + numOf(i);
-    out[fixed.len() + 3 * i + 1] = "__wacVal" + numOf(i);
-    out[fixed.len() + 3 * i + 2] = "__wacHand" + numOf(i);
+    out[fixed.len() + 3 * i] = "__wacUp" + synthDecimal(i);
+    out[fixed.len() + 3 * i + 1] = "__wacVal" + synthDecimal(i);
+    out[fixed.len() + 3 * i + 2] = "__wacHand" + synthDecimal(i);
   }
-  for (i32 i = 0; i < nums; i++) { out[fixed.len() + 3 * n + i] = numOf(i); }
+  for (i32 i = 0; i < nums; i++) { out[fixed.len() + 3 * n + i] = synthDecimal(i); }
   return out;
 }
 
 /** Decimal, without pulling `packages/fmt` into the compiler's own dependencies. */
-string numOf(i32 n) {
+string synthDecimal(i32 n) {
   if (n == 0) { return "0"; }
   string out = "";
   i32 v = n;
@@ -179,7 +179,7 @@ string numOf(i32 n) {
 string synthMarker() { return "// wac:async-synth "; }
 
 /** A source with the tail appended, or the same bytes when it is already there. */
-export u8[] synthTail(u8[] src, i32 ups, i32 states) {
+export u8[] synthSource(u8[] src, i32 ups, i32 states) {
   if (synthBase(src) >= 0) { return src; }
   string tail = "\n" + synthMarker();
   string[] w = synthWords(ups, states);
@@ -197,7 +197,7 @@ export u8[] synthTail(u8[] src, i32 ups, i32 states) {
 /**
  * Where the first word sits in `src`, or -1 when the tail is not there.
  *
- * Searched for rather than remembered, so `synthTail` is idempotent and a source that has been
+ * Searched for rather than remembered, so `synthSource` is idempotent and a source that has been
  * through it twice — which `Lexed`'s re-lex note makes possible — is not extended twice.
  */
 export i32 synthBase(u8[] src) {

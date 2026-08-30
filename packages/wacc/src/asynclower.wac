@@ -59,7 +59,7 @@ import {
 import { Lexed } from "./lex.wac";
 import { AsyncPlan, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
-  synthTail, synthTokens, synthTok, synthTextAt,
+  synthSource, synthTokens, synthTok, synthTextAt,
   synthPending, synthWait, synthThen, synthSched, synthDetach, synthState, synthDone, synthRes,
   synthStep, synthAssign, synthI32, synthBool, synthVoid, synthId, synthV, synthResolve,
   synthSettled, synthDrop, synthArmed, synthWaitAt, synthNoStep, synthStepFn, synthMachine,
@@ -191,7 +191,7 @@ Expr eCallLocal(Ctx c, i32 tok) {
  */
 Stmt sCallStep(Ctx c) {
   Stmt[] out = Stmt[2](fill: sRet(c, null));
-  out[0] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tBool(c)), Ty[]()), tStepFn(c),
+  out[0] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()), tStepFn(c),
                              eCell(c, tStep(c)), false), c.line, freshCol(c));
   out[1] = sExpr(c, eCallLocal(c, tStepFn(c)));
   return sBlock(c, out);
@@ -244,7 +244,7 @@ Ty cloneTy(Ty t) {
  * Whether `t` is `void`.
  *
  * **A machine for an `async void` has no answer to keep.** Every other return type gets a cell to
- * put the answer in; `void[1]()` is not a thing, and `Pending<void>`'s resolver takes no value and
+ * lowPut the answer in; `void[1]()` is not a thing, and `Pending<void>`'s resolver takes no value and
  * returns none — which is what `design/lang/0014` D5 made expressible in the first place.
  */
 bool isVoidTy(Ctx c, Ty t) {
@@ -254,23 +254,23 @@ bool isVoidTy(Ctx c, Ty t) {
   }
 }
 
-Ty tyPrim(Ctx c, i32 tok) { return Ty(TyKind.Prim(tok), c.line, c.col); }
-Ty tyArr(Ctx c, Ty el) { return Ty(TyKind.Arr(el), c.line, c.col); }
-Ty tyOpt(Ctx c, Ty el) { return Ty(TyKind.Nullable(el), c.line, c.col); }
-Ty tyPending(Ctx c, Ty el) {
+Ty lowPrimTy(Ctx c, i32 tok) { return Ty(TyKind.Prim(tok), c.line, c.col); }
+Ty lowArrTy(Ctx c, Ty el) { return Ty(TyKind.Arr(el), c.line, c.col); }
+Ty lowOptTy(Ctx c, Ty el) { return Ty(TyKind.Nullable(el), c.line, c.col); }
+Ty lowPendingTy(Ctx c, Ty el) {
   return Ty(TyKind.Named(tPend(c), Ty[1](fill: cloneTy(el))), c.line, c.col);
 }
-Ty tyFn(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, c.col); }
+Ty lowFnTy(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, c.col); }
 
 /** `T[] name = T[1]();` */
 Stmt sCellDecl(Ctx c, i32 nameTok, Ty el) {
   Expr mk = Expr(ExprKind.ArrNew(el, eInt(c, 1), null, Expr[]()), c.line, c.col);
-  return Stmt(StmtKind.Var(tyArr(c, el), nameTok, mk, false), c.line, freshCol(c));
+  return Stmt(StmtKind.Var(lowArrTy(c, el), nameTok, mk, false), c.line, freshCol(c));
 }
 
 /** `Pending<T>? name = null;` */
 Stmt sSlotDecl(Ctx c, i32 nameTok, Ty el) {
-  return Stmt(StmtKind.Var(tyOpt(c, tyPending(c, el)), nameTok, eNull(c), false),
+  return Stmt(StmtKind.Var(lowOptTy(c, lowPendingTy(c, el)), nameTok, eNull(c), false),
               c.line, freshCol(c));
 }
 
@@ -564,17 +564,17 @@ struct Bld {
   Ty ret;
 }
 
-i32 alloc(Bld b) {
+i32 lowAlloc(Bld b) {
   if (b.n >= b.states.len()) { return b.n - 1; }
   b.n = b.n + 1;
   return b.n - 1;
 }
 
-void put(Bld b, i32 id, Stmt[] body) {
+void lowPut(Bld b, i32 id, Stmt[] body) {
   if (id >= 0 && id < b.states.len()) { b.states[id] = body; }
 }
 
-Stmt[] join(Ctx c, Stmt[] head, Stmt[] tail) {
+Stmt[] lowJoin(Ctx c, Stmt[] head, Stmt[] tail) {
   Stmt[] out = Stmt[head.len() + tail.len()](fill: sRet(c, null));
   for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
   for (i32 i = 0; i < tail.len(); i++) { out[head.len() + i] = tail[i]; }
@@ -606,8 +606,8 @@ i32 lowerSeq(Bld b, Stmt[] body, i32 next) {
       for (i32 k = 0; k < count; k++) {
         run[k] = subStmt(b.c, body[j + 1 + k], false, brkTo, contTo);
       }
-      i32 e = alloc(b);
-      put(b, e, join(b.c, run, gotoS(b.c, entry)));
+      i32 e = lowAlloc(b);
+      lowPut(b, e, lowJoin(b.c, run, gotoS(b.c, entry)));
       entry = e;
       i = j;
     }
@@ -634,7 +634,7 @@ i32 lowerSuspend(Bld b, Expr awaited, Ty ty, i32 rest) {
   if (k < b.slotTy.len()) { b.slotTy[k] = cloneTy(ty); }
 
   // Taking the answer by waiting — and taking back the continuation first, or it is delivered twice.
-  i32 waitS = alloc(b);
+  i32 waitS = lowAlloc(b);
   Expr up = eBang(c, eId(c, tUp(c, k)));
   Expr sched = eBang(c, eDot(c, up, tSched(c)));
   Stmt[] det = Stmt[2](fill: sRet(c, null));
@@ -643,10 +643,10 @@ i32 lowerSuspend(Bld b, Expr awaited, Ty ty, i32 rest) {
   Stmt[] w = Stmt[2](fill: sRet(c, null));
   w[0] = Stmt(StmtKind.If(eCell(c, tArmed(c)), det, Stmt[]()), c.line, c.col);
   w[1] = sCellSet(c, tVal(c, k), eCall0(c, eDot(c, up, tWait(c))));
-  put(b, waitS, join(c, w, gotoS(c, rest)));
+  lowPut(b, waitS, lowJoin(c, w, gotoS(c, rest)));
 
   // Suspending. The default is "only a wait can move this"; registering upgrades it.
-  i32 susp = alloc(b);
+  i32 susp = lowAlloc(b);
   Stmt[] arm = Stmt[3](fill: sRet(c, null));
   arm[0] = sCellSet(c, tState(c), eInt(c, rest));
   arm[1] = sCellSet(c, tArmed(c), eBool(c, true));
@@ -658,7 +658,7 @@ i32 lowerSuspend(Bld b, Expr awaited, Ty ty, i32 rest) {
   sus[2] = sCellSet(c, tState(c), eInt(c, waitS));
   sus[3] = Stmt(StmtKind.If(eNotNull(c, eDot(c, up, tSched(c))), arm, Stmt[]()), c.line, c.col);
   sus[4] = sRet(c, eBool(c, false));
-  put(b, susp, sus);
+  lowPut(b, susp, sus);
   return susp;
 }
 
@@ -668,17 +668,17 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
   match (s.kind) {
     // `T x = await e;` — suspend, then bind from the slot and carry on.
     case Var(type, nameTok, init, isConst): {
-      i32 rest = alloc(b);
+      i32 rest = lowAlloc(b);
       i32 k = b.slot[0];
-      put(b, rest, join(c, Stmt[1](fill: sCellSet(c, nameTok, eCell(c, tVal(c, k)))),
+      lowPut(b, rest, lowJoin(c, Stmt[1](fill: sCellSet(c, nameTok, eCell(c, tVal(c, k)))),
                         gotoS(c, next)));
       return lowerSuspend(b, subExpr(c, innerAwait(c, init)), type, rest);
     }
     // `return await e;` — suspend, then the answer *is* the machine's.
     case Return(value): {
-      i32 rest = alloc(b);
+      i32 rest = lowAlloc(b);
       i32 k = b.slot[0];
-      put(b, rest, Stmt[1](fill: sFinish(c, eCell(c, tVal(c, k)))));
+      lowPut(b, rest, Stmt[1](fill: sFinish(c, eCell(c, tVal(c, k)))));
       return lowerSuspend(b, subExpr(c, innerAwait(c, (value is null) ? eNull(c) : value!)),
                           cloneTy(b.ret), rest);
     }
@@ -686,11 +686,11 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     case If(cond, then, els): {
       i32 tEntry = lowerSeq(b, then, next);
       i32 eEntry = els.len() > 0 ? lowerSeq(b, els, next) : next;
-      i32 head = alloc(b);
+      i32 head = lowAlloc(b);
       Stmt[] hd = Stmt[2](fill: sRet(c, null));
       hd[0] = Stmt(StmtKind.If(subExpr(c, cond), gotoS(c, tEntry), Stmt[]()), c.line, c.col);
       hd[1] = sBlock(c, gotoS(c, eEntry));
-      put(b, head, hd);
+      lowPut(b, head, hd);
       return head;
     }
     // **The loop, which is the whole reason this is a state machine.** The header tests and either
@@ -698,54 +698,54 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     // and none is needed — the dispatch is at the top of the `while`, so *every* state is reachable
     // from it, including one in the middle of what used to be a loop.
     case While(cond, body): {
-      i32 head = alloc(b);
-      push(b, next, head);
+      i32 head = lowAlloc(b);
+      lowPush(b, next, head);
       i32 bodyEntry = lowerSeq(b, body, head);
-      pop(b);
+      lowPop(b);
       Stmt[] hd = Stmt[2](fill: sRet(c, null));
       hd[0] = Stmt(StmtKind.If(subExpr(c, cond), gotoS(c, bodyEntry), Stmt[]()), c.line, c.col);
       hd[1] = sBlock(c, gotoS(c, next));
-      put(b, head, hd);
+      lowPut(b, head, hd);
       return head;
     }
     case For(init, cond, update, body): {
-      i32 head = alloc(b);
-      i32 step = alloc(b);
-      push(b, next, step);
+      i32 head = lowAlloc(b);
+      i32 step = lowAlloc(b);
+      lowPush(b, next, step);
       i32 bodyEntry = lowerSeq(b, body, step);
-      pop(b);
+      lowPop(b);
       Stmt[] up = Stmt[1](fill: (update is null) ? sRet(c, null)
                                                 : subStmt(c, update!, false, 0 - 1, 0 - 1));
       if (update is null) { up = Stmt[](); }
-      put(b, step, join(c, up, gotoS(c, head)));
+      lowPut(b, step, lowJoin(c, up, gotoS(c, head)));
       Stmt[] hd = Stmt[2](fill: sRet(c, null));
       Expr test = (cond is null) ? eBool(c, true) : subExpr(c, cond!);
       hd[0] = Stmt(StmtKind.If(test, gotoS(c, bodyEntry), Stmt[]()), c.line, c.col);
       hd[1] = sBlock(c, gotoS(c, next));
-      put(b, head, hd);
-      i32 entry = alloc(b);
+      lowPut(b, head, hd);
+      i32 entry = lowAlloc(b);
       Stmt[] pre = (init is null) ? Stmt[]()
                                   : Stmt[1](fill: subStmt(c, init!, false, 0 - 1, 0 - 1));
-      put(b, entry, join(c, pre, gotoS(c, head)));
+      lowPut(b, entry, lowJoin(c, pre, gotoS(c, head)));
       return entry;
     }
     else: {
       // Unreachable: the plan refuses every other shape holding a suspension, by name.
-      i32 e = alloc(b);
-      put(b, e, gotoS(c, next));
+      i32 e = lowAlloc(b);
+      lowPut(b, e, gotoS(c, next));
       return e;
     }
   }
 }
 
-void push(Bld b, i32 brkTo, i32 contTo) {
+void lowPush(Bld b, i32 brkTo, i32 contTo) {
   if (b.depth >= b.brk.len()) { return; }
   b.brk[b.depth] = brkTo;
   b.cont[b.depth] = contTo;
   b.depth = b.depth + 1;
 }
 
-void pop(Bld b) { if (b.depth > 0) { b.depth = b.depth - 1; } }
+void lowPop(Bld b) { if (b.depth > 0) { b.depth = b.depth - 1; } }
 
 /**
  * The `switch` arms, and the state the machine starts in.
@@ -764,8 +764,8 @@ struct Arms {
 Arms buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   Bld b = Bld(c, Stmt[][256](fill: Stmt[]()), 0, i32[64](), i32[64](), 0, i32[1](),
               Ty[64](fill: fnRet), fnRet);
-  i32 done = alloc(b);
-  put(b, done, Stmt[1](fill: sFinish(c, null)));
+  i32 done = lowAlloc(b);
+  lowPut(b, done, Stmt[1](fill: sFinish(c, null)));
   i32 entry = lowerSeq(b, body, done);
   Case[] arms = Case[b.n + 1](fill: Case(null, Stmt[](), c.line, c.col));
   for (i32 i = 0; i < b.n; i++) {
@@ -786,7 +786,7 @@ Stmt[] stepBody(Ctx c, Case[] arms) {
 
 /** `(i32 id)`, the parameter every one of the ticket's three functions takes. */
 Param[] idParam(Ctx c) {
-  return Param[1](fill: Param(tId(c), tyPrim(c, tI32(c)), false));
+  return Param[1](fill: Param(tId(c), lowPrimTy(c, tI32(c)), false));
 }
 
 /**
@@ -835,19 +835,19 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   Stmt[] out = Stmt[n](fill: sRet(c, null));
   i32 at = 0;
 
-  out[at] = sCellDecl(c, tState(c), tyPrim(c, tI32(c))); at = at + 1;
-  out[at] = sCellDecl(c, tDone(c), tyPrim(c, tBool(c))); at = at + 1;
+  out[at] = sCellDecl(c, tState(c), lowPrimTy(c, tI32(c))); at = at + 1;
+  out[at] = sCellDecl(c, tDone(c), lowPrimTy(c, tBool(c))); at = at + 1;
   if (!isVoidTy(c, fnRet)) { out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1; }
   // Whether a continuation is registered, and where to go when a waiter takes over from it.
-  out[at] = sCellDecl(c, tArmed(c), tyPrim(c, tBool(c))); at = at + 1;
-  out[at] = sCellDecl(c, tWaitAt(c), tyPrim(c, tI32(c))); at = at + 1;
+  out[at] = sCellDecl(c, tArmed(c), lowPrimTy(c, tBool(c))); at = at + 1;
+  out[at] = sCellDecl(c, tWaitAt(c), lowPrimTy(c, tI32(c))); at = at + 1;
   for (i32 i = 0; i < plan.hoist.len(); i++) {
     out[at] = sCellDecl(c, plan.hoist[i], cloneTy(plan.hoistTy[i])); at = at + 1;
   }
   // **The step cell first**, because the handlers read it and the machine writes it. Filled with a
   // no-op so it holds something before either exists.
-  out[at] = Stmt(StmtKind.Var(tyArr(c, tyFn(c, tyPrim(c, tBool(c)), Ty[]())), tStep(c),
-                              Expr(ExprKind.ArrNew(tyFn(c, tyPrim(c, tBool(c)), Ty[]()),
+  out[at] = Stmt(StmtKind.Var(lowArrTy(c, lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]())), tStep(c),
+                              Expr(ExprKind.ArrNew(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()),
                                                    eInt(c, 1), eId(c, tNoStep(c)), Expr[]()),
                                    c.line, c.col), false), c.line, freshCol(c));
   at = at + 1;
@@ -874,15 +874,15 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
     hb[2] = sCallStep(c);
     Param[] hp = Param[1](fill: Param(tV(c), cloneTy(made.slotTy[k]), false));
     Ty[] hpt = Ty[1](fill: cloneTy(made.slotTy[k]));
-    out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tVoid(c)), hpt), tHand(c, k),
+    out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tVoid(c)), hpt), tHand(c, k),
                                 eLambda(c, hp, hb), false), c.line, freshCol(c));
     at = at + 1;
   }
 
-  // The machine itself, bound to a local and then put in the cell: a lambda written straight into
+  // The machine itself, bound to a local and then lowPut in the cell: a lambda written straight into
   // an array element is in a position the walk does not type.
   Expr step = eLambda(c, Param[](), stepBody(c, made.cases));
-  out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tBool(c)), Ty[]()), tMachine(c), step, false),
+  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()), tMachine(c), step, false),
                  c.line, freshCol(c));
   at = at + 1;
   out[at] = sCellSet(c, tStep(c), eId(c, tMachine(c))); at = at + 1;
@@ -893,19 +893,19 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   out[at] = sCellSet(c, tState(c), eInt(c, made.entry)); at = at + 1;
   out[at] = sCallStep(c); at = at + 1;
 
-  Ty[] oneI32 = Ty[1](fill: tyPrim(c, tI32(c)));
-  out[at] = Stmt(StmtKind.Var(tyFn(c, cloneTy(fnRet), oneI32), tResolve(c),
+  Ty[] oneI32 = Ty[1](fill: lowPrimTy(c, tI32(c)));
+  out[at] = Stmt(StmtKind.Var(lowFnTy(c, cloneTy(fnRet), oneI32), tResolve(c),
                               resolveLambda(c, fnRet), false), c.line, freshCol(c));
   at = at + 1;
 
   Stmt[] setBody = Stmt[1](fill: sRet(c, eCell(c, tDone(c))));
   Expr setL = eLambda(c, idParam(c), setBody);
-  out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tBool(c)), oneI32), tSettled(c), setL, false),
+  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), oneI32), tSettled(c), setL, false),
                  c.line, freshCol(c));
   at = at + 1;
 
   Expr drpL = eLambda(c, idParam(c), Stmt[]());
-  out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tVoid(c)), oneI32), tDrop(c), drpL, false),
+  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tVoid(c)), oneI32), tDrop(c), drpL, false),
                  c.line, freshCol(c));
   at = at + 1;
 
@@ -915,7 +915,7 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   args[2] = eId(c, tSettled(c));
   args[3] = eId(c, tDrop(c));
   args[4] = eNull(c);
-  Expr ticket = Expr(ExprKind.Construct(tyPending(c, fnRet), args, NamedArg[]()), c.line, c.col);
+  Expr ticket = Expr(ExprKind.Construct(lowPendingTy(c, fnRet), args, NamedArg[]()), c.line, c.col);
   out[at] = sRet(c, ticket); at = at + 1;
 
   Stmt[] trimmed = Stmt[at](fill: sRet(c, null));
@@ -989,7 +989,7 @@ bool anyLowerable(Program prog) {
  * different questions — *can I flatten this shape* and *do I know how to emit an async function at
  * all* — and running one of them here does not answer the other.
  *
- * The source is extended once for the whole file, not once per function, because `synthTail` is
+ * The source is extended once for the whole file, not once per function, because `synthSource` is
  * idempotent and the token indices it hands out are absolute.
  */
 export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
@@ -999,7 +999,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
 
   i32 line = 1;
   i32 col = 1;
-  u8[] src2 = synthTail(src, ups, states);
+  u8[] src2 = synthSource(src, ups, states);
   i32 first = lexed.tokenCount;
   Lexed lexed2 = synthTokens(lexed, src2, ups, states, line, col);
 
@@ -1023,7 +1023,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
                     i32[1](fill: prog.decls[d].col + 1000), bool[1]());
 
         Stmt[] machine = machineBody(c, body, plan, returnType);
-        out[d] = Decl(DeclKind.Func(nameTok, tyPending(c, cloneTy(returnType)), params, machine,
+        out[d] = Decl(DeclKind.Func(nameTok, lowPendingTy(c, cloneTy(returnType)), params, machine,
                                     exported, typeParams, false),
                       prog.decls[d].line, prog.decls[d].col);
       }
@@ -1032,7 +1032,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   }
   Ctx top = Ctx(first, ups, 1, 1, string[](), src2, lexed2, i32[1](fill: 1), bool[1]());
   Stmt[] noBody = Stmt[1](fill: sRet(top, eBool(top, true)));
-  out[prog.decls.len()] = Decl(DeclKind.Func(tNoStep(top), tyPrim(top, tBool(top)), Param[](),
+  out[prog.decls.len()] = Decl(DeclKind.Func(tNoStep(top), lowPrimTy(top, tBool(top)), Param[](),
                                              noBody, false, i32[](), false), 1, 1);
   return Lowered(Program(out), src2, lexed2, true);
 }

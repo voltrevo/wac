@@ -227,13 +227,13 @@ bool isAwait(Expr e) {
  */
 export AsyncPlan planBody(Stmt[] body) {
   if (body.len() == 0) { return AsyncPlan(true, "", i32[0](), i32[0](), Ty[]()); }
-  Walked w = Walked(i32[256](), 0, i32[256](), Ty[256](fill: anyTy(body)), 0, "");
+  Walked w = Walked(i32[256](), 0, i32[256](), Ty[256](fill: planAnyTy(body)), 0, "");
   walkPlan(body, w);
   if (w.why != "") { return AsyncPlan(false, w.why, i32[0](), i32[0](), Ty[]()); }
   i32[] outAt = i32[w.n]();
   for (i32 i = 0; i < w.n; i++) { outAt[i] = i; }
   i32[] outH = i32[w.h]();
-  Ty[] outT = Ty[w.h](fill: anyTy(body));
+  Ty[] outT = Ty[w.h](fill: planAnyTy(body));
   for (i32 i = 0; i < w.h; i++) { outH[i] = w.hoist[i]; outT[i] = w.hoistTy[i]; }
   return AsyncPlan(true, "", outAt, outH, outT);
 }
@@ -347,24 +347,24 @@ string declineFor(Stmt s) {
  * constant covers all of that with room to spare, and being generous costs a few words in a comment
  * at the end of the file.
  */
-export i32 statesNeeded(Stmt[] body) { return 4 * countStmts(body) + 8; }
+export i32 statesNeeded(Stmt[] body) { return 4 * planCountStmts(body) + 8; }
 
 /** Statements at every depth, not counting inside a lambda — the flattening does not go there. */
-i32 countStmts(Stmt[] body) {
+i32 planCountStmts(Stmt[] body) {
   i32 n = 0;
   for (i32 i = 0; i < body.len(); i++) {
     n = n + 1;
     match (body[i].kind) {
-      case If(cond, then, els): { n = n + countStmts(then) + countStmts(els); }
-      case While(cond, b2): { n = n + countStmts(b2); }
-      case For(init, cond, update, b2): { n = n + countStmts(b2) + 2; }
-      case DoWhile(b2, cond): { n = n + countStmts(b2); }
-      case Block(b2): { n = n + countStmts(b2); }
+      case If(cond, then, els): { n = n + planCountStmts(then) + planCountStmts(els); }
+      case While(cond, b2): { n = n + planCountStmts(b2); }
+      case For(init, cond, update, b2): { n = n + planCountStmts(b2) + 2; }
+      case DoWhile(b2, cond): { n = n + planCountStmts(b2); }
+      case Block(b2): { n = n + planCountStmts(b2); }
       case Switch(subject, cases): {
-        for (i32 j = 0; j < cases.len(); j++) { n = n + countStmts(cases[j].body); }
+        for (i32 j = 0; j < cases.len(); j++) { n = n + planCountStmts(cases[j].body); }
       }
       case Match(subject, arms): {
-        for (i32 j = 0; j < arms.len(); j++) { n = n + countStmts(arms[j].body); }
+        for (i32 j = 0; j < arms.len(); j++) { n = n + planCountStmts(arms[j].body); }
       }
       else: { }
     }
@@ -373,7 +373,7 @@ i32 countStmts(Stmt[] body) {
 }
 
 /** Any `Ty` from the body, purely to fill an array a reference type cannot default. */
-Ty anyTy(Stmt[] body) {
+Ty planAnyTy(Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       case Var(type, nameTok, init, isConst): { return type; }
@@ -394,8 +394,8 @@ export string describePlans(Program prog) {
         if (!p.ok) {
           out = out + "declined: " + p.why + "\n";
         } else {
-          out = out + "ok suspends=" + numOf(planSuspends(p))
-                    + " hoist=" + numOf(p.hoist.len()) + "\n";
+          out = out + "ok suspends=" + planDecimal(planSuspends(p))
+                    + " hoist=" + planDecimal(p.hoist.len()) + "\n";
         }
       }
       else: { }
@@ -404,7 +404,7 @@ export string describePlans(Program prog) {
   return out;
 }
 
-string numOf(i32 n) {
+string planDecimal(i32 n) {
   if (n == 0) { return "0"; }
   string out = "";
   i32 v = n;

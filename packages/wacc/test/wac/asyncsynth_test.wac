@@ -15,7 +15,7 @@ import { lex, Lexed, tokenStride } from "../../src/lex.wac";
 import { tokenTextOf } from "../../src/emit.wac";
 import { kIdent, kInt, kAssign, kVoid } from "../../src/kinds.wac";
 import {
-  synthTail, synthBase, synthOffset, synthTokens, synthTok, synthWords,
+  synthSource, synthBase, synthOffset, synthTokens, synthTok, synthWords,
   synthPending, synthStep, synthSlot, synthZero, synthNum, synthAssign, synthVoid,
 } from "../../src/asyncsynth.wac";
 
@@ -31,12 +31,12 @@ export string test_the_tail_is_appended_once_and_found_again() {
   u8[] a = SRC.toBytes();
   t.eqI32(synthBase(a), 0 - 1, "a source without the tail says so");
 
-  u8[] b = synthTail(a, UPS, STATES);
+  u8[] b = synthSource(a, UPS, STATES);
   t.isTrue(b.len() > a.len(), "the tail was appended");
   t.isTrue(synthBase(b) > 0, "and is found again");
 
   // Idempotent, because a source that has been through the frontend twice is a thing that happens.
-  u8[] c = synthTail(b, UPS, STATES);
+  u8[] c = synthSource(b, UPS, STATES);
   t.eqI32(c.len(), b.len(), "appending twice appends once");
   t.eqI32(synthBase(c), synthBase(b), "and the base does not move");
   return t.report();
@@ -44,7 +44,7 @@ export string test_the_tail_is_appended_once_and_found_again() {
 
 export string test_a_synthetic_token_reads_back_as_its_spelling() {
   T t = T.create();
-  u8[] src = synthTail(SRC.toBytes(), UPS, STATES);
+  u8[] src = synthSource(SRC.toBytes(), UPS, STATES);
   Lexed lexed = lex(src);
   i32 first = lexed.tokenCount;
   Lexed with = synthTokens(lexed, src, UPS, STATES, 1, 1);
@@ -73,7 +73,7 @@ export string test_the_tail_is_invisible_to_the_lexer() {
   // If the tail lexed as code, these two counts would differ — and the failure would arrive much
   // later, as a parse error on a line the file does not have.
   Lexed plain = lex(SRC.toBytes());
-  Lexed tailed = lex(synthTail(SRC.toBytes(), UPS, STATES));
+  Lexed tailed = lex(synthSource(SRC.toBytes(), UPS, STATES));
   t.eqI32(tailed.tokenCount, plain.tokenCount, "the tail produced no tokens of its own");
   t.eqI32(tailed.errorCount, plain.errorCount, "and no errors");
   return t.report();
@@ -81,7 +81,7 @@ export string test_the_tail_is_invisible_to_the_lexer() {
 
 export string test_every_word_has_a_distinct_offset_in_order() {
   T t = T.create();
-  u8[] src = synthTail(SRC.toBytes(), UPS, STATES);
+  u8[] src = synthSource(SRC.toBytes(), UPS, STATES);
   string[] w = synthWords(UPS, STATES);
   // The offsets are walked from a list rather than written down, so the property worth pinning is
   // the walk's: strictly increasing, and each far enough past the last to hold it.
@@ -106,7 +106,7 @@ export string test_a_synthetic_tokens_kind_is_not_always_an_identifier() {
   // identifier. None of the three fails at the point of the mistake: a numeral lexed as an
   // identifier is an unresolved name much later, an `=` lexed as an identifier is an assignment the
   // emitter reads as something else, and `void` as an identifier is a type nobody declared.
-  u8[] src = synthTail(SRC.toBytes(), UPS, STATES);
+  u8[] src = synthSource(SRC.toBytes(), UPS, STATES);
   Lexed with = synthTokens(lex(src), src, UPS, STATES, 1, 1);
   i32 first = lex(src).tokenCount;
   t.eqI32(with.tokens[synthTok(first, synthAssign()) * tokenStride()], kAssign(), "`=` is an assign");
