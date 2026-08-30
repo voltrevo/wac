@@ -212,8 +212,14 @@ export i32 main(Core core, Cli cli) {
 ```
 
 Two clients overlapping must both be served, and the second must be accepted while the first is still
-open — the same assertion `packages/platform/example/echod`-shaped tests make today. Exercises D1, D5,
-D6 and `return` from inside a `match` inside a `while`.
+open. **Passes as of 2026-08-30**, in `packages/platform/test/wac/asyncserver_test.wac` — with two
+differences from the sketch above, both of them the cut's limits rather than the design's:
+
+- **`.linkedTo(core)` on every ticket.** `Cli` hands out tickets with no scheduler, so `then` traps on
+  one and a machine awaiting it can only be driven by a `wait`. That is the open question below.
+- **What was awaited is bound before the `match`.** A suspension in a `match` subject or arm is
+  declined, so it reads `Read r = await cli.recv(sock); match (r) { … }`, and the `send` binds its
+  result rather than being a bare `await`.
 
 ### A2 — an ordinary blocking caller
 
@@ -471,7 +477,7 @@ already the state slot.
 | 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
 | 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
 | 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
-| 4 | **A2, A3, D6's loops and drain-driving pass 2026-08-30** — `packages/platform/test/wac/asyncsyntax_test.wac` 13/13. Bodies flatten to a state machine (`if`, `while`, `for`, blocks, `break`, `continue`); a suspension on a **linked** ticket registers, so `drain` alone finishes a machine and two interleave; a `wait` detaches first so the body never runs twice. Declined by name: a suspension in a loop condition, one nested in a larger expression, one whose value is discarded |
+| 4 | **done 2026-08-30 for A1–A4** — `asyncsyntax_test.wac` 15/15 and `asyncserver_test.wac` 1/1. A1 runs: two clients accepted while the first is open, both echoed, under one `drain`, with `async void`, a suspending `while`, a `match`, and an early `return` out of the loop. Declined by name: a suspension in a loop or `if` **condition**, in a `match` subject or arm, nested in a larger expression, or one whose value is discarded |
 | 5 | not started |
 
 ## Open

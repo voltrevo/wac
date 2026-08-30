@@ -1,0 +1,90 @@
+// A1 — accept and serve, the program `design/lang/0014` was written for.
+//
+// Everything else about `async` can be shown with a timer. This cannot: two clients, both accepted
+// while the first is still open, both echoed, and **one** `drain` driving all of it. It is the
+// criterion the whole design exists to meet, and it uses nearly every part at once — `async void`,
+// a `while` loop with a suspension in it, a `match` on what was awaited, an early `return` out of
+// the loop, and a second machine started from inside the first one's continuation.
+//
+// **`.linkedTo(core)` is written on every ticket here, and that is the open question.** `Cli`'s
+// capabilities hand out tickets with no scheduler, so `then` traps on them and a machine awaiting one
+// can only be driven by a `wait` — never by `drain`, which is what this test needs. Either the
+// linkage stays visible like this, or `Cli` carries the scheduler the way `Core` does and the calls
+// disappear. `design/lang/0014` records the choice; this file is what it looks like written the first
+// way.
+//
+// **The bug this found was silent.** The lowering's substitution walk returned a `match` unchanged,
+// so `echo = bytes` inside an arm went on writing to a name that had become a cell — no diagnostic,
+// no crash, just a server that answered nothing and a client that waited for ever. Six controls went
+// past before the log said `bytes=0`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, Socket, Pending } from "std/platform.wac";
+import { Read } from "core";
+
+/**
+ * Echo everything one connection sends, until it closes.
+ *
+ * The `match` is not on `await cli.recv(…)` directly — a suspension inside a `match` *subject* is one
+ * of the shapes this cut declines, as is one inside an arm — so what was awaited is bound first. That
+ * is the difference between the design note's sketch and what compiles today, and it is worth seeing.
+ */
+async void serve(Core core, Cli cli, i32 sock, i32[] served) {
+  while (true) {
+    Read r = await cli.recv(sock).linkedTo(core);
+    u8[] echo = u8[0]();
+    bool over = false;
+    match (r) {
+      case Data(bytes): { echo = bytes; }
+      case End: { over = true; }
+      case Failed(why): { over = true; }
+    }
+    if (over) { cli.closeSocket(sock); return; }
+    bool ok = await cli.send(sock, echo).linkedTo(core);
+    served[0] = served[0] + 1;
+  }
+}
+
+/** Take `n` connections, starting a server for each — eagerly, and deliberately not awaited. */
+async void accepting(Core core, Cli cli, i32 listener, i32 n, i32[] served) {
+  for (i32 i = 0; i < n; i++) {
+    Socket s = await cli.accept(listener).linkedTo(core);
+    if (s.handle < 0) { return; }
+    serve(core, cli, s.handle, served);
+  }
+}
+
+string readBack(Cli cli, i32 handle) {
+  Read r = cli.recv(handle).wait();
+  string out = "";
+  match (r) { case Data(x): { out = string.fromBytes(x); } else: { } }
+  return out;
+}
+
+export string test_two_clients_are_accepted_and_served_under_one_drain(Core core, Cli cli) {
+  T t = T.create();
+  Socket l = cli.listen("127.0.0.1", 0).wait();
+  t.isTrue(l.handle >= 0, "bound a loopback listener");
+
+  i32[] served = i32[1]();
+  accepting(core, cli, l.handle, 2, served);
+
+  // Both connect before anything is drained, so the second is accepted while the first is open —
+  // which is the property, and the reason `accepting` does not wait for `serve`.
+  Socket a = cli.connect("127.0.0.1", l.port).wait();
+  Socket b = cli.connect("127.0.0.1", l.port).wait();
+  t.isTrue(a.handle >= 0 && b.handle >= 0, "both clients connected");
+  cli.send(a.handle, "one".toBytes()).wait();
+  cli.send(b.handle, "two".toBytes()).wait();
+
+  core.drainFor(2000);
+  t.eqI32(served[0], 2, "both connections were served");
+  t.eqStr(readBack(cli, a.handle), "one", "the first client got its own bytes back");
+  t.eqStr(readBack(cli, b.handle), "two", "and the second got its own");
+
+  cli.closeSocket(a.handle);
+  cli.closeSocket(b.handle);
+  cli.closeSocket(l.handle);
+  core.dropAll();
+  return t.report();
+}

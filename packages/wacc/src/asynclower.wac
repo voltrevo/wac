@@ -53,8 +53,8 @@
 // arm.
 
 import {
-  Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
-  StmtKind, Ty, TyKind,
+  Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, NamedArg, Param,
+  Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import { Lexed } from "./lex.wac";
 import { AsyncPlan, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
@@ -85,6 +85,14 @@ struct Ctx {
    * walk believe one lambda captures another.
    */
   i32[] col2;
+  /**
+   * Whether the walk is currently inside a lambda.
+   *
+   * Carried here rather than threaded, because `subExpr` needs it too — a `match` used as an
+   * *expression* has arm bodies, and a `return` in one of those means what it means in whatever
+   * function the walk is in. Threading it would have changed every call site of `subExpr`.
+   */
+  bool[] inLam;
 }
 
 i32 tPend(Ctx c)   { return synthTok(c.first, synthPending()); }
@@ -354,8 +362,26 @@ Expr subExpr(Ctx c, Expr e) {
     case Lambda(params, body): {
       return Expr(ExprKind.Lambda(params, subBody(c, body, true, 0 - 1, 0 - 1)), e.line, e.col);
     }
-    case MatchExpr(subject, arms): { return e; }
-    case Jsx(tagTok, closeTok, attrs, kids): { return e; }
+    case MatchExpr(subject, arms): {
+      Arm[] out = Arm[arms.len()](fill: arms.len() > 0 ? arms[0]
+                                                       : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+      for (i32 i = 0; i < arms.len(); i++) {
+        Expr? av = (arms[i].value is null) ? null : subExpr(c, arms[i].value!);
+        out[i] = Arm(arms[i].variantTok, arms[i].elseTok, arms[i].bindingToks,
+                     subBody(c, arms[i].body, c.inLam[0], 0 - 1, 0 - 1), av);
+      }
+      return Expr(ExprKind.MatchExpr(subExpr(c, subject), out), e.line, e.col);
+    }
+    // Same reasoning as the `match` arms: an attribute's value and a child are expressions, and a
+    // hoisted name can appear in either.
+    case Jsx(tagTok, closeTok, attrs, kids): {
+      JsxAttr[] as2 = JsxAttr[attrs.len()](fill: attrs.len() > 0 ? attrs[0]
+                                                                 : JsxAttr(0 - 1, eNull(c)));
+      for (i32 i = 0; i < attrs.len(); i++) {
+        as2[i] = JsxAttr(attrs[i].nameTok, subExpr(c, attrs[i].value));
+      }
+      return Expr(ExprKind.Jsx(tagTok, closeTok, as2, subExprs(c, kids)), e.line, e.col);
+    }
     case JsxText(startOff, endOff): { return e; }
     case IntLit(tok): { return e; }
     case FloatLit(tok): { return e; }
@@ -391,8 +417,11 @@ Lvalue subLv(Ctx c, Lvalue lv) {
  * or `switch` in the emitted code.
  */
 Stmt[] subBody(Ctx c, Stmt[] body, bool inLambda, i32 brkTo, i32 contTo) {
+  bool was = c.inLam[0];
+  c.inLam[0] = inLambda;
   Stmt[] out = Stmt[body.len()](fill: body.len() > 0 ? body[0] : sRet(c, null));
   for (i32 i = 0; i < body.len(); i++) { out[i] = subStmt(c, body[i], inLambda, brkTo, contTo); }
+  c.inLam[0] = was;
   return out;
 }
 
@@ -449,7 +478,21 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     }
     case Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
     case ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
-    case Match(subject, arms): { return s; }
+    // **An arm's body is code.** Returning the `match` unchanged left every assignment inside an arm
+    // writing to a name that had become a cell — silently, because the checker ran on the original
+    // tree and the emitter was handed a write it could not mean. What it produced was an `echo` that
+    // stayed empty and a server that sent nothing, with no diagnostic anywhere. `issues/lang/0005`
+    // is the same lesson from the other direction: five AST walks were missing enum arms.
+    case Match(subject, arms): {
+      Arm[] out = Arm[arms.len()](fill: arms.len() > 0 ? arms[0]
+                                                       : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+      for (i32 i = 0; i < arms.len(); i++) {
+        Expr? av = (arms[i].value is null) ? null : subExpr(c, arms[i].value!);
+        out[i] = Arm(arms[i].variantTok, arms[i].elseTok, arms[i].bindingToks,
+                     subBody(c, arms[i].body, inLambda, brkTo, contTo), av);
+      }
+      return Stmt(StmtKind.Match(subExpr(c, subject), out), s.line, s.col);
+    }
     // **A `break` whose loop is gone has to go somewhere.** After flattening there is no `while` for
     // it to leave — the only loop left is the dispatch, and breaking that would resume the machine at
     // whatever state happened to be set. So it becomes the transfer the loop's exit is.
@@ -977,7 +1020,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
           names[i] = synthTextAt(src2, lexed2, plan.hoist[i]);
         }
         Ctx c = Ctx(first, ups, prog.decls[d].line, prog.decls[d].col, names, src2, lexed2,
-                    i32[1](fill: prog.decls[d].col + 1000));
+                    i32[1](fill: prog.decls[d].col + 1000), bool[1]());
 
         Stmt[] machine = machineBody(c, body, plan, returnType);
         out[d] = Decl(DeclKind.Func(nameTok, tyPending(c, cloneTy(returnType)), params, machine,
@@ -987,7 +1030,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
       else: { }
     }
   }
-  Ctx top = Ctx(first, ups, 1, 1, string[](), src2, lexed2, i32[1](fill: 1));
+  Ctx top = Ctx(first, ups, 1, 1, string[](), src2, lexed2, i32[1](fill: 1), bool[1]());
   Stmt[] noBody = Stmt[1](fill: sRet(top, eBool(top, true)));
   out[prog.decls.len()] = Decl(DeclKind.Func(tNoStep(top), tyPrim(top, tBool(top)), Param[](),
                                              noBody, false, i32[](), false), 1, 1);
