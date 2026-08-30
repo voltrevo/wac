@@ -17,7 +17,7 @@
 // ## Why the scripts come from the existing corpus
 //
 // `packages/sh/test/wac/corpus.wac` is already the differential fixture, compared against bash by
-// `differential.test.ts` and against a second shell by `tools/corpusThrough.ts`. Importing it means
+// `differential.test.ts` and against a second shell by `tools/wac/corpusthrough.wac`. Importing it means
 // these hosts are compared on the cases somebody wrote for a *reason* — each one is a rule of bash's
 // that was got wrong once — rather than on scripts chosen to pass.
 //

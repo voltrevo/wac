@@ -133,7 +133,7 @@ if (import.meta.main) {
       clearEnv: true,
     }).outputSync();
     const d = new TextDecoder();
-    // 124 is `timeout`'s, not a shell's — see `corpusThrough.ts`, which has kept them apart since it
+    // 124 is `timeout`'s, not a shell's — see `tools/wac/corpusthrough.wac`, which has kept them apart since it
     // was written. A bound that fired has no stderr to compare, so it is skipped rather than counted
     // as a difference in wording.
     return { err: d.decode(r.stderr), code: r.code, hung: r.code === 124 };

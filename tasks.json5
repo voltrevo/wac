@@ -88,7 +88,7 @@
   "bench:json-lookup": "deno run -A packages/json/bench/lookup.ts",
 
   // The shell corpus, measured different ways.
-  "corpus:through": "deno run -A tools/corpusThrough.ts",
+  "corpus:through": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusthrough.wac --",
   "corpus:hosts": "deno run -A tools/corpusHosts.ts",
   "corpus:backings": "deno run -A tools/corpusBackings.ts",
   "corpus:routes": "deno run -A tools/corpusRoutes.ts",

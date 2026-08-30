@@ -88,7 +88,7 @@ and `packages/sh` runs the applets it is handed.
 `packages/box`'s `grep -q` did not stop at the first match — worse, it printed every matching line, which
 is the opposite of what the flag asks. The corpus contains `seq 1 100000 | grep -q 5` precisely because
 `packages/sh`'s does stop, and measuring through box's ran until it was killed, which is why
-`corpusThrough.ts` bounds each script through `timeout(1)` and reports what never finished.
+`tools/wac/corpusthrough.wac` bounds each script through `timeout(1)` and reports what never finished.
 
 ## 2026-08-07, later: the blocker is cleared, and the drift got worse
 
