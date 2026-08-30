@@ -95,3 +95,26 @@ export string test_an_async_function_without_await_is_an_ordinary_program() {
           "`export async void`, which is the D5 case that needed `Pending<void>` to exist");
   return t.report();
 }
+
+export string test_await_inside_a_plain_lambda_is_refused() {
+  T t = T.create();
+  // **A lambda is not the async function it sits in.** `design/lang/0002` settles that its `return`
+  // returns from the lambda, so an `await` here would have to suspend a plain funcref. The checker
+  // accepted this until 2026-08-30 — `c.inAsync` was the enclosing *function*'s answer and a lambda
+  // never changed it — which would have handed step 4 a program with no lowering.
+  //
+  // There are no `async` lambdas yet, and the note records why they are not in this pass: no
+  // acceptance criterion needs one, and a lambda is already hoisted to a function with a captured
+  // environment, so `async` on one is the same transform applied twice. This is the refusal that has
+  // to exist in the meantime.
+  string out = diagnose(TICKET
+    + "async i32 f(Pending<i32> p) {\n"
+    + "  fn[void()] g = () => { i32 z = await p; };\n"
+    + "  g();\n"
+    + "  return 0;\n"
+    + "}\n"
+    + "i32 main() { return 0; }\n");
+  t.isTrue(contains(out, "`await` outside an `async` function"),
+           "the lambda is the function it is in, and it is not async — got \"" + out + "\"");
+  return t.report();
+}

@@ -132,6 +132,32 @@ position. That is true of the field and false of the methods: `then(fn[void(T)] 
 rather than by a new check. That message names neither `Vec<void>` nor the line, which is the
 diagnostic-quality risk this step was warned about; improving it is not part of this step.
 
+### D6a — `async` lambdas are not in this pass, and the refusal is
+
+D6 says *the whole language*, and a lambda is part of it. This document did not mention one, which is
+an omission rather than a decision, so here is the decision.
+
+**Not in this pass.** No acceptance criterion needs one: A1's `serve` and `accepting` are async
+functions, and A6's `relayd` becomes async functions too. A lambda is already hoisted to a function
+with a captured environment, so `async` on one is the *same* transform step 4 builds — worth applying
+once, to functions, before applying it twice.
+
+**But the refusal has to exist now**, or step 4 inherits a program it cannot lower. `await` inside a
+plain lambda was accepted until 2026-08-30: `c.inAsync` answered *which function am I in* with the
+enclosing one, and entering a lambda never changed the answer, so this checked clean —
+
+```wac
+async i32 f(Pending<i32> p) {
+  fn[void()] g = () => { i32 z = await p; };   // suspend what, exactly?
+  …
+}
+```
+
+`design/lang/0002` settles it: a lambda's `return` returns from the lambda, so its `await` would have
+to suspend a plain funcref. The flag is now saved and cleared around a lambda body the way
+`lambdaReturn` already was, and both answer the same question. When async lambdas arrive it becomes
+the lambda's own flag and nothing else moves.
+
 ### D6 — the whole language, not a linear subset
 
 `await` works inside `while`, `for`, `if`, `match`, and in expression position.

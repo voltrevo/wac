@@ -5450,6 +5450,17 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   // one's returns checked against nothing when the inner one finished.
   string outer = c.lambdaReturn;
   c.lambdaReturn = ret;
+  // **A lambda is not the async function it sits in.** `design/lang/0002` settles that its `return`
+  // returns from the lambda, so an `await` in here would have to suspend *this* function — and this
+  // one is a plain funcref. Cleared for the same reason `lambdaReturn` is replaced rather than left:
+  // both answer *which function am I in*, and inside a lambda the answer changed.
+  //
+  // There are no `async` lambdas yet, so this is always false; when there are, it becomes the
+  // lambda's own flag and nothing else here moves. Without it, `async i32 f(Pending<i32> p) { fn[void()]
+  // g = () => { i32 z = await p; }; … }` was accepted, and would have reached step 4's lowering as a
+  // program it has no way to lower.
+  bool outerAsync = c.inAsync;
+  c.inAsync = false;
   c.pushScope(body);
   for (i32 i = 0; i < params.len(); i++) {
     c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
@@ -5474,6 +5485,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   }
   c.popScope();
   c.lambdaReturn = outer;
+  c.inAsync = outerAsync;
 }
 
 /** A call's method name token, or -1 when the callee is not a member access. */
