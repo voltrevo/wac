@@ -6,12 +6,11 @@
 // a `while` loop with a suspension in it, a `match` on what was awaited, an early `return` out of
 // the loop, and a second machine started from inside the first one's continuation.
 //
-// **`.linkedTo(core)` is written on every ticket here, and that is the open question.** `Cli`'s
-// capabilities hand out tickets with no scheduler, so `then` traps on them and a machine awaiting one
-// can only be driven by a `wait` — never by `drain`, which is what this test needs. Either the
-// linkage stays visible like this, or `Cli` carries the scheduler the way `Core` does and the calls
-// disappear. `design/lang/0014` records the choice; this file is what it looks like written the first
-// way.
+// **Not a `linkedTo` in sight, and there used to be one on every line.** `Cli`'s capabilities handed
+// out tickets with no scheduler, so `then` trapped on them and a machine awaiting one could only be
+// driven by a `wait` — never by `drain`, which is what this test needs. `Cli` carries the scheduler
+// now, the same way `Core` always has, so a ticket arrives able to dispatch and the program never has
+// to hand the world back something it already had.
 //
 // **The bug this found was silent.** The lowering's substitution walk returned a `match` unchanged,
 // so `echo = bytes` inside an arm went on writing to a name that had become a cell — no diagnostic,
@@ -31,7 +30,7 @@ import { Read } from "core";
  */
 async void serve(Core core, Cli cli, i32 sock, i32[] served) {
   while (true) {
-    Read r = await cli.recv(sock).linkedTo(core);
+    Read r = await cli.recv(sock);
     u8[] echo = u8[0]();
     bool over = false;
     match (r) {
@@ -40,7 +39,7 @@ async void serve(Core core, Cli cli, i32 sock, i32[] served) {
       case Failed(why): { over = true; }
     }
     if (over) { cli.closeSocket(sock); return; }
-    bool ok = await cli.send(sock, echo).linkedTo(core);
+    bool ok = await cli.send(sock, echo);
     served[0] = served[0] + 1;
   }
 }
@@ -48,7 +47,7 @@ async void serve(Core core, Cli cli, i32 sock, i32[] served) {
 /** Take `n` connections, starting a server for each — eagerly, and deliberately not awaited. */
 async void accepting(Core core, Cli cli, i32 listener, i32 n, i32[] served) {
   for (i32 i = 0; i < n; i++) {
-    Socket s = await cli.accept(listener).linkedTo(core);
+    Socket s = await cli.accept(listener);
     if (s.handle < 0) { return; }
     serve(core, cli, s.handle, served);
   }

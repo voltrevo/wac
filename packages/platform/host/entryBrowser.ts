@@ -58,10 +58,12 @@ export function runAsWorkerBrowser(load: () => Promise<AppModule>): void {
         // a handle and no canvas, and its output belongs to whoever started it. That is what lets one
         // bundle be both a terminal and the sixty programs the terminal runs.
         const asChild = (start as unknown as { child?: boolean }).child === true;
+        // One scheduler across the three, for the reason `worldFor` gives.
+        const pageSched = (app as unknown as { Sched: { create(): unknown } }).Sched.create();
         const code = app.page !== undefined && !asChild
           ? app.page(
-            coreOf(b, app as unknown as Parameters<typeof coreOf>[1]),
-            cliOf(b, app),
+            coreOf(b, app as unknown as Parameters<typeof coreOf>[1], pageSched),
+            cliOf(b, app as unknown as Parameters<typeof cliOf>[1], undefined, pageSched),
             pageOf(b, app as unknown as PageClasses),
           )
           : app.main(...worldFor(b, app as unknown as Record<string, unknown>));

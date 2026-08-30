@@ -1038,7 +1038,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // *no struct Core in the manifest*, about a program that was right. That path is
     // `packages/wac/src/testrun.wac`'s now and reaches this through `Cli.load`, where the same
     // reasoning holds for the same reason; `main_declares_nothing` is what carries it.
-    let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
+    let mut shared: Vec<(String, v8::Local<v8::Value>)> = Vec::new();
+    let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported, &mut shared) {
         Ok(v) => v,
         Err(e) => {
             if main_declares_nothing {
@@ -1059,7 +1060,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // described one perfectly well and a single funcref field in it had no dispatcher. That sent readers
     // looking for a missing struct. `issues/lang/0162b`.
     let (cli, cli_err) =
-        match build_struct(scope, exports, m, "Cli", &mut caps, &mut names, &mut unsupported) {
+        match build_struct(scope, exports, m, "Cli", &mut caps, &mut names, &mut unsupported, &mut shared) {
             Ok(v) => (Some(v), None),
             Err(e) => (None, Some(e)),
         };
@@ -1349,6 +1350,13 @@ fn build_struct<'s>(
     caps: &mut [Vec<Cap>],
     names: &mut [Vec<String>],
     unsupported: &mut Vec<String>,
+    // Values built by `<Type>.create` and shared across the capabilities of one world.
+    //
+    // **`Core` and `Cli` must be handed the *same* `Sched`.** Each has one as a field, and building
+    // each capability independently gave each its own — so `cli.readFile(…).then(f)` registered its
+    // continuation on a scheduler `core.drain()` never looks at and the callback simply never ran.
+    // Nothing failed: the ticket was linked, the drain returned, and the work sat on the other one.
+    shared: &mut Vec<(String, v8::Local<'s, v8::Value>)>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let spec = m.find_struct(name).ok_or_else(|| format!("no struct {name} in the manifest"))?;
     let ctor = spec
@@ -1392,9 +1400,14 @@ fn build_struct<'s>(
                     })?;
                 let ctor = get_export(scope, exports, &made.export_name)
                     .ok_or_else(|| format!("no {}", made.export_name))?;
+                if let Some((_, had)) = shared.iter().find(|(t, _)| t == &field.ty) {
+                    args.push(*had);
+                    continue;
+                }
                 let v = ctor
                     .call(scope, exports.into(), &[])
                     .ok_or_else(|| format!("{} trapped while building {name}", made.export_name))?;
+                shared.push((field.ty.clone(), v));
                 args.push(v);
                 continue;
             }
@@ -3954,9 +3967,10 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
     // capability, so its manifest has no `Core` — building one first is what made `wac test` refuse
     // every test file in this repository once, and the same mistake is available here.
     let mut world: Vec<v8::Global<v8::Value>> = Vec::new();
-    if let Ok(core) = build_struct(scope, exports, &m, "Core", &mut caps, &mut names, &mut unsupported) {
+    let mut shared2: Vec<(String, v8::Local<v8::Value>)> = Vec::new();
+    if let Ok(core) = build_struct(scope, exports, &m, "Core", &mut caps, &mut names, &mut unsupported, &mut shared2) {
         world.push(v8::Global::new(scope, core));
-        if let Ok(cli) = build_struct(scope, exports, &m, "Cli", &mut caps, &mut names, &mut unsupported) {
+        if let Ok(cli) = build_struct(scope, exports, &m, "Cli", &mut caps, &mut names, &mut unsupported, &mut shared2) {
             world.push(v8::Global::new(scope, cli));
         }
     }

@@ -1,6 +1,7 @@
 # 0298 — making `Cli` carry the scheduler emits a compiler that cannot rebuild its own command
 
-- **Status:** open — the change is wanted; this is what stopped it
+- **Status:** closed — two faults, neither the one suspected
+- **Fixed in:** the commit this line arrived in
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -35,7 +36,30 @@ refuses to install a compiler that cannot rebuild its own command, which is the 
 without it the toolchain would have been replaced by a broken one, as it briefly was twice while this
 was being chased.
 
-## The lead, and what would confirm it
+## What it actually was — and the lead was wrong
+
+**Measured first, which is what settled it.** `wac.wac` has **211** lambdas against a cap of 1024, so
+thirty-one more is nowhere near it. One command, and the hypothesis below died before anything was
+raised on it.
+
+The engine names the fault exactly, once you ask it rather than the bootstrap:
+
+    CompileError: Compiling function #2425:"childCli" failed:
+      not enough arguments on the stack for call (need 42, got 41)
+
+**A fourth construction site.** `childCli` in `packages/platform/src/frame.wac` builds a `Cli` too,
+and so does `packages/sh/test/wac/probe.wac`. The grep that found them was truncated with `head -8`
+and only the first two were seen. A failed `bootstrap.sh` writes its seed before it checks, so
+validating `native/v8/seed/wacc.wasm` is what turns this from a guess into a sentence.
+
+**And a second fault behind it, which is the interesting one.** With all four sites fixed the ladder
+reached a fixed point and `cli.readFile(p).then(f)` still did nothing: the ticket was linked, `then`
+did not trap, `core.drain()` returned — and the callback never ran. The native host builds a
+non-callback field by calling `<Type>.create` **per capability**, so `Core.sched` and `Cli.sched` were
+two different schedulers and the work sat on the one nobody drained. Nothing failed anywhere; it was
+silent. One cache keyed by type name, shared across the capabilities of one world, fixes it.
+
+## The lead that was wrong, kept because it was plausible
 
 Thirty-one wrappers are thirty-one **new lambdas in one module**, and `emit.wac` caps that:
 

@@ -2487,6 +2487,9 @@ export struct Cli {
   fn[string(u8[])] validated;
 
 
+  /** Where this `Cli`'s tickets send their continuations — as `Core.of` does for its four. */
+  Sched sched;
+
   Cli of(
     fn[Pending<i32>()] argCount,
     fn[Pending<u8[]>(i32)] arg,
@@ -2528,15 +2531,32 @@ export struct Cli {
     fn[LoadedModule(u8[], i32)] load,
     fn[CallResult(i32, string, i32)] call,
     fn[void(i32)] unload,
-    fn[string(u8[])] validated
+    fn[string(u8[])] validated,
+    Sched sched
   ) {
     return Cli(
-      argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
-      mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
-      connect, listen, accept, recv, send, closeSocket, closeSend, bindDatagram, receiveFrom, sendTo,
-      spawn, spawnSelf, closeFeed, exitCode, cwd,
-      pushChild, popChild, execWithIn,
-      load, call, unload, validated
+      () => argCount().on(sched), (i32 a0) => arg(a0).on(sched),
+      (string a0) => env(a0).on(sched), () => readStdin().on(sched), write, writeErr,
+      (string a0) => readFile(a0).on(sched), (string a0, u8[] a1) => writeFile(a0, a1).on(sched),
+      (string a0) => stat(a0).on(sched), (string a0) => linkStat(a0).on(sched),
+      (string a0) => readDir(a0).on(sched), (string a0, bool a1) => mkdir(a0, a1).on(sched),
+      (string a0, bool a1) => remove(a0, a1).on(sched),
+      (string a0, string a1) => rename(a0, a1).on(sched),
+      (string a0, bool a1) => setExecutable(a0, a1).on(sched),
+      (string a0) => openInput(a0).on(sched), readChunk, () => outputError().on(sched),
+      (string a0) => openOutput(a0).on(sched), (string a0, i32 a1) => connect(a0, a1).on(sched),
+      (string a0, i32 a1) => listen(a0, a1).on(sched), (i32 a0) => accept(a0).on(sched),
+      (i32 a0) => recv(a0).on(sched), (i32 a0, u8[] a1) => send(a0, a1).on(sched), closeSocket,
+      closeSend, (string a0, i32 a1) => bindDatagram(a0, a1).on(sched),
+      (i32 a0) => receiveFrom(a0).on(sched),
+      (i32 a0, string a1, i32 a2, u8[] a3) => sendTo(a0, a1, a2, a3).on(sched),
+      (u8[] a0, u8[][] a1, i32 a2, string a3, i32 a4, bool a5) => spawn(a0, a1, a2, a3, a4, a5).on(sched),
+      (u8[][] a0, i32 a1, string a2, bool a3, bool a4) => spawnSelf(a0, a1, a2, a3, a4).on(sched),
+      closeFeed, (i32 a0) => exitCode(a0).on(sched), () => cwd().on(sched),
+      (string[] a0, u8[] a1, string a2, bool a3) => pushChild(a0, a1, a2, a3).on(sched),
+      () => popChild().on(sched),
+      (string a0, string[] a1, u8[] a2, string[] a3, bool a4, bool a5, string a6) => execWithIn(a0, a1, a2, a3, a4, a5, a6).on(sched),
+      load, call, unload, validated, sched
     );
   }
 }

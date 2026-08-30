@@ -377,7 +377,10 @@ Cli fakeCli() {
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
                 fakeSend, fakeCloseSocket, fakeCloseSend, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
                 fakeCwd, fakePushChild, fakePopChild, fakeExec, fakeLoad, fakeCall, fakeUnload,
-                fakeValidated);
+                fakeValidated,
+                // Real, like `Core`'s above and for the same reason: a scheduler is ordinary wac
+                // state, so a fake would be more work and less true.
+                Sched.create());
 }
 
 // ── What the coverage driver calls ────────────────────────────────────────────

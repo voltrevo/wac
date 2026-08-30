@@ -39,12 +39,12 @@ export i32 main(Core core, Cli cli) {
   }
 
   if (how == "linked") {
-    // **A ticket from a capability that is not the world that dispatches.** `Cli` has no scheduler,
-    // so its tickets arrive unlinked and `linkedTo` is the program saying which world runs the
-    // continuation. `Core`'s own tickets need none of this — `core.randomBytes(8).then(f)` works,
-    // because `Core.of` links what `Core` hands out.
+    // **Every capability's ticket arrives able to dispatch.** `Core.of` has always linked the four
+    // `Core` hands out; `Cli.of` links its thirty-one the same way, so neither of these says where
+    // its continuation should run. A ticket made by the program itself is the one case that still
+    // does — `Pending.linkedTo` is for those, and `packages/platform/test/wac/sched_test.wac` has one.
     core.randomBytes(8).then((u8[] b) => { core.log("random " + itoa(b.len())); });
-    cli.cwd().linkedTo(core).then((string d) => { core.log("and a Cli ticket, linked by hand"); });
+    cli.cwd().then((string d) => { core.log("and a Cli ticket, linked by its capability"); });
     core.log("drained " + itoa(core.drain()));
     return 0;
   }

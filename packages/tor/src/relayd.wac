@@ -829,7 +829,7 @@ void spliceBack(Conn?[] conns, i32 connCount, i32 connId, i32 circId, i32 toConn
  */
 async void armAccept(Core core, Cli cli, Relay x, Socket listener) {
   while (x.accepting) {
-    Socket fresh = await cli.accept(listener.handle).linkedTo(core);
+    Socket fresh = await cli.accept(listener.handle);
     if (fresh.handle < 0) {
       core.warn("relayd: accept: " + fresh.error + " — no longer accepting");
       x.accepting = false;
@@ -868,7 +868,7 @@ async void armOne(Core core, Cli cli, Relay x, Conn c, i32 source, i32 circId) {
     if (source != 0 && at < 0) { disarm(c, source, circId); return; }
     Pending<Read> p = source == 0 ? c.fromClient
                     : (source == 1 ? c.circs[at]!.fromNext : c.circs[at]!.fromStream);
-    Read r = await p.linkedTo(core);
+    Read r = await p;
     if (!c.live) { disarm(c, source, circId); return; }
     i32 back = source == 0 ? 0 - 1 : findCirc(c, circId);
     if (source != 0 && back < 0) { disarm(c, source, circId); return; }

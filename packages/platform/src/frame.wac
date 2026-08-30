@@ -378,5 +378,9 @@ export Cli childCli(Frame f, const Cli parent) {
     // Forwarded unchanged: a frame is a view of stdio and the working directory, and asking the
     // engine about some bytes touches neither.
     parent.validated,
+    // **The frame's child dispatches on the same scheduler.** A frame narrows what a `Cli` may do,
+    // not which world it belongs to — and a ticket registered on a scheduler nobody drains is a
+    // continuation that never fires.
+    parent.sched,
   );
 }

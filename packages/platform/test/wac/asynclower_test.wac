@@ -51,7 +51,7 @@ Pending<i32> fileSize(Core core, Cli cli, string path) {
   fn[bool()][] step = fn[bool()][1](fill: neverSteps);
 
   // Eager: the call to the capability happens now, at the point of the `await` — D1.
-  Pending<FileResult> up = cli.readFile(path).linkedTo(core);
+  Pending<FileResult> up = cli.readFile(path);
 
   // **The body after the await, written once.** Both drivers run this same closure, which is the
   // property that makes "advanced exactly once" checkable rather than hoped for.

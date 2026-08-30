@@ -1,5 +1,16 @@
 // Two awaits, and the composition the lowering needs — `design/lang/0014` step 4, A3.
 //
+// **A `_probe` rather than a `_test`, because it reproduces `issues/lang/0295c` in the aggregate.**
+// `wac test` on a directory builds one module out of every file in it, and this one's generics —
+// `ready<T>` and `flatMap<T, U>` — are instantiated only inside lambdas, which that issue is about:
+// the walk that records instantiations does not descend into a lambda body. On its own the file
+// emits and its three cases pass; combined with the other forty-one the module will not load. A
+// statement-level instantiation of each is the documented workaround and was tried here — it is not
+// enough, which is worth knowing and is recorded on the issue.
+//
+// It stays because it is the evidence for a decision: the state machine was chosen over CPS, and
+// this is what CPS looked like. `wac test packages/platform/test/wac/asyncchain_probe.wac` runs it.
+//
 // `asynclower_test.wac` did one `await` by hand and found what the runtime was missing. This does
 // **two**, which is where the shape changes: a continuation that itself awaits does not answer `T`,
 // it answers `Pending<T>`, so composing with `map` would give `Pending<Pending<T>>` and the early
@@ -109,13 +120,13 @@ i32 sizeOf(Cli cli, string path) {
  * and compute the free variables itself, while the machinery to do it already exists for lambdas.
  */
 Pending<i32> second(Core core, Cli cli, FileResult a) {
-  return cli.readFile("MERGE.md").linkedTo(core).map<i32>((FileResult b) => {
+  return cli.readFile("MERGE.md").map<i32>((FileResult b) => {
     return a.bytes.len() + b.bytes.len();
   });
 }
 
 Pending<i32> total(Core core, Cli cli) {
-  return flatMap<FileResult, i32>(cli.readFile("README.md").linkedTo(core), (FileResult a) => {
+  return flatMap<FileResult, i32>(cli.readFile("README.md"), (FileResult a) => {
     if (!a.ok) { return ready<i32>(0 - 1); }
     return second(core, cli, a);
   });
@@ -145,7 +156,7 @@ export string test_the_early_return_takes_its_own_path(Core core, Cli cli) {
   // The branch between the two awaits — A3's `if (!a.ok)`. A file that is not there answers -1 and
   // the second read never happens, which is what `flatMap` being lazy in `f` buys.
   Pending<i32> p = flatMap<FileResult, i32>(
-      cli.readFile("no-such-file-here.md").linkedTo(core), (FileResult a) => {
+      cli.readFile("no-such-file-here.md"), (FileResult a) => {
     if (!a.ok) { return ready<i32>(0 - 1); }
     return second(core, cli, a);
   });

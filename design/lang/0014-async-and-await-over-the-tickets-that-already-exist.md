@@ -265,8 +265,8 @@ Two clients overlapping must both be served, and the second must be accepted whi
 open. **Passes as of 2026-08-30**, in `packages/platform/test/wac/asyncserver_test.wac` — with two
 differences from the sketch above, both of them the cut's limits rather than the design's:
 
-- **`.linkedTo(core)` on every ticket.** `Cli` hands out tickets with no scheduler, so `then` traps on
-  one and a machine awaiting it can only be driven by a `wait`. That is the open question below.
+- ~~**`.linkedTo(core)` on every ticket.**~~ Gone as of 2026-08-30: `Cli` carries the scheduler, so
+  its tickets arrive able to dispatch and A1 reads as it was sketched.
 - **What was awaited is bound before the `match`.** A suspension in a `match` subject or arm is
   declined, so it reads `Read r = await cli.recv(sock); match (r) { … }`, and the `send` binds its
   result rather than being a bare `await`.
@@ -517,11 +517,14 @@ rather than requiring a `Core` parameter the function may not have. An unlinked 
 under `wait` — which is the *host-backed → block* row of D2's table — and cannot advance under
 `drain`, because there was nowhere to register it.
 
-**Answered 2026-08-30: `Cli` should carry the scheduler**, and the attempt is `issues/lang/0298c`.
-The change is `Core.of`'s shape applied to `Cli`'s thirty-one ticket-returning capabilities, and it
-type-checks and emits on its own — but built into the whole `wac.wac` graph the emitter writes a
-module the engine refuses, so `bootstrap.sh` refuses the compiler. The lead is the 1024-lambda cap,
-unconfirmed. Until it lands, `.linkedTo(core)` stays written in A1 and `relayd`.
+**Answered and done, 2026-08-30: `Cli` carries the scheduler.** `Cli.of` takes a `Sched` and wraps
+its thirty-one ticket-returning capabilities in `(args…) => name(args…).on(sched)`, exactly as
+`Core.of` has always wrapped its four — and the host makes **one** scheduler and hands it to both,
+because two would put a `Cli` ticket's continuation where `core.drain()` never looks.
+
+So `cli.readFile(p).then(f)` works, `.linkedTo(core)` is gone from A1 and from `relayd`, and
+`Pending.linkedTo` is left for the one case that still needs it: a ticket the program made itself.
+`issues/lang/0298c` records the two faults it took to get there, neither of them the one suspected.
 
 The reasoning below is what it was before the answer.
 

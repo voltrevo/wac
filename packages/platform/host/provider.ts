@@ -101,6 +101,11 @@ export type PendingClasses = {
 export function coreOf(
   b: Bridge,
   cls: { Core: PlatformClasses["Core"]; Sched: PlatformClasses["Sched"] } & PendingClasses,
+  // **Handed in rather than made here**, because `Cli` needs the same one: a capability that answers
+  // with a ticket and the world that dispatches it are the same world, so both objects a program's
+  // `main` is given must share a scheduler or a `Cli` ticket's continuation is registered where
+  // nothing drains it. Defaulted, so a caller that wants only a `Core` is unchanged.
+  sched?: unknown,
 ): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };
@@ -156,7 +161,7 @@ export function coreOf(
     // **Built, not implemented.** The scheduler is wac code and wac state; the host's whole part in
     // it is calling `create` once, so that a program handed a world is handed somewhere for its
     // continuations to wait. `Core.delay`, `Core.drain` and `Core.dropAll` are the program's view.
-    cls.Sched.create(),
+    sched ?? cls.Sched.create(),
   );
 }
 
@@ -169,6 +174,7 @@ export function coreOf(
 export function cliOf(
   b: Bridge,
   cls: {
+    Sched: PlatformClasses["Sched"];
     Cli: PlatformClasses["Cli"];
     FileResult: { of(...a: unknown[]): unknown };
     Stat: { of(...a: unknown[]): unknown };
@@ -204,6 +210,7 @@ export function cliOf(
    * launcher, which refuses on the loader's grants. This narrows, and the bridge cannot widen.
    */
   grants?: number,
+  sched?: unknown,
 ): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };
@@ -918,7 +925,12 @@ export function cliOf(
       } catch (e) {
         return e instanceof Error ? e.message : String(e);
       }
-    });
+    },
+    /*= sched */
+    // The scheduler this world dispatches on — the same object `Core` was given, so a `Cli`
+    // ticket's continuation lands where `core.drain()` will find it rather than nowhere.
+    sched ?? cls.Sched.create(),
+  );
 }
 
 /**
@@ -978,9 +990,12 @@ export function worldFor(
   // to build from and `Core.of` is `undefined.of`. The two Rust hosts read `main`'s parameter list for
   // this; here the absent class is the same signal, and it is the one this side has.
   if (app.Core === undefined) return [];
-  const out: unknown[] = [coreOf(b, app as unknown as Parameters<typeof coreOf>[1])];
+  // **One scheduler for both.** `Core` and `Cli` are two faces of one world, and a `Cli` ticket
+  // registered on a scheduler `core.drain()` does not run is a continuation that never fires.
+  const sched = (app as unknown as { Sched: PlatformClasses["Sched"] }).Sched.create();
+  const out: unknown[] = [coreOf(b, app as unknown as Parameters<typeof coreOf>[1], sched)];
   if (app.Cli !== undefined) {
-    out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1], grants));
+    out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1], grants, sched));
   }
   return out;
 }

@@ -292,5 +292,6 @@ export Cli narrowed(const Cli parent, Asked a) {
     // no file, starts nothing, and the bytes came from the caller. Passed on unconditionally for the
     // same reason `write` is.
     parent.validated,
+    parent.sched,
   );
 }

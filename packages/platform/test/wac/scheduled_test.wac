@@ -147,10 +147,10 @@ export string test_a_continuation_on_an_ordinary_capabilitys_ticket(Core core, C
   // stands on — so what was missing was only a way for the ticket to be told which world it belongs
   // to.
   //
-  // **Both halves of that now**, since 2026-08-30: `core.randomBytes(8).then(f)` needs no linking,
-  // because `Core.of` links what `Core` hands out, and the `Cli` ticket beside it still does, because
-  // `Cli` has no scheduler. The example prints one of each so the difference is visible rather than
-  // described.
+  // **Neither half needs linking now**, since 2026-08-30: `Core.of` has always linked the four
+  // `Core` hands out, and `Cli.of` links its thirty-one the same way — so `cli.cwd().then(f)` works
+  // where it used to trap. The example prints one of each because the two arrive by different
+  // capabilities, not because they are told different things.
   T t = T.create();
   Ran r = run(cli, "linked");
   t.isTrue(r.ran, r.err);
@@ -167,7 +167,7 @@ export string test_a_continuation_on_an_ordinary_capabilitys_ticket(Core core, C
   // settled before the drain starts depends on how loaded the box is. Both orders are correct.
   string[] middle = string[](lines[1], lines[2], lines[3], lines[4]);
   t.eqStr(joinedWith(sorted(middle), ","),
-          "and a Cli ticket, linked by hand,first,random 8,second", r.out);
+          "and a Cli ticket, linked by its capability,first,random 8,second", r.out);
   return t.report();
 }
 
