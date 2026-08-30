@@ -886,7 +886,7 @@ string usage() {
        // block because these two lines were narrower than the truth — so `wac --help` listed `run`
        // and `test` twice, with two different accounts of `test`. Reported against an external
        // project on 2026-08-25. One list, and it is this one.
-       + "                [--coverage] [--filter <name>] [--ignore <path,…>] [--verbose] [path…]\n"
+       + "                [--coverage] [--filter <name>] [--ignore <path,…>] [--quiet] [path…]\n"
        + "                run `test*()` exports; paths may be files or directories\n"
        // **These two were the host's lines**, printed after this block by `native/v8/src/main.rs`
        // under `if SHELL.is_some()` and `if UPDATE.is_some()` — because they were payloads it
@@ -1065,7 +1065,10 @@ string[] flagsFor(string cmd) {
   }
   if (cmd == "test") {
     return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
-                    "--coverage", "--filter", "--ignore", "--verbose");
+                    // **`--quiet` rather than `--verbose`, since 2026-08-29.** A run says which
+                    // tests it ran and how long each took, the way `deno test` and `cargo test` do;
+                    // the flag is for the caller that wants only the tally, which is the suite.
+                    "--coverage", "--filter", "--ignore", "--quiet");
   }
   // The grants and the destination, and nothing that needs a second command to finish — which is the
   // whole of `issues/system/0274c`.
@@ -1911,7 +1914,7 @@ export i32 main(Core core, Cli cli) {
         }
         return runTests(core, cli, target, hit.bytes, cachedManifest, grantsIn(cli, argc),
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target, "",
-                        hasFlag(cli, argc, "--verbose"), profileDir);
+                        !hasFlag(cli, argc, "--quiet"), profileDir);
       }
     }
     // **An `app` hit is the module plus two shell lines**, which is all an app is — so this rebuilds
@@ -2152,7 +2155,7 @@ export i32 main(Core core, Cli cli) {
     i32 code = runTests(core, cli, entry, wholeTest, manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
                         covered ? covTableFilesIn(paths, texts, res, entry) : "",
-                        hasFlag(cli, argc, "--verbose"), profileDir);
+                        !hasFlag(cli, argc, "--quiet"), profileDir);
     // The aggregate is already gone — removed below `gather`, which is the one place that covers
     // every way out of this function rather than only this one. GitHub wac#27.
     return code;
