@@ -1,0 +1,139 @@
+// Every program in this repo compiles.
+//
+//     wac test --allow-read --allow-run tools/wac/programscompile_test.wac
+//
+// wac-mono 0079: the suite compiled only the programs a test drives — `packages/box` and `packages/sh`
+// build theirs per case — and none of the other thirty. So a program could stop compiling and
+// `wac task test` stayed green, with the breakage surfacing whenever somebody next tried to run it and
+// no indication of which change had done it. It was found by consolidating a function out of
+// `packages/tor/src/relayd.wac`: the tor package's 169 tests passed, and the only reason the program
+// was known to still build is that somebody built it by hand afterwards.
+//
+// **A compile is the whole assertion.** This is not a behavioural test and does not need to be. It
+// calls the compiler's file-level API rather than building an artefact, which skips the packaging a
+// real build does — that is what makes it affordable at all.
+//
+// The programs come from `tools/wac/programs.wac`, which is also what writes `MAP.md`, so a program
+// cannot be in the map and outside this test.
+//
+// **There is a second implementation of that rule and nothing compares them.** `harness/programs.ts`
+// finds programs with `/^export i32 main\(/m` for the TypeScript that still needs the list;
+// `programs.wac` does it with `exportsEntry`, which requires the same text at a line start. They
+// agree today — both spellings demand `export i32 main(` beginning a line — and its own header warns
+// that "two copies of this regex would drift, and the drift would be invisible in the direction that
+// matters". It goes when the last TypeScript reader of it does; until then this is the copy the map
+// and this test share, which is the pair that matters most.
+//
+// **In wac since 2026-08-30**, from tools/programs.test.ts — `issues/system/0289b`. The TypeScript
+// reached `diagnoseFiles` and `blockedFiles` through `harness/waccBuild.ts`'s `waccApi`, a wasm
+// instance built and called from Deno, and read each program's closure with `harness/wacFiles.ts`.
+// Both are ordinary wac: the two checks are exports of `packages/wacc/src/api.wac`, and the closure is
+// `sourcesOf` in `packages/wactest/src/built.wac`. So this compiles every program in the same process
+// that is running the test.
+//
+// test-lane: heavy — compiles every program in the repository; 42s of CPU measured 2026-08-30, which is
+// the TypeScript's 41s and not an improvement: the work is the compiling, and dropping the bridge does
+// not change it. Memory undeclared rather than inherited — `issues/system/0230c` is about costs copied
+// forward instead of measured, and 1020 MB was the Deno process's
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { Sources, sourcesOf } from "../../packages/wactest/src/built.wac";
+import { blockedFiles, diagnoseFiles } from "../../packages/wacc/src/api.wac";
+import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
+
+/**
+ * A floor on how many programs were found, so the test cannot pass by finding none.
+ *
+ * A floor rather than the exact number keeps this from failing every time somebody writes a program —
+ * the exact count lives in `MAP.md`, which is regenerated and checked by `tools/wac/map_test.wac`.
+ */
+const i32 AT_LEAST = 30;
+
+/** At most six lines of a diagnostic, since the second is often the one that names the cause. */
+string firstLines(string s, i32 want) {
+  i32 seen = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) != "\n") { continue; }
+    seen = seen + 1;
+    if (seen == want) { return s.slice(0, i); }
+  }
+  return s;
+}
+
+export string test_every_program_in_the_repo_compiles(Core core, Cli cli) {
+  T t = T.create();
+
+  Program[] programs = findPrograms(cli);
+  t.isTrue(programs.len() >= AT_LEAST,
+           "only " + itoa(programs.len()) + " programs found — the discovery in tools/wac/programs.wac"
+           + " is broken, and a test that compiles nothing passes");
+  if (programs.len() < AT_LEAST) { return t.report(); }
+
+  string broken = "";
+  i32 nBroken = 0;
+  for (i32 i = 0; i < programs.len(); i++) {
+    Program p = programs[i];
+    Sources src = sourcesOf(cli, p.path);
+    if (src.why != "") {
+      nBroken = nBroken + 1;
+      broken = broken + "\n  " + p.path + ": could not read its closure — " + src.why;
+      continue;
+    }
+    // Both halves of "does it compile": what the checker refuses, and what the emitter declines. A
+    // build runs both, so a guard that ran one would still let the other through.
+    string diagnostics = diagnoseFiles(src.paths, src.texts, p.path);
+    string blocked = diagnostics == "" ? blockedFiles(src.paths, src.texts, p.path) : "";
+    if (diagnostics == "" && blocked == "") { continue; }
+    nBroken = nBroken + 1;
+    broken = broken + "\n  " + p.path + " (" + p.pkg + "):\n"
+             + (diagnostics != "" ? firstLines(diagnostics, 6)
+                                  : "    the emitter declined it: " + blocked);
+  }
+
+  t.eqI32(nBroken, 0, itoa(nBroken) + " of " + itoa(programs.len())
+                      + " programs do not compile:" + broken);
+  return t.report();
+}
+
+/**
+ * Guards the guard.
+ *
+ * `programs.wac` decides what a program is by looking for `main` or `page`, and the platform's two
+ * launchers decide what to *run* the same way. If those ever disagree, the test above compiles the
+ * wrong set and the failure it exists to catch goes back to being silent.
+ *
+ * Two files, because the dispatch is split and the first version of this looked in one: `main` is run
+ * by `entry.ts`, and `page` only by `entryBrowser.ts` — a page needs a canvas, so the Deno launcher
+ * has nothing to offer it.
+ */
+export string test_a_programs_entry_point_is_one_the_platform_dispatches(Core core, Cli cli) {
+  T t = T.create();
+
+  FileResult entry = cli.readFile("packages/platform/host/entry.ts").wait();
+  t.isTrue(entry.ok, "packages/platform/host/entry.ts could not be read");
+  if (entry.ok) {
+    t.isTrue(contains(string.fromBytes(entry.bytes), "app.main"), "entry.ts no longer runs `main`");
+  }
+
+  FileResult browser = cli.readFile("packages/platform/host/entryBrowser.ts").wait();
+  t.isTrue(browser.ok, "packages/platform/host/entryBrowser.ts could not be read");
+  if (browser.ok) {
+    t.isTrue(contains(string.fromBytes(browser.bytes), "page"),
+             "entryBrowser.ts no longer mentions `page`, so tools/wac/programs.wac may be looking for"
+             + " the wrong export");
+  }
+
+  Program[] programs = findPrograms(cli);
+  bool anyCli = false;
+  bool anyPage = false;
+  for (i32 i = 0; i < programs.len(); i++) {
+    if (programs[i].kind == KIND_CLI) { anyCli = true; }
+    if (programs[i].kind == KIND_PAGE) { anyPage = true; }
+  }
+  t.isTrue(anyCli, "no `main` program found");
+  t.isTrue(anyPage, "no `page` program found");
+  return t.report();
+}

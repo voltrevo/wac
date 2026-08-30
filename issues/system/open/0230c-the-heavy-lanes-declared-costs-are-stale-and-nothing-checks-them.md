@@ -243,7 +243,7 @@ for the test's own `N passed` line rather than for an exit status:
 |---|---:|---:|---|
 | `packages/box/test/wac/backingsprocess_test.wac` | 18s | **1s** | 18x cheaper |
 | `packages/tls/test/wac/certtamper_test.wac` | 5.5s | **2s** | |
-| `tools/programs.test.ts` | 42s | **41s** | accurate |
+| `tools/wac/programscompile_test.wac` | 42s | **42s** | accurate — re-measured 2026-08-30 when it moved to wac; the work is the compiling, so dropping the Deno bridge did not change it |
 | `packages/box/test/fuzz.test.ts` | 21s | **23s** | accurate |
 | `packages/gzip/test/wac/fuzzcorruption_test.wac` | 22s | **49s** | 2.2x dearer |
 
