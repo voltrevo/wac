@@ -1,0 +1,116 @@
+// The whole shell corpus, through **two hosts**: one JavaScript and one that is not.
+//
+//   wac task corpus:hosts [--from N] [--count N]
+//
+// `design/0001`'s arrival test asks for the same system in two substantially different hosts. The gate
+// runs a bounded slice of this in `packages/platform/test/wac/native_shell_test.wac`, because every
+// case costs two subprocesses and the corpus is 900-odd; this is the whole sweep, run by hand.
+//
+// Both artefacts are built from `packages/box/src/bin/sealedsh.wac` — a session whose filesystem is in
+// memory and which is granted nothing — so what is compared is the *system*, not the machine under it.
+// A difference here is a difference in the capability boundary, since everything above it is the same
+// wasm.
+//
+// ## In wac since 2026-08-30, and it shares rather than copies
+//
+// From tools/corpusHosts.ts — `issues/system/0289b`. **That issue recorded this as blocked on
+// `buildNative`, and the blocker was wrong.** The TypeScript reached for
+// `packages/platform/native.ts`'s builder — 1,610 lines with eight importers — and the wac side never
+// needed it: the native half is an ordinary `wac build`, and `native_shell_test.wac` has been doing
+// exactly that on every gate. Reading the TypeScript's import list and stopping is how the wrong
+// blocker got written down.
+//
+// So this is not a translation of the TypeScript. It is the sweep half of a comparison whose sample
+// half already existed, and the pieces both need — the two builds, the two runners, the difference —
+// moved into `packages/platform/test/wac/hostfs.wac` so that there is one of each rather than two.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { nativeBinaryPath } from "../../packages/wactest/src/host.wac";
+import { announce, unannounce } from "./suitegate.wac";
+import { Vec } from "core/vec.wac";
+import { corpus } from "../../packages/sh/test/wac/corpus.wac";
+import { Built, Ran, builds, denoAll, difference, hangReport, shell }
+       from "../../packages/platform/test/wac/hostfs.wac";
+
+/** `--name N`, or `fallback` when it is absent or has nothing after it. */
+i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--" + name && i + 1 < argc) {
+      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+    }
+  }
+  return fallback;
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] scripts = corpus();
+  i32 argc = cli.argCount().wait();
+  i32 from = flagOf(cli, argc, "from", 0);
+  i32 count = flagOf(cli, argc, "count", scripts.len());
+  i32 last = from + count < scripts.len() ? from + count : scripts.len();
+
+  // **The wasmtime host is not built by default**, and a checkout without one is not quietly short of
+  // coverage — `issues/system/0208`. This is the whole comparison, so there is nothing to report
+  // without it.
+  string native = nativeBinaryPath(core, cli, "corpus:hosts");
+  if (native == "") {
+    core.warn("corpus:hosts: cargo has not built `native`, so there is no second host to compare with");
+    return 2;
+  }
+
+  // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: it builds two
+  // programs and runs each script twice. `issues/system/0142`. Removed by hand at each exit, since wac
+  // has no `unload` listener; a note stranded by a trap is swept by the next reader.
+  string note = announce(core, cli, "corpus:hosts");
+
+  Built b = builds(cli);
+  if (!b.ok) {
+    core.warn("corpus:hosts: the shells did not build — " + b.error);
+    unannounce(cli, note);
+    return 2;
+  }
+
+  string tmp = cli.cwd().wait() + "/.cache/corpushosts";
+  cli.remove(tmp, true).wait();
+  cli.mkdir(tmp, true).wait();
+
+  string[] slice = string[last - from](fill: "");
+  for (i32 i = from; i < last; i++) { slice[i - from] = scripts[i]; }
+
+  // The Deno half in one batch, because starting Deno per script is most of the cost — `denoBatch`
+  // is what `native_shell_test.wac` uses for the same reason.
+  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), slice);
+
+  i32 agree = 0;
+  Vec<string> hung = Vec<string>.create();
+  Vec<string> differ = Vec<string>.create();
+  for (i32 i = 0; i < slice.len(); i++) {
+    Ran a = denoAnswers[i];
+    // A batched run that hit its bound is retried alone, which is what tells a busy machine from a
+    // program that wedges.
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), slice[i]); }
+    Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), slice[i]);
+
+    string why = hangReport(slice[i], string[]("deno", "native"), Ran[](a, c));
+    if (why != "") { hung.push(why); continue; }
+    string d = difference(slice[i], a, c);
+    if (d == "") { agree = agree + 1; continue; }
+    differ.push(d);
+  }
+
+  cli.remove(tmp, true).wait();
+  unannounce(cli, note);
+
+  core.log(itoa(agree) + " of " + itoa(slice.len() - hung.len())
+           + " scripts answer the same on a JavaScript host and one that is not");
+  // Said rather than dropped: a sweep that silently skipped what it could not run would report a
+  // coverage it did not have.
+  if (hung.len() > 0) {
+    core.log("\n" + itoa(hung.len()) + " did not finish and were not compared:");
+    for (i32 i = 0; i < hung.len(); i++) { core.log("  " + hung.get(i)); }
+  }
+  for (i32 i = 0; i < differ.len(); i++) { core.log("\n" + differ.get(i)); }
+  return differ.len() == 0 ? 0 : 1;
+}

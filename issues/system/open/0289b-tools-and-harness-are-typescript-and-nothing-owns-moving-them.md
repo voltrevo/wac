@@ -242,6 +242,24 @@ file after the six ports of that day, nothing left in it is available:
 So the next thing that moves here is not a port. It is `0183` being answered, or somebody deciding
 to move `packages/sh`'s three TypeScript tests so `corpusStderr` can follow them.
 
+**The `buildNative` blocker above is wrong, and it was mine.** `tools/corpusHosts.ts` imports
+`buildNative` from `packages/platform/native.ts`, so I recorded `corpus:hosts` as behind a
+1,610-line chain with eight importers. What I did not do was ask how the *wac* side already does
+the same comparison — and it does:
+`packages/platform/test/wac/native_shell_test.wac` runs a 25-script slice of exactly this on every
+gate, building its native half with an ordinary `wac build` and its Deno half by spawning
+`packages/platform/build.ts`. It never touches `buildNative`. Its own comment says the full sweep
+*is* `wac task corpus:hosts`.
+
+So the tool is available, and the port is not a translation of the TypeScript but a generalisation
+of the wac test that already exists — which means it should *share* that test's builder and
+comparison rather than copy them.
+
+**That is the third stale blocker this file has carried in one day, and the only one I wrote
+myself.** The other two I inherited and checked; this one I created by reading an import list and
+stopping. The rule the two paragraphs below state — that a TypeScript import is not evidence about
+what wac can reach — applies to blockers as much as to tests.
+
 **Twice now a row here has hidden a portable test inside a TypeScript-subject group, so check the
 rows rather than trusting them.** `programs.test.ts` sat in the row above as "tests TypeScript
 machinery" and did not: it compiled every wac program in the repository, through a Deno bridge only
@@ -263,7 +281,8 @@ own test. Nothing else imports it. So it is not work of its own at all: it is de
 three moves as everything else in this section, and the row above should not be read as a separate
 task.
 
-**`corpus:hosts` is behind a library too, and a much bigger one.** It calls `buildNative` from
+**`corpus:hosts` is behind a library too, and a much bigger one.** *(Wrong — see the correction
+below. Left in place because the reasoning is the thing to distrust, not the conclusion.)* It calls `buildNative` from
 `packages/platform/native.ts`, which is not a cargo wrapper: it reaches `harness/waccBuild.ts` and
 `packages/wacc/tools/waccBindgen.ts` for artifacts and bindgen parsing. That is **1,610 lines with
 eight importers**, most of them `packages/platform`'s own TypeScript tests. So it is load-bearing
@@ -287,7 +306,7 @@ actually available to port:
 |---|---|---|
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
 | ~~`corpus:stderr`~~ | — | **done, 2026-08-30** — the knot was untied and it is `tools/wac/corpusstderr.wac` |
-| `corpus:hosts` | 129 | **blocked on `buildNative`**, not on `0290b` — see below |
+| ~~`corpus:hosts`~~ | — | **done, 2026-08-30** — `tools/wac/corpushosts.wac`; the `buildNative` blocker below was mine and was wrong |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
