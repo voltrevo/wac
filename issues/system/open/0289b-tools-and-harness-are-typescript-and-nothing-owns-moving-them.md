@@ -207,3 +207,36 @@ hosts is a decision, not a translation.
 
 **So the honest remainder is nine tasks behind one missing parameter, two behind one missing
 function, and one that dissolves.** The rest is the carve-out working as intended.
+
+## `tools/` read file by file — 2026-08-30
+
+Thirty-eight `.ts` files. Every one has a determination, and the useful result is how little of it is
+actually available to port:
+
+| what | lines | state |
+|---|---|---|
+| `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
+| the five `corpus:*` | 821 | blocked: `0290b` → `0291c` |
+| `ignoredFlags.ts` | 144 | blocked: `0290b` → `0291c` |
+| **`fuzz.ts` + `fuzzBoundary.ts`** | **954** | **available** |
+| `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
+| `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
+| `suiteGate.ts` + test | 116 | waits for the eight announcers, which are the rows above |
+| `suiteGuard.ts` | 66 | waits for `mutate`, its last two callers |
+| `bench.ts` | 232 | carve-out: measures the JS boundary, which is the subject |
+| `wasmopt.ts` | 81 | carve-out: an `npm:binaryen` host. Its own header — "an experiment, not a build step" |
+| `syncBootstrap.ts` | 115 | carve-out: `bootstrap/` machinery, and `bootstrap/` is a designated host |
+| `_spawncmp.ts` | 66 | carve-out: imports `packages/platform/host/*`; its subject is the JS host |
+| `discovery.test.ts` | 84 | carve-out already named above |
+| `lane.test.ts`, `programs.test.ts`, `profile.test.ts`, `mutate.test.ts` | 816 | test TypeScript machinery; they go with their subjects |
+
+**So the whole unblocked remainder of `tools/` is `fuzz.ts` and `fuzzBoundary.ts`.** Everything else
+is behind one compiler bug, is a carve-out, or moves when the thing it tests moves.
+
+That is worth saying plainly because the raw count invites the opposite conclusion. 38 files reads
+like weeks of translation; it is one 954-line job, and then the work is `0291c` — a compiler bug
+somebody else filed, which unblocks ~6,500 lines in one go.
+
+`fuzz.ts` is a good next port for a reason beyond being available: **its oracle is the generated tree,
+not a second interpreter** — "31 of 36 disagreements were mine" is why — so it needs no host to be
+right, only `packages/wacc/src/api.wac` to compile and `spawn` to run what it compiled. Both exist.
