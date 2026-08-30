@@ -314,6 +314,54 @@ diagnostic.
 constructions. `Method`'s own note already warned why last — it is a third `bool` beside `hasThis`
 and `thisConst`, so a slot inserted among them would typecheck and mean something else.
 
+## How step 4 will lower, and why that way
+
+**An AST-to-AST rewrite after checking, before emission.** The checker already understands `async`
+and `await`; the emitter never needs to. So the transform sits between them and hands the emitter
+ordinary wac — the shape `packages/platform/test/wac/asynclower_test.wac` writes by hand and which is
+therefore known to compile and run.
+
+The two alternatives were considered and are worse:
+
+- **Lowering in the emitter**, straight to wasm. Closures are a whole subsystem
+  (`design/lang/0002` tier two) and this would rebuild the environment machinery a second time, by
+  hand, at the level where mistakes are silent.
+- **Rewriting the source text** and re-lexing. It needs a printer that turns an arbitrary expression
+  back into compilable wac, which does not exist — `print.wac` writes a debug form, not source. An
+  AST rewrite does not need one, because it **reuses the original subtrees**: only the scaffolding is
+  new.
+
+**Synthetic tokens are the mechanism, and there is prior art.** Every later phase reads a name
+through `tokenText`, so a node the reader did not write still needs a span. `wapytok.wac` and
+`wapyparse.wac` already do this for wapy's rewrites — `for i in range(a, b)` becomes
+`for (i32 i = a; i < b; i++)` and none of `i32`, `<`, `++` is in the file. Its two hard-won rules
+carry over and are worth repeating rather than rediscovering:
+
+- **A synthetic token keeps the span of the token it came from**, so a diagnostic points at the word
+  the reader wrote. `await`'s own token is the honest span for everything derived from it.
+- **The appended spellings live behind a `#`**, so the tail is invisible to the lexer and the rewrite
+  is idempotent when a file is processed twice. A bare tail was lexed as code the second time round.
+
+### The one runtime question it turns up
+
+`then` **traps on an unlinked ticket**, and `Cli`'s tickets are unlinked — only `Core.of` links the
+four it hands out. So `await cli.recv(sock)`, written exactly as A1 writes it, would trap at the
+moment the continuation is registered. Confirmed by running it.
+
+The lowering therefore registers **only when the ticket carries a scheduler**, reading `up.sched`
+rather than requiring a `Core` parameter the function may not have. An unlinked chain still advances
+under `wait` — which is the *host-backed → block* row of D2's table — and cannot advance under
+`drain`, because there was nowhere to register it.
+
+That is coherent but it leaves a silent stall, which is the failure D7 exists to prevent, and it
+means **A1 must say `.linkedTo(core)`** or the tickets it awaits must arrive linked. Both of A1's
+functions take a `Core`, so the criterion is writable either way. Which of the two is right is a
+decision for the operator, and the second is the larger one: `Cli` could carry the scheduler the way
+`Core` does, at which point `linkedTo` disappears from the language. That echoes the correction that
+put the ticket capabilities on `Core` in the first place — *the API asks for random bytes from core so
+core should already own it* — and it is a change at the host boundary, which is why it is raised
+rather than taken.
+
 ## Order of work
 
 | # | step | done when |
