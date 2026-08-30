@@ -68,7 +68,7 @@ async function wasmSample(): Promise<Uint8Array | null> {
   // moved past it — `frame.wac` uses `u32.leadingZeros`, which the reference does not have, so
   // compiling it there returned `!ok` and this sample silently vanished from the corpus. It had
   // gone by the time anybody looked: the README's table still lists a `wasm` row and a run does
-  // not produce one. `tools/size.ts` and `tools/wasmopt.ts` were moved to wacc for the same reason
+  // not produce one. `tools/wac/size.wac` and `tools/wasmopt.ts` were moved to wacc for the same reason
   // (`issues/lang/0105`); this was the straggler.
   const { waccArtifacts } = await import("../../../harness/waccBuild.ts");
   const { wacFiles } = await import("../../../harness/wacFiles.ts");

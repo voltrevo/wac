@@ -1,0 +1,172 @@
+// What the Tor client costs: to ship, and to compile.
+//
+//   wac task size
+//
+// The layers are compiled separately and each pulls its own dependencies, so they do not sum to the
+// total — TLS and the Tor protocol share most of the crypto, and the shared part is counted twice if
+// you add them up. The interesting numbers are the total and the gap between it and each layer.
+//
+// Times are the median of five runs after a warm-up, so they measure the compiler rather than the
+// host deciding to optimise it.
+//
+// **In wac since 2026-08-30**, from tools/size.ts — `issues/system/0289b`. It was blocked on the one
+// thing a wac program could not do: `packages/wacc/src/api.wac` has taken
+// `emitFiles(paths, sources, entry)` all along, and nothing could produce the arguments.
+// `sourcesOf` in `packages/wactest/src/built.wac` is that reading half now.
+//
+// **Both numbers are wacc's**, because wacc is what builds an application: a size measured on some
+// other compiler's output is a size of bytes nobody runs, and a time measured on it is how long a
+// compiler nobody invokes takes. Figures recorded before 2026-08-12 are the deleted reference's and
+// are not comparable — the compiler changed, not the program. `issues/lang/0105`.
+//
+// It also compiles **in this process** rather than spawning `wac build` per layer, which is what the
+// TypeScript did through a binding layer. That is the difference between timing the compiler and
+// timing a process start plus a file write, and it is the whole point of the `compile` column.
+//
+// ## One column changed meaning, and it is the gzipped one
+//
+// The TypeScript compressed with the host's `CompressionStream("gzip")` — zlib. This uses
+// `packages/gzip`, because a tool that shipped its own compressor and then asked JavaScript for the
+// number would be measuring the thing it is not.
+//
+// **It is between 1% and 5% larger**, measured on these four layers the same afternoon:
+//
+//     layer               ours      zlib
+//     proto_only       18.6 KiB  18.4 KiB
+//     tor_only         41.1 KiB  40.1 KiB
+//     tls_only         48.2 KiB  46.3 KiB
+//     client_entry     71.5 KiB  67.8 KiB
+//
+// That is not news and not a defect: `packages/gzip/README.md` owns the ratio question and already
+// records the dials and what each costs — "match-search cutoffs (zlib's nice/good): +19% compress,
+// 0.9% larger output". What is worth saying here is that a figure quoted from this table is now our
+// compressor's, so it answers "what would this cost if we compressed it" rather than "what will a CDN
+// serve". The wasm column is unaffected and identical to the TypeScript's, byte for byte.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
+import { Sources, sourcesOf } from "../../packages/wactest/src/built.wac";
+import { blockedFiles, diagnoseFiles, emitFiles } from "../../packages/wacc/src/api.wac";
+import { gzipBest } from "../../packages/gzip/src/gzip.wac";
+
+/** The layers, largest last so the table reads as a build-up. */
+string[] entries() {
+  return string[]("packages/tor/size/proto_only.wac",
+                  "packages/tor/size/tor_only.wac",
+                  "packages/tor/size/tls_only.wac",
+                  "packages/tor/src/client_entry.wac");
+}
+
+/** What each layer is, in the words the table prints. */
+string[] labels() {
+  return string[]("cells + path selection, no crypto",
+                  "tor protocol + its crypto",
+                  "TLS 1.3 client + its crypto",
+                  "the whole client");
+}
+
+/** How many times each layer is compiled. The median of five is the reported number. */
+const i32 RUNS = 5;
+
+export i32 main(Core core, Cli cli) {
+  string[] ents = entries();
+  string[] labs = labels();
+
+  core.log(padded("layer", 36) + "     wasm     gzipped     lines    compile");
+  core.log(dashes(76));
+
+  i32 broken = 0;
+  string firstBroken = "";
+  for (i32 i = 0; i < ents.len(); i++) {
+    Sources src = sourcesOf(cli, ents[i]);
+    if (src.why != "") {
+      core.log(padded(labs[i], 36) + "  cannot read " + src.why);
+      broken = broken + 1;
+      if (firstBroken == "") { firstBroken = ents[i]; }
+      continue;
+    }
+
+    // **Asked in two parts**, because wacc answers them separately: the checker's diagnostics, then
+    // what the emitter declined. A cast that said only `{ ok }` and nothing else threw away the
+    // diagnostics this branch exists to print, so it reported nothing, silently, in exactly the case
+    // the tool is for.
+    string diagnostics = diagnoseFiles(src.paths, src.texts, ents[i]);
+    string declined = diagnostics == "" ? blockedFiles(src.paths, src.texts, ents[i]) : "";
+    if (diagnostics != "" || declined != "") {
+      // Loudly, and non-zero at the end. A size report that prints "did not compile" and exits 0 is
+      // green to everything that checks exit codes while measuring nothing — three of these four
+      // layers were broken for some time and this is what said so.
+      core.log(padded(labs[i], 36) + "  did not compile");
+      string[] lines = splitKeepingEmpty(diagnostics == "" ? declined : diagnostics);
+      for (i32 k = 0; k < lines.len(); k++) {
+        if (lines[k] != "") { core.log("    " + lines[k]); }
+      }
+      broken = broken + 1;
+      if (firstBroken == "") { firstBroken = ents[i]; }
+      continue;
+    }
+
+    i32 lines = 0;
+    for (i32 k = 0; k < src.texts.len(); k++) {
+      lines = lines + splitKeepingEmpty(src.texts[k]).len();
+    }
+
+    i64[] took = i64[RUNS]();
+    u8[] wasm = u8[0]();
+    for (i32 r = 0; r < RUNS; r++) {
+      i64 t0 = core.monotonicNanos().wait();
+      wasm = emitFiles(src.paths, src.texts, ents[i]);
+      took[r] = core.monotonicNanos().wait() - t0;
+    }
+    sortNanos(took);
+
+    u8[] gz = gzipBest(wasm);
+    core.log(padded(labs[i], 36)
+             + rightly(kib(wasm.len()), 8) + " KiB"
+             + rightly(kib(gz.len()), 9) + " KiB"
+             + rightly(itoa(lines), 10)
+             + rightly(itoa64(took[RUNS / 2] / (1000000 as i64)), 9) + " ms");
+  }
+
+  if (broken > 0) {
+    core.warn("\n" + itoa(broken) + " of " + itoa(ents.len()) + " layers did not compile, the first "
+              + "being " + firstBroken + ".");
+    return 1;
+  }
+  return 0;
+}
+
+/** `n` bytes as KiB to one decimal place, rounded, without a float. */
+string kib(i32 n) {
+  i32 tenths = (n * 10 + 512) / 1024;
+  return itoa(tenths / 10) + "." + itoa(tenths % 10);
+}
+
+/** In place, ascending — five elements, so the shape matters less than it being obvious. */
+void sortNanos(i64[] a) {
+  for (i32 i = 1; i < a.len(); i++) {
+    i64 v = a[i];
+    i32 at = i;
+    while (at > 0 && a[at - 1] > v) { a[at] = a[at - 1]; at = at - 1; }
+    a[at] = v;
+  }
+}
+
+string padded(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = out + " "; }
+  return out;
+}
+
+string rightly(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+string dashes(i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + "-"; }
+  return out;
+}

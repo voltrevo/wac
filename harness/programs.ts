@@ -45,7 +45,7 @@ export function blurbOf(src: string): string {
  * not by anybody's command line.
  *
  * Excludes `size/` for the same kind of reason. A `size/` directory under a package exists to be **weighed** —
- * `packages/tor/size/` is where the convention comes from, and `tools/size.ts` compiles those to
+ * `packages/tor/size/` is where the convention comes from, and `tools/wac/size.wac` compiles those to
  * compare layers. Tor's happen to export ordinary functions and so were never counted; a size fixture
  * that measures a *capability boundary* has to export `main`, because the boundary only exists for
  * `main`'s parameters. Counting those as programs would put seven weights in the repository's tally
