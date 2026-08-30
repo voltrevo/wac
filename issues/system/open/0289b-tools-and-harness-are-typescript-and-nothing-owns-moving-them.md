@@ -65,8 +65,9 @@ The five `corpus:*` tools are self-contained despite the two imports that look l
 `designClaims.test.ts` as convertible-but-not-done. Both are done — `tools/wac/docsignatures_test.wac`
 and `tools/wac/designclaims_test.wac` exist and the TypeScript is gone.
 
-**2. `coverageAll.ts` (307) — done 2026-08-30, `tools/wac/coverageall.wac`. `coverageUnion.ts` (147)
-is what is left.** `coverageOrder.ts` (41) went with it, and *that* is the part worth recording: it
+**2. Done 2026-08-30 — all three.** `coverageAll.ts` (307) is `tools/wac/coverageall.wac`,
+`coverageUnion.ts` (147) is `tools/wac/coverageunion.wac`, and `coverageOrder.ts` (41) went with the
+first of them. That last one is the part worth recording: it
 looks like the ideal first port — 9 lines of logic, its own test, no I/O — and it is not a leaf. It is
 a *library*, imported only by `coverageAll.ts`, and a TypeScript file cannot import a wac module, so
 porting it alone would have left two copies of the ordering rule or a broken import. **Size is not the
@@ -81,6 +82,15 @@ It also gained the parser and the tests the TypeScript's own comments asked for 
 what `wac task` reads the registry with, instead of a hand-rolled strip that had already broken once;
 and cases for `driverOf`, the ratchet-call classifier, the failure-line filter and the ANSI strip,
 none of which had a test, because the only way to exercise them was a two-minute sweep.
+
+The union half kept its numbers exactly — `tls`/`quic` report the same 3,583 and 4,463 points and the
+same row, `packages/tls/src/handshake.wac | tls | 108 | 80 (74%) | 96 (89%) | +16` — and gained three
+things. It has a **task** (`wac task coverage:union`), where before it was `deno run -A …` typed from
+memory. It **refuses a package name it does not know**, exit 2; the TypeScript filtered the list, so
+`coverageUnion.ts nosuchpkg` printed an empty table, *"0 file(s) … by 0 point(s)"* and exited 0 — a
+clean-looking result over nothing measured, which is the exact failure this repository keeps finding.
+And the two files now **share** `packagesOf`, `commandFor`, `splitOn` and the owner-of-a-path rule
+rather than holding two copies each.
 
 **3. Then `tools/suiteGate.ts` can be deleted, and not before.** Its header names its own exit
 condition: what is left in it is the *writer* of `/tmp/wac-heavy-<pid>`, because the eight tools that

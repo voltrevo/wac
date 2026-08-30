@@ -68,7 +68,7 @@ string timesPath() { return ".cache/coverage-times"; }
 string staleTimesPath() { return ".cache/coverage-times.json"; }
 
 /** The checkout's binary, not `wac` on PATH — an installed build is a different compiler. */
-string binary() { return "./native/v8/target/release/wac"; }
+export string binary() { return "./native/v8/target/release/wac"; }
 
 /** What one package's driver did. */
 struct Result {
@@ -88,7 +88,7 @@ struct Result {
  * package it skipped regresses. Both passed when this was found, which is the only reason it cost
  * nothing. Deriving it means adding a task is the whole of adding it to the sweep.
  */
-string[] packagesOf(Task[] tasks) {
+export string[] packagesOf(Task[] tasks) {
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
     string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
@@ -105,7 +105,7 @@ string[] packagesOf(Task[] tasks) {
 }
 
 /** The command for `coverage:<pkg>`, or `""`. */
-string commandFor(Task[] tasks, string pkg) {
+export string commandFor(Task[] tasks, string pkg) {
   for (i32 i = 0; i < tasks.len(); i++) {
     if (tasks[i].name == "coverage:" + pkg) { return tasks[i].command; }
   }
@@ -135,7 +135,7 @@ export string driverOf(string command) {
 }
 
 /** `s` cut at every `sep`, keeping nothing empty — the words of a command line. */
-string[] splitOn(string s, string sep) {
+export string[] splitOn(string s, string sep) {
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
     string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
