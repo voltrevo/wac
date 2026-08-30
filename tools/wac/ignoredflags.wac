@@ -1,0 +1,268 @@
+// For every applet flag the real tool documents: does box implement it, refuse it, or **ignore** it?
+//
+//   wac task app:build packages/box/src/box.wac --allow-read --allow-write --allow-net -o /tmp/box
+//   wac task flags:ignored /tmp/box
+//
+// Ignoring is the bug, and this repo has its own ranking of the three — `packages/sh/test/gaps.test.ts`
+// states it: doing something plausible is worst, refusing is better, saying *which side is incomplete*
+// is best. A flag accepted and ignored is the first of those, given to a caller who asked for it by name.
+// `cat`, `grep -q` and `tr` were each found in that state by hand, one at a time; this is the same
+// question asked of every applet at once.
+//
+// **The real tool decides what counts.** "Changed nothing" proves nothing on its own — `cat -T` on a file
+// with no tabs is a no-op for GNU too — so a flag is only judged when the real tool's own output changes
+// for that input. That check is what took the first run's 213 findings down to 64 true ones.
+//
+// The answer on 2026-08-07 was **64 ignored against 5 refused**, and wac-mono 0105 has the list.
+//
+// **In wac since 2026-08-30**, from tools/ignoredFlags.ts — `issues/system/0289b`, and one of the nine
+// that `issues/system/0290b` unblocked. It could not be written before: every applet is probed in a
+// scratch directory holding the input file, and until `Cli.execWithIn` no wac program could run a host
+// binary anywhere but where it stood.
+//
+// **It calls `acceptedFlags` rather than parsing it.** The TypeScript read
+// `packages/box/src/lib/flags.wac` as text and recovered the applet-to-letters table with two regexes
+// over the body of the function, because that was the only way a TypeScript program could reach a
+// fact stated in wac. This imports it and calls it, so the table cannot be recovered wrongly and a
+// letter added there is honoured here the next time this runs. It is the same gain as `corpus:through`
+// importing the corpus instead of a derivation of it.
+
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { contains, startsWith, joined, splitLines } from "../../packages/wactest/src/strings.wac";
+import { trimmed } from "../../packages/wactest/src/strings.wac";
+import { scratch } from "../../packages/wactest/src/host.wac";
+import { sortStrings } from "./covledger.wac";
+import { Vec } from "core/vec.wac";
+import { acceptedFlags } from "../../packages/box/src/lib/flags.wac";
+import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
+import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
+
+/** What one probe did. */
+struct Got {
+  string out;
+  string err;
+  i32 code;
+}
+
+/**
+ * The applets asked about. Every one that `packages/box` has and the system also has, so that there
+ * is a real tool to be the authority on what a flag does.
+ */
+string[] applets() {
+  return string[]("cat", "wc", "head", "tail", "rev", "sort", "uniq", "grep", "tr", "seq", "nl", "tac",
+                  "cut", "fold", "paste", "base64", "base32", "basename", "dirname", "echo", "sha256sum",
+                  "sha512sum", "strings", "shuf", "split", "du", "ls", "diff", "find", "stat", "tee",
+                  "cp", "mv", "rm", "mkdir", "rmdir", "touch", "tar", "gzip", "gunzip", "yes", "true",
+                  "false");
+}
+
+/** The bytes every probe is fed, chosen so that sorting, counting and deduplicating all show. */
+string stdinText() { return "banana\napple\napple\ncherry\n"; }
+
+/** Where the system keeps its own copy of an applet, or `""` if it has none. */
+string realPath(Cli cli, string tool) {
+  string[] where = string[]("/usr/bin/" + tool, "/bin/" + tool);
+  for (i32 i = 0; i < where.len(); i++) {
+    Stat s = cli.stat(where[i]).wait();
+    if (s.exists) { return where[i]; }
+  }
+  return "";
+}
+
+/**
+ * Run one command in `dir` and collect what it said.
+ *
+ * Through `timeout(1)`: `tail -f` follows for ever and `yes` never stops, and the real tool doing
+ * that is not a disagreement — it is the harness needing a bound, which this one did not have and
+ * which cost ten minutes of nothing. Bounded in *both* directions: `timeout` caps the time and
+ * `head -c` caps the bytes, because `yes` under a five-second timeout is gigabytes and the reader
+ * dies before the writer does.
+ *
+ * `"$0" "$@"` rather than an interpolated command line, so a path or an argument containing a space
+ * or a quote is passed through as one word rather than re-split by the shell that bounds it.
+ */
+Got runWith(Cli cli, string cmd, string[] args, string stdinBytes, string dir, string[] env) {
+  string[] argv = string[args.len() + 3](fill: "");
+  argv[0] = "-c";
+  argv[1] = "timeout 5 \"$0\" \"$@\" | head -c 200000";
+  argv[2] = cmd;
+  for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
+  Exec r = cli.execWithIn("sh", argv, stdinBytes.toBytes(), env, true, false, dir).wait();
+  if (!r.ran()) { return Got("", "could not run sh: " + r.error, 0 - 1); }
+  return Got(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status);
+}
+
+/** The single-letter flags the real tool's own `--help` documents. */
+string[] documentedFlags(Cli cli, string tool, string[] env) {
+  string real = realPath(cli, tool);
+  if (real == "") { return string[0](fill: ""); }
+  Exec r = cli.execWithIn(real, string[]("--help"), u8[0](), env, true, false, ".").wait();
+  if (!r.ran()) { return string[0](fill: ""); }
+  return flagsFromHelp(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+}
+
+/**
+ * The letters, given the help text — the whole of the parsing, with no capability in it so that a
+ * test can hand it a page and check the answer. It is the one place in this tool that can be
+ * silently wrong: everything else either runs a program or compares two strings, and a flag missed
+ * here is a flag never asked about, which lowers the count without lowering the gap.
+ *
+ * `\s-([a-zA-Z])(?:[,\s]|$)` per line, with a space prepended so that a flag at the start of a line
+ * is preceded by one — the TypeScript spelled the same thing `(?:^|\s)` under `/m`, and doing it per
+ * line is what `packages/regex` offers instead of a multi-line flag.
+ *
+ * **Adjacent flags separated by a single space are not both found**, because the match consumes the
+ * separator: `-a -b` yields `a` alone. The TypeScript's `matchAll` consumed it too, so this is the
+ * behaviour that produced the 64, and changing it here would change the number without anybody having
+ * decided to. `test_adjacent_flags_split_by_one_space_lose_the_second` beside this file pins it, so a
+ * change has to edit an assertion that says what it costs rather than sliding past.
+ */
+export string[] flagsFromHelp(string text) {
+  Program? p = compile("\\s-([a-zA-Z])(?:[,\\s]|$)".toBytes());
+  if (p is null) { return string[0](fill: ""); }
+  i32[] caps = i32[slotCount(p!)]();
+
+  Vec<string> found = Vec<string>.create();
+  string[] lines = splitLines(text);
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = " " + lines[i];
+    u8[] bytes = line.toBytes();
+    i32 at = 0;
+    while (at <= bytes.len()) {
+      if (search(p!, bytes, at, caps, 1000000) == NO_MATCH()) { break; }
+      if (caps[2] >= 0 && caps[3] > caps[2]) {
+        string letter = line.slice(caps[2], caps[3]);
+        if (!seen(found, letter)) { found.push(letter); }
+      }
+      i32 next = caps[1] > at ? caps[1] : at + 1;
+      at = next;
+    }
+  }
+  string[] out = toArray(found);
+  sortStrings(out, out.len());
+  return out;
+}
+
+/** Already collected? Over the `Vec` itself, so a page of fifty flags does not allocate fifty arrays. */
+bool seen(Vec<string> v, string want) {
+  for (i32 i = 0; i < v.len(); i++) { if (v.get(i) == want) { return true; } }
+  return false;
+}
+
+string[] toArray(Vec<string> v) {
+  string[] out = string[v.len()](fill: "");
+  for (i32 i = 0; i < v.len(); i++) { out[i] = v.get(i); }
+  return out;
+}
+
+/**
+ * Prove the binary answers before judging anything it says.
+ *
+ * **Run with no argument the TypeScript reported "109 refused with a message — honest" and exited 0.**
+ * Every probe had failed, because the path was undefined and `sh -c` ran nothing; a flag whose probe
+ * produces no output is indistinguishable from one the applet refused, so a sweep that measured
+ * *nothing* read as a clean bill of health. That is the failure this repo keeps finding in its own
+ * measurements, in the tool written to find it in the applets.
+ *
+ * A usage check alone would not have been enough: a path that exists and is not a box — an old build,
+ * a shell script, a directory — fails the same way and says the same thing. So this asks it something
+ * with a known answer.
+ */
+bool answers(Core core, Cli cli, string box, string[] env) {
+  Got r = runWith(cli, box, string[]("echo", "canary"), "", ".", env);
+  if (trimmed(r.out) == "canary") { return true; }
+  core.warn(box + " did not answer `box echo canary` — it said \"" + trimmed(r.out) + "\"");
+  core.warn("  Every flag would be reported as refused, which is what an unmeasured sweep looks");
+  core.warn("  like. Build one: wac task app:build packages/box/src/box.wac -o /tmp/box");
+  return false;
+}
+
+export i32 main(Core core, Cli cli) {
+  string box = "";
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (box == "" && !startsWith(a, "--")) { box = a; }
+  }
+  if (box == "") {
+    core.warn("usage: wac task flags:ignored <box-binary>");
+    core.warn("  wac task app:build packages/box/src/box.wac --allow-read --allow-write -o /tmp/box");
+    return 2;
+  }
+
+  // `LC_ALL=C` and nothing else inherited but `PATH`, so the answer does not move with the
+  // environment the sweep happened to run in.
+  u8[]? path = cli.env("PATH").wait();
+  string[] env = string[]("LC_ALL=C",
+                          "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!)));
+
+  if (!answers(core, cli, box, env)) { return 2; }
+
+  Vec<string> ignored = Vec<string>.create();
+  Vec<string> refused = Vec<string>.create();
+  Vec<string> accepted = Vec<string>.create();
+
+  string[] names = applets();
+  i32 checked = 0;
+  for (i32 ai = 0; ai < names.len(); ai++) {
+    string applet = names[ai];
+    string[] flags = documentedFlags(cli, applet, env);
+    if (flags.len() == 0) { continue; }
+    string real = realPath(cli, applet);
+    if (real == "") { continue; }
+
+    string dir = scratch(cli, "flags-" + applet);
+    cli.mkdir(dir, true).wait();
+    cli.writeFile(dir + "/f.txt", stdinText().toBytes()).wait();
+
+    // Two baselines: what each answers with no flag at all, on the same input.
+    Got bare = runWith(cli, box, string[](applet, "f.txt"), stdinText(), dir, env);
+    Got bareReal = runWith(cli, real, string[]("f.txt"), stdinText(), dir, env);
+
+    string deliberate = acceptedFlags(applet);
+
+    for (i32 fi = 0; fi < flags.len(); fi++) {
+      string f = flags[fi];
+      // `--help`/`--version` noise, which every tool has and no tool implements as an applet flag.
+      if (applet != "cat" && (f == "h" || f == "V" || f == "v")) { continue; }
+
+      Got got = runWith(cli, box, string[](applet, "-" + f, "f.txt"), stdinText(), dir, env);
+      Got theirs = runWith(cli, real, string[]("-" + f, "f.txt"), stdinText(), dir, env);
+      checked = checked + 1;
+
+      // 124 is `timeout` killing it, which says nothing about the flag.
+      if (theirs.code == 124 || got.code == 124) { continue; }
+
+      // **The flag has to do something to *this* input**, or "changed nothing" says nothing: `cat -T`
+      // on a file with no tabs is a no-op for GNU too. The real tool is what decides that.
+      bool realDoes = theirs.out != bareReal.out || theirs.code != bareReal.code;
+      if (!realDoes) { continue; }
+
+      bool saidSomething = trimmed(got.err) != "";
+      bool changed = got.out != bare.out || got.code != bare.code;
+      if (!changed && !saidSomething) {
+        // `acceptedFlags` is a claim that ignoring this letter *is* the right answer — `cat -u`, which
+        // GNU documents as ignored, and `tar -c`, which names the only mode this tar has. Asking it
+        // here keeps the two categories apart: a deliberate agreement is not the silent gap this tool
+        // exists to count.
+        if (contains(deliberate, f)) { accepted.push(applet + " -" + f); }
+        else { ignored.push(applet + " -" + f); }
+      } else if (!changed && saidSomething) {
+        refused.push(applet + " -" + f);
+      }
+    }
+    cli.remove(dir, true).wait();
+  }
+
+  core.log(itoa(checked) + " flags tried across " + itoa(names.len())
+           + " applets; only those the real tool acts on are judged\n");
+  core.log("ACCEPTED AND IGNORED (" + itoa(ignored.len()) + ") — changed nothing, said nothing:");
+  for (i32 i = 0; i < ignored.len(); i++) { core.log("  " + ignored.get(i)); }
+  core.log("\naccepted deliberately (" + itoa(accepted.len())
+           + ") — the real tool ignores these too:");
+  core.log("  " + joined(toArray(accepted), "  "));
+  core.log("\nrefused with a message (" + itoa(refused.len()) + ") — honest:");
+  core.log("  " + joined(toArray(refused), "  "));
+  return 0;
+}

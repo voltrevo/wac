@@ -99,7 +99,7 @@
   // `wac bindgen` is the same job through wacc, and is a subcommand rather than a task —
   // reachable by anyone who has the command, which a Deno program under `tools/` is not.
   "bindgen": "./native/v8/target/release/wac bindgen",
-  "flags:ignored": "deno run -A tools/ignoredFlags.ts",
+  "flags:ignored": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/ignoredflags.wac --",
   "size": "./native/v8/target/release/wac run --allow-read tools/wac/size.wac",
   "gen:core": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/gencore.wac",
   "gen:unicode": "deno run -A packages/unicode/tools/gentables.ts",

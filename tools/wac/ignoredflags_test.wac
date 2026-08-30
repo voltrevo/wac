@@ -1,0 +1,85 @@
+// Which letters `wac task flags:ignored` recovers from a `--help` page, and nothing else.
+//
+// This is the one part of that tool that can be wrong without saying so. Everything else either runs
+// a program or compares two strings; a flag missed *here* is a flag never asked about, and the sweep
+// reports a smaller gap rather than a smaller measurement — the failure its own header is about.
+//
+// The TypeScript this was ported from had no test, because the parsing was a regex literal inline in
+// a function that also spawned `--help`: reaching it at all meant having the real tool on the machine
+// and reading its page. `issues/system/0289b`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { joined } from "../../packages/wactest/src/strings.wac";
+import { flagsFromHelp } from "./ignoredflags.wac";
+
+export string test_a_flag_at_the_start_of_a_line_is_found() {
+  T t = T.create();
+  // The case a space is prepended for: `(?:^|\s)` under `/m` in the TypeScript, and per-line here
+  // because `packages/regex` takes no multi-line flag.
+  t.eqStr(joined(flagsFromHelp("-b, --number-nonblank"), " "), "b", "found at column zero");
+  return t.report();
+}
+
+export string test_the_usual_gnu_shape() {
+  T t = T.create();
+  string page = "Usage: cat [OPTION]... [FILE]...\n"
+              + "  -A, --show-all           equivalent to -vET\n"
+              + "  -n, --number             number all output lines\n"
+              + "  -s, --squeeze-blank      suppress repeated empty output lines\n";
+  // `-vET` in the description yields nothing: the match needs a comma, a space or end-of-line after
+  // the letter, and `-v` is followed by `E`. Bundled forms named in prose are not picked up, which is
+  // right — they are mentioned there, not documented as options of their own.
+  t.eqStr(joined(flagsFromHelp(page), " "), "A n s", "one per documented option, sorted");
+  return t.report();
+}
+
+export string test_a_letter_is_reported_once_however_often_it_appears() {
+  T t = T.create();
+  string page = "  -n, --number\n  -n again\n  see -n above\n";
+  t.eqStr(joined(flagsFromHelp(page), " "), "n", "deduplicated");
+  return t.report();
+}
+
+export string test_long_options_alone_yield_nothing() {
+  T t = T.create();
+  // `--help` is two dashes; the pattern wants a single one, so a page of long options only is empty
+  // rather than yielding `h`. An applet whose page is all long options is skipped by the caller,
+  // which is right: there is no single-letter flag to ask about.
+  t.eqStr(joined(flagsFromHelp("      --help     display this help and exit\n"), " "), "",
+          "no single-letter flags");
+  return t.report();
+}
+
+export string test_digits_and_punctuation_are_not_flags() {
+  T t = T.create();
+  // `-1` is a real flag for some tools and this pattern does not take it, which is a known narrowing
+  // rather than an accident: the class is `[a-zA-Z]`. Recorded so that widening it is a decision.
+  t.eqStr(joined(flagsFromHelp("  -1  one column\n  --  end of options\n"), " "), "",
+          "neither a digit nor a bare dash-dash");
+  return t.report();
+}
+
+export string test_adjacent_flags_split_by_one_space_lose_the_second() {
+  T t = T.create();
+  // **This pins a known limitation, not a desired behaviour.** The match consumes the separator, so
+  // the space before `-b` has already been eaten by the match that found `-a`. The TypeScript's
+  // `matchAll` did the same, and the published answer — 64 ignored against 5 refused, wac-mono 0105 —
+  // was measured with it. Changing the pattern changes that number, so it has to be a deliberate
+  // change against a re-measured baseline; this assertion is what makes it one.
+  t.eqStr(joined(flagsFromHelp("  -a -b\n"), " "), "a", "the second is missed today");
+  return t.report();
+}
+
+export string test_a_comma_separated_pair_gives_both() {
+  T t = T.create();
+  // The comma is inside the class the match ends on, and the space after it is what the next match
+  // begins on — so the shape GNU actually writes does yield both.
+  t.eqStr(joined(flagsFromHelp("  -a, -b, -c\n"), " "), "a b c", "all three");
+  return t.report();
+}
+
+export string test_an_empty_page_is_empty_rather_than_a_trap() {
+  T t = T.create();
+  t.eqStr(joined(flagsFromHelp(""), " "), "", "nothing from nothing");
+  return t.report();
+}

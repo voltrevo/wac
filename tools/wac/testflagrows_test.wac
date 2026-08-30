@@ -3,7 +3,7 @@
 // **`--verbose` was accepted and implemented by nobody on three of the four hosts.** It was in
 // `unknownTestFlag`'s list, so it was not refused as a typo; it was spelled correctly, changed
 // nothing, and no document said what it should do. `packages/sh/test/gaps.test.ts` ranks the three
-// outcomes and `tools/ignoredFlags.ts` asks this question of every box applet against the real tool:
+// outcomes and `tools/wac/ignoredflags.wac` asks this question of every box applet against the real tool:
 // doing something plausible is worst, refusing is better, saying which side is incomplete is best. A
 // flag accepted and ignored is the first of those, handed to a caller who asked for it by name.
 //

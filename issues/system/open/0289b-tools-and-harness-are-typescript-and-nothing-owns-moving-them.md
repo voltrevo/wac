@@ -18,7 +18,7 @@ that is not obvious — I had to read `tools/suiteGate.ts`'s header to find one 
 
 | where | files | lines | of which `*.test.ts` |
 |---|---|---|---|
-| `tools/**/*.ts` | 46 | 9,411 | 14 files, 2,114 |
+| `tools/**/*.ts` | 36 | 8,048 | 12 files, 1,817 |
 | `harness/**/*.ts` | 36 | 6,026 | 14 files, 1,667 |
 
 `tools/mutate/` is 13 of those files and 2,941 of those lines — a third of `tools/`, in a
@@ -27,7 +27,7 @@ first and had to correct it; anyone re-deriving these should use `find` rather t
 
 For scale on the other side: `tools/*.wac` and `tools/wac/*.wac` are already 43 files and 13,050
 lines, so this is not a new idea being proposed — it is a migration two thirds done in one directory
-and untouched in the other. **26 of the 78 entries in `tasks.json5` still spawn `deno`**, and 44
+and untouched in the other. **23 of the 76 entries in `tasks.json5` still spawn `deno`**, and 44
 invoke the `wac` binary. That count is the tracking number for this issue: it goes to zero, or to
 whatever the carve-out below leaves, and it can be read in one grep.
 
@@ -208,6 +208,11 @@ hosts is a decision, not a translation.
 **So the honest remainder is nine tasks behind one missing parameter, two behind one missing
 function, and one that dissolves.** The rest is the carve-out working as intended.
 
+**The missing parameter landed on 2026-08-30** — `Cli.execWithIn`, `0290b`, after `issues/lang/0291c`
+turned out not to reproduce once `wac task gen:core` was run. Two of the nine are ported since:
+`corpus:through` and `flags:ignored`. What follows was written while they were still blocked, so
+read the table above for the live state and this analysis for how the classification was reached.
+
 ## `tools/` read file by file — 2026-08-30
 
 Thirty-eight `.ts` files. Every one has a determination, and the useful result is how little of it is
@@ -216,8 +221,8 @@ actually available to port:
 | what | lines | state |
 |---|---|---|
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
-| the five `corpus:*` | 821 | blocked: `0290b` → `0291c` |
-| `ignoredFlags.ts` | 144 | blocked: `0290b` → `0291c` |
+| `corpus:backings`, `corpus:routes`, `corpus:stderr` | 568 | unblocked — want `buildApp` in wac, and an answer for `ETXTBSY` |
+| `corpus:hosts` | 129 | unblocked — the same, plus `buildNative`, which builds a Rust crate |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
@@ -251,7 +256,9 @@ context-dependent emission bugs; it would go blind to exactly the class the wrap
 there for.
 
 **So the unblocked remainder of `tools/` is nothing.** Every one of the 38 files is behind
-`issues/lang/0291c`, is a carve-out, or moves when its subject moves. The raw count says weeks of
+`issues/lang/0291c`, is a carve-out, or moves when its subject moves. *(True when written and
+false within the day: `0291c` did not reproduce, `0290b` landed, and the seven that remain of the
+nine are ordinary translation work.)* The raw count says weeks of
 translation; the determination says the next lever is a compiler bug somebody else filed, and fixing
 it unblocks ~6,500 lines in one go.
 
@@ -311,6 +318,6 @@ regenerating the compiler's embedded copy of it, which is `issues/system/0291b`.
 recorded honestly and each was checked by the person after; what settled it was running the
 reproduction rather than reading it.
 
-So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts, then port nine
-tools that all want a scratch directory to run something in. `mutate` additionally has
+So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts — **done, `0290b`** —
+then port nine tools that all want a scratch directory to run something in, of which two are done. `mutate` additionally has
 `issues/system/0183`, which is its own thing.
