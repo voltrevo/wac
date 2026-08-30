@@ -226,3 +226,23 @@ Then:
 The verified-today part is that seven parameters are fine: `issues/lang/0291c` closed as not
 reproducing, and a seventh on `spawn` bootstraps to a fixed point in one round. So the constraint on
 this design is the wire format and the eight decoders, not the language.
+
+### The implementation map, read out
+
+Smaller than the eight decoders suggest, because two of them share and one refuses:
+
+| file | what |
+|---|---|
+| `std/platform.wac` | the capability, its constructor entry, `execWith` and `exec` as methods over it — then `wac task gen:core` |
+| `packages/platform/host/ops.ts` | `EXEC_WITH_IN: 59` and its docstring |
+| `packages/platform/host/provider.ts` | the encode — one more `prefixed(str(cwd), …)` layer — and `NEEDS[59] = GRANT_RUN` |
+| `packages/platform/host/child.ts` | `unpackExec`, which **`deno.ts` and `node.ts` share**, so the decode moves once |
+| `packages/platform/host/deno.ts` | pass it: `Deno.Command` already takes `cwd` |
+| `packages/platform/host/node.ts` | pass it: `child_process.spawn` already takes `cwd` |
+| `packages/platform/host/browser.ts` | one line. It answers 58 with *"a page cannot run a host program"* and answers 59 the same way |
+| `native/src/main.rs`, `native/v8/src/main.rs` | the two Rust hosts; `std::process::Command` takes `current_dir` |
+| `packages/wac/src/grants.wac` | the stub stored in the field when `--allow-run` is withheld |
+| `packages/platform/test/wac/conformance_test.wac` | a citation for 59 that drives every host rather than one that reads as covered — `issues/system/0279c` |
+
+The empty-means-inherit rule keeps every existing behaviour: `execWith` passes `""` and nothing that
+does not ask for a directory can notice the change.
