@@ -129,3 +129,15 @@ parameters, which is fine, but `0291c` explicitly records that it is not known w
 real boundary or something seven crosses — and a capability change that silently produces a compiler
 with no entry point is discovered by `bootstrap.sh` refusing to install it, which is the only thing
 between it and a broken tree.
+
+### What the fold would cost, counted
+
+- **35** `execWith` call sites in `packages/`, `tools/`, `harness/` and `native/`.
+- **8** of them pass a `true` for `clearEnv` or `inherit` — the only ones with a decision in them.
+  The other 27 are `false, false` and become the default flag value.
+- **398** `.exec(…)` call sites are untouched: `Cli.exec` is the convenience that passes the
+  defaults, and it keeps its arity by passing the new flags word and an empty `cwd`.
+
+So the fold is 35 mechanical edits and 8 judgements, against 9 tasks unblocked. That is the size of
+the commit rather than an argument against it — but it does mean the change lands in one piece across
+five hosts, and `0291c` is the reason it cannot land as the smaller one.
