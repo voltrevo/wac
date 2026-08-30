@@ -59,6 +59,28 @@ The `async` lowering does not hit it: its handlers are declared in the enclosing
 nested inside one another, for an unrelated scoping reason. So this is a gap in what a person can
 write by hand, not in what the compiler generates.
 
+## Where it is, and what the fix looks like
+
+Chased since filing. The emitter already knows this case exists and says so, beside the promotion:
+
+> A parameter records -1 and is skipped: it has no `Var` to promote, and needs a cell made at
+> function entry instead — the piece that is still missing.
+
+and it does handle it — `noteParamCell(this.walkFuncLine, this.walkFuncCol, name)`. **The bug is
+which function that names.** `walkFuncLine` and `walkFuncCol` are set only from a *declaration's*
+name token — five sites, all of them a function or a method — and never when the walk enters a
+lambda. So a captured *lambda* parameter records its cell against the enclosing **function**, which
+never makes one, while the inner lambda's environment is built expecting it. Hence a `struct.new`
+handed a raw `i64` where a `(ref null …)` belongs.
+
+The fix is to make those two fields name the innermost function-*like* thing rather than the
+innermost declaration: set them to the lambda's own position when the walk enters a lambda body, and
+put them back on the way out — the same save-and-restore shape `walkLambdaDepth` already uses beside
+it. A captured function parameter keeps working because the outermost case is unchanged.
+
+Not attempted here: it is a change to how the capture walk names things, and it deserves its own
+tests rather than being folded into the `design/lang/0014` work that found it.
+
 ## Notes
 
 The failure is loud, which is the one good thing about it: the module is written and refused rather
