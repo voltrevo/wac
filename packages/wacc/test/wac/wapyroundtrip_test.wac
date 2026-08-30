@@ -66,7 +66,9 @@ string[] knownBad() {
     "packages/platform/src/frame.wac",
     "packages/platform/test/wac/scheduled_test.wac",
     "packages/wac/src/grants.wac",
-    "spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac");
+    "spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac",
+    "packages/platform/test/wac/asynclower_test.wac",
+    "packages/platform/test/wac/asyncchain_test.wac");
 }
 
 /** Why each is listed, index for index with `knownBad`. */
@@ -78,7 +80,9 @@ string[] knownBadWhy() {
     "jsx text containing markup characters",
     "jsx text containing markup characters",
     "jsx text containing markup characters",
-    "a type-argument chain with an inline lambda");
+    "a type-argument chain with an inline lambda",
+    "a ternary inside a lambda — issues/lang/0297c",
+    "a ternary inside a lambda — issues/lang/0297c");
 }
 
 /**

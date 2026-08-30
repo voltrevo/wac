@@ -78,7 +78,12 @@ string[] statementSources() {
 
 string[] expressionLabels() {
   return string[](
-    "Unary", "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member", "Call", "Call-method",
+    "Unary",
+    // `await`'s operand is an expression like any other, and the arm that types it descends into the
+    // operand *before* deciding whether it is a ticket — so a fault buried in one is reported even
+    // when the await itself is also wrong. `design/lang/0014`.
+    "Await",
+    "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member", "Call", "Call-method",
     "Construct", "Assign-rhs", "Return-value", "Condition",
     // Added after `Incr` turned out to be unwalked in its expression form: `p.n++;` was checked and
     // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
@@ -112,6 +117,7 @@ string[] expressionLabels() {
 string[] expressionSources() {
   return string[](
     "void f(i32 p, f64 q) { i32 r = -" + SUB + "; }",
+    "async i32 f(i32 p, f64 q) { return await " + SUB + "; }",
     "void f(i32 p, f64 q) { i32 r = " + SUB + " + 1; }",
     "void f(i32 p, f64 q) { i64 r = " + SUB + " as i64; }",
     "void f(i32 p, f64 q, bool c) { i32 r = c ? " + SUB + " : 0; }",
