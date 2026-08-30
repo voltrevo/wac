@@ -239,7 +239,7 @@ passed to, and the method is found on the receiver — **including a receiver th
 funcref**, which is what every capability call is:
 
 ```wac
-core.randomBytes(8).linkedTo(core).then((u8[] b) => core.log(itoa(b.len())));
+core.randomBytes(8).then((u8[] b) => core.log(itoa(b.len())));
 ```
 
 `randomBytes` is a `fn[Pending<u8[]>(i32)]` field rather than a method, and for a while that was the

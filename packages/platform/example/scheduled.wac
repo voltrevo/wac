@@ -8,7 +8,7 @@
 //   scheduled leave      do not — which the host reports as an error
 //   scheduled abandon    say you meant it
 //   scheduled budget     drain for half a second, and abandon what that did not reach
-//   scheduled linked     a continuation on a ticket that is not a timer
+//   scheduled linked     a `Core` ticket that is not a timer, and a `Cli` ticket linked by hand
 //
 // **Nothing here names a scheduler.** `delay` hands back a ticket that can carry a continuation,
 // `then` puts one on it, and `drain` runs them — things this world can do, reached through the
@@ -39,10 +39,12 @@ export i32 main(Core core, Cli cli) {
   }
 
   if (how == "linked") {
-    // **Any ticket can carry a continuation, not just `delay`'s.** `randomBytes` is an ordinary
-    // capability that knows nothing about scheduling; `linkedTo` is the ticket being told which world
-    // runs its continuations, and it is the same world that handed the ticket over.
-    core.randomBytes(8).linkedTo(core).then((u8[] b) => { core.log("random " + itoa(b.len())); });
+    // **A ticket from a capability that is not the world that dispatches.** `Cli` has no scheduler,
+    // so its tickets arrive unlinked and `linkedTo` is the program saying which world runs the
+    // continuation. `Core`'s own tickets need none of this — `core.randomBytes(8).then(f)` works,
+    // because `Core.of` links what `Core` hands out.
+    core.randomBytes(8).then((u8[] b) => { core.log("random " + itoa(b.len())); });
+    cli.cwd().linkedTo(core).then((string d) => { core.log("and a Cli ticket, linked by hand"); });
     core.log("drained " + itoa(core.drain()));
     return 0;
   }
