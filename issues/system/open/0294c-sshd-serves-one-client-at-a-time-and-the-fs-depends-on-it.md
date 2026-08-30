@@ -47,6 +47,29 @@ Two things need answering first, and neither is the lowering's business:
   session that wrote for itself from one that did not. With two sessions overlapping, "after a
   session ends" no longer names a moment when the filesystem is quiet.
 
+## `dird` is the same shape, and its state is even more explicit
+
+`packages/tor/src/dird.wac` has the identical loop, and threads its state through the serial
+iteration in the source rather than in a comment:
+
+```wac
+while (true) {
+  Socket conn = cli.accept(listener.handle).wait();
+  docs = answer(core, cli, conn, docs);   // each request may update what the next one serves
+  cli.closeSocket(conn.handle);
+}
+```
+
+`docs = answer(…, docs)` only means what it says while one request is in flight at a time. Two
+overlapping requests would need `docs` to be shared mutable state, which is the same question `Fs`
+raises above — so whatever answers one should answer both, and they are worth deciding together.
+
+There is a reason to want it here that `sshd` does not have: `answer`'s own comment records that a
+client which never finishes a request line holds the loop forever, *"and a directory port is
+reachable by anyone who can route to it"*. It is capped rather than concurrent, so a slow client
+still blocks every other client for as long as the cap allows. Concurrency would remove that
+head-of-line block, which makes this the stronger case of the two — and still not a mechanical port.
+
 ## What is worth knowing anyway
 
 The survey that found this was looking for packages where `async` is a clear win. Measured across
