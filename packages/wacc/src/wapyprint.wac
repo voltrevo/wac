@@ -242,6 +242,10 @@ void wapyPrintExpr(Wp w, Expr e) {
     case NullLit: { w.s("None"); }
     case Ident(tok): { w.tok(tok); }
 
+    case Await(operand): {
+      w.s("await ");
+      printOperand(w, operand);
+    }
     case Unary(op, operand): {
       // `!a` is `not a`; the arithmetic ones keep their punctuation.
       if (w.tokIs(op, "!")) { w.s("not "); } else { w.tok(op); }
@@ -831,7 +835,7 @@ void wapyPrintDecl(Wp w, Decl d) {
       w.nl();
     }
 
-    case Func(nameTok, returnType, params, body, exported, typeParams): {
+    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       if (exported) { w.s("@export"); w.nl(); }
       w.s("def ");
       w.tok(nameTok);

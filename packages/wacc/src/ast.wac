@@ -118,6 +118,16 @@ export enum ExprKind {
   Ident(i32 tok),
   /** `op` is the operator token. */
   Unary(i32 op, Expr operand),
+  /**
+   * `await e` — `design/lang/0014`.
+   *
+   * **Its own variant rather than a `Unary` with `op == kAwait()`**, and the reason is which way
+   * the mistake falls. There are 23 `case Unary(` arms; a new operator flowing through them would
+   * be handled by whatever each already does with an operator it does not know, silently. A
+   * variant makes every match that must care say so, and the ones that genuinely do not keep
+   * their `else`.
+   */
+  Await(Expr operand),
   Binary(i32 op, Expr left, Expr right),
   /** One of `as`, `as!`, `as~`, `as@` — which is in `op`. */
   Cast(i32 op, Expr operand, Ty target),
@@ -349,6 +359,15 @@ export struct Method {
    * agreeing.
    */
   i32[] typeParams;
+  /**
+   * Declared `async` — `design/lang/0014` D3, where the return type is what the *body* answers
+   * and the caller receives a `Pending<T>` of it.
+   *
+   * Appended last for the reason `typeParams` above was, and the hazard is sharper here: this is
+   * a third `bool` and the two beside it are `hasThis` and `thisConst`, so a slot inserted among
+   * them would typecheck and mean something else.
+   */
+  bool isAsync;
 }
 
 /** One variant of an `enum` declaration. Payload fields are shaped like params. */
@@ -375,7 +394,7 @@ export enum DeclKind {
    * none. A generic function, struct or enum is the same declaration with those recorded.
    */
   Func(i32 nameTok, Ty returnType, Param[] params, Stmt[] body, bool exported,
-       i32[] typeParams),
+       i32[] typeParams, bool isAsync),
   /** `parentTok` is -1 when the struct has no parent. */
   StructDecl(i32 nameTok, i32 parentTok, Field[] fields, Method[] methods,
              bool exported, bool isConst, i32[] typeParams),

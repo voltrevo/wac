@@ -23,7 +23,7 @@ import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
-  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kImport,
+  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kImport,
   kOverride, kAssign,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
@@ -279,9 +279,26 @@ export struct P {
  * range test rather than a list. `kinds.wac` says every kind after a removed one moves
  * down, which keeps that true — and the differential test is what noticed last time.
  */
+/**
+ * Whether `k` is a keyword's kind — **the one place that answers this**.
+ *
+ * `kImport`..`kMatch` is contiguous and `kinds.wac` asks that it stay so, but a kind added after
+ * `kEof` cannot join it: everything below 84 mirrors the reference's `TokenKind` order. `async` and
+ * `await` are wac's own (`design/lang/0014`), so they are named here.
+ *
+ * Two callers read this and they must agree. They did not: extending only `atKeyword` left
+ * `looksLikeVarDecl` testing the bare range, so `i32 async = 1;` was not recognised as a declaration
+ * at all and produced five cascading parse errors instead of *'async' is a keyword and cannot be used
+ * as a variable name* — which `i32 const = 1;` has said all along. The test for the new keyword is
+ * what found it.
+ */
+bool isKeywordKind(i32 k) {
+  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait();
+}
+
 bool atKeyword(P p) {
   i32 k = p.kindAt(0);
-  return k >= kImport() && k <= kMatch();
+  return isKeywordKind(k);
 }
 
 /**
@@ -1195,6 +1212,15 @@ Expr parseCast(P p) {
 Expr parseUnary(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
+  // **`await` binds tighter than any binary operator and looser than postfix** — `design/lang/0014`.
+  // Recursing into `parseUnary` gives both at once: `await cli.readFile(p)` awaits the call rather
+  // than the receiver, because the postfix chain is parsed whole below; and `await n + 1` is
+  // `(await n) + 1`, because this returns before the binary level is reached. That is Rust's and
+  // JavaScript's grouping, and the one a reader assumes.
+  if (p.at1(kAwait())) {
+    p.advance();
+    return Expr(ExprKind.Await(parseUnary(p)), line, col);
+  }
   if (p.at1(kMinus()) || p.at1(kBang()) || p.at1(kTilde())) {
     i32 op = p.advance();
     return Expr(ExprKind.Unary(op, parseUnary(p)), line, col);
@@ -1798,7 +1824,7 @@ bool looksLikeVarDecl(P p) {
   // reference does the same, so that `i32 match = 1;` can be told it named a keyword
   // instead of reporting a missing semicolon further down.
   i32 k = p.kindAt(j);
-  return k >= kImport() && k <= kMatch() && p.kindAt(j + 1) == kAssign();
+  return isKeywordKind(k) && p.kindAt(j + 1) == kAssign();
 }
 
 Stmt[] parseBlock(P p) {
@@ -2322,7 +2348,7 @@ Decl parseStructDecl(P p, bool exported) {
       }
       p.expect(kRparen());
       methods.push(Method(memberTok, memberType, params.take(), parseBlock(p),
-        isOverride, overrideTok, hasThis, thisConst, mTypeParams));
+        isOverride, overrideTok, hasThis, thisConst, mTypeParams, false));
     } else {
       p.fail(perrExpected());
       while (!p.at1(kRbrace()) && !p.at1(kSemi()) && !p.at1(kEof())) { p.advance(); }
@@ -2402,7 +2428,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
-                        i32[0]()));
+                        i32[0](), false));
   }
 
   p.expect(kRbrace());
@@ -2434,6 +2460,10 @@ Decl parseFuncDecl(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
   bool exported = p.eat(kExport());
+  // `export async i32 f()`, in that order — `async` sits where `const` does in `export const struct`,
+  // between the visibility and the thing. `design/lang/0014` D3: the type written is what the *body*
+  // answers, and the caller receives a `Pending<T>` of it.
+  bool isAsync = p.eat(kAsync());
   Ty ret = parseType(p);
   i32 nameTok = -1;
   nameTok = declName(p, perrExpected(), "function name");
@@ -2443,7 +2473,7 @@ Decl parseFuncDecl(P p) {
   if (!p.at1(kRparen())) { parseParams(p, params); }
   p.expect(kRparen());
   return Decl(DeclKind.Func(nameTok, ret, params.take(), parseBlock(p), exported,
-    typeParams), line, col);
+    typeParams, isAsync), line, col);
 }
 
 Decl parseConstDecl(P p, bool exported) {
@@ -2493,11 +2523,11 @@ export Program parseProgram(P p) {
     } else if (k == kConst()) {
       if (exported) { p.advance(); }
       decls.push(parseConstDecl(p, exported));
-    } else if (exported || k == kFn() || k == kVoid() || k == kIdent()) {
+    } else if (exported || k == kFn() || k == kVoid() || k == kIdent() || k == kAsync()) {
       // A function: `parseFuncDecl` consumes its own `export`. Entered only when the
       // token could actually begin one — a return type is an `ident` (the primitives
-      // are not keywords), or `void`, or `fn`, or an `export` whose declaration kind
-      // was not matched above.
+      // are not keywords), or `void`, or `fn`, or `async`, or an `export` whose
+      // declaration kind was not matched above.
       i32 before = p.at;
       decls.push(parseFuncDecl(p));
       if (p.at == before) {

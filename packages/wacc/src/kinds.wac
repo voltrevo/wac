@@ -300,8 +300,16 @@ export i32 kJsxText() { return 84; }
 export i32 kFatArrow() { return 85; }
 
 
+// `async` and `await` — `design/lang/0014`. Appended for the same reason `kFatArrow` was: these are
+// wac's own and the reference has no token for either, so a number below 84 would shift one the
+// differential used to read straight out of `wacLex.ts`.
+/** `async` */
+export i32 kAsync() { return 86; }
+/** `await` */
+export i32 kAwait() { return 87; }
+
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 86; }
+export i32 kindCount() { return 88; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.
@@ -398,5 +406,7 @@ export string kindName(i32 kind) {
   if (kind == 83) { return "eof"; }
   if (kind == 84) { return "jsx text"; }
   if (kind == 85) { return "=>"; }
+  if (kind == 86) { return "async"; }
+  if (kind == 87) { return "await"; }
   return "something else";
 }

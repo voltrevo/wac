@@ -20,7 +20,7 @@ import {
   kImport, kExport, kStruct, kConst, kThis, kOverride,
   kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
   kBreak, kContinue, kReturn, kTrap, kTrue, kFalse, kNull,
-  kIs, kNot, kAs, kVoid, kFn, kEnum, kMatch,
+  kIs, kNot, kAs, kVoid, kFn, kEnum, kMatch, kAsync, kAwait,
   kAsBang, kAsTilde, kAsAt,
   kPlus, kMinus, kStar, kSlash, kPercent, kAssign, kEq, kNe,
   kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kAnd, kOr, kCaret, kTilde,
@@ -165,6 +165,8 @@ i32 keywordKind(u8[] src, i32 start, i32 len) {
     if (v == p5('f', 'a', 'l', 's', 'e')) { return kFalse(); }
     if (v == p5('c', 'o', 'n', 's', 't')) { return kConst(); }
     if (v == p5('m', 'a', 't', 'c', 'h')) { return kMatch(); }
+    if (v == p5('a', 's', 'y', 'n', 'c')) { return kAsync(); }
+    if (v == p5('a', 'w', 'a', 'i', 't')) { return kAwait(); }
     return kIdent();
   }
   if (len == 6) {

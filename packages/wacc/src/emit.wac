@@ -601,7 +601,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
         u8[] gs = srcFor(env.fileSrcs, src, env.declFile(d));
         Lexed gl = lexFor(env.fileLexeds, lexed, env.declFile(d));
         match (gd[d].kind) {
-          case Func(nameTok, returnType, params, body, exported, typeParams): {
+          case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() != targs.len()) { continue; }
             if (tokenTextOf(gs, gl, nameTok) != raw) { continue; }
             string inst = raw + "<";
@@ -641,7 +641,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
     u8[] cs = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed cl = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (cd[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
         if (params.len() != args.len()) { return ""; }
@@ -2977,7 +2977,7 @@ export struct Env {
 /** Whether a declaration is a function this slice can emit. */
 bool emittable(Decl d) {
   match (d.kind) {
-    case Func(nameTok, returnType, params, body, exported, typeParams): {
+    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       return typeParams.len() == 0;
     }
     else: { return false; }
@@ -4050,7 +4050,7 @@ string exportSigsOf(Front f) {
     src = srcFor(env.fileSrcs, b2s, env.curFile);
     lexed = lexFor(env.fileLexeds, b2l, env.curFile);
     match (b2d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         bool ok = env.funcIndex[at] >= 0;
         at = at + 1;
@@ -4793,7 +4793,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd1[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         if (env.funcIndex[countAt] < 0) { countAt = countAt + 1; continue; }
         countAt = countAt + 1;
@@ -4828,7 +4828,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd2[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
         registerNamed(env, rt);
@@ -4972,7 +4972,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
       match (pd3[di].kind) {
         // One function per instance, in the same place in the order its registration put it.
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
@@ -5091,7 +5091,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd4[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         registerFuncTypes(env, src, lexed, returnType, params, "");
       }
@@ -5141,7 +5141,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       src = srcFor(env.fileSrcs, blobSrc, env.curFile);
       lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
       match (pd5[di].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5470,7 +5470,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           index = index + 1;
         }
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
         emitAt = emitAt + 1;
@@ -5550,7 +5550,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       match (pd8[di].kind) {
         // **Never exported.** An instance's name is not a name anybody wrote, and two modules that
         // happened to infer the same one would collide on it.
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
@@ -7759,6 +7759,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (env.constInits[ci] is null) { return; }
       emitExprAt(fb, cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!, env.constTypes[ci]);
     }
+    // **Declined before emission reaches here** by `unsupportedExpr`, which names it. The arm exists
+    // because the match is exhaustive, and it traps rather than emitting a plausible value: a wrong
+    // answer for `await` would be a program that runs and lies, which is worse than one that stops.
+    case Await(operand): { fb.byte(0); }
     case Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kBang()) {
@@ -9174,7 +9178,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         env.walkFuncCol = lexedCol(lexed, nameTok);
         findLambdasExpr(env, src, lexed, init, typeOfTyName(env, src, lexed, type));
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0 && bodyHasLambda(src, lexed, body)) { env.lambdaInGeneric = true; }
         if (typeParams.len() == 0) {
           env.walkCount = 0;
@@ -9354,7 +9358,7 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
       src = srcFor(env.fileSrcs, w3s, env.curFile);
       lexed = lexFor(env.fileLexeds, w3l, env.curFile);
       match (w3d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
@@ -9458,7 +9462,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       src = srcFor(env.fileSrcs, w5s, env.curFile);
       lexed = lexFor(env.fileLexeds, w5l, env.curFile);
       match (w5d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
@@ -9769,6 +9773,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // the mark is its own parameter or local; a name resolving nowhere is a function, a struct or a
     // constant rather than a local, and is not captured either.
     case Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
+    case Await(operand): { findLambdasExpr(env, src, lexed, operand, ""); }
     case Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
     case Binary(op, left, right): {
       findLambdasExpr(env, src, lexed, left, "");
@@ -11655,6 +11660,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
       return unsupportedValue(cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!);
     }
+    case Await(operand): { return "`await`, which the emitter does not lower yet — `design/lang/0014` step 4"; }
     case Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     case Binary(op, left, right): {
       string l = unsupportedValue(src, lexed, env, left);
@@ -12218,7 +12224,7 @@ string blockedOf(Front f) {
     src = srcFor(env.fileSrcs, b3s, env.curFile);
     lexed = lexFor(env.fileLexeds, b3l, env.curFile);
     match (b3d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // A generic function is a **template**, and a template emits nothing: `mapOption<T, U>` is
         // not a function until its arguments say which one. Declining the declaration declined every
         // file that merely imports the file it lives in — which is most of `std`'s consumers, none
@@ -12468,7 +12474,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       src = srcFor(env.fileSrcs, w8s, env.curFile);
       lexed = lexFor(env.fileLexeds, w8l, env.curFile);
       match (w8d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() > 0) { continue; }
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
         }
@@ -12613,7 +12619,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           // A generic **function**. It has no type of its own to build — only a body to compile once
           // per binding — so registering it is registering *one function* under the instance's name,
           // with its parameters and return type resolved under the substitution the name carries.
-          case Func(nameTok, returnType, params, body, exported, typeParams): {
+          case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             if (env.funcAt(inst) >= 0) { continue; }
@@ -12962,7 +12968,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // down, which is the same argument the checker makes for collecting signatures before bodies.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         string[] pts = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(env, src, lexed, params[i].type); }
@@ -13026,7 +13032,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
     src = srcFor(env.fileSrcs, w10s, env.curFile);
     lexed = lexFor(env.fileLexeds, w10l, env.curFile);
     match (w10d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         collectArrayTypesIn(env, src, lexed, params, body);
       }
@@ -13209,7 +13215,7 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
     src = srcFor(env.fileSrcs, w11s, env.curFile);
     lexed = lexFor(env.fileLexeds, w11l, env.curFile);
     match (w11d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         // Only the entry file's exports become the module's, which is what the counter checks too.
         bool mine = entryDecls < 0 || d < entryDecls;
@@ -13263,7 +13269,7 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
     src = srcFor(env.fileSrcs, w12s, env.curFile);
     lexed = lexFor(env.fileLexeds, w12l, env.curFile);
     match (w12d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         // **Two questions, because they have different answers.** `funcOk` is the settling's
         // verdict — "did anything unsupported stop this" — and `funcIndex` is whether the function
@@ -13320,7 +13326,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
       src = srcFor(env.fileSrcs, w13s, env.curFile);
       lexed = lexFor(env.fileLexeds, w13l, env.curFile);
       match (w13d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() > 0) { continue; }
           if (env.funcOk[at] &&
               !canEmit(src, lexed, env, params, body, "",
@@ -13738,6 +13744,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
       collectArrayTypesOfExpr(env, src, lexed, arr);
       collectArrayTypesOfExpr(env, src, lexed, index);
     }
+    case Await(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     case Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     case Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     case Binary(op, left, right): {
@@ -13773,6 +13780,7 @@ string kindOfExpr(Expr e) {
     case NullLit: { return "null"; }
     case TypeName(named): { return "a type used as a value"; }
     case Ident(tok): { return "name"; }
+    case Await(operand): { return "await"; }
     case Unary(op, operand): { return "unary"; }
     case Binary(op, left, right): { return "binary"; }
     case Cast(op, operand, target): { return "cast"; }
@@ -14695,7 +14703,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
     src = srcFor(env.fileSrcs, w17s, env.curFile);
     lexed = lexFor(env.fileLexeds, w17l, env.curFile);
     match (w17d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < params.len(); i++) {
           n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, params[i].type));
@@ -14820,7 +14828,7 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
     src = srcFor(env.fileSrcs, w19s, env.curFile);
     lexed = lexFor(env.fileLexeds, w19l, env.curFile);
     match (w19d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
         if (isFuncrefType(rt)) { n = addOutSig(out, n, rt); }
@@ -15309,7 +15317,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
     lexed = lexFor(env.fileLexeds, w20l, env.curFile);
     if (entryDecls >= 0 && d >= entryDecls) { break; }
     match (w20d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, returnType)));
         n = noteSignatureTypes(env, out, n, typeOfTyName(env, src, lexed, returnType));

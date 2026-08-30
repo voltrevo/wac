@@ -160,7 +160,7 @@ void collect(Decls d, u8[] src) {
   Program prog = parseProgram(p);
   for (i32 i = 0; i < prog.decls.len(); i++) {
     match (prog.decls[i].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         string name = tokenTextOf(src, lexed, nameTok);
         addName(d, name);
         if (exported) {

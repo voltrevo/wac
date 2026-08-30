@@ -608,7 +608,7 @@ export string namesFiles(string[] paths, string[] sources, string entry) {
 bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -1058,7 +1058,7 @@ i32 declarationsIn(u8[] src, Lexed lexed, Program prog) {
         for (i32 v = 0; v < variants.len(); v++) { n = n + variants[v].fields.len(); }
         for (i32 m = 0; m < methods.len(); m++) { n = n + methods[m].params.len(); }
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         n = n + params.len() + typeParams.len();
       }
       else: { }
@@ -1225,7 +1225,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
         // **A function's signature reaches as far as a field's does.** `export Pending<i32> later()`
         // hands the caller a type it never named, exactly as `Cli`'s fields do — this arm was
         // missing from the first version of the fix, and the silence it left was identical.
-        case Func(nameTok, returnType, params, body, exported, typeParams): {
+        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           tyNames(src, lx, returnType, found, seen);
           for (i32 p = 0; p < params.len(); p++) {
@@ -1806,7 +1806,7 @@ string mentionedIn(u8[] src, Lexed lx, Program prog, i32 d) {
         }
       }
     }
-    case Func(nameTok, returnType, params, body, exported, typeParams): {
+    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       out = out + tyNamesJoined(src, lx, returnType);
       for (i32 p = 0; p < params.len(); p++) { out = out + tyNamesJoined(src, lx, params[p].type); }
     }

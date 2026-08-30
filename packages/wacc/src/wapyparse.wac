@@ -855,7 +855,7 @@ Decl funcAt(W w, i32 i, i32 hi, bool exported) {
   i32 nameTok = f + 1;
   if (nameTok >= to || kindOf(w, nameTok) != kIdent()) {
     err(w, werrBadDecl(), ln, cl);
-    return Decl(DeclKind.Func(f, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), noStmts(), exported, i32[0](fill: 0)), ln, cl);
+    return Decl(DeclKind.Func(f, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), noStmts(), exported, i32[0](fill: 0), false), ln, cl);
   }
   i32[] tps = i32[0](fill: 0);
   i32 after = nameTok + 1;
@@ -866,19 +866,19 @@ Decl funcAt(W w, i32 i, i32 hi, bool exported) {
   }
   if (after >= to || kindOf(w, after) != kLparen()) {
     err(w, werrBadDecl(), ln, colOf(w, nameTok));
-    return Decl(DeclKind.Func(nameTok, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), blockOf(w, i, hi), exported, tps), ln, cl);
+    return Decl(DeclKind.Func(nameTok, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), blockOf(w, i, hi), exported, tps, false), ln, cl);
   }
   i32 close = mate(w, after, to);
   if (close < 0) {
     err(w, werrBadDecl(), ln, colOf(w, after));
-    return Decl(DeclKind.Func(nameTok, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), blockOf(w, i, hi), exported, tps), ln, cl);
+    return Decl(DeclKind.Func(nameTok, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), blockOf(w, i, hi), exported, tps, false), ln, cl);
   }
   Param[] ps = paramsIn(w, after + 1, close);
   i32 arrow = findArrow(w, close + 1, to);
   Ty ret = tyPrim(w.i32Tok, ln, cl);
   if (arrow < 0) { err(w, werrBadDecl(), ln, colOf(w, close)); }
   else { ret = typeIn(w, arrow + 2, to); }
-  return Decl(DeclKind.Func(nameTok, ret, ps, blockOf(w, i, hi), exported, tps), ln, cl);
+  return Decl(DeclKind.Func(nameTok, ret, ps, blockOf(w, i, hi), exported, tps, false), ln, cl);
 }
 
 Param[] noParams(W w) { return Param[0](fill: Param(0, tyPrim(w.i32Tok, 1, 1), false)); }
@@ -902,17 +902,17 @@ Method methodAt(W w, i32 i, i32 hi, string owner, bool isOverride, i32 overrideT
   Ty bad = tyPrim(w.i32Tok, ln, cl);
   if (nameTok >= to || kindOf(w, nameTok) != kIdent()) {
     err(w, werrBadDecl(), ln, cl);
-    return Method(f, bad, noParams(w), noStmts(), isOverride, overrideTok, false, false, i32[0](fill: 0));
+    return Method(f, bad, noParams(w), noStmts(), isOverride, overrideTok, false, false, i32[0](fill: 0), false);
   }
   i32 open = nameTok + 1;
   if (open >= to || kindOf(w, open) != kLparen()) {
     err(w, werrBadDecl(), ln, colOf(w, nameTok));
-    return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0));
+    return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0), false);
   }
   i32 close = mate(w, open, to);
   if (close < 0) {
     err(w, werrBadDecl(), ln, colOf(w, open));
-    return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0));
+    return Method(nameTok, bad, noParams(w), blockOf(w, i, hi), isOverride, overrideTok, false, false, i32[0](fill: 0), false);
   }
 
   WVec<i32> parts = WVec.create();
@@ -946,7 +946,7 @@ Method methodAt(W w, i32 i, i32 hi, string owner, bool isOverride, i32 overrideT
   if (arrow < 0) { err(w, werrBadDecl(), ln, colOf(w, close)); }
   else { ret = typeIn(w, arrow + 2, to); }
   return Method(nameTok, ret, ps.toArray(), blockOf(w, i, hi), isOverride, overrideTok,
-                hasThis, thisConst, i32[0](fill: 0));
+                hasThis, thisConst, i32[0](fill: 0), false);
 }
 
 /** `class NAME[T](Parent):` or `class NAME(enum):`. */

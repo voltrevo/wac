@@ -288,6 +288,11 @@ void printExpr(Pr w, Expr e) {
     case Ident(tok): {
       w.open("ident", e.line, e.col); w.sp(); w.tok(tok); w.close();
     }
+    case Await(operand): {
+      w.open("await", e.line, e.col);
+      w.sp(); printExpr(w, operand);
+      w.close();
+    }
     case Unary(op, operand): {
       w.open("unary", e.line, e.col);
       w.sp(); w.tok(op);
@@ -649,7 +654,7 @@ void printDecl(Pr w, Decl d) {
       }
       w.s("))");
     }
-    case Func(nameTok, returnType, params, body, exported, typeParams): {
+    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       w.open("func", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
       w.sp(); w.tok(nameTok);

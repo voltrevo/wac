@@ -265,6 +265,27 @@ reading the emitter:
 `trap`, and `trap "…"` does not carry its text (`issues/lang/0147`). The whole point of D7 is that the
 failure is a sentence rather than a hang, so it waits for the thing that can say one.
 
+### What step 3 cost
+
+A new keyword is not one edit. `kAsync` and `kAwait` are numbered after `kEof`, because everything
+below 84 mirrors the reference's `TokenKind` order — so they cannot join the contiguous
+`kImport`..`kMatch` block that two places tested to decide *is this a keyword*. Extending one of them
+left the other reading the bare range, and `i32 async = 1;` produced five cascading parse errors
+instead of the *'async' is a keyword and cannot be used as a variable name* that `i32 const = 1;` has
+given all along. There is one predicate now, `isKeywordKind`, and both read it. **The test for the new
+keyword is what found it** — the feature worked and the collision message did not.
+
+`Await` is its own `ExprKind` rather than a `Unary` carrying the token. There are 23 `case Unary(`
+arms; a new operator flowing through them would have been handled by whatever each already does with
+an operator it does not recognise, silently. As a variant it broke five exhaustive matches by name,
+which is the list of places that had to decide something — including `findLambdasExpr`, where missing
+it would have lost a lambda written inside an `await` and produced an invalid module rather than a
+diagnostic.
+
+`Func` and `Method` each gained an `isAsync`, appended last: 37 identical `case Func(` arms and 11
+constructions. `Method`'s own note already warned why last — it is a third `bool` beside `hasThis`
+and `thisConst`, so a slot inserted among them would typecheck and mean something else.
+
 ## Order of work
 
 | # | step | done when |
@@ -288,7 +309,7 @@ already the state slot.
 | 0 | **done 2026-08-30** — `packages/wacc/test/wac/voidtypearg_test.wac` |
 | 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
 | 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
-| 3 | not started |
+| 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 5/5. `async` and `await` lex, parse and check; A5's first two refusals fire as codes 211 and 212. The call-site type of D3 — an async function's callers seeing `Pending<T>` — is the part still owed, and belongs with step 4 |
 | 4 | not started |
 | 5 | not started |
 

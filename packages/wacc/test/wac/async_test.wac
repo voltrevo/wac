@@ -1,0 +1,97 @@
+// `async` and `await` as syntax — `design/lang/0014` step 3.
+//
+// Step 3 is the notation and the refusals, not the lowering: a body containing `await` is **declined
+// by the emitter** with a sentence naming step 4, rather than emitted as something that runs and
+// lies. So everything here is a question about diagnostics, asked through `diagnoseGraph` on
+// self-contained sources — the same shape `voidtypearg_test.wac` settled on, and for the same
+// reason: that entry point resolves no built-ins, so a case written against the real `Pending` would
+// answer `""` and pass whatever the rules did.
+//
+// Two of A5's refusals are the point of the file. The third — a chain that cannot advance — is D7
+// and needs a message `trap` cannot carry yet (`issues/lang/0147`).
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { diagnoseGraph } from "../../src/api.wac";
+
+const string ENTRY = "main.wac";
+
+string diagnose(string src) {
+  return diagnoseGraph(string[](ENTRY), string[](src), ENTRY);
+}
+
+/** A stand-in for the real ticket, since `diagnoseGraph` resolves no built-ins. */
+const string TICKET = "struct Pending<T> {\n"
+                    + "  i32 id;\n"
+                    + "  Pending<T> of(i32 id) { return Pending<T>(id); }\n"
+                    + "}\n";
+
+export string test_await_outside_an_async_function_is_refused() {
+  T t = T.create();
+  string out = diagnose(TICKET
+    + "i32 main() {\n"
+    + "  Pending<i32> p = Pending<i32>.of(1);\n"
+    + "  return await p;\n"
+    + "}\n");
+  // **The declaration is named, not the operand.** The operand here is a perfectly good ticket, so a
+  // message about it would send the reader to the one part of this program that is right.
+  t.isTrue(contains(out, "`await` outside an `async` function"),
+           "the refusal should name the function it is in — got \"" + out + "\"");
+  t.isTrue(contains(out, "declare the function `async`"),
+           "and the help should say what to change — got \"" + out + "\"");
+  return t.report();
+}
+
+export string test_awaiting_something_that_is_not_a_ticket_names_its_type() {
+  T t = T.create();
+  string out = diagnose(
+      "async i32 f() {\n"
+    + "  i32 n = 7;\n"
+    + "  return await n;\n"
+    + "}\n"
+    + "i32 main() { return 0; }\n");
+  t.isTrue(contains(out, "cannot be awaited"), "refused — got \"" + out + "\"");
+  // *What did I await then* is the whole question, so the type is in the sentence.
+  t.isTrue(contains(out, "and this is i32"),
+           "the type awaited should be named — got \"" + out + "\"");
+  return t.report();
+}
+
+export string test_await_on_a_ticket_inside_async_is_accepted() {
+  T t = T.create();
+  // The control for both cases above: same `await`, same ticket, and now in a function that may say
+  // it. Without this the two refusals would pass just as well if `await` were refused everywhere.
+  string out = diagnose(TICKET
+    + "async i32 f(Pending<i32> p) {\n"
+    + "  return await p;\n"
+    + "}\n"
+    + "i32 main() { return 0; }\n");
+  t.eqStr(out, "", "an awaited ticket inside an async function is a program");
+  return t.report();
+}
+
+export string test_async_is_a_keyword_and_says_so_when_used_as_a_name() {
+  T t = T.create();
+  // Adding a keyword takes a spelling away from every program, so the message for the collision is
+  // part of the feature rather than an afterthought — `[§wac-keyword-name-8wnq4kp]`. `async` and
+  // `await` are numbered after `kEof`, outside the contiguous keyword range `atKeyword` tests, which
+  // is exactly how this would have been missed.
+  string out = diagnose("i32 main() {\n  i32 async = 1;\n  return async;\n}\n");
+  t.isTrue(contains(out, "'async' is a keyword"),
+           "the collision should name the keyword — got \"" + out + "\"");
+  string out2 = diagnose("i32 main() {\n  i32 await = 1;\n  return await;\n}\n");
+  t.isTrue(contains(out2, "'await' is a keyword"),
+           "and so should the other one — got \"" + out2 + "\"");
+  return t.report();
+}
+
+export string test_an_async_function_without_await_is_an_ordinary_program() {
+  T t = T.create();
+  // `async` is accepted where a return type may be written, including after `export`.
+  t.eqStr(diagnose("async i32 f() { return 1; }\ni32 main() { return 0; }\n"), "",
+          "a plain async function");
+  t.eqStr(diagnose("export async void tick() { }\ni32 main() { return 0; }\n"), "",
+          "`export async void`, which is the D5 case that needed `Pending<void>` to exist");
+  return t.report();
+}

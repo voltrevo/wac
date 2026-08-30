@@ -157,6 +157,8 @@ export string checkMessage(i32 code) {
   // wrong is that the two mean different things. `design/lang/0013`.
   if (code == 209) { return "a character literal is a codepoint, and this element holds a byte"; }
   if (code == 210) { return "the compiler's copy of that built-in does not export this name"; }
+  if (code == 211) { return "`await` outside an `async` function"; }
+  if (code == 212) { return "this cannot be awaited"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -250,6 +252,8 @@ export string hintFor(i32 code) {
   if (code == 62) { return "unwrap the subject with `!`, or test it with `is null` first"; }
   if (code == 209) { return "compare against the bytes — `\"é\".toBytes()` is 195 169, not 233"; }
   if (code == 210) { return "`core/` and `std/` are carried inside the compiler — run `wac task gen:core` if you have edited one"; }
+  if (code == 211) { return "declare the function `async`, or `.wait()` the ticket — which blocks"; }
+  if (code == 212) { return "`await` takes a `Pending<T>`, which is what every capability hands back"; }
   // Added where the help is real. A hint that only restates the message is worse than none: it
   // costs a line of everybody's terminal and teaches nothing, and the percentage it moves is a
   // measurement of itself.

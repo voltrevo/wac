@@ -260,6 +260,21 @@ export i32 errCharIntoByte() { return 209; }
  * file, and this is about a *build step that has not been run*.
  */
 export i32 errStaleBuiltinEmbedding() { return 210; }
+
+/**
+ * `await` outside an `async` function — `design/lang/0014`.
+ *
+ * Its own code rather than *unknown name*, because the word was understood: the program said
+ * something meaningful in a place where it cannot mean it, and the fix is on the *declaration*
+ * rather than on the expression the caret sits under.
+ */
+export i32 errAwaitOutsideAsync() { return 211; }
+/**
+ * `await` applied to something that is not a `Pending<T>`.
+ *
+ * The type is named, because *what did I await then* is the whole question — `design/lang/0014` A5.
+ */
+export i32 errAwaitNotPending() { return 212; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -483,6 +498,26 @@ bool rawCast(string from, string to) {
  * only place its fields are written down. So every lookup that takes an owner has to come back here
  * first, and the type arguments are what it substitutes afterwards.
  */
+/**
+ * Whether `t` is a `Pending<…>` — the one type `await` accepts.
+ *
+ * Keyed names are accepted too: a second file declaring `Pending` is spelled `Pending@<file>`, and
+ * an `await` inside *that* file is asking about that one. Written once because both the type rule
+ * and the diagnostic ask the same question, and two spellings of it would drift.
+ */
+bool isPendingType(string t) {
+  string base = genericBase(t);
+  if (base == "") { return false; }
+  if (base == "Pending") { return true; }
+  u8[] a = base.toBytes();
+  u8[] want = "Pending@".toBytes();
+  if (a.len() < want.len()) { return false; }
+  for (i32 i = 0; i < want.len(); i++) {
+    if (a[i] != want[i]) { return false; }
+  }
+  return true;
+}
+
 string genericBase(string t) {
   if (!endsWith(t, ">")) { return ""; }
   u8[] a = t.toBytes();
@@ -1412,6 +1447,19 @@ export struct C {
   string[] unresolvedSpecs;
   i32 unresolvedCount;
 
+  /**
+   * Whether the function whose body is being checked was declared `async` — `design/lang/0014`.
+   *
+   * `await` is only a thing inside one, and the type rules of D3 read off it, so it travels the
+   * way `lambdaReturn` does: set around the body and put back afterwards, rather than threaded
+   * through every `checkExpr` signature.
+   *
+   * Appended last, and next to an `i32`, for the reason the note on `expectedUnknown` gives: `C`
+   * is built positionally, so a `bool` slotted beside another `bool` would land in the wrong
+   * place with the types still agreeing.
+   */
+  bool inAsync;
+
 
 
   /**
@@ -1451,7 +1499,7 @@ export struct C {
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
              string[decls](), i32[locals](fill: 0 - 1), 0,
              string[decls](), string[decls](), 0,
-             string[decls](), 0);
+             string[decls](), 0, false);
   }
 
   /**
@@ -3487,6 +3535,16 @@ export string typeOfExpr(C c, Expr e) {
       return elem;
     }
     // `!x` is a boolean; `-x` and `~x` are whatever `x` is.
+    // `await p` has the type the ticket answers — `design/lang/0014` D3. Unknown when the operand is
+    // not a ticket, which keeps this silent while `checkExpr` is the one that says so; a type made up
+    // here would report the same fault a second time through whatever slot the value lands in.
+    case Await(operand): {
+      string at = typeOfExpr(c, operand);
+      if (!isPendingType(at)) { return typeNone(); }
+      string[] aargs2 = genericArgs(at);
+      if (aargs2.len() != 1) { return typeNone(); }
+      return aargs2[0];
+    }
     case Unary(op, operand): {
       i32 uk = tokenKind(c, op);
       if (uk == kBang()) { return "bool"; }
@@ -4529,6 +4587,25 @@ void checkExpr(C c, Expr e) {
       // to notice it by. The reference: *"'!' unwrap requires nullable type, got null"*.
       // `issues/lang/0249a`.
       if (litKindOf(operand) == litNull()) { c.report(errNeedsNullable(), e.line, e.col); }
+    }
+    case Await(operand): {
+      checkExpr(c, operand);
+      // **The declaration first.** `await` outside an `async` function is wrong wherever its operand
+      // is a ticket or not, and saying so names the fix — the caller writes `async` — rather than
+      // sending the reader after the operand's type.
+      if (!c.inAsync) {
+        c.report(errAwaitOutsideAsync(), e.line, e.col);
+        return;
+      }
+      string awt = typeOfExpr(c, operand);
+      // Unknown stays silent, by the rule the rest of this checker keeps: the operand was already
+      // reported by whatever could not name it.
+      if (awt == typeNone() || awt == "") { return; }
+      if (!isPendingType(awt)) {
+        c.reportWith(errAwaitNotPending(), e.line, e.col,
+                     "`await` wants a Pending<T>, and this is " + awt);
+        return;
+      }
     }
     case Unary(op, operand): {
       checkExpr(c, operand);
@@ -9233,7 +9310,7 @@ void checkImportCollisions(C c, Program prog) {
 /** The name a declaration introduces, or `""` — an import introduces one too, and is not one. */
 string declaredNameOf(C c, Decl d) {
   match (d.kind) {
-    case Func(nameTok, returnType, params, body, exported, typeParams): {
+    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       return tokenText(c, nameTok);
     }
     case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -9369,7 +9446,7 @@ void checkDuplicates(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     string name = "";
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         name = tokenText(c, nameTok);
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -9721,7 +9798,7 @@ export void declareModule(C c, Program prog, string[] only) {
   }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // A generic function's signature is written in terms of its own type parameters, which mean
         // nothing at a call site: `Box<T>` accepts every `Box<…>`, and `T` accepts everything. Its
         // arity is still worth having — that does not depend on the types — so the parameters are
@@ -10016,7 +10093,7 @@ void checkDeclaredTypeNames(C c, Program prog) {
         }
         c.activeParamCount = 0;
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         setActiveParams(c, typeParams);
         // A return type is the fourth position a type can be written in, and the packed rule is the
         // same in all of them — `spec/cases/0060`.
@@ -10315,7 +10392,7 @@ export void checkModule(C c, Program prog) {
   }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // **A generic function's body is checked**, with its type parameters left unknown.
         //
         // It was skipped entirely once, because answering questions about `T` produced wrong answers.
@@ -10343,7 +10420,12 @@ export void checkModule(C c, Program prog) {
           c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
         }
         declareAll(c, body);
+        // Set around the body and put back, the way `lambdaReturn` is: `await` is only a thing inside
+        // an `async` function, and this is the only place that knows which kind this is.
+        bool wasAsync = c.inAsync;
+        c.inAsync = isAsync;
         checkAll(c, body, returnType);
+        c.inAsync = wasAsync;
         c.popScope();
         // Reported at the declaration rather than at the closing brace, which is where the reference
         // puts it: the fault is the function's, not any one statement's.
