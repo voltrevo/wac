@@ -39,6 +39,34 @@ So it is the pair, not either half. The nearest thing already on that test's kno
 *"a type-argument chain with an inline lambda"* — a lambda in a position the printer renders
 differently — which suggests the two are the same underlying gap seen from different sides.
 
+## The cause, found 2026-08-30
+
+**A lambda body is rendered as wac statements whose expressions are in wapy form.** `wapyprint.wac`
+says the first half itself, and says why:
+
+> **wac's parameter spelling, not wapy's.** A lambda is an expression, and `spec/spec/wapy.md` says
+> expressions are wac's unchanged — so it is `(i32 a)` here rather than `(a: i32)`.
+
+The body keeps wac's `{ … ; … }` and its `return`, but a ternary inside it comes out as wapy's
+`X if C else Y`. Reading back sends that body to the **wac** statement parser, which has no such
+form: `if` after an expression begins a new statement. So one `return` of a conditional becomes two
+expression statements, with a `null` where an arm was and the arms swapped:
+
+    wac  : (lambda ((mut n (prim i32))) ((return (ternary (ident b) (ident n) (binary - (int 0) (int 1))))))
+    wapy : (lambda ((mut n (prim i32))) ((expr (ternary (ident b) (null) (ident n)))
+                                         (expr (call (null) ((binary - (int 0) (int 1)))))))
+
+That explains the table above exactly. A ternary in a *function* body survives because that body is
+wapy throughout; a lambda with a simple body survives because nothing in it spells differently. It is
+the pair because it takes both to get a wapy-spelled expression inside a wac-parsed body.
+
+So the fix is a choice rather than a patch: the body is wapy throughout, or the expressions inside it
+stay wac's. Either closes it; mixing is what does not work.
+
+**Worth checking beyond the ternary.** It is the one with a distinctive spelling, so it is the one
+that shows. Anything else wapy writes differently would be rendered into a wac-parsed body the same
+way and would fail the same silent test.
+
 ## Notes
 
 Found because two new files tripped the round trip and neither contained anything exotic:

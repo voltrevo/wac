@@ -29,7 +29,8 @@ export string test_an_async_lambda_answers_its_ticket(Core core, Cli cli) {
   // `async` function has to be handed.
   fn[Pending<i32>(string)] size = async (string p) => {
     FileResult f = await cli.readFile(p);
-    return f.ok ? f.bytes.len() : 0 - 1;
+    if (!f.ok) { return 0 - 1; }
+    return f.bytes.len();
   };
 
   Pending<i32> tk = size("README.md");
@@ -44,7 +45,8 @@ export string test_an_async_lambda_completes_under_drain(Core core, Cli cli) {
   i32 want = sizeOf(cli, "README.md");
   fn[Pending<i32>(string)] size = async (string p) => {
     FileResult f = await cli.readFile(p);
-    return f.ok ? f.bytes.len() : 0 - 1;
+    if (!f.ok) { return 0 - 1; }
+    return f.bytes.len();
   };
   // D1 again, from the other side: the suspension registered a continuation, so draining alone is
   // enough and the `wait` afterwards drives nothing.
@@ -64,7 +66,8 @@ export string test_a_parameter_survives_the_suspension(Core core, Cli cli) {
   // a declared cell first, so what is captured is a declaration.
   fn[Pending<string>(string)] describe = async (string p) => {
     FileResult f = await cli.readFile(p);
-    return p + "=" + (f.ok ? "ok" : "no");
+    if (!f.ok) { return p + "=no"; }
+    return p + "=ok";
   };
   t.eqStr(describe("README.md").wait(), "README.md=ok", "the parameter was still there afterwards");
   return t.report();
@@ -75,7 +78,8 @@ export string test_two_async_lambdas_overlap(Core core, Cli cli) {
   i32 want = sizeOf(cli, "README.md");
   fn[Pending<i32>(string)] size = async (string p) => {
     FileResult f = await cli.readFile(p);
-    return f.ok ? f.bytes.len() : 0 - 1;
+    if (!f.ok) { return 0 - 1; }
+    return f.bytes.len();
   };
   Pending<i32> a = size("README.md");
   Pending<i32> b = size("README.md");
