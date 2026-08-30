@@ -260,13 +260,32 @@ export struct Pending<T> {
    * same rule `delay`, `drain` and `dropAll` keep. It is also the honest statement of the
    * relationship: the world that answers a ticket is the world that dispatches it.
    *
-   * `delay` does this for you. Every *other* capability answers with an unlinked ticket, so
-   * `cli.readFile(p).linkedTo(core).then(f)` is how the rest of the world gets continuations —
+   * **`Core`'s own tickets arrive linked** — `Core.of` does it, so `core.delay`, `core.randomBytes`,
+   * `core.nowMillis` and `core.monotonicNanos` all carry continuations without being asked. This is
+   * for the ones handed out by a capability that is *not* the world that dispatches: `Cli` has no
+   * scheduler, so `cli.readFile(p).linkedTo(core).then(f)` is how the rest of the world gets them.
    * `waitAny` already takes ticket ids across differing `Pending<T>`, which is the property that
    * makes one scheduler enough for all of them.
+   *
+   * **It read `core.randomBytes(8).linkedTo(core).then(f)` until 2026-08-30**, which asked the caller
+   * to hand `core` back to a ticket `core` had just produced — and the failure for forgetting was a
+   * bare trap. The operator had said so when this was built.
    */
   Pending<T> linkedTo(const this, const Core core) {
-    return Pending<T>(this.id, this.resolve, this.settled, this.drop, core.sched);
+    return this.on(core.sched);
+  }
+
+  /**
+   * The same ticket, told which scheduler dispatches its continuations.
+   *
+   * **`Core.of` uses this on every ticket `Core` itself hands out**, which is why `core.delay`,
+   * `core.randomBytes`, `core.nowMillis` and `core.monotonicNanos` carry continuations without being
+   * asked to. A capability reached *through* the world that dispatches has no business making the
+   * caller say so a second time; `linkedTo` above is for a ticket some *other* capability handed
+   * out, and `Cli`'s are all of those.
+   */
+  Pending<T> on(const this, Sched s) {
+    return Pending<T>(this.id, this.resolve, this.settled, this.drop, s);
   }
 
   /**
@@ -763,7 +782,7 @@ export struct Core {
    * ticket with a continuation on it.
    */
   Pending<i64> delay(const this, i32 millis) {
-    return this.sleepMillis(millis).linkedTo(this);
+    return this.sleepMillis(millis);
   }
 
   /**
@@ -820,8 +839,16 @@ export struct Core {
     fn[i32()] askInterrupt,
     Sched sched
   ) {
-    return Core(nowMillis, monotonicNanos, sleepMillis, randomBytes, log, warn, waitAny,
-                askInterrupt, sched);
+    // **Linked here, once, rather than by every caller.** These four are the only capabilities
+    // `Core` answers with a ticket, and `Core` is the thing that dispatches — so a ticket it handed
+    // out arrives able to carry a continuation. `then` on an unlinked ticket is a bare trap, and
+    // requiring `core.randomBytes(8).linkedTo(core).then(f)` made the world ask the caller to hand
+    // it back something it already had.
+    return Core(() => nowMillis().on(sched),
+                () => monotonicNanos().on(sched),
+                (i32 ms) => sleepMillis(ms).on(sched),
+                (i32 n) => randomBytes(n).on(sched),
+                log, warn, waitAny, askInterrupt, sched);
   }
 }
 

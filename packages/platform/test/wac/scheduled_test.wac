@@ -146,22 +146,28 @@ export string test_a_continuation_on_an_ordinary_capabilitys_ticket(Core core, C
   // already takes ticket ids across differing `Pending<T>` — that is the property the whole scheduler
   // stands on — so what was missing was only a way for the ticket to be told which world it belongs
   // to.
+  //
+  // **Both halves of that now**, since 2026-08-30: `core.randomBytes(8).then(f)` needs no linking,
+  // because `Core.of` links what `Core` hands out, and the `Cli` ticket beside it still does, because
+  // `Cli` has no scheduler. The example prints one of each so the difference is visible rather than
+  // described.
   T t = T.create();
   Ran r = run(cli, "linked");
   t.isTrue(r.ran, r.err);
   if (!r.ran) { return t.report(); }
   t.eqI32(r.status, 0, r.err);
   string[] lines = splitLines(r.out);
-  t.isTrue(lines.len() >= 5, "five lines: " + joinedWith(lines, " | "));
-  if (lines.len() < 5) { return t.report(); }
+  t.isTrue(lines.len() >= 6, "six lines: " + joinedWith(lines, " | "));
+  if (lines.len() < 6) { return t.report(); }
   t.eqStr(lines[0], "scheduled 2, ran 0", r.out);
-  t.eqStr(lines[4], "drained 3", r.out);
+  t.eqStr(lines[5], "drained 4", r.out);
   // **The order of the middle three is deliberately not asserted, because it is a race and not a
   // claim.** `randomBytes` is answered by the host at once while the two timers are 1ms and 2ms out —
   // and `then` is followed by a `core.log`, which is itself a round trip, so whether the timers have
   // settled before the drain starts depends on how loaded the box is. Both orders are correct.
-  string[] middle = string[](lines[1], lines[2], lines[3]);
-  t.eqStr(joinedWith(sorted(middle), ","), "first,random 8,second", r.out);
+  string[] middle = string[](lines[1], lines[2], lines[3], lines[4]);
+  t.eqStr(joinedWith(sorted(middle), ","),
+          "and a Cli ticket, linked by hand,first,random 8,second", r.out);
   return t.report();
 }
 
