@@ -1,0 +1,154 @@
+// Two awaits, and the composition the lowering needs — `design/lang/0014` step 4, A3.
+//
+// `asynclower_test.wac` did one `await` by hand and found what the runtime was missing. This does
+// **two**, which is where the shape changes: a continuation that itself awaits does not answer `T`,
+// it answers `Pending<T>`, so composing with `map` would give `Pending<Pending<T>>` and the early
+// `return -1` in A3 would disagree with it. Flattening is the whole difference between one await and
+// any number.
+//
+// **Prototyped here rather than in `std/platform.wac`** on purpose. Everything in that file costs a
+// `gen:core` and a full ladder rebuild to try, and this is the part of the design most likely to be
+// wrong twice before it is right. It moves there once it holds — which is the same order
+// `asynclower_test.wac` used, and the same reason.
+//
+// The correction that made it work is worth stating, because the design note had it wrong: `flatMap`
+// *can* be a combinator. The earlier objection was that flattening by composing `resolve` blocks
+// inside a continuation and would serialise the clients A1 exists to overlap. True of that
+// implementation, and avoidable — the handler registered on the first ticket **registers again on the
+// second** when it fires, which `Sched.run` explicitly supports by unregistering a handler before
+// running it. The flattened ticket itself is never registered, which is what `Sched` holding host ids
+// only requires.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult, Pending, Sched } from "std/platform.wac";
+
+/**
+ * A ticket that is already answered — the tail of a chain, and what a `return` becomes inside a
+ * continuation that has to hand back a ticket.
+ *
+ * Its id is -1 and nothing may register on it: `Sched` holds host ids, so a program-made ticket is
+ * answerable only by being waited on. That is exactly what it is for.
+ */
+Pending<T> ready<T>(T v) {
+  T[] cell = T[1](fill: v);
+  fn[T(i32)] res = (i32 id) => cell[0];
+  fn[bool(i32)] set = (i32 id) => true;
+  fn[void(i32)] drp = (i32 id) => { };
+  return Pending<T>(0 - 1, res, set, drp, null);
+}
+
+/**
+ * `p`, then the ticket `f` makes from its answer — one ticket, two stages.
+ *
+ * **Registered in two stages rather than composed.** Eagerly, a handler goes on `p`; when it fires it
+ * builds the second ticket and registers on *that*. So a drain advances the chain without ever
+ * blocking in a continuation, and two chains interleave. Only when `p` carries no scheduler is there
+ * nothing to register, and the chain then advances under `wait` alone — D2's *host-backed → block*.
+ */
+Pending<U> flatMap<T, U>(Pending<T> p, fn[Pending<U>(T)] f) {
+  Pending<U>?[] inner = Pending<U>?[1](fill: null);
+
+  fn[Pending<U>()] force = () => {
+    if (inner[0] is null) { inner[0] = f(p.resolve(p.id)); }
+    return inner[0]!;
+  };
+
+  if (p.sched is not null) {
+    Sched s = p.sched!;
+    fn[void(i32)] armSecond = (i32 id) => {
+      Pending<U> nxt = force();
+      // The second stage, registered from inside the first — which is why this is a combinator and
+      // not a composition. `ready` carries no scheduler, so a chain that ends in one stops here.
+      if (nxt.sched is not null) {
+        fn[void(i32)] fin = (i32 id2) => { };
+        nxt.sched!.on(nxt.id, fin, nxt.drop);
+      }
+    };
+    s.on(p.id, armSecond, p.drop);
+  }
+
+  fn[U(i32)] res = (i32 id) => {
+    Pending<U> got = force();
+    return got.wait();
+  };
+  fn[bool(i32)] set = (i32 id) => !(inner[0] is null) && inner[0]!.isDone();
+  fn[void(i32)] drp = (i32 id) => {
+    if (inner[0] is null) { p.drop(p.id); } else { inner[0]!.cancel(); }
+  };
+  return Pending<U>(p.id, res, set, drp, p.sched);
+}
+
+/** The oracle: the same answer computed by blocking, with no machinery at all. */
+i32 sizeOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? f.bytes.len() : 0 - 1;
+}
+
+/**
+ * A3, hand-lowered:
+ *
+ *     async i32 total(Cli cli) {
+ *       FileResult a = await cli.readFile("README.md");
+ *       if (!a.ok) { return -1; }
+ *       FileResult b = await cli.readFile("MERGE.md");
+ *       return a.bytes.len() + b.bytes.len();
+ *     }
+ *
+ * The outer continuation contains another `await`, so it hands back a ticket and the early `return`
+ * becomes `ready`. The inner one does not, so it is a plain `map`. That is the whole rule the
+ * lowering follows: **a continuation that awaits is flat-mapped, one that does not is mapped.**
+ */
+/**
+ * The second continuation, **hoisted out of the lambda that would otherwise hold it** — and not for
+ * taste. `issues/lang/0295c`: a generic instantiated only inside a lambda is never monomorphised, so
+ * `map<i32>` written where it belongs is refused with *a value of a type this emitter cannot write:
+ * U*. Hoisting gives it a statement-level instantiation and it emits.
+ *
+ * The captured local has to come with it as a parameter, which is closure conversion done by hand.
+ * That is the cost this file measures: a CPS lowering would have to do this for every continuation
+ * and compute the free variables itself, while the machinery to do it already exists for lambdas.
+ */
+Pending<i32> second(Core core, Cli cli, FileResult a) {
+  return cli.readFile("MERGE.md").linkedTo(core).map<i32>((FileResult b) => {
+    return a.bytes.len() + b.bytes.len();
+  });
+}
+
+Pending<i32> total(Core core, Cli cli) {
+  return flatMap<FileResult, i32>(cli.readFile("README.md").linkedTo(core), (FileResult a) => {
+    if (!a.ok) { return ready<i32>(0 - 1); }
+    return second(core, cli, a);
+  });
+}
+
+export string test_two_awaits_answer_by_waiting(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md") + sizeOf(cli, "MERGE.md");
+  t.isTrue(want > 0, "the oracle read both files");
+  t.eqI32(total(core, cli).wait(), want, "the chain answered the sum");
+  return t.report();
+}
+
+export string test_two_awaits_answer_under_drain(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md") + sizeOf(cli, "MERGE.md");
+  Pending<i32> p = total(core, cli);
+  t.isFalse(p.isDone(), "outstanding before anything drives it");
+  core.drain();
+  t.isTrue(p.isDone(), "and the drain advanced both stages");
+  t.eqI32(p.wait(), want, "to the same answer");
+  return t.report();
+}
+
+export string test_the_early_return_takes_its_own_path(Core core, Cli cli) {
+  T t = T.create();
+  // The branch between the two awaits — A3's `if (!a.ok)`. A file that is not there answers -1 and
+  // the second read never happens, which is what `flatMap` being lazy in `f` buys.
+  Pending<i32> p = flatMap<FileResult, i32>(
+      cli.readFile("no-such-file-here.md").linkedTo(core), (FileResult a) => {
+    if (!a.ok) { return ready<i32>(0 - 1); }
+    return second(core, cli, a);
+  });
+  t.eqI32(p.wait(), 0 - 1, "the early return answered");
+  return t.report();
+}
