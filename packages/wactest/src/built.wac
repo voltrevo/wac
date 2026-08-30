@@ -195,6 +195,70 @@ export Closure closureOf(Cli cli, string entry) {
 }
 
 /**
+ * Every file `entry` reaches, with what is in each — what a compiler API's `emitFiles` takes.
+ *
+ * The reading half of `wacFiles` in the TypeScript harness, and the thing `issues/system/0289b`
+ * records as blocking `wac task size` and `bench:compile`: `packages/wacc/src/api.wac` exposes
+ * `emitFiles(paths, sources, entry)`, and until this there was no way for a wac program to produce
+ * its arguments.
+ *
+ * **Deliberately not merged into `closureOf` above**, though it walks the same graph by the same two
+ * helpers. `newestInClosure` is asked on every cached build, and a build cache that carried the text
+ * of all 190 files `sshd` reaches — to answer a question about mtimes — would be paying for the
+ * larger answer every time it wanted the smaller one.
+ *
+ * **Not `gather`, which is the complete answer.** `packages/wac/src/wac.wac` resolves `@/` project
+ * roots and import maps and is what the `wac` command itself uses; this resolves neither, so a
+ * program that writes `@/` gets a closure with a hole in it. No caller needs that today — checked
+ * across `packages/tor`, `packages/tls` and `packages/crypto`, which is what the blocked tools
+ * compile — and `why` names the first file it could not read so a hole is reported rather than
+ * compiled.
+ */
+export struct Sources {
+  string[] paths;
+  string[] texts;
+  /** `""` when the whole closure was read, otherwise the first file that could not be. */
+  string why;
+}
+
+export Sources sourcesOf(Cli cli, string entry) {
+  string[] seen = string[CLOSURE_CAP](fill: "");
+  string[] text = string[CLOSURE_CAP](fill: "");
+  seen[0] = entry;
+  i32 n = 1;
+  i32 at = 0;
+  i32 kept = 0;
+  string[] paths = string[CLOSURE_CAP](fill: "");
+  while (at < n) {
+    string path = seen[at];
+    at = at + 1;
+    // `std/…` and `core/…` resolve to nothing on disk: they live in the compiler, and the compiler
+    // is what will be handed these, so it already has them.
+    if (!cli.stat(path).wait().isFile) { continue; }
+    FileResult f = cli.readFile(path).wait();
+    if (!f.ok) { return Sources(string[0](fill: ""), string[0](fill: ""), path); }
+    string src = string.fromBytes(f.bytes);
+    paths[kept] = path;
+    text[kept] = src;
+    kept = kept + 1;
+    string[] specs = importsOf(src);
+    for (i32 i = 0; i < specs.len(); i++) {
+      string next = resolvedFrom(path, specs[i]);
+      if (next == "") { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
+      if (have || n >= seen.len()) { continue; }
+      seen[n] = next;
+      n = n + 1;
+    }
+  }
+  string[] outPaths = string[kept](fill: "");
+  string[] outTexts = string[kept](fill: "");
+  for (i32 i = 0; i < kept; i++) { outPaths[i] = paths[i]; outTexts[i] = text[i]; }
+  return Sources(outPaths, outTexts, "");
+}
+
+/**
  * The newest modification time among `entry` and every file it imports, transitively.
  *
  * A file that cannot be read answers `now`, so an artefact is rebuilt rather than trusted when the walk
