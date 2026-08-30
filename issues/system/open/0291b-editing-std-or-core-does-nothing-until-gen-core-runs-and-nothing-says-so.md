@@ -90,6 +90,9 @@ capability involved.
 ## Scope
 
 Everything `gen:core` generates: `core/read.wac`, `core/jsx.wac`, the five `core/` siblings, and
-`std/platform.wac`. Nine files. Anyone editing one of them and rebuilding meets this, and
-`std/README.md` and `core/README.md` currently say only "do not edit the *embedding* by hand" —
-which is the opposite hazard, and reads as though editing the source is the safe thing to do.
+`std/platform.wac`. Nine files. Anyone editing one of them and rebuilding meets this.
+
+Both `std/README.md` and `core/README.md` said only "do not edit the *embedding* by hand" — the
+opposite hazard, and it reads as though editing the source is the safe thing to do. They say this as
+well now, and so does `CLAUDE.md` beside its "rebuild after touching `packages/wacc/`" line, which is
+where somebody would look for it.
