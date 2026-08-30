@@ -56,20 +56,13 @@ export string test_an_async_function_with_no_await_still_plans() {
 
 export string test_the_shapes_this_cut_declines_are_named_apart() {
   T t = T.create();
+  // A suspension in a *condition* is still refused: the condition is re-evaluated on every pass, so
+  // splitting it needs the loop's header split too, which is a different piece of work.
   t.eqStr(planOf("async i32 f(Cli cli) {\n"
-                 + "  for (i32 i = 0; i < 3; i++) { FileResult a = await cli.readFile(\"x\"); }\n"
+                 + "  while (await cli.ready()) { }\n"
                  + "  return 0;\n"
                  + "}\n"),
-          "declined: an `await` inside a `for`\n", "the loop, which is the next increment");
-  t.eqStr(planOf("async i32 f(Cli cli) {\n"
-                 + "  while (true) { FileResult a = await cli.readFile(\"x\"); }\n"
-                 + "}\n"),
-          "declined: an `await` inside a `while`\n", "and the other loop");
-  t.eqStr(planOf("async i32 f(Cli cli) {\n"
-                 + "  if (true) { FileResult a = await cli.readFile(\"x\"); }\n"
-                 + "  return 0;\n"
-                 + "}\n"),
-          "declined: an `await` inside an `if`\n", "a branch");
+          "declined: an `await` in a `while` condition\n", "a suspension in a condition");
   // **Not a block split but an expression split**, which is why it is a different sentence.
   t.eqStr(planOf("async i32 f(Cli cli) {\n"
                  + "  i32 n = g(await cli.readFile(\"x\"));\n"
@@ -84,6 +77,33 @@ export string test_the_shapes_this_cut_declines_are_named_apart() {
                  + "  return 0;\n"
                  + "}\n"),
           "declined: an `await` whose value is discarded\n", "and a bare await");
+  return t.report();
+}
+
+export string test_a_suspension_inside_control_flow_is_counted() {
+  T t = T.create();
+  // What changed when loops arrived: a suspension is no longer a statement of the top-level block,
+  // and the plan counts them wherever they are. The induction variable is hoisted with the rest —
+  // it is read after every suspension, so a plain local would reset it on resume and the loop would
+  // run its first iteration for ever.
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  i32 total = 0;\n"
+                 + "  for (i32 i = 0; i < 3; i++) {\n"
+                 + "    FileResult a = await cli.readFile(\"x\");\n"
+                 + "    total = total + a.n;\n"
+                 + "  }\n"
+                 + "  return total;\n"
+                 + "}\n"),
+          "ok suspends=1 hoist=3\n", "one suspension in a loop; total, i and a hoisted");
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  if (true) {\n"
+                 + "    FileResult a = await cli.readFile(\"x\");\n"
+                 + "    return a.n;\n"
+                 + "  }\n"
+                 + "  FileResult b = await cli.readFile(\"y\");\n"
+                 + "  return b.n;\n"
+                 + "}\n"),
+          "ok suspends=2 hoist=2\n", "one in a branch and one after it");
   return t.report();
 }
 

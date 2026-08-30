@@ -76,8 +76,16 @@ export i32 synthZero(i32 ups) { return synthNum(ups, 0); }
 /** `1`, for the `T[1]()` that makes one. */
 export i32 synthOne(i32 ups) { return synthNum(ups, 1); }
 
-/** How many numerals the tail carries for `ups` suspensions — states `0..ups`, plus the `1`. */
-export i32 synthNumCount(i32 ups) { return (ups < 0 ? 0 : ups) + 2; }
+/**
+ * How many numerals a body needs.
+ *
+ * **Sized from the *states*, not the suspensions.** Every state the flattening allocates is written
+ * down as `__wacState[0] = k;`, and a loop turns one statement into three states — so tying this to
+ * the number of `await`s was right only while the machine was linear. It stopped being right the
+ * moment a suspension could sit inside a loop, and what it produced was a token index past the end
+ * of the tail: a trap inside the compiler, reported as `wac.wac trapped`.
+ */
+export i32 synthNumCount(i32 states) { return (states < 0 ? 0 : states) + 2; }
 
 /**
  * Every spelling the tail carries, for a file needing `ups` suspension slots.
@@ -86,10 +94,10 @@ export i32 synthNumCount(i32 ups) { return (ups < 0 ? 0 : ups) + 2; }
  * hand-counted offsets is right until somebody adds a word in the middle, and `wapyparse.wac` keeps
  * four such offsets for exactly four synthetics. This has more, and a variable number of them.
  */
-export string[] synthWords(i32 ups) {
+export string[] synthWords(i32 ups, i32 states) {
   string[] fixed = fixedWords();
   i32 n = ups < 0 ? 0 : ups;
-  i32 nums = synthNumCount(n);
+  i32 nums = synthNumCount(states);
   string[] out = string[fixed.len() + n + nums]();
   for (i32 i = 0; i < fixed.len(); i++) { out[i] = fixed[i]; }
   for (i32 i = 0; i < n; i++) { out[fixed.len() + i] = "__wacUp" + numOf(i); }
@@ -113,10 +121,10 @@ string numOf(i32 n) {
 string synthMarker() { return "// wac:async-synth "; }
 
 /** A source with the tail appended, or the same bytes when it is already there. */
-export u8[] synthTail(u8[] src, i32 ups) {
+export u8[] synthTail(u8[] src, i32 ups, i32 states) {
   if (synthBase(src) >= 0) { return src; }
   string tail = "\n" + synthMarker();
-  string[] w = synthWords(ups);
+  string[] w = synthWords(ups, states);
   for (i32 i = 0; i < w.len(); i++) {
     if (i > 0) { tail = tail + " "; }
     tail = tail + w[i];
@@ -153,10 +161,10 @@ export i32 synthBase(u8[] src) {
  * Walked from the base rather than indexed, because the words have different lengths and one space
  * between them — the same reason the list above is the single source of the offsets.
  */
-export i32 synthOffset(u8[] src, i32 ups, i32 which) {
+export i32 synthOffset(u8[] src, i32 ups, i32 states, i32 which) {
   i32 at = synthBase(src);
   if (at < 0) { return 0 - 1; }
-  string[] w = synthWords(ups);
+  string[] w = synthWords(ups, states);
   if (which < 0 || which >= w.len()) { return 0 - 1; }
   for (i32 i = 0; i < which; i++) { at = at + w[i].toBytes().len() + 1; }
   return at;
@@ -169,8 +177,8 @@ export i32 synthOffset(u8[] src, i32 ups, i32 which) {
  * meant. `"0"` is lexed as an integer rather than an identifier, because an `IntLit` reads its value
  * out of its token and a kind mismatch there would be a silent zero somewhere else.
  */
-export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 line, i32 col) {
-  string[] w = synthWords(ups);
+export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 line, i32 col) {
+  string[] w = synthWords(ups, states);
   i32 stride = tokenStride();
   i32 have = lexed.tokenCount;
   i32[] out = i32[(have + w.len()) * stride]();
@@ -185,7 +193,7 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 line, i32 col) {
     else if (i == synthAssign()) { k = kAssign(); }
     else if (i == synthVoid()) { k = kVoid(); }
     out[at] = k;
-    out[at + 1] = synthOffset(src, ups, i);
+    out[at + 1] = synthOffset(src, ups, states, i);
     out[at + 2] = w[i].toBytes().len();
     out[at + 3] = line;
     out[at + 4] = col;

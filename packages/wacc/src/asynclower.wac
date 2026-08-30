@@ -57,7 +57,7 @@ import {
   StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import { Lexed } from "./lex.wac";
-import { AsyncPlan, planBody, planSuspends } from "./asyncplan.wac";
+import { AsyncPlan, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
   synthTail, synthTokens, synthTok, synthTextAt,
   synthPending, synthWait, synthState, synthDone, synthRes, synthStep, synthAssign,
@@ -304,7 +304,7 @@ Expr subExpr(Ctx c, Expr e) {
     // **Inside, but as a lambda.** The names it captures are cells now, so the substitution goes in;
     // its `return`s are its own, so `inLambda` stops the finish rewrite at the boundary.
     case Lambda(params, body): {
-      return Expr(ExprKind.Lambda(params, subBody(c, body, true)), e.line, e.col);
+      return Expr(ExprKind.Lambda(params, subBody(c, body, true, 0 - 1, 0 - 1)), e.line, e.col);
     }
     case MatchExpr(subject, arms): { return e; }
     case Jsx(tagTok, closeTok, attrs, kids): { return e; }
@@ -334,13 +334,21 @@ Lvalue subLv(Ctx c, Lvalue lv) {
   }
 }
 
-Stmt[] subBody(Ctx c, Stmt[] body, bool inLambda) {
+/**
+ * `body`, substituted.
+ *
+ * `brkTo` and `contTo` are the states a `break` and a `continue` become when the loop they belong to
+ * has been flattened away, or -1 when they still mean what they say. **They do not descend into a
+ * nested loop or switch**: a `break` in there belongs to *that* one, which is still a real `while`
+ * or `switch` in the emitted code.
+ */
+Stmt[] subBody(Ctx c, Stmt[] body, bool inLambda, i32 brkTo, i32 contTo) {
   Stmt[] out = Stmt[body.len()](fill: body.len() > 0 ? body[0] : sRet(c, null));
-  for (i32 i = 0; i < body.len(); i++) { out[i] = subStmt(c, body[i], inLambda); }
+  for (i32 i = 0; i < body.len(); i++) { out[i] = subStmt(c, body[i], inLambda, brkTo, contTo); }
   return out;
 }
 
-Stmt subStmt(Ctx c, Stmt s, bool inLambda) {
+Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
   match (s.kind) {
     // **A declaration of a hoisted local becomes an assignment to its cell**, because the cell was
     // declared in the enclosing function. Nothing else could work: a second declaration inside the
@@ -357,27 +365,27 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda) {
       return Stmt(StmtKind.IncrStmt(subLv(c, target), op), s.line, s.col);
     }
     case If(cond, then, els): {
-      return Stmt(StmtKind.If(subExpr(c, cond), subBody(c, then, inLambda),
-                              subBody(c, els, inLambda)), s.line, s.col);
+      return Stmt(StmtKind.If(subExpr(c, cond), subBody(c, then, inLambda, brkTo, contTo),
+                              subBody(c, els, inLambda, brkTo, contTo)), s.line, s.col);
     }
     case While(cond, body): {
-      return Stmt(StmtKind.While(subExpr(c, cond), subBody(c, body, inLambda)), s.line, s.col);
+      return Stmt(StmtKind.While(subExpr(c, cond), subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
     }
     case For(init, cond, update, body): {
-      Stmt? i2 = (init is null) ? null : subStmt(c, init!, inLambda);
+      Stmt? i2 = (init is null) ? null : subStmt(c, init!, inLambda, 0 - 1, 0 - 1);
       Expr? c2 = (cond is null) ? null : subExpr(c, cond!);
-      Stmt? u2 = (update is null) ? null : subStmt(c, update!, inLambda);
-      return Stmt(StmtKind.For(i2, c2, u2, subBody(c, body, inLambda)), s.line, s.col);
+      Stmt? u2 = (update is null) ? null : subStmt(c, update!, inLambda, 0 - 1, 0 - 1);
+      return Stmt(StmtKind.For(i2, c2, u2, subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
     }
     case DoWhile(body, cond): {
-      return Stmt(StmtKind.DoWhile(subBody(c, body, inLambda), subExpr(c, cond)), s.line, s.col);
+      return Stmt(StmtKind.DoWhile(subBody(c, body, inLambda, 0 - 1, 0 - 1), subExpr(c, cond)), s.line, s.col);
     }
     case Switch(subject, cases): {
       Case[] cs = Case[cases.len()](fill: cases.len() > 0 ? cases[0]
                                                           : Case(null, Stmt[](), s.line, s.col));
       for (i32 i = 0; i < cases.len(); i++) {
         Expr? v = (cases[i].value is null) ? null : subExpr(c, cases[i].value!);
-        cs[i] = Case(v, subBody(c, cases[i].body, inLambda), cases[i].line, cases[i].col);
+        cs[i] = Case(v, subBody(c, cases[i].body, inLambda, 0 - 1, 0 - 1), cases[i].line, cases[i].col);
       }
       return Stmt(StmtKind.Switch(subExpr(c, subject), cs), s.line, s.col);
     }
@@ -391,11 +399,14 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda) {
       Expr? v = (value is null) ? null : subExpr(c, value!);
       return Stmt(StmtKind.Trap(v), s.line, s.col);
     }
-    case Block(body): { return sBlock(c, subBody(c, body, inLambda)); }
+    case Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
     case ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
     case Match(subject, arms): { return s; }
-    case Break: { return s; }
-    case Continue: { return s; }
+    // **A `break` whose loop is gone has to go somewhere.** After flattening there is no `while` for
+    // it to leave — the only loop left is the dispatch, and breaking that would resume the machine at
+    // whatever state happened to be set. So it becomes the transfer the loop's exit is.
+    case Break: { return brkTo < 0 ? s : sBlock(c, gotoS(c, brkTo)); }
+    case Continue: { return contTo < 0 ? s : sBlock(c, gotoS(c, contTo)); }
   }
 }
 
@@ -417,19 +428,6 @@ Expr innerAwait(Ctx c, Expr e) {
   }
 }
 
-/**
- * The type the suspension's ticket answers.
- *
- * `T x = await e;` says `T`; `return await e;` says the function's own return type. Those are the
- * only two shapes the plan admits, and this is why — see `asyncplan.wac`.
- */
-Ty awaitedTy(Ctx c, Stmt s, Ty fnRet) {
-  match (s.kind) {
-    case Var(type, nameTok, init, isConst): { return type; }
-    else: { return fnRet; }
-  }
-}
-
 /** The local a suspension binds, or -1 when it is `return await e;`. */
 i32 boundOf(Stmt s) {
   match (s.kind) {
@@ -443,56 +441,222 @@ Expr eTake(Ctx c, i32 k) {
   return eCall0(c, eDot(c, eBang(c, eId(c, tUp(c, k))), tWait(c)));
 }
 
+/** `__wacState[0] = k; break;` — leaving the arm so the dispatch picks up state `k`. */
+Stmt[] gotoS(Ctx c, i32 k) {
+  Stmt[] out = Stmt[2](fill: sRet(c, null));
+  out[0] = sCellSet(c, tState(c), eInt(c, k));
+  out[1] = Stmt(StmtKind.Break, c.line, c.col);
+  return out;
+}
+
 /**
- * The `switch` arms: one per state, plus a `default` that stops.
+ * The states, as they are built.
  *
- * Arm `k` begins by taking the answer of suspension `k - 1` — that is what *resuming* is — then runs
- * the ordinary statements up to suspension `k`, then suspends. The last arm has no suspension and
- * ends by falling into whatever the body's own `return` became.
+ * A state is a straight-line list of statements ending in a transfer — a `goto`, a suspend, or a
+ * finish. That is the whole of the flattening: **once every state is straight-line, plain wac can
+ * express the machine**, and the loop's back edge is `__wacState[0] = header;` rather than a jump.
  */
-Case[] buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
-  i32 m = planSuspends(plan);
-  Case[] arms = Case[m + 2](fill: Case(null, Stmt[](), c.line, c.col));
-  for (i32 k = 0; k <= m; k++) {
-    Stmt[] acc = Stmt[body.len() + 4](fill: sRet(c, null));
-    i32 n = 0;
+struct Bld {
+  Ctx c;
+  Stmt[][] states;
+  i32 n;
+  /** Where `break` and `continue` go, innermost last. */
+  i32[] brk;
+  i32[] cont;
+  i32 depth;
+  /** The next suspension slot; each `await` in the body gets its own. */
+  i32[] slot;
+  /**
+   * What each slot's ticket answers, filled as slots are handed out.
+   *
+   * **Recorded here rather than derived afterwards**, because the flattening walks the body backwards
+   * and nests into loops, so slot order is the order the walk reached them and nothing outside can
+   * reconstruct it. It used to be read off the plan's list of top-level indices, which stopped
+   * meaning anything the moment a suspension could be inside a loop.
+   */
+  Ty[] slotTy;
+  Ty ret;
+}
 
-    if (k > 0) {
-      Stmt prev = body[plan.suspendAt[k - 1]];
-      i32 bound = boundOf(prev);
-      if (bound >= 0) { acc[n] = sCellSet(c, bound, eTake(c, k - 1)); }
-      else { acc[n] = sFinish(c, eTake(c, k - 1)); }
-      n = n + 1;
-    }
+i32 alloc(Bld b) {
+  if (b.n >= b.states.len()) { return b.n - 1; }
+  b.n = b.n + 1;
+  return b.n - 1;
+}
 
-    i32 from = (k == 0) ? 0 : plan.suspendAt[k - 1] + 1;
-    i32 to = (k == m) ? body.len() : plan.suspendAt[k];
-    for (i32 i = from; i < to; i++) {
-      acc[n] = subStmt(c, body[i], false);
-      n = n + 1;
-    }
+void put(Bld b, i32 id, Stmt[] body) {
+  if (id >= 0 && id < b.states.len()) { b.states[id] = body; }
+}
 
-    if (k < m) {
-      Stmt sus = body[plan.suspendAt[k]];
-      acc[n] = sSet(c, tUp(c, k), subExpr(c, awaitedOf(c, sus)));
-      acc[n + 1] = sCellSet(c, tState(c), eInt(c, k + 1));
-      acc[n + 2] = sRet(c, eBool(c, false));
-      n = n + 3;
+Stmt[] join(Ctx c, Stmt[] head, Stmt[] tail) {
+  Stmt[] out = Stmt[head.len() + tail.len()](fill: sRet(c, null));
+  for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+  for (i32 i = 0; i < tail.len(); i++) { out[head.len() + i] = tail[i]; }
+  return out;
+}
+
+/**
+ * `body` as states, entered at the returned one, leaving to `next`.
+ *
+ * **Built backwards**, because a statement needs to know where it goes when it is done and that is
+ * the state after it. Runs of statements with no suspension in them are grouped into one state
+ * rather than one each, which keeps the `switch` the size of the *control flow* rather than the size
+ * of the program.
+ */
+i32 lowerSeq(Bld b, Stmt[] body, i32 next) {
+  i32 entry = next;
+  i32 i = body.len() - 1;
+  while (i >= 0) {
+    if (awaitInStmt(body[i])) {
+      entry = lowerOne(b, body[i], entry);
+      i = i - 1;
     } else {
-      // **A body that runs off its end still has to stop.** Unreachable when the checker has already
-      // insisted on a `return`, and not when the last statement was one — but a `switch` arm that
-      // falls out of the `while` would spin.
-      acc[n] = sFinish(c, null);
-      n = n + 1;
+      i32 j = i;
+      while (j >= 0 && !awaitInStmt(body[j])) { j = j - 1; }
+      i32 count = i - j;
+      Stmt[] run = Stmt[count](fill: sRet(b.c, null));
+      i32 brkTo = b.depth > 0 ? b.brk[b.depth - 1] : 0 - 1;
+      i32 contTo = b.depth > 0 ? b.cont[b.depth - 1] : 0 - 1;
+      for (i32 k = 0; k < count; k++) {
+        run[k] = subStmt(b.c, body[j + 1 + k], false, brkTo, contTo);
+      }
+      i32 e = alloc(b);
+      put(b, e, join(b.c, run, gotoS(b.c, entry)));
+      entry = e;
+      i = j;
     }
+  }
+  return entry;
+}
 
-    Stmt[] out = Stmt[n](fill: sRet(c, null));
-    for (i32 i = 0; i < n; i++) { out[i] = acc[i]; }
-    arms[k] = Case(eInt(c, k), out, c.line, c.col);
+/** One statement that contains a suspension, as states. */
+i32 lowerOne(Bld b, Stmt s, i32 next) {
+  Ctx c = b.c;
+  match (s.kind) {
+    // `T x = await e;` — suspend, then bind and carry on.
+    case Var(type, nameTok, init, isConst): {
+      i32 k = b.slot[0];
+      b.slot[0] = b.slot[0] + 1;
+      if (k < b.slotTy.len()) { b.slotTy[k] = cloneTy(type); }
+      i32 resume = alloc(b);
+      i32 susp = alloc(b);
+      Stmt[] sus = Stmt[3](fill: sRet(c, null));
+      sus[0] = sSet(c, tUp(c, k), subExpr(c, innerAwait(c, init)));
+      sus[1] = sCellSet(c, tState(c), eInt(c, resume));
+      sus[2] = sRet(c, eBool(c, false));
+      put(b, susp, sus);
+      Stmt[] res = Stmt[1](fill: sCellSet(c, nameTok, eTake(c, k)));
+      put(b, resume, join(c, res, gotoS(c, next)));
+      return susp;
+    }
+    // `return await e;` — suspend, then the answer *is* the machine's.
+    case Return(value): {
+      i32 k = b.slot[0];
+      b.slot[0] = b.slot[0] + 1;
+      if (k < b.slotTy.len()) { b.slotTy[k] = cloneTy(b.ret); }
+      i32 resume = alloc(b);
+      i32 susp = alloc(b);
+      Stmt[] sus = Stmt[3](fill: sRet(c, null));
+      sus[0] = sSet(c, tUp(c, k), subExpr(c, innerAwait(c, (value is null) ? eNull(c) : value!)));
+      sus[1] = sCellSet(c, tState(c), eInt(c, resume));
+      sus[2] = sRet(c, eBool(c, false));
+      put(b, susp, sus);
+      Stmt[] res = Stmt[1](fill: sFinish(c, eTake(c, k)));
+      put(b, resume, res);
+      return susp;
+    }
+    case Block(body): { return lowerSeq(b, body, next); }
+    case If(cond, then, els): {
+      i32 tEntry = lowerSeq(b, then, next);
+      i32 eEntry = els.len() > 0 ? lowerSeq(b, els, next) : next;
+      i32 head = alloc(b);
+      Stmt[] hd = Stmt[2](fill: sRet(c, null));
+      hd[0] = Stmt(StmtKind.If(subExpr(c, cond), gotoS(c, tEntry), Stmt[]()), c.line, c.col);
+      hd[1] = sBlock(c, gotoS(c, eEntry));
+      put(b, head, hd);
+      return head;
+    }
+    // **The loop, which is the whole reason this is a state machine.** The header tests and either
+    // enters the body or leaves; the body's last act is to go back to the header. There is no jump
+    // and none is needed — the dispatch is at the top of the `while`, so *every* state is reachable
+    // from it, including one in the middle of what used to be a loop.
+    case While(cond, body): {
+      i32 head = alloc(b);
+      push(b, next, head);
+      i32 bodyEntry = lowerSeq(b, body, head);
+      pop(b);
+      Stmt[] hd = Stmt[2](fill: sRet(c, null));
+      hd[0] = Stmt(StmtKind.If(subExpr(c, cond), gotoS(c, bodyEntry), Stmt[]()), c.line, c.col);
+      hd[1] = sBlock(c, gotoS(c, next));
+      put(b, head, hd);
+      return head;
+    }
+    case For(init, cond, update, body): {
+      i32 head = alloc(b);
+      i32 step = alloc(b);
+      push(b, next, step);
+      i32 bodyEntry = lowerSeq(b, body, step);
+      pop(b);
+      Stmt[] up = Stmt[1](fill: (update is null) ? sRet(c, null)
+                                                : subStmt(c, update!, false, 0 - 1, 0 - 1));
+      if (update is null) { up = Stmt[](); }
+      put(b, step, join(c, up, gotoS(c, head)));
+      Stmt[] hd = Stmt[2](fill: sRet(c, null));
+      Expr test = (cond is null) ? eBool(c, true) : subExpr(c, cond!);
+      hd[0] = Stmt(StmtKind.If(test, gotoS(c, bodyEntry), Stmt[]()), c.line, c.col);
+      hd[1] = sBlock(c, gotoS(c, next));
+      put(b, head, hd);
+      i32 entry = alloc(b);
+      Stmt[] pre = (init is null) ? Stmt[]()
+                                  : Stmt[1](fill: subStmt(c, init!, false, 0 - 1, 0 - 1));
+      put(b, entry, join(c, pre, gotoS(c, head)));
+      return entry;
+    }
+    else: {
+      // Unreachable: the plan refuses every other shape holding a suspension, by name.
+      i32 e = alloc(b);
+      put(b, e, gotoS(c, next));
+      return e;
+    }
+  }
+}
+
+void push(Bld b, i32 brkTo, i32 contTo) {
+  if (b.depth >= b.brk.len()) { return; }
+  b.brk[b.depth] = brkTo;
+  b.cont[b.depth] = contTo;
+  b.depth = b.depth + 1;
+}
+
+void pop(Bld b) { if (b.depth > 0) { b.depth = b.depth - 1; } }
+
+/**
+ * The `switch` arms, and the state the machine starts in.
+ *
+ * `entry` comes back through `plan.suspendAt` being unused now — the caller reads it from
+ * `arms[0]`'s companion, which is why this answers both.
+ */
+struct Arms {
+  Case[] cases;
+  i32 entry;
+  /** One per suspension, in the order the slots were handed out. */
+  Ty[] slotTy;
+  i32 slots;
+}
+
+Arms buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
+  Bld b = Bld(c, Stmt[][256](fill: Stmt[]()), 0, i32[64](), i32[64](), 0, i32[1](),
+              Ty[64](fill: fnRet), fnRet);
+  i32 done = alloc(b);
+  put(b, done, Stmt[1](fill: sFinish(c, null)));
+  i32 entry = lowerSeq(b, body, done);
+  Case[] arms = Case[b.n + 1](fill: Case(null, Stmt[](), c.line, c.col));
+  for (i32 i = 0; i < b.n; i++) {
+    arms[i] = Case(eInt(c, i), b.states[i], c.line, c.col);
   }
   Stmt[] dflt = Stmt[1](fill: sRet(c, eBool(c, true)));
-  arms[m + 1] = Case(null, dflt, c.line, c.col);
-  return arms;
+  arms[b.n] = Case(null, dflt, c.line, c.col);
+  return Arms(arms, entry, b.slotTy, b.slot[0]);
 }
 
 /** `while (true) { switch (__wacState[0]) { … } }` — the step lambda's whole body. */
@@ -537,12 +701,12 @@ Expr resolveLambda(Ctx c, Ty fnRet) {
  * the body runs to its first `await` when it is *called* rather than when it is driven; and the
  * ticket last, out of three functions bound to locals rather than written inline.
  */
-Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty[] hoistTys) {
+Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   i32 m = planSuspends(plan);
   // Three cells, the hoisted ones, one slot per suspension, then: the step, its eager call, the
   // three ticket functions, and the `return`. Counted rather than guessed — an array one short here
   // traps inside the *compiler*, which reads as `wac.wac trapped` and says nothing about async.
-  i32 n = 3 + plan.hoist.len() + m + 6;
+  i32 n = 3 + plan.hoist.len() + m + 7;
   Stmt[] out = Stmt[n](fill: sRet(c, null));
   i32 at = 0;
 
@@ -550,18 +714,23 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty[] hoistTys) 
   out[at] = sCellDecl(c, tDone(c), tyPrim(c, tBool(c))); at = at + 1;
   out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1;
   for (i32 i = 0; i < plan.hoist.len(); i++) {
-    out[at] = sCellDecl(c, plan.hoist[i], cloneTy(hoistTys[i])); at = at + 1;
+    out[at] = sCellDecl(c, plan.hoist[i], cloneTy(plan.hoistTy[i])); at = at + 1;
   }
-  for (i32 k = 0; k < m; k++) {
-    out[at] = sSlotDecl(c, tUp(c, k), cloneTy(awaitedTy(c, body[plan.suspendAt[k]], fnRet)));
+  Arms made = buildArms(c, body, plan, fnRet);
+  for (i32 k = 0; k < made.slots; k++) {
+    out[at] = sSlotDecl(c, tUp(c, k), cloneTy(made.slotTy[k]));
     at = at + 1;
   }
 
-  Expr step = eLambda(c, Param[](), stepBody(c, buildArms(c, body, plan, fnRet)));
+  Expr step = eLambda(c, Param[](), stepBody(c, made.cases));
   out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tBool(c)), Ty[]()), tStep(c), step, false),
                  c.line, freshCol(c));
   at = at + 1;
 
+  // **The machine starts where the flattening says, not at zero.** States are numbered as they are
+  // allocated and the entry is whatever the body's first statement became, so the cell is set before
+  // the eager step rather than relying on `i32[1]()` happening to be right.
+  out[at] = sCellSet(c, tState(c), eInt(c, made.entry)); at = at + 1;
   out[at] = sExpr(c, eCallLocal(c, tStep(c))); at = at + 1;
 
   Ty[] oneI32 = Ty[1](fill: tyPrim(c, tI32(c)));
@@ -605,24 +774,21 @@ export struct Lowered {
   bool changed;
 }
 
-/** The declared types of the top-level locals, parallel to `plan.hoist`. */
-Ty[] hoistTypesOf(Stmt[] body, Ty fnRet) {
-  i32 n = 0;
-  for (i32 i = 0; i < body.len(); i++) {
-    match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): { n = n + 1; }
+/** How many numerals this file needs — the largest state bound any one function asks for. */
+i32 numsNeeded(Program prog) {
+  i32 most = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (!isAsync) { continue; }
+        if (!planBody(body).ok) { continue; }
+        i32 want = statesNeeded(body);
+        if (want > most) { most = want; }
+      }
       else: { }
     }
   }
-  Ty[] out = Ty[n](fill: fnRet);
-  i32 at = 0;
-  for (i32 i = 0; i < body.len(); i++) {
-    match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): { out[at] = type; at = at + 1; }
-      else: { }
-    }
-  }
-  return out;
+  return most;
 }
 
 /** How many suspension slots this file needs — the largest any one function asks for. */
@@ -669,12 +835,13 @@ bool anyLowerable(Program prog) {
 export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   if (!anyLowerable(prog)) { return Lowered(prog, src, lexed, false); }
   i32 ups = slotsNeeded(prog);
+  i32 states = numsNeeded(prog);
 
   i32 line = 1;
   i32 col = 1;
-  u8[] src2 = synthTail(src, ups);
+  u8[] src2 = synthTail(src, ups, states);
   i32 first = lexed.tokenCount;
-  Lexed lexed2 = synthTokens(lexed, src2, ups, line, col);
+  Lexed lexed2 = synthTokens(lexed, src2, ups, states, line, col);
 
   Decl[] out = Decl[prog.decls.len()](fill: prog.decls[0]);
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -692,8 +859,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
         Ctx c = Ctx(first, ups, prog.decls[d].line, prog.decls[d].col, names, src2, lexed2,
                     i32[1](fill: prog.decls[d].col + 1000));
 
-        Stmt[] machine = machineBody(c, body, plan, returnType,
-                                     hoistTypesOf(body, returnType));
+        Stmt[] machine = machineBody(c, body, plan, returnType);
         out[d] = Decl(DeclKind.Func(nameTok, tyPending(c, cloneTy(returnType)), params, machine,
                                     exported, typeParams, false),
                       prog.decls[d].line, prog.decls[d].col);

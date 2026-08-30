@@ -1,4 +1,4 @@
-// `async` and `await`, compiled and run — `design/lang/0014`, A2 and A3.
+// `async` and `await`, compiled and run — `design/lang/0014`, A2, A3, and D6's loops.
 //
 // Everything before this file was either a hand lowering (`asyncstate_test.wac`) or a question about
 // diagnostics (`async_test.wac`). This is the feature: source that says `await`, lowered by the
@@ -8,8 +8,9 @@
 // `async`/`await` and once with `.wait()` and no machinery — and compares. An async function that
 // returned a plausible zero would pass a test that only checked it ran.
 //
-// This cut is `wait`-driven and flattens a body whose `await`s are statements of the top-level
-// block. `asyncplan_test.wac` holds the shapes it declines, by name; the loop is the next increment.
+// This cut is `wait`-driven and flattens `if`, `while`, `for`, nested blocks, `break` and
+// `continue`. `asyncplan_test.wac` holds the shapes it still declines, by name — a suspension in a
+// loop *condition*, one nested inside a larger expression, and one whose value is discarded.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, FileResult, Pending } from "std/platform.wac";
@@ -92,5 +93,79 @@ export string test_two_async_calls_do_not_share_a_machine(Core core, Cli cli) {
   Pending<i32> b = fileSize(cli, "MERGE.md");
   t.eqI32(a.wait(), sizeOf(cli, "README.md"), "the first kept its own path");
   t.eqI32(b.wait(), sizeOf(cli, "MERGE.md"), "and the second kept its own");
+  return t.report();
+}
+
+// ── Suspending inside control flow — what the state machine was chosen for ────
+
+/** A `for` whose body suspends: the induction variable and the accumulator cross every await. */
+async i32 sumOf(Cli cli, string[] paths) {
+  i32 total = 0;
+  for (i32 i = 0; i < paths.len(); i++) {
+    FileResult f = await cli.readFile(paths[i]);
+    if (!f.ok) { return 0 - 1; }
+    total = total + f.bytes.len();
+  }
+  return total;
+}
+
+/** A `while` with `break` and `continue` around a suspension. */
+async i32 countReadable(Cli cli, string[] paths, i32 stopAt) {
+  i32 i = 0;
+  i32 seen = 0;
+  while (i < paths.len()) {
+    FileResult f = await cli.readFile(paths[i]);
+    i = i + 1;
+    if (!f.ok) { continue; }
+    seen = seen + 1;
+    if (f.bytes.len() >= stopAt) { break; }
+  }
+  return seen;
+}
+
+export string test_a_for_loop_suspends_once_per_iteration(Core core, Cli cli) {
+  T t = T.create();
+  string[] ps = string[]("README.md", "MERGE.md", "CLAUDE.md");
+  i32 want = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    i32 one = sizeOf(cli, ps[i]);
+    t.isTrue(one > 0, "the oracle read " + ps[i]);
+    want = want + one;
+  }
+  // **Three suspensions and three resumptions, all re-entering one loop.** `i` and `total` are
+  // captured cells, so they survive; a plain local would reset on resume and this would either loop
+  // for ever or answer the first file three times.
+  t.eqI32(sumOf(cli, ps).wait(), want, "the machine summed all three");
+  return t.report();
+}
+
+export string test_a_return_from_inside_the_loop_leaves_the_machine(Core core, Cli cli) {
+  T t = T.create();
+  // Not `break` — a `return` from inside a flattened loop has to leave the *machine*, and the loop's
+  // exit state is not where it goes.
+  t.eqI32(sumOf(cli, string[]("README.md", "no-such-file-here.md", "CLAUDE.md")).wait(), 0 - 1,
+          "it stopped at the failure");
+  return t.report();
+}
+
+export string test_break_and_continue_survive_the_flattening(Core core, Cli cli) {
+  T t = T.create();
+  // After flattening there is no `while` left for these to leave — the only loop is the dispatch,
+  // and breaking *that* would resume the machine at whatever state was set. Both become transfers.
+  string[] ps = string[]("no-such-file-here.md", "README.md", "MERGE.md");
+  t.eqI32(countReadable(cli, ps, 1).wait(), 1,
+          "`continue` skipped the missing file and `break` stopped at the first readable one");
+  t.eqI32(countReadable(cli, ps, 1000000000).wait(), 2,
+          "and with nothing big enough to break on, both readable files were counted");
+  return t.report();
+}
+
+export string test_two_loops_in_flight_keep_their_own_counters(Core core, Cli cli) {
+  T t = T.create();
+  // Two machines over the same function, both mid-loop. Each iteration's state lives in the call.
+  Pending<i32> a = sumOf(cli, string[]("README.md"));
+  Pending<i32> b = sumOf(cli, string[]("MERGE.md", "CLAUDE.md"));
+  t.eqI32(a.wait(), sizeOf(cli, "README.md"), "the one-file loop");
+  t.eqI32(b.wait(), sizeOf(cli, "MERGE.md") + sizeOf(cli, "CLAUDE.md"), "and the two-file loop");
   return t.report();
 }

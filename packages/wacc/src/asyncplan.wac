@@ -28,7 +28,8 @@
 // the next increment rather than this one.
 
 import {
-  Arm, Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind,
+  Arm, Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind, Ty,
+  TyKind,
 } from "./ast.wac";
 
 /** What the rewrite needs to know about one `async` function. */
@@ -39,8 +40,16 @@ export struct AsyncPlan {
   string why;
   /** Indices into the body of the statements that suspend, in order. */
   i32[] suspendAt;
-  /** Name tokens of the top-level locals that must outlive a suspension. */
+  /** Name tokens of the locals that must outlive a suspension, at any depth. */
   i32[] hoist;
+  /**
+   * Each hoisted local's declared type, parallel to `hoist`.
+   *
+   * **Collected by the same walk**, because the two must agree element for element and a second walk
+   * that recreates the traversal is a second thing to get wrong — which it was, the moment locals
+   * started being hoisted out of loop bodies and `for` initialisers as well as the top level.
+   */
+  Ty[] hoistTy;
 }
 
 /** How many suspension points, which is how many slots the tail must carry. */
@@ -217,27 +226,91 @@ bool isAwait(Expr e) {
  * cheap direction is the safe one here.
  */
 export AsyncPlan planBody(Stmt[] body) {
-  i32[] at = i32[body.len()]();
-  i32 n = 0;
-  i32[] hoist = i32[body.len()]();
-  i32 h = 0;
+  if (body.len() == 0) { return AsyncPlan(true, "", i32[0](), i32[0](), Ty[]()); }
+  Walked w = Walked(i32[256](), 0, i32[256](), Ty[256](fill: anyTy(body)), 0, "");
+  walkPlan(body, w);
+  if (w.why != "") { return AsyncPlan(false, w.why, i32[0](), i32[0](), Ty[]()); }
+  i32[] outAt = i32[w.n]();
+  for (i32 i = 0; i < w.n; i++) { outAt[i] = i; }
+  i32[] outH = i32[w.h]();
+  Ty[] outT = Ty[w.h](fill: anyTy(body));
+  for (i32 i = 0; i < w.h; i++) { outH[i] = w.hoist[i]; outT[i] = w.hoistTy[i]; }
+  return AsyncPlan(true, "", outAt, outH, outT);
+}
+
+/** The running answer while the body is walked. */
+struct Walked {
+  i32[] unused;
+  /** How many suspensions have been seen — the number of slots the machine needs. */
+  i32 n;
+  i32[] hoist;
+  Ty[] hoistTy;
+  i32 h;
+  string why;
+}
+
+/**
+ * Every suspension and every local, at any depth — **except inside a lambda**, whose body is a
+ * different function.
+ *
+ * `suspendAt` used to be indices into the top-level block, which only meant anything while a
+ * suspension could only *be* a top-level statement. With loops it cannot: a suspension inside a loop
+ * body has no index in the outer sequence, and the same one runs many times. What the rest of the
+ * machine needs from this is only *how many* there are, since each gets its own slot, so the list is
+ * now `0..n` and the walk that flattens finds them where they are.
+ */
+void walkPlan(Stmt[] body, Walked w) {
   for (i32 i = 0; i < body.len(); i++) {
-    if (isSuspension(body[i])) {
-      at[n] = i;
-      n = n + 1;
-    } else if (awaitInStmt(body[i])) {
-      return AsyncPlan(false, declineFor(body[i]), i32[0](), i32[0]());
-    }
-    match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): { hoist[h] = nameTok; h = h + 1; }
-      else: { }
+    if (w.why != "") { return; }
+    Stmt s = body[i];
+    match (s.kind) {
+      case Var(type, nameTok, init, isConst): {
+        if (w.h < w.hoist.len()) {
+          w.hoist[w.h] = nameTok; w.hoistTy[w.h] = type; w.h = w.h + 1;
+        }
+        if (isAwait(init)) { w.n = w.n + 1; }
+        else if (awaitInExpr(init)) { w.why = "an `await` nested inside a larger expression"; }
+      }
+      case Return(value): {
+        if ((value is not null) && isAwait(value!)) { w.n = w.n + 1; }
+        else if ((value is not null) && awaitInExpr(value!)) {
+          w.why = "an `await` nested inside a larger expression";
+        }
+      }
+      case If(cond, then, els): {
+        if (awaitInExpr(cond)) { w.why = "an `await` in an `if` condition"; }
+        walkPlan(then, w);
+        walkPlan(els, w);
+      }
+      case While(cond, body2): {
+        if (awaitInExpr(cond)) { w.why = "an `await` in a `while` condition"; }
+        walkPlan(body2, w);
+      }
+      case For(init, cond, update, body2): {
+        if ((init is not null) && awaitInStmt(init!)) { w.why = "an `await` in a `for` initialiser"; }
+        // **The induction variable is hoisted like any other.** It is declared once and read after
+        // every suspension in the body, so leaving it a plain local would reset it on resume — the
+        // loop would run its first iteration for ever.
+        if (init is not null) {
+          match (init!.kind) {
+            case Var(type2, nameTok2, init2, isConst2): {
+              if (w.h < w.hoist.len()) {
+                w.hoist[w.h] = nameTok2; w.hoistTy[w.h] = type2; w.h = w.h + 1;
+              }
+            }
+            else: { }
+          }
+        }
+        if ((cond is not null) && awaitInExpr(cond!)) { w.why = "an `await` in a `for` condition"; }
+        if ((update is not null) && awaitInStmt(update!)) { w.why = "an `await` in a `for` update"; }
+        walkPlan(body2, w);
+      }
+      case Block(body2): { walkPlan(body2, w); }
+      else: {
+        if (awaitInStmt(s)) { w.why = declineFor(s); }
+      }
     }
   }
-  i32[] outAt = i32[n]();
-  for (i32 i = 0; i < n; i++) { outAt[i] = at[i]; }
-  i32[] outH = i32[h]();
-  for (i32 i = 0; i < h; i++) { outH[i] = hoist[i]; }
-  return AsyncPlan(true, "", outAt, outH);
 }
 
 /**
@@ -263,6 +336,51 @@ string declineFor(Stmt s) {
     case ExprStmt(expr): { return "an `await` whose value is discarded"; }
     else: { return "an `await` nested inside a larger expression"; }
   }
+}
+
+/**
+ * An upper bound on the states flattening `body` will allocate.
+ *
+ * **A bound, not a count**, because the tail of spellings has to be written before the flattening
+ * runs and every state is named by a numeral in it. Each statement costs at most one state for the
+ * run it sits in; a suspension costs two, a branch one, a loop three. Four per statement plus a
+ * constant covers all of that with room to spare, and being generous costs a few words in a comment
+ * at the end of the file.
+ */
+export i32 statesNeeded(Stmt[] body) { return 4 * countStmts(body) + 8; }
+
+/** Statements at every depth, not counting inside a lambda — the flattening does not go there. */
+i32 countStmts(Stmt[] body) {
+  i32 n = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    n = n + 1;
+    match (body[i].kind) {
+      case If(cond, then, els): { n = n + countStmts(then) + countStmts(els); }
+      case While(cond, b2): { n = n + countStmts(b2); }
+      case For(init, cond, update, b2): { n = n + countStmts(b2) + 2; }
+      case DoWhile(b2, cond): { n = n + countStmts(b2); }
+      case Block(b2): { n = n + countStmts(b2); }
+      case Switch(subject, cases): {
+        for (i32 j = 0; j < cases.len(); j++) { n = n + countStmts(cases[j].body); }
+      }
+      case Match(subject, arms): {
+        for (i32 j = 0; j < arms.len(); j++) { n = n + countStmts(arms[j].body); }
+      }
+      else: { }
+    }
+  }
+  return n;
+}
+
+/** Any `Ty` from the body, purely to fill an array a reference type cannot default. */
+Ty anyTy(Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      case Var(type, nameTok, init, isConst): { return type; }
+      else: { }
+    }
+  }
+  return Ty(TyKind.Prim(0 - 1), 1, 1);
 }
 
 /** The plan for every `async` function in `prog`, as one line each — for tests and for reading. */
