@@ -342,6 +342,38 @@ carry over and are worth repeating rather than rediscovering:
 - **The appended spellings live behind a `#`**, so the tail is invisible to the lexer and the rewrite
   is idempotent when a file is processed twice. A bare tail was lexed as code the second time round.
 
+### `Sched` holds host ids only, and that decides the shape
+
+`Sched.run` picks what to dispatch with `core.waitAny(live, budget)` — it hands the registered ids
+**to the host**. So a ticket the *program* made cannot be registered: the host is asked about an id it
+never issued. Measured rather than reasoned:
+
+    core.sched.on(999999, (i32 id) => { core.log("fired"); }, noop);
+    core.drain();
+    → "registered; draining" / "drained some" — and never "fired"
+    → wac: … finished with 1 continuation(s) still waiting
+
+It does not trap; the work simply never runs, and the existing end-of-program report is what says so.
+
+**Three things follow, and they are why the hand lowering is shaped as it is.**
+
+1. **The machine registers on the host ticket it is currently awaiting**, never on its own ticket, and
+   re-registers as it advances. `Sched.run` unregisters a handler before running it precisely so a
+   handler may register more — which is the mechanism the next `await` uses.
+2. **`flatMap` cannot be a method that fixes this.** A `Pending<Pending<U>>` flattened by composing
+   `resolve` answers correctly under `wait` and blocks under `drain`, because the composed resolve
+   waits on the inner ticket inside a continuation — which would serialise the two clients A1 exists
+   to overlap. Two-stage registration needs to know the whole chain, so it belongs in the lowering
+   and not in a combinator.
+3. **`then` on an async function's own ticket cannot work through `Sched`.** A caller may `wait` it;
+   being *notified* when it completes needs the machine to keep its own list of waiters, which is a
+   program-level thing rather than a scheduler one. Not needed by any acceptance criterion — A1 and
+   A2 wait or drain — so it is recorded rather than built.
+
+The second open question below is answered in passing: **there is already a message for work that was
+never run**, and it names the fix. An async ticket nobody consumed should reuse it rather than invent
+one.
+
 ### The one runtime question it turns up
 
 `then` **traps on an unlinked ticket**, and `Cli`'s tickets are unlinked — only `Core.of` links the
