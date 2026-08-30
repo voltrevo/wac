@@ -197,3 +197,32 @@ implements exactly one of them" is already true and stays true.
   as covered.
 - `wac task gen:core` after `std/platform.wac`, which is `issues/system/0291b` and now refused by
   `bootstrap.sh` rather than silent.
+
+### And the seven-parameter one should be the *capability*, with `execWith` a method over it
+
+Following the same shape one more step makes the change additive rather than sweeping. `Cli` today
+has one capability and one convenience:
+
+    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith;   // the capability
+    Pending<Exec> exec(...)  { return this.execWith(path, args, stdin, string[](), false, false); }
+
+Make the capability the wide one and `execWith` the second method:
+
+    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWithIn;  // + cwd
+    Pending<Exec> execWith(...) { return this.execWithIn(path, args, stdin, env, clearEnv, inherit, ""); }
+    Pending<Exec> exec(...)     { return this.execWith(path, args, stdin, string[](), false, false); }
+
+Then:
+
+- **no call site changes at all.** The 35 `execWith` callers and the 398 `exec` callers keep their
+  arity, and the counted cost above stops being a cost.
+- **each host still implements exactly one**, which is what `EXEC_WITH`'s docstring already claims
+  and wants to stay true.
+- a host that has not been rebuilt fails on opcode 59 and names itself, which is the whole reason for
+  a new number.
+- the two stubs — `noExec`-shaped things in `packages/wac/src/grants.wac` and any test double — are
+  the only signatures that move.
+
+The verified-today part is that seven parameters are fine: `issues/lang/0291c` closed as not
+reproducing, and a seventh on `spawn` bootstraps to a fixed point in one round. So the constraint on
+this design is the wire format and the eight decoders, not the language.
