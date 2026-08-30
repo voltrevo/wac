@@ -5,7 +5,7 @@ import { pool } from "../../../harness/inFlight.ts";
 import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
 import { CORPUS, usesDeleted } from "./corpus.ts";
-import { sameName } from "../../../tools/corpusStderr.ts";
+import { sameName } from "./shname.ts";
 // The shell, against bash.
 //
 // Every script here runs through GNU bash and through ours, and the two must agree on standard

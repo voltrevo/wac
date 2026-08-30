@@ -20,7 +20,7 @@
 // agreeing is somebody's fix, and the row has to go — a table of expected failures that quietly
 // accumulates correct entries is the shape that stops anyone reading it.
 
-import { KNOWN, sameName } from "../../../tools/corpusStderr.ts";
+import { KNOWN, sameName } from "./shname.ts";
 import { loadNow } from "../../../harness/bounded.ts";
 import { buildApp } from "../../../harness/buildApp.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.

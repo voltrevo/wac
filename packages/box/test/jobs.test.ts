@@ -6,7 +6,7 @@
 // `src/bin/sh.wac`, which has all 63 applets and can therefore actually run one.
 
 import { buildApp } from "../../../harness/buildApp.ts";
-import { sameName } from "../../../tools/corpusStderr.ts";
+import { sameName } from "../../sh/test/shname.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
