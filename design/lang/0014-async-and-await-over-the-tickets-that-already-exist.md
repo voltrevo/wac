@@ -283,6 +283,10 @@ export i32 main(Core core, Cli cli) {
 Answers the real size. No `drain`, no restructuring — this is the criterion that keeps 3080 existing
 call sites able to reach an async function (D2, D3).
 
+**Passes as of 2026-08-30**, compiled from this syntax in `asyncsyntax_test.wac` and by hand in
+`asynclower_test.wac`. The hand version is what found that `wait` has to *detach* the continuation
+before stepping, since otherwise a later `drain` runs the body a second time.
+
 ### A3 — two awaits and a branch
 
 ```wac
@@ -296,10 +300,17 @@ async i32 total(Cli cli) {
 
 The sum. Today this shape is a `Pending<Pending<i32>>` type error when written by hand with `map`.
 
+**Passes as of 2026-08-30** — `asyncsyntax_test.wac`, and `spec/cases/0306` and `0307` are the loop
+and the early `return` out of one, which is the same machinery under a harder control flow.
+
 ### A4 — a ticket handed on
 
 `connectLater` from D4: the outer await returns a `Pending<Socket>` that is already connecting, and
 awaiting that gives the socket. Two awaits with two meanings.
+
+**Passes as of 2026-08-30** — `spec/cases/0311`, and `§wac-async-nested-6bqt3jf` is the clause that
+says a ticket is not flattened, so the rule is stated where a reader of the language will meet it
+rather than only here.
 
 ### A5 — the refusals
 
@@ -307,6 +318,16 @@ awaiting that gives the socket. Two awaits with two meanings.
 - `await` applied to something that is not a `Pending<T>` — named.
 - `Vec<void>` — `errVoidType`, at the instantiation rather than deep in monomorphisation.
 - A `wait` on a chain that cannot advance — D7's sentence, not a hang.
+
+**Passes as of 2026-08-30.** The first three are `async_test.wac` and `voidtypearg_test.wac`; the
+fourth is `spec/cases/0312`, and it is the one that changed a contract rather than adding a check —
+see D7.
+
+The list turned out to be short by four, all found by building the lowering rather than by reasoning
+about it: a suspension in a loop or `if` **condition**, in a `match` subject or arm, nested inside a
+larger expression, and one whose value is discarded. Each is declined by name with what it would
+need, which is the same standard the four above are held to, so they belong here even though this
+section did not foresee them.
 
 ### A6 — `relayd` reads as the loop it is
 
@@ -559,7 +580,7 @@ already the state slot.
 | --- | --- |
 | 0 | **done 2026-08-30** — `packages/wacc/test/wac/voidtypearg_test.wac` |
 | 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
-| 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
+| 2 | **done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 landed too: `issues/lang/0147` closed while this was being written, so `trap "…"` carries a sentence, and `Pending` gained a `waitable` field to have something true to say — `spec/cases/0312` |
 | 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
 | 4 | **done 2026-08-30 for A1–A4** — `asyncsyntax_test.wac` 15/15 and `asyncserver_test.wac` 1/1. A1 runs: two clients accepted while the first is open, both echoed, under one `drain`, with `async void`, a suspending `while`, a `match`, and an early `return` out of the loop. Declined by name: a suspension in a loop or `if` **condition**, in a `match` subject or arm, nested in a larger expression, or one whose value is discarded |
 | 5 | **done 2026-08-30** — `spec/spec/async.md` (eleven clauses), seven cases in `spec/cases/`, and A6: `relayd`'s accept and read loops are `async`, with `network_tor_test` green |
