@@ -496,9 +496,14 @@ string emittedSig(Env env, u8[] src, Lexed lexed, Ty returnType, Param[] params,
 string emittedSigOf(Env env, u8[] src, Lexed lexed, string ret, Param[] params, string receiver) {
   string out = "fn[" + ret + "(";
   if (receiver != "") { out = out + receiver; }
+  // A `void` argument erases its parameter here too — see the `Funcref` case of `typeOfTyName`.
+  i32 wrote = receiver != "" ? 1 : 0;
   for (i32 i = 0; i < params.len(); i++) {
-    if (i > 0 || receiver != "") { out = out + ","; }
-    out = out + typeOfTyName(env, src, lexed, params[i].type);
+    string pt = typeOfTyName(env, src, lexed, params[i].type);
+    if (pt == "void") { continue; }
+    if (wrote > 0) { out = out + ","; }
+    out = out + pt;
+    wrote = wrote + 1;
   }
   return out + ")]";
 }
@@ -6178,11 +6183,22 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       string r = typeOfTyName(env, src, lexed, ret);
       if (r == "") { return ""; }
       string out = "fn[" + r + "(";
+      // **A `void` argument erases the parameter it stood in for**, so `fn[void(T)]` at `T = void` is
+      // `fn[void()]` rather than a callback taking a value of a type that has none. That is what a
+      // continuation on a ticket answering nothing should take, and without it `Pending<void>` cannot
+      // be built at all: `then` and `map` are the two methods putting `T` in parameter position, and
+      // the emitter refuses `void` there — correctly, since there is nothing to pass.
+      // `design/lang/0014` D5.
+      //
+      // Counted rather than indexed, because an erased parameter must not leave its comma behind.
+      i32 wrote = 0;
       for (i32 i = 0; i < params.len(); i++) {
         string pt = typeOfTyName(env, src, lexed, params[i]);
         if (pt == "") { return ""; }
-        if (i > 0) { out = out + ","; }
+        if (pt == "void") { continue; }
+        if (wrote > 0) { out = out + ","; }
         out = out + pt;
+        wrote = wrote + 1;
       }
       return out + ")]";
     }

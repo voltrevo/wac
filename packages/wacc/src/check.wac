@@ -701,10 +701,18 @@ string substituteType(C c, string owner, string written) {
   if (startsWithFn(core)) {
     string fret = funcrefReturn(core);
     if (fret != "") {
+      // **A `void` argument erases the parameter it stood in for**, so a `fn[void(T)]` field of a
+      // `Pending<void>` offers a lambda `fn() -> void` as its target rather than `fn(void) -> void`,
+      // which nothing can be written to satisfy. The emitter drops it from the spelling for the same
+      // reason and the two have to agree. `design/lang/0014` D5.
       string out = "fn(";
+      i32 wrote = 0;
       for (i32 i = 0; i < funcrefParamCount(core); i++) {
-        if (i > 0) { out = out + ", "; }
-        out = out + substituteType(c, owner, funcrefParamAt(core, i));
+        string pt = substituteType(c, owner, funcrefParamAt(core, i));
+        if (pt == "void") { continue; }
+        if (wrote > 0) { out = out + ", "; }
+        out = out + pt;
+        wrote = wrote + 1;
       }
       return out + ") -> " + substituteType(c, owner, fret) + suffix;
     }
@@ -2567,11 +2575,15 @@ export string typeOfTy(C c, Ty t) {
     // by assignable here. There is no variance: `fn(bool) -> i32` does not hold a `fn(i32) -> i32`.
     case Funcref(ret, params): {
       string out = "fn(";
+      // A `void` argument erases its parameter — see the substituting speller above.
+      i32 wrote = 0;
       for (i32 i = 0; i < params.len(); i++) {
         string pt = typeOfTy(c, params[i]);
         if (pt == typeNone()) { return typeNone(); }
-        if (i > 0) { out = out + ", "; }
+        if (pt == "void") { continue; }
+        if (wrote > 0) { out = out + ", "; }
         out = out + pt;
+        wrote = wrote + 1;
       }
       string rt = typeOfTy(c, ret);
       if (rt == typeNone()) { return typeNone(); }

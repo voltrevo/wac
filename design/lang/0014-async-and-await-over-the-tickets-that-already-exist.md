@@ -1,6 +1,6 @@
 # 0014 — `async` and `await`, over the tickets that already exist
 
-- **Status:** proposed — decided in discussion 2026-08-30, no code written
+- **Status:** in progress — step 0 landed 2026-08-30; the state of play below is the truth
 - **Date:** 2026-08-30
 - **Author:** agent-c, with the operator
 - **Depends on:** `issues/lang/0292c` (a method on `Pending<T>` exports its binding twice), which
@@ -111,12 +111,25 @@ The mismatch should say both readings rather than guess:
 unit type in `core`.
 
 Nothing deep prevents it. `void` is already a kind — `packages/wacc/src/kinds.wac` gives it 29 — and
-what refuses it is a rule about *value positions*, with its own diagnostic (`errVoidType`,
-`packages/wacc/src/check.wac`). `Pending<T>` never stores a `T`; it stores `fn[T(i32)] resolve`, where
-`T` is in return position, which is exactly where void is already legal.
+what refuses it is a rule about *value positions*.
 
-So: allow `void` in the type-argument grammar and let the existing rule fire where an instantiation
-needs a value of it. `Vec<void>` must still be refused, by `errVoidType` rather than by a new check.
+**Two changes, and the second was missed when this was first written.** The claim here was that
+`Pending<T>` never needs a value of `T`, since it stores `fn[T(i32)] resolve` with `T` in return
+position. That is true of the field and false of the methods: `then(fn[void(T)] f)` and
+`map<U>(fn[U(T)] f)` both put `T` in **parameter** position, so `Pending<void>` asks for
+`fn[void(void)]` — a callback taking a value of a type that has none.
+
+1. `void` joins the whitelist in `afterTypeArgs`. It is its own token kind rather than an identifier,
+   so `Pending<void> p = …` failed that scan, was read as a comparison, and complained *expected an
+   expression, found 'void'*. The same type in return position always parsed.
+2. **A `void` argument erases the parameter it stood in for**, so `fn[void(T)]` at `T = void` is
+   `fn[void()]`. That is also what one would write by hand: a continuation on a ticket that answers
+   nothing takes no argument. Both spellers need it — the emitter's and the checker's — or a lambda
+   is offered a target nothing can satisfy.
+
+`Vec<void>` is still refused, by the emitter's existing *a value of a type this emitter cannot write*
+rather than by a new check. That message names neither `Vec<void>` nor the line, which is the
+diagnostic-quality risk this step was warned about; improving it is not part of this step.
 
 ### D6 — the whole language, not a linear subset
 
@@ -237,7 +250,7 @@ already the state slot.
 
 | step | state |
 | --- | --- |
-| 0 | not started |
+| 0 | **done 2026-08-30** — `packages/wacc/test/wac/voidtypearg_test.wac` |
 | 1 | not started — `issues/lang/0292c` filed 2026-08-30 |
 | 2 | not started; `Sched.off` and `Core.cancel` landed 2026-08-30 as prerequisites |
 | 3 | not started |

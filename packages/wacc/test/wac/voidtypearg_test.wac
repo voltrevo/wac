@@ -1,0 +1,74 @@
+// `void` as a type argument, and what it does to a parameter it stands in for.
+//
+// **A ticket that answers nothing is the thing that wants this.** `Pending<T>` is what every
+// capability hands back, and an `async void` function has to hand its caller *something* —
+// `design/lang/0014` D5. There is no unit type in `core` and `Pending<void>` was a **parse** error
+// until 2026-08-30: `void` is its own token kind rather than an identifier, so it failed the
+// whitelist in `afterTypeArgs`, the declaration was read as a comparison, and the complaint was
+// *expected an expression, found 'void'* — a message about the parser's hypothesis rather than the
+// program, which is the shape `issues/lang/0113` is about. The same type in *return* position
+// parsed fine, because nothing there has to be disambiguated.
+//
+// **Then it was an emitter refusal, for a better reason.** `Pending<T>` puts `T` in *parameter*
+// position twice — `then(fn[void(T)] f)` and `map<U>(fn[U(T)] f)` — and `fn[void(void)]` is a
+// callback taking a value of a type that has none. So a `void` argument now erases the parameter it
+// stood in for, which is also what you would want written by hand: a continuation on a ticket that
+// answers nothing takes no argument.
+//
+// The first case runs the feature rather than describing it; the second pins the erasure by the
+// wording the checker offers a lambda, because "it compiles" would pass just as well if the rule
+// were dropped and the parameter kept.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Pending } from "std/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { diagnoseGraph } from "../../src/api.wac";
+
+const string ENTRY = "main.wac";
+
+export string test_a_void_ticket_is_made_waited_on_and_continued(Core core, Cli cli) {
+  T t = T.create();
+
+  // Made from a real host ticket, so `drain` has something to wait on: `map` keeps the same id.
+  Pending<void> done = core.delay(1).map<void>((i64 at) => { });
+
+  // The continuation takes **no** argument, which is the erasure this file is about.
+  i32[] ran = i32[1](fill: 0);
+  done.then(() => { ran[0] = ran[0] + 1; });
+  t.eqI32(ran[0], 0, "`then` returns before its continuation runs");
+
+  t.eqI32(core.drain(), 1, "the drain ran exactly the one continuation");
+  t.eqI32(ran[0], 1, "and it was this one");
+
+  // And a void ticket can be waited on, which is `wait` at `T = void` — a call whose value is
+  // nothing, in statement position.
+  Pending<void> other = core.delay(1).map<void>((i64 at) => { });
+  other.wait();
+  return t.report();
+}
+
+export string test_a_void_argument_erases_the_parameter_it_stood_in_for(Core core, Cli cli) {
+  T t = T.create();
+  // A one-argument lambda against a `Pending<void>`'s `then`. Before the rule this was the *right*
+  // shape and `() => {}` was refused; the wording is what says which way round it is now.
+  // **Self-contained, because `diagnoseGraph` resolves no built-ins.** Handed a source importing
+  // `std/platform.wac` it answers nothing at all rather than complaining, so a case written against
+  // `Pending` here passes whatever the rule does — which is how the first draft of this passed while
+  // asserting the opposite of what it meant.
+  string src = "struct Box<T> {\n"
+             + "  i32 n;\n"
+             + "  Box<T> of() { return Box<T>(0); }\n"
+             + "  void on(const this, fn[void(T)] g) { }\n"
+             + "}\n"
+             + "export i32 main() {\n"
+             + "  Box<void> b = Box.of();\n"
+             + "  b.on((i32 x) => { });\n"
+             + "  return 0;\n"
+             + "}\n";
+  string out = diagnoseGraph(string[](ENTRY), string[](src), ENTRY);
+  t.isTrue(contains(out, "fn() -> void"),
+           "the target offered should have no parameter — got \"" + out + "\"");
+  t.isFalse(contains(out, "fn(void)"),
+            "and must not offer one of type void, which nothing can satisfy — got \"" + out + "\"");
+  return t.report();
+}

@@ -849,9 +849,23 @@ i32 afterTypeArgs(P p, i32 from) {
   return -1;
 }
 
-/** Whether a token could appear inside a type argument list — see `afterTypeArgs`. */
+/**
+ * Whether a token could appear inside a type argument list — see `afterTypeArgs`.
+ *
+ * **`void` is one of them**, which it was not until 2026-08-30. It is its own token kind rather than
+ * an identifier, so `Pending<void> p = …` failed this scan, was read as a comparison, and complained
+ * *expected an expression, found 'void'* — a message about the parser's hypothesis rather than the
+ * program, which is the same shape `issues/lang/0113` describes. The same type in *return* position
+ * parsed fine, because nothing there has to be disambiguated.
+ *
+ * A ticket that answers nothing is the thing that wants it: `Pending<void>` is what an `async void`
+ * function hands its caller — `design/lang/0014` D5 — and `Pending<T>` never stores a `T`, so there
+ * is no value of it to need. Where an instantiation *does* need one, `Vec<void>` being the example,
+ * `errVoidType` is the existing refusal and this does not disturb it.
+ */
 bool typeToken(i32 kind) {
   return kind == kIdent() || kind == kFn() || kind == kComma() || kind == kQuestion()
+      || kind == kVoid()
       || kind == kLt() || kind == kGt() || kind == kShr() || kind == kShrU()
       || kind == kLbrack() || kind == kRbrack() || kind == kLparen() || kind == kRparen();
 }
