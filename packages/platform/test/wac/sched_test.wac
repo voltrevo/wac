@@ -278,3 +278,26 @@ export string test_the_handler_carries_the_type() {
   t.eqStr(got[0], "hello", "the handler read its own ticket's value, at its own type");
   return t.report();
 }
+
+export string test_detach_takes_the_handler_and_leaves_the_ticket() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] dropped = i32[1]();
+
+  // Both handlers trap, so any dispatch below fails loudly rather than passing quietly.
+  s.on(7, (i32 id) => { trap; }, (i32 id) => { dropped[0] = dropped[0] + 1; });
+  s.on(9, (i32 id) => { trap; }, (i32 id) => { dropped[0] = dropped[0] + 1; });
+
+  t.isTrue(s.detach(7), "the registered id was found");
+  t.eqI32(s.pending(), 1, "and unregistered");
+  t.eqI32(dropped[0], 0, "**without dropping** — this is the whole difference from `off`");
+
+  // `off` on the sibling, side by side, so the two policies are pinned against each other rather
+  // than each against a memory of the other.
+  t.isTrue(s.off(9), "the sibling was found too");
+  t.eqI32(s.pending(), 0, "and unregistered");
+  t.eqI32(dropped[0], 1, "but its ticket *was* released");
+
+  t.isFalse(s.detach(7), "detaching what is no longer registered is silent");
+  return t.report();
+}

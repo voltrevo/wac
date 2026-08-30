@@ -231,6 +231,40 @@ three `*Armed` flags and the `findCirc`-at-fire-time go away — they exist only
 cannot be registered twice and a captured slot number goes stale under compaction, both of which the
 lowering owns instead. The live tests must stay green: `network_tor_test`, `ctor_live_test`.
 
+## What the hand lowering found
+
+Step 2 was written as `packages/platform/test/wac/asynclower_test.wac` — the code the compiler will
+emit, emitted by hand first, on the principle that a notation whose lowering turns out to be
+impossible is worse than no notation. A2 passes: `fileSize(core, cli, "README.md").wait()` answers the
+real size with no `drain` and no restructuring, and the same function completes under `drain` alone.
+
+**The shape is smaller than the document assumed.** `Pending<T>` is an id plus three functions of that
+id, so an async function's ticket is simply one whose `resolve` drives a state machine instead of
+asking a host. `Sched`, `map` and `then` are untouched, and there is no state object: closures capture
+**by reference**, so a captured local *is* the state slot. The estimate's reliance on
+`design/lang/0002` holds.
+
+**One thing was missing, and it was not the obvious one.** `Sched.off` fuses two operations —
+unregister the continuation *and* drop the ticket — and D2's driving needs only the first. Written
+with `off`, every wait-driven case trapped: the driver released the host's slot and then waited on a
+ticket that no longer existed. `Sched.detach` and `Core.detach` are the other half, and the
+distinction is now pinned in `sched_test.wac` with `off` beside it. Taking over is not giving up.
+
+**Two constraints on what step 4 may emit**, both found by writing the lowering rather than by
+reading the emitter:
+
+- A lambda written directly as an argument to a static on a generic (`Pending<i32>.of(…)`), or
+  directly into an array element, is *"in a position the walk does not type yet"* — four of them
+  refused at once. Each must be bound to a local of a stated funcref type first. The lowering has to
+  emit the bound form.
+- `step[0]()` does not parse. A call after `]` is array construction, so the parser reads `step` as a
+  type name — `issues/lang/0265c`. A state machine keeps its resumption point in exactly that shape,
+  so step 4 meets that issue head-on rather than merely coexisting with it.
+
+**D7 is not done and is blocked on a message.** A chain that cannot advance currently reaches a bare
+`trap`, and `trap "…"` does not carry its text (`issues/lang/0147`). The whole point of D7 is that the
+failure is a sentence rather than a hang, so it waits for the thing that can say one.
+
 ## Order of work
 
 | # | step | done when |
@@ -253,7 +287,7 @@ already the state slot.
 | --- | --- |
 | 0 | **done 2026-08-30** — `packages/wacc/test/wac/voidtypearg_test.wac` |
 | 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
-| 2 | not started; `Sched.off` and `Core.cancel` landed 2026-08-30 as prerequisites |
+| 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
 | 3 | not started |
 | 4 | not started |
 | 5 | not started |

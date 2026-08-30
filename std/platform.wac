@@ -158,14 +158,41 @@ export struct Sched {
    * both fine answers to *make sure this is not pending*.
    */
   bool off(this, i32 id) {
+    i32 at = this.indexOf(id);
+    if (at < 0) { return false; }
+    fn[void(i32)] go = this.drops[at];
+    this.removeAt(at);
+    go(id);
+    return true;
+  }
+
+  /**
+   * Take the continuation off and **keep the ticket**.
+   *
+   * The other half of `off`, which abandons both. This is for a caller that means to resolve the
+   * ticket itself: it must take the handler back first, or the answer arrives twice — once where the
+   * caller waited and once when `run` dispatches — and a body that appends to a list or sends a
+   * packet does that twice too.
+   *
+   * **Found by `design/lang/0014` step 2**, where an async function's ticket has to answer a plain
+   * `.wait()` by driving its own chain. Written as `off` at first, and every wait-driven case
+   * trapped: `off` releases the host's slot, so the very next line waited on a ticket that was gone.
+   * The two are one search and two policies, which is why `indexOf` exists rather than a second loop
+   * that can drift from this one.
+   */
+  bool detach(this, i32 id) {
+    i32 at = this.indexOf(id);
+    if (at < 0) { return false; }
+    this.removeAt(at);
+    return true;
+  }
+
+  /** Where `id` is registered, or -1. */
+  i32 indexOf(const this, i32 id) {
     for (i32 i = 0; i < this.n; i++) {
-      if (this.ids[i] != id) { continue; }
-      fn[void(i32)] go = this.drops[i];
-      this.removeAt(i);
-      go(id);
-      return true;
+      if (this.ids[i] == id) { return i; }
     }
-    return false;
+    return 0 - 1;
   }
 
   void removeAt(this, i32 at) {
@@ -837,6 +864,15 @@ export struct Core {
    * a mutable `Pending` to have one.
    */
   bool cancel(this, i32 id) { return this.sched.off(id); }
+
+  /**
+   * Take a continuation back **without** abandoning its ticket — `Sched.detach`.
+   *
+   * `cancel` is for giving up; this is for taking over. A caller that is about to resolve a ticket
+   * itself has to unregister first or the answer is delivered twice, and it must not let the ticket
+   * be dropped on the way out or there is nothing left to resolve.
+   */
+  bool detach(this, i32 id) { return this.sched.detach(id); }
 
   /**
    * Run continuations until none are outstanding. Answers how many ran.

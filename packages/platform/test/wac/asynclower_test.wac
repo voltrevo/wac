@@ -1,0 +1,163 @@
+// What `async`/`await` lowers to, written by hand — `design/lang/0014` step 2.
+//
+// This file is the lowering the compiler will emit, before the compiler emits it. The point is to
+// find out what the runtime needs *before* building syntax on top of it, because a notation whose
+// lowering turns out to be impossible is worse than no notation.
+//
+// **The finding is that the runtime needs nothing new.** `Pending<T>` is an id plus three functions
+// of that id, so an async function's ticket is one whose `resolve` drives a state machine instead of
+// asking a host. `Sched` is untouched; no second stack appears; `map` and `then` are unchanged.
+// Closures capturing **by reference** (`design/lang/0002`) is what carries the locals across an
+// await without a state object — the captured local *is* the state slot.
+//
+// Two things have to be true at once, and they are what the tests below are:
+//
+//   1. **A ticket must answer a plain `.wait()`** — D2, and the reason is arithmetic: there are 3080
+//      `.wait()` sites in this tree and 13 `.then(`. An async function unreachable from a blocking
+//      caller would be a feature for code nobody has written yet.
+//   2. **The same function must also work under `drain`** — D1, since calling it runs the body
+//      eagerly and registers a continuation, which is how two of them overlap.
+//
+// The trap between them is that both drivers advance *one* machine. If `wait` runs the body while a
+// continuation for the same step is still registered, `drain` runs it a second time — so `wait`
+// takes the continuation off the scheduler before stepping. That is what `Sched.off` is for, and it
+// is why it was written before any of this.
+//
+// What is *not* here is D7 — the error for a chain that cannot advance. It needs a message, and
+// `trap "…"` does not carry one yet (`issues/lang/0147`), so the honest version of that case is a
+// bare `unreachable` that says nothing. Left for the step that can give it a sentence.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+
+/** The initial value of a step slot: a machine that has not been armed cannot advance. */
+bool neverSteps() { return false; }
+
+/**
+ * The hand lowering of:
+ *
+ *     async i32 fileSize(Cli cli, string path) {
+ *       FileResult f = await cli.readFile(path);
+ *       return f.ok ? f.bytes.len() : -1;
+ *     }
+ *
+ * One await, so one resumption point. `slot`, `done` and `armed` are the locals that outlive it,
+ * each a one-element array because that is how a wac program spells a cell today.
+ */
+Pending<i32> fileSize(Core core, Cli cli, string path) {
+  i32[] slot = i32[1](fill: 0);
+  bool[] done = bool[1](fill: false);
+  i32[] armed = i32[1](fill: 0 - 1);
+  fn[bool()][] step = fn[bool()][1](fill: neverSteps);
+
+  // Eager: the call to the capability happens now, at the point of the `await` — D1.
+  Pending<FileResult> up = cli.readFile(path).linkedTo(core);
+
+  // **The body after the await, written once.** Both drivers run this same closure, which is the
+  // property that makes "advanced exactly once" checkable rather than hoped for.
+  fn[void(FileResult)] resume = (FileResult f) => {
+    slot[0] = f.ok ? f.bytes.len() : 0 - 1;
+    done[0] = true;
+  };
+
+  // Driver A — the scheduler. Registered now, so `core.drain()` alone completes the machine.
+  up.then(resume);
+  armed[0] = up.id;
+
+  // Driver B — a blocking caller, which may run *this chain* and nothing else (D2). It detaches the
+  // continuation first, so driver A cannot also run it.
+  //
+  // **Every lambda below is named before it is used**, and not for readability: a lambda written
+  // directly as an argument to `Pending<i32>.of` — a static on a generic — is *"a position the walk
+  // does not type yet"*, and so is one written directly into `step[0]`. Four of them, refused
+  // together. Binding each to a local of a stated funcref type is the way through, and it is a real
+  // constraint on step 4: the emitted lowering must not put a lambda where a hand-written one is
+  // refused.
+  fn[bool()] advance = () => {
+    resume(up.wait());
+    return true;
+  };
+  step[0] = advance;
+
+  fn[i32(i32)] doResolve = (i32 ignored) => {
+    while (!done[0]) {
+      // **`detach`, not `cancel`.** Taking over is not giving up: `cancel` calls the ticket's `drop`
+      // and releases the host's slot, so the `up.wait()` on the next line would be a wait on a
+      // ticket that no longer exists. Every wait-driven case here trapped until `Sched.detach`
+      // existed, which is what step 2 was for.
+      if (armed[0] >= 0) { core.detach(armed[0]); armed[0] = 0 - 1; }
+      // **Re-read each round**, because a machine with two awaits replaces this slot as it goes.
+      // Bound to a local first because `step[0]()` does not parse: `i32[1](fill: 0)` means a call
+      // after `]` is array construction, so the parser reads `step` as a type name and says
+      // *unknown type 'step'* — `issues/lang/0265c`. A state machine keeps its resumption point in
+      // exactly this shape, so step 4 meets that issue rather than merely coexisting with it.
+      fn[bool()] next = step[0];
+      if (!next()) { trap; }
+    }
+    return slot[0];
+  };
+  fn[bool(i32)] doSettled = (i32 ignored) => done[0];
+  fn[void(i32)] doDrop = (i32 ignored) => {
+    if (armed[0] >= 0) { core.cancel(armed[0]); armed[0] = 0 - 1; }
+  };
+
+  return Pending<i32>.of(0, doResolve, doSettled, doDrop);
+}
+
+/** The real size of the file, for the oracle. */
+i32 sizeOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? f.bytes.len() : 0 - 1;
+}
+
+export string test_an_async_ticket_answers_a_plain_wait(Core core, Cli cli) {
+  T t = T.create();
+  // A2 — the criterion that keeps 3080 existing call sites able to reach an async function. No
+  // `drain`, no restructuring, and the answer is the real one rather than a plausible zero.
+  i32 want = sizeOf(cli, "README.md");
+  t.isTrue(want > 0, "the oracle read the file at all");
+
+  Pending<i32> p = fileSize(core, cli, "README.md");
+  t.isFalse(p.isDone(), "the ticket is outstanding before anyone drives it");
+  t.eqI32(p.wait(), want, "`wait` drove the chain to the real size");
+  t.isTrue(p.isDone(), "and the machine is finished afterwards");
+  return t.report();
+}
+
+export string test_the_same_function_completes_under_drain(Core core, Cli cli) {
+  T t = T.create();
+  // D1 — the call ran the body up to the await and registered a continuation, so draining is enough.
+  i32 want = sizeOf(cli, "README.md");
+  Pending<i32> p = fileSize(core, cli, "README.md");
+  t.isTrue(core.drain() > 0, "the drain had something to run");
+  t.isTrue(p.isDone(), "draining alone finished the machine");
+  t.eqI32(p.wait(), want, "and `wait` then answers without driving anything");
+  return t.report();
+}
+
+export string test_waiting_first_leaves_the_drain_nothing_to_run(Core core, Cli cli) {
+  T t = T.create();
+  // **The one that would catch a double-run.** `wait` detaches before it steps, so the continuation
+  // registered at the await is gone by the time `drain` looks. Without the detach this drains one
+  // continuation and runs the body twice — which for this body is invisible, and for a body that
+  // appends to a list or sends a packet is not.
+  Pending<i32> p = fileSize(core, cli, "README.md");
+  p.wait();
+  t.eqI32(core.drain(), 0, "nothing was left registered for this chain");
+  return t.report();
+}
+
+export string test_two_async_calls_overlap(Core core, Cli cli) {
+  T t = T.create();
+  // Not concurrency from `await` itself — two tickets and one drain, which is what D1 buys: both
+  // bodies are past their capability call before either has answered.
+  i32 want = sizeOf(cli, "README.md");
+  Pending<i32> a = fileSize(core, cli, "README.md");
+  Pending<i32> b = fileSize(core, cli, "README.md");
+  t.isFalse(a.isDone(), "the first is outstanding");
+  t.isFalse(b.isDone(), "and so is the second, before any drain");
+  core.drain();
+  t.eqI32(a.wait(), want, "the first answered");
+  t.eqI32(b.wait(), want, "and so did the second");
+  return t.report();
+}
