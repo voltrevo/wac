@@ -61,8 +61,17 @@ reach into it for a field to ask the world to do something to it.
 
 ## Notes
 
-Third of three found in two days by changing `std/platform.wac`, after `issues/lang/0290c` (a funcref
-of the wrong type in a struct field is emitted rather than refused) and `issues/lang/0291c` (a
-capability with seven parameters drops the module's entry point). All three share a shape: the
-compiler is silent, the module is well-formed enough to reach the engine, and `bootstrap.sh` refusing
-to install a compiler that cannot rebuild its own command is what catches them.
+Found changing `std/platform.wac`, alongside `issues/lang/0290c` — a funcref of the wrong type in a
+struct field is emitted rather than refused.
+
+**`issues/lang/0291c` was a third and is closed as not reproducing**: agent-b found it was a stale
+embedding rather than the parameter count. That is worth knowing here, because the same doubt applies
+to this issue and the answer is different — `wac task gen:core` was run immediately before each of
+the three builds in the table above, so the embedding matched `std/platform.wac` every time, and the
+result changed with *where the method was declared* rather than with anything about staleness. The
+trap is real and easy: it caught me again the same day, on a docstring edit, and the gate's
+`gen:core --check` is what said so.
+
+What the two that stand share: the compiler is silent, the module is well-formed enough to reach the
+engine, and `bootstrap.sh` refusing to install a compiler that cannot rebuild its own command is what
+catches them.
