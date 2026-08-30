@@ -144,6 +144,30 @@ export struct Sched {
     this.drops = nd;
   }
 
+  /**
+   * Withdraw the registration for `id`, if there is one. Answers whether there was.
+   *
+   * **For work that is abandoned rather than finished.** `run` unregisters a handler before running
+   * it, so a continuation that re-arms needs nothing from this — the normal path never calls it. What
+   * does is a caller giving up on something it registered: a relay dropping a connection has to take
+   * back the reads still outstanding on that connection's other sockets, or they fire later against a
+   * closed handle.
+   *
+   * The ticket's own `drop` is called, as `dropAll` does, so the host's slot is released rather than
+   * leaked. Silent when `id` is not registered, because "already fired" and "never registered" are
+   * both fine answers to *make sure this is not pending*.
+   */
+  bool off(this, i32 id) {
+    for (i32 i = 0; i < this.n; i++) {
+      if (this.ids[i] != id) { continue; }
+      fn[void(i32)] go = this.drops[i];
+      this.removeAt(i);
+      go(id);
+      return true;
+    }
+    return false;
+  }
+
   void removeAt(this, i32 at) {
     for (i32 i = at; i + 1 < this.n; i++) {
       this.ids[i] = this.ids[i + 1];
@@ -784,6 +808,21 @@ export struct Core {
   Pending<i64> delay(const this, i32 millis) {
     return this.sleepMillis(millis);
   }
+
+  /**
+   * Take back the continuation put on the ticket with this id, if it still has one.
+   *
+   * **The counterpart of `then` for work that is abandoned rather than finished.** A continuation
+   * that re-arms needs nothing from this — `run` unregisters a handler before running it — so this is
+   * for a caller giving up: a relay dropping a connection takes back the reads outstanding on that
+   * connection's other sockets, which would otherwise fire against a closed handle. The ticket's own
+   * `drop` runs, so the host's slot is released rather than leaked.
+   *
+   * **On `Core` and taking an id, rather than on `Pending<T>`**, which is where it belongs and where
+   * it cannot go: a method on that struct makes wacc emit its `$bind$` export twice and the module is
+   * refused by the engine — `issues/lang/0292c`. `p.id` is the argument until that is fixed.
+   */
+  bool cancel(this, i32 id) { return this.sched.off(id); }
 
   /**
    * Run continuations until none are outstanding. Answers how many ran.
