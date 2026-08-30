@@ -31,7 +31,7 @@
 //       };
 //       fn[bool(i32)] __wacSettled = (i32 id) => __wacDone[0];
 //       fn[void(i32)] __wacDrop = (i32 id) => { };
-//       return Pending<R>(0 - 1, __wacResolve, __wacSettled, __wacDrop, null);
+//       return Pending<R>(0 - 1, __wacResolve, __wacSettled, __wacDrop, null, true);
 //     }
 //
 // **Every hoisted local is a one-element array.** `T[1]()` works for any `T`, struct included, which
@@ -909,12 +909,16 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
                  c.line, freshCol(c));
   at = at + 1;
 
-  Expr[] args = Expr[5](fill: eNull(c));
+  // **`waitable` is true**: this ticket's resolver drives the machine, so waiting on one does
+  // advance it — `design/lang/0014` D7. The flag exists to separate that from a ticket only a
+  // continuation can answer, which waiting cannot help and which now says so.
+  Expr[] args = Expr[6](fill: eNull(c));
   args[0] = eInt(c, 0);
   args[1] = eId(c, tResolve(c));
   args[2] = eId(c, tSettled(c));
   args[3] = eId(c, tDrop(c));
   args[4] = eNull(c);
+  args[5] = eBool(c, true);
   Expr ticket = Expr(ExprKind.Construct(lowPendingTy(c, fnRet), args, NamedArg[]()), c.line, c.col);
   out[at] = sRet(c, ticket); at = at + 1;
 

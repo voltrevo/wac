@@ -1,0 +1,21 @@
+// expect: traps answer
+// why: a wait drives its own chain and no unrelated work, so a ticket only a continuation can answer cannot be advanced by waiting on it
+// from: design/lang/0014 D7
+// spec: §wac-async-unwaitable-4hpx2vn
+import { Pending } from "std/platform.wac";
+
+/**
+ * A ticket whose answer arrives only when somebody else's continuation runs: unsettled, no
+ * scheduler, and a resolver with nothing to consult. `waitable` is false, which is the whole of what
+ * makes this sayable — before it, `wait` returned the cell's default and said nothing.
+ */
+Pending<i32> onlyAContinuationCanAnswer() {
+  i32[] cell = i32[1]();
+  bool[] done = bool[1]();
+  fn[i32(i32)] r = (i32 id) => cell[0];
+  fn[bool(i32)] s = (i32 id) => done[0];
+  fn[void(i32)] d = (i32 id) => { };
+  return Pending<i32>(0, r, s, d, null, false);
+}
+
+export i32 answer() { return onlyAContinuationCanAnswer().wait(); }

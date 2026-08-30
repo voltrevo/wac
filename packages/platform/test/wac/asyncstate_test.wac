@@ -70,7 +70,8 @@ Pending<i32> fileSize(Cli cli, string path) {
   };
   fn[bool(i32)] set = (i32 id) => fr.done;
   fn[void(i32)] drp = (i32 id) => { };
-  return Pending<i32>(0 - 1, res, set, drp, null);
+  // `waitable` — this resolver drives the machine, so waiting on it advances it.
+  return Pending<i32>(0 - 1, res, set, drp, null, true);
 }
 
 // ── An await inside a loop — A1's shape, and the discriminator ────────────────
@@ -131,7 +132,8 @@ Pending<i32> sumOf(Cli cli, string[] paths) {
   fn[i32(i32)] res = (i32 id) => { while (!fr.done) { lstep(fr); } return fr.result; };
   fn[bool(i32)] set = (i32 id) => fr.done;
   fn[void(i32)] drp = (i32 id) => { };
-  return Pending<i32>(0 - 1, res, set, drp, null);
+  // `waitable` — this resolver drives the machine, so waiting on it advances it.
+  return Pending<i32>(0 - 1, res, set, drp, null, true);
 }
 
 /** The oracle: the same answers by blocking, with no machinery at all. */

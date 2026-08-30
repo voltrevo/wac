@@ -300,8 +300,43 @@ export struct Pending<T> {
    */
   Sched? sched;
 
+  /**
+   * Whether **waiting** on this ticket can make it answer.
+   *
+   * True of every ticket a host hands out, because waiting is exactly how the host is asked. True of
+   * an `async` function's ticket, because waiting drives its machine. False of a ticket the program
+   * made whose answer arrives only when somebody *else's* continuation runs — nothing a `wait` is
+   * allowed to do can advance one of those, and `design/lang/0014` D2 is what makes that so: a wait
+   * drives its own chain and deliberately runs no unrelated registered work.
+   *
+   * **It has to be recorded rather than worked out.** Measured 2026-08-30: at the moment of the wait
+   * a host ticket whose answer has not arrived and a ticket nothing can ever answer are
+   * indistinguishable — `sched` is null and `settled` is false for both. Asking again afterwards does
+   * not separate them either, because a host ticket is *not* settled after being waited on: its slot
+   * is spent and `settled` answers false again.
+   *
+   * **False is the default a hand-written ticket should have.** Getting it wrong that way traps and
+   * says so; getting it wrong the other way is what this replaces — a silent zero.
+   */
+  bool waitable;
+
+  /**
+   * A ticket the host will answer. Every capability's is made through here, which is why this sets
+   * `waitable`: being waited on is how the host is asked.
+   */
   Pending<T> of(i32 id, fn[T(i32)] resolve, fn[bool(i32)] settled, fn[void(i32)] drop) {
-    return Pending<T>(id, resolve, settled, drop, null);
+    return Pending<T>(id, resolve, settled, drop, null, true);
+  }
+
+  /**
+   * A ticket the *program* answers, which waiting can drive — an `async` function's, and anything
+   * else whose `resolve` does the work rather than asking for it.
+   *
+   * The counterpart is no static at all: a ticket only a continuation can answer is built with the
+   * constructor and `false`, and saying so is the point.
+   */
+  Pending<T> driven(i32 id, fn[T(i32)] resolve, fn[bool(i32)] settled, fn[void(i32)] drop) {
+    return Pending<T>(id, resolve, settled, drop, null, true);
   }
 
   /**
@@ -336,7 +371,7 @@ export struct Pending<T> {
    * out, and `Cli`'s are all of those.
    */
   Pending<T> on(const this, Sched s) {
-    return Pending<T>(this.id, this.resolve, this.settled, this.drop, s);
+    return Pending<T>(this.id, this.resolve, this.settled, this.drop, s, this.waitable);
   }
 
   /**
@@ -362,7 +397,8 @@ export struct Pending<T> {
    * `resolve` rather than something this adds — a ticket answers once, and `map` does not copy it.
    */
   Pending<U> map<U>(const this, fn[U(T)] f) {
-    return Pending<U>(this.id, (i32 id) => f(this.resolve(id)), this.settled, this.drop, this.sched);
+    return Pending<U>(this.id, (i32 id) => f(this.resolve(id)), this.settled, this.drop, this.sched,
+                      this.waitable);
   }
 
   /**
@@ -400,7 +436,18 @@ export struct Pending<T> {
    * resolver. It has to be const to be callable at all from a `const this` method, which
    * is where half the capability calls in `packages/sh` and `packages/ssh` live.
    */
-  T wait(const this) { return this.resolve(this.id); }
+  T wait(const this) {
+    // **`design/lang/0014` D7.** A ticket that only a continuation can answer cannot be advanced by
+    // waiting on it — D2 says a wait drives its own chain and runs no unrelated registered work — so
+    // waiting is a mistake rather than a delay. It used to return whatever the resolver had, which
+    // for the shape that reaches here is a default: a program that asks for a file size and is told
+    // zero, with nothing said. `settled` first, because a ticket that already has its answer is
+    // fine whoever put it there.
+    if (!this.waitable && !this.settled(this.id)) {
+      trap "this ticket is answered by a continuation, so waiting cannot advance it — call core.drain()";
+    }
+    return this.resolve(this.id);
+  }
 
   /** Whether `wait` would return immediately. Never blocks. */
   bool isDone(const this) { return this.settled(this.id); }

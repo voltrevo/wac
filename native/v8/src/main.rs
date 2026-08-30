@@ -1569,8 +1569,12 @@ fn call_named(
     let Some(result) = f.call(scope, exports.into(), &values) else {
         // A trap is exit 2 rather than 1: the program ran and stopped, which is a different
         // outcome from one that never compiled.
+        // `trap_said` already carries the `": "` — its doc says so, and `trap_said_bare` is the one
+        // without. Adding a second here printed `trapped: : the message`, which is what running a
+        // *named* function showed and running `main` did not, because that path reads the global
+        // itself.
         let said = trap_said(scope, exports);
-        eprintln!("wac: {name} trapped{}", if said.is_empty() { String::new() } else { format!(": {said}") });
+        eprintln!("wac: {name} trapped{said}");
         return 2;
     };
     match print_returned(scope, result, &sig.ret) {

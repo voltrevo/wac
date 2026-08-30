@@ -34,7 +34,7 @@ Pending<T> ready<T>(T v) {
   fn[T(i32)] res = (i32 id) => cell[0];
   fn[bool(i32)] set = (i32 id) => true;
   fn[void(i32)] drp = (i32 id) => { };
-  return Pending<T>(0 - 1, res, set, drp, null);
+  return Pending<T>(0 - 1, res, set, drp, null, true);
 }
 
 /**
@@ -75,7 +75,7 @@ Pending<U> flatMap<T, U>(Pending<T> p, fn[Pending<U>(T)] f) {
   fn[void(i32)] drp = (i32 id) => {
     if (inner[0] is null) { p.drop(p.id); } else { inner[0]!.cancel(); }
   };
-  return Pending<U>(p.id, res, set, drp, p.sched);
+  return Pending<U>(p.id, res, set, drp, p.sched, p.waitable);
 }
 
 /** The oracle: the same answer computed by blocking, with no machinery at all. */

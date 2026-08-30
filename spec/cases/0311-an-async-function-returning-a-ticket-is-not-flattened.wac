@@ -1,22 +1,23 @@
 // expect: answers answer = 5
 // why: awaiting the outer ticket yields the inner one, and neither await is redundant
 // spec: §wac-async-nested-6bqt3jf
-struct Sch { bool detach(this, i32 id) { return false; } }
-struct Pending<T> {
-  i32 id;
-  fn[T(i32)] resolve;
-  fn[bool(i32)] settled;
-  fn[void(i32)] drop;
-  Sch? sched;
-  T wait(const this) { return this.resolve(this.id); }
-  void then(this, fn[void(T)] f) { }
-}
+import { Pending } from "std/platform.wac";
+
+/**
+ * A ticket that is already answered.
+ *
+ * `driven` rather than the constructor, because it says the ticket is one **waiting can advance** —
+ * which is what separates it from one only a continuation could answer,
+ * `[§wac-async-unwaitable-4hpx2vn]`. The real `Pending` rather than a look-alike, because the
+ * lowering constructs that one and a program declaring its own would have to match it field for
+ * field.
+ */
 Pending<i32> ready(i32 v) {
   i32[] cell = i32[1](fill: v);
   fn[i32(i32)] r = (i32 id) => cell[0];
   fn[bool(i32)] s = (i32 id) => true;
   fn[void(i32)] d = (i32 id) => { };
-  return Pending<i32>(0, r, s, d, null);
+  return Pending<i32>.driven(0, r, s, d);
 }
 async Pending<i32> handOn(i32 v) {
   i32 first = await ready(0);

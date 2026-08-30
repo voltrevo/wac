@@ -178,7 +178,7 @@ that chain can ever advance. That is decidable at the moment it happens.
 **Because D2 is what makes it detectable.** A general pump would silently interleave instead; plain
 blocking would hang. Narrowing what `wait` may run is what turns the failure into a sentence.
 
-#### What it actually does today, and why the sentence is not written yet
+#### Done 2026-08-30, and what it took
 
 **It does not hang. It answers a default, silently** — measured 2026-08-30 by awaiting a ticket that
 is unsettled, carries no scheduler, and whose resolver has nothing to consult:
@@ -206,9 +206,27 @@ after being waited on either: the slot is spent and `settled` answers false agai
 nor after distinguishes them.
 
 Making it decidable is a change to `Pending`'s contract, and the smallest one is a ticket knowing
-whether anything outside the program can answer it. `resolve` being able to say *nobody will* would do
-it, as would a host-backed ticket being distinguishable from a program-made one. Either is a decision
-about the type every capability returns, which is why this is recorded rather than taken.
+whether anything outside the program can answer it. **The operator took that decision**, so
+`Pending<T>` has a `waitable` field: true of every ticket a host hands out — `of` sets it, and that is
+the only way a capability makes one — and true of an `async` function's, whose resolver drives its
+machine. False of a ticket answered only by somebody else's continuation.
+
+`wait` then says so, and the message names the thing to do instead:
+
+    wac: answer trapped: this ticket is answered by a continuation, so waiting cannot advance it
+      — call core.drain()
+
+`settled` is asked first, so a ticket that already holds its answer is fine whoever put it there, and
+a host ticket pays one bool test on a path with three thousand call sites.
+
+**False is the default a hand-written ticket gets, and that is the safe direction**: getting it wrong
+that way traps and says so, while getting it wrong the other way is the silent zero this replaces.
+
+Two things fell out. `spec/cases`' async cases stopped declaring a `Pending` look-alike and now import
+the real one — the lowering constructs *that* type, so a program with its own would have had to match
+it field for field, which is a contract nobody wrote down and nobody could satisfy by accident. And
+running a *named* function printed `trapped: : the message`: `trap_said` already carries the `": "`
+and that path added a second, which `main` never showed because it reads the global itself. One line.
 
 ## Acceptance criteria
 

@@ -78,6 +78,19 @@ flight interleave rather than running one after the other. A ticket without a sc
 has nowhere to register, so a chain awaiting one advances only under `wait` —
 `Pending.linkedTo` is how such a ticket is given one.
 
+`[§wac-async-unwaitable-4hpx2vn]` **Waiting on a ticket that only a continuation can answer is a
+trap, not a wait.** `Pending` records whether waiting on it can make it answer — true of every ticket
+a host hands out, and of an `async` function's, whose resolver drives its machine. False of one whose
+answer arrives when somebody else's continuation runs: a wait drives its own chain and no unrelated
+registered work, so nothing it may do can advance such a ticket.
+
+It has to be recorded rather than worked out. At the moment of the wait, a host ticket whose answer
+has not arrived and a ticket nothing can ever answer are indistinguishable — `sched` null, `settled`
+false for both — and asking again afterwards does not separate them either, because a host ticket is
+not settled after being waited on. What this replaces is worse than a hang: the resolver returned
+whatever it had, which for that shape is a default, so a program asked for a file size and was told
+zero with nothing said.
+
 `[§wac-async-once-3jhw8qk]` A body runs once however it is driven. A `wait` that arrives
 while a continuation is registered takes that continuation back before stepping, so the
 answer is delivered once rather than both where the caller waited and again when the
