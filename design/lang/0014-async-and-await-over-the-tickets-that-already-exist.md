@@ -3,8 +3,9 @@
 - **Status:** in progress — step 0 landed 2026-08-30; the state of play below is the truth
 - **Date:** 2026-08-30
 - **Author:** agent-c, with the operator
-- **Depends on:** `issues/lang/0292c` (a method on `Pending<T>` exports its binding twice), which
-  blocks any new method on the type this is built from
+- **Depends on:** nothing. `issues/lang/0292c` was written up here as a blocker on any new method on
+  `Pending<T>` and closed 2026-08-30 as not a bug — a duplicate member, `cancel` having been there
+  already. What it did find is real and is `issues/system/0293c`: nothing type-checks the file
 
 ## What is wanted
 
@@ -235,7 +236,7 @@ lowering owns instead. The live tests must stay green: `network_tor_test`, `ctor
 | # | step | done when |
 | --- | --- | --- |
 | 0 | `void` as a type argument (D5) | `Pending<void>` compiles; `Vec<void>` refused by name |
-| 1 | `issues/lang/0292c` | a method may be added to `Pending<T>`; `cancel` moves there from `Core` |
+| 1 | ~~`issues/lang/0292c`~~ | **gone** — not a bug, and `cancel` stays on `Core` for a different reason |
 | 2 | The async ticket and D2's driving, plus D7's error | A2 passes with a hand-written lowering |
 | 3 | Lex and parse `async`/`await`; the type rules of D3 and D4 | A5's first two refusals fire |
 | 4 | The lowering, in full (D6) | A1, A3, A4 pass |
@@ -251,7 +252,7 @@ already the state slot.
 | step | state |
 | --- | --- |
 | 0 | **done 2026-08-30** — `packages/wacc/test/wac/voidtypearg_test.wac` |
-| 1 | not started — `issues/lang/0292c` filed 2026-08-30 |
+| 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
 | 2 | not started; `Sched.off` and `Core.cancel` landed 2026-08-30 as prerequisites |
 | 3 | not started |
 | 4 | not started |

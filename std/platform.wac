@@ -818,9 +818,23 @@ export struct Core {
    * connection's other sockets, which would otherwise fire against a closed handle. The ticket's own
    * `drop` runs, so the host's slot is released rather than leaked.
    *
-   * **On `Core` and taking an id, rather than on `Pending<T>`**, which is where it belongs and where
-   * it cannot go: a method on that struct makes wacc emit its `$bind$` export twice and the module is
-   * refused by the engine — `issues/lang/0292c`. `p.id` is the argument until that is fixed.
+   * **On `Core` and taking an id, rather than on `Pending<T>`**, and not for the reason this once
+   * gave: `issues/lang/0292c` claimed a method on that struct could not be added at all, and closed
+   * as not a bug — it was a duplicate member, because `cancel` was already there.
+   *
+   * The real reason is `const`. The obvious home is inside `Pending.cancel`, which drops the host's
+   * ticket and should plainly take the continuation off with it. But that method is `const this` —
+   * load-bearing, since it is called from the const methods that hold most of `packages/sh` and
+   * `packages/ssh` — and detaching writes to a `Sched` the whole program shares:
+   *
+   *     error: a non-const reference cannot be taken from a const one
+   *       |     if (this.sched is not null) { this.sched!.off(this.id); }
+   *       |                                              ^
+   *
+   * So the two halves of *stop caring* are split by who may write: the ticket's own half is const
+   * and lives on `Pending`, and the scheduler's half is not and lives here. A caller that wants
+   * both does `p.cancel()` and `core.cancel(p.id)`, which is worth a single call one day and needs
+   * a mutable `Pending` to have one.
    */
   bool cancel(this, i32 id) { return this.sched.off(id); }
 
