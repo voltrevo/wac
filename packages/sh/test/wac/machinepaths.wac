@@ -1,0 +1,102 @@
+// Which corpus scripts reach the **real machine**, rather than only the filesystem under test.
+//
+// A backing comparison runs the same script against a sealed session and against a host mount. A
+// script naming an absolute path outside `/tmp` is not comparable across those: `[ -d /etc ]` is true
+// on this machine and false in a fresh session, and that is a fact about Linux rather than about a
+// VFS. So those scripts are compared on the sealed pair only, and counted.
+//
+// **This lives beside the corpus because it is a property of corpus scripts**, and because there are
+// two readers of it: `packages/box/test/wac/backings_test.wac`, which does the comparison in process
+// on the gate, and `tools/wac/corpusbackings.wac`, which does it across three real binaries outside
+// the gate. They had a copy each — the second one written from `corpusBackings.ts`'s regex and the
+// first by hand — and two copies of a predicate that silently changes what gets compared is exactly
+// the thing that drifts without failing.
+//
+// **They agreed when this was written**, which is why it is a move and not a fix: run over all 946
+// scripts, the byte scan and the regex both answered 30, disagreeing on none. The classes are not
+// identical — see `pathStart` — so that agreement is a property of this corpus, not of the two rules.
+
+import { Cli, Stat } from "std/platform.wac";
+
+/**
+ * The bytes a path can follow: the start of a word, in other words.
+ *
+ * Without this, `a/b/c` and the `//` of a URL would both read as absolute paths.
+ */
+bool opensAPath(string ch) {
+  return ch == " " || ch == "\t" || ch == "\n" || ch == "\"" || ch == "'" ||
+         ch == "<" || ch == ">" || ch == "|" || ch == "=" || ch == "(";
+}
+
+/** The bytes a path is made of — `[\w./-]`. */
+bool pathByte(string ch) {
+  u8[] b = ch.toBytes();
+  if (b.len() != 1) { return false; }
+  i32 c = b[0];
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         c == '_' || c == '.' || c == '/' || c == '-';
+}
+
+/**
+ * The byte that may open a path, after the slash.
+ *
+ * **This is `pathByte`, and the TypeScript this came from used `[A-Za-z]`**, so the two rules were never
+ * quite the same: this admits `//host`, `/_x` and `/0`, and the regex did not. The old wac comment
+ * said it matched `[\w./-]`, which is the class for the *rest* of the path in that regex and not for
+ * its first character — so the comment described the difference away rather than recording it.
+ *
+ * Kept as the looser one, deliberately. This predicate decides what gets *excluded* from a three-way
+ * comparison, so admitting more paths is the conservative direction: the cost of a false positive is
+ * one script compared on two backings instead of three, and it is counted and printed. The cost of a
+ * false negative is a permanent unexplained difference in the output, which is the failure that made
+ * six lines of expected noise the normal result before 2026-08-09.
+ */
+bool pathStart(string ch) { return pathByte(ch); }
+
+/**
+ * The absolute paths a script names, with `/tmp` and everything under it left out.
+ *
+ * `/tmp` is levelled by the callers — every script runs after `mkdir -p /tmp` — so it is the one
+ * absolute path every backing has, and naming it says nothing about the machine.
+ *
+ * Pure, so it can be tested without a filesystem. It is the half that can be quietly wrong: being
+ * wrong here does not fail anything, it just changes how many scripts get compared on three backings
+ * instead of two, and the agreement figure looks the same for having checked less.
+ */
+export string[] absolutePathsIn(string script) {
+  // Two passes rather than a Vec, to keep this importable by anything without pulling in `core/vec`.
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = string[n](fill: "");
+    i32 k = 0;
+    for (i32 i = 0; i < script.len(); i++) {
+      if (script.slice(i, i + 1) != "/") { continue; }
+      if (i > 0 && !opensAPath(script.slice(i - 1, i))) { continue; }
+      if (i + 1 >= script.len() || !pathStart(script.slice(i + 1, i + 2))) { continue; }
+      i32 end = i + 1;
+      while (end < script.len() && pathByte(script.slice(end, end + 1))) { end = end + 1; }
+      string path = script.slice(i, end);
+      if (path == "/tmp" || (path.len() > 5 && path.slice(0, 5) == "/tmp/")) { continue; }
+      if (pass == 0) { n = n + 1; } else { out[k] = path; k = k + 1; }
+    }
+    if (pass == 1) { return out; }
+  }
+  return string[0](fill: "");
+}
+
+/**
+ * Whether this script names an absolute path that **exists on this machine**.
+ *
+ * **The existence check is the point**, and `corpusBackings.ts` records what happened without it:
+ * naming an absolute path is not enough, since `/nosuchfile` is absent on the machine *and* in a
+ * session, so all three backings agree and the comparison is worth keeping. Excluding on the name
+ * alone dropped the host arm for 34 scripts where only 6 could ever have differed.
+ */
+export bool reachesTheMachine(Cli cli, string script) {
+  string[] paths = absolutePathsIn(script);
+  for (i32 i = 0; i < paths.len(); i++) {
+    Stat st = cli.stat(paths[i]).wait();
+    if (st.exists) { return true; }
+  }
+  return false;
+}

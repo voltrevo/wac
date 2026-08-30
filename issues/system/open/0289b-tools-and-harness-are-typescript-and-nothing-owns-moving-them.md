@@ -209,11 +209,43 @@ hosts is a decision, not a translation.
 function, and one that dissolves.** The rest is the carve-out working as intended.
 
 **The missing parameter landed on 2026-08-30** — `Cli.execWithIn`, `0290b`, after `issues/lang/0291c`
-turned out not to reproduce once `wac task gen:core` was run. Three of the nine are ported since:
-`corpus:through`, `flags:ignored` and `corpus:routes`. `corpus:stderr` is worth doing next of the
-remainder for a reason outside its own size: it and `tools/wac/designclaims_test.wac` are the last two
-readers of `packages/sh/test/corpus.ts`, which is a *derived* copy of the wac corpus, so porting it
-takes the file from two consumers to one. What follows was written while they were still blocked, so
+turned out not to reproduce once `wac task gen:core` was run. Four of the nine are ported since:
+`corpus:through`, `flags:ignored`, `corpus:routes` and `corpus:backings`.
+
+**Where the nine actually end, read one by one — 2026-08-30.** Four are ported: `corpus:through`,
+`flags:ignored`, `corpus:routes` and `corpus:backings`. The other five are not translation work and
+none of them is blocked by `0290b` any more:
+
+- `mutate`, `mutate:diff`, `mutate:operators` — behind `issues/system/0183`, **claimed by agent-c**.
+- `corpus:stderr` — a library to three TypeScript tests, below.
+- `corpus:hosts` — behind `buildNative`, below.
+
+So the capability that unblocked them has been spent, and what is left of `tools/` is either
+somebody's else's claim or a TypeScript library that moves with its importers. That is a different
+kind of remainder from the one at the top of this issue and it is worth saying plainly: the next
+lever is not another capability.
+
+**`suiteGate.ts` is a 67-line remnant, and its blocker shrank with the ports.** The live gate is
+`tools/wac/suitegate.wac`, 574 lines, which `tools/push.sh` calls by name — the TypeScript file is
+what is left over for the tools that still announce themselves in TypeScript, and after the four
+ports above those are exactly three: `mutate.ts`, `corpusHosts.ts` and `corpusStderr.ts`, plus its
+own test. Nothing else imports it. So it is not work of its own at all: it is deleted by the same
+three moves as everything else in this section, and the row above should not be read as a separate
+task.
+
+**`corpus:hosts` is behind a library too, and a much bigger one.** It calls `buildNative` from
+`packages/platform/native.ts`, which is not a cargo wrapper: it reaches `harness/waccBuild.ts` and
+`packages/wacc/tools/waccBindgen.ts` for artifacts and bindgen parsing. That is **1,610 lines with
+eight importers**, most of them `packages/platform`'s own TypeScript tests. So it is load-bearing
+infrastructure that moves with its subsystem, and the `129` in the table is the size of the tool
+rather than the size of the work.
+
+**`corpus:stderr` is not next, and looked like it was.** `tools/corpusStderr.ts` is a *library* as
+well as a tool: `packages/sh/test/stderr.test.ts` imports `KNOWN` and `sameName` from it, and
+`packages/sh/test/differential.test.ts` and `packages/box/test/jobs.test.ts` import `sameName`. A wac
+file cannot be imported by TypeScript, so it moves when those three do and not before — the same
+shape as `coverageOrder.ts` above, which this issue already records as the trap. `corpusBackings.ts`
+and `corpusHosts.ts` have no importers at all and are ordinary translations. What follows was written while they were still blocked, so
 read the table above for the live state and this analysis for how the classification was reached.
 
 ## `tools/` read file by file — 2026-08-30
@@ -224,12 +256,12 @@ actually available to port:
 | what | lines | state |
 |---|---|---|
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
-| `corpus:backings`, `corpus:stderr` | 412 | unblocked — `buildApp` is now `builtApp` in `packages/wactest/src/built.wac` |
-| `corpus:hosts` | 129 | unblocked — the same, plus `buildNative`, which builds a Rust crate |
+| `corpus:stderr` | 198 | **blocked on its three TypeScript importers**, not on `0290b` — see below |
+| `corpus:hosts` | 129 | **blocked on `buildNative`**, not on `0290b` — see below |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
-| `suiteGate.ts` + test | 116 | waits for the eight announcers, which are the rows above |
+| `suiteGate.ts` + test | 116 | waits for **three** announcers now, not eight — and it is already a remnant |
 | `suiteGuard.ts` | 66 | waits for `mutate`, its last two callers |
 | `bench.ts` | 232 | carve-out: measures the JS boundary, which is the subject |
 | `wasmopt.ts` | 81 | carve-out: an `npm:binaryen` host. Its own header — "an experiment, not a build step" |
@@ -322,5 +354,5 @@ recorded honestly and each was checked by the person after; what settled it was 
 reproduction rather than reading it.
 
 So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts — **done, `0290b`** —
-then port nine tools that all want a scratch directory to run something in, of which three are done. `mutate` additionally has
+then port nine tools that all want a scratch directory to run something in, of which four are done. `mutate` additionally has
 `issues/system/0183`, which is its own thing.

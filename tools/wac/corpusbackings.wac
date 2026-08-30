@@ -1,0 +1,238 @@
+// The whole shell corpus, through **three filesystem backings**, as three spawned binaries.
+//
+//   wac task corpus:backings [--from N] [--count N]
+//
+// **The gate runs this comparison now**, over the same 946 scripts, in
+// `packages/box/test/wac/backings_test.wac` — three `Fs` values inside one process, about a second and
+// a half. What is left here that is not there is the *route*: three real binaries, three real
+// processes, a `timeout` around each, and grants that differ per backing. Run it when the question is
+// about the programs rather than about the filesystems.
+//
+// **The two share one `reachesTheMachine`** — `packages/sh/test/wac/machinepaths.wac`, beside the
+// corpus, because it is a property of corpus scripts. They had a copy each until 2026-08-30: the wac
+// test's written by hand and this file's ported from `corpusBackings.ts`'s regex. Run over all 946
+// scripts the two selected the same 30 and disagreed on none, so it was a move rather than a fix —
+// but the classes were not identical, and a predicate that silently changes what gets compared is the
+// kind of duplicate that drifts without ever failing.
+//
+// `design/0001` D7 asks for exactly this and it did not exist: "the same scripts can run against a host
+// mount *and* against an image, and any divergence between those two is a VFS bug with a reference
+// answer." The reference answer is bash's, because the corpus is already compared against bash — so a
+// script that two backings answer differently has one of them wrong about a filesystem, with the right
+// answer already written down next door.
+//
+// The three, all running the same wasm above the boundary:
+//
+//   **memory** `packages/box/src/bin/sealedsh.wac` — `Fs.inMemory`, no grants at all
+//   **image**  `packages/box/src/bin/imaged.wac` — the same, loaded from and saved to a file
+//   **host**   `packages/box/src/bin/sh.wac` — `Backing.Host`, the real disk through a `Cli`
+//
+// ## Making the three comparable without making the comparison vacuous
+//
+// Two differences are deliberate and are levelled rather than ignored:
+//
+//   - `sealedsh` makes `/tmp` and `imaged` does not, so every script is run after `mkdir -p /tmp`.
+//     Levelling it in the *script* rather than by dropping `ls /` from the corpus keeps the listing
+//     comparable, which is where a VFS bug would show.
+//   - the host shell starts in a directory of its own, made empty for each script. Otherwise it sees
+//     the repository and the other two see nothing, and every listing differs for a reason that has
+//     nothing to do with the backing.
+//
+// A third is levelled since 2026-08-09, and it had been six permanent false positives: a script naming
+// an absolute path outside `/tmp` reaches the *real* filesystem on the host shell and nothing in the
+// other two, so `[ -d /etc ]` is true on this machine and false in a fresh session. Those are compared
+// on memory against image — the pair that says anything about a VFS — and the count is printed.
+//
+// What is *not* levelled is anything about behaviour. A difference that survives those three is a
+// difference worth reading, and now that is true: before it, six lines of expected noise were the
+// output every time, which is exactly how a seventh goes unread.
+//
+// **In wac since 2026-08-30**, from tools/corpusBackings.ts — `issues/system/0289b`, one of the nine
+// `issues/system/0290b` unblocked, and the fourth done. It needed `Cli.execWithIn` for the host arm's
+// per-script directory and `builtApp` for the three binaries.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { startsWith } from "../../packages/wactest/src/strings.wac";
+import { scratch } from "../../packages/wactest/src/host.wac";
+import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
+import { announce, unannounce } from "./suitegate.wac";
+import { Vec } from "core/vec.wac";
+import { corpus } from "../../packages/sh/test/wac/corpus.wac";
+import { reachesTheMachine } from "../../packages/sh/test/wac/machinepaths.wac";
+
+/** What one script did on one backing. */
+struct Run {
+  string out;
+  string err;
+  i32 code;
+  bool hung;
+}
+
+/** One script's three answers, each in a world of its own. */
+struct Three {
+  Run memory;
+  Run image;
+  Run host;
+}
+
+/** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
+const i32 KILLED = 124;
+
+/**
+ * The environment every child gets, and it is total.
+ *
+ * **`C.UTF-8`, not `C`** — the locale this machine actually has, and the one every applet is measured
+ * against. `box`'s `wc -w` counts by code point since `issues/system/0143`, so pinned to `C` the real
+ * `wc` answers 1 where ours answers 2 for `a\u{a0}b`, and a corpus script feeding non-ASCII to it
+ * would fail on the locale rather than on the shell. Measured before moving: `tr`, `cut`, `fold`,
+ * `grep`, `head`, `sort` and `uniq` produce identical bytes under both, bash's own `[[ =~ ]]`, `case`
+ * ranges and collation are identical too because glibc's `C.UTF-8` orders by code point, and `box` has
+ * no `sed` — which is the one tool that does differ. `issues/system/0145`.
+ *
+ * **This checkout's `wac` goes on the front of PATH**: a `wac app` artefact is a shell preamble that
+ * runs `command -v wac`, so under `clearEnv` with no PATH none of the three would start.
+ */
+string[] childEnv(Cli cli, string dir, string binDir) {
+  u8[]? path = cli.env("PATH").wait();
+  string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
+  return string[]("LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+}
+
+/** One script, on one binary, in `dir`. `mkdir -p /tmp` levels the one deliberate entry-point difference. */
+Run runOne(Cli cli, string cmd, string[] extra, string script, string dir, string[] env) {
+  string[] argv = string[extra.len() + 4](fill: "");
+  argv[0] = "10";
+  argv[1] = cmd;
+  for (i32 i = 0; i < extra.len(); i++) { argv[2 + i] = extra[i]; }
+  argv[extra.len() + 2] = "-c";
+  argv[extra.len() + 3] = "mkdir -p /tmp; " + script;
+  Exec r = cli.execWithIn("timeout", argv, u8[0](), env, true, false, dir).wait();
+  if (!r.ran()) { return Run("", "could not run timeout: " + r.error, 0 - 1, false); }
+  return Run(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status, r.status == KILLED);
+}
+
+bool same(Run a, Run b) { return a.out == b.out && a.err == b.err && a.code == b.code; }
+
+string show(Run r) { return "\"" + r.out + r.err + "\" (" + itoa(r.code) + ")"; }
+
+Three three(Cli cli, string base, string sealed, string imaged, string host, string binDir,
+            string script, i32 n) {
+  string image = base + "/w" + itoa(n) + ".img";
+  string work = base + "/host" + itoa(n);
+  cli.mkdir(work, true).wait();
+  Three answers = Three(
+      runOne(cli, sealed, string[0](fill: ""), script, base, childEnv(cli, base, binDir)),
+      runOne(cli, imaged, string[](image), script, base, childEnv(cli, base, binDir)),
+      runOne(cli, host, string[0](fill: ""), script, work, childEnv(cli, work, binDir)));
+  // A script that wrote nothing leaves no image, and removing what is not there is not an error here.
+  cli.remove(image, false).wait();
+  cli.remove(work, true).wait();
+  return answers;
+}
+
+
+/** `--name N`, or `fallback` when it is absent or has nothing after it. */
+i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--" + name && i + 1 < argc) {
+      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+    }
+  }
+  return fallback;
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] scripts = corpus();
+  i32 argc = cli.argCount().wait();
+  i32 from = flagOf(cli, argc, "from", 0);
+  i32 count = flagOf(cli, argc, "count", scripts.len());
+
+  // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: this builds
+  // programs and runs them, and nothing else made it visible. `issues/system/0142`. Removed by hand at
+  // every exit, because wac has no `unload` listener; a note stranded by a trap is swept by the next
+  // reader, which drops any whose process is gone.
+  string note = announce(core, cli, "corpus:backings");
+
+  string binDir = wacBinary(cli);
+  i32 cut = 0;
+  for (i32 i = 0; i < binDir.len(); i++) { if (binDir.slice(i, i + 1) == "/") { cut = i; } }
+  binDir = binDir.slice(0, cut);
+
+  string sealed = builtApp(cli, "packages/box/src/bin/sealedsh.wac", "corpusbackings-sealed",
+                           string[0](fill: ""));
+  string imaged = builtApp(cli, "packages/box/src/bin/imaged.wac", "corpusbackings-imaged",
+                           string[]("--allow-read", "--allow-write"));
+  string host = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusbackings-host",
+                         string[]("--allow-read", "--allow-write", "--allow-env"));
+
+  string base = scratch(cli, "corpus-backings");
+  cli.mkdir(base, true).wait();
+
+  // **The canary.** Everything below is "these agree", which three shells that ran nothing would also
+  // report. One script that must answer proves each is live.
+  Three live = three(cli, base, sealed, imaged, host, binDir, "echo one", 0);
+  string[] names = string[]("memory", "image", "host");
+  Run[] arms = Run[](live.memory, live.image, live.host);
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (!startsWith(arms[i].out, "one")) {
+      core.warn("the " + names[i] + " backing did not answer `echo one`: " + show(arms[i]));
+      cli.remove(base, true).wait();
+      unannounce(cli, note);
+      return 2;
+    }
+  }
+
+  i32 last = from + count < scripts.len() ? from + count : scripts.len();
+  i32 agree = 0;
+  /** How many were compared on the two of ours only, because the third would be answering about Linux. */
+  i32 machineOnly = 0;
+  Vec<string> hung = Vec<string>.create();
+  Vec<string> differ = Vec<string>.create();
+
+  for (i32 i = from; i < last; i++) {
+    string script = scripts[i];
+    Three r = three(cli, base, sealed, imaged, host, binDir, script, i + 1);
+    if (r.memory.hung || r.image.hung || r.host.hung) { hung.push(script); continue; }
+
+    // **The third difference, and it is the machine rather than the backing.** A script naming an
+    // absolute path outside `/tmp` reaches the *real* filesystem on the host shell and nothing at all
+    // in the other two: `[ -d /etc ]` is true on this machine and false in a fresh session, and so is
+    // `ls /etc/passwd`. Every one of those "survived" the two levellings above and was reported as a
+    // difference worth reading. It is not — memory and image agreed with each other throughout, which
+    // is the comparison that says anything about a VFS.
+    //
+    // So those scripts are compared **memory against image** and the host is left out of it, and the
+    // count is printed rather than quietly dropped: a sweep that silently narrows what it covers
+    // reports a better number for checking less.
+    if (reachesTheMachine(cli, script)) {
+      if (same(r.memory, r.image)) { agree = agree + 1; machineOnly = machineOnly + 1; continue; }
+      differ.push("\"" + script + "\"  (host not compared: names an absolute path)\n"
+                  + "  memory " + show(r.memory) + "\n  image  " + show(r.image));
+      continue;
+    }
+    if (same(r.memory, r.image) && same(r.memory, r.host)) { agree = agree + 1; continue; }
+    differ.push("\"" + script + "\"\n  memory " + show(r.memory) + "\n  image  " + show(r.image)
+                + "\n  host   " + show(r.host));
+  }
+
+  cli.remove(base, true).wait();
+  unannounce(cli, note);
+
+  core.log(itoa(agree) + " of " + itoa(last - from)
+           + " scripts agree across memory, image and a host mount");
+  if (machineOnly > 0) {
+    core.log("  " + itoa(machineOnly) + " of those named an absolute path and were compared on memory"
+             + " and image only — the host shell would be answering about this machine, not about a"
+             + " backing");
+  }
+  // Said rather than dropped: a sweep that silently skipped what it could not run would report a
+  // coverage it did not have.
+  if (hung.len() > 0) {
+    core.log("\n" + itoa(hung.len()) + " did not finish in 10s and were not compared:");
+    for (i32 i = 0; i < hung.len(); i++) { core.log("  \"" + hung.get(i) + "\""); }
+  }
+  for (i32 i = 0; i < differ.len(); i++) { core.log("\n" + differ.get(i)); }
+  return differ.len() == 0 ? 0 : 1;
+}
