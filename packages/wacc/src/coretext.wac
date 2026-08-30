@@ -3011,8 +3011,8 @@ export string stdFile(string path) {
             + "  Pending<Exec> execWith(const this, string path, string[] args, u8[] stdin, string[] env,\n"
             + "                         bool clearEnv, bool inherit) {\n"
             + "    return this.execWithIn(path, args, stdin, env, clearEnv, inherit, \"\");\n"
-            + "  }\n"
-            + "\n"
+            + "  }\n";
+    s = s + "\n"
             + "  /**\n"
             + "   * `execWith` with nothing added, nothing cleared and buffered output — what almost every caller\n"
             + "   * wants: 342 call sites in 154 files, and the ones that do not are a test runner and the fixtures\n"
@@ -3023,8 +3023,8 @@ export string stdFile(string path) {
             + "   * closed: the second `false` below becomes `true`, and the call sites that were relying on\n"
             + "   * inheritance fail here rather than in six hosts.\n"
             + "   */\n"
-            + "  Pending<Exec> exec(const this, string path, string[] args, u8[] stdin) {\n";
-    s = s + "    return this.execWith(path, args, stdin, string[](), false, false);\n"
+            + "  Pending<Exec> exec(const this, string path, string[] args, u8[] stdin) {\n"
+            + "    return this.execWith(path, args, stdin, string[](), false, false);\n"
             + "  }\n"
             + "\n"
             + "  /**\n"
@@ -3050,8 +3050,8 @@ export string stdFile(string path) {
             + "   * asks the launcher something; these three do not ask anybody.\n"
             + "   *\n"
             + "   * **On this thread.** See `LoadedModule`: nothing can stop a running export, so an export that loops\n"
-            + "   * forever hangs the caller.\n";
-    s = s + "   */\n"
+            + "   * forever hangs the caller.\n"
+            + "   */\n"
             + "  fn[LoadedModule(u8[], i32)] load;\n"
             + "\n"
             + "  /**\n"
@@ -3075,8 +3075,8 @@ export string stdFile(string path) {
             + "   * have to know how far it got. Not required for correctness — a program that exits releases\n"
             + "   * everything — but a runner that loads a module per file would otherwise hold every one of them.\n"
             + "   */\n"
-            + "  fn[void(i32)] unload;\n"
-            + "\n"
+            + "  fn[void(i32)] unload;\n";
+    s = s + "\n"
             + "  /**\n"
             + "   * Would the engine accept these bytes as a module? \"\" if it would, and why not if it would not.\n"
             + "   *\n"
@@ -3087,8 +3087,8 @@ export string stdFile(string path) {
             + "   * engine will take\" is asking about the *bytes*.\n"
             + "   *\n"
             + "   * **The question only a host can answer**, and so the one thing about modules that stayed on this\n"
-            + "   * side of `issues/system/0257c`'s line. wac has no `WebAssembly.validate`, so\n";
-    s = s + "   * `packages/wacc/test/wac/corpusemit_test.wac` used to run each module it emitted — a fork per\n"
+            + "   * side of `issues/system/0257c`'s line. wac has no `WebAssembly.validate`, so\n"
+            + "   * `packages/wacc/test/wac/corpusemit_test.wac` used to run each module it emitted — a fork per\n"
             + "   * module, 142s of the 193s it took — and `wac validate` was a host command for want of this.\n"
             + "   *\n"
             + "   * **Not `Pending`, for `load`'s reason:** nothing crosses to a launcher. The engine is here.\n"
@@ -3114,8 +3114,8 @@ export string stdFile(string path) {
             + "    fn[Pending<string[]?>(string)] readDir,\n"
             + "    fn[Pending<Change>(string, bool)] mkdir,\n"
             + "    fn[Pending<Change>(string, bool)] remove,\n"
-            + "    fn[Pending<Change>(string, string)] rename,\n";
-    s = s + "    fn[Pending<Change>(string, bool)] setExecutable,\n"
+            + "    fn[Pending<Change>(string, string)] rename,\n"
+            + "    fn[Pending<Change>(string, bool)] setExecutable,\n"
             + "    fn[Pending<Change>(string)] openInput,\n"
             + "    fn[Read()] readChunk,\n"
             + "    fn[Pending<string>()] outputError,\n"
@@ -3139,8 +3139,8 @@ export string stdFile(string path) {
             + "    fn[Pending<Captured>()] popChild,\n"
             + "    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWithIn,\n"
             + "    fn[LoadedModule(u8[], i32)] load,\n"
-            + "    fn[CallResult(i32, string, i32)] call,\n"
-            + "    fn[void(i32)] unload,\n"
+            + "    fn[CallResult(i32, string, i32)] call,\n";
+    s = s + "    fn[void(i32)] unload,\n"
             + "    fn[string(u8[])] validated\n"
             + "  ) {\n"
             + "    return Cli(\n"
@@ -3151,8 +3151,8 @@ export string stdFile(string path) {
             + "      pushChild, popChild, execWithIn,\n"
             + "      load, call, unload, validated\n"
             + "    );\n"
-            + "  }\n";
-    s = s + "}\n";
+            + "  }\n"
+            + "}\n";
     return s;
   }
   return "";
