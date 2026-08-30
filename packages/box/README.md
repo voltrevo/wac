@@ -350,7 +350,7 @@ the worst of the three answers this repo ranks: the caller asked for it by name 
 `base64 -d` re-encoded, `uniq -d` and `-u` filtered nothing, and `echo -n` printed the newline it exists
 to suppress.
 
-**It is now 0 ignored against 7 refused**, over the same 375 flags and 43 applets (wac-mono 0105). Five
+**It went to 0 ignored against 7 refused**, over the same 375 flags and 43 applets (wac-mono 0105). Five
 were implemented; the rest are *refused by name* from
 `lib/flags.wac`, which is one table of what each applet reads and one of what the real tool documents,
 and picks between two sentences:
@@ -360,6 +360,14 @@ $ box sort -k2      sort: -k is not implemented
 $ box sort -Q       sort: invalid option -- 'Q'
                     Try 'sort --help' for more information.
 ```
+
+**Re-measured on 2026-08-30 it is 2 ignored against 4 refused**, over that same population — so the
+line above records where it got to, not where it is. The two are `base64 -w` and `base32 -w`, and the
+sweep's label overstates them: `-w` is implemented and `-w 20` wraps at twenty columns byte for byte
+with GNU. What is missing is validation of its *argument* — a width that will not parse falls back to
+the default 76 instead of being refused, and six sibling applets that read the same
+`hasNum ? num : default` all refuse it. `issues/system/0292b`. What moved the other five between the
+two runs is not established.
 
 The distinction is the whole point. Calling `-k` invalid says the *command* is wrong when only this
 program is unfinished, and it sends a caller to re-read a manual that was right. Both tables are measured
