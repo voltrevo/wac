@@ -232,6 +232,20 @@ Ty cloneTy(Ty t) {
   }
 }
 
+/**
+ * Whether `t` is `void`.
+ *
+ * **A machine for an `async void` has no answer to keep.** Every other return type gets a cell to
+ * put the answer in; `void[1]()` is not a thing, and `Pending<void>`'s resolver takes no value and
+ * returns none — which is what `design/lang/0014` D5 made expressible in the first place.
+ */
+bool isVoidTy(Ctx c, Ty t) {
+  match (t.kind) {
+    case Prim(tok): { return synthTextAt(c.src, c.lexed, tok) == "void"; }
+    else: { return false; }
+  }
+}
+
 Ty tyPrim(Ctx c, i32 tok) { return Ty(TyKind.Prim(tok), c.line, c.col); }
 Ty tyArr(Ctx c, Ty el) { return Ty(TyKind.Arr(el), c.line, c.col); }
 Ty tyOpt(Ctx c, Ty el) { return Ty(TyKind.Nullable(el), c.line, c.col); }
@@ -740,6 +754,7 @@ Param[] idParam(Ctx c) {
  * full of choices like this one, where the cheaper spelling is the one that borrows no new spelling.
  */
 Expr resolveLambda(Ctx c, Ty fnRet) {
+  bool isVoid = isVoidTy(c, fnRet);
   Stmt[] brk = Stmt[1](fill: Stmt(StmtKind.Break, c.line, c.col));
   Stmt gate = Stmt(StmtKind.If(eCell(c, tDone(c)), brk, Stmt[]()), c.line, c.col);
   // **Take over from the scheduler.** If a continuation is registered, this machine is somebody
@@ -753,6 +768,7 @@ Expr resolveLambda(Ctx c, Ty fnRet) {
   loopBody[1] = seize;
   loopBody[2] = tick;
   Stmt loop = Stmt(StmtKind.While(eBool(c, true), loopBody), c.line, c.col);
+  if (isVoid) { return eLambda(c, idParam(c), Stmt[1](fill: loop)); }
   Stmt[] body = Stmt[2](fill: loop);
   body[0] = loop;
   body[1] = sRet(c, eCell(c, tRes(c)));
@@ -778,7 +794,7 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
 
   out[at] = sCellDecl(c, tState(c), tyPrim(c, tI32(c))); at = at + 1;
   out[at] = sCellDecl(c, tDone(c), tyPrim(c, tBool(c))); at = at + 1;
-  out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1;
+  if (!isVoidTy(c, fnRet)) { out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1; }
   // Whether a continuation is registered, and where to go when a waiter takes over from it.
   out[at] = sCellDecl(c, tArmed(c), tyPrim(c, tBool(c))); at = at + 1;
   out[at] = sCellDecl(c, tWaitAt(c), tyPrim(c, tI32(c))); at = at + 1;

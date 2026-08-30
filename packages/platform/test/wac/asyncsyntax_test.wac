@@ -249,3 +249,24 @@ export string test_a_returned_ticket_is_not_flattened(Core core, Cli cli) {
   t.isTrue(inner.wait() > (0 as i64), "and awaiting it again answers");
   return t.report();
 }
+
+/** `async void` — the D5 case: no answer to keep, and a `Pending<void>` to hand back. */
+async void bump(Core core, i32[] log) {
+  i64 at = await core.delay(1);
+  log[0] = log[0] + 1;
+}
+
+export string test_an_async_void_function_has_a_ticket_with_no_answer(Core core, Cli cli) {
+  T t = T.create();
+  // Every other return type gets a cell to keep the answer in; `void[1]()` is not a thing, so this
+  // machine has none — and `Pending<void>`'s resolver takes no value and returns none. That is what
+  // `void` being a usable type argument was for.
+  i32[] log = i32[1]();
+  Pending<void> p = bump(core, log);
+  t.eqI32(log[0], 0, "suspended before doing its work");
+  t.eqI32(core.drain(), 1, "the drain ran its one continuation");
+  t.eqI32(log[0], 1, "and the body finished");
+  p.wait();
+  t.isTrue(p.isDone(), "the ticket answers nothing and is settled");
+  return t.report();
+}
