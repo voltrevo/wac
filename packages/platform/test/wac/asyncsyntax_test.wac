@@ -1,0 +1,96 @@
+// `async` and `await`, compiled and run — `design/lang/0014`, A2 and A3.
+//
+// Everything before this file was either a hand lowering (`asyncstate_test.wac`) or a question about
+// diagnostics (`async_test.wac`). This is the feature: source that says `await`, lowered by the
+// compiler into a flattened state machine, answering the same thing a blocking version answers.
+//
+// **The oracle is the blocking spelling.** Every case computes its answer twice — once through
+// `async`/`await` and once with `.wait()` and no machinery — and compares. An async function that
+// returned a plausible zero would pass a test that only checked it ran.
+//
+// This cut is `wait`-driven and flattens a body whose `await`s are statements of the top-level
+// block. `asyncplan_test.wac` holds the shapes it declines, by name; the loop is the next increment.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+
+/** A2, exactly as `design/lang/0014` writes it. */
+async i32 fileSize(Cli cli, string path) {
+  FileResult f = await cli.readFile(path);
+  return f.ok ? f.bytes.len() : 0 - 1;
+}
+
+/** A3 — two awaits, and a branch between them that is not itself a suspension. */
+async i32 total(Cli cli, string one, string two) {
+  FileResult a = await cli.readFile(one);
+  if (!a.ok) { return 0 - 1; }
+  FileResult b = await cli.readFile(two);
+  return a.bytes.len() + b.bytes.len();
+}
+
+/** No `await` at all: still a machine, still a ticket — D3 — it simply never suspends. */
+async i32 seven() { return 7; }
+
+/** The oracle, with no machinery in it. */
+i32 sizeOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? f.bytes.len() : 0 - 1;
+}
+
+export string test_one_await_answers_what_blocking_answers(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md");
+  t.isTrue(want > 0, "the oracle read the file");
+  t.eqI32(fileSize(cli, "README.md").wait(), want, "and so did the async version");
+  return t.report();
+}
+
+export string test_the_caller_gets_a_ticket_not_a_value(Core core, Cli cli) {
+  T t = T.create();
+  // D3 in the one place it is visible at runtime: the declaration says `i32` and this is a
+  // `Pending<i32>`, outstanding until something drives it.
+  Pending<i32> p = fileSize(cli, "README.md");
+  t.isFalse(p.isDone(), "eager ran the body to its first await and stopped");
+  t.eqI32(p.wait(), sizeOf(cli, "README.md"), "waiting drove the rest");
+  t.isTrue(p.isDone(), "and it remembers being finished");
+  return t.report();
+}
+
+export string test_two_awaits_with_a_branch_between_them(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md") + sizeOf(cli, "MERGE.md");
+  t.eqI32(total(cli, "README.md", "MERGE.md").wait(), want, "the sum across two suspensions");
+  return t.report();
+}
+
+export string test_a_return_from_between_the_awaits_leaves_the_machine(Core core, Cli cli) {
+  T t = T.create();
+  // The early `return` is what makes the second `await` conditional. If a `return` in the body only
+  // left its own state rather than the whole machine, this would go on to read the second file and
+  // answer a sum — so the number here is the test, not the fact that it ran.
+  t.eqI32(total(cli, "no-such-file-here.md", "MERGE.md").wait(), 0 - 1,
+          "it stopped at the failure and never read the second file");
+  return t.report();
+}
+
+export string test_an_async_function_that_never_suspends(Core core, Cli cli) {
+  T t = T.create();
+  Pending<i32> p = seven();
+  // Nothing suspended, so the eager call ran the body to its end — `isDone` before anyone waits is
+  // the difference between "no awaits" and "one await that happened to be ready".
+  t.isTrue(p.isDone(), "finished during the call");
+  t.eqI32(p.wait(), 7, "and the answer is there");
+  return t.report();
+}
+
+export string test_two_async_calls_do_not_share_a_machine(Core core, Cli cli) {
+  T t = T.create();
+  // Two calls of one function, both outstanding at once. Every local the machine keeps lives in the
+  // call rather than beside the function, and this is what would catch it if one of them did not:
+  // the second would overwrite the first's state and both would answer the same file.
+  Pending<i32> a = fileSize(cli, "README.md");
+  Pending<i32> b = fileSize(cli, "MERGE.md");
+  t.eqI32(a.wait(), sizeOf(cli, "README.md"), "the first kept its own path");
+  t.eqI32(b.wait(), sizeOf(cli, "MERGE.md"), "and the second kept its own");
+  return t.report();
+}

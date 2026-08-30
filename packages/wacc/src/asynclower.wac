@@ -105,10 +105,27 @@ i32 tNum(Ctx c, i32 k) { return synthTok(c.first, synthNum(c.ups, k)); }
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
+/**
+ * The next unused column.
+ *
+ * **A declaration is promoted to a cell by its position.** `notePromoted(line, col)` is how the
+ * emitter records that a local is captured, and `localIsCell` asks the same way — so two
+ * declarations at one position are one declaration as far as that table is concerned. Every local
+ * the machine declares sat at the function's own line and column, so promoting `__wacState`
+ * promoted `__wacResolve` with it, and the emitter went looking for the cell struct of a funcref
+ * nothing captures: *a value of a type this emitter cannot write: `$cell$fni32(i32)$a`*.
+ *
+ * Source cannot produce two declarations at one position, which is why nothing had ever needed to
+ * say this. A generator can, and must not.
+ */
+i32 freshCol(Ctx c) {
+  c.col2[0] = c.col2[0] + 1;
+  return c.col2[0];
+}
+
 /** A synthesised lambda, at a column no other has. */
 Expr eLambda(Ctx c, Param[] ps, Stmt[] body) {
-  c.col2[0] = c.col2[0] + 1;
-  return Expr(ExprKind.Lambda(ps, body), c.line, c.col2[0]);
+  return Expr(ExprKind.Lambda(ps, body), c.line, freshCol(c));
 }
 
 Expr eId(Ctx c, i32 tok) { return Expr(ExprKind.Ident(tok), c.line, c.col); }
@@ -119,6 +136,24 @@ Expr eIx(Ctx c, Expr a, Expr i) { return Expr(ExprKind.Index(a, i), c.line, c.co
 Expr eBang(Ctx c, Expr e) { return Expr(ExprKind.Unwrap(e), c.line, c.col); }
 Expr eDot(Ctx c, Expr o, i32 tok) { return Expr(ExprKind.Member(o, tok), c.line, c.col); }
 Expr eCall0(Ctx c, Expr f) { return Expr(ExprKind.Call(f, Expr[](), Ty[]()), c.line, c.col); }
+
+/**
+ * `name()` — calling a funcref held in a local.
+ *
+ * **A `Construct`, not a `Call`, and that is what the parser produces.** `Name()` is construction
+ * syntax in wac, so `__wacStep()` parses as a construction of something called `__wacStep`, and the
+ * emitter is what decides it is a call because the name is a local of funcref type. Generating a
+ * `Call(Ident(…))` instead builds a tree no source can produce, and the emitter took a different
+ * path through it — the decline was *a value of a type this emitter cannot write:
+ * `$cell$fni32(i32)$a`*, which named neither the node nor the reason.
+ *
+ * Found by printing the generated tree beside the hand-written one and diffing them, after four
+ * hypotheses tested by rebuilding the ladder found nothing. Two lines apart in a 119-line dump.
+ */
+Expr eCallLocal(Ctx c, i32 tok) {
+  return Expr(ExprKind.Construct(Ty(TyKind.Named(tok, Ty[]()), c.line, c.col),
+                                 Expr[](), NamedArg[]()), c.line, c.col);
+}
 
 /** `name[0]` — reading a cell. */
 Expr eCell(Ctx c, i32 nameTok) { return eIx(c, eId(c, nameTok), eInt(c, 0)); }
@@ -174,12 +209,13 @@ Ty tyFn(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, c.c
 /** `T[] name = T[1]();` */
 Stmt sCellDecl(Ctx c, i32 nameTok, Ty el) {
   Expr mk = Expr(ExprKind.ArrNew(el, eInt(c, 1), null, Expr[]()), c.line, c.col);
-  return Stmt(StmtKind.Var(tyArr(c, el), nameTok, mk, false), c.line, c.col);
+  return Stmt(StmtKind.Var(tyArr(c, el), nameTok, mk, false), c.line, freshCol(c));
 }
 
 /** `Pending<T>? name = null;` */
 Stmt sSlotDecl(Ctx c, i32 nameTok, Ty el) {
-  return Stmt(StmtKind.Var(tyOpt(c, tyPending(c, el)), nameTok, eNull(c), false), c.line, c.col);
+  return Stmt(StmtKind.Var(tyOpt(c, tyPending(c, el)), nameTok, eNull(c), false),
+              c.line, freshCol(c));
 }
 
 Stmt sRet(Ctx c, Expr? v) { return Stmt(StmtKind.Return(v), c.line, c.col); }
@@ -482,7 +518,7 @@ Param[] idParam(Ctx c) {
 Expr resolveLambda(Ctx c, Ty fnRet) {
   Stmt[] brk = Stmt[1](fill: Stmt(StmtKind.Break, c.line, c.col));
   Stmt gate = Stmt(StmtKind.If(eCell(c, tDone(c)), brk, Stmt[]()), c.line, c.col);
-  Stmt tick = sExpr(c, eCall0(c, eId(c, tStep(c))));
+  Stmt tick = sExpr(c, eCallLocal(c, tStep(c)));
   Stmt[] loopBody = Stmt[2](fill: gate);
   loopBody[0] = gate;
   loopBody[1] = tick;
@@ -523,25 +559,25 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty[] hoistTys) 
 
   Expr step = eLambda(c, Param[](), stepBody(c, buildArms(c, body, plan, fnRet)));
   out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tBool(c)), Ty[]()), tStep(c), step, false),
-                 c.line, c.col);
+                 c.line, freshCol(c));
   at = at + 1;
 
-  out[at] = sExpr(c, eCall0(c, eId(c, tStep(c)))); at = at + 1;
+  out[at] = sExpr(c, eCallLocal(c, tStep(c))); at = at + 1;
 
   Ty[] oneI32 = Ty[1](fill: tyPrim(c, tI32(c)));
-  out[at] = Stmt(StmtKind.Var(tyFn(c, cloneTy(fnRet), oneI32), tResolve(c), resolveLambda(c, fnRet), false),
-                 c.line, c.col);
+  out[at] = Stmt(StmtKind.Var(tyFn(c, cloneTy(fnRet), oneI32), tResolve(c),
+                              resolveLambda(c, fnRet), false), c.line, freshCol(c));
   at = at + 1;
 
   Stmt[] setBody = Stmt[1](fill: sRet(c, eCell(c, tDone(c))));
   Expr setL = eLambda(c, idParam(c), setBody);
   out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tBool(c)), oneI32), tSettled(c), setL, false),
-                 c.line, c.col);
+                 c.line, freshCol(c));
   at = at + 1;
 
   Expr drpL = eLambda(c, idParam(c), Stmt[]());
   out[at] = Stmt(StmtKind.Var(tyFn(c, tyPrim(c, tVoid(c)), oneI32), tDrop(c), drpL, false),
-                 c.line, c.col);
+                 c.line, freshCol(c));
   at = at + 1;
 
   Expr[] args = Expr[5](fill: eNull(c));
