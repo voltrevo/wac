@@ -20,7 +20,7 @@
 {
   // The everyday loop — the suite, the doc checks, the generated map.
   "test": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/runTests.wac --",
-  "test:changed": "deno run -A tools/testChanged.ts",
+  "test:changed": "./native/v8/target/release/wac run --allow-read --allow-run --allow-write --allow-env --allow-net tools/wac/testchanged.wac",
   "test:heavy": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/runTests.wac -- --heavy",
   "docs": "./native/v8/target/release/wac test --allow-read --allow-write --allow-run tools/",
   "map": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/map.wac",

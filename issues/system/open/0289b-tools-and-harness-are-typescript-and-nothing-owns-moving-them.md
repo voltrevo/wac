@@ -45,8 +45,9 @@ whatever the carve-out below leaves, and it can be read in one grep.
 ## The order, and what blocks each step
 
 **1. The leaf tools — unblocked, no decisions in them.** Each is a task entry point that reads the
-repository, computes, and prints: `size.ts`, `ignoredFlags.ts`, `docCheck.ts`, and the five
-`corpus:*` tools. `tools/genCore.ts` was one of these and went on 2026-08-30 — its output is checked
+repository, computes, and prints: `size.ts`, `ignoredFlags.ts` and the five `corpus:*` tools.
+`docCheck.ts` was on this list and turned out not to need porting at all — it had been dead since
+2026-08-27 and was deleted. `tools/genCore.ts` was one of these and went on 2026-08-30 — its output is checked
 in, which made the port verifiable byte for byte rather than argued.
 
 The five `corpus:*` tools are self-contained despite the two imports that look like blockers:

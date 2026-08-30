@@ -222,9 +222,13 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
   // Every runner that builds its own `deno test` argument list. `mutate.ts` is the one that drifted;
   // `mutate/profile.ts` is the one where drifting costs most, since it decides which tests reach
   // which lines, so a test that fails to start contributes no coverage and the mutants in code only
-  // it reaches are then run against the wrong tests. `testChanged.ts` is the edit loop, where a
-  // missing flag is met as `Deno.listenDatagram is not a function` before anything else.
-  for (const runner of ["./mutate.ts", "./mutate/profile.ts", "./testChanged.ts"]) {
+  // it reaches are then run against the wrong tests.
+  //
+  // **`testChanged.ts` was the third and is gone**, and not merely because it was ported: the edit
+  // loop is `tools/wac/testchanged.wac` now, and it does not build an argument list at all — it hands
+  // its targets to `tools/runTests.wac`, which is the list this compares against. There is nothing
+  // left for it to drift from, which is a better answer than checking that it has not.
+  for (const runner of ["./mutate.ts", "./mutate/profile.ts"]) {
     const has = flagsIn(await read(runner));
     const missing = [...suite].filter((f) => !has.has(f));
     if (missing.length > 0) {

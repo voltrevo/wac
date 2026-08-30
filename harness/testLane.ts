@@ -182,9 +182,10 @@ async function declaredTests(
  * How a set of targets divides into the parallel pass and the lane.
  *
  * Pure, and separately tested, because both callers got it wrong in different ways when it was inline:
- * `tools/testChanged.ts` compared a *directory* target against a *file* path so nothing ever matched,
+ * tools/testChanged.ts compared a *directory* target against a *file* path so nothing ever matched,
  * and its whole-suite mode passes no targets at all, where "no targets" means everything rather than
- * nothing. Neither mistake failed anything — the suite passed, in parallel, exactly as before, and said
+ * nothing. (That caller is `tools/wac/testchanged.wac` since 2026-08-30 and no longer splits lanes at
+ * all — it hands its targets to `tools/runTests.wac`, which is the one place that decides.) Neither mistake failed anything — the suite passed, in parallel, exactly as before, and said
  * nothing either way. That is the shape of bug this repo keeps finding, so this one is a function with
  * cases rather than four lines repeated twice.
  *

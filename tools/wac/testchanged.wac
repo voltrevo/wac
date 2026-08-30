@@ -1,0 +1,190 @@
+// The tests that could plausibly have broken, for the loop where you are still editing.
+//
+//   wac task test:changed
+//
+// **This is not the gate.** `tools/push.sh` runs the whole suite and that is what decides whether a
+// commit may be pushed, because "which tests could this have broken" is a guess and a full run is
+// not. What this is for is the twenty times before that, where the whole suite is five minutes and
+// the three files you care about are two.
+//
+// The mapping is deliberately generous rather than clever: a change anywhere under `packages/<name>`
+// runs all of that package's tests, and a change to anything shared — the harness, `tools/`, the wac
+// compiler pin, `deno.json` — runs everything, because a shared change can break anything. There is
+// no dependency graph here and there should not be: `packages/box` imports nine other packages, and
+// a wrong graph would quietly skip the test that mattered. Generous is cheap; clever is a lie that
+// takes a week to notice.
+//
+// Changed means "against `origin/master`, plus whatever is uncommitted", so it covers the file you
+// are editing right now as well as the branch you are on.
+//
+// ## What the port fixed, and it was not cosmetic
+//
+// **In wac since 2026-08-30**, from tools/testChanged.ts — `issues/system/0289b`. That file ran
+// `deno test` and nothing else, and 32 of 38 packages now have only `*_test.wac`. So for all but six
+// of them this command answered:
+//
+//     error: No test modules found
+//
+// and exited **1**. The edit-loop runner — the thing you type twenty times before a push — reported a
+// failure that named no test, for any change to any wac-only package, and the message says nothing
+// about why. Measured: `deno test --allow-read --no-check packages/rlp/` is exactly that, exit 1.
+// Same shape as `issues/system/0183` and `0267c`, which is `deno test` being asked to find tests that
+// stopped being TypeScript.
+//
+// The fix is not a second lane here. It is **not having a second lane at all**: this hands its targets
+// to `tools/runTests.wac`, which already owns the Deno pass, the wac lane, the chunking, the
+// exclusive files and the job cap. The TypeScript had to reimplement the lane split — and its own
+// comment records getting it wrong, matching a directory against a file path so that "the lane was
+// empty and everything ran in parallel exactly as before. It looked like it worked." One entry point
+// cannot disagree with itself, which is what that comment wanted.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+import { Map } from "core/map.wac";
+import { hashString, stringEq } from "core/hash.wac";
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
+import { refuseIfNested } from "./suitegate.wac";
+import { binary } from "./coverageall.wac";
+import { sortStrings } from "./covledger.wac";
+
+/**
+ * A change to any of these runs everything.
+ *
+ * `tools/` is in the list and this file is in `tools/`, which is correct and worth saying: editing the
+ * runner is exactly the change whose blast radius is unknowable.
+ *
+ * **`import_map.json` was in this list and there is no such file.** Nothing else in the repository
+ * mentions it; it matched nothing, so it cost nothing and said nothing — a list entry that can only
+ * ever be inert is indistinguishable from one that is load-bearing until somebody checks.
+ */
+string[] sharedPaths() {
+  return string[]("harness/", "tools/", "deno.json");
+}
+
+/** One `git` invocation's lines, or none. A git that fails is a repository this cannot narrow. */
+string[] gitLines(Cli cli, string[] args) {
+  Exec r = cli.exec("git", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return string[0](fill: ""); }
+  return splitLines(string.fromBytes(r.stdout));
+}
+
+/** Add `lines` to `out`, skipping any already in `seen`. */
+void absorb(Vec<string> out, Map<string, i32> seen, string[] lines) {
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (lines[i] == "" || seen.getOr(lines[i], 0) != 0) { continue; }
+    seen.set(lines[i], 1);
+    out.push(lines[i]);
+  }
+}
+
+/** `packages/<name>/…` → `<name>`, and `""` for anything else. */
+export string packageOf(string path) {
+  if (!startsWith(path, "packages/")) { return ""; }
+  string rest = path.slice(9, path.len());
+  i32 slash = rest.indexOf("/");
+  return slash < 0 ? "" : rest.slice(0, slash);
+}
+
+/** What a set of changed files means: run nothing, run everything, or run these directories. */
+export struct Plan {
+  /** `NOTHING`, `EVERYTHING` or `NARROWED`. */
+  i32 mode;
+  /** The directories to hand the runner, empty unless `NARROWED`. */
+  string[] targets;
+  /** What to say before running: which shared files, or which packages. */
+  string said;
+}
+
+export i32 NOTHING() { return 0; }
+export i32 EVERYTHING() { return 1; }
+export i32 NARROWED() { return 2; }
+
+/**
+ * The whole decision, as a function of the changed files and nothing else.
+ *
+ * Separated from `main` so it can be tested without a repository in a particular state, which the
+ * TypeScript could not be: its rule lived inline between four `git` calls and a spawn, so the only
+ * way to exercise "a shared file means everything" was to edit a shared file and watch. Three of the
+ * cases below are ones a person would have to construct on disk to see at all.
+ */
+export Plan planFor(string[] changed) {
+  if (changed.len() == 0) { return Plan(NOTHING(), string[0](fill: ""), ""); }
+
+  Vec<string> shared = Vec<string>.create();
+  Map<string, i32> pkgSeen = Map.create(hashString, stringEq);
+  Vec<string> pkgs = Vec<string>.create();
+  string[] roots = sharedPaths();
+  for (i32 i = 0; i < changed.len(); i++) {
+    string f = changed[i];
+    for (i32 k = 0; k < roots.len(); k++) {
+      if (startsWith(f, roots[k])) { shared.push(f); }
+    }
+    string p = packageOf(f);
+    if (p != "" && pkgSeen.getOr(p, 0) == 0) { pkgSeen.set(p, 1); pkgs.push(p); }
+  }
+
+  // A shared change means everything, and saying so beats running four packages and looking green.
+  if (shared.len() > 0) {
+    string names = "";
+    for (i32 i = 0; i < shared.len(); i++) { names = names + (i == 0 ? "" : ", ") + shared.get(i); }
+    return Plan(EVERYTHING(), string[0](fill: ""), names);
+  }
+  if (pkgs.len() == 0) { return Plan(NOTHING(), string[0](fill: ""), ""); }
+
+  string[] names = string[pkgs.len()](fill: "");
+  for (i32 i = 0; i < pkgs.len(); i++) { names[i] = pkgs.get(i); }
+  sortStrings(names, names.len());
+  string[] targets = string[names.len()](fill: "");
+  string said = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    targets[i] = "packages/" + names[i] + "/";
+    said = said + (i == 0 ? "" : ", ") + names[i];
+  }
+  return Plan(NARROWED(), targets, said);
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 nested = refuseIfNested(core, cli, "wac task test:changed");
+  if (nested != 0) { return nested; }
+
+  Map<string, i32> seen = Map.create(hashString, stringEq);
+  Vec<string> changedV = Vec<string>.create();
+  absorb(changedV, seen, gitLines(cli, string[]("diff", "--name-only", "origin/master...HEAD")));
+  absorb(changedV, seen, gitLines(cli, string[]("diff", "--name-only")));
+  absorb(changedV, seen, gitLines(cli, string[]("diff", "--name-only", "--cached")));
+  absorb(changedV, seen, gitLines(cli, string[]("ls-files", "--others", "--exclude-standard")));
+
+  string[] changed = string[changedV.len()](fill: "");
+  for (i32 i = 0; i < changedV.len(); i++) { changed[i] = changedV.get(i); }
+
+  Plan plan = planFor(changed);
+  if (plan.mode == NOTHING()) {
+    core.log(changed.len() == 0
+             ? "nothing changed against origin/master; nothing to run."
+             : itoa(changed.len())
+               + " changed file(s), none of them under packages/ or shared — nothing to run.\n"
+               + "  If that is wrong, the honest move is `wac task test`.");
+    return 0;
+  }
+  if (plan.mode == EVERYTHING()) {
+    core.log("shared files changed (" + plan.said + ") — running the whole suite.");
+  } else {
+    core.log("changed packages: " + plan.said);
+    core.log("this is not the gate — tools/push.sh still runs everything.\n");
+  }
+  string[] targets = plan.targets;
+
+  // **The suite runner, with the targets narrowed** — not a second runner with the same rules copied
+  // into it. `wac task test` with no targets is the whole suite, which is what an empty list means
+  // here too, so the shared-change branch above needs no separate spelling.
+  string[] args = string[targets.len() + 2](fill: "");
+  args[0] = "task";
+  args[1] = "test";
+  for (i32 i = 0; i < targets.len(); i++) { args[i + 2] = targets[i]; }
+
+  // Inherited rather than captured: this is the loop you watch, and a runner that says nothing for
+  // five minutes and then everything is the thing `issues/system/0231c` is about.
+  Exec r = cli.execWith(binary(), args, u8[0](), string[](), false, true).wait();
+  return r.ran() ? r.status : 1;
+}
