@@ -147,8 +147,8 @@ Canaried by bounding *our* side at 0.05s so every case hits it: all 286 retried,
 (~200ms each), the suite stayed green, and the stderr line named the load each time. A case that
 genuinely hangs fails both bounds and is reported with both.
 
-**Left alone:** `tools/corpusStderr.ts`, `corpusRoutes.ts`, `corpusHosts.ts` and `corpusBackings.ts`
-carry the same fixed 10s bound. They are `deno task` tools rather than gate tests, so a starved run
+**Left alone:** `tools/corpusStderr.ts`, `tools/wac/corpusroutes.wac`, `corpusHosts.ts` and
+`corpusBackings.ts` carry the same fixed 10s bound. They are `deno task` tools rather than gate tests, so a starved run
 costs the person who ran it and nobody else — the same treatment would suit them and is not urgent.
 
 None of this touches **this** issue's own case: the native half still times out under load, and
@@ -183,7 +183,7 @@ that the report can now tell you which question you are looking at.
 ## 2026-08-12: the four `corpus:*` tools, checked rather than assumed
 
 The note above left them alone with "the same treatment would suit them", which reads as though they
-carry the same defect. Read: they do not. `corpusStderr`, `corpusRoutes`, `corpusHosts` and
+carry the same defect. Read: they do not. `corpusStderr`, `corpusroutes`, `corpusHosts` and
 `corpusBackings` each detect 124, **skip that script and count it separately**, and print the count
 in the summary — so a loaded machine costs a comparison rather than inventing a difference, which is
 the half that matters and the half that cost a push.

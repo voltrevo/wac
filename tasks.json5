@@ -91,7 +91,7 @@
   "corpus:through": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusthrough.wac --",
   "corpus:hosts": "deno run -A tools/corpusHosts.ts",
   "corpus:backings": "deno run -A tools/corpusBackings.ts",
-  "corpus:routes": "deno run -A tools/corpusRoutes.ts",
+  "corpus:routes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusroutes.wac --",
   "corpus:stderr": "deno run -A tools/corpusStderr.ts",
 
   // Everything else.

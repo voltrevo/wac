@@ -209,8 +209,11 @@ hosts is a decision, not a translation.
 function, and one that dissolves.** The rest is the carve-out working as intended.
 
 **The missing parameter landed on 2026-08-30** — `Cli.execWithIn`, `0290b`, after `issues/lang/0291c`
-turned out not to reproduce once `wac task gen:core` was run. Two of the nine are ported since:
-`corpus:through` and `flags:ignored`. What follows was written while they were still blocked, so
+turned out not to reproduce once `wac task gen:core` was run. Three of the nine are ported since:
+`corpus:through`, `flags:ignored` and `corpus:routes`. `corpus:stderr` is worth doing next of the
+remainder for a reason outside its own size: it and `tools/wac/designclaims_test.wac` are the last two
+readers of `packages/sh/test/corpus.ts`, which is a *derived* copy of the wac corpus, so porting it
+takes the file from two consumers to one. What follows was written while they were still blocked, so
 read the table above for the live state and this analysis for how the classification was reached.
 
 ## `tools/` read file by file — 2026-08-30
@@ -221,7 +224,7 @@ actually available to port:
 | what | lines | state |
 |---|---|---|
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
-| `corpus:backings`, `corpus:routes`, `corpus:stderr` | 568 | unblocked — want `buildApp` in wac, and an answer for `ETXTBSY` |
+| `corpus:backings`, `corpus:stderr` | 412 | unblocked — `buildApp` is now `builtApp` in `packages/wactest/src/built.wac` |
 | `corpus:hosts` | 129 | unblocked — the same, plus `buildNative`, which builds a Rust crate |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
@@ -319,5 +322,5 @@ recorded honestly and each was checked by the person after; what settled it was 
 reproduction rather than reading it.
 
 So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts — **done, `0290b`** —
-then port nine tools that all want a scratch directory to run something in, of which two are done. `mutate` additionally has
+then port nine tools that all want a scratch directory to run something in, of which three are done. `mutate` additionally has
 `issues/system/0183`, which is its own thing.

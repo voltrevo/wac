@@ -411,6 +411,81 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
 }
 
 /**
+ * The same, built with `wac app` — a file you run, rather than a module `wac` runs.
+ *
+ * `builtProgram` above answers a `.wasm` that the caller hands back to `wac`. This answers an
+ * artefact that is executable itself, which is what a test needs when the thing under test is *being
+ * a program*: what it does on a PATH, what its exit status is to a shell, whether a pipeline sees it.
+ * `harness/buildApp.ts` is the TypeScript this replaces. Four wac tests spawn `wac app` inline today
+ * and **none of them should call this**: `app_test.wac`, `commandparity_test.wac` and
+ * `setexecutable_test.wac` are testing that command — its usage line, its refusals, whether its output
+ * is executable — and a helper that caches the artefact and swallows the `Exec` is the wrong shape for
+ * asserting on a build that is *supposed* to fail. `bootstrap_test.wac` builds a probe to test
+ * something else and could move, which is one caller and not a reason.
+ *
+ * So this exists for the `corpus:*` tools, which is the same population `buildApp.ts` served: a
+ * program built in order to measure something else about it.
+ *
+ * **The artefact needs `wac` on PATH to run.** `wac app` writes a shell preamble that runs
+ * `command -v wac` and execs `wac app-run "$0"`, so the binary is not self-contained and a caller that
+ * clears the child's environment has to put one there. This does not do it for them: the TypeScript
+ * mutated its own process's PATH at import, which works when the test *is* the Deno process and does
+ * not when the runner is a wac program spawning a shell. Pass it in the child's env, and prefer this
+ * checkout's own — `wacBinary(cli)`'s directory — because an installed `wac` elsewhere on PATH is a
+ * different compiler and a test about this tree should not be answered by it.
+ *
+ * **`WAC_PROFILE` instrumentation is not carried over, and that is a real loss.** `buildApp.ts`'s
+ * comment called it "how every existing subprocess test becomes attributable without being edited";
+ * `wac app` cannot, because the flag was accepted and wrote no table to read the counters with, and it
+ * is refused rather than left looking like it works. `issues/system/0274c` holds the three decisions a
+ * profiled app would need. So a mutation run over `packages/box/` loses subprocess attribution — which
+ * is written down here rather than discovered later from a coverage number that quietly dropped, the
+ * failure `issues/system/0160` already cost two days.
+ *
+ * **Not known yet: whether this needs an `ETXTBSY` retry.** `harness/spawnRetry.ts` exists because a
+ * parallel suite failed three times in one day executing a binary it had just built, and every
+ * TypeScript test that builds and runs imports it. Nothing here does that yet, because the caches
+ * above mean most calls write nothing at all and the window only exists after a fresh build — so the
+ * honest answer is that it has not been observed on this path, not that it cannot happen. If a test
+ * that builds an app starts failing under load with *Text file busy*, this is the note that says the
+ * retry belongs here and why it was not written in advance.
+ */
+export string builtApp(Cli cli, string entry, string name, string[] grants) {
+  string wac = wacBinary(cli);
+  string dir = cli.cwd().wait() + "/.cache/built-" + name;
+  cli.mkdir(dir, true).wait();
+  string out = dir + "/" + name;
+
+  string want = "";
+  for (i32 i = 0; i < grants.len(); i++) { want = want + grants[i] + "\n"; }
+  FileResult had = cli.readFile(out + ".flags").wait();
+  bool sameFlags = had.ok && string.fromBytes(had.bytes) == want;
+
+  Stat have = cli.stat(out).wait();
+  i64 newest = newestInClosure(cli, entry);
+  Stat bin = cli.stat(wac).wait();
+  if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
+  if (have.exists && sameFlags && have.modifiedMillis > newest) { return out; }
+
+  string[] args = string[4 + grants.len()](fill: "");
+  args[0] = "app";
+  args[1] = entry;
+  args[2] = "-o";
+  args[3] = out;
+  for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
+  // The same rule as `builtProgram`: a failed build takes the artefact with it, because a stale one
+  // still runs and the test then passes against code that no longer compiles.
+  Exec built = cli.exec(wac, args, u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    cli.remove(out, false).wait();
+    cli.remove(out + ".flags", false).wait();
+    return out;
+  }
+  cli.writeFile(out + ".flags", want.toBytes()).wait();
+  return out;
+}
+
+/**
  * The same idea for `packages/platform/build.ts`, which is the *Deno* builder: a program built for the
  * deno or node host, or the worker half a `spawn` takes.
  *
