@@ -164,8 +164,7 @@ string replaceAll(string s, string from, string to) {
  * column once, and neither file noticed.
  */
 i32 countTestsDeclaredHere(string src) {
-  return occurrences(src, "Deno.test(") + occurrences(src, "testBounded(") +
-         occurrences(src, "docTest(");
+  return occurrences(src, "Deno.test(") + occurrences(src, "testBounded(");
 }
 
 i32 occurrences(string s, string needle) {

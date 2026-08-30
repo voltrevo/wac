@@ -60,9 +60,9 @@ if (rows.length === 0) {
  *
  * Counted through `harness/testRegistrars.ts`, which is what makes that claim true rather than
  * merely intended. It used to be a bare `/Deno\.test\(/g` here beside a shared list there, and the
- * two diverged the moment a wrapper existed: `docTest` — the doc checks, which warn rather than fail
- * — took **19 tests** out of this figure the day it landed, and `testBounded` had never been counted
- * at all. That is the third time this exact drift has happened, and the list's own comment predicted
+ * two diverged the moment a wrapper existed: `docTest` — a doc check that warned rather than failed,
+ * deleted on 2026-08-30 once nothing called it — took **19 tests** out of this figure the day it
+ * landed, and `testBounded` had never been counted at all. That is the third time this exact drift has happened, and the list's own comment predicted
  * the first two.
  *
  * It is still an *undercount* of what the suites report — a test generated inside a helper or a loop

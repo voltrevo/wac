@@ -73,9 +73,10 @@ case, both now `try`/`finally`.
 
 tools/runTests.ts removes `/tmp/wac-*` older than a day at the start of every `deno task test`.
 A day is far longer than any suite, so the newest thing it can touch is from yesterday and nothing
-another agent is *using* matches; `/tmp/wac-doc-warnings` is excluded by name because it is a tally
-`docCheck.ts` keeps across a run's processes. It prints one line when it removes anything, because a
-cleanup nobody sees is how the count reached 2,300 in the first place.
+another agent is *using* matches; `/tmp/wac-doc-warnings` was excluded by name because it was a tally
+tools/docCheck.ts kept across a run's processes — that file and its tally went on 2026-08-30, so the
+exemption went with them. It prints one line when it removes anything, because a cleanup nobody sees
+is how the count reached 2,300 in the first place.
 
 Canaried: with one stale directory and one stale excluded tally present, a run reports
 `swept 1 temp entry older than a day` and leaves a fresh directory and the tally alone.
