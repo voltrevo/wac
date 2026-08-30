@@ -257,8 +257,9 @@ export type WaccArtifacts = {
  * identical up to the manifest section, which is appended.
  *
  * So the wasm, the glue and the coverage table are cached here, keyed on the sources, the entry, and
- * whether this is a coverage or an optimised build. `wacTestRun` and `wacCoverage` call this too, so
- * they get the same reuse. `issues/system/0193`.
+ * whether this is a coverage or an optimised build. `wacTestRun` calls this too, so it gets the same reuse.
+ * `wacCoverage` did as well, until packages/sh/cov.ts — its only caller — became
+ * `packages/sh/test/cov_ledger.wac` on 2026-08-30 and both were deleted. `issues/system/0193`.
  */
 export async function waccArtifacts(
   files: Map<string, string>,

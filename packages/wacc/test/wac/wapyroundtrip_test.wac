@@ -1,0 +1,217 @@
+// Every tracked `.wac` file, rendered to wapy and read back **by wacc**, compared as trees.
+//
+// `[§wac-wapy-roundtrip-5vd2qnw]`
+//
+//     wac test --allow-read --allow-run packages/wacc/test/wac/wapyroundtrip_test.wac
+//
+// ## Why this one is not circular and the one it replaces was
+//
+// The test this ultimately replaces — compiler/wapyRoundTrip.test.ts, deleted 2026-08-27 — rendered
+// with one printer and read back with that printer's own parser, and that reader's header said what
+// is wrong with it: *"a round-trip test cannot notice, because it only ever feeds the reader output
+// from the printer — which is valid by construction."* A printer emitting a spelling no reader
+// outside the pair accepts, and a reader accepting it, agree with each other perfectly.
+//
+// `packages/wacc/src/wapyparse.wac` is a second implementation, written from `spec/spec/wapy.md`
+// rather than from the printer, and it is the one that compiles. So rendering with one and reading
+// with the other is a real comparison: it is how `issues/lang/0277a` was found — the printer emits
+// `\uXXXX`, which is not a wac escape, and wacc refuses it.
+//
+// ## What is compared
+//
+// The **tree**, printed in wacc's canonical form by `dump` and `dumpWapy`, with `@line:col` stripped:
+// the two layouts put the same declaration on different lines, which is the point of having two
+// layouts. Everything else must match — a dropped `else`, a lost parameter or a conditional whose
+// arms are the wrong way round all fail.
+//
+// ## In wac since 2026-08-30, and it lost a bridge rather than gaining one
+//
+// From packages/wacc/test/wapyRoundTrip.test.ts, `issues/system/0289b`. That version reached
+// `dump`, `wapyOf` and `dumpWapy` through `harness/waccBuild.ts`'s `waccApi` — a wasm instance built
+// and called from Deno. They are ordinary exports of `packages/wacc/src/api.wac`, so this imports
+// them and calls them in process: no build, no bridge, no host.
+//
+// **One thing got worse and is worth saying.** The TypeScript wrapped each file in a `try`, so a
+// source that made the printer or the parser *fail* was recorded as one broken file and the walk went
+// on. wac has no catch: a trap ends the module, so a single such file would end the run with no
+// report rather than naming itself. Nothing in the tree does that today — all seven entries below are
+// tree differences, not failures — which is measured rather than assumed, because the whole corpus
+// passes through here on every run. If that changes, the symptom is a test that dies instead of
+// failing, and this paragraph is the explanation.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { tracked } from "../../../wactest/src/repo.wac";
+import { endsWith, has } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { dump, dumpWapy, wapyOf } from "../../src/api.wac";
+
+/**
+ * The files whose rendering is a different program, with the issue each belongs to.
+ *
+ * **Measured, not remembered.** The first version of this list was written from what its author
+ * thought the failures were and named five files, none of which are these — it passed only because
+ * nothing in it fired. A list of known failures that is not the list of actual failures is worse than
+ * no list: it reads as knowledge.
+ *
+ * Six are `issues/lang/0277a` and JSX: a text run holding `<` or `/` re-lexes as markup when the
+ * rendering is read back, so the tree gains an element the source did not have. Not fixable by
+ * quoting — the surface has nowhere to put a quote.
+ */
+string[] knownBad() {
+  return string[](
+    "spec/cases/0124-jsx-text-children.wac",
+    "spec/cases/0130-jsx-text-is-not-wac-source.wac",
+    "spec/cases/0135-a-jsx-fragment-is-a-node.wac",
+    "packages/platform/src/frame.wac",
+    "packages/platform/test/wac/scheduled_test.wac",
+    "packages/wac/src/grants.wac",
+    "spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac");
+}
+
+/** Why each is listed, index for index with `knownBad`. */
+string[] knownBadWhy() {
+  return string[](
+    "jsx text containing markup characters",
+    "jsx text containing markup characters",
+    "jsx text containing markup characters",
+    "jsx text containing markup characters",
+    "jsx text containing markup characters",
+    "jsx text containing markup characters",
+    "a type-argument chain with an inline lambda");
+}
+
+/**
+ * A dump with the positions taken out, and the three spellings the two layouts differ on.
+ *
+ * `@12:34` goes because the two surfaces put the same declaration on different lines, which is the
+ * whole point of having two. The three word-to-symbol rewrites go because wapy spells them as words
+ * and wac as symbols; anything else surviving here is a real difference.
+ */
+string bare(string dumped) {
+  string out = withoutPositions(dumped);
+  out = replaceAll(out, "(binary and ", "(binary && ");
+  out = replaceAll(out, "(binary or ", "(binary || ");
+  out = replaceAll(out, "(unary not ", "(unary ! ");
+  return out;
+}
+
+/** `@<digits>:<digits>` removed, by scan — the shape `/@\d+:\d+/g` matched. */
+string withoutPositions(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  i32 k = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    if (b[i] == '@') {
+      i32 j = i + 1;
+      while (j < b.len() && b[j] >= '0' && b[j] <= '9') { j = j + 1; }
+      if (j > i + 1 && j < b.len() && b[j] == ':') {
+        i32 m = j + 1;
+        while (m < b.len() && b[m] >= '0' && b[m] <= '9') { m = m + 1; }
+        // Only a complete `@N:N` is a position; a bare `@` or `@N` is something else and stays.
+        if (m > j + 1) { i = m; continue; }
+      }
+    }
+    out[k] = b[i];
+    k = k + 1;
+    i = i + 1;
+  }
+  u8[] cut = u8[k]();
+  for (i32 n = 0; n < k; n++) { cut[n] = out[n]; }
+  return string.fromBytes(cut);
+}
+
+/**
+ * Every `from` replaced by `to`, over bytes and into one buffer.
+ *
+ * **Not `out = out + piece` in a loop.** `core/README.md` says repeated `s + t` is quadratic, and on
+ * these inputs that is not a subtlety: a dump is tens of kilobytes and there are 1,300 of them, so
+ * the first version of this did not finish inside seven minutes where the TypeScript took four
+ * seconds.
+ */
+string replaceAll(string s, string from, string to) {
+  if (from == "") { return s; }
+  u8[] b = s.toBytes();
+  u8[] f = from.toBytes();
+  u8[] r = to.toBytes();
+  i32 room = b.len() + (r.len() > f.len() ? b.len() * (r.len() - f.len()) + r.len() : 0);
+  u8[] out = u8[room]();
+  i32 k = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    bool hit = i + f.len() <= b.len();
+    if (hit) {
+      for (i32 j = 0; j < f.len(); j++) { if (b[i + j] != f[j]) { hit = false; } }
+    }
+    if (hit) {
+      for (i32 j = 0; j < r.len(); j++) { out[k] = r[j]; k = k + 1; }
+      i = i + f.len();
+    } else {
+      out[k] = b[i];
+      k = k + 1;
+      i = i + 1;
+    }
+  }
+  u8[] cut = u8[k]();
+  for (i32 n = 0; n < k; n++) { cut[n] = out[n]; }
+  return string.fromBytes(cut);
+}
+
+export string test_the_printers_output_is_what_wacc_reads_back(Core core, Cli cli) {
+  T t = T.create();
+
+  string[] all = tracked(core, cli);
+  string[] wacFiles = string[all.len()](fill: "");
+  i32 nFiles = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (endsWith(all[i], ".wac")) { wacFiles[nFiles] = all[i]; nFiles = nFiles + 1; }
+  }
+  // A floor, because git succeeding with a short list is a different way to get the same wrong
+  // answer as git failing — `repo.wac`'s header asks every caller to put one here.
+  t.isTrue(nFiles >= 300, "only " + itoa(nFiles) + " tracked .wac files — did git run?");
+  if (nFiles < 300) { return t.report(); }
+
+  string[] bad = knownBad();
+  string[] why = knownBadWhy();
+  string broke = "";
+  i32 nBroke = 0;
+  string fixed = "";
+  i32 nFixed = 0;
+  i32 compared = 0;
+
+  for (i32 i = 0; i < nFiles; i++) {
+    string path = wacFiles[i];
+    FileResult got = cli.readFile(path).wait();
+    // A tracked path that will not read is a deleted-but-staged file, not a round-trip failure.
+    if (!got.ok) { continue; }
+
+    string wapy = wapyOf(got.bytes);
+    bool same = bare(dump(got.bytes)) == bare(dumpWapy(wapy.toBytes()));
+    compared = compared + 1;
+
+    if (has(bad, path)) {
+      if (same) {
+        nFixed = nFixed + 1;
+        fixed = fixed + "\n  " + path + " — listed as " + whyOf(bad, why, path)
+                + ", but it round-trips now";
+      }
+    } else if (!same) {
+      nBroke = nBroke + 1;
+      broke = broke + "\n  " + path + " — the trees differ";
+    }
+  }
+
+  t.isTrue(compared >= 300, "only " + itoa(compared) + " files compared — the walk found too few");
+  // **The list fails in both directions**, and that is why it is a list rather than a floor: a count
+  // with slack in it cannot tell "the printer was fixed" from "four more files broke".
+  t.eqI32(nBroke, 0, itoa(nBroke) + " of " + itoa(compared)
+                     + " file(s) do not survive the round trip:" + broke);
+  t.eqI32(nFixed, 0, itoa(nFixed) + " file(s) listed as known-bad now work — delete them:" + fixed);
+  return t.report();
+}
+
+string whyOf(string[] bad, string[] why, string path) {
+  for (i32 i = 0; i < bad.len(); i++) { if (bad[i] == path) { return why[i]; } }
+  return "known-bad";
+}

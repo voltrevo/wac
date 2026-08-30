@@ -273,7 +273,7 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
         }
         // The counter array is allocated by this call, not at instantiation: without it every
         // instrumented function traps on its first branch, and the message names the program under
-        // test rather than the missing call. `harness/wacCoverage.ts` learnt the same thing.
+        // test rather than the missing call. the deleted harness/wacCoverage.ts had learnt the same thing.
         if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
         // Only the capabilities this program named — `worldFor` carries the reason.
         if (world === undefined) world = worldFor(b, app as unknown as Record<string, unknown>);

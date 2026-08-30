@@ -266,7 +266,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
         ("Cli", "setExecutable") => Cap::SetExecutable,
-        ("Cli", "execWith") => Cap::Exec,
+        ("Cli", "execWithIn") => Cap::Exec,
         // **Answered, and the answer is "not here".** `issues/system/0240c` gave the JavaScript hosts
         // `load`/`call` in `provider.ts`, where a module can be driven in the caller's own realm
         // against the caller's own bridge. This host builds its world in Rust around one program's
@@ -3035,6 +3035,8 @@ fn dispatch(
                 .collect();
             let clear_env = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
             let inherit = args.get(6).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            // Empty means "wherever this process already is", matching `spawn`'s `cwd`.
+            let cwd = read_string(scope, args.get(7));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.run));
             if !granted {
                 let refused =
@@ -3056,7 +3058,7 @@ fn dispatch(
                 // wanting. There is nothing to hand back to.
                 let _ = worker.complete(
                     id,
-                    run_host_program(path, argv, stdin, env, clear_env, inherit),
+                    run_host_program(path, argv, stdin, env, clear_env, inherit, cwd),
                 );
             });
             match ticket_pending(scope, "Exec", id) {
@@ -4546,9 +4548,15 @@ fn run_host_program(
     env: Vec<String>,
     clear_env: bool,
     inherit: bool,
+    cwd: String,
 ) -> Answer {
     let mut cmd = std::process::Command::new(&path);
     cmd.args(&argv).stdin(std::process::Stdio::piped());
+    // **Empty means "wherever this process already is"**, which is `spawn`'s rule for the same
+    // parameter — so a caller with no opinion keeps the behaviour it had. `issues/system/0290b`.
+    if !cwd.is_empty() {
+        cmd.current_dir(&cwd);
+    }
     // **`inherit` is the real file descriptor**, so the child's output reaches this process's own
     // stdout and stderr and there is nothing here to collect.
     if inherit {

@@ -1328,7 +1328,7 @@ That is no longer true and the fix was not the one this issue proposed. `wac cov
 program path (`issues/system/0221`), so a **wac** exercise's `main` has a real `Core` and `Cli` and
 simply calls those tests. `packages/crypto/test/cov_exercise.wac` does; `mlkem.wac` reads 131 of 132 in
 the same counter array as everything else, against the 125 the binary was being asked for, and
-`MEASURED_BY_THE_BINARY` is deleted. The same sentence in `harness/wacCoverage.ts` was hiding **64 of
+`MEASURED_BY_THE_BINARY` is deleted. The same sentence in harness/wacCoverage.ts was hiding **64 of
 `packages/crypto`'s 152 returning tests and 29 of `packages/ssh`'s 32** from their own drivers —
 `runTestExports` skips any test whose `fn.length > 0`.
 
@@ -1338,7 +1338,7 @@ What is left of the decision is whether the sixteen *should* hold floors, which 
 yes and is still not mine to decide alone.
 
 **And the trap note above was true of one driver and not the other.** "The driver dedupes by source
-position, which is what 'is this branch tested' means" was true of `harness/wacCoverage.ts`, which keys
+position, which is what 'is this branch tested' means" was true of harness/wacCoverage.ts, which keys
 on `(file, line, col, kind)` and unions — and false of `tools/wac/covreport.wac`, which counted raw
 points from the day it was written. Every package converted off a `cov.ts` was measured raw. It went
 unnoticed because it only shows where one source position is instantiated more than once, and it showed

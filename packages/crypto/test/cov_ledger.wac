@@ -11,7 +11,7 @@
 //
 // ## 1117 of 1148, against the TypeScript's 974 of 1053
 //
-// More points seen *and* fewer missed, and the reason is one thing: `harness/wacCoverage.ts` could not
+// More points seen *and* fewer missed, and the reason is one thing: harness/wacCoverage.ts could not
 // call a test that takes an argument. `runTestExports` skips any whose `fn.length > 0`, because
 // `instrument` and `wacBind` cannot supply a capability — so **64 of this package's 152 returning tests
 // were unreachable from its own coverage driver**, and it made up the difference with about six hundred

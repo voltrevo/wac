@@ -1,0 +1,203 @@
+// The whole shell corpus, through **both ways a shell can run an applet**.
+//
+//   wac task corpus:routes [--from N] [--count N]
+//
+// `packages/sh`'s shell runs an external program one of two ways: **called** in process through
+// `sh.external` — `boxRun`, which pushes a frame with `pushChild` and takes the output back with
+// `popChild` — or **spawned** as a real child of its own instance. Both are live code and they are
+// supposed to be indistinguishable.
+//
+// ## Why this exists now
+//
+// It did not need to until 2026-08-09, because the called route was what nearly everything did. Then
+// wac-mono 0116 made a spawned stage able to see its parent's filesystem, and `sealedsh`, `imaged`,
+// `sshd -i` and the browser terminal all turned spawning on. Every session binary now spawns, so the
+// three differentials that existed — `corpus:backings`, `corpus:hosts` and `native_shell` — stopped
+// covering the called route entirely.
+//
+// It is still reachable and still shipped: `packages/box/example/boxsh.wac` is exactly `wacsh` with
+// the spawn turned off, `site/tools/site.test.ts` runs the front page's commands through it, and it is
+// what any world that *cannot* spawn falls back to. A route with no coverage and no way to notice is
+// the thing this repository keeps finding in other people's code.
+//
+// ## The two programs, and why they are comparable
+//
+// `boxsh` and `wacsh` are the same wiring over the same host filesystem, differing in one line:
+// `sh.externalSpawnable`. So a difference between them is a difference between the routes and nothing
+// else — not a filesystem, not a set of applets, not a shell.
+//
+// ## What is *expected* to differ, and is therefore not in the corpus
+//
+// One thing: a called applet's output is **captured in memory and capped at 8 MiB**, so past the cap
+// there is nothing it can do, while a spawned one's queue drains as the next stage reads it. It used
+// to answer 8323568 where bash answers 10888896 — a wrong number, silently — because `write`
+// returning false at the cap is indistinguishable, from inside the applet, from the reader going
+// away, which is what `box yes` is written to stop on. `Captured.truncated` carries the difference
+// now and the called route refuses with a sentence instead.
+//
+// The canary below asserts that divergence rather than hiding it, because a run where the two routes
+// agreed on *everything* would most likely mean `boxsh` had quietly started spawning too, and this
+// whole comparison would be measuring nothing.
+//
+// **In wac since 2026-08-30**, from tools/corpusRoutes.ts — `issues/system/0289b`, one of the nine
+// `issues/system/0290b` unblocked. Two things it needed that wac did not have until now: a way to run
+// a host binary in a chosen directory (`Cli.execWithIn`), because each script gets a directory of its
+// own so neither route sees the other's files; and a way to build a runnable artefact
+// (`builtApp`), which is `harness/buildApp.ts` in wac.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { scratch } from "../../packages/wactest/src/host.wac";
+import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
+import { announce, unannounce } from "./suitegate.wac";
+import { Vec } from "core/vec.wac";
+import { corpus } from "../../packages/sh/test/wac/corpus.wac";
+
+/** What one script did on one route. */
+struct Run {
+  string out;
+  string err;
+  i32 code;
+  bool hung;
+}
+
+/** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
+const i32 KILLED = 124;
+
+/**
+ * The environment every child gets, and it is total.
+ *
+ * **`C.UTF-8`, not `C`** — the locale this machine actually has, and the one every applet is measured
+ * against. `box`'s `wc -w` counts by code point since `issues/system/0143`, so pinned to `C` the real
+ * `wc` answers 1 where ours answers 2 for `a\u{a0}b`, and a corpus script feeding non-ASCII to it
+ * would fail on the locale rather than on the shell. Measured before moving: `tr`, `cut`, `fold`,
+ * `grep`, `head`, `sort` and `uniq` produce identical bytes under both, bash's own `[[ =~ ]]`, `case`
+ * ranges and collation are identical too because glibc's `C.UTF-8` orders by code point, and `box`
+ * has no `sed` — which is the one tool that does differ. `issues/system/0145`.
+ *
+ * **This checkout's `wac` goes on the front of PATH**, which the TypeScript did once at import in
+ * `harness/buildApp.ts` and this has to do explicitly: a `wac app` artefact is a shell preamble that
+ * runs `command -v wac`, so with `clearEnv` and no PATH neither shell would start at all, and with an
+ * inherited PATH an installed `wac` elsewhere — a different compiler — could answer instead.
+ */
+string[] childEnv(Cli cli, string dir, string binDir) {
+  u8[]? path = cli.env("PATH").wait();
+  string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
+  return string[]("LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+}
+
+/** One script, on one shell, in `dir`, with a bound on how long it may take. */
+Run runOne(Cli cli, string shell, string script, string dir, string[] env) {
+  Exec r = cli.execWithIn("timeout", string[]("10", shell, "-c", script), u8[0](),
+                          env, true, false, dir).wait();
+  if (!r.ran()) { return Run("", "could not run timeout: " + r.error, 0 - 1, false); }
+  return Run(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
+             r.status == KILLED);
+}
+
+bool same(Run a, Run b) { return a.out == b.out && a.err == b.err && a.code == b.code; }
+
+string show(Run r) { return "\"" + r.out + r.err + "\" (" + itoa(r.code) + ")"; }
+
+/** One script's two answers, each in a directory of its own so neither sees the other's files. */
+struct Both {
+  Run called;
+  Run spawned;
+}
+
+Both both(Cli cli, string base, string calledSh, string spawnedSh, string binDir,
+          string script, i32 n) {
+  string a = base + "/a" + itoa(n);
+  string b = base + "/b" + itoa(n);
+  cli.mkdir(a, true).wait();
+  cli.mkdir(b, true).wait();
+  Both answers = Both(runOne(cli, calledSh, script, a, childEnv(cli, a, binDir)),
+                      runOne(cli, spawnedSh, script, b, childEnv(cli, b, binDir)));
+  cli.remove(a, true).wait();
+  cli.remove(b, true).wait();
+  return answers;
+}
+
+/** `--name N`, or `fallback` when it is absent or has nothing after it. */
+i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--" + name && i + 1 < argc) {
+      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+    }
+  }
+  return fallback;
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] scripts = corpus();
+  i32 argc = cli.argCount().wait();
+  i32 from = flagOf(cli, argc, "from", 0);
+  i32 count = flagOf(cli, argc, "count", scripts.len());
+
+  // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: this builds
+  // programs and runs them, and nothing else made it visible. `issues/system/0142`.
+  //
+  // The TypeScript took the note down from an `unload` listener, which wac has no equivalent of, so
+  // every exit below removes it by hand. A trap would still leave one, and that is not a leak: a note
+  // carries its pid, and `heavyOthers` removes any whose process is gone as it reads them. So a
+  // stranded note costs one `kill(0)` and is swept by the next reader.
+  string note = announce(core, cli, "corpus:routes");
+
+  string binDir = wacBinary(cli);
+  // `wacBinary` answers the binary; the preamble wants the directory it is in.
+  i32 cut = 0;
+  for (i32 i = 0; i < binDir.len(); i++) { if (binDir.slice(i, i + 1) == "/") { cut = i; } }
+  binDir = binDir.slice(0, cut);
+
+  string[] grants = string[]("--allow-read", "--allow-write", "--allow-env");
+  string calledSh = builtApp(cli, "packages/box/example/boxsh.wac", "corpusroutes-boxsh", grants);
+  string spawnedSh = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusroutes-wacsh", grants);
+
+  string base = scratch(cli, "corpus-routes");
+  cli.mkdir(base, true).wait();
+
+  // **The canary, first.** Everything below is "these agree", which two shells that both did nothing
+  // would also report — and the specific way this comparison could become vacuous is `boxsh` starting
+  // to spawn, at which point the two are the same program. So: the one case the routes are *known* to
+  // answer differently, asserted to differ.
+  Both capped = both(cli, base, calledSh, spawnedSh, binDir, "seq 1 1500000", 0 - 1);
+  if (!contains(capped.called.err, "output exceeded") || capped.called.code == 0) {
+    core.warn("the called route did not refuse output past its cap, so this comparison is measuring"
+              + " one\nprogram twice: called " + show(capped.called));
+    cli.remove(base, true).wait();
+    unannounce(cli, note);
+    return 2;
+  }
+  if (same(capped.called, capped.spawned)) {
+    core.warn("the two routes agree past the cap, which they cannot. spawned "
+              + show(capped.spawned));
+    cli.remove(base, true).wait();
+    unannounce(cli, note);
+    return 2;
+  }
+
+  i32 last = from + count < scripts.len() ? from + count : scripts.len();
+  i32 agree = 0;
+  Vec<string> hung = Vec<string>.create();
+  Vec<string> differ = Vec<string>.create();
+
+  for (i32 i = from; i < last; i++) {
+    string script = scripts[i];
+    Both answers = both(cli, base, calledSh, spawnedSh, binDir, script, i);
+    if (answers.called.hung || answers.spawned.hung) { hung.push(script); continue; }
+    if (same(answers.called, answers.spawned)) { agree = agree + 1; continue; }
+    differ.push("\"" + script + "\"\n  called  " + show(answers.called)
+                + "\n  spawned " + show(answers.spawned));
+  }
+
+  cli.remove(base, true).wait();
+  unannounce(cli, note);
+
+  core.log(itoa(agree) + " of " + itoa(last - from)
+           + " scripts agree between the called and spawned applet routes");
+  for (i32 i = 0; i < hung.len(); i++) { core.log("  timed out: \"" + hung.get(i) + "\""); }
+  for (i32 i = 0; i < differ.len(); i++) { core.log(differ.get(i)); }
+  return differ.len() > 0 || hung.len() > 0 ? 1 : 0;
+}

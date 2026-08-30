@@ -17,7 +17,7 @@
 // ## Why the scripts come from the existing corpus
 //
 // `packages/sh/test/wac/corpus.wac` is already the differential fixture, compared against bash by
-// `differential.test.ts` and against a second shell by `tools/corpusThrough.ts`. Importing it means
+// `differential.test.ts` and against a second shell by `tools/wac/corpusthrough.wac`. Importing it means
 // these hosts are compared on the cases somebody wrote for a *reason* — each one is a rule of bash's
 // that was got wrong once — rather than on scripts chosen to pass.
 //
@@ -40,82 +40,15 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
 import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, DEFAULT_SECONDS } from "./hostfs.wac";
+import { Built, OPEN, SEALED, buildOne, builds, denoAll, difference, root, shell } from "./hostfs.wac";
 
-const string SEALED = "packages/box/src/bin/sealedsh.wac";
-const string OPEN = "packages/box/src/bin/sh.wac";
-/** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs all 800-odd. */
+/** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs them all. */
 const i32 SAMPLE = 25;
-const string BUILT = ".cache/hostshell";
 
-string root(Cli cli) { return cli.cwd().wait(); }
 
-string buildOne(Cli cli, bool native, string entry, string out, string[] grants) {
-  if (native) {
-    string[] args = string[4 + grants.len()](fill: "");
-    args[0] = "build";
-    args[1] = entry;
-    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
-    args[2 + grants.len()] = "-o";
-    args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
-    if (!r.ran() || r.status != 0) {
-      return "wac build " + out + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-    }
-    return "";
-  }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
-  string[] args = string[head.len() + grants.len() + 2](fill: "");
-  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
-  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
-  args[head.len() + grants.len()] = "-o";
-  args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts " + out + ": " + string.fromBytes(r.stderr); }
-  return "";
-}
 
-/**
- * The four builds, made once behind an mtime check and reused by all three cases.
- *
- * `sealed` has no grants; `granted` has read, write and env and is still sealed, which is what makes
- * the third case a test rather than a tautology; `open` is the same binary shape with a shell whose
- * world *is* the host's, and exists only to prove the grants are live.
- */
-struct Built {
-  bool ok;
-  string error;
-  string sealedDeno;
-  string sealedManifest;
-  string grantedDeno;
-  string grantedManifest;
-  string openDeno;
-  string openManifest;
-}
 
-Built builds(Cli cli) {
-  string dir = root(cli) + "/" + BUILT;
-  cli.mkdir(dir, true).wait();
-  Built b = Built(true, "",
-                  // The native half is the module itself: `wac build` writes one artefact and both
-                  // hosts read the manifest out of its `wac.manifest` section. It was a `.json`
-                  // beside the module until 2026-08-20.
-                  dir + "/sealed-deno", dir + "/sealed.wasm",
-                  dir + "/granted-deno", dir + "/granted.wasm",
-                  dir + "/open-deno", dir + "/open.wasm");
-  string[] none = string[0](fill: "");
-  string[] rwe = string[]("--allow-read", "--allow-write", "--allow-env");
-  string why = "";
-  i64 sealedNewest = newestFor(cli, SEALED);
-  i64 openNewest = newestFor(cli, OPEN);
-  if (stale(cli, b.sealedDeno, sealedNewest)) { why = why + buildOne(cli, false, SEALED, b.sealedDeno, none); }
-  if (stale(cli, b.sealedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, dir + "/sealed", none); }
-  if (stale(cli, b.grantedDeno, sealedNewest)) { why = why + buildOne(cli, false, SEALED, b.grantedDeno, rwe); }
-  if (stale(cli, b.grantedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, dir + "/granted", rwe); }
-  if (stale(cli, b.openDeno, openNewest)) { why = why + buildOne(cli, false, OPEN, b.openDeno, rwe); }
-  if (stale(cli, b.openManifest, openNewest)) { why = why + buildOne(cli, true, OPEN, dir + "/open", rwe); }
-  if (why != "") { b.ok = false; b.error = why; }
-  return b;
-}
+
 
 /**
  * A fresh directory for one test, and **it says so when it could not make one.**
@@ -151,39 +84,8 @@ string scratch(Core core, Cli cli, string name) {
  * is a claim about the moment, and the way to tell that from a hang is to ask again. 0128.
  */
 
-/**
- * The Deno half of many scripts in one process — `harness/appRunMany.ts` behind one `exec`.
- *
- * A built Deno bundle is 133ms to start against the native host's 17ms, and this file runs it
- * forty-odd times; that was most of its 17s. `hostfs.wac`'s `denoBatch` is the same program through
- * the same `appRunner`, and `issues/system/0213` is the whole argument. **A sealed session needs no
- * fixture**, which is what makes it a plain list here: its filesystem is synthesised inside the image,
- * so every run may share one directory — the reason `native_hostfs_test.wac` builds a tree per script
- * and this does not.
- */
-Ran[] denoAll(Cli cli, string tmp, string[] grants, string[] scripts) {
-  string[] cwds = string[scripts.len()](fill: tmp);
-  string[][] argv = string[][scripts.len()](fill: string[0](fill: ""));
-  u8[][] stdins = u8[][scripts.len()](fill: u8[0]());
-  for (i32 i = 0; i < scripts.len(); i++) { argv[i] = string[]("-c", scripts[i]); }
-  return denoBatch(cli, DEFAULT_SECONDS * 2, SEALED, grants, tmp, cwds, argv, stdins);
-}
 
-Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
-  string[] args = string[pre.len() + 2](fill: "");
-  for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
-  args[pre.len()] = "-c";
-  args[pre.len() + 1] = script;
-  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[0](), () => { });
-}
 
-/** How the two answers differ, or empty when they do not. */
-string difference(string script, Ran a, Ran b) {
-  if (a.out == b.out && a.err == b.err && a.code == b.code) { return ""; }
-  return script +
-         " | deno " + a.out + a.err + " (" + itoa(a.code) + ")" +
-         " | native " + b.out + b.err + " (" + itoa(b.code) + ")";
-}
 
 export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not(
     Core core, Cli cli) {

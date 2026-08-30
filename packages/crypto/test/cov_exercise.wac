@@ -7,7 +7,7 @@
 //
 // ## The tests are the workload now, and that is the whole change
 //
-// The TypeScript could not call them. `harness/wacCoverage.ts`'s `runTestExports` skips any test taking
+// The TypeScript could not call them. harness/wacCoverage.ts's `runTestExports` skips any test taking
 // an argument — `fn.length > 0` — because `instrument` and `wacBind` cannot supply a capability: a `Cli`
 // is built by the wac side against a shared-memory bridge that only a real host sets up. So **64 of
 // this package's 152 returning tests were unreachable from its own coverage driver**, and it made up

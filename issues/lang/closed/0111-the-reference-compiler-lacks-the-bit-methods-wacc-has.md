@@ -31,7 +31,7 @@ that had no spelling, and a 32-iteration loop replaced in four files. That is a 
 
 The reference compiler does not have them. So a file using them compiles wherever `wacc` is used and
 fails wherever the reference is, and the two are used by different tools on the same source:
-`harness/wacCoverage.ts`'s `instrument` takes the reference path, while the test path does not. This
+harness/wacCoverage.ts's `instrument` takes the reference path, while the test path does not. This
 is [0105](0105-callers-still-compiling-with-the-reference.md)'s subject arriving as a hard failure
 rather than as a difference in output.
 
@@ -66,7 +66,7 @@ that"*, deliberate. The bit methods are a row in that table, added by the same c
 reference is behaving exactly as designed and there is nothing to fix in it.
 
 The fix is the one I listed second: **the tools that still compile with the reference have to stop**.
-`harness/wacCoverage.ts`'s `instrument` is the one that bites here, because it builds package sources
+harness/wacCoverage.ts's `instrument` is the one that bites here, because it builds package sources
 that are now allowed to use wacc-only features. That is
 [0105](0105-callers-still-compiling-with-the-reference.md)'s subject, and this is a concrete instance
 of it with a package already broken rather than a future risk.
@@ -119,7 +119,7 @@ what the reference is *for*, and it belongs to whoever owns
 
 The question this issue ends on — *"a decision about what the reference is for"* — was put to the
 operator and answered: **stop using the reference except for bootstrap.** So the narrower alternative
-here is the one taken, and it is not narrow: `harness/wacCoverage.ts` compiles with wacc now, with
+here is the one taken, and it is not narrow: harness/wacCoverage.ts compiles with wacc now, with
 `WAC_COV_FROM=reference` to go back. The reference will not be given the five methods.
 `design/lang/0003` records the rule.
 

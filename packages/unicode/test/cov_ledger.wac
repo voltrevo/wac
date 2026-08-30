@@ -23,7 +23,7 @@
 // over-long-encoding attack and is not reachable at all.
 //
 // **Nine of this package's thirteen tests take `(Core, Cli)`**, and until `issues/system/0221` a
-// driver could not call one: `harness/wacCoverage.ts` skips any test whose `fn.length > 0`, because
+// driver could not call one: harness/wacCoverage.ts skips any test whose `fn.length > 0`, because
 // `instrument` cannot supply a capability. So `cov_exercise.wac` was hand-built probes, and its number
 // answered "what do the probes reach" rather than "what do the tests reach". `wac covdump` runs the
 // ordinary program path, so the exercise's `main` has a real `Core` and `Cli` and simply calls them.

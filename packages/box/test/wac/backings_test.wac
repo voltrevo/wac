@@ -31,8 +31,9 @@
 // gets an empty directory of its own, or it would see the repository while the other two see nothing; and
 // a script naming an absolute path that **exists on this machine** is compared on memory against image
 // only, because the host arm would be answering about Linux rather than about a backing. All three
-// levellings are `tools/corpusBackings.ts`'s, which this file replaces in the gate; the third is counted
-// and reported rather than quietly applied.
+// levellings are shared with `tools/wac/corpusbackings.wac`, which runs the same comparison across three
+// real binaries outside the gate; the third is counted and reported rather than quietly applied, and the
+// predicate behind it is `packages/sh/test/wac/machinepaths.wac`, which both of them import.
 
 import { Cli, Core, Stat } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
@@ -49,6 +50,7 @@ import { Ran, memoryFs, runOn } from "./memory.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
+import { reachesTheMachine } from "../../../sh/test/wac/machinepaths.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 
@@ -189,47 +191,6 @@ export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Co
   return t.report();
 }
 
-/**
- * Whether this script names an absolute path that **exists on this machine**.
- *
- * `/tmp` is levelled already — every script runs after `mkdir -p /tmp` — so it is the one absolute path
- * all three backings have. Anything else absolute reaches the real filesystem on the host arm and nothing
- * in a sealed session.
- *
- * **The existence check is the point**, and `corpusBackings.ts` records what happened without it: naming an
- * absolute path is not enough, since `/nosuchfile` is absent on the machine *and* in a session, so all
- * three agree and the comparison is worth keeping. Excluding on the name alone dropped the host arm for 34
- * scripts where only 6 could ever have differed.
- */
-bool reachesTheMachine(Cli cli, string script) {
-  for (i32 i = 0; i < script.len(); i++) {
-    if (script.slice(i, i + 1) != "/") { continue; }
-    if (i > 0 && !opensAPath(script.slice(i - 1, i))) { continue; }
-    i32 end = i + 1;
-    while (end < script.len() && pathByte(script.slice(end, end + 1))) { end = end + 1; }
-    if (end == i + 1) { continue; }
-    string path = script.slice(i, end);
-    if (path == "/tmp" || (path.len() > 5 && path.slice(0, 5) == "/tmp/")) { continue; }
-    Stat st = cli.stat(path).wait();
-    if (st.exists) { return true; }
-  }
-  return false;
-}
-
-/** The bytes a path can follow: the start of a word, in other words. */
-bool opensAPath(string ch) {
-  return ch == " " || ch == "\t" || ch == "\n" || ch == "\"" || ch == "'" ||
-         ch == "<" || ch == ">" || ch == "|" || ch == "=" || ch == "(";
-}
-
-/** The bytes a path is made of, matching `corpusBackings.ts`'s `[\w./-]`. */
-bool pathByte(string ch) {
-  u8[] b = ch.toBytes();
-  if (b.len() != 1) { return false; }
-  i32 c = b[0];
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-         c == '_' || c == '.' || c == '/' || c == '-';
-}
 
 bool same(Ran a, Ran b) { return a.out == b.out && a.err == b.err && a.status == b.status; }
 

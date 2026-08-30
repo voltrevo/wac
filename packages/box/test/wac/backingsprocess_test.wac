@@ -1,7 +1,7 @@
 // The one thing about the three backings that needs three processes: that an image outlives one.
 //
 // `backings_test.wac` beside this one is the differential: all 946 scripts through three `Fs` values
-// inside one process, with the same three levellings `tools/corpusBackings.ts` applies, so the gate
+// inside one process, with the same three levellings `tools/wac/corpusbackings.wac` applies, so the gate
 // covers the whole of design/0001 D7 rather than the 4% the spawning version reached. This file is
 // the part of `backings.test.ts` that could not join it.
 //

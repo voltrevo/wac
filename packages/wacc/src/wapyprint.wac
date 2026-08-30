@@ -6,7 +6,7 @@
 //
 // ## Why it exists, which is not "for symmetry"
 //
-// `packages/wacc/test/wapyRoundTrip.test.ts` renders every tracked `.wac` file to wapy and reads it
+// `packages/wacc/test/wac/wapyroundtrip_test.wac` renders every tracked `.wac` file to wapy and reads it
 // back, comparing the two trees. That test's own header says why it is not circular:
 //
 // > A printer that emitted a spelling no reader outside this pair accepts, and a reader that

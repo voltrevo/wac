@@ -41,7 +41,7 @@ file the function is in. Measured over `packages/fs`'s probe:
                all attributed to packages/fs/test/wac/cov_probe.wac
     REFERENCE    0 of 1422
 
-`report` in `harness/wacCoverage.ts` merges per `(file, line, col, kind)` — deliberately, so a file
+`report` in harness/wacCoverage.ts merges per `(file, line, col, kind)` — deliberately, so a file
 reachable from two entry points is not counted twice. With no position, every entry point in the
 program shares the key `<entry file>:0:0:entry`, so they become **one** point, covered as soon as any
 function anywhere has run:
@@ -84,7 +84,7 @@ points looked healthier than the reference's 689 while carrying 145 fewer measur
 
 ## Standing on
 
-`harness/wacCoverage.ts` uses wacc for every package as of 2026-08-12
+harness/wacCoverage.ts uses wacc for every package as of 2026-08-12
 ([0111](0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md)), so this is live in every
 `deno task coverage:<pkg>` and in the `coverage:all` the gate reports. `WAC_COV_FROM=reference` still
 measures the old way, which is how the two columns above were taken.

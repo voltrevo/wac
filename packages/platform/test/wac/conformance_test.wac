@@ -248,7 +248,7 @@ Cover[] coverage() {
       "neighbouring question is not coverage of this one. A shell case could not reach it: " +
       "native_hostfs drives the hosts through scripts and there is no `chmod` applet. " +
       "issues/system/0132"),
-    where2("EXEC_WITH", "packages/platform/test/wac/native_test.wac", "packages/platform/test/wac/runtimes_test.wac",
+    where2("EXEC_WITH_IN", "packages/platform/test/wac/native_test.wac", "packages/platform/test/wac/runtimes_test.wac",
       "native: one module built once and run by both native binaries — `native_test.wac`'s " +
       "`test_running_a_host_program_agrees_between_the_two_native_hosts`, which compares the three " +
       "verdicts `exec_probe.wac` prints (an inherited stream, an added environment, a cleared one) " +

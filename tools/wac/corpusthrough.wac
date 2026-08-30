@@ -1,0 +1,205 @@
+// `packages/sh`'s differential corpus, run through some *other* shell.
+//
+//   wac task corpus:through <shell-binary> [--trace] [--verbose]
+//
+// `packages/sh/README.md` says the sensible end state is to delete its twelve built-in programs and
+// let `packages/box`'s sixty applets serve, "once something checks that `box`'s pass the same
+// differential scripts against bash". This is that something. It was an open question with no number
+// attached for as long as the paragraph has existed; the answer on 2026-08-07 was **563 of 632**, and
+// wac-mono 0100 has the breakdown.
+//
+// Build the shell to measure first — `packages/box/src/bin/sh.wac` is the one with every applet wired
+// in:
+//
+//   wac build --allow-read --allow-write --allow-net --allow-env -o /tmp/boxsh packages/box/src/bin/sh.wac
+//   wac task corpus:through /tmp/boxsh
+//
+// **In wac since 2026-08-30**, from tools/corpusThrough.ts — `issues/system/0289b`, and the first of
+// the nine that `issues/system/0290b` unblocked. It could not be written before: every script runs in
+// a scratch directory so the ones that write files do not write them into the checkout, and until
+// `Cli.execWithIn` there was no way for a wac program to run a host binary anywhere but where it
+// stood. The `sh -c 'cd DIR && …'` workaround is worse here than anywhere: the payload *is* a shell
+// script, and this corpus exists to contain quotes, backslashes, `$`, `;` and newlines.
+//
+// The corpus is `packages/sh/test/wac/corpus.wac`, imported rather than copied, so it cannot go
+// stale: a script added there is measured here the next time this runs. The TypeScript imported a
+// *derivation* of it — `packages/sh/test/corpus.ts` parses `vectors.txt`, which
+// `tools/wac/shvectors.wac` writes from that file — because it could not read wac data. This reads
+// the source.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { startsWith } from "../../packages/wactest/src/strings.wac";
+import { scratch } from "../../packages/wactest/src/host.wac";
+import { Vec } from "core/vec.wac";
+import { Map } from "core/map.wac";
+import { hashString, stringEq } from "core/hash.wac";
+import { corpus } from "../../packages/sh/test/wac/corpus.wac";
+import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
+import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
+
+/**
+ * How long a script may take before something kills it.
+ *
+ * **Not caution.** The corpus contains `seq 1 100000 | grep -q 5`, which is there because `grep -q`
+ * answering on the first match is the only thing that makes it finish — and `packages/box`'s `grep -q`
+ * reads the whole input, so measuring through it ran until something killed it. A run that hangs
+ * reports nothing at all; one that says "this never finished" reports the defect.
+ *
+ * Through `timeout(1)` rather than a deadline of our own, which is what the TypeScript did first and
+ * which did not work: the child was killed and the reader went on accumulating whatever had already
+ * been written down a pipe nobody was draining. The system's own bound stops the process *and*
+ * closes the pipe, which is the part that matters.
+ */
+string seconds() { return "10"; }
+
+/** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
+const i32 KILLED = 124;
+
+/** What one script did on one shell. */
+struct Run {
+  string out;
+  i32 status;
+  bool hung;
+}
+
+/**
+ * The environment every child gets, and it is total.
+ *
+ * **`C.UTF-8`, not `C`** — the locale this machine actually has, and the one every applet is measured
+ * against. `box`'s `wc -w` counts by code point since `issues/system/0143`, so pinned to `C` the real
+ * `wc` answers 1 where ours answers 2 for `a\u{a0}b`, and a corpus script feeding non-ASCII to it
+ * would fail on the locale rather than on the shell. Measured before moving: `tr`, `cut`, `fold`,
+ * `grep`, `head`, `sort` and `uniq` produce identical bytes under both, bash's own `[[ =~ ]]`, `case`
+ * ranges and collation are identical too because glibc's `C.UTF-8` orders by code point, and `box`
+ * has no `sed` — which is the one tool that does differ. `issues/system/0145`.
+ */
+string[] childEnv(Cli cli, string dir) {
+  u8[]? path = cli.env("PATH").wait();
+  return string[]("LC_ALL=C.UTF-8",
+                  "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!)),
+                  "HOME=" + dir);
+}
+
+/** One script, on one shell, in `dir`, with a bound on how long it may take. */
+Run runOne(Cli cli, string cmd, string script, string dir, string[] env) {
+  Exec r = cli.execWithIn("timeout", string[](seconds(), cmd, "-c", script), u8[0](),
+                          env, true, false, dir).wait();
+  if (!r.ran()) { return Run("", 0 - 1, false); }
+  return Run(string.fromBytes(r.stdout), r.status, r.status == KILLED);
+}
+
+/**
+ * Which program a script is really about, for grouping. First match wins, which is close enough.
+ *
+ * `(^|[|;\s])name($|[\s|;])` — the name as a word of the script rather than a substring of one, so
+ * `nl` does not claim every script containing `only`. `packages/regex` has `\s` and classes and no
+ * lookaround, which this needs none of.
+ */
+string[] programs() {
+  return string[]("tr", "cat", "seq", "sort", "uniq", "grep", "nl", "rev", "wc", "head", "tail",
+                  "printf");
+}
+
+string about(string script) {
+  string[] names = programs();
+  for (i32 i = 0; i < names.len(); i++) {
+    Program? p = compile(("(^|[|;\\s])" + names[i] + "($|[\\s|;])").toBytes());
+    if (p is null) { continue; }
+    i32[] caps = i32[slotCount(p!)]();
+    if (search(p!, script.toBytes(), 0, caps, 1000000) != NO_MATCH()) { return names[i]; }
+  }
+  return "(the shell itself)";
+}
+
+export i32 main(Core core, Cli cli) {
+  string shell = "";
+  bool trace = false;
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--trace") { trace = true; }
+    else if (a == "--verbose") { verbose = true; }
+    else if (shell == "" && !startsWith(a, "--")) { shell = a; }
+  }
+  if (shell == "") {
+    core.warn("usage: wac task corpus:through <shell-binary>");
+    core.warn("  wac build --allow-read --allow-write -o /tmp/boxsh packages/box/src/bin/sh.wac");
+    return 2;
+  }
+
+  // Per agent, like every other scratch directory here — three of us share this machine.
+  string dir = scratch(cli, "corpus-through");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string[] env = childEnv(cli, dir);
+
+  string[] scripts = corpus();
+  Vec<string> differ = Vec<string>.create();
+  Vec<string> hung = Vec<string>.create();
+  for (i32 i = 0; i < scripts.len(); i++) {
+    if (trace) { core.warn("... " + scripts[i]); }
+    Run theirs = runOne(cli, "bash", scripts[i], dir, env);
+    Run ours = runOne(cli, shell, scripts[i], dir, env);
+    if (ours.hung && !theirs.hung) {
+      hung.push(scripts[i]);
+      differ.push(scripts[i]);
+      continue;
+    }
+    if (ours.out != theirs.out || ours.status != theirs.status) { differ.push(scripts[i]); }
+  }
+
+  core.log(itoa(scripts.len() - differ.len()) + "/" + itoa(scripts.len())
+           + " agree with bash through " + shell);
+
+  if (hung.len() > 0) {
+    core.log("  " + itoa(hung.len()) + " of them never finished, where bash did:");
+    for (i32 i = 0; i < hung.len(); i++) { core.log("      " + hung.get(i)); }
+  }
+
+  // Grouped by what each script is about, biggest group first — the shape of the gap rather than its
+  // size, which is what says where to look next.
+  Map<string, i32> counts = Map.create(hashString, stringEq);
+  Vec<string> seen = Vec<string>.create();
+  for (i32 i = 0; i < differ.len(); i++) {
+    string p = about(differ.get(i));
+    if (counts.getOr(p, 0) == 0) { seen.push(p); }
+    counts.set(p, counts.getOr(p, 0) + 1);
+  }
+  for (i32 round = 0; round < seen.len(); round++) {
+    string best = "";
+    i32 most = 0;
+    for (i32 i = 0; i < seen.len(); i++) {
+      i32 n = counts.getOr(seen.get(i), 0);
+      if (n > most) { most = n; best = seen.get(i); }
+    }
+    if (best == "") { break; }
+    core.log("  " + rightly(itoa(most), 3) + "  " + best);
+    counts.set(best, 0);
+  }
+
+  if (verbose) {
+    for (i32 i = 0; i < differ.len(); i++) {
+      Run theirs = runOne(cli, "bash", differ.get(i), dir, env);
+      Run ours = runOne(cli, shell, differ.get(i), dir, env);
+      core.log("\n" + differ.get(i));
+      core.log("  theirs(" + itoa(theirs.status) + ") " + cut(theirs.out));
+      core.log("  ours(" + itoa(ours.status) + ")   " + cut(ours.out));
+    }
+  }
+
+  cli.remove(dir, true).wait();
+  return 0;
+}
+
+/** At most seventy bytes of it, so one disagreement is one line. */
+string cut(string s) {
+  return s.len() > 70 ? s.slice(0, 70) + "\u{2026}" : s;
+}
+
+string rightly(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}

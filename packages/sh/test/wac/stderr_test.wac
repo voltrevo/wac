@@ -1,0 +1,183 @@
+// What this shell says on standard error, against what bash says.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/sh/test/wac/stderr_test.wac
+//
+// **Nothing compared it until 2026-08-09.** `differential.test.ts` runs every corpus script through
+// both shells and asserts stdout and the exit status, with stderr discarded — so the messages were
+// never captured. A repository that measures GNU's wording tool by tool (`cannotOpen` carries five
+// sentences, each read off the tool it belongs to) had no differential over the thing those sentences
+// are.
+//
+// The first sweep found 58 of 821 differing, and **forty were one fact**: a builtin's diagnostic did
+// not name the shell. `sh: ` on a builtin's errors — and not on its `usage:` lines, which is bash's
+// own distinction — closed those.
+//
+// ## What this file is, and what the task is
+//
+// `wac task corpus:stderr` is the whole corpus and takes minutes; it fails on a difference that is
+// not pinned *and* on a pin that has gone stale. This is the fast half: the nineteen that still
+// differ, checked to still differ **in the recorded way**.
+//
+// Both directions matter. A new divergence in one of these is a regression. A pin that starts
+// agreeing is somebody's fix, and the row has to go — a table of expected failures that quietly
+// accumulates correct entries is the shape that stops anyone reading it.
+//
+// **In wac since 2026-08-30**, from packages/sh/test/stderr.test.ts — `issues/system/0289b`. It was
+// TypeScript because `KNOWN` and `sameName` were, and those are wac now: `knownstderr.wac` and
+// `shname.wac` beside this file.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { startsWith, trimmed } from "../../../wactest/src/strings.wac";
+import { scratch } from "../../../wactest/src/host.wac";
+import { builtApp, wacBinary } from "../../../wactest/src/built.wac";
+import { Diff, known } from "./knownstderr.wac";
+import { sameName } from "./shname.wac";
+
+/** The bound, in seconds, named once so the message below cannot state a different one. */
+const i32 BOUND_S = 20;
+
+/** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
+const i32 KILLED = 124;
+
+/**
+ * The load average, for the one message that needs it.
+ *
+ * Read out of `/proc/loadavg` rather than asked of the host, which is what `tools/wac/suitegate.wac`
+ * does and for the same reason: it is one file read instead of a capability, and unreadable is not a
+ * reason to fail — the load only decorates a message.
+ */
+string loadNow(Cli cli) {
+  FileResult f = cli.readFile("/proc/loadavg").wait();
+  if (!f.ok) { return "load unknown"; }
+  string s = string.fromBytes(f.bytes);
+  i32 cut = s.indexOf(" ");
+  i32 second = cut < 0 ? 0 - 1 : s.slice(cut + 1, s.len()).indexOf(" ");
+  return "load " + (cut < 0 || second < 0 ? trimmed(s) : s.slice(0, cut + 1 + second));
+}
+
+string[] childEnv(Cli cli, string dir, string binDir) {
+  u8[]? path = cli.env("PATH").wait();
+  string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
+  return string[]("LC_ALL=C", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+}
+
+Exec once(Cli cli, string cmd, string script, string dir, string binDir, i32 seconds) {
+  return cli.execWithIn("timeout", string[](itoa(seconds), cmd, "-c", script), u8[0](),
+                        childEnv(cli, dir, binDir), true, false, dir).wait();
+}
+
+/**
+ * What `cmd -c script` says on standard error, or `""` with `t` failed if it wedged.
+ *
+ * **A fired bound is not an empty message**, and the TypeScript returned one for both. `timeout`
+ * answers 124 when it had to kill, and a killed shell has written nothing — so a gate on a loaded
+ * machine reported `got: "" want: "sh: [: b: binary operator expected"`, which reads as a diagnostic
+ * this shell has stopped printing rather than as a shell that never got to print it. Every other
+ * place in this repository that bounds a subprocess carries a `hung` flag; this was the one that did
+ * not, and it cost a red gate to notice.
+ *
+ * Twenty seconds is not a deadline, it is a bound on wedging, and the retry at three times that is
+ * what tells "this machine was busy" from "this program hangs". The load goes in the message for the
+ * same reason.
+ */
+string stderrOf(T t, Core core, Cli cli, string cmd, string script, string dir, string binDir) {
+  Exec r = once(cli, cmd, script, dir, binDir, BOUND_S);
+  if (!r.ran()) {
+    t.fail("could not run `timeout " + itoa(BOUND_S) + " " + cmd + "` — " + r.error);
+    return "";
+  }
+  if (r.status != KILLED) { return trimmed(string.fromBytes(r.stderr)); }
+
+  Exec again = once(cli, cmd, script, dir, binDir, BOUND_S * 3);
+  if (!again.ran() || again.status == KILLED) {
+    t.fail(cmd + " -c \"" + script + "\" was killed by its " + itoa(BOUND_S) + "s bound and again by "
+           + itoa(BOUND_S * 3) + "s alone (" + loadNow(cli) + ") — a hang rather than a busy machine.");
+    return "";
+  }
+  core.warn("stderr: " + cmd + " -c \"" + script + "\" hit its " + itoa(BOUND_S)
+            + "s bound and answered on the retry — " + loadNow(cli)
+            + ", so this is the machine rather than the shell");
+  return trimmed(string.fromBytes(again.stderr));
+}
+
+/** `wacBinary` answers the binary; a `wac app` artefact's preamble wants the directory it is in. */
+string binDirOf(Cli cli) {
+  string p = wacBinary(cli);
+  i32 cut = 0;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return p.slice(0, cut);
+}
+
+export string test_the_differences_from_bashs_diagnostics_are_the_ones_written_down(Core core,
+                                                                                    Cli cli) {
+  T t = T.create();
+  Diff[] rows = known();
+  t.isTrue(rows.len() > 10, "only " + itoa(rows.len()) + " rows — has the table been emptied?");
+  if (rows.len() <= 10) { return t.report(); }
+
+  string binDir = binDirOf(cli);
+  string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "stderr-wacsh",
+                          string[]("--allow-read", "--allow-write", "--allow-env"));
+  string base = scratch(cli, "sh-stderr");
+  cli.mkdir(base, true).wait();
+
+  string wrong = "";
+  i32 nWrong = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    string a = base + "/a" + itoa(i);
+    string b = base + "/b" + itoa(i);
+    cli.mkdir(a, true).wait();
+    cli.mkdir(b, true).wait();
+    string theirs = sameName(stderrOf(t, core, cli, "bash", rows[i].script, a, binDir));
+    string ours = stderrOf(t, core, cli, shell, rows[i].script, b, binDir);
+    cli.remove(a, true).wait();
+    cli.remove(b, true).wait();
+
+    if (theirs == ours) {
+      nWrong = nWrong + 1;
+      wrong = wrong + "\n  \"" + rows[i].script
+              + "\"\n    pinned as different and now agrees — delete the row from"
+              + " packages/sh/test/wac/knownstderr.wac";
+      continue;
+    }
+    if (theirs != trimmed(rows[i].bash) || ours != trimmed(rows[i].ours)) {
+      nWrong = nWrong + 1;
+      wrong = wrong + "\n  \"" + rows[i].script + "\"\n    pinned bash: \"" + rows[i].bash
+              + "\"\n    actual bash: \"" + theirs + "\"\n    pinned ours: \"" + rows[i].ours
+              + "\"\n    actual ours: \"" + ours + "\"";
+    }
+  }
+
+  cli.remove(base, true).wait();
+  t.eqI32(nWrong, 0, wrong);
+  return t.report();
+}
+
+export string test_a_builtins_diagnostic_names_the_shell_and_its_usage_line_does_not(Core core,
+                                                                                     Cli cli) {
+  T t = T.create();
+  string binDir = binDirOf(cli);
+  string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "stderr-wacsh",
+                          string[]("--allow-read", "--allow-write", "--allow-env"));
+  string dir = scratch(cli, "sh-stderr-rule");
+  cli.mkdir(dir, true).wait();
+
+  t.eqStr(stderrOf(t, core, cli, shell, "[ a b c ]", dir, binDir),
+          "sh: [: b: binary operator expected", "our builtin names the shell");
+  t.eqStr(sameName(stderrOf(t, core, cli, "bash", "[ a b c ]", dir, binDir)),
+          "sh: [: b: binary operator expected", "and bash's, once its own name is mapped");
+
+  string usage = stderrOf(t, core, cli, shell, "printf", dir, binDir);
+  t.isTrue(startsWith(usage, "printf: usage:"), "a usage line was prefixed: " + usage);
+  t.isTrue(startsWith(sameName(stderrOf(t, core, cli, "bash", "printf", dir, binDir)),
+                      "printf: usage:"),
+           "bash prefixes its usage line after all — the rule above it is wrong");
+
+  string cat = stderrOf(t, core, cli, shell, "cat /nosuchfile", dir, binDir);
+  t.eqStr(cat, "cat: /nosuchfile: No such file or directory", cat);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

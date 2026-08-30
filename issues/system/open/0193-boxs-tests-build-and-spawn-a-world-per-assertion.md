@@ -93,7 +93,7 @@ Two things the move found:
 * the old sample was **vacuous**. Breaking the host arm outright made 2 of the 40 cases differ and 38
   agree — the head of the corpus is the shell language, not the world. That is what made running all 946
   the right answer rather than a better sample.
-* `tools/corpusBackings.ts` says six scripts name an absolute path this machine has and are compared on
+* `tools/wac/corpusbackings.wac` says six scripts name an absolute path this machine has and are compared on
   two arms. It is **30**, measured with that file's own regex. The wac port agrees with it exactly, script
   for script, which is how the port was checked.
 

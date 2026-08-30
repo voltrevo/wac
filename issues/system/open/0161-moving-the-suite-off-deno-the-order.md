@@ -21,7 +21,7 @@ below were already current — see the note at the end of "The two \"not applica
 |---|---|---|---|
 | `box`, `sh` | 5,696 + 1,570 | 17 + 4 | another agent's packages |
 | `platform` | 6,522 | 30 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20. Re-checked on 2026-08-24 and it holds — see below |
-| `wacc` | 2,281 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
+| `wacc` | 620 | 3 | **the decision arrived and the eight are gone.** The three that remain are about the JavaScript boundary — `bindgen` and `jsBindgen` import the generated glue and call it, `jsxBoundary` renders a wac JSX tree with a JavaScript renderer. `wapyRoundTrip` was a fourth and was not one of them: its other half is wacc, reached through a Deno bridge only because nothing else could call it, so it moved in process on 2026-08-30. See below, the reference-oracle section |
 | `webrtc`, `raster`, `stream` | 909 + 217 + 296 | 1 + 1 + 1 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
 | `ts` | 354 | 2 | **the subject is a TypeScript compiler's answer**, which is the one thing a wac test cannot be. `stripDifferential` runs `packages/ts` against `ts.transpileModule` out of `site/node_modules`, and that oracle exists precisely because the wac side must not be trusted about TypeScript; `tinyInterface` asks Deno and Node to parse what came out. Both stay for the same reason `wacc`'s oracle rows do — see `design/system/0009` |
 
@@ -2063,6 +2063,12 @@ That principle reaches `parse_errors` (which compares diagnostics by position) m
 reaches `corpusMutate` and `mutateCheck` (which use it to *generate* known-bad programs and only ask
 whether wacc notices). Porting them would entrench an arrangement that may be about to go. Left
 alone deliberately, pending that decision.
+
+> **Resolved by the decision, not by a port — 2026-08-28.** The operator's answer was to delete the
+> reference outright, so all three went with it in `066cab6c`, *"Delete the twelve files whose oracle
+> is the compiler being removed"*. Nothing here had to be ported: the question "should these entrench
+> the reference as a second implementation" was answered by there no longer being one. `packages/wacc`
+> holds four `.test.ts` now and none of them names a reference compiler.
 
 ## The orchestrator itself moved — 2026-08-21, agent-c
 

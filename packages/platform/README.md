@@ -65,7 +65,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `spawn`, `spawnSelf`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |
 | | `cwd` | — (a read; there is no `chdir`) |
 | | `pushChild`, `popChild` | — (a child *inside* this program, with this program's authority) |
-| | `execWith` | `--allow-run` — a **host program**, which `spawn` is not; a page has no form of it. `Cli.exec` is the short form: no environment, nothing cleared, output buffered |
+| | `execWithIn` | `--allow-run` — a **host program**, which `spawn` is not; a page has no form of it. `cwd` empty means wherever this program already is, as `spawn`'s does. `Cli.execWith` is the short form with no directory, and `Cli.exec` the shorter one with no environment either, nothing cleared and output buffered |
 | | `load`, `call`, `unload` | — (a **module** rather than a program: its exports called in this program's own world, with this program's own authority, so there is no grant to pass. Not `Pending`, because nothing crosses to a host. `spawn` is still what confines something: a loaded export runs on the caller's thread and nothing can stop it) |
 | | `validated` | — (whether the *engine* would accept some bytes as a module, compiled and no further. No grant: it reads no file, starts nothing, and the bytes came from the caller. The one thing about a module only a host can answer, which is why `wac validate` was a host command until there was a field for it) |
 | `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |

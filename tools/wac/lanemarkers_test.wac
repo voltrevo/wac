@@ -123,12 +123,30 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
     n = n + 1;
   }
 
-  // **A floor on the evidence.** Zero markers found and zero stranded is the same output as a walk
-  // that read nothing, and this file exists because two lists agreeing by accident is not the same
-  // as two lists agreeing.
-  t.isTrue(markers >= 3,
-           "only " + itoa(markers) + " lane marker(s) found across the tree — did the scan match? "
-           + "The marker is `// test-lane:` at the start of a line.");
+  // **A floor on the evidence, and it counts both kinds on purpose.** Zero markers found and zero
+  // stranded is the same output as a walk that read nothing, and this file exists because two lists
+  // agreeing by accident is not the same as two lists agreeing.
+  //
+  // The stranding check above is about `.test.ts`, because `tsRoots()` is the list it compares
+  // against. The *floor* is not: `tools/runTests.wac` reads this marker out of "either kind", and the
+  // scanning code is the same for both, so a floor counting only TypeScript is really asserting how
+  // much TypeScript is left. That number is going down on purpose — `issues/system/0289b` — and it
+  // took this guard red on 2026-08-30 when tools/programs.test.ts became
+  // `packages/wacc/test/wac/programscompile_test.wac` and the count fell from 3 to 2, with nothing about the scan
+  // having changed. A floor that a successful port breaks is measuring the wrong thing.
+  i32 inWac = 0;
+  string[] wacFiles = sourceFiles(core, cli, string[](".wac"), string[]("site", "node_modules"));
+  for (i32 i = 0; i < wacFiles.len(); i++) {
+    FileResult f = cli.readFile(wacFiles[i]).wait();
+    if (!f.ok) { continue; }
+    string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+    for (i32 k = 0; k < lines.len(); k++) {
+      if (startsWith(lines[k], "// test-lane:")) { inWac = inWac + 1; break; }
+    }
+  }
+  t.isTrue(markers + inWac >= 3,
+           "only " + itoa(markers) + " lane marker(s) in `.test.ts` and " + itoa(inWac)
+           + " in `.wac` — did the scan match? The marker is `// test-lane:` at the start of a line.");
 
   t.eqStr(stranded, "",
           itoa(n) + " `.test.ts` file(s) declare a lane in a tree `tsRoots()` does not walk, so the "

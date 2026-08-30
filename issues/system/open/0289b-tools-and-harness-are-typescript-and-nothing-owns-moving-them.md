@@ -18,8 +18,8 @@ that is not obvious — I had to read `tools/suiteGate.ts`'s header to find one 
 
 | where | files | lines | of which `*.test.ts` |
 |---|---|---|---|
-| `tools/**/*.ts` | 46 | 9,411 | 14 files, 2,114 |
-| `harness/**/*.ts` | 36 | 6,026 | 14 files, 1,667 |
+| `tools/**/*.ts` | 31 | 7,246 | 11 files, 1,712 |
+| `harness/**/*.ts` | 35 | 5,809 | 14 files, 1,667 |
 
 `tools/mutate/` is 13 of those files and 2,941 of those lines — a third of `tools/`, in a
 subdirectory, and `ls tools/*.ts` does not show it. I counted `tools/` at 33 files and 6,470 lines
@@ -27,7 +27,7 @@ first and had to correct it; anyone re-deriving these should use `find` rather t
 
 For scale on the other side: `tools/*.wac` and `tools/wac/*.wac` are already 43 files and 13,050
 lines, so this is not a new idea being proposed — it is a migration two thirds done in one directory
-and untouched in the other. **26 of the 78 entries in `tasks.json5` still spawn `deno`**, and 44
+and untouched in the other. **16 of the 76 entries in `tasks.json5` still spawn `deno`**, and 44
 invoke the `wac` binary. That count is the tracking number for this issue: it goes to zero, or to
 whatever the carve-out below leaves, and it can be read in one grep.
 
@@ -208,6 +208,95 @@ hosts is a decision, not a translation.
 **So the honest remainder is nine tasks behind one missing parameter, two behind one missing
 function, and one that dissolves.** The rest is the carve-out working as intended.
 
+**The missing parameter landed on 2026-08-30** — `Cli.execWithIn`, `0290b`, after `issues/lang/0291c`
+turned out not to reproduce once `wac task gen:core` was run. Four of the nine are ported since:
+`corpus:through`, `flags:ignored`, `corpus:routes` and `corpus:backings`.
+
+**Where the nine actually end, read one by one — 2026-08-30.** Four are ported: `corpus:through`,
+`flags:ignored`, `corpus:routes` and `corpus:backings`. The other five are not translation work and
+none of them is blocked by `0290b` any more:
+
+- `mutate`, `mutate:diff`, `mutate:operators` — behind `issues/system/0183`, **claimed by agent-c**.
+- `corpus:stderr` — a library to three TypeScript tests, below.
+- `corpus:hosts` — behind `buildNative`, below.
+
+So the capability that unblocked them has been spent, and what is left of `tools/` is either
+somebody's else's claim or a TypeScript library that moves with its importers. That is a different
+kind of remainder from the one at the top of this issue and it is worth saying plainly: the next
+lever is not another capability.
+
+**`tools/` is at its floor as of 2026-08-30, and the floor is not a carve-out list.** Read file by
+file after the six ports of that day, nothing left in it is available:
+
+- `mutate.ts`, `mutate.test.ts`, `tools/mutate/`, `suiteGuard.ts`, `profile.test.ts`,
+  `lane.test.ts` — behind `issues/system/0183`, **claimed by agent-c**.
+- tools/corpusStderr.ts — a library to three TypeScript tests. `corpusHosts.ts` — behind
+  `buildNative`. `suiteGate.ts` and its test — a remnant serving those two and `mutate`.
+- `fuzz.ts`, `fuzzBoundary.ts`, `bench.ts`, `wasmopt.ts`, `syncBootstrap.ts`, `_spawncmp.ts`,
+  `discovery.ts`/`discovery.test.ts` — carve-outs where Deno, npm or the JavaScript bootstrap
+  *is* the subject. Checked rather than inherited: `syncBootstrap` imports `bootstrap/hosts/deno.js`
+  and `_spawncmp` imports three files from `packages/platform/host/`.
+- `checkTypes.ts`, `typecheck.test.ts`, `benchCompile*` — dissolve with the TypeScript they check,
+  or wait on a decision about which build they measure.
+
+So the next thing that moves here is not a port. It is `0183` being answered, or somebody deciding
+to move `packages/sh`'s three TypeScript tests so `corpusStderr` can follow them.
+
+**The `buildNative` blocker above is wrong, and it was mine.** `tools/corpusHosts.ts` imports
+`buildNative` from `packages/platform/native.ts`, so I recorded `corpus:hosts` as behind a
+1,610-line chain with eight importers. What I did not do was ask how the *wac* side already does
+the same comparison — and it does:
+`packages/platform/test/wac/native_shell_test.wac` runs a 25-script slice of exactly this on every
+gate, building its native half with an ordinary `wac build` and its Deno half by spawning
+`packages/platform/build.ts`. It never touches `buildNative`. Its own comment says the full sweep
+*is* `wac task corpus:hosts`.
+
+So the tool is available, and the port is not a translation of the TypeScript but a generalisation
+of the wac test that already exists — which means it should *share* that test's builder and
+comparison rather than copy them.
+
+**That is the third stale blocker this file has carried in one day, and the only one I wrote
+myself.** The other two I inherited and checked; this one I created by reading an import list and
+stopping. The rule the two paragraphs below state — that a TypeScript import is not evidence about
+what wac can reach — applies to blockers as much as to tests.
+
+**Twice now a row here has hidden a portable test inside a TypeScript-subject group, so check the
+rows rather than trusting them.** `programs.test.ts` sat in the row above as "tests TypeScript
+machinery" and did not: it compiled every wac program in the repository, through a Deno bridge only
+because nothing else could call the compiler. `wapyRoundTrip.test.ts` sat in `0161`'s wacc row as a
+"JavaScript boundary" and did not: its other half is wacc. Both moved on 2026-08-30 and neither
+needed anything that did not already exist.
+
+The shared shape is worth naming, because it will be the next one too: **a test written in
+TypeScript because that was the only language that could reach the subject is not a test *about*
+TypeScript.** The tell is the import list — `waccApi`, `wacFiles`, `buildApp` — a bridge to
+something written in wac. A row saying "the subject is TypeScript" earns that description only
+when the thing being asserted about would not exist without it.
+
+**`suiteGate.ts` is a 67-line remnant, and its blocker shrank with the ports.** The live gate is
+`tools/wac/suitegate.wac`, 574 lines, which `tools/push.sh` calls by name — the TypeScript file is
+what is left over for the tools that still announce themselves in TypeScript, and after the four
+ports above those are exactly three: `mutate.ts`, `corpusHosts.ts` and tools/corpusStderr.ts, plus its
+own test. Nothing else imports it. So it is not work of its own at all: it is deleted by the same
+three moves as everything else in this section, and the row above should not be read as a separate
+task.
+
+**`corpus:hosts` is behind a library too, and a much bigger one.** *(Wrong — see the correction
+below. Left in place because the reasoning is the thing to distrust, not the conclusion.)* It calls `buildNative` from
+`packages/platform/native.ts`, which is not a cargo wrapper: it reaches `harness/waccBuild.ts` and
+`packages/wacc/tools/waccBindgen.ts` for artifacts and bindgen parsing. That is **1,610 lines with
+eight importers**, most of them `packages/platform`'s own TypeScript tests. So it is load-bearing
+infrastructure that moves with its subsystem, and the `129` in the table is the size of the tool
+rather than the size of the work.
+
+**`corpus:stderr` is not next, and looked like it was.** tools/corpusStderr.ts is a *library* as
+well as a tool: `packages/sh/test/wac/stderr_test.wac` imports `KNOWN` and `sameName` from it, and
+`packages/sh/test/differential.test.ts` and `packages/box/test/jobs.test.ts` import `sameName`. A wac
+file cannot be imported by TypeScript, so it moves when those three do and not before — the same
+shape as `coverageOrder.ts` above, which this issue already records as the trap. `corpusBackings.ts`
+and `corpusHosts.ts` have no importers at all and are ordinary translations. What follows was written while they were still blocked, so
+read the table above for the live state and this analysis for how the classification was reached.
+
 ## `tools/` read file by file — 2026-08-30
 
 Thirty-eight `.ts` files. Every one has a determination, and the useful result is how little of it is
@@ -216,19 +305,19 @@ actually available to port:
 | what | lines | state |
 |---|---|---|
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
-| the five `corpus:*` | 821 | blocked: `0290b` → `0291c` |
-| `ignoredFlags.ts` | 144 | blocked: `0290b` → `0291c` |
+| ~~`corpus:stderr`~~ | — | **done, 2026-08-30** — the knot was untied and it is `tools/wac/corpusstderr.wac` |
+| ~~`corpus:hosts`~~ | — | **done, 2026-08-30** — `tools/wac/corpushosts.wac`; the `buildNative` blocker below was mine and was wrong |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
 | `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
-| `suiteGate.ts` + test | 116 | waits for the eight announcers, which are the rows above |
+| `suiteGate.ts` + test | 116 | waits for **three** announcers now, not eight — and it is already a remnant |
 | `suiteGuard.ts` | 66 | waits for `mutate`, its last two callers |
 | `bench.ts` | 232 | carve-out: measures the JS boundary, which is the subject |
 | `wasmopt.ts` | 81 | carve-out: an `npm:binaryen` host. Its own header — "an experiment, not a build step" |
 | `syncBootstrap.ts` | 115 | carve-out: `bootstrap/` machinery, and `bootstrap/` is a designated host |
 | `_spawncmp.ts` | 66 | carve-out: imports `packages/platform/host/*`; its subject is the JS host |
 | `discovery.test.ts` | 84 | carve-out already named above |
-| `lane.test.ts`, `programs.test.ts`, `profile.test.ts`, `mutate.test.ts` | 816 | test TypeScript machinery; they go with their subjects |
+| `lane.test.ts`, `profile.test.ts`, `mutate.test.ts` | 711 | test TypeScript machinery; they go with their subjects — `lane.test.ts`'s is `harness/testLane.ts`, whose only non-test reader is `tools/mutate/known.ts`, so it goes when `mutate` does |
 
 ### Correction, an hour later: the two fuzzers are carve-outs too
 
@@ -251,7 +340,9 @@ context-dependent emission bugs; it would go blind to exactly the class the wrap
 there for.
 
 **So the unblocked remainder of `tools/` is nothing.** Every one of the 38 files is behind
-`issues/lang/0291c`, is a carve-out, or moves when its subject moves. The raw count says weeks of
+`issues/lang/0291c`, is a carve-out, or moves when its subject moves. *(True when written and
+false within the day: `0291c` did not reproduce, `0290b` landed, and the seven that remain of the
+nine are ordinary translation work.)* The raw count says weeks of
 translation; the determination says the next lever is a compiler bug somebody else filed, and fixing
 it unblocks ~6,500 lines in one go.
 
@@ -273,7 +364,7 @@ days. But the count is not the finding — **the distribution is**:
 |---|---|---|
 | `platform` | 31 | "the subject is TypeScript in every one" |
 | `box`, `sh` | 17 + 4 | another agent's packages |
-| `wacc` | 4 | `bindgen`, `jsBindgen`, `jsxBoundary`, `wapyRoundTrip` — every one a JavaScript boundary or a differential whose other half is JavaScript |
+| `wacc` | 3 | `bindgen`, `jsBindgen`, `jsxBoundary` — each a JavaScript boundary, and the subject is the generated JavaScript itself. `wapyRoundTrip` was a fourth in this row and did not belong: its other half is **wacc**, not JavaScript, and it is `packages/wacc/test/wac/wapyroundtrip_test.wac` as of 2026-08-30 |
 | `ts` | 2 | "the subject is a TypeScript compiler's answer" |
 | `webrtc`, `raster`, `stream` | 1 each | a real browser, a real canvas, a `TransformStream` |
 
@@ -311,6 +402,75 @@ regenerating the compiler's embedded copy of it, which is `issues/system/0291b`.
 recorded honestly and each was checked by the person after; what settled it was running the
 reproduction rather than reading it.
 
-So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts, then port nine
-tools that all want a scratch directory to run something in. `mutate` additionally has
+So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts — **done, `0290b`** —
+then port nine tools that all want a scratch directory to run something in, of which four are done. `mutate` additionally has
 `issues/system/0183`, which is its own thing.
+
+## Deno measured against the rule it is supposed to obey — agent-b, 2026-08-30
+
+The standing instruction is that **Deno should be a bootstrap host and an oracle called by wac tests,
+and nothing else**. That is a testable statement about this repository and nobody had checked it, so
+this is the check, done by reading rather than by guarding — a guard here would have to grade a
+determination per call site, which is the thing `0161` says a guard must not do.
+
+**Sixteen `deno` entries remain in `tasks.json5`, of 76**, counted as
+`grep -cE '^  "[^"]+": "deno '`. Both looser spellings are wrong and I used each once: a plain
+`grep -c 'deno '` counts two comment lines, and a `[a-z:]*` key pattern silently drops
+`bench:zstd-speed` and `bench:json-lookup` for their hyphens. By role:
+
+| role | entries | verdict |
+|---|---|---|
+| blocked on `0183`, agent-c's | `mutate`, `mutate:diff`, `mutate:operators` | not available |
+| **a decision, not a translation** | `bench:hash`, `bench:zstd`, `bench:zstd-speed`, `bench:json`, `bench:json-lookup` | **the operator's** |
+| the subject is Deno, npm or the browser | `serve`, `app:build`, `site:map`, `wasmopt`, `verify:fmt`, `gen:unicode`, `check`, `bench` | carve-out |
+
+*(The row that stood here on 2026-08-30 read `corpus:hosts`, `corpus:stderr` — blocked on a
+TypeScript library. Both were ported the same day: the first because its blocker was mine and
+wrong, the second because the library turned out to be a five-line regex. Three plus five plus
+eight is sixteen.)*
+
+**And the TypeScript that wac itself reaches is small and in role.** Grepping wac sources for a
+`deno` spawn finds twelve test files, and what they run is `harness/ladderRun.ts` — the bootstrap
+ladder, which is the *first* permitted role — and `harness/appRunMany.ts`, a batch runner for a built
+program, which is the second. The rest are oracles by construction: `packages/platform/test/wac/node_net_test.wac` against Node's
+networking, `packages/tls/test/wac/interop_test.wac` against a real TLS peer.
+
+**Two harness files looked dead and were not**, which is worth recording because the method that
+found them wrong is the one to use next time. `harness/appRunMany.ts` and `harness/ladderRun.ts` have **zero
+importers** — no TypeScript file names either. They are alive because *wac* spawns them by path, and
+a spawn is a dependency an import graph cannot see. Deleting on an importer count would have removed
+both.
+
+So the honest position for `tools/` and `harness/`: what remains is either in a role the rule allows,
+behind somebody else's issue, or waiting on one decision — whether the JS boundary is still the right
+thing for the five benchmarks to measure, now that there are two native hosts.
+
+### The `corpus:stderr` knot, sized — and it is smaller than it looks
+
+tools/corpusStderr.ts cannot move alone because three TypeScript tests import from it, which reads as
+1,474 lines that have to move together:
+
+| file | lines | needs |
+|---|---|---|
+| tools/corpusStderr.ts | 198 | — |
+| `packages/sh/test/wac/stderr_test.wac` | 163 | `KNOWN`, `sameName` |
+| `packages/sh/test/differential.test.ts` | 892 | `sameName` |
+| `packages/box/test/jobs.test.ts` | 221 | `sameName` |
+
+**But `sameName` is five lines** — one regex mapping bash's `bash: line 1: ` prefix onto `sh: `, and
+three of the four want nothing else. So the knot is not "move 1,474 lines"; it is "one small shared
+constant lives in a file that also happens to be a tool".
+
+The move that unties it, in the order that keeps everything green:
+
+1. Lift `sameName` and `KNOWN` out of tools/corpusStderr.ts into a module of their own that the three
+   TypeScript tests import. Nothing changes behaviourally and the tool is then free.
+2. Port the tool half to wac, with its own `sameName`.
+3. **Assert the two agree**, because step 2 makes a second copy of a rule and this repository has
+   already been bitten by exactly that — `packages/platform/test/faults_agree.test.ts` exists because
+   the fault numbering lives on both sides of the bridge, and `packages/platform/test/wac/hostfaults_test.wac` compares the two
+   Rust hosts by reading their sources. A wac test that reads the TypeScript's pattern and checks it
+   against its own is the same shape and the same cost.
+
+What it is *not* is a translation of 1,474 lines, which is how the row above reads and how I read it
+before measuring.

@@ -29,7 +29,7 @@ export struct Arith {
    * Where the thing bash calls the **error token** starts, in `src`.
    *
    * bash names it in every arithmetic diagnostic and this did not, which is seven of the twenty-seven
-   * rows `tools/corpusStderr.ts` pins:
+   * rows `tools/wac/corpusstderr.wac` pins:
    *
    *     $ echo $((1+*2))     1+*2: syntax error: operand expected (error token is "*2")
    *     $ echo $((a b c))    a b c: syntax error in expression (error token is "b c")

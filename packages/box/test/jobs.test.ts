@@ -6,7 +6,7 @@
 // `src/bin/sh.wac`, which has all 63 applets and can therefore actually run one.
 
 import { buildApp } from "../../../harness/buildApp.ts";
-import { sameName } from "../../../tools/corpusStderr.ts";
+import { sameName } from "../../sh/test/shname.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -98,7 +98,7 @@ Deno.test({
       // bash names itself and the line; we name ourselves. **Mapped rather than stripped**, so this
       // still checks that our builtins carry `sh: ` — which they did not until the stderr sweep found
       // forty corpus scripts differing for that one reason. `sameName` is the same mapping
-      // `tools/corpusStderr.ts` uses, in one place rather than two.
+      // `tools/wac/corpusstderr.wac` uses, in one place rather than two.
       const strip = (t: string) => sameName(t).trim();
       assertEquals(dec.decode(ours.stdout), dec.decode(theirs.stdout), `${script}: output`);
       assertEquals(strip(dec.decode(ours.stderr)), strip(dec.decode(theirs.stderr)), `${script}: stderr`);

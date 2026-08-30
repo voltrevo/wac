@@ -1,0 +1,70 @@
+// bash naming itself and the line, mapped onto our own name.
+//
+// bash prefixes its diagnostics with `bash: line 1: `, `bash: -c: line 1: `, or `environment: line
+// 1: ` inside a function it was given on the command line. We are not bash and our name is `sh`, so
+// that prefix is **mapped** to `sh: ` rather than stripped.
+//
+// **Mapped, because stripping would hide a diagnostic where *we* forgot to name ourselves**, which is
+// exactly the bug the comparison found: forty differences were one fact, a builtin whose message did
+// not carry `sh: `, and a stripping normaliser would have reported them as agreements.
+//
+// ## There is a second copy of this rule and it is deliberate
+//
+// `packages/sh/test/shname.ts` has the same function in TypeScript, because
+// `packages/sh/test/differential.test.ts` and `packages/box/test/jobs.test.ts` are TypeScript and a
+// wac file cannot be imported by them. Two copies of a rule is what this repository keeps getting
+// bitten by — `packages/platform/test/faults_agree.test.ts` exists because the fault numbering lives
+// on both sides of the bridge — so `shname_test.wac` beside this file reads the TypeScript's pattern
+// and checks it against this one, rather than trusting that they stayed level.
+
+import { compile, search, slotCount } from "../../../regex/src/regex.wac";
+import { Program, NO_MATCH } from "../../../regex/src/program.wac";
+
+/**
+ * The pattern, as one string, so the agreement test can compare it with the TypeScript's.
+ *
+ * `\S*bash` because bash names itself by however it was invoked: `bash:` from a bare name and
+ * `/usr/bin/bash:` from a path, which is what `packages/box/test/jobs.test.ts` gets and what the
+ * first version of this missed.
+ */
+export string pattern() { return "^(?:\\S*bash|environment)(?:: -c)?: line \\d+: "; }
+
+/**
+ * `text` with every such prefix replaced by `sh: `.
+ *
+ * The TypeScript spells this `/…/gm` and replaces across the whole string; `packages/regex` takes no
+ * multi-line flag, so this cuts at newlines and anchors each line at its own start — which is what
+ * `^` under `/m` means.
+ */
+export string sameName(string text) {
+  Program? p = compile(pattern().toBytes());
+  if (p is null) { return text; }
+  i32[] caps = i32[slotCount(p!)]();
+
+  u8[] b = text.toBytes();
+  // One buffer, not repeated concatenation: `core/README.md` says `s + t` in a loop is quadratic, and
+  // this runs over every script's stderr.
+  u8[] out = u8[b.len() + 8]();
+  i32 k = 0;
+  i32 start = 0;
+  while (start <= b.len()) {
+    i32 end = start;
+    while (end < b.len() && b[end] != '\n') { end = end + 1; }
+    string line = text.slice(start, end);
+    i32 from = 0;
+    if (search(p!, line.toBytes(), 0, caps, 1000000) == 0) {
+      // The pattern is anchored, so a match can only begin at zero; `caps[1]` is where it ends.
+      u8[] name = "sh: ".toBytes();
+      for (i32 i = 0; i < name.len(); i++) { out[k] = name[i]; k = k + 1; }
+      from = caps[1];
+    }
+    u8[] rest = line.toBytes();
+    for (i32 i = from; i < rest.len(); i++) { out[k] = rest[i]; k = k + 1; }
+    if (end < b.len()) { out[k] = '\n'; k = k + 1; }
+    if (end >= b.len()) { break; }
+    start = end + 1;
+  }
+  u8[] cut = u8[k]();
+  for (i32 i = 0; i < k; i++) { cut[i] = out[i]; }
+  return string.fromBytes(cut);
+}

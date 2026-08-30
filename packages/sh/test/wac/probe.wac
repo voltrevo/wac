@@ -349,7 +349,7 @@ Exec resolveNoHost(i32 id) { return Exec.of(0, u8[0](), u8[0](), "no host in thi
 // probe answers "no host" to the whole capability. They are in the signature because `Cli.of`
 // is positional and a shape that does not match wires the field to its neighbour.
 Pending<Exec> fakeExec(string path, string[] args, u8[] stdin, string[] env, bool clearEnv,
-                      bool inherit) {
+                      bool inherit, string cwd) {
   return Pending.of(0, resolveNoHost, alwaysSettled, ignoreDrop);
 }
 

@@ -481,7 +481,7 @@ what `assert` calls to *format a failure* and a passing run never reaches them. 
 the report working rather than a gap.
 
 **There is no longer a check that this agrees with the Deno harness, on purpose — 2026-08-19.** There
-were two: one compared `wac test --coverage` against `harness/wacCoverage.ts` file by file, and one
+were two: one compared `wac test --coverage` against harness/wacCoverage.ts file by file, and one
 ran every wac test in the repository through both runners and compared the tallies. Both were deleted
 with the file that held them.
 

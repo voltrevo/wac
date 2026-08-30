@@ -18,8 +18,8 @@
 // would each have to check fails the ones that remembered.
 
 import { T } from "../../src/assert.wac";
-import { Core, Cli, Stat } from "std/platform.wac";
-import { Sources, builtProgram, sourcesOf } from "../../src/built.wac";
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
+import { Sources, builtApp, builtProgram, sourcesOf } from "../../src/built.wac";
 import { freshDir, putFile } from "../../src/host.wac";
 import { contains, startsWith } from "../../src/strings.wac";
 
@@ -56,6 +56,54 @@ export string test_a_program_that_stopped_compiling_is_not_served_from_before(Co
 
   cli.remove(dir, true).wait();
   cli.remove(cli.cwd().wait() + "/.cache/built-builtprobe", true).wait();
+  return t.report();
+}
+
+/**
+ * `builtApp` answers something you can *run*, which is the whole reason it is not `builtProgram`.
+ *
+ * Asserting on the exit status rather than on the file's bytes: `wac app` writes a shell preamble and
+ * what matters about it is that a shell will execute it and the program's own status comes back. A
+ * test that only stat'd the artefact would pass for a file that is executable and does nothing, which
+ * is exactly the artefact a broken preamble produces.
+ *
+ * **The child gets a PATH with this checkout's `wac` first.** The preamble runs `command -v wac`, so
+ * an artefact run with no PATH fails with *needs the wac command on PATH* and an inherited PATH might
+ * find an installed `wac` that is a different compiler.
+ */
+export string test_a_built_app_runs_and_answers_its_own_exit_status(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/built-appprobe-src";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string entry = dir + "/p.wac";
+  // Exit 7, so the assertion cannot pass by accident on a 0 that means "did nothing".
+  t.isTrue(putFile(cli, entry,
+      "import { Core, Cli } from \"std/platform.wac\";\n"
+      + "export i32 main(Core core, Cli cli) { core.log(\"from the app\"); return 7; }\n") == "",
+      "could not write the program");
+
+  string app = builtApp(cli, entry, "appprobe", string[0](fill: ""));
+  Stat made = cli.stat(app).wait();
+  t.isTrue(made.exists && made.size > 8, "builtApp wrote nothing to " + app);
+  if (!made.exists) { return t.report(); }
+
+  string binDir = cli.cwd().wait() + "/native/v8/target/release";
+  Exec ran = cli.execWithIn(app, string[0](fill: ""), u8[0](),
+                            string[]("PATH=" + binDir), true, false, dir).wait();
+  t.isTrue(ran.ran(), "the artefact did not run at all — " + ran.error);
+  t.eqI32(ran.status, 7, "the program's own status did not come back: "
+                         + string.fromBytes(ran.stderr));
+  t.isTrue(contains(string.fromBytes(ran.stdout), "from the app"),
+           "the program's output did not come back: " + string.fromBytes(ran.stdout));
+
+  // The same failure rule as `builtProgram`: a build that fails must not leave the one before it,
+  // because an executable that runs is even easier to pass against than a module that loads.
+  t.isTrue(putFile(cli, entry, BROKEN) == "", "could not break the program");
+  Stat after = cli.stat(builtApp(cli, entry, "appprobe", string[0](fill: ""))).wait();
+  t.isTrue(!after.exists, "a failed `wac app` left the artefact from before it broke");
+
+  cli.remove(dir, true).wait();
+  cli.remove(cli.cwd().wait() + "/.cache/built-appprobe", true).wait();
   return t.report();
 }
 

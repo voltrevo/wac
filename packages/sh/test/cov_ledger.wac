@@ -1,0 +1,55 @@
+// sh's branch coverage.
+//
+//   wac task coverage:sh
+//   wac task coverage:sh --verbose
+//
+// The scripts are `test/cov_exercise.wac`; this builds it with `--coverage`, runs it, and joins the
+// counters against the branch table.
+//
+// **In wac since 2026-08-30, and it was the last one.** packages/sh/cov.ts was the only coverage
+// driver in the repository still written in TypeScript — the other thirty-six packages already ran
+// `wac run …/cov_ledger.wac`. `issues/system/0289b`.
+//
+// **This reports and does not ratchet, which is `issues/system/0288b` and is not closed by this.**
+// Every other package fails when a branch point nothing reaches has no entry; sh prints its table and
+// exits 0. Moving the driver does not change that, and pretending otherwise by adding a floor would be
+// worse than the gap: 788 of 3,068 points are unreached, and a ledger entry is a claim that nothing
+// *can* reach the code — 788 of those is not a translation job, it is 788 judgements. `0288b` holds
+// the sizing and the method that worked on the first batch.
+//
+// What moving it does buy is that the ledger machinery is now reachable from here at all:
+// `tools/wac/covledger.wac`'s `ratchet` takes the `Pin` and `Rule` lists this file will one day carry,
+// and until 2026-08-30 sh could not have used them from TypeScript even if the entries had been
+// written.
+//
+// `tools/wac/coverageall.wac` classifies a driver by whether it calls that shared ratchet, not by its
+// language, so this still counts as **`reports`** in the gate's summary — which is the honest answer
+// and the one `0288b` was filed against.
+
+import { Core, Cli } from "std/platform.wac";
+import { LedgerFlags, Measured, measure, report, reportPoints } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/sh/test/cov_exercise.wac";
+const string PREFIX = "packages/sh/";
+
+/**
+ * Nothing, and that is the point of `test/wac/probe.wac`.
+ *
+ * The shell under test is handed faked capabilities inside wac, so the exercise reads no file, spawns
+ * no process and opens no socket — every `cd`, `ls` and `mkdir` in the script list is answered by the
+ * fake. An exercise that needed grants would be one whose coverage depended on the machine it ran on.
+ */
+string[] grants() { return string[0](fill: ""); }
+
+export i32 main(Core core, Cli cli) {
+  LedgerFlags flags = LedgerFlags.read(cli);
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can union this
+  // driver's reach with another's — `issues/system/0241b`.
+  if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
+  report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
+  return 0;
+}

@@ -14,7 +14,7 @@
 // here and the probe is the larger one.
 //
 // The 32 safe tests are called anyway, from `main` with a real `Core` and `Cli` — which
-// `harness/wacCoverage.ts` could not do, since `runTestExports` skips any test taking an argument and 29
+// harness/wacCoverage.ts could not do, since `runTestExports` skips any test taking an argument and 29
 // of the 32 take capabilities.
 //
 // ## What the probe is for
@@ -1002,7 +1002,7 @@ export i32 main(Core core, Cli cli) {
   channels();
   serverHalf();
 
-  // The 32 tests that need no port. `harness/wacCoverage.ts` could call three of them: 29 take
+  // The 32 tests that need no port. harness/wacCoverage.ts could call three of them: 29 take
   // capabilities and `runTestExports` skips any test whose `fn.length > 0`.
   i32 bad = 0;
   if (channel__the_window_returns_credit_before_it_runs_out_not_after().len() > 0) { core.warn("error: FAILED channel_test test_the_window_returns_credit_before_it_runs_out_not_after"); bad = bad + 1; }

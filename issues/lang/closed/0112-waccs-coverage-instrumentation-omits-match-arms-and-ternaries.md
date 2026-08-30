@@ -32,7 +32,7 @@ Three differences, and only one of them is the one that is written down anywhere
 - **`case`: 125 → 0.** Every `match` arm in the package is uninstrumented.
 - **`ternary-then` / `ternary-else`: 157 each → 0.** Every conditional expression, both sides.
 - **`else`: 6 → 304.** wacc pairs an `else` with every `then`; the reference emits one only where
-  an `else` branch is written. This is the difference `harness/wacCoverage.ts` describes, and
+  an `else` branch is written. This is the difference harness/wacCoverage.ts describes, and
   wacc's convention is the better of the two — a fall-through that never happens is a decision
   nobody made, and it should be counted.
 
@@ -64,11 +64,11 @@ stopped measuring them. That is the whole failure mode in one step.
 
 [0111](0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md) is `coverage:zstd` failing
 because the reference cannot compile a package that uses wacc's bit methods, and its fix is
-[0105](0105-callers-still-compiling-with-the-reference.md)'s: point `harness/wacCoverage.ts` at
+[0105](0105-callers-still-compiling-with-the-reference.md)'s: point harness/wacCoverage.ts at
 wacc. **That switch is not safe until this closes.** It would fix one package's build by silently
 weakening nineteen packages' measurement.
 
-The comment in `harness/wacCoverage.ts` currently says the switch is ready and names only the
+The comment in harness/wacCoverage.ts currently says the switch is ready and names only the
 `else` difference — *"wacc instruments six that the reference does not in `packages/fs` alone"*.
 That sentence is true and it is the reason nobody looked further. Corrected in the same commit as
 this file.

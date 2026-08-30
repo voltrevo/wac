@@ -5,7 +5,7 @@ import { pool } from "../../../harness/inFlight.ts";
 import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
 import { CORPUS, usesDeleted } from "./corpus.ts";
-import { sameName } from "../../../tools/corpusStderr.ts";
+import { sameName } from "./shname.ts";
 // The shell, against bash.
 //
 // Every script here runs through GNU bash and through ours, and the two must agree on standard
@@ -695,7 +695,7 @@ Deno.test({
   ignore: !haveBash,
   fn: () => {
     // bash names itself and the line; we name ourselves — **mapped rather than stripped**, so this
-    // still checks that our builtins carry `sh: `. They did not until `tools/corpusStderr.ts` compared
+    // still checks that our builtins carry `sh: `. They did not until `tools/wac/corpusstderr.wac` compared
     // standard error across the whole corpus and found forty scripts differing for that one reason.
     const strip = (t: string) => sameName(t).trim();
     for (const script of ["cd /nosuchdir", "cd /etc/passwd", "cd /nosuchdir; echo st=$?"]) {
@@ -822,7 +822,7 @@ Deno.test({
       // bash prefixes a *builtin's* failure with `bash: line N: ` and ours has no line number to give
       // — the same deliberate difference the `cd` test above strips, and for the same reason.
       // bash names itself and the line; we name ourselves — **mapped rather than stripped**, so this
-    // still checks that our builtins carry `sh: `. They did not until `tools/corpusStderr.ts` compared
+    // still checks that our builtins carry `sh: `. They did not until `tools/wac/corpusstderr.wac` compared
     // standard error across the whole corpus and found forty scripts differing for that one reason.
     const strip = (t: string) => sameName(t).trim();
       assertEquals(dec.decode(ours.stdout), dec.decode(theirs.stdout), `${script}: output`);

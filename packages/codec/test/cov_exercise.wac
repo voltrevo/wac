@@ -24,7 +24,7 @@
 // `--coverage` and runs its `main`, so the exercises are inside the instrumented module.
 //
 // **It lives under `test/` on purpose.** `covreport` skips any file with `/test/` in its path, which
-// is the rule `harness/wacCoverage.ts` had and the reason `test/probe.wac` was never counted — so a
+// is the rule harness/wacCoverage.ts had and the reason `test/probe.wac` was never counted — so a
 // driver's own branches cannot appear in codec's number.
 
 import { hexEnc, hexEncUpper, hexDec, hexAccepts, hexDecodedOrTrap, b64Enc, b64Dec, b64Accepts,

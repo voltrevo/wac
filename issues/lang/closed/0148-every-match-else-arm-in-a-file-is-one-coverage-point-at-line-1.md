@@ -9,7 +9,7 @@
 - **Symptom:** wrong answer
 
 An `else:` arm's coverage point is recorded at line 1, column 1 **of the entry module** rather than
-where the arm is. `harness/wacCoverage.ts` merges per `(file, line, col, kind)`, so every else arm
+where the arm is. harness/wacCoverage.ts merges per `(file, line, col, kind)`, so every else arm
 in the whole compiled closure — however many files it spans — collapses into that one point.
 Exercising any one of them marks all of them covered.
 

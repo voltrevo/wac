@@ -1,6 +1,6 @@
 // **A coverage point at a position no construct has is a decision nobody measures.**
 //
-// `harness/wacCoverage.ts` merges points on `(file, line, col, kind)`, and `covTableRow` derives the
+// harness/wacCoverage.ts merges points on `(file, line, col, kind)`, and `covTableRow` derives the
 // *file* from the point's line in the linked blob. So a point given a floored or zeroed position
 // lands at the entry module's first line, every point like it lands there too, and covering any one
 // of them covers all — a collapse that always reads in the flattering direction. `issues/lang/0148`.

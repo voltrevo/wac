@@ -2339,7 +2339,19 @@ export struct Cli {
    * caller having to read it. What it is *not* is capturable — an inherited stream goes to the real
    * file descriptor, so `pushChild`'s capture does not see it.
    */
-  fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith;
+  fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWithIn;
+
+  /**
+   * `execWithIn` with no directory — the child runs wherever this program is.
+   *
+   * **The capability is the wider one and this is a method over it**, which is the same arrangement
+   * `exec` below already has with this. It means the thirty-five callers that do not care where the
+   * child runs are unchanged, and a host still implements exactly one of the three.
+   */
+  Pending<Exec> execWith(const this, string path, string[] args, u8[] stdin, string[] env,
+                         bool clearEnv, bool inherit) {
+    return this.execWithIn(path, args, stdin, env, clearEnv, inherit, "");
+  }
 
   /**
    * `execWith` with nothing added, nothing cleared and buffered output — what almost every caller
@@ -2465,7 +2477,7 @@ export struct Cli {
     fn[Pending<string>()] cwd,
     fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
     fn[Pending<Captured>()] popChild,
-    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith,
+    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWithIn,
     fn[LoadedModule(u8[], i32)] load,
     fn[CallResult(i32, string, i32)] call,
     fn[void(i32)] unload,
@@ -2476,7 +2488,7 @@ export struct Cli {
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
       connect, listen, accept, recv, send, closeSocket, closeSend, bindDatagram, receiveFrom, sendTo,
       spawn, spawnSelf, closeFeed, exitCode, cwd,
-      pushChild, popChild, execWith,
+      pushChild, popChild, execWithIn,
       load, call, unload, validated
     );
   }

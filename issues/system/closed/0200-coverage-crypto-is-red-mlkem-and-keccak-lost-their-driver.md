@@ -42,7 +42,7 @@ oracle. Ten of that file's twelve tests now take `(Core core, Cli cli)` — they
 out of generated glue with the coverage task's name on it. `packages/fmt` had the same shape and the
 same red.
 
-`harness/wacCoverage.ts`'s `runTestExports` is the fix: it runs the exports that take nothing, and
+harness/wacCoverage.ts's `runTestExports` is the fix: it runs the exports that take nothing, and
 **names the ones it cannot call** rather than dropping them. `fmt` is green again and `crypto` now
 reports instead of crashing. Eight `cov.ts` files had that loop copied; all eight use the helper now.
 
@@ -75,7 +75,7 @@ this stays red without stopping anybody, which is how it survived three gate run
 ## 127 was mostly not the package — 2026-08-18, agent-c
 
 The number this issue quotes was measured by a loop in packages/crypto/cov.ts that filtered on the
-package prefix alone, while the table beside it — `report()` in `harness/wacCoverage.ts` — excludes test
+package prefix alone, while the table beside it — `report()` in harness/wacCoverage.ts — excludes test
 files, "because a coverage report is about the package". So the two disagreed, and the list was the one
 that was wrong:
 
@@ -141,7 +141,7 @@ loosens is a ledger.
 > `packages/crypto/src/mlkem.wac` reads **131 of 132** in the same counter array as everything else,
 > because the shared paths are covered by the rest of the run too. There is no subprocess, no remembered
 > figure and no `measuredElsewhere` exclusion. What this entry was working around was one sentence in
-> `harness/wacCoverage.ts`: `runTestExports` skips any test whose `fn.length > 0`, because `instrument`
+> harness/wacCoverage.ts: `runTestExports` skips any test whose `fn.length > 0`, because `instrument`
 > cannot supply a capability. Sixty-four of the package's 152 returning tests were behind that.
 
 **2. keccak's five remaining points are *not* a measurement gap, and this issue said they were.** It
@@ -201,7 +201,7 @@ driver could *union* the binary's measurement with its own, on the evidence that
 "on `rsa.wac` the Deno driver reaches 125 where the binary's own run of `rsa_test.wac` reaches 115".
 
 There is nothing to union. Both numbers came from the same instrument being asked twice because
-`harness/wacCoverage.ts`'s `runTestExports` skips any test taking an argument — `instrument` cannot
+harness/wacCoverage.ts's `runTestExports` skips any test taking an argument — `instrument` cannot
 supply a capability, so the driver ran none of the tests that need one, and the binary ran only that
 file's. `wac covdump` runs the ordinary program path (`issues/system/0221`), so a wac exercise's `main`
 has a real `Core` and `Cli` and calls every test itself: one run, one counter array, and the union is

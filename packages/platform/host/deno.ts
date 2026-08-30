@@ -1080,8 +1080,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
      * not a program that could not be started, and the first is the case a differential oracle
      * cares about most.
      */
-    [OP.EXEC_WITH]: async (p) => {
-      const { path, args, env, stdin, clearEnv, inherit } = unpackExec(p);
+    [OP.EXEC_WITH_IN]: async (p) => {
+      const { path, args, env, stdin, clearEnv, inherit, cwd } = unpackExec(p);
       if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
       try {
         const child = new Deno.Command(path, {
@@ -1091,6 +1091,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
           // the whole of it.
           env: envRecord(env),
           clearEnv,
+          // **Empty means "wherever this process already is"**, which is `spawn`'s rule for the same
+          // parameter — `undefined` is Deno's spelling of it. `issues/system/0290b`.
+          cwd: cwd === "" ? undefined : cwd,
           stdin: "piped",
           // Inherited means the real file descriptor: the bytes reach this process's own output and
           // are not collected, which is why the answer below carries none.

@@ -1,9 +1,14 @@
 // Every runnable program in this repo, found the way `MAP.md` finds them.
 //
-// One definition of "a program", used by `tools/wac/map.wac` to write the map and by
-// `tools/programs.test.ts` to compile them all. Two copies of this regex would drift, and the drift
-// would be invisible in the direction that matters: a program the test does not know about is a program
-// nothing compiles, which is wac-mono 0079.
+// **This is the TypeScript copy, and it is no longer the definition.** `tools/wac/programs.wac` is what
+// `tools/wac/map.wac` writes the map from and what `packages/wacc/test/wac/programscompile_test.wac` compiles from,
+// and this file serves the TypeScript that still wants the list. The two agree — both demand
+// `export i32 main(` at the start of a line — and nothing checks that they do.
+//
+// The sentence that used to be here said there was one definition, and warned that "two copies of this
+// regex would drift, and the drift would be invisible in the direction that matters: a program the test
+// does not know about is a program nothing compiles", which is wac-mono 0079. That warning is now about
+// this file. It goes when the last TypeScript reader of it goes; `issues/system/0289b` tracks them.
 //
 // A program is a `.wac` file outside a `test/` directory exporting `main` or `page`. That is the whole
 // rule — `packages/platform`'s `entry.ts` dispatches on exactly those two names, so anything else is a

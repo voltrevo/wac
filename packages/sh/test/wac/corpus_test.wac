@@ -70,7 +70,7 @@ export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
     cli.remove(dir, true).wait();
     ran = ran + 1;
     // Output and status, which is what the differential compared. Standard error is captured in the
-    // vectors for `tools/corpusStderr.ts` and is not asserted here: this shell says `sh:` where bash
+    // vectors for `tools/wac/corpusstderr.wac` and is not asserted here: this shell says `sh:` where bash
     // says `bash:`, deliberately, and the two are compared where that difference is the subject.
     if (r.out != vec.out || r.status != vec.status) {
       wrong = wrong + 1;

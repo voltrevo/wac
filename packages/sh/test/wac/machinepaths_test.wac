@@ -1,0 +1,98 @@
+// Which absolute paths a corpus script names, and nothing else.
+//
+// This decides whether a script is compared on three backings or on two, and being wrong about it
+// **does not fail** — it silently narrows the comparison and reports the same agreement figure for
+// having checked less. The history is the argument for pinning it: the first version matched on the
+// path's *name* and not its existence, and dropped the host arm for 34 scripts where only 6 could
+// ever have differed.
+//
+// The existence half needs a filesystem and belongs to the two callers; this covers the scanning
+// half, which is where the shape of the rule shows.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { absolutePathsIn } from "./machinepaths.wac";
+
+/** The scan, spelled as one call so each case below is one line. */
+string found(string script) { return joined(absolutePathsIn(script), " "); }
+
+export string test_a_path_at_the_start_and_after_a_space() {
+  T t = T.create();
+  t.eqStr(found("/etc/passwd"), "/etc/passwd", "at position zero");
+  t.eqStr(found("ls /etc/passwd"), "/etc/passwd", "after a space");
+  return t.report();
+}
+
+export string test_tmp_is_levelled_and_so_is_everything_under_it() {
+  T t = T.create();
+  // Every script runs after `mkdir -p /tmp`, so `/tmp` is the one absolute path all three backings
+  // have — naming it says nothing about the machine.
+  t.eqStr(found("ls /tmp"), "", "/tmp itself");
+  t.eqStr(found("cat /tmp/x/y"), "", "and under it");
+  // But a directory whose name merely starts with the same letters is not /tmp.
+  t.eqStr(found("ls /tmpish"), "/tmpish", "/tmpish is not /tmp");
+  return t.report();
+}
+
+export string test_a_relative_path_is_not_absolute() {
+  T t = T.create();
+  // The delimiter before the slash is what makes this work: in `a/b/c` the slash is preceded by `a`,
+  // which does not open a path, so there is no match at all.
+  t.eqStr(found("cat a/b/c"), "", "a relative path names nothing");
+  return t.report();
+}
+
+export string test_the_delimiters_a_script_actually_uses() {
+  T t = T.create();
+  t.eqStr(found("cat \"/etc/hosts\""), "/etc/hosts", "inside double quotes");
+  t.eqStr(found("cat '/etc/hosts'"), "/etc/hosts", "inside single quotes");
+  t.eqStr(found("cat </etc/hosts"), "/etc/hosts", "after a redirect");
+  t.eqStr(found("x=/etc/hosts"), "/etc/hosts", "after an assignment");
+  t.eqStr(found("( cd /etc )"), "/etc", "after an open paren");
+  return t.report();
+}
+
+export string test_several_paths_in_one_script() {
+  T t = T.create();
+  t.eqStr(found("[ -f /etc/passwd -a -d /usr ]"), "/etc/passwd /usr", "both, in order");
+  return t.report();
+}
+
+export string test_a_script_naming_nothing_absolute() {
+  T t = T.create();
+  t.eqStr(found("echo hello | wc -l"), "", "no paths at all");
+  t.eqStr(found(""), "", "and an empty script is not a trap");
+  return t.report();
+}
+
+export string test_a_bare_slash_is_not_a_path() {
+  T t = T.create();
+  // Something has to follow the slash, so `ls /` is not reported. Deliberate and worth pinning: `/`
+  // exists on every machine, so treating it as a named path would drop the host arm for every script
+  // that lists the root — which is exactly the listing a VFS bug would show up in.
+  t.eqStr(found("ls /"), "", "the root itself");
+  t.eqStr(found("ls -la / | head"), "", "even with a pipeline after it");
+  return t.report();
+}
+
+/**
+ * **The one place this rule and `corpusBackings.ts`'s regex were never the same.**
+ *
+ * That regex is `(?:^|[\s"'<>|=(])(\/[A-Za-z][\w./-]*)` — `[A-Za-z]` for the character after the
+ * slash, and `[\w./-]` only for the rest. This admits the wider class in both positions, so `//host`,
+ * `/_x` and `/0` are paths here and were not there. The wac comment used to say it matched
+ * `[\w./-]`, which described the difference away instead of recording it.
+ *
+ * It made no difference to the answer: over all 946 corpus scripts the two rules both selected 30 and
+ * disagreed on none, which is a property of this corpus rather than of the rules. Pinned so that a
+ * corpus script which *does* tell them apart shows up here as a decision rather than as a number that
+ * moved.
+ */
+export string test_the_first_byte_after_the_slash_takes_the_wider_class() {
+  T t = T.create();
+  t.eqStr(found("curl http://host/x"), "", "a URL's slashes do not open a path — `p` precedes them");
+  t.eqStr(found("ls //host"), "//host", "but a delimiter and two slashes do, where the regex said no");
+  t.eqStr(found("cat /_private"), "/_private", "an underscore may open a path here");
+  t.eqStr(found("cat /0day"), "/0day", "and so may a digit");
+  return t.report();
+}
