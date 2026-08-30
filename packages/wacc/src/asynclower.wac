@@ -63,13 +63,14 @@ import {
   synthPending, synthWait, synthThen, synthSched, synthDetach, synthState, synthDone, synthRes,
   synthStep, synthAssign, synthI32, synthBool, synthVoid, synthId, synthV, synthResolve,
   synthSettled, synthDrop, synthArmed, synthWaitAt, synthNoStep, synthStepFn, synthMachine,
-  synthSlot, synthVal, synthHand, synthNum, synthZero, synthOne,
+  synthSlot, synthVal, synthHand, synthNum, synthZero, synthOne, synthArg,
 } from "./asyncsynth.wac";
 
 /** Everything the rewrite needs that is not the statement in front of it. */
 struct Ctx {
   i32 first;        // index of the first synthetic token
   i32 ups;          // how many suspension slots the tail carries
+  i32 args;         // how many `__wacArgK` names the tail carries — `issues/lang/0294c`
   i32 line;
   i32 col;
   string[] hoisted; // names that have become cells
@@ -122,7 +123,9 @@ i32 tMachine(Ctx c) { return synthTok(c.first, synthMachine()); }
 i32 tUp(Ctx c, i32 k) { return synthTok(c.first, synthSlot(k)); }
 i32 tVal(Ctx c, i32 k) { return synthTok(c.first, synthVal(k)); }
 i32 tHand(Ctx c, i32 k) { return synthTok(c.first, synthHand(k)); }
-i32 tNum(Ctx c, i32 k) { return synthTok(c.first, synthNum(c.ups, k)); }
+i32 tNum(Ctx c, i32 k) { return synthTok(c.first, synthNum(c.ups, c.args, k)); }
+/** The synthetic name an async lambda's parameter `k` is renamed to — `issues/lang/0294c`. */
+i32 tArg(Ctx c, i32 k) { return synthTok(c.first, synthArg(c.ups, k)); }
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
@@ -271,6 +274,18 @@ Ty lowFnTy(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, 
 /** `T[] name = T[1]();` */
 Stmt sCellDecl(Ctx c, i32 nameTok, Ty el) {
   Expr mk = Expr(ExprKind.ArrNew(el, eInt(c, 1), null, Expr[]()), c.line, c.col);
+  return Stmt(StmtKind.Var(lowArrTy(c, el), nameTok, mk, false), c.line, freshCol(c));
+}
+
+/**
+ * `T[] name = T[1](fill: init);` — a cell that starts out holding something.
+ *
+ * Only an `async` lambda's parameters need this: a hoisted *local* is declared in the body and its
+ * declaration is rewritten in place, so there is nothing to carry in. A parameter arrives with a
+ * value already, and the cell is what the machine reads it out of afterwards.
+ */
+Stmt sCellFrom(Ctx c, i32 nameTok, Ty el, Expr init) {
+  Expr mk = Expr(ExprKind.ArrNew(el, eInt(c, 1), init, Expr[]()), c.line, c.col);
   return Stmt(StmtKind.Var(lowArrTy(c, el), nameTok, mk, false), c.line, freshCol(c));
 }
 
@@ -945,16 +960,109 @@ export struct Lowered {
   bool changed;
 }
 
-/** How many numerals this file needs — the largest state bound any one function asks for. */
-i32 numsNeeded(Program prog) {
+// ── async lambdas — `issues/lang/0294c` ──────────────────────────────────────
+//
+// The same machine, built for a lambda instead of a function, with two differences that both come
+// from a lambda never writing a return type.
+//
+// **Where `R` comes from.** This pass runs on the tree with no type information at all, and
+// `machineBody` needs `R` to declare the cell the answer lands in. A function writes it; a lambda
+// takes it from the `fn[…]` it is assigned to. So the lowering takes an `async` lambda that is the
+// initialiser of a declaration whose type spells `Pending<R>` out, because that is the one place `R`
+// is present in the AST — and the emitter declines the rest by name. That is less of a restriction
+// than it sounds: `async` is only *legal* on a slot naming a ticket, so the type has to be written
+// somewhere, and a declaration is where it is written.
+//
+// **Why the parameters are renamed.** The machine puts the whole body inside `__wacStep`, so every
+// mention of a parameter becomes a capture — and a lambda's parameter captured by an inner lambda
+// emits a module the engine rejects (`issues/lang/0296c`, still live: a cell is keyed by the
+// position of a *declaration*, and a parameter has none). The parameter takes a synthetic name and
+// its cell keeps the written one, which turns the capture into an ordinary hoisted local and needs
+// no change to the substitution:
+//
+//     fn[Pending<i32>(string)] f = async (string p) => { … p … };
+//     fn[Pending<i32>(string)] f = (string __wacArg0) => {
+//       string[] p = string[1](fill: __wacArg0);   // `p` is a hoisted local now
+//       …                                          // and every read of it is `p[0]`
+//     };
+
+/**
+ * The `R` of a `fn[Pending<R>(…)]`, or null when the type is not one.
+ *
+ * Read off the written type rather than resolved, so a slot spelled through an alias is not one this
+ * finds. That is the honest limit of a pass with no types: it can read what the program says.
+ */
+Ty? slotTicketTy(u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    case Funcref(ret, params): {
+      match (ret.kind) {
+        case Named(tok, typeArgs): {
+          if (synthTextAt(src, lexed, tok) != "Pending") { return null; }
+          if (typeArgs.len() != 1) { return null; }
+          return typeArgs[0];
+        }
+        else: { return null; }
+      }
+    }
+    else: { return null; }
+  }
+}
+
+/** The `async` lambda `s` declares, or null — `fn[Pending<R>(…)] n = async (…) => { … };`. */
+Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): {
+      if (slotTicketTy(src, lexed, type) is null) { return null; }
+      match (init.kind) {
+        case Lambda(params, body, isAsync): { return isAsync ? init : null; }
+        else: { return null; }
+      }
+    }
+    else: { return null; }
+  }
+}
+
+/** Whether this file has an `async` lambda the lowering can take. */
+bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        for (i32 i = 0; i < body.len(); i++) {
+          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+          if (lam is null) { continue; }
+          match (lam!.kind) {
+            case Lambda(lps, lbody, la): { if (planBody(lbody).ok) { return true; } }
+            else: { }
+          }
+        }
+      }
+      else: { }
+    }
+  }
+  return false;
+}
+
+/**
+ * The widest parameter list any lowerable `async` lambda has.
+ *
+ * One `__wacArgK` per position, shared across the file the way the suspension slots are — the tail
+ * is built once for a file and sized by its largest asker.
+ */
+i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
   i32 most = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (!isAsync) { continue; }
-        if (!planBody(body).ok) { continue; }
-        i32 want = statesNeeded(body);
-        if (want > most) { most = want; }
+        for (i32 i = 0; i < body.len(); i++) {
+          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+          if (lam is null) { continue; }
+          match (lam!.kind) {
+            case Lambda(lps, lbody, la): {
+              if (planBody(lbody).ok && lps.len() > most) { most = lps.len(); }
+            }
+            else: { }
+          }
+        }
       }
       else: { }
     }
@@ -962,16 +1070,63 @@ i32 numsNeeded(Program prog) {
   return most;
 }
 
-/** How many suspension slots this file needs — the largest any one function asks for. */
-i32 slotsNeeded(Program prog) {
+/**
+ * How many numerals this file needs — the largest state bound any one machine asks for.
+ *
+ * **Lambdas count, and a lambda in a *plain* function counts.** The walk cannot filter on the
+ * declaration being `async`, because an `async` lambda is a machine of its own wherever it sits.
+ * Undersizing this is not a diagnostic: it is a token index past the end of the tail, which traps
+ * inside the compiler and is reported as `wac.wac trapped`.
+ */
+i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
   i32 most = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (!isAsync) { continue; }
-        AsyncPlan p = planBody(body);
-        if (!p.ok) { continue; }
-        if (planSuspends(p) > most) { most = planSuspends(p); }
+        if (isAsync && planBody(body).ok) {
+          i32 want = statesNeeded(body);
+          if (want > most) { most = want; }
+        }
+        for (i32 i = 0; i < body.len(); i++) {
+          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+          if (lam is null) { continue; }
+          match (lam!.kind) {
+            case Lambda(lps, lbody, la): {
+              if (!planBody(lbody).ok) { continue; }
+              i32 w = statesNeeded(lbody);
+              if (w > most) { most = w; }
+            }
+            else: { }
+          }
+        }
+      }
+      else: { }
+    }
+  }
+  return most;
+}
+
+/** How many suspension slots this file needs — the largest any one machine asks for. */
+i32 slotsNeeded(Program prog, u8[] src, Lexed lexed) {
+  i32 most = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (isAsync) {
+          AsyncPlan p = planBody(body);
+          if (p.ok && planSuspends(p) > most) { most = planSuspends(p); }
+        }
+        for (i32 i = 0; i < body.len(); i++) {
+          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+          if (lam is null) { continue; }
+          match (lam!.kind) {
+            case Lambda(lps, lbody, la): {
+              AsyncPlan q = planBody(lbody);
+              if (q.ok && planSuspends(q) > most) { most = planSuspends(q); }
+            }
+            else: { }
+          }
+        }
       }
       else: { }
     }
@@ -993,6 +1148,67 @@ bool anyLowerable(Program prog) {
 }
 
 /**
+ * Every `async` lambda declared directly in `body`, rewritten into a machine.
+ *
+ * **Directly, not at any depth.** A declaration nested inside an `if` or a loop is left alone and
+ * declined by name, which is the same standard the four suspension shapes `design/lang/0014` could
+ * not flatten are held to. Declaring a handler is a top-of-body act, so this is where they are.
+ */
+Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stmt[] body) {
+  if (body.len() == 0) { return body; }
+  Stmt[] out = Stmt[body.len()](fill: body[0]);
+  for (i32 i = 0; i < body.len(); i++) {
+    out[i] = body[i];
+    match (body[i].kind) {
+      case Var(type, nameTok, init, isConst): {
+        Ty? tick = slotTicketTy(src2, lexed2, type);
+        if (tick is null) { continue; }
+        match (init.kind) {
+          case Lambda(lps, lbody, la): {
+            if (!la) { continue; }
+            AsyncPlan plan = planBody(lbody);
+            if (!plan.ok) { continue; }
+
+            // The names that become cells: the locals the plan hoisted, and **every parameter**.
+            // A parameter is hoisted whether or not it outlives a suspension, because the machine
+            // puts the whole body inside `__wacStep` — so even a read in state 0 is a capture.
+            string[] names = string[plan.hoist.len() + lps.len()](fill: "");
+            for (i32 h = 0; h < plan.hoist.len(); h++) {
+              names[h] = synthTextAt(src2, lexed2, plan.hoist[h]);
+            }
+            for (i32 j = 0; j < lps.len(); j++) {
+              names[plan.hoist.len() + j] = synthTextAt(src2, lexed2, lps[j].nameTok);
+            }
+            // A column of its own: the emitter keys a lambda by position, and this builds several.
+            Ctx c = Ctx(first, ups, args, init.line, init.col, names, src2, lexed2,
+                        i32[1](fill: init.col + 5000), bool[1]());
+
+            Param[] ps2 = Param[lps.len()](fill: lps.len() > 0 ? lps[0]
+                                                               : Param(0 - 1, type, false));
+            for (i32 j = 0; j < lps.len(); j++) {
+              ps2[j] = Param(tArg(c, j), cloneTy(lps[j].type), lps[j].isConst);
+            }
+
+            Stmt[] mach = machineBody(c, lbody, plan, tick!);
+            Stmt[] full = Stmt[lps.len() + mach.len()](fill: mach[0]);
+            for (i32 j = 0; j < lps.len(); j++) {
+              full[j] = sCellFrom(c, lps[j].nameTok, cloneTy(lps[j].type), eId(c, tArg(c, j)));
+            }
+            for (i32 k = 0; k < mach.len(); k++) { full[lps.len() + k] = mach[k]; }
+
+            Expr made = Expr(ExprKind.Lambda(ps2, full, false), init.line, init.col);
+            out[i] = Stmt(StmtKind.Var(type, nameTok, made, isConst), body[i].line, body[i].col);
+          }
+          else: { }
+        }
+      }
+      else: { }
+    }
+  }
+  return out;
+}
+
+/**
  * Every `async` function in `prog`, rewritten into a state machine.
  *
  * **A function this cut cannot flatten is left exactly as it was**, still marked `async`, so the
@@ -1004,15 +1220,18 @@ bool anyLowerable(Program prog) {
  * idempotent and the token indices it hands out are absolute.
  */
 export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
-  if (!anyLowerable(prog)) { return Lowered(prog, src, lexed, false); }
-  i32 ups = slotsNeeded(prog);
-  i32 states = numsNeeded(prog);
+  if (!anyLowerable(prog) && !anyLambdaLowerable(prog, src, lexed)) {
+    return Lowered(prog, src, lexed, false);
+  }
+  i32 ups = slotsNeeded(prog, src, lexed);
+  i32 states = numsNeeded(prog, src, lexed);
+  i32 args = argsNeeded(prog, src, lexed);
 
   i32 line = 1;
   i32 col = 1;
-  u8[] src2 = synthSource(src, ups, states);
+  u8[] src2 = synthSource(src, ups, states, args);
   i32 first = lexed.tokenCount;
-  Lexed lexed2 = synthTokens(lexed, src2, ups, states, line, col);
+  Lexed lexed2 = synthTokens(lexed, src2, ups, states, args, line, col);
 
   // **One extra declaration per file**: the no-op a step cell is filled with before the machine
   // exists. A top-level function rather than a lambda, because it is what an `fn[bool()][1](fill: …)`
@@ -1022,18 +1241,28 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
     out[d] = prog.decls[d];
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (!isAsync) { continue; }
-        AsyncPlan plan = planBody(body);
+        // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
+        // everything its body contains, lambdas included — so a lambda lowered beforehand is
+        // ordinary code by the time that walk reaches it, and its captures of the enclosing
+        // function's cells are rewritten with everything else.
+        Stmt[] body2 = lowerLambdasIn(first, ups, args, src2, lexed2, body);
+        if (!isAsync) {
+          out[d] = Decl(DeclKind.Func(nameTok, returnType, params, body2, exported, typeParams,
+                                      false),
+                        prog.decls[d].line, prog.decls[d].col);
+          continue;
+        }
+        AsyncPlan plan = planBody(body2);
         if (!plan.ok) { continue; }
 
         string[] names = string[plan.hoist.len()](fill: "");
         for (i32 i = 0; i < plan.hoist.len(); i++) {
           names[i] = synthTextAt(src2, lexed2, plan.hoist[i]);
         }
-        Ctx c = Ctx(first, ups, prog.decls[d].line, prog.decls[d].col, names, src2, lexed2,
+        Ctx c = Ctx(first, ups, args, prog.decls[d].line, prog.decls[d].col, names, src2, lexed2,
                     i32[1](fill: prog.decls[d].col + 1000), bool[1]());
 
-        Stmt[] machine = machineBody(c, body, plan, returnType);
+        Stmt[] machine = machineBody(c, body2, plan, returnType);
         out[d] = Decl(DeclKind.Func(nameTok, lowPendingTy(c, cloneTy(returnType)), params, machine,
                                     exported, typeParams, false),
                       prog.decls[d].line, prog.decls[d].col);
@@ -1041,7 +1270,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
       else: { }
     }
   }
-  Ctx top = Ctx(first, ups, 1, 1, string[](), src2, lexed2, i32[1](fill: 1), bool[1]());
+  Ctx top = Ctx(first, ups, args, 1, 1, string[](), src2, lexed2, i32[1](fill: 1), bool[1]());
   Stmt[] noBody = Stmt[1](fill: sRet(top, eBool(top, true)));
   out[prog.decls.len()] = Decl(DeclKind.Func(tNoStep(top), lowPrimTy(top, tBool(top)), Param[](),
                                              noBody, false, i32[](), false), 1, 1);

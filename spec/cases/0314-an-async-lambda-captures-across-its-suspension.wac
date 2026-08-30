@@ -1,0 +1,28 @@
+// expect: answers answer = 30
+// why: a captured name and a parameter both survive a suspension, which is why a lambda is wanted
+// from: issues/lang/0294c
+// spec: §wac-async-lambda-captures-5mtj28r
+import { Pending } from "std/platform.wac";
+
+/** A ticket that is already answered — see `0305` for why it is built this way. */
+Pending<i32> ready(i32 v) {
+  i32[] cell = i32[1](fill: v);
+  fn[i32(i32)] r = (i32 id) => cell[0];
+  fn[bool(i32)] s = (i32 id) => true;
+  fn[void(i32)] d = (i32 id) => { };
+  return Pending<i32>.driven(0, r, s, d);
+}
+
+export i32 answer() {
+  i32[] base = i32[1](fill: 10);
+
+  // Two things cross the suspension here, and they are stored differently underneath: `base` is
+  // **captured** from the enclosing function, and `n` is the lambda's own **parameter**. A top-level
+  // `async` function could take `n` but would have to be handed `base`; being able to write the
+  // machine where the values already are is the whole point of the feature.
+  fn[Pending<i32>(i32)] plus = async (i32 n) => {
+    i32 v = await ready(n);
+    return v + base[0] + n;
+  };
+  return plus(10).wait();
+}

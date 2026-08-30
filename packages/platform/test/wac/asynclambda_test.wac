@@ -1,0 +1,109 @@
+// `async` lambdas — `issues/lang/0294c`, the increment after `design/lang/0014`.
+//
+// A lambda never writes a return type: the `fn[…]` it is assigned to supplies one. So the slot is
+// both the permission and the type — `fn[Pending<R>(…)]` is what allows `async` here and what says
+// what the ticket carries. That is D3's rule for functions read backwards, and it is why there is no
+// new syntax for the return type and no inference to argue about.
+//
+// **The issue's own motivating example does not typecheck**, which was worth finding out before
+// building for it: it was `p.then(async (Socket s) => …)`, and `then` takes `fn[void(T)]` — a slot
+// that wants no ticket. An `async` lambda has to be written into a slot that names one, which in
+// practice means a declaration, and a declaration is exactly where the type is available.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+
+/** The oracle: the same answer with no machinery at all. */
+i32 sizeOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? f.bytes.len() : 0 - 1;
+}
+
+export string test_an_async_lambda_answers_its_ticket(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md");
+  t.isTrue(want > 0, "the oracle read the file at all");
+
+  // The whole feature in four lines: `async` on a lambda, an `await` in its body, and a slot that
+  // says the value is a ticket. `cli` is captured, which is the thing a lambda has and a top-level
+  // `async` function has to be handed.
+  fn[Pending<i32>(string)] size = async (string p) => {
+    FileResult f = await cli.readFile(p);
+    return f.ok ? f.bytes.len() : 0 - 1;
+  };
+
+  Pending<i32> tk = size("README.md");
+  t.isFalse(tk.isDone(), "the call ran to the first await and stopped — eager, D1");
+  t.eqI32(tk.wait(), want, "and waiting drove it to the real answer");
+  t.isTrue(tk.isDone(), "which it remembers");
+  return t.report();
+}
+
+export string test_an_async_lambda_completes_under_drain(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md");
+  fn[Pending<i32>(string)] size = async (string p) => {
+    FileResult f = await cli.readFile(p);
+    return f.ok ? f.bytes.len() : 0 - 1;
+  };
+  // D1 again, from the other side: the suspension registered a continuation, so draining alone is
+  // enough and the `wait` afterwards drives nothing.
+  Pending<i32> tk = size("README.md");
+  t.isTrue(core.drain() > 0, "the drain had something to run");
+  t.isTrue(tk.isDone(), "draining alone finished the machine");
+  t.eqI32(tk.wait(), want, "and the answer is still the real one");
+  return t.report();
+}
+
+export string test_a_parameter_survives_the_suspension(Core core, Cli cli) {
+  T t = T.create();
+  // **The case that decides the lowering.** `p` is read *after* the await as well as before, so it
+  // has to cross a state boundary. In a function the machine's step closure captures the parameter
+  // directly; in a lambda that is an inner lambda capturing the enclosing lambda's parameter, which
+  // emits a module the engine rejects — `issues/lang/0296c`. The lowering copies the parameter into
+  // a declared cell first, so what is captured is a declaration.
+  fn[Pending<string>(string)] describe = async (string p) => {
+    FileResult f = await cli.readFile(p);
+    return p + "=" + (f.ok ? "ok" : "no");
+  };
+  t.eqStr(describe("README.md").wait(), "README.md=ok", "the parameter was still there afterwards");
+  return t.report();
+}
+
+export string test_two_async_lambdas_overlap(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md");
+  fn[Pending<i32>(string)] size = async (string p) => {
+    FileResult f = await cli.readFile(p);
+    return f.ok ? f.bytes.len() : 0 - 1;
+  };
+  Pending<i32> a = size("README.md");
+  Pending<i32> b = size("README.md");
+  t.isFalse(a.isDone(), "the first is outstanding");
+  t.isFalse(b.isDone(), "and so is the second, before any drain");
+  core.drain();
+  t.eqI32(a.wait(), want, "the first answered");
+  t.eqI32(b.wait(), want, "and so did the second");
+  return t.report();
+}
+
+export string test_an_async_lambda_with_a_loop(Core core, Cli cli) {
+  T t = T.create();
+  string[] ps = string[]("README.md", "MERGE.md", "CLAUDE.md");
+  i32 want = 0;
+  for (i32 i = 0; i < ps.len(); i++) { want = want + sizeOf(cli, ps[i]); }
+
+  // A suspension inside a loop, in a lambda — the same shape A1 needed from a function, and the one
+  // a continuation-passing lowering cannot express without hoisting every step by hand.
+  fn[Pending<i32>(string[])] total = async (string[] paths) => {
+    i32 sum = 0;
+    for (i32 i = 0; i < paths.len(); i++) {
+      FileResult f = await cli.readFile(paths[i]);
+      if (!f.ok) { return 0 - 1; }
+      sum = sum + f.bytes.len();
+    }
+    return sum;
+  };
+  t.eqI32(total(ps).wait(), want, "the machine summed all three across three suspensions");
+  return t.report();
+}

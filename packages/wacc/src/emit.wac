@@ -11599,9 +11599,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // The lowering takes one written into a declaration whose type names the ticket, because that
       // is the one place the return type is *in the AST*: a lambda never writes one, and this pass
       // runs on the tree with no type information at all.
+      //
+      // **Two reasons reach here and the message names both**, because they are fixed in different
+      // places: a lambda somewhere the ticket type is not written down needs moving to a
+      // declaration, and one whose body the flattening declined needs the body changed.
       if (lamAsync) {
-        return "an `async` lambda outside a `fn[Pending<…>(…)]` declaration, where "
-             + "`issues/lang/0294c`'s lowering cannot see what the ticket carries";
+        return "an `async` lambda the lowering did not take — either it is not the initialiser of a "
+             + "`fn[Pending<…>(…)]` declaration, which is where `issues/lang/0294c` reads what the "
+             + "ticket carries, or its body suspends in a shape `design/lang/0014` cannot flatten";
       }
       i32 li = env.lambdaAtPos(e.line, e.col);
       // **Capture is by reference now**, so a write is no longer a reason to refuse: a captured local

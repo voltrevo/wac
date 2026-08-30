@@ -115,20 +115,43 @@ export i32 synthVal(i32 k) { return synthFixedCount() + 3 * k + 1; }
 export i32 synthHand(i32 k) { return synthFixedCount() + 3 * k + 2; }
 
 /**
- * The numeral `k`, as an index into `synthWords(ups)`.
+ * The name an `async` lambda's parameter `k` is renamed to — `issues/lang/0294c`.
+ *
+ * **The parameter is renamed so that its cell can keep the written name.** A machine puts the whole
+ * body inside `__wacStep`, so every mention of a parameter becomes a capture, and a lambda's
+ * parameter captured by an inner lambda emits a module the engine rejects (`issues/lang/0296c`: a
+ * cell is keyed by the position of a *declaration* and a parameter has none). Giving the cell the
+ * written name and the parameter a synthetic one turns the capture into an ordinary hoisted local:
+ *
+ *     async (string p) => { … p … }
+ *     (string __wacArg0) => { string[] p = string[1](fill: __wacArg0); … p[0] … }
+ *
+ * The substitution that rewrites `p` to `p[0]` is then the one already there for locals, and nothing
+ * shadows anything: `__wacArg0` is read exactly once, in the fill.
+ */
+export i32 synthArg(i32 ups, i32 k) { return synthFixedCount() + 3 * (ups < 0 ? 0 : ups) + k; }
+
+/**
+ * The numeral `k`, as an index into `synthWords(ups, states, args)`.
  *
  * **Numerals are generated too, and that is not fussiness.** `IntLit` reads its value out of the
  * token's text, so every number the machine writes down needs its own spelling: the `1` of `T[1]()`,
  * the `0` of `x[0]`, and one per state for `__wacState[0] = k;`. A machine with `ups` suspensions has
  * states `0..ups`, so the tail carries numerals up to `ups + 1` and a wrong count here would be a
  * silently wrong state number rather than a failure.
+ *
+ * **Last in the tail, and that is load-bearing**: `synthTokens` decides a word is an `IntLit` by
+ * being at or past the first numeral, so anything appended after them would be lexed as a number.
+ * The argument names sit before them for exactly that reason.
  */
-export i32 synthNum(i32 ups, i32 k) { return synthFixedCount() + 3 * (ups < 0 ? 0 : ups) + k; }
+export i32 synthNum(i32 ups, i32 args, i32 k) {
+  return synthArg(ups, args < 0 ? 0 : args) + k;
+}
 
 /** `0`, for indexing a cell. */
-export i32 synthZero(i32 ups) { return synthNum(ups, 0); }
+export i32 synthZero(i32 ups, i32 args) { return synthNum(ups, args, 0); }
 /** `1`, for the `T[1]()` that makes one. */
-export i32 synthOne(i32 ups) { return synthNum(ups, 1); }
+export i32 synthOne(i32 ups, i32 args) { return synthNum(ups, args, 1); }
 
 /**
  * How many numerals a body needs.
@@ -148,18 +171,20 @@ export i32 synthNumCount(i32 states) { return (states < 0 ? 0 : states) + 2; }
  * hand-counted offsets is right until somebody adds a word in the middle, and `wapyparse.wac` keeps
  * four such offsets for exactly four synthetics. This has more, and a variable number of them.
  */
-export string[] synthWords(i32 ups, i32 states) {
+export string[] synthWords(i32 ups, i32 states, i32 args) {
   string[] fixed = fixedWords();
   i32 n = ups < 0 ? 0 : ups;
+  i32 a = args < 0 ? 0 : args;
   i32 nums = synthNumCount(states);
-  string[] out = string[fixed.len() + 3 * n + nums]();
+  string[] out = string[fixed.len() + 3 * n + a + nums]();
   for (i32 i = 0; i < fixed.len(); i++) { out[i] = fixed[i]; }
   for (i32 i = 0; i < n; i++) {
     out[fixed.len() + 3 * i] = "__wacUp" + synthDecimal(i);
     out[fixed.len() + 3 * i + 1] = "__wacVal" + synthDecimal(i);
     out[fixed.len() + 3 * i + 2] = "__wacHand" + synthDecimal(i);
   }
-  for (i32 i = 0; i < nums; i++) { out[fixed.len() + 3 * n + i] = synthDecimal(i); }
+  for (i32 i = 0; i < a; i++) { out[fixed.len() + 3 * n + i] = "__wacArg" + synthDecimal(i); }
+  for (i32 i = 0; i < nums; i++) { out[fixed.len() + 3 * n + a + i] = synthDecimal(i); }
   return out;
 }
 
@@ -179,10 +204,10 @@ string synthDecimal(i32 n) {
 string synthMarker() { return "// wac:async-synth "; }
 
 /** A source with the tail appended, or the same bytes when it is already there. */
-export u8[] synthSource(u8[] src, i32 ups, i32 states) {
+export u8[] synthSource(u8[] src, i32 ups, i32 states, i32 args) {
   if (synthBase(src) >= 0) { return src; }
   string tail = "\n" + synthMarker();
-  string[] w = synthWords(ups, states);
+  string[] w = synthWords(ups, states, args);
   for (i32 i = 0; i < w.len(); i++) {
     if (i > 0) { tail = tail + " "; }
     tail = tail + w[i];
@@ -219,10 +244,10 @@ export i32 synthBase(u8[] src) {
  * Walked from the base rather than indexed, because the words have different lengths and one space
  * between them — the same reason the list above is the single source of the offsets.
  */
-export i32 synthOffset(u8[] src, i32 ups, i32 states, i32 which) {
+export i32 synthOffset(u8[] src, i32 ups, i32 states, i32 args, i32 which) {
   i32 at = synthBase(src);
   if (at < 0) { return 0 - 1; }
-  string[] w = synthWords(ups, states);
+  string[] w = synthWords(ups, states, args);
   if (which < 0 || which >= w.len()) { return 0 - 1; }
   for (i32 i = 0; i < which; i++) { at = at + w[i].toBytes().len() + 1; }
   return at;
@@ -235,8 +260,8 @@ export i32 synthOffset(u8[] src, i32 ups, i32 states, i32 which) {
  * meant. `"0"` is lexed as an integer rather than an identifier, because an `IntLit` reads its value
  * out of its token and a kind mismatch there would be a silent zero somewhere else.
  */
-export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 line, i32 col) {
-  string[] w = synthWords(ups, states);
+export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 args, i32 line, i32 col) {
+  string[] w = synthWords(ups, states, args);
   i32 stride = tokenStride();
   i32 have = lexed.tokenCount;
   i32[] out = i32[(have + w.len()) * stride]();
@@ -247,11 +272,11 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 line, i
     // token, an `Assign` reads its operator's kind out of one, and `void` is its own kind rather
     // than an identifier — each of those would be wrong *silently* if this were uniform.
     i32 k = kIdent();
-    if (i >= synthNum(ups, 0)) { k = kInt(); }
+    if (i >= synthNum(ups, args, 0)) { k = kInt(); }
     else if (i == synthAssign()) { k = kAssign(); }
     else if (i == synthVoid()) { k = kVoid(); }
     out[at] = k;
-    out[at + 1] = synthOffset(src, ups, states, i);
+    out[at + 1] = synthOffset(src, ups, states, args, i);
     out[at + 2] = w[i].toBytes().len();
     out[at + 3] = line;
     out[at + 4] = col;

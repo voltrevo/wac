@@ -33,9 +33,35 @@ tick()`.
 
 ## Awaiting
 
-`[§wac-await-inside-3nq7wbe]` `await` may appear only inside an `async` function. A
-lambda is a different function, so an `await` in a lambda body is refused even when the
-lambda is written inside an async function — there are no async lambdas yet.
+`[§wac-await-inside-3nq7wbe]` `await` may appear only inside something declared `async`.
+A lambda is a different function, so an `await` in a **plain** lambda's body is refused
+even when that lambda is written inside an async function: its `return` returns from the
+lambda, so its `await` would have to suspend a plain funcref. `async` on the lambda
+itself is what permits one.
+
+## async lambdas
+
+```wac
+import { Cli, FileResult, Pending } from "std/platform.wac";
+
+fn[Pending<i32>(string)] size = async (string p) => {
+  FileResult f = await cli.readFile(p);
+  return f.ok ? f.bytes.len() : 0 - 1;
+};
+```
+
+`[§wac-async-lambda-slot-9wq4nkz]` A lambda never writes a return type, so **its slot is
+both the permission and the type**. `async` is allowed only where the target is
+`fn[Pending<R>(…)]`, and that `R` is what the body is checked against. This is the rule
+for functions read backwards: a function writes what its body answers and the caller
+derives the ticket; a lambda derives what its body answers from the ticket its slot
+names. `async` on a slot wanting no ticket is an error naming the type that was found,
+which is what `p.then(async (T x) => …)` is — `then` takes `fn[void(T)]`.
+
+`[§wac-async-lambda-captures-5mtj28r]` An async lambda **captures**, and a captured name
+survives its suspensions. That is the whole reason to want one: a top-level `async`
+function has to be handed everything it uses, and a lambda written where the values
+already are does not.
 
 `[§wac-await-pending-9km2xtr]` `await e` requires `e` to be a `Pending<T>` and has the
 type `T`. Anything else is an error naming the type that was awaited.
@@ -114,4 +140,8 @@ These are refused by name rather than mis-lowered, and each states what it would
 - an `await` whose value is discarded — `await e;` — because nothing in the source names
   the type of the ticket it suspends on, and the machine needs that type for the slot it
   suspends into. `T x = await e;` and `return await e;` are exactly the two shapes that
-  name it.
+  name it;
+- an `async` lambda that is **not the initialiser of a declaration** — an argument, a
+  returned value, an assignment to something declared earlier. The lowering runs on the
+  tree with no type information, and a declaration is the one place the `Pending<R>` it
+  needs is written down. The same limit, from the same cause, as the item above it.

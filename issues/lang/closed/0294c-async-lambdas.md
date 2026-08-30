@@ -1,6 +1,7 @@
 # 0294 — `async` lambdas
 
-- **Status:** open — wanted, and deliberately sequenced after `design/lang/0014`
+- **Status:** closed — done 2026-08-30 for the declaration form; the rest is declined by name
+- **Fixed in:** `packages/wacc/src/{parse,check,emit,asyncsynth,asynclower}.wac`, `packages/platform/test/wac/asynclambda_test.wac`, `spec/cases/0313`–`0314`
 - **Claimed by:** agent-c, 2026-08-30
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -93,3 +94,39 @@ What does *not* move, checked: `asyncplan`'s `awaitInExpr` already answers `fals
 — *"a lambda's body is not this function's"* — and that stays correct, because an async lambda's
 suspensions belong to its own machine. The checker's signature comparison does not move either: the
 slot genuinely is `fn[Pending<T>(…)]`, so only the *body's* return type unwraps.
+
+## Done 2026-08-30, and the example at the top of this issue is wrong
+
+**`p.then(async (Socket s) => …)` does not typecheck**, and finding that out changed the design. `then`
+takes `fn[void(T)]` — a slot that wants no ticket — so `async` on it is refused by the new code 213,
+*"expected a Pending<…>, found void"*. An `async` lambda has to be written into a slot that names a
+ticket. That is not a restriction the implementation chose; it is what `async` means on something
+whose return type it does not write.
+
+Which resolves the one real obstacle. `lowerProgram(prog, src, lexed)` is handed **no type
+information at all**, and `machineBody` needs `R` to declare the cell the answer lands in. A function
+writes `R`; a lambda never does. But the only slots where `async` is *legal* are the ones that spell
+`Pending<R>` out — so a declaration puts `R` in the AST exactly where the lowering can read it. The
+lowering takes the declaration form and the emitter declines the rest by name, which is the standard
+`design/lang/0014` held its four unflattenable shapes to.
+
+The parameter hoist is as measured above, with one refinement: the *parameter* takes the synthetic
+name and its cell keeps the written one, so the existing name-based substitution needs no change and
+nothing shadows.
+
+    fn[Pending<i32>(string)] f = async (string p) => { … p … };
+    fn[Pending<i32>(string)] f = (string __wacArg0) => {
+      string[] p = string[1](fill: __wacArg0);   // an ordinary hoisted local now
+      …                                          // and every read of it is `p[0]`
+    };
+
+Covered by `packages/platform/test/wac/asynclambda_test.wac` — 5/5, including a parameter read either
+side of a suspension, two lambdas overlapping under one `drain`, and a suspension inside a loop — and
+by `spec/cases/0313`/`0314` against `§wac-async-lambda-slot-9wq4nkz` and
+`§wac-async-lambda-captures-5mtj28r`. `0296c` is untouched and still live: this goes around it rather
+than fixing it, and a hand-written lambda capturing an enclosing lambda's parameter still emits an
+invalid module.
+
+**What is left, and it is in the spec rather than here**: an `async` lambda that is not a
+declaration's initialiser — an argument, a returned value, an assignment to something declared
+earlier. Same cause as the item above it in *"What is not covered yet"*: the type is not in the tree.
