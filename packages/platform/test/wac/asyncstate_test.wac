@@ -1,0 +1,177 @@
+// The other candidate lowering: a **flattened state machine**, hand-written — `design/lang/0014`
+// step 4.
+//
+// `asyncchain_test.wac` is the CPS candidate — continuations as lambdas, composed with `map` and
+// `flatMap`. This is the rival: the body's control flow flattened into `while (true) { switch (state)
+// { … } }` over an explicit frame, with each `await` a state boundary. Both were built so the choice
+// could be made on evidence rather than on which one sounded better.
+//
+// **What this file exists to show is the second test.** CPS handles two awaits and a branch, which
+// the other file does. What it cannot do without hoisting every continuation into a named function
+// and threading its free variables by hand is an `await` **inside a loop** — and that is A1, the
+// program the whole design is for. Here it is three lines of state: the resume arm sets `state` back
+// to the loop header and `break`s, and the `while` goes round again.
+//
+// Two things this settles that were argued about first:
+//
+//   - **wasm has no goto either.** `emitStmt`'s own note says `if` and `while` are wasm's structured
+//     control flow rather than jumps, and a `br_table` can only leave an enclosing block, never enter
+//     one. So a resumable machine needs the graph flattened whichever level it is built at — that
+//     work is common to both routes and is not a reason to prefer one.
+//   - **Once flattened, every state is straight-line code**, which plain wac expresses. So the
+//     machine can be built out of ordinary statements and emitted by the emitter that already
+//     exists, rather than by a second one written beside it.
+//
+// Neither machine here registers with a scheduler, so both are `wait`-driven. Registration is the
+// next increment and is the same in both: `then` on the ticket the machine is suspended at.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+
+// ── One await, no loop — A2's shape ───────────────────────────────────────────
+
+/** The locals that outlive an await, the state, and one slot per await point. */
+struct Frame {
+  i32 state;
+  Cli cli;
+  string path;
+  Pending<FileResult>? up0;
+  i32 result;
+  bool done;
+}
+
+/** The body, flattened. Answers whether it finished; `false` means it suspended. */
+bool step(Frame fr) {
+  while (true) {
+    switch (fr.state) {
+      case 0: {
+        fr.up0 = fr.cli.readFile(fr.path);
+        fr.state = 1;
+        return false;
+      }
+      case 1: {
+        FileResult f = fr.up0!.wait();
+        fr.result = f.ok ? f.bytes.len() : 0 - 1;
+        fr.done = true;
+        return true;
+      }
+      default: { return true; }
+    }
+  }
+}
+
+Pending<i32> fileSize(Cli cli, string path) {
+  Frame fr = Frame(0, cli, path, null, 0, false);
+  // Eager — D1. The call runs the body as far as the first await and no further.
+  step(fr);
+  fn[i32(i32)] res = (i32 id) => {
+    while (!fr.done) { step(fr); }
+    return fr.result;
+  };
+  fn[bool(i32)] set = (i32 id) => fr.done;
+  fn[void(i32)] drp = (i32 id) => { };
+  return Pending<i32>(0 - 1, res, set, drp, null);
+}
+
+// ── An await inside a loop — A1's shape, and the discriminator ────────────────
+
+struct LFrame {
+  i32 state;
+  Cli cli;
+  string[] paths;
+  i32 i;
+  i32 total;
+  Pending<FileResult>? up0;
+  i32 result;
+  bool done;
+}
+
+/**
+ * The lowering of:
+ *
+ *     async i32 sumOf(Cli cli, string[] paths) {
+ *       i32 total = 0;
+ *       for (i32 i = 0; i < paths.len(); i++) {
+ *         FileResult f = await cli.readFile(paths[i]);
+ *         if (!f.ok) { return -1; }
+ *         total = total + f.bytes.len();
+ *       }
+ *       return total;
+ *     }
+ *
+ * State 0 is the loop header — the condition and the suspend. State 1 is the resume, and its last
+ * act is `state = 0`, which is the loop's back edge written as data. There is no `goto` here and none
+ * is needed, because the dispatch is at the top of the `while` and every arm is straight-line.
+ */
+bool lstep(LFrame fr) {
+  while (true) {
+    switch (fr.state) {
+      case 0: {
+        if (fr.i >= fr.paths.len()) { fr.result = fr.total; fr.done = true; return true; }
+        fr.up0 = fr.cli.readFile(fr.paths[fr.i]);
+        fr.state = 1;
+        return false;
+      }
+      case 1: {
+        FileResult f = fr.up0!.wait();
+        if (!f.ok) { fr.result = 0 - 1; fr.done = true; return true; }
+        fr.total = fr.total + f.bytes.len();
+        fr.i = fr.i + 1;
+        fr.state = 0;
+        break;
+      }
+      default: { return true; }
+    }
+  }
+}
+
+Pending<i32> sumOf(Cli cli, string[] paths) {
+  LFrame fr = LFrame(0, cli, paths, 0, 0, null, 0, false);
+  lstep(fr);
+  fn[i32(i32)] res = (i32 id) => { while (!fr.done) { lstep(fr); } return fr.result; };
+  fn[bool(i32)] set = (i32 id) => fr.done;
+  fn[void(i32)] drp = (i32 id) => { };
+  return Pending<i32>(0 - 1, res, set, drp, null);
+}
+
+/** The oracle: the same answers by blocking, with no machinery at all. */
+i32 sizeOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? f.bytes.len() : 0 - 1;
+}
+
+export string test_one_await_flattened_answers_the_real_size(Core core, Cli cli) {
+  T t = T.create();
+  i32 want = sizeOf(cli, "README.md");
+  t.isTrue(want > 0, "the oracle read the file");
+
+  Pending<i32> p = fileSize(cli, "README.md");
+  t.isFalse(p.isDone(), "eager ran to the first await and stopped there");
+  t.eqI32(p.wait(), want, "and waiting drove it to the answer");
+  t.isTrue(p.isDone(), "which it remembers");
+  return t.report();
+}
+
+export string test_an_await_inside_a_loop_suspends_and_resumes(Core core, Cli cli) {
+  T t = T.create();
+  string[] ps = string[]("README.md", "MERGE.md", "CLAUDE.md");
+  i32 want = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    i32 one = sizeOf(cli, ps[i]);
+    t.isTrue(one > 0, "the oracle read " + ps[i]);
+    want = want + one;
+  }
+  // **The case CPS cannot express without hoisting.** Three suspensions and three resumptions, all
+  // re-entering the same loop, and the frame carries `i` and `total` across every one.
+  t.eqI32(sumOf(cli, ps).wait(), want, "the machine summed all three");
+  return t.report();
+}
+
+export string test_the_loop_machine_stops_early_when_a_read_fails(Core core, Cli cli) {
+  T t = T.create();
+  // The `return` from inside the loop, which is a state that sets `done` rather than a back edge —
+  // and the reason the arms answer `bool` instead of falling off the end.
+  string[] ps = string[]("README.md", "no-such-file-here.md", "CLAUDE.md");
+  t.eqI32(sumOf(cli, ps).wait(), 0 - 1, "it left the loop at the failure");
+  return t.report();
+}

@@ -314,6 +314,59 @@ diagnostic.
 constructions. `Method`'s own note already warned why last — it is a third `bool` beside `hasThis`
 and `thisConst`, so a slot inserted among them would typecheck and mean something else.
 
+## How step 4 lowers — decided by building both
+
+Two candidates were hand-written as tests before either was generated, so the choice rests on code
+that runs rather than on which sounded better.
+
+| | CPS — `asyncchain_test.wac` | flattened state machine — `asyncstate_test.wac` |
+| --- | --- | --- |
+| one await | works | works |
+| two awaits and a branch | works | works |
+| **await inside a loop** | needs every continuation hoisted to a named function with its free variables threaded by hand | three lines: the resume arm sets `state` back to the header |
+| new runtime | `ready` and `flatMap` in `std/platform.wac` | none |
+| meets `issues/lang/0295c` | yes — it emits generic calls inside lambdas | no |
+| closures | one per continuation, plus hand-written capture analysis when hoisting | three small ones for the ticket; the frame is an ordinary struct |
+
+The loop row is the decision. It is A1 — the program this document exists for — and CPS needs
+closure conversion written by hand there, duplicating what the lambda machinery already does. The
+state machine needs the loop's back edge written as data, which is `state = 0`.
+
+### Generated as AST, not as wasm
+
+**Both arguments I first gave for this were wrong**, and correcting them is what settled it.
+
+*"Emitting wasm directly would rebuild the closure subsystem."* Backwards — a state machine **avoids**
+closures. The locals that cross an await are fields of a frame, not captures, and `Pending<T>` is an
+id plus three functions **of that id**, which is exactly the shape for a frame reached by index.
+
+*"wasm has `br_table`, so only wasm can re-enter a loop."* False. `emitStmt`'s own note says `if` and
+`while` are wasm's structured control flow rather than jumps, and a branch can only leave an enclosing
+block, never enter one. **wasm has no goto either.** So the control-flow graph has to be flattened
+whichever level the machine is built at — that work is common to both and is not a reason to prefer
+either.
+
+What is left decides it. Once flattened, every state is straight-line code, so the machine is
+ordinary wac and the emitter that already exists emits it. Generating wasm instead would additionally
+need its own dispatch, its own frame layout, and its own rewriting of local accesses into frame
+accesses — untyped, at the level where mistakes are silent rather than diagnosed. It would buy one
+thing: `switch` is emitted as a chain of comparisons rather than a `br_table`, so dispatch is linear
+in the number of states. That is a constant factor on each resume, and if it ever matters the fix is
+to emit `br_table` for `switch` — which every wac program would get, not only the async ones.
+
+*Assessed rather than built*: the wasm route was sized by reading `emitStmt` (446 lines, 21 statement
+kinds, though after flattening the existing arms would emit each segment) and by reading how `Switch`
+emits. The state-machine and CPS lowerings were both actually written and both run.
+
+### What the AST route still needs
+
+Synthetic tokens, because every later phase learns what a token says by reading bytes out of the
+source, so a node the rewrite invents still needs a span. `wapytok.wac` has the prior art and
+`asyncsynth.wac` is the instrument, pinned by its own tests. Its two rules carry over: a synthetic
+token keeps the span of the token it came from, so a diagnostic points at the word the reader wrote;
+and the appended spellings hide behind a comment, so a source that is lexed twice is not extended
+twice.
+
 ## How step 4 will lower, and why that way
 
 **An AST-to-AST rewrite after checking, before emission.** The checker already understands `async`
