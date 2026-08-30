@@ -94,3 +94,38 @@ processes puts two mechanisms behind one name.
 `tools/wac/coverageall.wac` (ported 2026-08-30) spawns 37 drivers with no `cwd` and did not need one,
 and neither did the freshness checks. So the gap is specific to tools that make a scratch directory
 and run something in it, rather than to running host binaries at all.
+
+## The obvious fix is blocked by `issues/lang/0291c` — 2026-08-30
+
+"One more parameter on `execWith`" is what this said, and it cannot have one. `execWith` takes six
+today, and `0291c` — filed the day before this — is that **a capability with a seventh parameter
+silently drops the module's entry point**: a valid module, 1473 wasm exports, an empty `exports` list
+in the manifest, and a `wac` built around it that answers every command including `--version` with
+`exports no main`. It names the three widest capabilities in the tree as `spawn`, `execWith` and
+`drawPixelsIn`, all at six, "so this boundary had never been crossed".
+
+`issues/system/0282c` is already blocked on the same thing for the same reason, and carries the
+workaround: **fold two flags into one `i32` and stay at six.**
+
+That works here too, and arguably improves the signature rather than paying a tax to it. `execWith`'s
+last two parameters are both booleans — `clearEnv` and `inherit` — and they are the two nobody can
+read at a call site:
+
+    cli.execWith(path, args, stdin, env, false, false)   // which false is which?
+
+Folding them into one `i32` of named bits frees the slot and makes the call site say what it does:
+
+    fn[Pending<Exec>(string, string[], u8[], string[], i32, string)] execWith;
+    //                path    args      stdin  env       flags  cwd
+
+    cli.execWith(path, args, stdin, env, CLEAR_ENV | INHERIT, dir)
+
+So the shape of the fix changes but not its size, and it stops being blocked. What it costs is every
+`execWith` call site — `Cli.exec` covers 342 of them by passing the defaults, so the ones that change
+are the handful that pass `true` today.
+
+**Do not do this before `0291c` is understood.** The workaround gets a seventh *value* through six
+parameters, which is fine, but `0291c` explicitly records that it is not known whether seven is the
+real boundary or something seven crosses — and a capability change that silently produces a compiler
+with no entry point is discovered by `bootstrap.sh` refusing to install it, which is the only thing
+between it and a broken tree.
