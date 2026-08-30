@@ -78,8 +78,24 @@ innermost declaration: set them to the lambda's own position when the walk enter
 put them back on the way out — the same save-and-restore shape `walkLambdaDepth` already uses beside
 it. A captured function parameter keeps working because the outermost case is unchanged.
 
-Not attempted here: it is a change to how the capture walk names things, and it deserves its own
-tests rather than being folded into the `design/lang/0014` work that found it.
+**And there is a second half, found on a later look.** Renaming is not enough on its own, because
+nothing would read the record: `paramNeedsCell` is consulted in exactly two places, both inside
+`emitFunctionOf`, which emits *functions and methods*. A captured parameter gets its cell there — the
+value arrives in its slot, a cell is built from it, and a new local of the same name shadows the
+parameter so every later read goes through the cell. **The lambda emission path does none of that.**
+
+So the fix is two changes that only work together:
+
+1. `walkFuncLine`/`walkFuncCol` name the innermost function-*like* thing, saved and restored around a
+   lambda body the way `walkLambdaDepth` already is beside it, so the record is made against the
+   lambda that owns the parameter.
+2. The lambda emitter makes the cell at entry when `paramNeedsCell` says so — the same three
+   instructions `emitFunctionOf` uses, and worth sharing rather than copying, since the receiver case
+   there records that the one place which made an exception of `this` is the one place it went wrong.
+
+Not attempted here: it is a change to how the capture walk names things *and* to how lambdas are
+emitted, and it deserves its own tests rather than being folded into the `design/lang/0014` work that
+found it.
 
 ## Notes
 
