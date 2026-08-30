@@ -10,7 +10,7 @@
 // `WAC_PROFILE` coverage wrapper. issues/system 0074.
 import "./spawnRetry.ts";
 import { appRunner } from "./appRun.ts";
-import { buildApp } from "../packages/platform/build.ts";
+import { buildApp } from "./buildApp.ts";
 
 function eq<T>(got: T, want: T, msg: string): void {
   if (got !== want) throw new Error(`${msg}\n  got:  ${JSON.stringify(got)}\n  want: ${JSON.stringify(want)}`);
