@@ -42,8 +42,8 @@ it was recorded before this directory existed.
 
 **Run `wac task gen:core` after editing anything here.** The compiler reads the embedding and never
 this directory, and `./bootstrap.sh` does not regenerate it — so an edit has no effect at all until
-you do, and the failure you get is *"that file does not export this name"* about a file that plainly
-does. `issues/system/0291b`.
+you do. `./bootstrap.sh` refuses rather than building against a stale one, and a compiler that gets
+past it says *"the compiler's copy of that built-in does not export this name"*. `issues/system/0291b`.
 
 The alternative was a marker inside one shared file. That is a third thing to invent, to parse and
 to keep true, for a distinction a directory already draws.

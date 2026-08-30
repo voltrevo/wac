@@ -39,9 +39,9 @@ is generated from this directory. Do not edit it by hand:
     wac task gen:core --check    # fail if it is out of step
 
 **And run the first of those after editing anything in here.** The compiler reads the *embedding*,
-never this directory, so an edit to `platform.wac` does nothing whatever until it is regenerated —
-`./bootstrap.sh` will not do it for you, and what you get instead is *"that file does not export this
-name"* pointing at your import. `issues/system/0291b`.
+never this directory, so an edit to `platform.wac` does nothing whatever until it is regenerated.
+`./bootstrap.sh` will not do it for you — it refuses instead — and a compiler that gets past it says
+*"the compiler's copy of that built-in does not export this name"*. `issues/system/0291b`.
 
 ## What it costs
 

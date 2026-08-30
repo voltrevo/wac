@@ -175,9 +175,9 @@ say "building from $(git -C . rev-parse --short HEAD 2>/dev/null || echo 'a tree
 # **The compiler carries `core/*.wac` and `std/platform.wac` inside it**, as
 # `packages/wacc/src/coretext.wac` — `isBuiltinSpec` there answers true for those specifiers, so an
 # import of them never touches the disk. This script does not regenerate that file, so an edit to
-# `std/platform.wac` has no effect whatever until `wac task gen:core` runs, and what you get instead
-# is `that file does not export this name` pointing at your import, about a file that plainly does
-# export it. `issues/system/0291b`.
+# `std/platform.wac` has no effect whatever until `wac task gen:core` runs. The compiler says so
+# now — `the compiler's copy of that built-in does not export this name`, and a help line naming this
+# command — but only once you try to use the edit. This says it before the build. `issues/system/0291b`.
 #
 # **Checked here because the check that exists runs too late.** `tools/wac/gencore_test.wac` asks the
 # same question in the suite, which `tools/push.sh` reaches *after* the build — so it can only report

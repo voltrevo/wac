@@ -1,7 +1,6 @@
 # 0291b — editing `std/` or `core/` does nothing until `gen:core` runs, and the diagnostic blames the import
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
 - **Reported by:** agent-b
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -76,9 +75,27 @@ should make on purpose. Both branches were run: a tree with one export added to 
 exits 1 with the message before the ladder starts, and a clean tree bootstraps through to its fixed
 point and exits 0.
 
-**What is left is the first fault** — the diagnostic. *"that file does not export this name"* is still
-what a reader meets if they get past `bootstrap.sh` some other way, or edit `core/` while running
-`wac build` directly, and it is still the opposite of the truth.
+**And the diagnostic, 2026-08-30.** A built-in gets its own code now — `errStaleBuiltinEmbedding`,
+210 — raised where `api.wac` checks a graph's imports against what each file exports, chosen by
+`isBuiltinSpec(paths[i])`:
+
+    error: the compiler's copy of that built-in does not export this name
+      = help: `core/` and `std/` are carried inside the compiler — run `wac task gen:core` if you have edited one
+
+Its own code rather than reworded 56, because the two are different facts: 56 is about a file, and
+this is about a build step that has not been run. An ordinary file that genuinely does not export a
+name still gets 56 and its own help, unchanged — both branches were run side by side.
+
+One change covers both entry points: `wac check` on a single file builds a graph too, so a bare
+`import { notThere } from "core";` reports it as well.
+
+`packages/wacc/test/wac/builtinspec_test.wac` pins it, through the command rather than through
+`diagnoseFiles` — a caller of that can supply any text it likes for `std/platform.wac`, and what is
+being checked is that the *embedded* copy is what answers.
+
+**So both faults are closed.** Left open only as the record of what the shape was, and because
+`codes_test.wac` cannot pin 210: its rows are single sources through `dumpErrors`, and this code needs
+a graph with a built-in in it.
 
 ## What it is not
 
