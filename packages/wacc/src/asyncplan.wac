@@ -15,11 +15,17 @@
 //
 // ## What this cut can flatten
 //
-// A suspension may be a statement of the top-level block, in one of three shapes — `T x = await e;`,
-// `await e;`, and `return await e;`. Anything else is declined **by name**, because a lowering that
-// silently mis-flattens is worse than one that refuses: an `await` nested inside a larger expression
-// needs the expression's evaluation order split around it, and an `await` inside a loop needs the
-// loop's back edge as a state, which is the next increment rather than this one.
+// A suspension may be a statement of the top-level block, in one of two shapes — `T x = await e;`
+// and `return await e;`. **Both are the shapes that name the ticket's type**, which is not a
+// coincidence: the machine keeps the ticket it suspended at in a slot of type `Pending<X>`, and the
+// only way to know `X` from the AST alone is to have it written. `T x = await e;` says `T`, and
+// `return await e;` says the function's own return type. A bare `await e;` says neither, so it is
+// declined here rather than guessed at.
+//
+// Anything else is declined **by name**, because a lowering that silently mis-flattens is worse than
+// one that refuses: an `await` nested inside a larger expression needs the expression's evaluation
+// order split around it, and an `await` inside a loop needs the loop's back edge as a state, which is
+// the next increment rather than this one.
 
 import {
   Arm, Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind,
@@ -184,8 +190,12 @@ export bool awaitInBody(Stmt[] body) {
  */
 bool isSuspension(Stmt s) {
   match (s.kind) {
+    // **Both shapes name the ticket's type, and that is why they are the two.** The machine has to
+    // keep the ticket it suspended at, in a slot of type `Pending<X>` — and the only way to know `X`
+    // from the AST is to have it written: `T x = await e;` says `T`, and `return await e;` says the
+    // function's own return type. A bare `await e;` says neither, which is the whole reason it is
+    // declined below rather than supported here.
     case Var(type, nameTok, init, isConst): { return isAwait(init); }
-    case ExprStmt(expr): { return isAwait(expr); }
     case Return(value): { return (value is not null) && isAwait(value!); }
     else: { return false; }
   }
@@ -248,6 +258,9 @@ string declineFor(Stmt s) {
     case Match(subject, arms): { return "an `await` inside a `match`"; }
     case Block(body): { return "an `await` inside a nested block"; }
     case Assign(target, op, rhs): { return "an `await` on the right of an assignment"; }
+    // Its value is thrown away, so nothing in the source says what the ticket answers — and the
+    // machine needs that type to declare the slot it suspends into. `T x = await e;` for now.
+    case ExprStmt(expr): { return "an `await` whose value is discarded"; }
     else: { return "an `await` nested inside a larger expression"; }
   }
 }

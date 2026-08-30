@@ -76,6 +76,14 @@ export string test_the_shapes_this_cut_declines_are_named_apart() {
                  + "  return n;\n"
                  + "}\n"),
           "declined: an `await` nested inside a larger expression\n", "nested in a call");
+  // **The type is what decides which shapes are in.** The machine keeps the ticket it suspended at
+  // in a slot of type `Pending<X>`, and only a written type says what `X` is — `T x = await e;` says
+  // `T`, `return await e;` says the function's own. A discarded value says neither.
+  t.eqStr(planOf("async i32 f(Cli cli) {\n"
+                 + "  await cli.readFile(\"x\");\n"
+                 + "  return 0;\n"
+                 + "}\n"),
+          "declined: an `await` whose value is discarded\n", "and a bare await");
   return t.report();
 }
 
