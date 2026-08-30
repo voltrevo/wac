@@ -66,7 +66,8 @@
 // now the docstring on `defaultJobs` below, carried over so that deleting a file did not delete the
 // measurements in it. `tools/suiteGate.ts` keeps `announceHeavy` and nothing else: its lock,
 // thresholds, cooldown and refusal are gone, because they are here. `tools/suiteGuard.ts` stays
-// whole — `SUITE_ENV` and `refuseIfNested` have four callers that are still TypeScript.
+// whole — `SUITE_ENV` and `refuseIfNested` have two callers that are still TypeScript, both of them
+// `mutate`.
 //
 // Where the tests live: this runner's own are `tools/wac/suitegate_test.wac`, which the *docs* gate
 // runs — `wac task docs` starts with `wac test tools/`, and the suite's lane roots are `packages`
@@ -78,7 +79,7 @@ import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, has, splitLines }
   from "../packages/wactest/src/strings.wac";
 import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, markRun,
-         warningsSoFar, clearWarnings, envOf } from "./wac/suitegate.wac";
+         envOf } from "./wac/suitegate.wac";
 import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles, mergedTimes }
   from "./wac/suitehouse.wac";
 
@@ -1440,11 +1441,6 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     if (note != "") { core.log(note); }
   }
 
-  i32 warnings = warningsSoFar(cli);
-  if (warnings > 0) {
-    core.log("\n" + itoa(warnings) + " doc warning(s) — the suite does not fail for these. " +
-             "`wac task docs` runs the same checks and does.");
-  }
   return code;
 }
 
@@ -1545,8 +1541,6 @@ export i32 main(Core core, Cli cli) {
   guardCodeCache(core, cli);
   sweepStaleTemp(core, cli);
   dropUnreachableTranspiles(core, cli);
-  // Before anything runs, so a previous suite's warnings are not counted as this one's.
-  clearWarnings(cli);
 
   // **The cooldown starts here, not where the lock was taken** — `issues/system/0283b`. Everything
   // above this point can still exit without having run a test, and an agent should not be locked out

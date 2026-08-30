@@ -19,7 +19,7 @@ import { Core, Cli, FileResult, Stat } from "std/platform.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Note, Slot, announce, unannounce, heavyOthers, ownPid, alive, agentName,
-         killedLaneNote, envOf, warningsSoFar, clearWarnings } from "./suitegate.wac";
+         killedLaneNote, envOf } from "./suitegate.wac";
 
 bool exists(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
 
@@ -149,28 +149,3 @@ export string test_a_killed_lane_is_told_apart_from_a_failed_one(Core core, Cli 
   return t.report();
 }
 
-/**
- * The doc-warning tally is counted in characters and consumed.
- *
- * `tools/docCheck.ts` appends one character per warning and reads the file's *length*, so a reader
- * that counted lines would report a different number for the same run — and the number is printed in
- * the suite's footer, where nobody would notice it was wrong. Tested directly because on a clean tree
- * the file does not exist at all: the footer then prints nothing whether the reader works or not,
- * which is agreement by absence rather than evidence.
- */
-export string test_the_doc_warning_tally_is_characters_and_is_consumed(Core core, Cli cli) {
-  T t = T.create();
-  string path = "/tmp/wac-doc-warnings";
-  // Kept and put back, because this is a real file another tool owns and a suite may be running.
-  FileResult had = cli.readFile(path).wait();
-  cli.writeFile(path, "xxx".toBytes()).wait();
-  t.eqI32(warningsSoFar(cli), 3, "three characters is three warnings");
-  t.isFalse(exists(cli, path), "and reading the tally consumes it, so the next run starts at zero");
-  t.eqI32(warningsSoFar(cli), 0, "a tally that is not there is no warnings");
-
-  cli.writeFile(path, "yy".toBytes()).wait();
-  clearWarnings(cli);
-  t.isFalse(exists(cli, path), "clearWarnings removes it without reading it");
-  if (had.ok) { cli.writeFile(path, had.bytes).wait(); }
-  return t.report();
-}

@@ -95,7 +95,7 @@ class of exemption that is currently a promise rather than a measurement.
 the covering half by hand and produced the table; the `webrtc` driver, pointed at the same file for a
 third term, reported zero points and disproved the rest.
 
-## Done — `tools/coverageUnion.ts` — agent-b, 2026-08-29
+## Done — `tools/wac/coverageunion.wac` — agent-b, 2026-08-29
 
 `covreport --points` prints every point as `file<TAB>line<TAB>col<TAB>count`, with **no prefix
 filter**. That is the half this issue says is thrown away:
@@ -142,7 +142,7 @@ was computed and discarded inside the report.
 
 ## The number, produced — agent-b, 2026-08-29
 
-    $ deno run -A tools/coverageUnion.ts tls quic
+    $ wac task coverage:union tls quic
 
     | file                           | owner | points | its own  | across all | gained |
     | packages/tls/src/handshake.wac | tls   |    108 | 80 (74%) |   96 (89%) |    +16 |
@@ -169,7 +169,7 @@ owner has no table in this run are skipped now.
 
 ### What is left
 
-Every ledger takes `--points`, so the full sweep is `deno run -A tools/coverageUnion.ts` with no
+Every ledger takes `--points`, so the full sweep is `wac task coverage:union` with no
 arguments. It runs the drivers one at a time and is a report somebody asks for rather than something
 on the push path: `tools/wac/coverageall.wac` is untouched and a package's own floor still fails exactly when it
 did.

@@ -81,6 +81,13 @@ things and never a manifest, a lockfile, a source file or a build product. There
 installed the command could reach — a Deno program under `tools/` needs this checkout, and they have
 a `$WAC_HOME` and no checkout.
 
+**Regenerate after touching `std/` or `core/`, and it is not the same as rebuilding.** Those nine
+files are carried *inside* the compiler as `packages/wacc/src/coretext.wac`, so an import of
+`std/platform.wac` never touches the disk. `./bootstrap.sh` does not regenerate it, so an edit there
+has no effect at all until `wac task gen:core` runs. `./bootstrap.sh` refuses if the embedding is out
+of step, and a build that gets past it says *"the compiler's copy of that built-in does not export
+this name"* with the command in its help line. `issues/system/0291b`.
+
 **Rebuild after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
 
 **There is one build command and it always starts from the ladder.** `./bootstrap.sh` builds the

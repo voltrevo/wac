@@ -1,0 +1,68 @@
+// What `wac task test:changed` decides to run, from a set of changed files and nothing else.
+//
+// The TypeScript this was ported from had no test. Its rule lived inline between four `git` calls
+// and a spawn, so the only way to see "a shared file means everything" was to edit a shared file and
+// watch — and three of the cases below are ones you would have to construct on disk to reach at all.
+// `issues/system/0289b`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { joined } from "../../packages/wactest/src/strings.wac";
+import { EVERYTHING, NARROWED, NOTHING, Plan, packageOf, planFor }
+       from "./testchanged.wac";
+
+export string test_a_change_under_one_package_runs_that_package() {
+  T t = T.create();
+  Plan p = planFor(string[]("packages/rlp/src/rlp.wac"));
+  t.eqI32(p.mode, NARROWED(), "narrowed to what changed");
+  t.eqStr(joined(p.targets, " "), "packages/rlp/", "one directory");
+  t.eqStr(p.said, "rlp", "named in the line it prints");
+  return t.report();
+}
+
+export string test_several_packages_are_sorted_and_deduplicated() {
+  T t = T.create();
+  // Sorted so the line reads the same for the same change whatever order git listed the files in,
+  // and deduplicated because a package with four changed files is still one directory to run.
+  Plan p = planFor(string[]("packages/tls/src/a.wac", "packages/abi/src/b.wac",
+                            "packages/tls/test/wac/c_test.wac", "packages/abi/README.md"));
+  t.eqStr(joined(p.targets, " "), "packages/abi/ packages/tls/", "two directories, in order");
+  t.eqStr(p.said, "abi, tls", "and the same order in the line");
+  return t.report();
+}
+
+export string test_a_shared_file_means_everything_even_beside_a_package() {
+  T t = T.create();
+  // The important asymmetry: `harness/` **and** a package changed is not "run that package". A
+  // shared change can break anything, so narrowing here would be running four packages and looking
+  // green. `targets` is empty, and empty is what the runner reads as the whole suite.
+  Plan p = planFor(string[]("packages/rlp/src/rlp.wac", "harness/testLane.ts"));
+  t.eqI32(p.mode, EVERYTHING(), "everything, not just rlp");
+  t.eqI32(p.targets.len(), 0, "no targets is the whole suite");
+  t.eqStr(p.said, "harness/testLane.ts", "and it says which file made it so");
+
+  t.eqI32(planFor(string[]("tools/push.sh")).mode, EVERYTHING(), "tools/ is shared too");
+  t.eqI32(planFor(string[]("deno.json")).mode, EVERYTHING(), "and so is deno.json");
+  return t.report();
+}
+
+export string test_a_change_that_touches_nothing_runnable_runs_nothing() {
+  T t = T.create();
+  // Not the same as "nothing changed", and the message says so — a README at the root or an issue
+  // is a real change with no test behind it. Running the whole suite for one would make this command
+  // useless in the loop it exists for.
+  t.eqI32(planFor(string[]("README.md", "issues/system/INDEX.md")).mode, NOTHING(),
+          "prose at the root runs nothing");
+  t.eqI32(planFor(string[0](fill: "")).mode, NOTHING(), "and neither does an empty change set");
+  return t.report();
+}
+
+export string test_a_path_that_only_looks_like_a_package_is_not_one() {
+  T t = T.create();
+  t.eqStr(packageOf("packages/rlp/src/rlp.wac"), "rlp", "the ordinary case");
+  // `packages/rlp` with nothing under it names a directory, not a file in a package — and taking it
+  // as one would hand the runner `packages//`, which matches everything by prefix.
+  t.eqStr(packageOf("packages/rlp"), "", "a bare package directory names no package");
+  t.eqStr(packageOf("packagesfoo/x.wac"), "", "a prefix that is not the directory");
+  t.eqStr(packageOf("core/read.wac"), "", "core is not under packages/");
+  return t.report();
+}

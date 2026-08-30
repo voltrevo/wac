@@ -1,0 +1,67 @@
+// What `wac task coverage:union` decides before it decides anything interesting.
+//
+// The TypeScript this was ported from had no tests — the only way to exercise any of it was to run
+// thirty-seven coverage drivers, which is three minutes, so in practice nothing did. These are the
+// four judgements it makes per table row, each of which has a wrong answer that would quietly change
+// the report rather than break it. `issues/system/0289b`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { joined } from "../../packages/wactest/src/strings.wac";
+import { allDigits, owner, percent, splitOnTabs } from "./coverageunion.wac";
+
+export string test_a_files_owner_is_read_from_its_path() {
+  T t = T.create();
+  t.eqStr(owner("packages/tls/src/handshake.wac"), "tls", "the ordinary case");
+  t.eqStr(owner("packages/tls/test/wac/x_test.wac"), "tls", "wherever in the package it is");
+
+  // `core/` is a package with a driver whose tree is at the repository root — the same exception
+  // `coverageall.wac`'s `driverOf` exists for.
+  t.eqStr(owner("core/read.wac"), "core", "the tree at the root");
+
+  // `std/` is not: it is the platform surface and no ledger owns it. It has to answer `""` rather
+  // than `std`, because a `std` table would then be compared against a driver that does not exist
+  // and every file in it would read 0% by its owner.
+  t.eqStr(owner("std/platform.wac"), "", "the platform surface is owned by nobody");
+  t.eqStr(owner("tools/wac/map.wac"), "", "and so is anything outside both trees");
+  t.eqStr(owner("packages/tls"), "", "a package directory with no file under it names no owner");
+  return t.report();
+}
+
+export string test_a_row_is_taken_only_when_its_count_is_a_number() {
+  T t = T.create();
+  // The driver prints its own report to the same stream this reads the table out of, so a line that
+  // looks like five fields but is prose has to be dropped rather than parsed as a point.
+  t.eqBool(allDigits("0"), true, "zero is a count");
+  t.eqBool(allDigits("1248"), true, "and so is a big one");
+  t.eqBool(allDigits(""), false, "an empty field is not");
+  t.eqBool(allDigits("12x"), false, "nor is one with a letter in it");
+  t.eqBool(allDigits("-1"), false, "nor a negative, which no counter is");
+  t.eqBool(allDigits(" 1"), false, "nor one with a space, which would come from a report line");
+  return t.report();
+}
+
+export string test_a_table_row_keeps_its_empty_fields() {
+  T t = T.create();
+  // Positional, so an empty field is a field: dropping it shifts `count` into `kind` and the row
+  // would be read as a different point rather than skipped.
+  t.eqI32(splitOnTabs("a\tb\tc\td\te").len(), 5, "five fields");
+  t.eqStr(joined(splitOnTabs("f\t12\t8\tentry\t0"), "|"), "f|12|8|entry|0", "in order");
+  t.eqI32(splitOnTabs("a\t\tc").len(), 3, "an empty field in the middle is still a field");
+  t.eqI32(splitOnTabs("a\t").len(), 2, "and so is one at the end");
+  t.eqI32(splitOnTabs("").len(), 1, "no tabs at all is one field");
+  return t.report();
+}
+
+export string test_the_percentage_rounds_and_survives_an_empty_file() {
+  T t = T.create();
+  t.eqI32(percent(80, 108), 74, "80 of 108");
+  t.eqI32(percent(96, 108), 89, "96 of 108");
+  t.eqI32(percent(1, 2), 50, "a half rounds up, as `Math.round` does");
+  t.eqI32(percent(1, 3), 33, "and a third does not");
+  t.eqI32(percent(0, 10), 0, "none");
+  t.eqI32(percent(10, 10), 100, "all");
+  // A file with no points at all would divide by zero. It cannot reach the table — a row exists
+  // because a point was parsed — but the report is the last thing to fail on a corpus it was handed.
+  t.eqI32(percent(0, 0), 0, "and a file with no points does not trap");
+  return t.report();
+}

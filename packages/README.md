@@ -155,7 +155,7 @@ wac task app:build <entry.wac> --worker -o child.worker.js  # ...or something `s
 wac task map             # regenerate MAP.md; the suite fails if it is stale
 wac task coverage:all        # branch coverage of every package, from its wac-native tests
 wac task coverage:<pkg> --points   # that package's per-point table, unfiltered, one row each
-deno run -A tools/coverageUnion.ts # what a file shared between packages reads across all of them
+wac task coverage:union # what a file shared between packages reads across all of them
 wac task coverage:abi
 wac task coverage:bls
 wac task coverage:bignum # ...and the host-driven exercises, per package

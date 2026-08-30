@@ -45,8 +45,9 @@ whatever the carve-out below leaves, and it can be read in one grep.
 ## The order, and what blocks each step
 
 **1. The leaf tools — unblocked, no decisions in them.** Each is a task entry point that reads the
-repository, computes, and prints: `size.ts`, `ignoredFlags.ts`, `docCheck.ts`, and the five
-`corpus:*` tools. `tools/genCore.ts` was one of these and went on 2026-08-30 — its output is checked
+repository, computes, and prints: `size.ts`, `ignoredFlags.ts` and the five `corpus:*` tools.
+`docCheck.ts` was on this list and turned out not to need porting at all — it had been dead since
+2026-08-27 and was deleted. `tools/genCore.ts` was one of these and went on 2026-08-30 — its output is checked
 in, which made the port verifiable byte for byte rather than argued.
 
 The five `corpus:*` tools are self-contained despite the two imports that look like blockers:
@@ -65,8 +66,9 @@ The five `corpus:*` tools are self-contained despite the two imports that look l
 `designClaims.test.ts` as convertible-but-not-done. Both are done — `tools/wac/docsignatures_test.wac`
 and `tools/wac/designclaims_test.wac` exist and the TypeScript is gone.
 
-**2. `coverageAll.ts` (307) — done 2026-08-30, `tools/wac/coverageall.wac`. `coverageUnion.ts` (147)
-is what is left.** `coverageOrder.ts` (41) went with it, and *that* is the part worth recording: it
+**2. Done 2026-08-30 — all three.** `coverageAll.ts` (307) is `tools/wac/coverageall.wac`,
+`coverageUnion.ts` (147) is `tools/wac/coverageunion.wac`, and `coverageOrder.ts` (41) went with the
+first of them. That last one is the part worth recording: it
 looks like the ideal first port — 9 lines of logic, its own test, no I/O — and it is not a leaf. It is
 a *library*, imported only by `coverageAll.ts`, and a TypeScript file cannot import a wac module, so
 porting it alone would have left two copies of the ordering rule or a broken import. **Size is not the
@@ -81,6 +83,15 @@ It also gained the parser and the tests the TypeScript's own comments asked for 
 what `wac task` reads the registry with, instead of a hand-rolled strip that had already broken once;
 and cases for `driverOf`, the ratchet-call classifier, the failure-line filter and the ANSI strip,
 none of which had a test, because the only way to exercise them was a two-minute sweep.
+
+The union half kept its numbers exactly — `tls`/`quic` report the same 3,583 and 4,463 points and the
+same row, `packages/tls/src/handshake.wac | tls | 108 | 80 (74%) | 96 (89%) | +16` — and gained three
+things. It has a **task** (`wac task coverage:union`), where before it was `deno run -A …` typed from
+memory. It **refuses a package name it does not know**, exit 2; the TypeScript filtered the list, so
+`coverageUnion.ts nosuchpkg` printed an empty table, *"0 file(s) … by 0 point(s)"* and exited 0 — a
+clean-looking result over nothing measured, which is the exact failure this repository keeps finding.
+And the two files now **share** `packagesOf`, `commandFor`, `splitOn` and the owner-of-a-path rule
+rather than holding two copies each.
 
 **3. Then `tools/suiteGate.ts` can be deleted, and not before.** Its header names its own exit
 condition: what is left in it is the *writer* of `/tmp/wac-heavy-<pid>`, because the eight tools that
@@ -125,3 +136,181 @@ than re-read**, because it is the one whose answer changes as `0161` progresses.
 - **A generated artefact is the best possible oracle.** Where the TypeScript wrote a checked-in file,
   the port is verifiable byte for byte. Where it only printed, the port needs a test written from
   scratch, and that is the slower half.
+
+## Every remaining `deno` task, classified — 2026-08-30
+
+The tracking number at the top is a count, and a count cannot say whether what is left *should* go.
+Read one by one, most of what remains is either the carve-out this issue already names or blocked on
+one of two specific things. This is the list, so nobody re-derives it:
+
+**Deno is the oracle or the host — these stay.** Six, and each is the permitted use rather than a
+leftover:
+
+| task | why |
+|---|---|
+| `gen:unicode` | `packages/unicode/tools/gentables.ts` asks JavaScript's `toLowerCase`, `toUpperCase` and `RegExp`'s `u` mode what every code point is. Its header states the design: the tables are *derived from the authority* rather than transcribed from it. A wac generator would be deriving wac's tables from wac |
+| `verify:fmt` | 500,000 random doubles through wac's `ftoaBytes`, compared against JavaScript's own number formatting. That formatting **is** the specification `ftoa` implements |
+| `bench` | measures the cost of the JS boundary itself — "bindgen copies an array with one exported wasm call per element" — which is the subject, not an accident of the host |
+| `serve` | `packages/server`'s JavaScript host |
+| `app:build` | the **browser** build. Its own header: "a page must carry its own host, because there is no PATH in a browser to find a `wac` on". The `deno` and `node` targets in it are already `design/system/0009`'s |
+| `site:map` | the npm/vite subtree |
+
+**Blocked on `issues/system/0290b`** — a wac program cannot run a host binary in a chosen directory:
+`corpus:through`, `corpus:hosts`, `corpus:backings`, `corpus:routes`, `corpus:stderr`, `mutate`,
+`mutate:diff`, `mutate:operators`, `flags:ignored`. Nine of them, and it is one missing parameter.
+
+**Blocked on a second thing, which has no issue yet: there is no wac equivalent of `wacFiles`.**
+`size` and `bench:compile` both want a program's whole import closure *with its sources*, to hand to
+`packages/wacc/src/api.wac`'s `emitFiles` — which exists and is exactly the API the TypeScript used.
+What is missing is the reading half.
+
+**And it is smaller than it first looks.** The obvious source is `gather` in
+`packages/wac/src/wac.wac`, which is private to the CLI and carries project roots (`@/`) and import
+maps and a cluster of helpers — extracting it touches the seed app's graph and wants a pass of its
+own. But neither blocked tool needs any of that: checked 2026-08-30, none of
+`packages/tor/size/*.wac`, `packages/tor/src/client_entry.wac`, or anything under `packages/tor/src`,
+`packages/tls/src` or `packages/crypto/src` writes a single `@/` import. A plain import walk that
+keeps the text is enough for both.
+
+`closureOf` in `packages/wactest/src/built.wac` is already that walk — it reads every file in the
+closure to find its imports and then throws the text away, keeping only mtimes. Widening it, or
+giving it a sibling that answers paths and texts, costs no seed rebuild and no new resolver. That is
+the cheap route; `gather` is the complete one, and which is right depends on whether a tool ever
+needs to compile a program that uses `@/`.
+
+**Done 2026-08-30 as `sourcesOf`, and it unblocked one of the two.** `wac task size` is
+`tools/wac/size.wac`: same wasm bytes and the same 12,319-line closure as the TypeScript, byte for
+byte, so the walk is the walk.
+
+**`bench:compile` is not unblocked, and reading it for the port is what showed why.** It does not
+time *a* build; it times the phases of the build as `harness/waccBuild.ts` makes them, in that order,
+and `benchCompile.test.ts` asserts that every `api.*` call in that harness file is either timed here
+or carries a `bench-exempt` line saying why — a guard added because the list silently drifted twice
+and once reported 106s for a build that no longer cost that. So a wac port has to answer *which build
+it measures*: the TypeScript harness's sequence, which is the one the guard is written against and
+which nobody runs to build anything, or `wac build`'s, which is the one people use. Those are
+different programs now. `--mem` is a second question — it re-invokes itself one phase per process to
+get peak memory, because a collection during phase 3 shows up as phase 4 using less, and nothing in
+`std/platform.wac` reports peak RSS.
+
+So the remaining count behind "no `wacFiles`" is one task, not two, and what is left of it is a
+decision about the subject rather than a missing function.
+
+**Goes when the TypeScript goes:** `check`, which is `deno check` over the remaining `.ts`.
+
+**Somebody else's package:** `coverage:sh`.
+
+**Five package benchmarks** — `bench:hash`, `bench:zstd`, `bench:zstd-speed`, `bench:json`,
+`bench:json-lookup` — all measure wac code through `wacBind`, so they are the same shape as `bench`
+above. Whether the JS boundary is still the right thing to measure now that there are two native
+hosts is a decision, not a translation.
+
+**So the honest remainder is nine tasks behind one missing parameter, two behind one missing
+function, and one that dissolves.** The rest is the carve-out working as intended.
+
+## `tools/` read file by file — 2026-08-30
+
+Thirty-eight `.ts` files. Every one has a determination, and the useful result is how little of it is
+actually available to port:
+
+| what | lines | state |
+|---|---|---|
+| `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
+| the five `corpus:*` | 821 | blocked: `0290b` → `0291c` |
+| `ignoredFlags.ts` | 144 | blocked: `0290b` → `0291c` |
+| `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
+| `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
+| `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
+| `suiteGate.ts` + test | 116 | waits for the eight announcers, which are the rows above |
+| `suiteGuard.ts` | 66 | waits for `mutate`, its last two callers |
+| `bench.ts` | 232 | carve-out: measures the JS boundary, which is the subject |
+| `wasmopt.ts` | 81 | carve-out: an `npm:binaryen` host. Its own header — "an experiment, not a build step" |
+| `syncBootstrap.ts` | 115 | carve-out: `bootstrap/` machinery, and `bootstrap/` is a designated host |
+| `_spawncmp.ts` | 66 | carve-out: imports `packages/platform/host/*`; its subject is the JS host |
+| `discovery.test.ts` | 84 | carve-out already named above |
+| `lane.test.ts`, `programs.test.ts`, `profile.test.ts`, `mutate.test.ts` | 816 | test TypeScript machinery; they go with their subjects |
+
+### Correction, an hour later: the two fuzzers are carve-outs too
+
+I wrote the row above from the file list — no task, not in `0290b`'s set, therefore available — and
+then read their headers, which say otherwise. Both are the permitted use of Deno.
+
+**`fuzzBoundary.ts` by its first line**: *"A round-trip fuzzer for the JavaScript boundary."* Its
+subject is the bindgen marshalling between wac and JavaScript — element-by-element arrays of
+references, boxed nullable primitives, packed elements crossing as i32. There is no version of that
+test without JavaScript in it.
+
+**`fuzz.ts` because of where its arithmetic comes from.** Its header is careful that the oracle is
+"the generated tree, not a second interpreter", and that is true about the *structure* — but the
+numbers are JavaScript's: `evalIn` computes `x + y`, `x & y` and the rest in `BigInt` and truncates
+with `BigInt.asIntN(64, …)`. That is an implementation of integer arithmetic independent of the one
+under test. Compiled to wac, the oracle's `x + y` would be an `i64.add` emitted by the same wacc that
+emitted the program it is checking, on the same host — so a wrong emission for a primitive would
+appear identically on both sides and read as agreement. It would still catch parse, typecheck and
+context-dependent emission bugs; it would go blind to exactly the class the wrapping arithmetic is
+there for.
+
+**So the unblocked remainder of `tools/` is nothing.** Every one of the 38 files is behind
+`issues/lang/0291c`, is a carve-out, or moves when its subject moves. The raw count says weeks of
+translation; the determination says the next lever is a compiler bug somebody else filed, and fixing
+it unblocks ~6,500 lines in one go.
+
+That is also the second time in one afternoon that reading a file's own header reversed a decision I
+had made from its name and its size.
+
+## Step 5's premise is wrong: `harness/` is not waiting for `0161`, it is permanent — 2026-08-30
+
+Step 5 above says to let `0161` empty `packages/**/*.test.ts` and then delete most of `harness/`
+rather than translate it. `0161` invites re-deriving its totals, so I did:
+
+    find packages -name '*.test.ts' | wc -l          61
+    find packages -name '*.test.ts' | xargs wc -l    16,518
+
+against the 64 files and 17,244 lines it recorded on 2026-08-24. Three files and ~700 lines in six
+days. But the count is not the finding — **the distribution is**:
+
+| package | files | `0161`'s determination |
+|---|---|---|
+| `platform` | 31 | "the subject is TypeScript in every one" |
+| `box`, `sh` | 17 + 4 | another agent's packages |
+| `wacc` | 4 | `bindgen`, `jsBindgen`, `jsxBoundary`, `wapyRoundTrip` — every one a JavaScript boundary or a differential whose other half is JavaScript |
+| `ts` | 2 | "the subject is a TypeScript compiler's answer" |
+| `webrtc`, `raster`, `stream` | 1 each | a real browser, a real canvas, a `TransformStream` |
+
+That is 61 of 61. Every remaining file is covered by a determination `0161` has already made, and
+none of those determinations is "not yet done" — they are reasons to keep it. `wacc`'s four are worth
+naming because `0161` records it dropping from eleven to four when the reference compiler was
+deleted: what went were the differentials that had lost their oracle, and what is left is the JS
+boundary, which cannot lose one.
+
+**So the Deno pass does not shrink to nothing, and `harness/` is what runs it.** The pool, the
+deadline, the port allocator, the reaper, `wacBind`, `appRun` — those exist to run 61 files that are
+staying. Step 5 was written expecting a workload scheduled to disappear; it is not scheduled to
+disappear.
+
+That changes the question rather than the answer. It is no longer "when does `harness/` become
+deletable" but "how much of `harness/` is duplicated by the wac side that now exists" — `runTests.wac`
+already reimplements the lane split and the queue, `packages/wactest/src/built.wac` has the build
+cache and now `sourcesOf`, and `tools/wac/programs.wac` has program discovery. Those pairs are the
+thing to look at, and each is a separate question about which copy is the real one.
+
+**Caveat, and `0161` supplies it about itself.** The `platform` row carries a standing warning —
+*"Nothing convertible left" was said on 2026-08-19 and was wrong once* — so 31 files is a
+determination to re-check rather than a fact to build on. What is said here is what follows from the
+determinations as they stand today, not a claim that they are all correct.
+
+## The nine unblock — 2026-08-30
+
+`issues/lang/0291c` closed as not reproducing, so `0290b` is not blocked, so the nine tasks behind it
+are not blocked: the five `corpus:*`, `mutate`, `mutate:diff`, `mutate:operators` and `flags:ignored`.
+
+The chain was three deep and two of its links were wrong. `0290b` said the fix needed a seventh
+parameter on `execWith` and could not have one, because `0291c` said a seventh parameter drops the
+module's entry point. `0291c` said that because its reproduction edited `std/platform.wac` without
+regenerating the compiler's embedded copy of it, which is `issues/system/0291b`. Each link was
+recorded honestly and each was checked by the person after; what settled it was running the
+reproduction rather than reading it.
+
+So the remaining work in `tools/` is: add a `cwd` to `execWith` across the five hosts, then port nine
+tools that all want a scratch directory to run something in. `mutate` additionally has
+`issues/system/0183`, which is its own thing.

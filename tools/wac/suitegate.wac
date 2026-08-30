@@ -572,19 +572,3 @@ export string killedLaneNote(string name, i32 code) {
          "   `issues/system/0154` has the measurements; the usual cause is memory.\n";
 }
 
-/**
- * How many doc warnings this run produced, and reset for the next one.
- *
- * `tools/docCheck.ts` keeps a tally by appending one character per warning to a file in `/tmp`, and
- * reads its *length*. Same file, same arithmetic — a wac runner that counted lines would report a
- * different number for the same run.
- */
-/** Called before a run, so a previous one's tally is not counted as this run's. */
-export void clearWarnings(Cli cli) { cli.remove("/tmp/wac-doc-warnings", false).wait(); }
-
-export i32 warningsSoFar(Cli cli) {
-  FileResult f = cli.readFile("/tmp/wac-doc-warnings").wait();
-  if (!f.ok) { return 0; }
-  cli.remove("/tmp/wac-doc-warnings", false).wait();
-  return f.bytes.len();
-}

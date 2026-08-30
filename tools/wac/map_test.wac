@@ -86,10 +86,15 @@ export string test_the_two_lists_of_test_registrars_agree(Core core, Cli cli) {
   string[] here = countsHere(tsText);
   // A floor, because a parser that found nothing would make every assertion below vacuous — which is
   // the shape of failure this file is about one level up.
-  t.isTrue(here.len() >= 3,
+  //
+  // **Two, not three, since 2026-08-30.** `docTest(` was the third and its wrapper was deleted: its
+  // last caller went on 2026-08-27 and tools/docCheck.ts sat unreferenced after it. The floor is
+  // the number that exists rather than a number to grow into — it is here to catch a parser that
+  // stopped parsing, and one that found only one of two would still trip it.
+  t.isTrue(here.len() >= 2,
            "only " + itoa(here.len()) + " `countsHere: true` registrar(s) parsed out of " +
            "harness/testRegistrars.ts — the shape of that file has changed");
-  if (here.len() < 3) { return t.report(); }
+  if (here.len() < 2) { return t.report(); }
 
   for (i32 i = 0; i < here.len(); i++) {
     t.isTrue(contains(wacText, "occurrences(src, \"" + here[i] + "\")"),

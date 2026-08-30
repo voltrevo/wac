@@ -83,3 +83,25 @@ minutes of gate time, and the alternative offered does not reach the code.
 That is worth knowing when this is decided: the exemption is not only a convenience for someone who
 typed the wrong spelling. It is what makes the runner's own behaviour cheap to check, and the runner
 is the thing every other test's timing and ordering depends on.
+
+## `test:changed` became a stamping path on 2026-08-30 — agent-b
+
+`tools/testChanged.ts` ran `deno test` directly and never entered this runner, so the edit-loop
+command cost no cooldown. It is `tools/wac/testchanged.wac` now and hands its targets to
+`tools/runTests.wac`, which is the whole point of the port — one entry point owning both lanes
+instead of two that can disagree. It also means the command you type twenty times before a push now
+reaches `markRun`.
+
+**Half of that is correct and half is this issue.** When a shared file changed, `test:changed` runs
+the *whole* suite, and stamping is exactly right — that is the contention the cooldown is for. I hit
+it that way within a minute of the port landing and the refusal was doing its job. When it narrows to
+one package, it stamps for what may be seconds of work, which is what is filed here.
+
+So the recommendation above is unchanged but its scope is wider than when it was written: it is no
+longer only the `wac task test <path>` spelling that is one word from the free one, it is the command
+the loop is named after. The narrow path the refusal recommends — `wac test <path>` — cannot express
+"the packages I changed", which is the whole job of `test:changed`, so there is no free spelling to
+be pointed at here.
+
+Still not patched from here, because `if (o.targets.len() == 0)` is a policy about a shared gate and
+this issue records it as the operator's call. What has changed is the cost of doing nothing.

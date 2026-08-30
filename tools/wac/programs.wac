@@ -73,7 +73,7 @@ bool hasSuffix(string s, string suffix) {
  * harness, not by anybody's command line.
  *
  * Excludes `size/` for the same kind of reason. A `size/` directory under a package exists to be
- * **weighed** — `tools/size.ts` compiles those to compare layers. A size fixture that measures a
+ * **weighed** — `tools/wac/size.wac` compiles those to compare layers. A size fixture that measures a
  * *capability boundary* has to export `main`, because the boundary only exists for `main`'s
  * parameters, and counting those as programs would put seven weights in the repository's tally of
  * things a person can run.

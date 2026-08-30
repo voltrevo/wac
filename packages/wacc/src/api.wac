@@ -12,7 +12,7 @@ import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
-         warningsOf, widthsOf, errNoSuchExport } from "./check.wac";
+         warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding } from "./check.wac";
 import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -1502,7 +1502,11 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     for (i32 k = 0; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
       if (!exportsName(isrc, ilexed, iprog, wantName[k])) {
-        c.report(errNoSuchExport(), wantLine[k], wantCol[k]);
+        // **A built-in gets its own code**, because for those two trees "that file does not export
+        // this name" is usually false: the file on disk does, and the compiler is reading the copy
+        // it carries. `issues/system/0291b`.
+        c.report(isBuiltinSpec(paths[i]) ? errStaleBuiltinEmbedding() : errNoSuchExport(),
+                 wantLine[k], wantCol[k]);
       }
     }
 

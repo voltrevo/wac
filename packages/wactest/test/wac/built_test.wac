@@ -19,8 +19,9 @@
 
 import { T } from "../../src/assert.wac";
 import { Core, Cli, Stat } from "std/platform.wac";
-import { builtProgram } from "../../src/built.wac";
+import { Sources, builtProgram, sourcesOf } from "../../src/built.wac";
 import { freshDir, putFile } from "../../src/host.wac";
+import { contains, startsWith } from "../../src/strings.wac";
 
 const string GOOD = "import { Core, Cli } from \"std/platform.wac\";\n"
   + "export i32 main(Core core, Cli cli) { return 0; }\n";
@@ -55,5 +56,41 @@ export string test_a_program_that_stopped_compiling_is_not_served_from_before(Co
 
   cli.remove(dir, true).wait();
   cli.remove(cli.cwd().wait() + "/.cache/built-builtprobe", true).wait();
+  return t.report();
+}
+
+/**
+ * `sourcesOf` answers a program's whole closure, with the text, and says when it could not.
+ *
+ * The reading half of what `packages/wacc/src/api.wac`'s `emitFiles` takes, and the thing
+ * `issues/system/0289b` records as blocking two tools. Tested here rather than through a caller
+ * because the interesting cases are the closure being *right* and the failure being *reported* —
+ * both of which a caller would turn into a compile error somewhere else.
+ */
+export string test_sourcesof_reads_a_whole_closure_and_reports_a_hole(Core core, Cli cli) {
+  T t = T.create();
+
+  // A file with no imports of its own is a closure of one, and its text is its text.
+  Sources one = sourcesOf(cli, "packages/wactest/src/strings.wac");
+  t.eqStr(one.why, "", "a file that reads is no hole");
+  t.eqI32(one.paths.len(), 1, "no imports means one file");
+  t.eqStr(one.paths[0], "packages/wactest/src/strings.wac", "and it is the entry");
+  t.isTrue(contains(one.texts[0], "export string[] splitKeepingEmpty"), "with its text");
+
+  // A file that imports reaches what it imports, and `std/` and `core/` are *not* in the answer:
+  // they live in the compiler, which is what will be handed this.
+  Sources many = sourcesOf(cli, "packages/wactest/src/built.wac");
+  t.eqStr(many.why, "", "still no hole");
+  t.isTrue(many.paths.len() >= 1, "the entry at least");
+  for (i32 i = 0; i < many.paths.len(); i++) {
+    t.isFalse(startsWith(many.paths[i], "std/") || startsWith(many.paths[i], "core/"),
+              "on disk only, not " + many.paths[i]);
+    t.isTrue(many.texts[i].len() > 0, many.paths[i] + " has text");
+  }
+
+  // **A hole is named, not skipped.** Compiling a program with a file missing from it reports
+  // whatever the hole makes the checker say, which points at the wrong file.
+  Sources gone = sourcesOf(cli, "packages/wactest/src/definitely-not-here.wac");
+  t.eqI32(gone.paths.len(), 0, "nothing to hand a compiler");
   return t.report();
 }

@@ -11,8 +11,9 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { joined } from "../../packages/wactest/src/strings.wac";
-import { callsRatchet, dispatchOrder, driverOf, isFailureLine, stripAnsi }
+import { callsRatchet, dispatchOrder, driverOf, isFailureLine, isSweep, packagesOf, stripAnsi }
        from "./coverageall.wac";
+import { Task } from "../../packages/wac/src/tasks.wac";
 
 /** The four packages every case below orders, in the alphabetical order the sweep hands over. */
 string[] four() { return string[]("abi", "bytes", "crypto", "zstd"); }
@@ -138,5 +139,32 @@ export string test_colour_escapes_are_taken_off_the_lines_that_are_repeated() {
   t.eqStr(stripAnsi("a\u{1b}[1;32mb\u{1b}[mc"), "abc", "several parameters, and an empty one");
   // A lone escape with no `[` after it is dropped rather than left to confuse whatever prints this.
   t.eqStr(stripAnsi("a\u{1b}b"), "ab", "an escape that starts no sequence");
+  return t.report();
+}
+
+export string test_the_sweep_never_dispatches_another_sweep() {
+  T t = T.create();
+  // **This is the canary for a run that looks like a hang.** `packagesOf` excluded `coverage:all`
+  // and nothing else, because it was the only sweep. `coverage:union` arrived on 2026-08-30 and was
+  // dispatched as though it were a package — so the sweep ran 37 drivers plus a nested whole-union
+  // run, and printed `ok` 37 times while a thirty-eighth job nobody counted kept the suite lock.
+  //
+  // The arithmetic is why it hid: 37 distinct `ok` lines is exactly what 38 dispatched jobs with one
+  // outstanding looks like. So this asserts the *set*, not the count.
+  Task[] tasks = Task[](Task("coverage:all", "x"), Task("coverage:union", "y"),
+                        Task("coverage:rlp", "z"), Task("coverage:tls", "w"),
+                        Task("test", "not a coverage task"));
+  string[] got = packagesOf(tasks);
+  t.eqStr(joined(got, ","), "rlp,tls", "the packages, and neither sweep");
+
+  t.eqBool(isSweep("coverage:all"), true, "the whole-sweep is a sweep");
+  t.eqBool(isSweep("coverage:union"), true, "and so is the union");
+  t.eqBool(isSweep("coverage:rlp"), false, "a package is not");
+  t.eqBool(isSweep("coverage:unionfind"), false, "nor is a name that merely starts the same");
+
+  // Whatever the registry holds, no dispatched name may name a sweep — the property, not the list.
+  for (i32 i = 0; i < got.len(); i++) {
+    t.eqBool(isSweep("coverage:" + got[i]), false, "dispatching coverage:" + got[i]);
+  }
   return t.report();
 }

@@ -274,7 +274,7 @@ bytes.
 ```sh
 wac task coverage:gzip [--verbose]   # this package, including the hand-built streams
 wac task coverage:all [--verbose]        # every package, from its wac-native tests
-wac task coverage:gzip --points          # the per-point table, for tools/coverageUnion.ts
+wac task coverage:gzip --points          # the per-point table, for tools/wac/coverageunion.wac
 ```
 
 wac gained opt-in branch-coverage instrumentation

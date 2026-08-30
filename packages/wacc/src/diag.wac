@@ -156,6 +156,7 @@ export string checkMessage(i32 code) {
   // **Not "out of range", because it is in range.** `'é'` is 233 and a `u8` holds 0..255; what is
   // wrong is that the two mean different things. `design/lang/0013`.
   if (code == 209) { return "a character literal is a codepoint, and this element holds a byte"; }
+  if (code == 210) { return "the compiler's copy of that built-in does not export this name"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -248,6 +249,7 @@ export string hintFor(i32 code) {
   if (code == 60) { return "remove the `else` — every variant is already covered"; }
   if (code == 62) { return "unwrap the subject with `!`, or test it with `is null` first"; }
   if (code == 209) { return "compare against the bytes — `\"é\".toBytes()` is 195 169, not 233"; }
+  if (code == 210) { return "`core/` and `std/` are carried inside the compiler — run `wac task gen:core` if you have edited one"; }
   // Added where the help is real. A hint that only restates the message is worse than none: it
   // costs a line of everybody's terminal and teaches nothing, and the percentage it moves is a
   // measurement of itself.

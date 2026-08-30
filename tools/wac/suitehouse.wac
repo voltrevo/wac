@@ -125,7 +125,7 @@ export void sweepStaleTemp(Core core, Cli cli) {
     // either, because they do not begin with `wac-`. Measured on 2026-08-29: **967 files, 7.6 MB**,
     // growing by two or three a run since the gate was written. A day old is well past any reader.
     if (!startsWith(name, "wac-") && !startsWith(name, "push-suite-")) { continue; }
-    if (name == "wac-doc-warnings" || name == "wac-suite.lock") { continue; }
+    if (name == "wac-suite.lock") { continue; }
     if (startsWith(name, "wac-suite-last-")) { continue; }
     string path = "/tmp/" + name;
     Stat s = cli.linkStat(path).wait();

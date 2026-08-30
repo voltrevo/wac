@@ -292,3 +292,45 @@ export string test_a_builtin_prefix_that_names_no_builtin_lists_the_ones_there_a
   return t.report();
 }
 
+
+/**
+ * A name the compiler's copy does not have is not "that file does not export this name".
+ *
+ * For these two trees that sentence is usually **false**: the file on disk does export it, and the
+ * compiler is reading the copy it carries. `./bootstrap.sh` does not regenerate that copy, so the
+ * way to meet this is to edit `std/platform.wac`, rebuild, and be told your import is wrong about a
+ * file you are looking at. `issues/system/0291b`.
+ *
+ * Through the command rather than through `diagnoseFiles`, for the reason the test above gives: a
+ * caller can supply any text it likes for `std/platform.wac`, and what is being checked here is that
+ * the *embedded* copy is what answers. So the name is one no version of that file has ever had.
+ */
+export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_the_file(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "builtin-stale");
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+  Change w = cli.writeFile(dir + "/stale.wac",
+                           ("import { Core, Cli, notInAnyVersionOfPlatform } "
+                            + "from \"std/platform.wac\";\n"
+                            + "export i32 main(Core core, Cli cli) { return 0; }\n").toBytes()).wait();
+  t.isTrue(w.ok(), "could not write stale.wac — " + w.message);
+  if (w.ok()) {
+    Exec r = checkFrom(cli, dir, "stale.wac");
+    t.isTrue(r.ran(), "wac did not run — " + r.error);
+    if (r.ran()) {
+      string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      t.isTrue(r.status != 0, "wacc accepted a name the built-in does not have: " + said);
+      t.isTrue(contains(said, "the compiler's copy"),
+               "wacc did not say whose copy it read — " + said);
+      // The help is the actionable half, and the whole reason this has its own code: a reader who is
+      // told the file is wrong will go and look at the file.
+      t.isTrue(contains(said, "gen:core"),
+               "wacc did not name the command that fixes it — " + said);
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

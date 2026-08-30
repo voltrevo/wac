@@ -247,6 +247,19 @@ export i32 errDuplicateCaseValue() { return 207; }
  */
 export i32 errTypeArgCount() { return 208; }
 export i32 errCharIntoByte() { return 209; }
+/**
+ * An import of a **built-in** asking for a name the compiler's embedded copy does not have.
+ *
+ * `errNoSuchExport` says "that file does not export this name", which for `core/…` and `std/…` is
+ * very often false: the file on disk exports it, and the compiler is not reading the file. It
+ * carries those nine files as `packages/wacc/src/coretext.wac`, so an edit to `std/platform.wac`
+ * has no effect until `wac task gen:core` regenerates the embedding — and the reader, told their
+ * import is wrong, opens the file and finds the export sitting there. `issues/system/0291b`.
+ *
+ * Its own code rather than better wording on 56, because the two are different facts: 56 is about a
+ * file, and this is about a *build step that has not been run*.
+ */
+export i32 errStaleBuiltinEmbedding() { return 210; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */

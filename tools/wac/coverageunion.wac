@@ -1,0 +1,289 @@
+// Which files two packages both reach, and by how much.
+//
+//   wac task coverage:union            # every package with a driver
+//   wac task coverage:union tls quic   # just these
+//
+// **The question this answers**, from `issues/system/0241b`: a coverage ledger names a prefix and the
+// prefix is a directory, so a file imported across a package boundary is measured once per importer
+// and never as a whole. `packages/tls/src/handshake.wac` has two consumers, and each ledger read on
+// its own overstates the gap in it — the points one driver leaves dark are largely the ones the other
+// covers.
+//
+// The data was there and thrown away: a driver executes points in files outside its own package and
+// the prefix is applied at *report* time. `--points` on every ledger prints the whole table instead,
+// as `file<TAB>line<TAB>col<TAB>kind<TAB>count`, and this unions it.
+//
+// **Keyed by `line:col:kind` and not by the counter index**, because each driver compiles its own
+// graph and numbers its own points — index 41 in one run and index 41 in another are unrelated. And
+// **not by `line:col` alone**, which was the first version of this: several counters sit at one
+// position — `handshake.wac` has 108 points over 75 positions — so keying on the position folds a
+// dark branch into a lit one beside it and reports 12 dark where the ledger reports 28.
+//
+// This reports and never fails. It is not a ratchet: a package's own floor is what fails when
+// somebody deletes a test, and that is `tools/wac/coverageall.wac` and should stay exactly as it is.
+// This is about the *reason column* — one class of exemption that is a promise rather than a
+// measurement.
+//
+// **In wac since 2026-08-30**, from tools/coverageUnion.ts — `issues/system/0289b` step 2, and the
+// second half of the port that moved the sweep. It shares that file's `packagesOf`, `commandFor`,
+// `splitOn` and `binary` rather than carrying its own: the TypeScript pair had two hand-rolled
+// `tasks.json5` strips and two copies of "which package owns this path", and the point of moving both
+// together is that there is now one of each. It also gained a task — it had none, and was run by
+// typing `deno run -A tools/coverageUnion.ts` from memory.
+
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Map } from "core/map.wac";
+import { hashString, stringEq } from "core/hash.wac";
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
+import { Task, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
+import { commandFor, packagesOf, splitOn } from "./coverageall.wac";
+
+/**
+ * Which package a file belongs to, by its path.
+ *
+ * `core/` is a package with a driver whose tree is at the repository root — the same exception
+ * `tools/wac/coverageall.wac`'s `driverOf` exists for. `std/` is not: it is the platform surface and
+ * no ledger owns it.
+ */
+export string owner(string file) {
+  if (startsWith(file, "core/")) { return "core"; }
+  if (!startsWith(file, "packages/")) { return ""; }
+  string rest = file.slice(9, file.len());
+  i32 slash = rest.indexOf("/");
+  return slash < 0 ? "" : rest.slice(0, slash);
+}
+
+/** `true` when every byte of `s` is a digit, and `s` is not empty. */
+export bool allDigits(string s) {
+  if (s.len() == 0) { return false; }
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] < '0' || b[i] > '9') { return false; } }
+  return true;
+}
+
+/** `100 * n / d`, rounded, with no division by zero. */
+export i32 percent(i32 n, i32 d) { return d == 0 ? 0 : (200 * n + d) / (2 * d); }
+
+/** Bit set in `flags` for a point some driver compiled. */
+const i32 EXISTS = 1;
+/** Bit set for a point some driver *reached*. */
+const i32 ANY = 2;
+/** Bit set for a point the file's own package reached. */
+const i32 OWN = 4;
+
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  Vec<string> asked = Vec<string>.create();
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (!startsWith(a, "--")) { asked.push(a); }
+  }
+
+  FileResult reg = cli.readFile(tasksFile()).wait();
+  if (!reg.ok) {
+    core.warn("coverage:union: cannot read " + tasksFile());
+    return 1;
+  }
+  Task[] tasks = tasksIn(reg.bytes);
+  string[] all = packagesOf(tasks);
+
+  // Named packages, or all of them. A name that is not a package is worth saying rather than
+  // silently producing a smaller report — the whole point of this tool is a number, and a typo that
+  // quietly narrows the set is a smaller number that looks like an answer.
+  Vec<string> wanted = Vec<string>.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    bool take = asked.len() == 0;
+    for (i32 k = 0; k < asked.len(); k++) { if (asked.get(k) == all[i]) { take = true; } }
+    if (take) { wanted.push(all[i]); }
+  }
+  for (i32 k = 0; k < asked.len(); k++) {
+    bool known = false;
+    for (i32 i = 0; i < all.len(); i++) { if (all[i] == asked.get(k)) { known = true; } }
+    if (!known) { core.warn("coverage:union: no package named " + asked.get(k)); return 2; }
+  }
+
+  Map<string, i32> flags = Map.create(hashString, stringEq);
+  Map<string, i32> ran = Map.create(hashString, stringEq);
+  Vec<string> failed = Vec<string>.create();
+
+  // **One at a time.** Four in parallel is what `tools/wac/coverageall.wac` does and is right there,
+  // because it is on the push path; this is a report somebody asks for, and a driver that shares the
+  // machine with three others is a driver whose *timings* are noise — the point sets are the same
+  // either way, but a run that takes twice as long for no reason is one nobody repeats.
+  for (i32 i = 0; i < wanted.len(); i++) {
+    string pkg = wanted.get(i);
+    string[] parts = splitOn(commandFor(tasks, pkg), " ");
+    if (parts.len() == 0) { continue; }
+    string[] args = string[parts.len()](fill: "");
+    for (i32 k = 1; k < parts.len(); k++) { args[k - 1] = parts[k]; }
+    args[parts.len() - 1] = "--points";
+
+    i64 started = core.nowMillis().wait();
+    Exec r = cli.exec(parts[0], args, u8[0]()).wait();
+    i32 rows = absorb(flags, string.fromBytes(r.stdout), pkg);
+    i64 took = core.nowMillis().wait() - started;
+
+    string status = r.ran() && r.status == 0 ? "" : "  (exit " + itoa(r.ran() ? r.status : -1) + ")";
+    if (!r.ran() || r.status != 0) { failed.push(pkg); }
+    core.log(padded(pkg, 12) + rightly(itoa(rows), 6) + " points  " + tenths(took) + "s" + status);
+    if (rows > 0) { ran.set(pkg, 1); }
+  }
+
+  report(core, flags, ran, failed);
+  return 0;
+}
+
+/**
+ * Fold one driver's `--points` table into `flags`, and answer how many **distinct** points it held.
+ *
+ * A line that is not five tab-separated fields, or whose count is not a number, is skipped rather
+ * than refused: the driver prints its own report to the same stream, and this is looking for the
+ * table inside it.
+ *
+ * **Distinct, not lines, and the difference is 144 on `tls` alone.** A generic is monomorphised, so
+ * the binary carries one counter per instantiation and the raw table has a row for each — `tls`
+ * instantiates `Pending<T>` seventeen times, so nine positions inside it appear seventeen times each,
+ * with counts like `0 0 0 0 0 0 0 100 1248 178 …`. Counting rows would report 4,607 points where
+ * there are 4,463, and seven of those seventeen would read as uncovered at a line the run exercises
+ * heavily. `issues/system/0205` is where this is written down — *"per-instantiation counters
+ * understate whether the source is tested. The driver dedupes by source position, which is what 'is
+ * this branch tested' means"* — and every consumer of a `--points` table has to do the same. The
+ * union below already did, by construction; this line of output did not.
+ */
+i32 absorb(Map<string, i32> flags, string text, string pkg) {
+  Map<string, i32> seen = Map.create(hashString, stringEq);
+  string[] lines = splitLines(text);
+  i32 rows = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string[] f = splitOnTabs(lines[i]);
+    if (f.len() != 5 || !allDigits(f[4])) { continue; }
+    string key = f[0] + "\t" + f[1] + ":" + f[2] + ":" + f[3];
+    if (seen.getOr(key, 0) == 0) { seen.set(key, 1); rows = rows + 1; }
+    i32 was = flags.getOr(key, 0);
+    i32 now = was | EXISTS;
+    if (f[4] != "0") {
+      now = now | ANY;
+      if (owner(f[0]) == pkg) { now = now | OWN; }
+    }
+    flags.set(key, now);
+  }
+  return rows;
+}
+
+/** `s` cut at every tab, keeping empty fields — a table row has meaning in its positions. */
+export string[] splitOnTabs(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\t") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\t") { out[at] = s.slice(from, i); at = at + 1; from = i + 1; }
+  }
+  out[at] = s.slice(from, s.len());
+  return out;
+}
+
+/** The table, sorted by what each file gained. */
+void report(Core core, Map<string, i32> flags, Map<string, i32> ran, Vec<string> failed) {
+  string[] keys = flags.keys();
+
+  // The distinct files, in first-seen order, so the arrays below can be sized rather than grown.
+  Map<string, i32> index = Map.create(hashString, stringEq);
+  Vec<string> files = Vec<string>.create();
+  for (i32 i = 0; i < keys.len(); i++) {
+    string file = keys[i].slice(0, keys[i].indexOf("\t"));
+    if (index.getOr(file, -1) >= 0) { continue; }
+    index.set(file, files.len());
+    files.push(file);
+  }
+
+  i32[] nAll = i32[files.len()]();
+  i32[] nAny = i32[files.len()]();
+  i32[] nOwn = i32[files.len()]();
+  for (i32 i = 0; i < keys.len(); i++) {
+    i32 at = index.getOr(keys[i].slice(0, keys[i].indexOf("\t")), -1);
+    i32 f = flags.getOr(keys[i], 0);
+    if ((f & EXISTS) != 0) { nAll[at] = nAll[at] + 1; }
+    if ((f & ANY) != 0) { nAny[at] = nAny[at] + 1; }
+    if ((f & OWN) != 0) { nOwn[at] = nOwn[at] + 1; }
+  }
+
+  // **Only where the owner ran.** Otherwise "its own" is zero because nothing measured it, and a
+  // two-package run reports every file in `wactest` as read 0% by its owner — an artefact of the
+  // selection, not a finding. A full run has every owner, so nothing is lost there.
+  Vec<i32> rows = Vec<i32>.create();
+  i32 gained = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    if (ran.getOr(owner(files.get(i)), 0) == 0) { continue; }
+    if (nAny[i] <= nOwn[i]) { continue; }
+    rows.push(i);
+    gained = gained + (nAny[i] - nOwn[i]);
+  }
+
+  // Biggest gain first — an insertion sort, because the interesting rows are the top few and the
+  // list is one entry per shared file.
+  i32[] order = i32[rows.len()]();
+  for (i32 i = 0; i < rows.len(); i++) {
+    i32 v = rows.get(i);
+    i32 at = i;
+    while (at > 0 && (nAny[order[at - 1]] - nOwn[order[at - 1]]) < (nAny[v] - nOwn[v])) {
+      order[at] = order[at - 1];
+      at = at - 1;
+    }
+    order[at] = v;
+  }
+
+  core.log("");
+  core.log("| file | owner | points | its own | across all | gained |");
+  core.log("|---|---|---:|---:|---:|---:|");
+  for (i32 k = 0; k < order.len(); k++) {
+    i32 i = order[k];
+    string who = owner(files.get(i));
+    core.log("| " + files.get(i) + " | " + (who == "" ? "(shared)" : who) + " | " + itoa(nAll[i])
+             + " | " + itoa(nOwn[i]) + " (" + itoa(percent(nOwn[i], nAll[i])) + "%) | "
+             + itoa(nAny[i]) + " (" + itoa(percent(nAny[i], nAll[i])) + "%) | +"
+             + itoa(nAny[i] - nOwn[i]) + " |");
+  }
+
+  core.log("");
+  core.log(itoa(order.len()) + " file(s) read better across all drivers than from their own package, "
+           + "by " + itoa(gained) + " point(s) in total.");
+  core.log("A package's own floor is unaffected and should be: this is the reason column, "
+           + "not a ratchet.");
+
+  // **A driver that exited non-zero contributed a partial table**, and a partial table can only make
+  // the union smaller — so every figure above is a floor rather than an answer. Said out loud because
+  // the direction is the reassuring one, which is exactly how it would go unnoticed.
+  if (failed.len() > 0) {
+    string names = "";
+    for (i32 i = 0; i < failed.len(); i++) {
+      names = names + (i == 0 ? "" : ", ") + failed.get(i);
+    }
+    core.log("\n" + itoa(failed.len()) + " driver(s) exited non-zero — " + names
+             + ". Their point sets are whatever they reached before stopping, so the gains above are "
+             + "understated.");
+  }
+}
+
+/** `s` in a field `w` wide, left-aligned. */
+string padded(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = out + " "; }
+  return out;
+}
+
+/** `s` in a field `w` wide, right-aligned. */
+string rightly(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+/** Milliseconds as `12.3`. */
+string tenths(i64 ms) {
+  i64 t = (ms + (50 as i64)) / (100 as i64);
+  return itoa((t / (10 as i64)) as! i32) + "." + itoa((t % (10 as i64)) as! i32);
+}
