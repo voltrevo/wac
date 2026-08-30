@@ -34,7 +34,7 @@ export string test_await_outside_an_async_function_is_refused() {
     + "  Pending<i32> p = Pending<i32>.of(1);\n"
     + "  return await p;\n"
     + "}\n");
-  // **The declaration is named, not the operand.** The operand here is a perfectly good ticket, so a
+  // `[§wac-await-inside-3nq7wbe]`. **The declaration is named, not the operand.** The operand here is a perfectly good ticket, so a
   // message about it would send the reader to the one part of this program that is right.
   t.isTrue(contains(out, "`await` outside an `async` function"),
            "the refusal should name the function it is in — got \"" + out + "\"");
@@ -51,6 +51,7 @@ export string test_awaiting_something_that_is_not_a_ticket_names_its_type() {
     + "  return await n;\n"
     + "}\n"
     + "i32 main() { return 0; }\n");
+  // `[§wac-await-pending-9km2xtr]` — only a `Pending<T>` may be awaited, and the type is named.
   t.isTrue(contains(out, "cannot be awaited"), "refused — got \"" + out + "\"");
   // *What did I await then* is the whole question, so the type is in the sentence.
   t.isTrue(contains(out, "and this is i32"),
@@ -146,7 +147,7 @@ export string test_a_caller_of_an_async_function_receives_a_ticket() {
 
 export string test_returning_a_ticket_from_an_async_function_says_both_readings() {
   T t = T.create();
-  // A5's first refusal, with D4's help rather than the general one. Returning a ticket *is* a real
+  // `[§wac-async-mismatch-8dxr5va]` — A5's first refusal, with D4's help rather than the general one. Returning a ticket *is* a real
   // program — the caller gets `Pending<Pending<T>>` and awaits twice — so the mismatch has two fixes
   // and nothing here can tell which was meant. What the general help offers is a cast, which is the
   // one thing that cannot be right: there is no conversion from a ticket to what it will answer.
@@ -157,5 +158,19 @@ export string test_returning_a_ticket_from_an_async_function_says_both_readings(
   t.isTrue(contains(out, "`await` it for the i32"), "the first reading — got \"" + out + "\"");
   t.isTrue(contains(out, "declare `async Pending<i32>`"), "the second — got \"" + out + "\"");
   t.isFalse(contains(out, "as!"), "and not a cast, which cannot convert a ticket");
+  return t.report();
+}
+
+export string test_await_binds_tighter_than_a_binary_operator() {
+  T t = T.create();
+  // `[§wac-await-bind-4wzp7cn]`. Asked as a *typing* question, because the lowering does not take an
+  // `await` nested inside a larger expression yet — but the checker types it either way, and that is
+  // where the grouping shows. If `await` bound looser than `+`, this would be `await (t + 1)` and
+  // `t + 1` would be an arithmetic operator applied to a ticket, which is an error.
+  t.eqStr(diagnose(TICKET
+    + "async i32 f(Pending<i32> t) {\n"
+    + "  return await t + 1;\n"
+    + "}\n"
+    + "i32 main() { return 0; }\n"), "", "`await t + 1` types as `(await t) + 1`");
   return t.report();
 }

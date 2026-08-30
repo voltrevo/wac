@@ -1,5 +1,7 @@
 // `void` as a type argument, and what it does to a parameter it stands in for.
 //
+// `[§wac-void-typearg-2mkx9db]`.
+//
 // **A ticket that answers nothing is the thing that wants this.** `Pending<T>` is what every
 // capability hands back, and an `async void` function has to hand its caller *something* —
 // `design/lang/0014` D5. There is no unit type in `core` and `Pending<void>` was a **parse** error

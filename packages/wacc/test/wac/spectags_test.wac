@@ -245,9 +245,16 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
   // A hard-coded list of places tags may live cannot survive files moving, so the assertion below is
   // no longer "could this be read at all" but "did this contribute anything", which is what actually
   // goes wrong.
+  // **`packages/platform/test/wac` joined on 2026-08-30, and that is the third time.** `async` and
+  // `await` are language rules whose evidence is a program that *runs* — a machine driven by
+  // `drain`, two of them interleaving, a wait taking a continuation back — so their tests live with
+  // the runtime rather than with the compiler, and six `§wac-async-*` clauses went out of this walk
+  // by being held in the natural place. The pattern each time is the same: the tests exist and run,
+  // and this list did not know where they were.
   string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "packages/wac/test/wac",
-                           "tools/wac", "tools/mutate");
-  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", "_test.wac", ".test.ts");
+                           "packages/platform/test/wac", "tools/wac", "tools/mutate");
+  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", "_test.wac", "_test.wac",
+                               ".test.ts");
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] tests = filesIn(cli, dirs[d], suffixes[d]);
     t.isTrue(tests.len() > 0,

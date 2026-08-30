@@ -256,9 +256,9 @@ digit          = "0"..."9" ;
 ### Keywords
 
 ```
-as  as!  as~  as@  break  case  const  continue  default  do  else  enum
-export  false  fn  for  if  import  is  match  not  null  override
-return  struct  switch  this  trap  true  void  while
+as  as!  as~  as@  async  await  break  case  const  continue  default  do
+else  enum  export  false  fn  for  if  import  is  match  not  null
+override  return  struct  switch  this  trap  true  void  while
 ```
 
 Type names are **not** keywords: `i32`, `u8`, `f64`, `bool`, `string` and the rest

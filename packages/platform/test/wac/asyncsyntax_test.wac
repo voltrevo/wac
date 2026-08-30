@@ -40,6 +40,7 @@ i32 sizeOf(Cli cli, string path) {
 
 export string test_one_await_answers_what_blocking_answers(Core core, Cli cli) {
   T t = T.create();
+  // `[§wac-async-wait-5tqm2wh]` — a plain `.wait()` drives the function's own chain to its answer.
   i32 want = sizeOf(cli, "README.md");
   t.isTrue(want > 0, "the oracle read the file");
   t.eqI32(fileSize(cli, "README.md").wait(), want, "and so did the async version");
@@ -48,8 +49,9 @@ export string test_one_await_answers_what_blocking_answers(Core core, Cli cli) {
 
 export string test_the_caller_gets_a_ticket_not_a_value(Core core, Cli cli) {
   T t = T.create();
-  // D3 in the one place it is visible at runtime: the declaration says `i32` and this is a
-  // `Pending<i32>`, outstanding until something drives it.
+  // `[§wac-async-decl-h3vq81m]` and `[§wac-async-eager-2rf9kdp]` in the one place both are visible
+  // at runtime: the declaration says `i32` and this is a `Pending<i32>`, outstanding because the
+  // eager call stopped at the first await rather than running to the end.
   Pending<i32> p = fileSize(cli, "README.md");
   t.isFalse(p.isDone(), "eager ran the body to its first await and stopped");
   t.eqI32(p.wait(), sizeOf(cli, "README.md"), "waiting drove the rest");
@@ -189,6 +191,7 @@ async i32 ticks(Core core, i32 n, i32[] log, i32 me) {
 
 export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
   T t = T.create();
+  // `[§wac-async-drain-7cvj4bn]` — registered, so the scheduler alone can finish it.
   i32[] log = i32[1]();
   Pending<i32> p = ticks(core, 2, log, 1);
   t.isFalse(p.isDone(), "eager stopped at the first await");
@@ -213,12 +216,36 @@ export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
 
 export string test_a_wait_takes_the_continuation_back(Core core, Cli cli) {
   T t = T.create();
-  // Registered *and* waited on. Without the detach the body would run twice — once where the wait
+  // `[§wac-async-once-3jhw8qk]`. Registered *and* waited on. Without the detach the body would run twice — once where the wait
   // drove it and once when `run` dispatched the continuation still sitting in the scheduler.
   i32[] log = i32[1]();
   Pending<i32> p = ticks(core, 1, log, 7);
   t.eqI32(p.wait(), 1, "waiting drove it");
   t.eqI32(log[0], 7, "the body ran once, not twice");
   t.eqI32(core.drain(), 0, "and nothing was left registered");
+  return t.report();
+}
+
+// ── A4, and how `await` groups ────────────────────────────────────────────────
+
+/**
+ * An async function that hands a **ticket** back — `[§wac-async-nested-6bqt3jf]`.
+ *
+ * Its caller gets a `Pending<Pending<i64>>`: awaiting once passes the first delay and yields a
+ * second one already running, and awaiting that gives its answer. The two awaits mean different
+ * things, which is why this is not flattened.
+ */
+async Pending<i64> laterStill(Core core) {
+  i64 first = await core.delay(1);
+  return core.delay(1);
+}
+
+export string test_a_returned_ticket_is_not_flattened(Core core, Cli cli) {
+  T t = T.create();
+  Pending<Pending<i64>> outer = laterStill(core);
+  Pending<i64> inner = outer.wait();
+  // The inner one is a real ticket, still outstanding — not a value dressed up as one.
+  t.isFalse(inner.isDone(), "the second delay is under way, not finished");
+  t.isTrue(inner.wait() > (0 as i64), "and awaiting it again answers");
   return t.report();
 }

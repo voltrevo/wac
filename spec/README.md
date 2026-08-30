@@ -39,6 +39,7 @@ what that changes about how a claim here is checked.
 - [spec/imports.md](spec/imports.md) — file-based imports, renaming with as
 - [spec/naming.md](spec/naming.md) — naming collisions, shadowing rules
 - [spec/funcrefs.md](spec/funcrefs.md) — function references, higher-order functions
+- [spec/async.md](spec/async.md) — async functions, await, and the tickets they are built on
 - [spec/grammar.md](spec/grammar.md) — formal EBNF grammar
 - [spec/wapy.md](spec/wapy.md) — wapy: the indentation surface, and how it corresponds
 - [spec/strings.md](spec/strings.md) — string type, literals, indexing, concatenation
