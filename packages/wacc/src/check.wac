@@ -8862,7 +8862,19 @@ void checkStmt(C c, Stmt s, Ty want) {
         // case the clause is about.
         string wrote = sourceOfExpr(c, e);
         string note = expectedFound(expected, got);
-        if (wrote == "" || got != "bool" || expected == "bool") {
+        // **D4, and it says both readings rather than guessing which was meant.** Returning a ticket
+        // from an async function is a real program — the caller gets `Pending<Pending<T>>` and awaits
+        // twice — so this mismatch has two fixes and no way to tell them apart. The general help here
+        // offers a cast, which is the one thing that cannot be right: there is no conversion from a
+        // ticket to what it will answer, only a wait.
+        if (c.inAsync && isPendingType(got) && !isPendingType(expected)) {
+          string[] pargs = genericArgs(got);
+          string inner = pargs.len() == 1 ? pargs[0] : "what it answers";
+          c.reportSpanHinted(errReturnTypeMismatch(), e.line, e.col, note,
+                             c.widthBetween(firstTokenOfExpr(e), lastTokenOfExpr(e)),
+                             "`await` it for the " + inner + ", or declare `async " + got
+                               + "` to hand the ticket on");
+        } else if (wrote == "" || got != "bool" || expected == "bool") {
           reportExprSpan(c, errReturnTypeMismatch(), e, note);
         } else {
           c.reportSpanHinted(errReturnTypeMismatch(), e.line, e.col, note,
@@ -9823,7 +9835,17 @@ export void declareModule(C c, Program prog, string[] only) {
         for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
         string[] ftps = string[typeParams.len()]();
         for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
-        c.declareFunc(c.renamed(tokenText(c, nameTok)), typeOfTy(c, returnType), prims,
+        // **D3, and it is one change here rather than one at every call.** `funcReturns` is the
+        // signature a caller reads, so wrapping it is the whole of *the declaration states what the
+        // body answers, and the caller receives a ticket for it*. The body is unaffected: it is
+        // checked against the written type further down, which is what `async i32 f()` means.
+        //
+        // `""` is this checker's *unknown*, and wrapping it would make `Pending<>` — a type nobody
+        // can name and every slot would then disagree with. Left alone, by the same rule the rest of
+        // the file keeps.
+        string fret = typeOfTy(c, returnType);
+        if (isAsync && fret != "") { fret = "Pending<" + fret + ">"; }
+        c.declareFunc(c.renamed(tokenText(c, nameTok)), fret, prims,
                       params.len(), ftps);
       }
       else: { }

@@ -335,7 +335,7 @@ already the state slot.
 | 0 | **done 2026-08-30** — `packages/wacc/test/wac/voidtypearg_test.wac` |
 | 1 | **dropped 2026-08-30** — `issues/lang/0292c` closed as not a bug; `Pending<T>` takes methods as any struct does. `cancel` stays on `Core` because the ticket's own `cancel` is `const this` and detaching writes to a shared `Sched`, which is a better reason than the one it had |
 | 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
-| 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 5/5. `async` and `await` lex, parse and check; A5's first two refusals fire as codes 211 and 212. The call-site type of D3 — an async function's callers seeing `Pending<T>` — is the part still owed, and belongs with step 4 |
+| 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
 | 4 | not started |
 | 5 | not started |
 

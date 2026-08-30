@@ -13328,6 +13328,17 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
       match (w13d[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() > 0) { continue; }
+          // **Declined whole, not only where an `await` is.** The checker gives an async function the
+          // signature `Pending<T>` — D3 — and this emitter would write one returning `T`, so even a
+          // body with no `await` in it would emit a function whose callers disagree with it about
+          // what came back. Refusing by name is the honest state until step 4 lowers them.
+          if (env.funcOk[at] && isAsync) {
+            env.funcOk[at] = false;
+            if (at < env.funcWhy.len()) {
+              env.funcWhy[at] = "an `async` function, which `design/lang/0014` step 4 lowers";
+            }
+            changed = true;
+          }
           if (env.funcOk[at] &&
               !canEmit(src, lexed, env, params, body, "",
                        typeOfTyName(env, src, lexed, returnType))) {

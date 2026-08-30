@@ -118,3 +118,44 @@ export string test_await_inside_a_plain_lambda_is_refused() {
            "the lambda is the function it is in, and it is not async — got \"" + out + "\"");
   return t.report();
 }
+
+export string test_a_caller_of_an_async_function_receives_a_ticket() {
+  T t = T.create();
+  // D3's other half, and the one that makes `async i32` mean anything: the declaration states what
+  // the *body* answers and the caller gets a `Pending<i32>`. Recorded once, where the signature is
+  // written down, rather than at every call — the body is still checked against `i32`, which is what
+  // the two cases below say together.
+  string bad = diagnose(TICKET
+    + "async i32 size() { return 7; }\n"
+    + "i32 main() {\n"
+    + "  i32 n = size();\n"
+    + "  return n;\n"
+    + "}\n");
+  t.isTrue(contains(bad, "Pending<i32>"),
+           "the caller should be told it got a ticket — got \"" + bad + "\"");
+
+  string ok = diagnose(TICKET
+    + "async i32 size() { return 7; }\n"
+    + "i32 main() {\n"
+    + "  Pending<i32> p = size();\n"
+    + "  return 0;\n"
+    + "}\n");
+  t.eqStr(ok, "", "and a `Pending<i32>` slot takes it");
+  return t.report();
+}
+
+export string test_returning_a_ticket_from_an_async_function_says_both_readings() {
+  T t = T.create();
+  // A5's first refusal, with D4's help rather than the general one. Returning a ticket *is* a real
+  // program — the caller gets `Pending<Pending<T>>` and awaits twice — so the mismatch has two fixes
+  // and nothing here can tell which was meant. What the general help offers is a cast, which is the
+  // one thing that cannot be right: there is no conversion from a ticket to what it will answer.
+  string out = diagnose(TICKET
+    + "async i32 size(Pending<i32> p) { return p; }\n"
+    + "i32 main() { return 0; }\n");
+  t.isTrue(contains(out, "expected i32, found Pending<i32>"), "the mismatch — got \"" + out + "\"");
+  t.isTrue(contains(out, "`await` it for the i32"), "the first reading — got \"" + out + "\"");
+  t.isTrue(contains(out, "declare `async Pending<i32>`"), "the second — got \"" + out + "\"");
+  t.isFalse(contains(out, "as!"), "and not a cast, which cannot convert a ticket");
+  return t.report();
+}
