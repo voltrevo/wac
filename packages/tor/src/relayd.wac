@@ -827,28 +827,27 @@ void spliceBack(Conn?[] conns, i32 connCount, i32 connId, i32 circId, i32 toConn
  * listening, and a refusal that forgot to re-arm would make the cap permanent. A *failed* accept is
  * the one case that stops: re-arming after a refusal is what turns one error into a spin.
  */
-void armAccept(Core core, Cli cli, Relay x, Socket listener) {
-  if (!x.accepting) { return; }
-  cli.accept(listener.handle).linkedTo(core).then((Socket fresh) => {
+async void armAccept(Core core, Cli cli, Relay x, Socket listener) {
+  while (x.accepting) {
+    Socket fresh = await cli.accept(listener.handle).linkedTo(core);
     if (fresh.handle < 0) {
       core.warn("relayd: accept: " + fresh.error + " — no longer accepting");
       x.accepting = false;
       return;
     }
-    armAccept(core, cli, x, listener);
     if (x.live >= MAX_CONNS) {
       // Refusing is the honest answer. A relay that accepts every connection offered holds them all
       // and dies on the first burst, which is worse for the network than one refusal.
       core.warn("relayd: at " + itoa(MAX_CONNS) + " connections, refusing " + fresh.peer);
       cli.closeSocket(fresh.handle);
-      return;
+      continue;
     }
     core.log("relayd: connection " + itoa(x.nextConnId + 1) + " from " + fresh.peer);
     x.nextConnId = x.nextConnId + 1;
     x.conns[x.live] = newConn(core, cli, fresh, x.id, x.nextConnId);
     x.live = x.live + 1;
     armConn(core, cli, x, x.conns[x.live - 1]!);
-  });
+  }
 }
 
 /**
@@ -859,13 +858,35 @@ void armAccept(Core core, Cli cli, Relay x, Socket listener) {
  * circuit by the time it fired. `findCirc` resolves it at the moment the answer arrives, and answers
  * -1 for a circuit that has gone, which is a read to drop rather than a mistake.
  */
-void armOne(Core core, Cli cli, Relay x, Conn c, i32 source, i32 circId) {
-  if (!c.live) { return; }
-  i32 at = source == 0 ? -1 : findCirc(c, circId);
-  if (source != 0 && at < 0) { return; }
-  Pending<Read> p = source == 0 ? c.fromClient
-                  : (source == 1 ? c.circs[at]!.fromNext : c.circs[at]!.fromStream);
-  p.linkedTo(core).then((Read r) => { fed(core, cli, x, c, source, circId, r); });
+async void armOne(Core core, Cli cli, Relay x, Conn c, i32 source, i32 circId) {
+  while (true) {
+    if (!c.live) { disarm(c, source, circId); return; }
+    // **Found again on every pass, not captured once.** `dropCirc` compacts the array, so a slot
+    // number taken before a suspension names a different circuit after it. That was true of the
+    // continuation this replaced and is true of the loop for the same reason.
+    i32 at = source == 0 ? 0 - 1 : findCirc(c, circId);
+    if (source != 0 && at < 0) { disarm(c, source, circId); return; }
+    Pending<Read> p = source == 0 ? c.fromClient
+                    : (source == 1 ? c.circs[at]!.fromNext : c.circs[at]!.fromStream);
+    Read r = await p.linkedTo(core);
+    if (!c.live) { disarm(c, source, circId); return; }
+    i32 back = source == 0 ? 0 - 1 : findCirc(c, circId);
+    if (source != 0 && back < 0) { disarm(c, source, circId); return; }
+    feedConn(core, cli, x, c, source, back, r);
+    if (!c.live) { disarm(c, source, circId); forget(core, cli, x, c); return; }
+    // **Feeding can create circuits**, and a reader only ever re-reads its own source — so the sweep
+    // that starts a reader for anything newly readable still has to happen here. It is the one thing
+    // the loop does not replace: the old `fed` called it for the same reason.
+    armConn(core, cli, x, c);
+  }
+}
+
+/** This reader is stopping: say so, so `armConn` may start another if the source comes back. */
+void disarm(Conn c, i32 source, i32 circId) {
+  if (source == 0) { c.clientArmed = false; return; }
+  i32 at = findCirc(c, circId);
+  if (at < 0) { return; }
+  if (source == 1) { c.circs[at]!.nextArmed = false; } else { c.circs[at]!.streamArmed = false; }
 }
 
 /** Arm whatever this connection can currently be read from, and nothing twice. */
@@ -877,21 +898,6 @@ void armConn(Core core, Cli cli, Relay x, Conn c) {
     if (k.hasNext && !k.nextArmed) { k.nextArmed = true; armOne(core, cli, x, c, 1, k.circId); }
     if (k.hasStream && !k.streamArmed) { k.streamArmed = true; armOne(core, cli, x, c, 2, k.circId); }
   }
-}
-
-/** One read answered: feed it, then re-arm what is still live — or drop the connection. */
-void fed(Core core, Cli cli, Relay x, Conn c, i32 source, i32 circId, Read r) {
-  if (!c.live) { return; }
-  i32 at = source == 0 ? -1 : findCirc(c, circId);
-  if (source == 0) { c.clientArmed = false; }
-  else {
-    // Gone while this was in flight: the answer is for a circuit nobody can act on.
-    if (at < 0) { return; }
-    if (source == 1) { c.circs[at]!.nextArmed = false; } else { c.circs[at]!.streamArmed = false; }
-  }
-  feedConn(core, cli, x, c, source, at, r);
-  if (!c.live) { forget(core, cli, x, c); return; }
-  armConn(core, cli, x, c);
 }
 
 /** A connection is over: take back what it still had armed, tear it down, and close the gap. */

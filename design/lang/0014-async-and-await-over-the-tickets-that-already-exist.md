@@ -297,6 +297,29 @@ three `*Armed` flags and the `findCirc`-at-fire-time go away — they exist only
 cannot be registered twice and a captured slot number goes stale under compaction, both of which the
 lowering owns instead. The live tests must stay green: `network_tor_test`, `ctor_live_test`.
 
+**Done 2026-08-30, and the second half of that prediction was wrong.** `network_tor_test` passes — a
+tor network with no C in it, and an onion service published on it and fetched from. `armAccept` and
+`armOne` are `async` now and each reads in a `while` loop, so the `then`-plus-`fed`-plus-re-arm
+trampoline is gone and the control flow reads as the loop it always was. That is the readability
+claim, and it holds.
+
+What did **not** happen is the rest of it. The file went from 2021 lines to 2027, and twelve mentions
+of `*Armed` remain. Both were misattributed here:
+
+- **The flags do not track "a handler is registered".** They track *"a reader exists for this
+  source"*, and one long-lived reader per source still has to not be started twice. The loop removes
+  a re-arm per read; it does not remove the question.
+- **`findCirc` at fire time is not the lowering's to own.** A local does survive a suspension now —
+  that part is real — but `dropCirc` compacts the array underneath it, so an *index* taken before a
+  suspension still names a different circuit after it. Only holding the circuit by id fixes that, and
+  that is what the code already does. No lowering could have.
+
+And one thing the loop genuinely lost, which the note did not foresee: `fed` called `armConn` after
+feeding, because **feeding can create circuits** and something has to start readers for them. A reader
+only ever re-reads its own source, so that sweep had to be put back explicitly. Leaving it out is what
+the first attempt did, and the network simply never converged — a 367-second timeout with nothing
+saying why.
+
 ## What the hand lowering found
 
 Step 2 was written as `packages/platform/test/wac/asynclower_test.wac` — the code the compiler will
@@ -510,7 +533,7 @@ already the state slot.
 | 2 | **A2 done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 still open, blocked on `issues/lang/0147` |
 | 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
 | 4 | **done 2026-08-30 for A1–A4** — `asyncsyntax_test.wac` 15/15 and `asyncserver_test.wac` 1/1. A1 runs: two clients accepted while the first is open, both echoed, under one `drain`, with `async void`, a suspending `while`, a `match`, and an early `return` out of the loop. Declined by name: a suspension in a loop or `if` **condition**, in a `match` subject or arm, nested in a larger expression, or one whose value is discarded |
-| 5 | **spec and corpus done 2026-08-30** — `spec/spec/async.md` with eleven clauses, seven cases in `spec/cases/`. A6 (`relayd`) not started |
+| 5 | **done 2026-08-30** — `spec/spec/async.md` (eleven clauses), seven cases in `spec/cases/`, and A6: `relayd`'s accept and read loops are `async`, with `network_tor_test` green |
 
 ## Open
 
