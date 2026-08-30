@@ -32,11 +32,11 @@ capabilities. D4's own list names neither.
 compiler/README.md holds that row, the ninth of its omissions. wacc carries the tree in full.
 
 This is the same mechanism as `core/jsx.wac`, which the reference also does not get: which compiler
-gets which file is expressed by which list it is in, in `tools/genCore.ts`, and both embeddings are
-generated from this directory. Do not edit the embeddings by hand:
+gets which file is expressed by which list it is in, in `tools/wac/gencore.wac`, and the embedding
+is generated from this directory. Do not edit it by hand:
 
-    wac task gen:core            # write both
-    wac task gen:core --check    # fail if either is out of step
+    wac task gen:core            # write it
+    wac task gen:core --check    # fail if it is out of step
 
 ## What it costs
 

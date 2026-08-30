@@ -1,0 +1,318 @@
+// One fixture per shape the dead-export check has been wrong about.
+//
+//     wac test --allow-read --allow-write tools/wac/deadexports_test.wac
+//
+// **Ported from tools/deadexports.test.ts** with its cases intact, because they are the reason the
+// check can be trusted: five false-positive shapes, each found by somebody reading a report that
+// called live code dead, and each fixed by editing a pattern with nothing pinning the fix. Two of
+// them came back in a different spelling after being fixed once.
+//
+//   1. a function passed as a value (`sh.external = boxRun`) rather than called
+//   2. an alias (`import { masked as bits }`), where the call site says the alias
+//   3. a by-name bridge entry (`entry: "upperCase"`), named only from TypeScript as a string
+//   4. a method on a bound module (`mod.scanKeys(8, …)`), which no wac file names
+//   5. a bound module's function taken as a value first (`const inflate = mod.inflate as …`)
+//
+// The port found a sixth, in the checker rather than in a package: the original blanks block comments
+// *before* line comments, so a `//` comment containing `/*` — `` `native/v8/seed/*.wasm` `` in
+// `packages/wactest/src/built.wac` — opened a comment that ran past the end of the function and
+// blanked live code. `newestOf` was reported dead while its own file called it. The case is below.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
+import { Decl, Scan, scanAt, report } from "./deadexports.wac";
+import { sortStrings } from "./covledger.wac";
+
+/** A tree of files under `.cache`, and the directory it was written to. */
+string fixture(T t, Cli cli, string[] paths, string[] texts) {
+  string dir = cli.cwd().wait() + "/.cache/deadexports-fixture";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  for (i32 i = 0; i < paths.len(); i++) {
+    t.isTrue(putFile(cli, dir + "/" + paths[i], texts[i]) == "", "could not write " + paths[i]);
+  }
+  return dir;
+}
+
+/** The names in `all` that nothing calls, sorted and comma-joined — the shape the cases compare. */
+string namesOf(Vec<Decl> all, bool[] live) {
+  Vec<string> got = Vec.create();
+  for (i32 i = 0; i < all.len(); i++) { if (!live[i]) { got.push(all.get(i).name); } }
+  string[] a = string[got.len()](fill: "");
+  for (i32 i = 0; i < got.len(); i++) { a[i] = got.get(i); }
+  sortStrings(a, a.len());
+  string out = "";
+  for (i32 i = 0; i < a.len(); i++) { out = out + (i == 0 ? "" : ",") + a[i]; }
+  return out;
+}
+
+/** The dead *exports* of a fixture tree. */
+string deadNames(T t, Core core, Cli cli, string[] paths, string[] texts) {
+  string dir = fixture(t, cli, paths, texts);
+  Scan s = scanAt(core, cli, dir);
+  string out = namesOf(s.decls, s.declLive);
+  cli.remove(dir, true).wait();
+  return out;
+}
+
+/** The dead *private* functions of a fixture tree. */
+string deadPrivateNames(T t, Core core, Cli cli, string[] paths, string[] texts) {
+  string dir = fixture(t, cli, paths, texts);
+  Scan s = scanAt(core, cli, dir);
+  string out = namesOf(s.privates, s.privLive);
+  cli.remove(dir, true).wait();
+  return out;
+}
+
+export string test_an_export_with_a_caller_is_not_dead_and_one_without_is(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("export i32 used() { return 1; }\n"
+             + "export i32 unused() { return 2; }\n"
+             + "export i32 caller() { return used(); }\n")),
+      "caller,unused",
+      "the caller itself has no caller, which is correct — nothing in this fixture calls it");
+  return t.report();
+}
+
+export string test_shape_1_a_function_passed_as_a_value_counts_as_used(Core core, Cli cli) {
+  T t = T.create();
+  // `boxRun` and `boxNames` were reported dead while a shell in a browser ran sixty programs through
+  // them. Passing a function is how every capability in this repo is wired.
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("export i32 handler() { return 1; }\n"
+             + "export i32 alsoHandler() { return 2; }\n"
+             + "export void wire(Shell sh) { sh.external = handler; }\n"
+             + "export i32 pick(bool b) { return b ? alsoHandler : handler; }\n")),
+      "pick,wire", "a function passed as a value was not counted as used");
+  return t.report();
+}
+
+export string test_shape_2_an_alias_counts_as_a_call_of_the_original(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/demo/src/other.wac"),
+      string[]("export i32 masked() { return 1; }\n",
+               "import { masked as bits } from \"./lib.wac\";\n"
+             + "export i32 use() { return bits(); }\n")),
+      "use", "the call site says the alias, and the alias is the original");
+  return t.report();
+}
+
+export string test_shape_3_entry_in_typescript_names_an_export(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/demo/test/t.test.ts"),
+      string[]("export i32 upperCase() { return 1; }\n",
+               "wacTransformStream({ src: \"x\", entry: \"upperCase\" });\n")),
+      "", "a by-name bridge entry is a caller no wac file names");
+  return t.report();
+}
+
+export string test_shape_4_a_method_call_on_a_bound_module_counts(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/demo/bench/b.ts"),
+      string[]("export i32 scanKeys(i32 a) { return a; }\n",
+               "const mod = await wacBind(); mod.scanKeys(8, 10_000);\n")),
+      "", "a method on a bound module is a call");
+  return t.report();
+}
+
+export string test_shape_5_a_bound_function_taken_as_a_value(Core core, Cli cli) {
+  T t = T.create();
+  // The one that survived the fix for shape 4: gzip's `cov.ts` takes the function as a value first,
+  // so `.inflate(` never appears in the file at all.
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/demo/cov.ts"),
+      string[]("export u8[] inflate(u8[] d) { return d; }\n",
+               "import { instrument } from \"../../harness/wacCoverage.ts\";\n"
+             + "const inf = await instrument(\"packages/demo/src/lib.wac\");\n"
+             + "const inflate = inf.mod.inflate as (d: Uint8Array) => Uint8Array;\n"
+             + "inflate(new Uint8Array([1]));\n")),
+      "", "a bound function taken as a value with no paren is still a caller");
+  return t.report();
+}
+
+export string test_a_same_named_method_in_another_package_is_not_a_caller(Core core, Cli cli) {
+  T t = T.create();
+  // The precision half, and why the search is confined by locality: `.write(` and `.done(` are
+  // ordinary method names, and matching them everywhere would hide real dead exports behind
+  // unrelated TypeScript.
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/elsewhere/test/t.test.ts"),
+      string[]("export i32 write(i32 a) { return a; }\n",
+               "const f = await Deno.open('x'); f.write(new Uint8Array());\n")),
+      "write", "a `.write(` in an unrelated package was counted as driving a wac export");
+  return t.report();
+}
+
+export string test_a_doc_comment_naming_its_function_is_not_a_use(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("/** `orphan()` returns one. Called by nothing. */\n"
+             + "// orphan() is mentioned here too\n"
+             + "export i32 orphan() { return 1; }\n")),
+      "orphan", "counting a comment would hide every dead export behind its own documentation");
+  return t.report();
+}
+
+export string test_a_name_inside_a_string_is_text_not_a_reference(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("export i32 wrap() { return 1; }\n"
+             + "export string css() { return \"#wrap { color: red; }\"; }\n")),
+      "css,wrap", "a name in a string literal is text");
+  return t.report();
+}
+
+export string test_a_stale_import_is_not_a_use(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/demo/src/other.wac"),
+      string[]("export i32 gone() { return 1; }\n",
+               "import { gone } from \"./lib.wac\";\n"
+             + "export i32 use() { return 2; }\n")),
+      "gone,use", "a stale import is exactly as dead as no import");
+  return t.report();
+}
+
+export string test_probes_size_entries_and_client_entry_are_skipped(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/test/wac/probe.wac", "packages/demo/size/small.wac",
+               "packages/demo/src/client_entry.wac", "packages/demo/src/lib.wac"),
+      string[]("export i32 probeThing() { return 1; }\n",
+               "export i32 sizeThing() { return 1; }\n",
+               "export i32 entryThing() { return 1; }\n",
+               "export i32 realOne() { return 1; }\n")),
+      "realOne", "their exports exist to be called from TypeScript by definition");
+  return t.report();
+}
+
+export string test_a_file_may_exempt_its_own_exports(Core core, Cli cli) {
+  T t = T.create();
+  string[] paths = string[]("packages/demo/src/table.wac", "packages/demo/src/lib.wac");
+  string[] texts = string[]("// dead-exports: exempt — mirrors an external enumeration\n"
+                          + "export i32 kOne() { return 1; }\n"
+                          + "export i32 kTwo() { return 2; }\n",
+                            "export i32 stillDead() { return 1; }\n");
+  t.eqStr(deadNames(t, core, cli, paths, texts), "stillDead", "the exemption leaked to another file");
+
+  string dir = fixture(t, cli, paths, texts);
+  Scan s = scanAt(core, cli, dir);
+  t.eqI32(s.exemptFile.len(), 1, "one file exempts itself");
+  if (s.exemptFile.len() == 1) {
+    t.eqStr(s.exemptWhy.get(0), "mirrors an external enumeration", "the reason is kept");
+  }
+  string text = report(s);
+  t.isTrue(text.indexOf("1 file(s) exempt by their own note") >= 0, "the report hides the exemption");
+  t.isTrue(text.indexOf("mirrors an external enumeration") >= 0, "the reason is not printed");
+  // Before the verdict, so a reader cannot read "no dead exports" without seeing what was skipped.
+  t.isTrue(text.indexOf("exempt") < text.indexOf("that no wac code calls"),
+           "the exemption is printed after the verdict");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_report_names_the_file_and_line(Core core, Cli cli) {
+  T t = T.create();
+  string dir = fixture(t, cli, string[]("packages/demo/src/lib.wac"),
+                       string[]("\nexport i32 orphan() { return 1; }\n"));
+  string text = report(scanAt(core, cli, dir));
+  t.isTrue(text.indexOf("packages/demo/src/lib.wac") >= 0, "the file is missing: " + text);
+  t.isTrue(text.indexOf(":2") >= 0, "the line number is missing: " + text);
+  t.isTrue(text.indexOf("1 exported function(s)") == 0, "the count does not lead: " + text);
+  cli.remove(dir, true).wait();
+
+  // And the clean case says how much it looked at, so "no dead exports" cannot be a scan of nothing.
+  string two = fixture(t, cli, string[]("packages/demo/src/lib.wac"),
+      string[]("export i32 a() { return b(); }\nexport i32 b() { return a(); }\n"));
+  t.isTrue(report(scanAt(core, cli, two)).indexOf("no dead exports across 2 exported functions") >= 0,
+           "the clean report does not say how many exports it looked at");
+  cli.remove(two, true).wait();
+  return t.report();
+}
+
+export string test_an_unexported_function_its_file_never_calls_is_dead(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadPrivateNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("i32 helper() { return 1; }\n"
+             + "i32 orphan() { return 2; }\n"
+             + "export i32 api() { return helper(); }\n")),
+      "orphan", "`helper` has a caller in the file; `orphan` has none anywhere it could have one");
+  return t.report();
+}
+
+export string test_a_caller_in_another_file_does_not_save_a_private(Core core, Cli cli) {
+  T t = T.create();
+  // wac has no way to reach another file's private function, so a same-named call elsewhere is a
+  // different symbol. Counting it would hide exactly the shape worth finding.
+  t.eqStr(deadPrivateNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac", "packages/demo/src/other.wac"),
+      string[]("i32 helper() { return 1; }\n",
+               "export i32 api() { return helper(); }\n")),
+      "helper", "a call in another file cannot reach a private function");
+  return t.report();
+}
+
+export string test_a_structs_methods_are_not_private_functions(Core core, Cli cli) {
+  T t = T.create();
+  // A method is reachable through any value of the struct, and the declaration looks identical apart
+  // from the indentation — which is why the pattern is anchored at column 0.
+  t.eqStr(deadPrivateNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("export struct S {\n"
+             + "  i32 value;\n"
+             + "  i32 twice(this) { return this.value * 2; }\n"
+             + "}\n")),
+      "", "`twice` is a method, not a top-level function");
+  return t.report();
+}
+
+export string test_a_private_function_passed_as_a_value_counts(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadPrivateNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("i32 double(i32 x) { return x * 2; }\n"
+             + "export i32 run(i32 x) { fn[i32(i32)] f = double; return f(x); }\n")),
+      "", "a private function passed as a value is called");
+  return t.report();
+}
+
+export string test_a_probe_is_exempt_from_the_private_check_too(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(deadPrivateNames(t, core, cli,
+      string[]("packages/demo/test/wac/probe.wac"),
+      string[]("i32 unusedHelper() { return 1; }\n")),
+      "", "test fixtures exist to be driven from TypeScript, and their helpers are theirs");
+  return t.report();
+}
+
+export string test_a_line_comment_holding_a_block_opener_does_not_blank_the_code(Core core, Cli cli) {
+  T t = T.create();
+  // **The defect this port found in the original.** Its `codeLines` blanks `/* … */` before it drops
+  // `//` tails, so a line comment mentioning a path glob — `` `seed/*.wasm` `` — opens a block comment
+  // that runs to the next `*/` and blanks every line between. In this repository that was
+  // `packages/wactest/src/built.wac`, where `newestOf` is called eight lines below such a comment and
+  // was reported dead. One scan that knows what it is inside cannot make that mistake.
+  // The call has to sit *between* the stray opener and the next `*/`, which is what makes the
+  // difference visible: a fixture where the phantom block closes on the following line blanks
+  // nothing, and passes under both implementations. Run against the original, this fixture answers
+  // `last,target` — `target` is called on the line the phantom block ate.
+  t.eqStr(deadNames(t, core, cli,
+      string[]("packages/demo/src/lib.wac"),
+      string[]("export i32 target() { return 1; }\n"
+             + "// a path glob in a comment: `native/v8/seed/*.wasm` is written by every build\n"
+             + "export i32 caller() { return target(); }\n"
+             + "/** A later doc comment, whose terminator closes the block the glob appeared to open. */\n"
+             + "export i32 last() { return caller(); }\n")),
+      "last", "a `/*` inside a line comment blanked the code below it");
+  return t.report();
+}

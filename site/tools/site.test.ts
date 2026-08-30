@@ -745,7 +745,7 @@ Deno.test("site: the coverage-ledger count and the list of packages without one 
   // list without the sentence noticing. The count happened to still be right, which is the way this
   // rots: one number moves, the other does not, and nothing reads them together.
   //
-  // Derived exactly as `tools/coverageAll.ts` derives them, because that is the thing being
+  // Derived exactly as `tools/wac/coverageall.wac` derives them, because that is the thing being
   // described: a package is a directory under `packages/` with a `src/`, and it carries a ledger if
   // `tasks.json5` has a `coverage:<name>` task. `core` is deliberately outside both counts — the page
   // says so in the same sentence.

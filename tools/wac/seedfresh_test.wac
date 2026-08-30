@@ -1,0 +1,234 @@
+// The three per-agent artefacts are not older than the sources they are built from.
+//
+// `native/v8/seed/wacc.wasm` is wacc compiled to wasm and embedded in `wac`, so `wac build`,
+// `wac run` and `wac test` all compile with whatever that file happens to be. It is gitignored:
+// every agent builds their own, by hand, with a command nobody runs on a schedule.
+//
+// Nothing else compares the two. A seed two days behind `packages/wacc/src/` produced a coverage
+// report over `packages/std` that named real files and real lines and was **40% short** — 227
+// points where the tree's compiler emits 367 — and the shape of that evidence pointed at the
+// profiler rather than at the compiler, because the per-test sets were a strict subset of the other
+// path's, which is what an attribution bug looks like. `issues/system/0160`.
+//
+// **A merge trips this, and that is correct.** Pulling someone else's change to `packages/wacc/src`
+// makes your binary's compiler older than the tree's, which is exactly the state this exists to
+// report — the same discipline `MAP.md is generated; staleness is a failure` already applies to a
+// generated file. The remedy is two commands and they are in the message.
+//
+// **An absent seed fails too, and it did not used to.** The rule here was that a checkout without
+// one is a perfectly good checkout, because the binary was then only a runtime and nothing compiled
+// with it. That stopped being true when tests started driving `wac test`: `harness/nativeTestProfile
+// .test.ts` runs `wac test --coverage` and, with no seed, fails with `cannot read test.json` — a
+// message about a missing artefact, three steps downstream of the missing compiler that explains it.
+//
+// So the skip was costing exactly what this check exists to prevent: an hour of the suite pointing
+// somewhere else. A guard that says why it is safe to skip is making a claim about the rest of the
+// tree, and that claim ages without anybody editing this file.
+//
+// **In wac since 2026-08-30**, from tools/seedFresh.test.ts. `issues/system/0161` recorded this file
+// as staying in TypeScript "because of *when* it runs" — `tools/wac/*` is not in the wac lane, so a
+// port would run only in `wac task docs`, which `tools/push.sh` runs after the suite, moving the
+// check past the failure it explains. That argument is about the lane and this file's call sites are
+// not in one: `push.sh` invokes it directly, before the suite and again in the retry loop, and it
+// invokes this port at those same two lines. `issues/system/0289b`.
+
+// **The whole graph, not `packages/wacc/src`.** This watched that one directory, and the seed is
+// built from `packages/wac/src/wac.wac` — whose closure is `src/`, yes, but also the example
+// itself and everything it imports from `packages/platform`, `packages/fs`, `packages/fmt` and
+// the rest. A change to the example's own usage text left the seed stale with this test green, and
+// the four CLI tests that then failed said nothing about a seed. Watching a directory when the
+// artefact is built from a *graph* is a guard whose scope is a guess; `closureOf` already computes
+// the graph, and is what the build itself walks.
+import { Core, Cli, Stat } from "std/platform.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { Closure, closureOf, nativeHost, nativeHostWhyNot } from "../../packages/wactest/src/built.wac";
+
+string SEED() { return "native/v8/seed/wacc.wasm"; }
+string ENTRY() { return "packages/wac/src/wac.wac"; }
+string HOST() { return "native/v8/target/release/wac"; }
+
+/**
+ * `"3.3 hour(s)"` — minutes under an hour, hours under a day, days beyond.
+ *
+ * Rounded rather than truncated, and to one decimal place beyond an hour, which is what the
+ * TypeScript this replaces printed. Done in integers: there is no float here and a gap measured in
+ * milliseconds does not need one.
+ */
+string behind(i64 gapMillis) {
+  i64 minute = 60000 as i64;
+  i64 mins = (gapMillis + minute / (2 as i64)) / minute;
+  if (mins < (60 as i64)) {
+    return itoa64(mins < (1 as i64) ? 1 as i64 : mins) + " minute(s)";
+  }
+  if (mins < (1440 as i64)) { return tenths(gapMillis, (3600000 as i64)) + " hour(s)"; }
+  return tenths(gapMillis, (86400000 as i64)) + " day(s)";
+}
+
+/** `value / unit` to one decimal place, rounded, without a float. */
+string tenths(i64 value, i64 unit) {
+  i64 ten = 10 as i64;
+  i64 t = (value * ten + unit / (2 as i64)) / unit;
+  return itoa64(t / ten) + "." + itoa64(t % ten);
+}
+
+export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_is_built_from(
+    Core core, Cli cli) {
+  T t = T.create();
+  Stat seed = cli.stat(SEED()).wait();
+  t.isTrue(seed.isFile,
+           SEED() + " is missing, so `wac build`, `wac run` and `wac test` have no\n"
+           + "  compiler in them. It is gitignored — one per agent — so a fresh container has none,\n"
+           + "  and the tests that drive the binary fail downstream of this with messages about the\n"
+           + "  files it did not write. Build it:\n"
+           + "    wac task seed");
+  if (!seed.isFile) { return t.report(); }
+
+  Closure c = closureOf(cli, ENTRY());
+  // A graph of one file is a walk that did not resolve, and would make this pass for ever.
+  t.isTrue(c.count >= 10,
+           "the seed's import graph came back as " + itoa(c.count) + " file(s) — it did not resolve");
+  if (c.count < 10) { return t.report(); }
+
+  t.isTrue(seed.modifiedMillis >= c.newest,
+           SEED() + " is " + behind(c.newest - seed.modifiedMillis) + " older than " + c.what + ".\n"
+           + "  Every `wac build`, `wac run` and `wac test` is compiling with that older compiler,\n"
+           + "  and will report plausible numbers from it. Rebuild:\n"
+           + "    wac task seed");
+  return t.report();
+}
+
+/**
+ * Every Rust source and manifest the `native/v8` host is built from.
+ *
+ * **Its own crate, and `manifest` which it depends on by path — not `native/src`.** `native/v8` is
+ * the crate `wac`; `native/` is the crate `wac-wasmtime`. They share a `manifest` dependency and
+ * nothing else, so listing `native/src` here asserted a dependency that does not exist — and made
+ * this *unclearable*: touching the wasmtime host's source failed this check, and the
+ * `cd native/v8 && cargo build --release` it recommends does nothing, because nothing this binary is
+ * built from changed. `native/src`, `native/build.rs` and `native/Cargo.*` belong to the wasmtime
+ * check below. `issues/system/0208`.
+ *
+ * `native/spike-v8` is not in the binary either: `native/Cargo.toml` names the members and a spike is
+ * not one of them. Watching it would make this red for an edit that changes nothing.
+ */
+string[] rustInputs(Cli cli) {
+  string[] dirs = string[]("native/v8/src", "native/manifest/src");
+  string[] named = string[]("native/v8/Cargo.toml", "native/v8/Cargo.lock", "native/v8/build.rs",
+                            "native/manifest/Cargo.toml");
+  // Two passes so the array is sized from the work rather than from a guess.
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    i32 at = 0;
+    for (i32 d = 0; d < dirs.len(); d++) {
+      string[]? entries = cli.readDir(dirs[d]).wait();
+      if (entries is null) { continue; }
+      string[] have = entries!;
+      for (i32 i = 0; i < have.len(); i++) {
+        string name = have[i];
+        if (name.len() < 3 || name.slice(name.len() - 3, name.len()) != ".rs") { continue; }
+        if (pass == 1) { out[at] = dirs[d] + "/" + name; }
+        at = at + 1;
+      }
+    }
+    for (i32 i = 0; i < named.len(); i++) {
+      // Not every one of these exists in every layout.
+      if (!cli.stat(named[i]).wait().isFile) { continue; }
+      if (pass == 1) { out[at] = named[i]; }
+      at = at + 1;
+    }
+    if (pass == 1) { return out; }
+    n = at;
+  }
+  return string[0](fill: "");
+}
+
+/**
+ * **And the binary around the seed, which is a second artefact with the same problem.**
+ *
+ * `native/v8/target/release/wac` is compiled Rust, gitignored, one per agent, built by a command
+ * nobody runs on a schedule — every sentence above about the seed is true of it. Nothing compared it
+ * to `native/v8/src/` until 2026-08-20, and the omission cost a full gate run: another agent's change
+ * to how the native host resolves a pushed child's paths against its frame's cwd landed at 14:39, a
+ * binary built at 13:27 was what ran, and their new test in
+ * `packages/platform/test/wac/frame_test.wac` failed against the stale host with the message "the
+ * frame's cwd was ignored". Nothing said "binary".
+ *
+ * `tools/push.sh` reseeds after a merge that touched `packages/wacc/src`, and now also rebuilds after
+ * one that touched `native/` — but that arm only helps when the gate did the pulling. A plain
+ * `git pull` leaves the binary stale with nothing to say so, which is the same argument that put the
+ * seed check here rather than trusting the script.
+ */
+export string test_the_wac_binary_is_not_older_than_the_rust_it_is_built_from(Core core, Cli cli) {
+  T t = T.create();
+  Stat host = cli.stat(HOST()).wait();
+  t.isTrue(host.isFile,
+           HOST() + " is missing, so nothing in the suite that drives the binary can\n"
+           + "  run. It is gitignored — one per agent. Build it:\n"
+           + "    cd native/v8 && cargo build --release");
+  if (!host.isFile) { return t.report(); }
+
+  string[] inputs = rustInputs(cli);
+  // A short list is a walk that did not resolve, and would make this pass for ever.
+  t.isTrue(inputs.len() >= 4,
+           "the host's Rust inputs came back as " + itoa(inputs.len()) + " file(s) — they did not resolve");
+  if (inputs.len() < 4) { return t.report(); }
+
+  i64 at = 0 as i64;
+  string what = "";
+  for (i32 i = 0; i < inputs.len(); i++) {
+    Stat s = cli.stat(inputs[i]).wait();
+    if (s.isFile && s.modifiedMillis > at) { at = s.modifiedMillis; what = inputs[i]; }
+  }
+  t.isTrue(host.modifiedMillis >= at,
+           HOST() + " is " + behind(at - host.modifiedMillis) + " older than " + what + ".\n"
+           + "  Every test that drives the binary is driving an older host, and a test written for\n"
+           + "  the change you just merged will fail saying something about what the host did rather\n"
+           + "  than about the host. Rebuild:\n"
+           + "    cd native/v8 && cargo build --release");
+  return t.report();
+}
+
+/**
+ * **The wasmtime host is a third per-agent artefact, and it had no freshness check.**
+ *
+ * `native/target/release/wac` is gitignored, built on demand by whichever test wants it, and
+ * nothing owned it — `issues/system/0208`. That was tolerable while the only consequence was a slow
+ * first test. It stopped being tolerable on 2026-08-20, when `tools/push.sh` started deciding whether
+ * to rebuild after a merge by *running this file*: a merge that changes `native/src/` then produced a
+ * retry that could not pass. It cost one, and the message named itself —
+ * `Cli.execWith is not implemented in the native runtime yet`, from a host binary that predated the
+ * merge that added it.
+ *
+ * **Absent is fine; stale is not.** A fresh clone has no wasmtime binary and the callers build it, so
+ * this asks the narrower question.
+ *
+ * **Asked of `nativeHostWhyNot` rather than walked again here.** That function is already this rule
+ * in wac — same five inputs, and its own comment credits the list to the TypeScript this file
+ * replaces — and four test files consult it to decide whether to skip their native halves. A second
+ * walk here would be a second copy of the rule, and the failure mode of two copies is the one
+ * `0208` already paid for: a blanket walk of `native/` answered "stale" forever, because
+ * `native/v8/seed/*.wasm` lives under `native/` without being inside a `target/`. One implementation
+ * means a fix like that lands once.
+ *
+ * It returns a reason for *absent* as well as for *stale*, which this has to tell apart — so the
+ * binary is stat-ed here for that one distinction and nothing else.
+ */
+export string test_the_wasmtime_host_if_built_is_not_older_than_the_rust_it_is_built_from(
+    Core core, Cli cli) {
+  T t = T.create();
+  Stat built = cli.stat(nativeHost(cli)).wait();
+  if (!built.exists) {
+    // Never built here, so nothing can be out of date. Asserted rather than returned silently: a
+    // report with no assertions in it is indistinguishable from a test that did not run.
+    t.eqBool(built.exists, false, "the wasmtime host is not built here, so nothing can be stale");
+    return t.report();
+  }
+  t.eqStr(nativeHostWhyNot(cli), "",
+          "the wasmtime host is stale. Every test that drives it is running the older one, and a\n"
+          + "  two-host differential then fails saying the host lacks something the tree has.\n"
+          + "  `./bootstrap.sh --host wasmtime` rebuilds it — or delete the binary and let the\n"
+          + "  callers rebuild it.");
+  return t.report();
+}

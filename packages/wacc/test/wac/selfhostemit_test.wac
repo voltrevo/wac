@@ -164,7 +164,7 @@ const string STAGE_A = ".cache/_selfhost_stageA.txt";
  * The driver carries every one of wacc's sources as string literals, so its checksum moves whenever
  * any of them does — one number covering the whole input. The other half is the compiler that runs
  * it: `harness/ladderRun.ts` and the ladder under `bootstrap/`, by their newest modification time,
- * which is the rule `tools/seedFresh.test.ts` uses for the seed. Both halves matter and neither
+ * which is the rule `tools/wac/seedfresh_test.wac` uses for the seed. Both halves matter and neither
  * implies the other.
  *
  * **It walked compiler/ until 2026-08-28**, which was the right directory while the reference

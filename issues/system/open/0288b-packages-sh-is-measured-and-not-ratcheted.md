@@ -16,7 +16,7 @@ nothing reaches has no entry — except one:
     | packages/sh/ | 3068 | 2032 | 66.2 |
     1036 branch points never executed
 
-`packages/sh/cov.ts` prints that table and exits 0. `tools/coverageAll.ts` classifies a driver by
+`packages/sh/cov.ts` prints that table and exits 0. `tools/wac/coverageall.wac` classifies a driver by
 whether it ratchets, and calls this one **`reports`**; every other package is a **`floor`**.
 
 So sh's coverage is measured on every gate — 6.5s of the ratchet phase — and measured is all it is.
@@ -38,7 +38,7 @@ as a named package. The line does not say *which*.
 `site/src/next/Checked.tsx` says *"36 of the 40 packages carry a coverage ledger"* and names the four
 without one: `wacc`, `box`, `wac`, `ts`. `sh` is not among them, because the guard behind that
 sentence derives "carries a ledger" from **having a `coverage:` task** — which is how
-`tools/coverageAll.ts` derives its own list, and is the right derivation for what that file does.
+`tools/wac/coverageall.wac` derives its own list, and is the right derivation for what that file does.
 
 It is one package's worth of generous. There are 35 `test/cov_ledger.wac` files and 36 tasks, and the
 sentence beside the number describes a ledger as *"a file listing every branch point the suite does
@@ -352,3 +352,34 @@ What is left is unchanged in kind and smaller in size: keep widening while it is
 rules for what genuinely cannot be reached, then switch the driver from `reports` to `floor` in the
 commit that can prove it. The next obvious probe is the differential corpus itself, which this
 exercise still does not run.
+
+## Where widening stopped, and what the ledger is now — agent-b, 2026-08-29
+
+    batch      uncovered   entries   %
+    (filed)         1036        44   66.2
+    one              958        36   68.8
+    two              880        28   71.3
+    three            850        26   72.3
+    callers          824        23   73.1
+    local, $'\xHH'   790        21   74.3
+    ls -Y            788        20   74.3
+
+The last batch took the third arm of `optionRefusal` — a *short* option nobody has, where
+`--badoption` had been taking the long-option arm and `ls -l` the "GNU has this letter and we do
+not" one. Four scripts for two points and one entry is a tenth of the rate the first batches ran at,
+so widening stops there.
+
+**What is left is close to the real ledger**, and about half of the twenty already have a reason:
+
+* **eight** are job control and the streaming pipeline, unreachable because `probe.wac` fakes `spawn`
+  statelessly by design, with the real coverage named in `packages/sh/test/spawn.test.ts`;
+* **`refused`** is the output-overflow path — `Output.refused` fires when a stage produces more than
+  the shell can hold, which is `issues/system/0127`, and this exercise cannot produce it;
+* the rest are lexer helpers and two constants, worth one more look before anybody writes a
+  justification for them.
+
+So the job that was filed as "1,036 points is not an afternoon" is now about ten entries, most with
+their sentence already written somewhere else. What made the difference was not effort but method:
+**read the callers, not the names**, and **run the construct through `wac sh -c` before believing it
+is unreachable** — two of the earlier batches had the right idea in a form that silently did
+something else.

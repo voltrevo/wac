@@ -7,7 +7,7 @@
 - **Kind:** missing feature
 - **Symptom:** not implemented
 
-`native/v8` has an owner: `deno task seed` builds it, `tools/seedFresh.test.ts` fails when the seed
+`native/v8` has an owner: `deno task seed` builds it, `tools/wac/seedfresh_test.wac` fails when the seed
 is older than its sources, and `CLAUDE.md` tells you to run the task after touching `packages/wacc`.
 
 `native/` — `wacland`, the wasmtime host — has none. `tools/seed.sh` builds `native/v8` only
@@ -35,7 +35,7 @@ than better. The fix below is unchanged by that; it is one more reason to want i
 ## **Two agents fixed this independently within the hour — see agent-a's section at the end, which is
 ## the implementation that survived.** Theirs recurses into subdirectories where mine read only the top
 ## level of each, so a `.rs` in a nested module would have gone unwatched; the merge conflict in
-## `tools/seedFresh.test.ts` was resolved to theirs entirely. What is left here is the reading of the
+## `tools/wac/seedfresh_test.wac` was resolved to theirs entirely. What is left here is the reading of the
 ## failure, which agrees with theirs and arrived at it from the other end — from a gate log rather than
 ## from the retry logic. Kept because the two paths to it are worth having on one page.
 
@@ -49,7 +49,7 @@ The arm was in `native/src/main.rs`. Nothing in that sentence is about a binary,
 artefact failures it does not merely mislead — **it names a missing feature, which is a plausible lie.**
 The reader goes to implement something that is already implemented.
 
-`tools/seedFresh.test.ts` guards the *other* binary, and was wrong in both directions until tonight:
+`tools/wac/seedfresh_test.wac` guards the *other* binary, and was wrong in both directions until tonight:
 `native/src` was in the V8 host's input list (a false alarm pointing at the wrong artefact — editing the
 wasmtime host told you to rebuild the V8 one) and nothing checked `wacland` at all. It is two checks with
 two input lists now, canaried both ways: touching `native/src` fires the wasmtime one and leaves the V8
@@ -71,7 +71,7 @@ Whole-suite runs pay it several times over.
 
 **Not measured, and the reason to care: freshness is nobody's job.** Change `native/src/main.rs`,
 run only the tests that *assume* the binary, and you have tested a stale `wacland` with nothing
-saying so. That is the same failure `tools/seedFresh.test.ts` exists to catch on the other host —
+saying so. That is the same failure `tools/wac/seedfresh_test.wac` exists to catch on the other host —
 `issues/system/0160` is what it cost there, a coverage report that named real files and real lines
 and was 40% short.
 
@@ -80,7 +80,7 @@ and was 40% short.
 A task that owns the build, and a freshness check that fails rather than rebuilding:
 
 - `deno task seed:native` (or a flag on `seed`) builds `native/` and nothing else.
-- A test in the shape of `seedFresh`: `wacland` is not older than `native/src/**`.
+- A test in the shape of `seedfresh`: `wacland` is not older than `native/src/**`.
 - The five call sites become a `stat` — present and fresh, or skip with the reason.
 
 The skip has to survive: cargo genuinely is absent on some machines, and every one of those five
@@ -99,7 +99,7 @@ Not fixed here — the wasmtime host still has no owner — but two things next 
 now measured rather than predicted.
 
 **The cost.** `tools/push.sh` decides whether to rebuild after a merge by running
-`tools/seedFresh.test.ts` (2026-08-20). That file knew about `native/v8/seed/wacc.wasm` and
+`tools/wac/seedfresh_test.wac` (2026-08-20). That file knew about `native/v8/seed/wacc.wasm` and
 `native/v8/target/release/wac`, and nothing about `native/target/release/wacland` — so a merge that
 brought another agent's `Cli.execWith` rebuilt the v8 host, left the wasmtime host behind, and the
 retry failed after **413 seconds** with
@@ -110,7 +110,7 @@ from a host binary that predated the merge that added it. The message names itse
 reason this took minutes rather than an afternoon: a two-host differential says *the host lacks
 something the tree has*, and that is exactly what a stale host is.
 
-`seedFresh.test.ts` now has a third check — *the wasmtime host, if built, is not older than the Rust it
+`seedfresh_test.wac` now has a third check — *the wasmtime host, if built, is not older than the Rust it
 is built from* — and `push.sh` rebuilds it after a merge when it exists. **Absent is fine; stale is
 not**: a fresh clone has no `wacland` and the five callers below build it, so asking anything stronger
 would fail a perfectly good checkout.
@@ -146,10 +146,10 @@ binaries — then I timed it: **7s of CPU, about 10s of wall, with nothing to do
 after every `packages/wacc` edit for three agents. That is the same waste this issue was filed about
 (*"2.6s of every run of this test"*), moved one level up and multiplied. A checkout with no `wacland` is
 not quietly short of coverage either: the six callers warn with the reason and name the task, and
-`seedFresh` fails on a binary that is present and stale. Both branches were run — with the binary moved
+`seedfresh` fails on a binary that is present and stale. Both branches were run — with the binary moved
 aside the seed prints *"no wasmtime host to refresh"* and builds nothing.
 
-**2. The freshness check exists** — `tools/seedFresh.test.ts`, added earlier the same day, fails when
+**2. The freshness check exists** — `tools/wac/seedfresh_test.wac`, added earlier the same day, fails when
 `wacland` is older than the Rust it is built from.
 
 **3. The call sites ask.** `packages/wactest/src/built.wac` gained `nativeHost` and `nativeHostWhyNot`,
@@ -213,7 +213,7 @@ assertion rather than a log line is the reason the sweep that broke them could n
 
 Fixed by naming the crate's inputs instead of walking its directory — `native/src`,
 `native/manifest/src`, `native/Cargo.toml`, `native/Cargo.lock`, `native/build.rs`, which is
-`tools/seedFresh.test.ts`'s list, and that file had it right all along. `native/v8` is the other crate
+`tools/wac/seedfresh_test.wac`'s list, and that file had it right all along. `native/v8` is the other crate
 and has no business in this answer.
 
 Canaried by restoring the blanket walk with the seed's output freshly touched: `native_hostfs_test`

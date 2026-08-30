@@ -13,7 +13,7 @@
 //
 // which reads as a program that answered nothing. It is `ETXTBSY`: wac-mono 0074, the window
 // `harness/spawnRetry.ts` was written for, whose header says it is "imported for its side effect by
-// every test file that builds something and runs it" — and `tools/spawnretry.test.ts` **checks** that
+// every test file that builds something and runs it" — and `tools/wac/spawnretry_test.wac` **checks** that
 // sentence, so every such file does import it.
 //
 // The import was there. The retry still could not help, because of where the failing `execve` happens:

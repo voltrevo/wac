@@ -21,7 +21,7 @@
 //
 // ## The phrasing is an API — `issues/system/0222`
 //
-// `tools/coverageAll.ts` repeats each failing task's own explanation, and selects the lines to repeat by
+// `tools/wac/coverageall.wac` repeats each failing task's own explanation, and selects the lines to repeat by
 // matching `no longer holds`, `is listed as unreach`, `branch point(s) uncovered` and a leading `error`.
 // Those exact strings are what this emits. They are not decoration: gzip's `cov.ts` said
 // "unreachable" where crypto's said "unreached", and a stale gzip entry therefore exited
@@ -749,7 +749,7 @@ export i32 onlyClaims(Rule rule, string[] ls, string[] uncovered, i32 nUncovered
 /**
  * Check a ledger against a measurement and say what is wrong. `true` when the run should fail.
  *
- * Everything printed here is read by a person and by `tools/coverageAll.ts`, in that order.
+ * Everything printed here is read by a person and by `tools/wac/coverageall.wac`, in that order.
  */
 /** The file part of a `file:line` key — everything before the last colon. */
 string fileOf(string where) {

@@ -36,11 +36,11 @@
 // numbers are unchanged — 806 points, 679 covered — because the workload is unchanged.
 //
 // **Its failure message could not be reported, which is the thing this issue was filed about.**
-// `tools/coverageAll.ts` repeats a failing task's own explanation and selects the lines by matching
+// `tools/wac/coverageall.wac` repeats a failing task's own explanation and selects the lines by matching
 // `no longer holds`, `is listed as unreach`, `branch point(s) uncovered` and a leading `error`. This
 // package said "N uncovered branch point(s) are not accounted for" — the same words in the other order,
 // matching none of them — so its *principal* failure exited 1 with nothing on screen but "(nothing
-// matched the known failure shapes)". And that same phrase is how `coverageAll.ts` decides a package
+// matched the known failure shapes)". And that same phrase is how `tools/wac/coverageall.wac` decides a package
 // holds a coverage floor, so the strictest ledger here was counted among the ones that only check their
 // own exemptions. The shared ratchet says it the one way.
 //

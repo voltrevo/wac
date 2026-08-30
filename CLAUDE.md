@@ -168,7 +168,7 @@ The `wac` binary carries a *prebuilt* compiler —
 compiling with whatever that file is until it is rebuilt. `cargo build` does not do it: the seed is an
 input to the build, not an output of it. A seed two days behind produced a coverage report over
 `packages/std` that named real files and real lines and was 40% short, and the shape of the evidence
-pointed at the profiler rather than the compiler (`issues/system/0160`). `tools/seedFresh.test.ts`
+pointed at the profiler rather than the compiler (`issues/system/0160`). `tools/wac/seedfresh_test.wac`
 fails when the seed is older than the sources, which is how you will usually find out.
 
 The *pull* half is easy to miss, because nothing you did made it stale: this is a shared repository and

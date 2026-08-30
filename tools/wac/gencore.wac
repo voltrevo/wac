@@ -1,0 +1,399 @@
+// `core` and `std`, from one source tree into the compiler that embeds them — `design/lang/0009`
+// D3 step 2.
+//
+//     wac task gen:core           # write the embedding
+//     wac task gen:core --check   # fail if it is out of step
+//
+// ## Why a generator rather than a shared file
+//
+// **The compiler cannot read `core` at runtime.** wacc's copy lives inside a wasm module, and a
+// module has no filesystem. So it keeps a literal, and de-duplicating means generating that literal
+// from the tree rather than teaching the compiler to open a file.
+//
+// **Which declarations wacc gets is said by which file they are in.** `core/read.wac` and
+// `core/jsx.wac` are the root; the five siblings and `std/platform.wac` are named by path. The
+// alternative was a marker inside one shared file — `// @wacc-only` or similar — which is a third
+// thing to invent, to parse, and to keep true, for a distinction the directory already draws. D3
+// makes `core` an embedded source *tree* regardless, so this is on that path rather than beside it.
+//
+// There were two outputs until 2026-08-28: this also wrote the TypeScript reference's copy of the
+// same declarations, and generating both from one tree was how they were kept from drifting. There
+// is one compiler now, so there is one copy and nothing to drift from — but the *lists* below are
+// still what `coreFile`, `stdFile` and `isBuiltinSpec` are generated from, which is what stops
+// those three answering for different sets.
+//
+// **In wac since 2026-08-30**, from tools/genCore.ts. Deno is a bootstrap host and a test oracle;
+// it was on the build path here, which is the one place it should not be — a generated file whose
+// generator needs a second runtime is a file a fresh checkout cannot regenerate.
+
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { joined, splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** The root: what `import … from core;` gets. Both files, because wacc does have a JSX frontend. */
+string[] waccRoot() { return string[]("core/read.wac", "core/jsx.wac"); }
+
+/**
+ * The siblings: files in the tree that are named by path and are *not* part of the root.
+ *
+ * Each is its own module, so a sibling costs nothing until something imports it.
+ */
+string[] siblings() {
+  return string[]("core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac",
+                  "core/vec.wac");
+}
+
+/**
+ * `std` — the capability half of the built-ins, `design/lang/0009` D4.
+ *
+ * **One file, and D4 is what says so**: `std` is "`Core`, `Cli`, filesystem, network, processes,
+ * environment, terminal, clocks, randomness, page", which is `platform.wac` and names nothing else.
+ * `frame.wac` and `stream.wac` sit next to it in `packages/platform` and are *not* in it — they are
+ * library code written over the capabilities rather than capabilities, and they stay a package.
+ *
+ * That distinction is also the one the mechanism can enforce. **A built-in cannot import a
+ * package**, because the compiler carries its text and there is no `../../bytes/src/buf.wac` inside
+ * a wasm module. `platform.wac` imports `"core"` and nothing else, so it embeds exactly; both of the
+ * others import `Buf` from `packages/bytes`, so neither could, whatever D4 had said.
+ *
+ * Siblings only, with no root module: D4's own example reaches it by path
+ * (`import { Core, Cli } from "std/platform.wac";`) and there is no declaration that wants to be in
+ * a `std` root. `"std"` is still reserved, so a project cannot define one and have it mean something
+ * other than a built-in.
+ */
+string[] std() { return string[]("std/platform.wac"); }
+
+/** The one file this writes. */
+string waccOut() { return "packages/wacc/src/coretext.wac"; }
+
+/**
+ * Every input read once, in the order the generated file names them: root, then siblings, then std.
+ *
+ * One read rather than one per use, because `coreSource`, the `coreFile` arms and the banner all
+ * want the same bytes and a file that changed between two of those reads would produce an embedding
+ * that never existed on disk.
+ */
+struct Tree {
+  string[] paths;
+  string[] texts;
+  i32 roots;
+  i32 sibs;
+  string why;
+
+  bool ok(const this) { return this.why == ""; }
+
+  /** The root's text, as `coreSource` embeds it. */
+  string rootText(const this) {
+    string[] out = string[this.roots](fill: "");
+    for (i32 i = 0; i < this.roots; i++) { out[i] = this.texts[i]; }
+    return joined(out, "\n");
+  }
+
+  string sibText(const this, i32 i) { return this.texts[this.roots + i]; }
+  string stdText(const this, i32 i) { return this.texts[this.roots + this.sibs + i]; }
+}
+
+/**
+ * Read every input, collapsing each file's trailing newlines to exactly one.
+ *
+ * Collapsing rather than trimming: a file with no trailing newline keeps none, so the embedding of
+ * a file is the file, and only the ragged blank lines a text editor leaves are normalised away.
+ */
+Tree readTree(Cli cli) {
+  string[] root = waccRoot();
+  string[] sib = siblings();
+  string[] st = std();
+  string[] paths = string[root.len() + sib.len() + st.len()](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < root.len(); i++) { paths[at] = root[i]; at = at + 1; }
+  for (i32 i = 0; i < sib.len(); i++) { paths[at] = sib[i]; at = at + 1; }
+  for (i32 i = 0; i < st.len(); i++) { paths[at] = st[i]; at = at + 1; }
+
+  string[] texts = string[paths.len()](fill: "");
+  string why = "";
+  for (i32 i = 0; i < paths.len(); i++) {
+    FileResult f = cli.readFile(paths[i]).wait();
+    if (!f.ok) {
+      if (why == "") { why = "cannot read " + paths[i]; }
+      continue;
+    }
+    string t = string.fromBytes(f.bytes);
+    i32 e = t.len();
+    while (e > 0 && t.slice(e - 1, e) == "\n") { e = e - 1; }
+    texts[i] = e < t.len() ? t.slice(0, e) + "\n" : t;
+  }
+  return Tree(paths, texts, root.len(), sib.len(), why);
+}
+
+/** A path or specifier as a wac string literal. */
+string quoted(string s) {
+  string out = "\"";
+  u8[] b = s.toBytes();
+  i32 from = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c != 92 && c != 34) { continue; }
+    out = out + s.slice(from, i) + (c == 92 ? "\\\\" : "\\\"");
+    from = i + 1;
+  }
+  return out + s.slice(from, s.len()) + "\"";
+}
+
+/**
+ * One source line as a wac string literal ending in `\n`.
+ *
+ * Scanning the bytes and slicing only at the ones that need escaping, rather than a byte at a time:
+ * `\` and `"` are ASCII and UTF-8 is self-synchronising, so every cut this makes is on a codepoint
+ * boundary however much of `core` is not ASCII.
+ */
+string quotedLine(string l) {
+  string out = "\"";
+  u8[] b = l.toBytes();
+  i32 from = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c != 92 && c != 34) { continue; }
+    out = out + l.slice(from, i) + (c == 92 ? "\\\\" : "\\\"");
+    from = i + 1;
+  }
+  return out + l.slice(from, l.len()) + "\\n\"";
+}
+
+/**
+ * The text as a wac expression: one quoted line per source line, concatenated.
+ *
+ * A line each rather than one long literal, because that is what makes a diff of the generated file
+ * readable — a one-line change to `core` should be a one-line change there.
+ */
+string asWac(string text) {
+  string[] lines = splitKeepingEmpty(text);
+  i32 n = lines.len();
+  if (n > 0 && lines[n - 1] == "") { n = n - 1; }
+  if (n == 0) { return "  return \"\";"; }
+
+  // **In chunks, because one expression this wide overflows the compiler's stack.**
+  // `std/platform.wac` is 1,939 lines, and as a single `+` chain that is a right-nested expression
+  // 1,939 operands deep; every recursive walk over it — parse, check, emit — recurses once per
+  // operand. It compiled, but with no headroom: adding one import edge to a file that already
+  // reached this module was enough to tip it into `Maximum call stack size exceeded`, from a trap
+  // that named neither the file nor the import. `issues/lang/0165a`.
+  //
+  // 64 is well under where trouble starts and still only ~30 statements for the largest file.
+  //
+  // **Not free, and not identical output**: the seed went 963,369 to 963,562 bytes, because
+  // `s = s + …` really is different code from one chain, and the concatenation is now incremental
+  // rather than one expression. 193 bytes to remove a stack overflow that struck from three files
+  // away is a trade worth stating rather than glossing.
+  i32 CHUNK = 64;
+  string out = "";
+  for (i32 i = 0; i < n; i = i + CHUNK) {
+    string head = i == 0 ? "  string s = " : "  s = s + ";
+    string pad = "";
+    for (i32 k = 0; k < head.len(); k++) { pad = pad + " "; }
+    for (i32 k = 0; k < CHUNK && i + k < n; k++) {
+      out = out + (k == 0 ? head : pad + "+ ") + quotedLine(lines[i + k]);
+      out = out + (i + k + 1 < n && k + 1 < CHUNK ? "\n" : ";\n");
+    }
+  }
+  return out + "  return s;";
+}
+
+/** Every line of `body` prefixed with two spaces — the arms of `coreFile` and `stdFile` are nested. */
+string indented(string body) {
+  string[] ls = splitKeepingEmpty(body);
+  string[] out = string[ls.len()](fill: "");
+  for (i32 i = 0; i < ls.len(); i++) { out[i] = "  " + ls[i]; }
+  return joined(out, "\n");
+}
+
+/** One `if (path == "…") { … }` arm per file. */
+string arms(string[] paths, string[] texts) {
+  string[] out = string[paths.len()](fill: "");
+  for (i32 i = 0; i < paths.len(); i++) {
+    out[i] = "  if (path == " + quoted(paths[i]) + ") {\n" + indented(asWac(texts[i])) + "\n  }";
+  }
+  return joined(out, "\n");
+}
+
+/** `"a", "b"` — the body of a `string[](…)` literal. */
+string quotedList(string[] paths) {
+  string[] out = string[paths.len()](fill: "");
+  for (i32 i = 0; i < paths.len(); i++) { out[i] = quoted(paths[i]); }
+  return joined(out, ", ");
+}
+
+string blk(string[] ls) { return joined(ls, "\n"); }
+
+/**
+ * The eight fixed pieces of the generated file, in order, with the seven computed pieces between
+ * them. One list so this reads in the order the file is written.
+ */
+string[] fixed() {
+  return string[](
+    // 0
+    blk(string[](
+      "// ")),
+    // 1
+    blk(string[](
+      "",
+      "//",
+      "// wacc's embedding of `core`. `core/README.md` says why anything is in there; this file is only the",
+      "// text, kept apart from `emit.wac` so that a generator owns a whole file rather than splicing into",
+      "// one that is also in the seed.",
+      "",
+      "export string coreSource() {",
+      "")),
+    // 2
+    blk(string[](
+      "",
+      "}",
+      "",
+      "/**",
+      " * A sibling of the tree by the specifier that names it, or \"\" when there is no such file.",
+      " *",
+      " * `coreSource` above is the *root* — what `import … from core;` gets. These are files in the tree,",
+      " * each its own module, reached as `import { Option } from \"core/option.wac\";`. \"\" rather than a trap",
+      " * because the caller has to tell \"not a built-in\" from \"a built-in that is broken\": the first falls",
+      " * through to the filesystem and the second is this generator's bug.",
+      " */",
+      "export string coreFile(string path) {",
+      "")),
+    // 3
+    blk(string[](
+      "",
+      "  return \"\";",
+      "}",
+      "",
+      "/**",
+      " * Does this specifier name a module inside the compiler rather than a file on disk?",
+      " *",
+      " * This had a twin — `isBuiltinSpecifier` in the TypeScript reference — and the sentence here was",
+      " * that the two must agree, because a built-in one resolver knows about and the other does not is a",
+      " * module the graph reads and the linker cannot find. The reference is deleted, so there is one",
+      " * resolver and nothing to disagree with; the list is still generated rather than typed, which is",
+      " * what made the agreement hold while there were two.",
+      " */",
+      "/**",
+      " * A file of the `std` tree by the specifier that names it, or \"\" when there is no such file.",
+      " *",
+      " * The capability half of the built-ins — `design/lang/0009` D4. Separate from `coreFile` because the",
+      " * two trees admit different things and the admission tests are different: `core` needs no capability",
+      " * and `std` is nothing but capability. `\"\"` on a miss for the same reason as `coreFile`.",
+      " */",
+      "export string stdFile(string path) {",
+      "")),
+    // 4
+    blk(string[](
+      "",
+      "  return \"\";",
+      "}",
+      "",
+      "/** Every `std` specifier, so a caller can reserve them without guessing the list. */",
+      "export string[] stdFiles() {",
+      "  return string[](")),
+    // 5
+    blk(string[](
+      ");",
+      "}",
+      "",
+      "/**",
+      " * **Named, not fetched.** This asked `coreFile(spec) != \"\" || stdFile(spec) != \"\"`, and those *build*",
+      " * the file's whole source by concatenating hundreds of literals — so a membership test reconstructed up",
+      " * to 107 KB of `std/platform.wac` and threw it away. `resolveFromAt` calls this once per import",
+      " * specifier, and this repository has 603 imports of that one file: measured at **4.7s of a 21.1s",
+      " * whole-corpus check**, by doubling the resolve loop and subtracting.",
+      " *",
+      " * The comparisons below are generated from the same two lists that generate `coreFile` and",
+      " * `stdFile`, so they cannot fall out of step with what those answer for — which is the whole reason",
+      " * this file is generated.",
+      " */",
+      "export bool isBuiltinSpec(string spec) {",
+      "  if (spec == \"core\" || spec == \"std\") { return true; }",
+      "  return ")),
+    // 6
+    blk(string[](
+      ";",
+      "}",
+      "",
+      "/** Every sibling's specifier, so a caller can reserve them without guessing the list. */",
+      "export string[] coreFiles() {",
+      "  return string[](")),
+    // 7
+    blk(string[](
+      ");",
+      "}")),);
+}
+
+/** The whole of `packages/wacc/src/coretext.wac`. */
+string waccFile(Tree tree) {
+  string[] f = fixed();
+  string[] sib = siblings();
+  string[] st = std();
+
+  // **Every input, not only the root.** This named `waccRoot` alone, so the one line stating where
+  // the file comes from listed `core/read.wac, core/jsx.wac` and omitted the five siblings and
+  // `std/platform.wac` — which `stdFile` below embeds in full. Somebody editing `std/platform.wac`
+  // therefore had nothing telling them a generated file had gone stale, and the banner they would
+  // check said the file was made from two files they had not touched.
+  string s = f[0] + "Generated by `wac task gen:core` from " + joined(tree.paths, ", ")
+           + ". Do not edit.";
+
+  string[] sibTexts = string[sib.len()](fill: "");
+  for (i32 i = 0; i < sib.len(); i++) { sibTexts[i] = tree.sibText(i); }
+  string[] stdTexts = string[st.len()](fill: "");
+  for (i32 i = 0; i < st.len(); i++) { stdTexts[i] = tree.stdText(i); }
+
+  string[] both = string[sib.len() + st.len()](fill: "");
+  for (i32 i = 0; i < sib.len(); i++) { both[i] = sib[i]; }
+  for (i32 i = 0; i < st.len(); i++) { both[sib.len() + i] = st[i]; }
+  string[] tests = string[both.len()](fill: "");
+  for (i32 i = 0; i < both.len(); i++) { tests[i] = "spec == " + quoted(both[i]); }
+
+  s = s + f[1] + asWac(tree.rootText());
+  s = s + f[2] + arms(sib, sibTexts);
+  s = s + f[3] + arms(st, stdTexts);
+  s = s + f[4] + quotedList(st);
+  s = s + f[5] + joined(tests, "\n      || ");
+  s = s + f[6] + quotedList(sib);
+  s = s + f[7] + "\n";
+  return s;
+}
+
+export i32 main(Core core, Cli cli) {
+  bool check = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--check") { check = true; }
+  }
+
+  Tree tree = readTree(cli);
+  if (!tree.ok()) {
+    core.warn("gen:core: " + tree.why);
+    return 1;
+  }
+  string want = waccFile(tree);
+
+  FileResult now = cli.readFile(waccOut()).wait();
+  if (now.ok && string.fromBytes(now.bytes) == want) {
+    core.log(check ? "core/: the embedding is in step" : "core/: the embedding is unchanged");
+    return 0;
+  }
+
+  if (check) {
+    string what = now.ok ? waccOut() + " is out of step with core/"
+                         : waccOut() + " is missing";
+    core.warn("1 generated file(s) do not match `core/`:\n  " + what + "\n\n"
+              + "Run `wac task gen:core`. Editing the embedding by hand is what this replaces — it "
+              + "is generated from the list of files in the generator, and that list is also what "
+              + "`coreFile`, `stdFile` and `isBuiltinSpec` answer for.");
+    return 1;
+  }
+
+  // The byte count, which is what `.len()` answers. The TypeScript this replaces printed
+  // `text.length` and called it bytes; that is UTF-16 code units, and `core` is not all ASCII, so
+  // the number it printed was short by one per non-BMP-free line.
+  cli.writeFile(waccOut(), want.toBytes()).wait();
+  core.log("wrote " + waccOut() + " (" + itoa(want.len()) + " bytes)");
+  core.log("core/: the embedding written");
+  return 0;
+}

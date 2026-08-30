@@ -12,7 +12,7 @@
 // downstream can see that; only the profile can say it. So `skipped` is written, and an empty list is
 // a positive statement that the profile is complete. `issues/system/0161`.
 //
-// Skipped when there is no binary, exactly as `tools/seedFresh.test.ts` skips when there is no seed:
+// Skipped when there is no binary, exactly as `tools/wac/seedfresh_test.wac` skips when there is no seed:
 // a checkout without one is a perfectly good checkout.
 
 import { ROOT } from "./programs.ts";

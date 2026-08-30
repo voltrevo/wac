@@ -18,7 +18,8 @@
 // below is what caught that and is why it stays.
 //
 // This reports and never fails. It is not a ratchet: a package's own floor is what fails when
-// somebody deletes a test, and that is `coverageAll.ts` and should stay exactly as it is. This is
+// somebody deletes a test, and that is `tools/wac/coverageall.wac` and should stay exactly as it
+// is. This is
 // about the *reason column* — one class of exemption that is a promise rather than a measurement.
 
 const TASKS: Record<string, string> = (() => {
@@ -55,7 +56,8 @@ const parse = (text: string): Table => {
   return { reached, all };
 };
 
-// One at a time. Four in parallel is what `coverageAll.ts` does and is right there, because it is on
+// One at a time. Four in parallel is what `tools/wac/coverageall.wac` does and is right there,
+// because it is on
 // the push path; this is a report somebody asks for, and a driver that shares the machine with three
 // others is a driver whose *timings* are noise — the point sets are the same either way, but a run
 // that takes twice as long for no reason is one nobody repeats.
@@ -85,7 +87,8 @@ for (const pkg of wanted) {
  * Which package a file belongs to, by its path.
  *
  * `core/` is a package with a driver whose tree is at the repository root — the same exception
- * `coverageAll.ts`'s `driverOf` exists for. `std/` is not: it is the platform surface and no ledger
+ * `tools/wac/coverageall.wac`'s `driverOf` exists for. `std/` is not: it is the platform surface and
+ * no ledger
  * owns it.
  */
 const owner = (file: string): string =>

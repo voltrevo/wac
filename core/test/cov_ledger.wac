@@ -25,7 +25,7 @@
 //
 // Worth writing down because it looks exactly like the failure this issue has now found twice:
 // `packages/http`'s `proxy.wac` was absent from its report with eighty-six branch points in it, and
-// `tools/coverageAll.ts` counted twenty-one packages while thirty-eight existed. Both were the
+// `tools/wac/coverageall.wac` counted twenty-one packages while thirty-eight existed. Both were the
 // denominator being quietly short. This one is not, and the way to tell is to open the file rather
 // than to count the rows.
 //

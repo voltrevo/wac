@@ -323,7 +323,8 @@ out as a special case of two code points rather than as a table.
 
 **What the no-dependencies rule actually decides is where the table lives**, not whether the step
 can be done. `packages/wacc/src/coretext.wac` is already a generated file inside wacc's own tree —
-the embedding of `core/` and `std/`, written by `tools/genCore.ts` and checked by the doc lane. A
+the embedding of `core/` and `std/`, written by `tools/wac/gencore.wac` and checked by the suite —
+`tools/wac/gencore_test.wac` spawns `wac task gen:core --check`, which the doc lane does not run. A
 category table is the same arrangement: generate it into `packages/wacc/src`, check it the same way,
 and wacc imports nothing.
 

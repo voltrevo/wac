@@ -15,7 +15,7 @@
 // `buildApp` becomes `wac build`, and the distinction matters more here than in most of these ports.
 // **The program is built from the current sources rather than being the `wac` binary itself.** The
 // binary carries a prebuilt seed, so running `wac compile` directly would compare the seed against
-// today's library — a real question, and a different one, which `tools/seedFresh.test.ts` already
+// today's library — a real question, and a different one, which `tools/wac/seedfresh_test.wac` already
 // asks. Building `example/wacc.wac` first keeps this file's claim about the *program*.
 //
 // The last case needs a JavaScript host, because what it asserts is that the generated glue **runs**.
@@ -70,7 +70,7 @@ i64 newestInput(Cli cli) {
  * cost and made it the second-largest test in the `wac` lane.
  *
  * Now it really is cached, in a directory of its own that nothing empties, and the freshness rule is
- * the one `tools/seedFresh.test.ts` uses for the seed: mtimes. Older than any of its inputs — the
+ * the one `tools/wac/seedfresh_test.wac` uses for the seed: mtimes. Older than any of its inputs — the
  * import graph or the binary that compiles it — and it is built again. It does **not** cover a
  * `.cache` entry corrupted by something else writing there, which is why the build writes to a name
  * of its own rather than sharing one with any other test file.

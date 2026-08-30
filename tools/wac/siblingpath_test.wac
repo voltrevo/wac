@@ -1,0 +1,121 @@
+// A path that walks out of this repository has to go through the import map.
+//
+//     wac test --allow-read tools/wac/siblingpath_test.wac
+//
+// **Ported from tools/siblingpath.test.ts**, which it replaces — unbackticked because that file is gone. Twice now the same mistake:
+// `new URL("../../../../wac/spec/tour.wac", import.meta.url)` — correct in a side-by-side checkout and
+// wrong everywhere else. `deno.json` maps `wac/` to the sibling checkout, and `tools/mutate.ts` stages
+// `packages` and `harness` into a temp directory *and rewrites that mapping to an absolute path*, so a
+// hand-counted `../..` points at `/tmp/…/wac`, which does not exist.
+//
+// What makes it worth a check is how differently the two failed. One threw and was fixed that day; the
+// other was *caught* by `packages/wacc/test/corpus.ts`, which printed a SKIPPED line from a test that
+// then passed — so every mutation run for weeks measured a corpus missing `tour.wac`, the one file
+// written to exercise every feature in the language, and reported the mutants only it reaches as
+// surviving. The same bug is found where it is loud and survives where it is quiet.
+//
+// Comments are stripped first, reusing the dead-export check's pass, because this file's own header
+// quotes the wrong form as an example — and a check its own explanation fails is a check that gets
+// deleted.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { codeLines, walk } from "./deadexports.wac";
+
+/**
+ * Whether `rel`, resolved against the directory holding `file`, leaves the repository.
+ *
+ * Segment arithmetic rather than a URL: these are plain relative paths, and what the original asks —
+ * does `new URL(rel, base).pathname` still start with the root — is the same question as whether the
+ * `..`s outrun the directory's depth.
+ */
+bool escapes(string file, string rel) {
+  i32 depth = 0;
+  for (i32 i = 0; i < file.len(); i++) { if (file.slice(i, i + 1) == "/") { depth = depth + 1; } }
+  i32 at = 0;
+  i32 from = 0;
+  while (from <= rel.len()) {
+    i32 slash = rel.slice(from, rel.len()).indexOf("/");
+    string seg = slash < 0 ? rel.slice(from, rel.len()) : rel.slice(from, from + slash);
+    if (seg == "..") {
+      depth = depth - 1;
+      if (depth < 0) { return true; }
+    } else if (seg != "." && seg != "") {
+      depth = depth + 1;
+    }
+    if (slash < 0) { return false; }
+    from = from + slash + 1;
+  }
+  return false;
+}
+
+/** Every `new URL("…", import.meta.url)` target in `text`, appended to `out`. */
+void urlTargets(string text, Vec<string> out) {
+  i32 from = 0;
+  while (from < text.len()) {
+    i32 at = text.slice(from, text.len()).indexOf("new URL(");
+    if (at < 0) { return; }
+    i32 base = from + at + 8;
+    string rest = text.slice(base, text.len());
+    i32 q1 = rest.indexOf("\"");
+    if (q1 < 0) { return; }
+    string after = rest.slice(q1 + 1, rest.len());
+    i32 q2 = after.indexOf("\"");
+    if (q2 < 0) { return; }
+    string target = after.slice(0, q2);
+    string tail = after.slice(q2 + 1, after.len());
+    // Only the `import.meta.url` form: a `new URL` against anything else is not a path into this tree.
+    i32 meta = tail.indexOf("import.meta.url");
+    i32 close = tail.indexOf(")");
+    if (meta >= 0 && close >= 0 && meta < close) { out.push(target); }
+    from = base + q1 + 1;
+  }
+}
+
+export string test_no_file_reaches_out_of_the_repository_by_counting_dots(Core core, Cli cli) {
+  T t = T.create();
+  Vec<string> files = Vec.create();
+  string[] roots = string[]("packages", "harness", "tools");
+  for (i32 i = 0; i < roots.len(); i++) { walk(cli, ".", roots[i], ".ts", files); }
+  t.isTrue(files.len() > 50, "only " + itoa(files.len()) + " .ts files found — did the walk resolve?");
+
+  string offenders = "";
+  i32 n = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult r = cli.readFile(files.get(i)).wait();
+    if (!r.ok) { t.fail("cannot read " + files.get(i) + " — " + r.error); continue; }
+    string[] lines = codeLines(string.fromBytes(r.bytes));
+    string code = "";
+    for (i32 k = 0; k < lines.len(); k++) { code = code + lines[k] + "\n"; }
+    Vec<string> targets = Vec.create();
+    urlTargets(code, targets);
+    for (i32 k = 0; k < targets.len(); k++) {
+      if (!escapes(files.get(i), targets.get(k))) { continue; }
+      n = n + 1;
+      if (n <= 5) { offenders = offenders + "\n  " + files.get(i) + " -> " + targets.get(k); }
+    }
+  }
+  t.eqI32(n, 0, n == 0 ? "" : "a path that leaves the repository must be resolved through the import "
+      + "map — `import.meta.resolve(\"wac/…\")` — because a mutation run stages this tree somewhere "
+      + "else and rewrites the map to match:" + offenders);
+  return t.report();
+}
+
+export string test_the_check_would_catch_the_shape_it_was_written_for(Core core, Cli cli) {
+  T t = T.create();
+  // The rule is a search over source, so what is worth pinning is that it finds the exact line that
+  // was wrong, and that *resolution* — not the number of `..` — is what decides.
+  Vec<string> found = Vec.create();
+  urlTargets("const TOUR = new URL(\"../../../../wac/spec/tour.wac\", import.meta.url);", found);
+  t.eqI32(found.len(), 1, "the shape was not found at all");
+  if (found.len() == 1) {
+    t.eqStr(found.get(0), "../../../../wac/spec/tour.wac", "the target is not the one written");
+    t.isTrue(escapes("packages/wacc/test/corpus.ts", found.get(0)), "this one escapes");
+  }
+  // And a path that stays inside is not an offender, however many `..` it has.
+  t.isTrue(!escapes("packages/wacc/test/corpus.ts", "../../../harness/appRun.ts"),
+           "three levels up from packages/wacc/test is still inside the repo");
+  return t.report();
+}

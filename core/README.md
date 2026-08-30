@@ -35,9 +35,9 @@ declaration is in is how that is said**:
 | `read.wac` | yes | yes |
 | `jsx.wac` | no — no JSX frontend | yes |
 
-`tools/genCore.ts` holds those two lists and writes both embeddings: compiler/wacCore.ts and
-`packages/wacc/src/coretext.wac`. Neither is edited by hand, and `wac task gen:core --check` fails
-when either is out of step. compiler/README.md carries the same omission as a row, which is where
+`tools/wac/gencore.wac` holds those lists and writes the embedding:
+`packages/wacc/src/coretext.wac`. It is not edited by hand, and `wac task gen:core --check` fails
+when it is out of step. compiler/README.md carries the same omission as a row, which is where
 it was recorded before this directory existed.
 
 The alternative was a marker inside one shared file. That is a third thing to invent, to parse and
@@ -46,8 +46,8 @@ to keep true, for a distinction a directory already draws.
 ## This directory and the specifier `core` are not the same thing
 
 `core/read.wac` here is the **source**. What a program imports is the copy embedded in whichever
-compiler is running, which `tools/genCore.ts` writes from this directory and
-`tools/wac/genCore_test.wac` keeps in step.
+compiler is running, which `tools/wac/gencore.wac` writes from this directory and
+`tools/wac/gencore_test.wac` keeps in step.
 
 Today the two cannot be confused, because the only specifier that reaches the embedded tree is the
 bare `core` and a quoted `"core/read.wac"` is an ordinary relative path — in a directory with no

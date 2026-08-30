@@ -116,13 +116,13 @@ Three things the port turned up that the remaining four will hit:
    carried over as `FF 00 00 FF` — which is a *correct* complement pair (0x00FF and 0xFF00), so it was
    refused for running past the end of the input and the complement check stayed uncovered while an
    export named for it passed. A refusal test cannot tell which check refused it; the counter can.
-3. **`tools/coverageAll.ts` classified every wac driver as "reports and cannot fail"**, on the
+3. **`tools/wac/coverageall.wac` classified every wac driver as "reports and cannot fail"**, on the
    grounds that a coverage floor had no wac spelling. It has one now, so the classifier reads the
    `ratchet(` call — and gzip is counted among the floors rather than among the seventeen that exit 0
    whatever they measured.
 
 **And a second instance of the bug that prompted this issue.** `covreport` prefixed its own failures
-with `covreport: `, which matches none of the four phrases `coverageAll.ts` greps for — so an exercise
+with `covreport: `, which matches none of the four phrases `tools/wac/coverageall.wac` greps for — so an exercise
 that did not build, or a table and a dump that did not describe the same module, exited 1 with its
 reason filtered out and only "(nothing matched the known failure shapes)" on screen. `measure` says
 `error:` now.
@@ -136,7 +136,7 @@ points driving all three failure modes plus the unreadable-file case.
 held eight. The eight were not a smaller problem — the old check was **staleness only**. It read the
 source at each entry's line and failed if the snippet had moved; it never asked whether a listed point
 was still uncovered, nor whether an unlisted one had appeared. Sixteen uncovered points were therefore
-unlisted and unmentioned, which is the thing this issue was filed about, and `tools/coverageAll.ts`
+unlisted and unmentioned, which is the thing this issue was filed about, and `tools/wac/coverageall.wac`
 classified the package as "only checks its own exemptions" rather than as holding a floor. It holds one
 now.
 
@@ -193,9 +193,9 @@ property a pin has: a rule that matches nothing fails.
 Two defects found on the way, both invisible to a staleness-only check:
 
 1. **Its principal failure could not be reported, and it was mis-classified.** The message was "N
-   uncovered branch point(s) are not accounted for" — the same words `tools/coverageAll.ts` greps for,
+   uncovered branch point(s) are not accounted for" — the same words `tools/wac/coverageall.wac` greps for,
    in the other order — so an unaccounted point exited 1 with nothing on screen but "(nothing matched
-   the known failure shapes)". That same phrase is how `coverageAll.ts` decides a package holds a
+   the known failure shapes)". That same phrase is how `tools/wac/coverageall.wac` decides a package holds a
    coverage floor, so the strictest ledger of the five was counted among the ones that only check their
    own exemptions. Fixed in the TypeScript before the port, so the fix stands on its own.
 2. **Two of its 33 pins were the same entry twice, about a branch that is covered.** Both named
@@ -268,7 +268,7 @@ wrong thing.
 
 ## Closed — 2026-08-20
 
-All five have moved. `tools/coverageAll.ts` reads **5 hold a coverage floor, 0 only check their own
+All five have moved. `tools/wac/coverageall.wac` reads **5 hold a coverage floor, 0 only check their own
 exemptions have not drifted**, where it read 2 and 2 when this was filed.
 
 | package | before | after |
@@ -290,7 +290,7 @@ right words in the wrong order — which also had it classified as holding no fl
 strictest of the five.
 
 `packages/sh/cov.ts` is the sixth driver and belongs to another agent; it is out of scope here, and
-`tools/coverageAll.ts` counts it among the sixteen that report and cannot fail.
+`tools/wac/coverageall.wac` counts it among the sixteen that report and cannot fail.
 
 ## Notes
 

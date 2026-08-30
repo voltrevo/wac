@@ -2,7 +2,7 @@
 
 - **Status:** closed
 - **Closed by:** agent-a, 2026-08-21 — canaried against the issue's own reproduction date
-- **Fixed in:** `tools/seedFresh.test.ts`
+- **Fixed in:** `tools/wac/seedfresh_test.wac`
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** bug
@@ -57,7 +57,7 @@ repository too, which matters if the binary is ever handed to anybody.
 Worth adding because it happened while this issue was still warm, and the symptom pointed somewhere
 else entirely.
 
-A full suite run failed **four** tests: this issue's own `seedFresh`, and three in
+A full suite run failed **four** tests: this issue's own `seedfresh`, and three in
 `harness/nativeTestProfile.test.ts` saying *"the profile has no `skipped` list … Keys present: all,
 entry, tests"*. Those three had just been written, so the obvious reading was that they were new and
 flaky, or that whatever else was in the tree had broken them.
@@ -68,7 +68,7 @@ format and the new test was right to refuse it. Rebuilding the seed made all fou
 
 So the failure mode is worse than "plausible numbers from an older compiler": **a stale seed fails
 tests belonging to whoever last changed the host**, with a message about their feature and no mention
-of the seed. `seedFresh` firing in the same run is the tell, and it is worth reading first when
+of the seed. `seedfresh` firing in the same run is the tell, and it is worth reading first when
 anything that runs `wac` fails.
 
 
@@ -77,7 +77,7 @@ anything that runs `wac` fails.
 Not a complaint about the guard, which caught two real staleness bugs for me today. A measurement of
 what it costs, from a day of using it.
 
-`seedFresh` compares the newest mtime under `packages/wacc/src` against the seed's. That is the right
+`seedfresh` compares the newest mtime under `packages/wacc/src` against the seed's. That is the right
 *direction* — it can only be over-eager, never miss — and over-eager has a price here, because the
 commonest way to touch a wacc source without changing it is the thing this repository does constantly:
 canary a check, watch it fail, restore the file. `cp backup file` writes a new mtime with identical
@@ -93,7 +93,7 @@ without something writing it down. The shape:
 
 - `deno task seed` writes `native/v8/seed/wacc.sources.sha256` beside the seed — a hash over the same
   file set the test walks, in a stable order.
-- `seedFresh` prefers that hash and falls back to mtime when it is absent, so a checkout that has
+- `seedfresh` prefers that hash and falls back to mtime when it is absent, so a checkout that has
   never run the new task behaves exactly as it does now.
 
 Both files are gitignored together, so they cannot disagree across a clone.
@@ -106,7 +106,7 @@ decision has the cost beside it: mtime is correct and cheap, and it charges a mi
 The half of this that was about a *missing* seed rather than a stale one is done, and it cost an hour
 first, which is the argument for it.
 
-A fresh container has no seed — it is gitignored, one per agent — and `seedFresh` skipped on absence
+A fresh container has no seed — it is gitignored, one per agent — and `seedfresh` skipped on absence
 by design, with a comment explaining that a checkout without one is a perfectly good checkout because
 the binary is then only a runtime. That was true when it was written. It stopped being true when
 tests started driving `wac test`: on a clean pull, `harness/nativeTestProfile.test.ts` failed twice
@@ -118,7 +118,7 @@ with
 which names an artefact three steps downstream of the missing compiler that explains it, while the
 guard built for exactly this reported **ok**.
 
-So `seedFresh` now fails when the seed is absent, with `deno task seed` in the message, and its name
+So `seedfresh` now fails when the seed is absent, with `deno task seed` in the message, and its name
 says what it checks — *"the seed inside `wac` is there, and not older than wacc's sources"*. Canaried
 by moving the file away and back.
 
@@ -128,7 +128,7 @@ about the rest of the tree**, and that claim ages without anyone editing the gua
 ## Closed — canaried on the reproduction's own date, 2026-08-21
 
 The stale half is covered, and by the guard whose *absent* half this issue already recorded as done.
-`tools/seedFresh.test.ts` compares the seed's mtime against the newest of everything it is built from,
+`tools/wac/seedfresh_test.wac` compares the seed's mtime against the newest of everything it is built from,
 and its name is the claim: *"the seed inside `wac` is there, and not older than anything it is built
 from"*.
 

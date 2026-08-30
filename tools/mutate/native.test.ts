@@ -7,7 +7,7 @@
 // way — `deno test --filter nonsense` exits 0 and the mutant reads as survived — so neither
 // direction can be assumed and both have to be observed.
 //
-// Skipped without a binary, as `tools/seedFresh.test.ts` skips without a seed.
+// Skipped without a binary, as `tools/wac/seedfresh_test.wac` skips without a seed.
 
 import { classify, WAC_BIN, wacTestArgs } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";

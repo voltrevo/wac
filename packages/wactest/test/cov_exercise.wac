@@ -54,6 +54,7 @@ import {
   test_trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle as stri__trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle,
   test_joined_puts_the_separator_between_rather_than_after as stri__joined_puts_the_separator_between_rather_than_after,
   test_splitlines_drops_the_empty_line_a_trailing_newline_would_add as stri__splitlines_drops_the_empty_line_a_trailing_newline_would_add,
+  test_splitkeepingempty_keeps_every_line_the_other_one_drops as stri__splitkeepingempty_keeps_every_line_the_other_one_drops,
 } from "./wac/strings_test.wac";
 
 export i32 main(Core core, Cli cli) {
@@ -188,6 +189,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (stri__splitlines_drops_the_empty_line_a_trailing_newline_would_add().len() > 0) {
     core.warn("error: FAILED strings_test test_splitlines_drops_the_empty_line_a_trailing_newline_would_add");
+    bad = bad + 1;
+  }
+  if (stri__splitkeepingempty_keeps_every_line_the_other_one_drops().len() > 0) {
+    core.warn("error: FAILED strings_test test_splitkeepingempty_keeps_every_line_the_other_one_drops");
     bad = bad + 1;
   }
   if (bad > 0) { core.warn("wactest: " + itoa(bad) + " test(s) failed under the coverage driver"); }

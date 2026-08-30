@@ -1,0 +1,142 @@
+// The order `wac task coverage:all` dispatches its drivers in.
+//
+// **The tail is the whole wall time, and alphabetical order put the tail last.** `dispatchOrder` in
+// `tools/wac/coverageall.wac` carries the measurement and the argument; these are the cases.
+//
+// They were tools/coverageOrder.test.ts, and the function they test was in a module of its own —
+// tools/coverageAll.ts spawned thirty-seven drivers at the top level, so importing it to test the
+// ordering would have run a two-minute sweep. That is not a property of the ordering, it is a
+// property of a file whose work happens at import time; a wac function is testable where it lives,
+// so the module went away with the port and these came here. `issues/system/0289b`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { joined } from "../../packages/wactest/src/strings.wac";
+import { callsRatchet, dispatchOrder, driverOf, isFailureLine, stripAnsi }
+       from "./coverageall.wac";
+
+/** The four packages every case below orders, in the alphabetical order the sweep hands over. */
+string[] four() { return string[]("abi", "bytes", "crypto", "zstd"); }
+
+export string test_with_no_recorded_times_the_alphabetical_order_is_kept() {
+  T t = T.create();
+  // A fresh checkout has no file, so every package is unknown, they all compare equal, and what comes
+  // out is what went in. This is the case that must not regress: it is what the sweep did for a year
+  // before any of this.
+  t.eqStr(joined(dispatchOrder(four(), string[0](fill: ""), i64[0]()), ","),
+          "abi,bytes,crypto,zstd", "no times at all");
+  return t.report();
+}
+
+export string test_the_slowest_recorded_package_goes_first() {
+  T t = T.create();
+  string[] names = string[]("abi", "bytes", "crypto", "zstd");
+  i64[] ms = i64[](5000 as i64, 1000 as i64, 90000 as i64, 10000 as i64);
+  t.eqStr(joined(dispatchOrder(four(), names, ms), ","), "crypto,zstd,abi,bytes", "all timed");
+  return t.report();
+}
+
+export string test_a_package_with_no_recorded_time_is_dispatched_before_every_timed_one() {
+  T t = T.create();
+  // The safe end, and the argument is asymmetric: an unknown is usually a new package and short, so
+  // putting it first costs almost nothing, while putting it last re-creates the exact problem this
+  // fixes for a package nobody has timed yet.
+  string[] names = string[]("abi", "crypto", "zstd");
+  i64[] ms = i64[](5000 as i64, 90000 as i64, 10000 as i64);
+  t.eqStr(joined(dispatchOrder(four(), names, ms), ","), "bytes,crypto,zstd,abi", "one untimed");
+  return t.report();
+}
+
+export string test_two_untimed_packages_keep_the_order_they_arrived_in() {
+  T t = T.create();
+  // They compare equal, so this is a claim about the sort being *stable*. The TypeScript got it from
+  // `Array.prototype.sort`, which has been stable since ES2019, and had to reach for
+  // `Number.MAX_SAFE_INTEGER` rather than `Infinity` because `Infinity - Infinity` is `NaN` and a
+  // comparator answering `NaN` has no defined result. The wac version is an insertion sort that only
+  // moves an element past a *strictly* smaller key, which is the same guarantee written out.
+  string[] names = string[]("crypto", "zstd");
+  i64[] ms = i64[](90000 as i64, 10000 as i64);
+  t.eqStr(joined(dispatchOrder(four(), names, ms), ","), "abi,bytes,crypto,zstd", "two untimed");
+  return t.report();
+}
+
+export string test_the_input_is_not_mutated() {
+  T t = T.create();
+  // The sweep keeps its alphabetical package list to sort the report back into, so an in-place sort
+  // here would silently reorder every row a reader scans for a red.
+  string[] pkgs = string[]("abi", "bytes", "crypto");
+  dispatchOrder(pkgs, string[]("abi"), i64[](9000 as i64));
+  t.eqStr(joined(pkgs, ","), "abi,bytes,crypto", "the argument is untouched");
+  return t.report();
+}
+
+export string test_a_recorded_time_for_a_package_that_is_gone_is_ignored() {
+  T t = T.create();
+  // The times file is written from whatever ran; a package can leave `tasks.json5` between runs and
+  // its entry outlives it. Sorting must not invent a row for it.
+  string[] names = string[]("retired", "abi");
+  i64[] ms = i64[](99000 as i64, 1000 as i64);
+  t.eqStr(joined(dispatchOrder(string[]("abi", "bytes"), names, ms), ","), "bytes,abi", "stale key");
+  return t.report();
+}
+
+// The rest of what the sweep decides, none of which the TypeScript had a test for. Its only test was
+// the ordering above — every other judgement it makes was covered by running the whole two-minute
+// sweep and reading the summary, which is why `sha1.wac` could sit at 0% inside a green driver.
+
+export string test_the_driver_is_read_out_of_the_command_rather_than_assumed() {
+  T t = T.create();
+  // `packages/<pkg>/cov.ts` is wrong for `core`, whose tree is at the repository root. The version of
+  // this that assumed the path reported `core` as having no driver while a `cov.ts` sat there.
+  t.eqStr(driverOf("deno run -A packages/gzip/cov.ts"), "packages/gzip/cov.ts", "a TypeScript driver");
+  t.eqStr(driverOf("deno run -A core/cov.ts"), "core/cov.ts", "a tree at the repository root");
+
+  // **`covreport.wac` is the shared reporter, not anyone's driver.** Several wac drivers are run
+  // through it, and taking the first `.wac` on the line would name it for every one of them — so they
+  // would all classify alike, from one file, whatever their own ledgers say.
+  t.eqStr(driverOf("./wac run --allow-read tools/wac/covreport.wac -- core/test/cov_exercise.wac x"),
+          "core/test/cov_exercise.wac", "the reporter is skipped and the real driver found");
+
+  t.eqStr(driverOf("echo nothing here"), "", "a command naming no driver says so");
+  return t.report();
+}
+
+export string test_a_wac_driver_holds_a_floor_only_when_it_calls_the_shared_ratchet() {
+  T t = T.create();
+  // The marker is the *call*, not a `return 1;` somewhere in the file, which would be a
+  // classification pretending to be a measurement.
+  t.eqBool(callsRatchet("  ratchet(cli, pins);"), true, "a plain call");
+  t.eqBool(callsRatchet("x = ledger.ratchet(a);"), true, "a call through a value");
+  t.eqBool(callsRatchet("ratchet(a);"), true, "at the very start of the file");
+  t.eqBool(callsRatchet("report(core, cli, points);"), false, "a driver that only reports");
+
+  // The boundary is the whole of it: a name that merely ends in `ratchet` would be counted as a
+  // coverage floor, and the summary would over-state how many of these checks can fail at all.
+  t.eqBool(callsRatchet("subratchet(a);"), false, "a longer name is not this call");
+  t.eqBool(callsRatchet("myRatchet(a); ratchet2(b);"), false, "nor is one that only starts the same");
+  return t.report();
+}
+
+export string test_the_failure_lines_are_matched_by_prefix_not_by_whole_sentence() {
+  T t = T.create();
+  // **`is listed as unreach` and not the whole sentence**, because the whole sentence was one word too
+  // specific. `packages/crypto`'s driver said "unreached but was covered" and `gzip`'s `cov.ts` said
+  // "unreachable" — so a stale gzip entry exited 1 and had its only explanation filtered out here.
+  t.eqBool(isFailureLine("  src/a.wac:12 is listed as unreached but was covered"), true, "unreached");
+  t.eqBool(isFailureLine("  src/a.wac:12 is listed as unreachable"), true, "and unreachable");
+  t.eqBool(isFailureLine("That reason no longer holds — drop the entry."), true, "the continuation");
+  t.eqBool(isFailureLine("57 branch point(s) uncovered"), true, "an uncovered count");
+  t.eqBool(isFailureLine("error: cannot read cov.ts"), true, "an error");
+  t.eqBool(isFailureLine("packages/gzip: 412 of 470 points (87.7%)"), false, "an ordinary report line");
+  return t.report();
+}
+
+export string test_colour_escapes_are_taken_off_the_lines_that_are_repeated() {
+  T t = T.create();
+  // A driver writes to a terminal; this repeats its lines into whatever is reading the gate.
+  t.eqStr(stripAnsi("\u{1b}[31merror: nope\u{1b}[0m"), "error: nope", "both ends");
+  t.eqStr(stripAnsi("plain"), "plain", "nothing to strip");
+  t.eqStr(stripAnsi("a\u{1b}[1;32mb\u{1b}[mc"), "abc", "several parameters, and an empty one");
+  // A lone escape with no `[` after it is dropped rather than left to confuse whatever prints this.
+  t.eqStr(stripAnsi("a\u{1b}b"), "ab", "an escape that starts no sequence");
+  return t.report();
+}

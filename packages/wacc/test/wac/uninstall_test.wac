@@ -19,7 +19,7 @@
 // two files it must never touch.
 //
 // Nothing here installs anything real: `install()` shells out to a release `cargo build`, which is a
-// minute of work already covered by `tools/seedFresh.test.ts`. What is worth checking is the file
+// minute of work already covered by `tools/wac/seedfresh_test.wac`. What is worth checking is the file
 // arrangement, which is milliseconds — the same argument `tools/install.test.ts` makes, and the same
 // fake install, so that a change to the layout has one more place to be made rather than a place
 // nobody finds.
