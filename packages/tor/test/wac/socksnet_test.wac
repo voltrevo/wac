@@ -343,8 +343,10 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // **What is asserted is the bytes, not the close.** The whole document arrives —
               // 2,561 bytes, the number the exit relay reports writing — and then `socks` does not
               // close the client socket, so a reader waiting for `End` waits forever. That is
-              // `issues/system/0304b`, filed from this case: both close paths run
-              // `c.read.cancel()` and then `cli.closeSocket(c.sock)`, and the peer sees no FIN.
+              // `issues/system/0304b`, filed from this case and then narrowed by the probe in
+              // `packages/platform/test/wac/closewhilereading_test.wac`: it is not `socks`'s bug at
+              // all. A close does not reach the peer while *any* `recv` is outstanding, and a proxy
+              // always has one parked on its client.
               // Asserting the close here would make the suite red for a bug that is written down,
               // so this asserts what is true and the issue carries what is not.
               t.isTrue(r.body.len() > 0, "the proxy carried a stream — " + r.why +
