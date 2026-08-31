@@ -75,9 +75,9 @@ Nothing here needs a new host feature. It needs work, but the shape is already l
   whole `Cli` out of wac functions to fake a filesystem for the coverage probe. A kernel, in this
   design, is a wac program that *synthesises worlds for its children* — the same trick, kept.
 - **Two process models exist.** `spawn`/`spawnSelf` give a real one (a worker, its own instance, its
-  own grants); `pushChild`/`popChild` give an in-process one, which is what runs 65 applets in a
+  own grants); `pushChild`/`popChild` give an in-process one, which is what runs 66 applets in a
   browser tab. What is missing is that nobody keeps a table.
-- **A userland exists.** 65 applets, a shell tested against bash script for script, `ssh`/`sshd`,
+- **A userland exists.** 66 applets, a shell tested against bash script for script, `ssh`/`sshd`,
   `httpd`, `tar`, `gzip`, `zstd`, `json`.
 - **Grants already narrow by construction**, which is a better answer than mode bits to "what may this
   session do". A session's world is built with what it is allowed and nothing else.
@@ -475,7 +475,7 @@ browser. Nothing was rewritten in the move.
 
 All three of [0087](../../issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s criteria are met and the whole of design/0001's arrival test passes across the two hosts — files, installed programs, shell behaviour, users and system services. This cell said *started* for as long after that as it took somebody to re-read it. `native/` — Rust on wasmtime, no JavaScript in the artifact and no WASI import in the module. A compiled wac program turned out to have **no imports of its own** beyond one dispatcher per funcref signature, so there is no bundle and no generated glue: `deno task app:native` emits a `.wasm` and a manifest, and the runtime reads the manifest. D9 survived its first contact — the `SharedArrayBuffer`, `Atomics.wait` and the ring of slots have no counterpart here and none was reimplemented.
 
-The **ticket table** is in, with D12's policy seam and D13's visible deadline built in rather than retrofitted: when several tickets are ready, `waitAny` answers the first in the *caller's* list rather than the first to finish, so a program's behaviour does not depend on how the threads were scheduled. **Two of [0087](../../issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s three criteria are met** — two requests completing out of order, and a `waitAny` returning on its deadline. **`packages/sh` and all 65 applets run on it**: `sealedsh` boots, and the first 25 of the shell's differential corpus answer byte-for-byte what the Deno host answers (`wac task corpus:hosts` runs the whole of it). That is the arrival test in substance for *shell behaviour and installed programs*; what is left of it is an **image**, which needs the filesystem capabilities.
+The **ticket table** is in, with D12's policy seam and D13's visible deadline built in rather than retrofitted: when several tickets are ready, `waitAny` answers the first in the *caller's* list rather than the first to finish, so a program's behaviour does not depend on how the threads were scheduled. **Two of [0087](../../issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s three criteria are met** — two requests completing out of order, and a `waitAny` returning on its deadline. **`packages/sh` and all 66 applets run on it**: `sealedsh` boots, and the first 25 of the shell's differential corpus answer byte-for-byte what the Deno host answers (`wac task corpus:hosts` runs the whole of it). That is the arrival test in substance for *shell behaviour and installed programs*; what is left of it is an **image**, which needs the filesystem capabilities.
 
 The **filesystem** is in, each call behind a grant check, so `imaged` boots an image on this host and **the arrival test passes for files, programs and shell behaviour**. **All three of 0087's criteria are met**: `spawnSelf` makes a second instance on its own thread, with grants intersected against the parent's and no route between the two stores — a confinement primitive, which it cannot be in a JavaScript host. **And the network, so the arrival test is met in full**: `arrival_users_test.wac` builds `sshd` for both hosts, has the JavaScript one write `/etc/passwd`, two homes, two `authorized_keys` and two private files into an image, and then serves that same file from the host with no JavaScript in it — where a real OpenSSH client logs in as each user, lands in their own home, reads their own secret and is refused the other's.
 
@@ -574,7 +574,7 @@ started. The supervision question stays open below and this does not settle it.
 
 The relay is a `waitAny` over every service's output, error stream and channel at once, for the reason `packages/sh` learned — a service blocked on a question nobody has answered writes nothing, so reading its output first waits for a service that is waiting for the loop. What runs at boot is a file you can `cat` and edit rather than a list compiled in, which is the whole of what makes it step 7. **Not a supervisor**: no restart policy, no dependency order, no health, no readiness, and no way to *stop* a service, since that needs step 3's delivery half. Those five are named in `init.wac` rather than approximated.
 
-And `/bin` is real: `Fs.mountBin` lists the programs this build has — `boxNames()`, the same function the dispatcher and the README's count are tied to — and `/bin/wc -l` runs `wc`. Each entry is a real directory entry with a mode and a size whose contents are one sentence saying the program is built in, because there is no file on disk to point at and inventing one would be design/0001 D6's "plausible rows". `sshd -i` serves every session from an image *and* from `packages/box`'s 65 applets, which read that image rather than the host (wac-mono 0109, and wac 0076 for the compiler bug the edge tripped over). Before that: `sshd -i home.wacimg` boots an image and serves every session from it — three packages end to end, driven by OpenSSH's own client.
+And `/bin` is real: `Fs.mountBin` lists the programs this build has — `boxNames()`, the same function the dispatcher and the README's count are tied to — and `/bin/wc -l` runs `wc`. Each entry is a real directory entry with a mode and a size whose contents are one sentence saying the program is built in, because there is no file on disk to point at and inventing one would be design/0001 D6's "plausible rows". `sshd -i` serves every session from an image *and* from `packages/box`'s 66 applets, which read that image rather than the host (wac-mono 0109, and wac 0076 for the compiler bug the edge tripped over). Before that: `sshd -i home.wacimg` boots an image and serves every session from it — three packages end to end, driven by OpenSSH's own client.
 
 Concurrency stays open because connections are served one at a time, so one writer is true by construction
 
@@ -585,7 +585,7 @@ So the honest statement of where step 8 sits: it is a real window manager over a
 An applet reads the filesystem the **shell** is holding as of 2026-08-07 (wac-mono 0109): they take an
 `Fs`, and `lib/input.wac` picks how to read it by mount — a host path still streams through `openInput`,
 anything else is served from the bytes the filesystem hands over. `packages/box/src/bin/sealedsh.wac` is
-a shell on `Fs.inMemory()` with all 65 applets and **no capabilities at all**, which is the shape
+a shell on `Fs.inMemory()` with all 66 applets and **no capabilities at all**, which is the shape
 steps 7 and 8 both need and the first time D1's "the shell asks its filesystem" is true of the commands
 as well as of the shell.
 
