@@ -192,3 +192,30 @@ saying so is the smaller fix if the real one is far.
 **Four wrong characterisations preceded this**, each killed by the next control: the target, the
 circuit-not-target, the response size, the teardown direction. Every one was an uncontrolled
 comparison — two things varying, one named. The reproduction now varies exactly one.
+
+## Where to look, from the exit's own log
+
+    stream 1 on handle 4 closed by the far end after 18 bytes in, 21 bytes out
+    relay command 3 on stream 1 (this circuit has no stream)
+    stream 2 open to 127.0.0.1:39513 on handle 5
+    the client ended stream 2 after 18 bytes in, 0 bytes out
+    stream 3 open to 127.0.0.1:39513 on handle 6
+    the client ended stream 3 after 18 bytes in, 0 bytes out
+
+Streams 2, 3 and 4 each get a **fresh socket** — handles 5, 6, 7 — so `streamSock` is being set
+correctly and the connect is happening. What never happens is delivery back. Reading the code around
+that:
+
+- BEGIN issues the read itself (`k.fromStream = cli.recv(k.streamSock)`, :1620) and does **not** set
+  `streamArmed`;
+- the arming pass (:922) starts `armOne` when `hasStream && !streamArmed`, and `armOne` *awaits the
+  existing* `k.fromStream` rather than issuing its own;
+- so whether a stream is delivered depends on the arming pass running again after its BEGIN was
+  handled. Stream 1's pump returns when its read answers `End`, and nothing observed here re-arms.
+
+That makes the ordering of "handle the cells" against "arm what is now outstanding" the first thing
+to check, rather than the socket or the flags, both of which the log exonerates.
+
+The stray line is worth keeping too: `relay command 3 on stream 1 (this circuit has no stream)` is a
+RELAY_END for a stream the exit has already torn down. Harmless on its own, but it says the two ends
+disagree about when stream 1 was over, which is the same seam.
