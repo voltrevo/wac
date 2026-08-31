@@ -103,3 +103,24 @@ Most of a program is this. It takes no capability, so it cannot reach the world,
 the whole of that argument — nothing else had to be arranged. Absence is a type rather than a
 sentinel, a loop says what it walks rather than how it counts, and a predicate is a value.
 **Not yet.**
+
+---
+
+## Authority narrows on the way in
+
+```wac
+i32 main(Sys sys) {
+  i32 found = sys.run(scan, [Grant.Read]);
+  sys.log("\{found} matches");
+  return 0;
+}
+
+i32 scan(Sys sys) {
+  // reads; it cannot write, listen or spawn, whatever it asks for
+}
+```
+
+`scan` runs to completion inside the program — its own scheduler, less authority than the caller
+holds, and nothing spawned. A grant can only be removed: a subsystem asking for more than its parent
+holds gets what its parent holds, so the ceiling falls as you go inward and never rises. It is what
+the host does when it runs `main`, one level up. **Not yet.**
