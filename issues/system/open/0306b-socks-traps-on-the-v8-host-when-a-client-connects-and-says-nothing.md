@@ -170,3 +170,28 @@ So it is not the shape, not the client count, and not the number of concurrent m
 `socks` still has that this does not: a TLS link, circuits and their cell machinery, the per-client
 phase state, and a much larger module. Those are the next things to add one at a time — the file is
 `packages/platform/test/wac/tmppumpd.wac` in a worktree and is not committed.
+
+### With the reproduction reliable: it is the v8 host, and it is not stack depth
+
+Both of these were measured before against a bug that was not firing, and both were void. Re-run
+against the 5-of-5 baseline:
+
+| arm | trapped |
+|---|---|
+| v8 host, as shipped | **5 of 5** |
+| **wasmtime** host, same module, same network | **0 of 3** |
+| v8 host with `--stack-size=8000`, eight times the default | 4 of 5 |
+
+So it is genuinely v8-specific — the earlier withdrawal of that claim was right on the evidence
+then, and it now stands on evidence that can distinguish the arms. And it is **not** stack
+exhaustion: eight times the stack leaves the rate where it was. That hypothesis fitted every
+symptom, which is exactly why it needed a baseline to test against rather than a plausible story.
+
+Note that running `socks` under wasmtime is only possible at all because that host's seed was
+rebuilt today; before that it answered *"this module was built without Core and Cli"* and could
+not be asked.
+
+**What is left**: v8-specific, at the point of suspension, no `$trap$message`, not the pump shape,
+not the client count, not the number of concurrent machines, not module size, not stack depth, not
+handle reuse. The difference between the two Rust hosts in how a suspended continuation is delivered
+is the next place to look, and it is host code rather than `socks`.
