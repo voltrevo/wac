@@ -57,9 +57,29 @@ RESOURCELIMIT END and a log line. What happens to a *sequential* second stream i
 worse: the exit opens it ("stream 2 open to … on handle 4"), forwards the request, and relays nothing
 back. Opened, accepted, and silently useless.
 
-**Next**: the same experiment with two sequential streams and no proxy at all — `app.wac` twice on
-one circuit — would say whether this is `relayd`'s stream teardown or the client-side `Circuit`
-state. Both ends keep per-stream windows and ciphers, and only one of them has to be wrong.
+### The exit is exonerated too, and the first argument did not show it
+
+The restart run had a fresh circuit **and** a fresh exit — `wacnet3 -> wacnet2 -> wacnet1` before,
+`wacnet2 -> wacnet1 -> wacnet3` after — so "the circuit, not the target" was the right answer reached
+by an argument that could not support it. Circuit and exit were still entangled.
+
+What separates them is already in a passing run's log:
+
+    circuit 0 for port 33907: wacnet1 -> wacnet2 -> wacnet3
+    circuit 1 for port 41489: wacnet1 -> wacnet2 -> wacnet3
+    circuit 2 for port 43453: wacnet1 -> wacnet3 -> wacnet2
+
+Circuits 0 and 1 **share the exit `wacnet3`** and both carried their documents. So an exit that has
+already carried a stream carries another quite happily, as long as it is a different circuit.
+
+So all three are separated: the target is fine, the exit is fine, and what fails is **a second
+sequential stream on one circuit**.
+
+**Next**: which end. Both keep per-stream windows and ciphers and only one has to be wrong. The exit
+logs "68 bytes in, 0 bytes out", which says it received the request and had nothing to send back —
+consistent with the target never being reached on that connection, or with the response being
+dropped in its own relay crypto. `relayd`'s own header calls one stream per circuit its limit, so it
+is the place to look first, but the client-side `Circuit` keeps stream state too.
 
 ## Why it is filed rather than chased
 
