@@ -12,6 +12,7 @@
 // `continue`. `asyncplan_test.wac` holds the shapes it still declines, by name — a suspension in a
 // loop *condition*, one nested inside a larger expression, and one whose value is discarded.
 
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, FileResult, Pending } from "std/platform.wac";
 
@@ -203,17 +204,25 @@ export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
 
 export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
   T t = T.create();
-  // **The property A1 exists for**, and the assertion is the property rather than one spelling of
-  // it. Run to completion one after the other the log reads 1122 or 2211; interleaved it reads 1212
-  // or 2121 — and **which of those two is a race**, decided by whichever 1ms timer the host answers
-  // first. Pinning 1212 passed here and failed in the suite, where the machine is busier. What is
-  // being claimed is that neither machine finished before the other started.
+  // **The property A1 exists for**, stated as the property rather than as a list of the logs that
+  // satisfy it — which is what this was, and it was short.
+  //
+  // Run to completion one after the other the log reads 1122 or 2211. **Everything else is an
+  // interleaving**, and there are four of them: 1212, 2121, 1221 and 2112. Which one appears is
+  // decided by whichever 1ms timer the host answers first and by how far each machine gets before
+  // the next dispatch — a race, and a busier machine races differently. This accepted the first two
+  // and failed on the other two, so it went red under load with a message saying the machines had
+  // not interleaved when they had. Measured on 2026-08-30 at load 6.6: pass, fail, pass.
+  //
+  // The claim is that **neither machine finished before the other started**, so the two serial logs
+  // are what to exclude. Written that way it cannot be short again.
   i32[] log = i32[1]();
   Pending<i32> a = ticks(core, 2, log, 1);
   Pending<i32> b = ticks(core, 2, log, 2);
   core.drain();
-  t.isTrue(log[0] == 1212 || log[0] == 2121,
-           "the two machines took turns rather than running one after the other");
+  t.isTrue(log[0] != 1122 && log[0] != 2211,
+           "the two machines took turns rather than running one after the other — the log was "
+           + itoa(log[0]) + ", and 1122 or 2211 is one finishing before the other started");
   t.isTrue(a.isDone() && b.isDone(), "and both finished");
   return t.report();
 }
