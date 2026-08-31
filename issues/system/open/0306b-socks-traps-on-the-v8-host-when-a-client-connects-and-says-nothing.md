@@ -77,3 +77,27 @@ price of a real stack.
 
 The other thread worth pulling is the missing `$trap$message`. Whatever traps is not going through
 the path that sets one, which is a much smaller search than "somewhere in the proxy".
+
+## Not currently reproducible, and that is the state to hand over
+
+Roughly fifty runs since the last confirmed trap, across every arm above and several more, all clean
+— including the pristine host with no changes, and 32 concurrent clients at load 7.4. So the earlier
+rates are not something a later reader will be able to reproduce by following the steps.
+
+What the reproductions had in common was **a gate running beside them**: real contention for five
+cores between two suites, not a load average. That is not something to manufacture — `push.sh` warns
+that three suites at once get killed at about 70% with no failure reported, so loading the box to
+chase this would hand the other agents phantom failures.
+
+**The route back to it** is therefore to run the probe *while a gate is running*, which happens
+several times an hour anyway, rather than to build load. The probe is described above and is
+deliberately uncommitted.
+
+**Things eliminated along the way**, each by a check rather than an argument, and all still true:
+the `0304b` interaction (rates indistinguishable), a stale circuit index (guard never fired), a
+nested `waitAny` (`startCircuit` has none), fixed-size machine cells (allocated per call), v8 stack
+depth (200KB did not make it worse), and every minimal reproduction of the proxy's shape.
+
+**And one thing not eliminated, only unmeasurable right now**: whether it is host-specific. The Deno
+and wasmtime arms were measured after the trap had already stopped appearing anywhere, so they say
+nothing.
