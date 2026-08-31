@@ -21,9 +21,19 @@ not have when this was filed.
 | async proxy, **Deno** host | 0 of 6 |
 | async proxy, **wasmtime** host | 0 of 6 |
 
-**So it is the v8 host.** Twelve clean runs on the two other hosts against roughly one in four on
-this one is about 3% by chance. The same module, the same `socks.wac`, the same network: two hosts
-carry it and one traps. That moves this off the wac code, which is where it was filed.
+**That table is confounded and the conclusion drawn from it was wrong.** The two v8 rows were
+measured while gates and another agent were loading the machine; Deno and wasmtime were measured
+later, on a quiet one. Re-running the **baseline** — pristine host, no changes — on the quiet machine
+gives **0 of 8**. So the arms differ in when they ran, not only in what they tested, and "it is the
+v8 host" is not supported by them.
+
+The same confound voids everything else measured in that stretch, each of which looked like a
+finding at the time: bounds guards 0 of 14 (with the guard never firing), a host debug print 0 of 4,
+`--stack-size=8000` 0 of 8, and `--stack-size=200` 0 of 6. Four "fixes" and one cause.
+
+**What survives is that the trap is load-dependent**, which is a fact about it worth more than any of
+the above: it appeared readily while the machine was busy and has not appeared once since it went
+quiet. Any future arm has to be measured *interleaved* with its control rather than after it.
 
 Testing the wasmtime arm needed its seed rebuilt — its binary carried one from before `Core`/`Cli`,
 which is the gap recorded as "could not ask" when `issues/system/0304b` was closed.
