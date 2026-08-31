@@ -204,26 +204,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // `4294967296` and `0` compared equal and `-nu` dropped one of them. Two cases, each writing its
     // own file, because they want different contents.
 
-    // `split`'s suffixes past `zz`. GNU reserves a leading `z` as the marker that the suffix has
-    // grown, so two letters run `aa`..`yz` and the next name is `zaaa` — this used to leave the
-    // alphabet entirely and emit `z676`, which sorts nowhere near where it was written.
-    // GitHub wac-mono#14.
-    const seven = await Deno.makeTempFile({ prefix: "wac-box-many-" });
-    await Deno.writeTextFile(seven, Array.from({ length: 700 }, (_, i) => String(i)).join("\n") + "\n");
-    const ours = await Deno.makeTempDir({ prefix: "wac-box-split-a-" });
-    const theirs = await Deno.makeTempDir({ prefix: "wac-box-split-b-" });
-    // Its own binary: `built` above is granted read only, and `split` has to open its pieces for
-    // writing. Without this it wrote nothing, and the comparison was "" against 700 names.
-    const writer = await Deno.makeTempFile({ prefix: "wac-box-splitw-" });
-    await buildApp(BOX, writer, { read: true, write: true });
-    new Deno.Command(writer, { args: ["split", "-1", seven], cwd: ours, stdout: "null" }).outputSync();
-    new Deno.Command("split", { args: ["-l", "1", seven], cwd: theirs, stdout: "null" }).outputSync();
-    const names = (dir: string) => [...Deno.readDirSync(dir)].map((e) => e.name).sort();
-    assertEquals(names(ours).join(" "), names(theirs).join(" "), "every split suffix, all 700");
-    await Deno.remove(seven);
-    await Deno.remove(writer);
-    await Deno.remove(ours, { recursive: true });
-    await Deno.remove(theirs, { recursive: true });
+    // **Moved to `applets_test.wac`** — wac-mono#14, `split`'s suffixes past `zz`. GNU reserves a
+    // leading `z` as the marker that the suffix has grown, so two letters run `aa`..`yz` and the next
+    // name is `zaaa`; this used to leave the alphabet and emit `z676`. The comparison there is a
+    // *directory listing* rather than standard output, which `split` does not write to at all, and GNU
+    // runs in a directory of its own through `execWithIn`. 700 pieces, both ways, in 94 ms — where
+    // this built a second binary with the write grant and spawned two processes.
 
     // **Moved to `applets_test.wac`** — wac-mono#26, where a pattern exhausting the backtracking
     // budget was counted as a match because only `NO_MATCH` was checked. Written down rather than

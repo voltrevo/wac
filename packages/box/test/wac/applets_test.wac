@@ -300,3 +300,70 @@ export string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core core, 
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * `split`'s suffixes past `zz` — GitHub wac-mono#14.
+ *
+ * GNU reserves a leading `z` as the marker that the suffix has grown, so two letters run `aa`..`yz`
+ * and the next name is `zaaa`. This used to leave the alphabet entirely and emit `z676`, which sorts
+ * nowhere near where it was written — and 700 pieces is what it takes to get there, since the first
+ * 675 names are unremarkable.
+ *
+ * **The comparison is a directory listing, not standard output**, which is why this is not a vector:
+ * what `split` writes to stdout is nothing at all. GNU runs in a directory of its own through
+ * `execWithIn`, so the two sets of names cannot be confused for each other.
+ */
+export string test_splits_suffixes_are_gnus_past_zz(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  string body = "";
+  for (i32 i = 0; i < 700; i++) { body = body + itoa(i) + "\n"; }
+  t.isTrue(cli.mkdir(dir + "/ours", true).wait().ok(), "made ours");
+  t.isTrue(cli.mkdir(dir + "/theirs", true).wait().ok(), "made theirs");
+  t.isTrue(cli.writeFile(dir + "/ours/seven", body.toBytes()).wait().ok(), "wrote the source");
+  t.isTrue(cli.writeFile(dir + "/theirs/seven", body.toBytes()).wait().ok(), "and its twin");
+
+  runCase(core, cli, dir + "/ours", "split -1 seven");
+  Exec real = cli.execWithIn("split", string[]("-l", "1", "seven"), u8[0](), string[](),
+                             false, false, dir + "/theirs").wait();
+  t.isTrue(real.ran(), "the real split ran: " + real.error);
+
+  string ours = sortedNames(cli, dir + "/ours");
+  string theirs = sortedNames(cli, dir + "/theirs");
+  // **A floor, because two empty listings compare equal.** Counted rather than measured in
+  // characters: the first version asked for 3000 bytes and 701 short names came to about 2900, so the
+  // floor failed on a listing that was entirely correct.
+  t.isTrue(count(theirs) > 690, "GNU produced a listing to compare against — status " +
+           itoa(real.status) + " err " + string.fromBytes(real.stderr));
+  t.eqStr(ours, theirs, "every split suffix, all 700");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** How many names a listing holds, which is what a floor on it should be counting. */
+i32 count(string listing) {
+  i32 n = 0;
+  u8[] b = listing.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == ' ') { n = n + 1; } }
+  return n;
+}
+
+/** A directory's entries, sorted, as one line — the shape a listing comparison wants. */
+string sortedNames(Cli cli, string dir) {
+  string[]? got = cli.readDir(dir).wait();
+  if (got is null) { return "(unreadable)"; }
+  string[] names = got!;
+  // Insertion sort: the lists are a few hundred short strings and this file has no sort to hand.
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && names[j] > v) { names[j + 1] = names[j]; j = j - 1; }
+    names[j + 1] = v;
+  }
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) { out = out + " " + names[i]; }
+  return out;
+}
