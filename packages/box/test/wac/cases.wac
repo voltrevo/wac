@@ -445,7 +445,8 @@ export string[] appletCases() {
     // than box's applet.** `shadowed_test.wac` pins that set — `echo ls mkdir rm chmod` — and the
     // replay runs a `Shell`, where a builtin wins and there is no `command` to bypass it with. So what
     // these compare against GNU is the builtin, which is worth comparing and is not the same claim as
-    // the applet's. `box.test.ts` keeps the assertions that must reach the applet, `ls -a` among them.
+    // the applet's. Anything that must reach the *applet* for these five goes through `runApplet` in
+    // `replay.wac`, which calls `dispatch` with a captured frame and no shell at all.
     //
     // The mutating three are safe as vector cases because `layFixtures` removes and re-lays the whole
     // directory before every one, on the capture side and the replay side alike.

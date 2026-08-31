@@ -25,6 +25,8 @@ import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";
+import { UNKNOWN, dispatch } from "../../src/box.wac";
+import { parseList } from "../../src/lib/args.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
@@ -76,6 +78,31 @@ export Ran runCase(Core core, Cli cli, string dir, string script) {
   sh.external = boxRun;
   sh.externalNames = boxNames;
   i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+}
+
+/**
+ * One applet, driven straight at `dispatch` with no shell in between.
+ *
+ * **This is how a wac test reaches an applet that a script cannot.** `runCase` runs a `Shell`, and
+ * five of the names are shadowed — `echo ls mkdir rm chmod` are builtins as well as applets, the
+ * builtin wins, and `packages/sh` has no `command` to bypass one with. So a script asking `ls -a` asks
+ * the builtin, which accepts it, where box's applet refuses it. Everything about flags, refusals and
+ * usage for those five is invisible from the vector route and visible from here.
+ *
+ * `argv` is the whole command line, applet name first, exactly as `box` receives it: `parseList` is
+ * handed `first = 1` for the same reason `parseArgs` hands `parseFrom` a 1.
+ *
+ * **The status is `dispatch`'s, not the program's.** An unknown name answers `UNKNOWN` (-1) here,
+ * where `box` answers 2 — `main` is the half that turns "no such applet" into a usage error, and it
+ * reads argv from the process, so it is not reachable in-process. Compare against `UNKNOWN` rather
+ * than against a number.
+ */
+export Ran runApplet(Core core, Cli cli, string dir, string[] argv) {
+  Frame f = Frame.of(argv, u8[0](), dir, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  i32 status = dispatch(c, l, Fs.onHost(l, 0), parseList(argv, 1, argv[0]), argv[0]);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
 }
 

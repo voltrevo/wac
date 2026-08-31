@@ -17,7 +17,8 @@ import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
-import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
+import { Loaded, Ran, layFixtures, load, runApplet, runCase, show } from "./replay.wac";
+import { UNKNOWN } from "../../src/box.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-applets"; }
@@ -534,6 +535,41 @@ export string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli
   }
 
   cli.chmod(denied, 384).wait();          // 0600, so the cleanup can unlink it
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A flag an applet has not implemented is **refused**, not ignored — asked of the applet itself.
+ *
+ * `lib/flags.wac`'s whole purpose, and `ls` is where it is most visible: GNU's `ls -a` works, so this
+ * is box's own answer rather than a disagreement to capture. Ignoring a flag would mean `ls -a` and
+ * `ls` are the same command, which is the shape `find -name` is still in — `issues/system/0299c`.
+ *
+ * **It took `runApplet` to ask.** Through a script this reaches the shell's `ls` builtin, which accepts
+ * `-a` and answers 0; the first version of this test asserted 2 and got 0 from a command that was never
+ * box's. The five shadowed names all have this hole and this is the way through it.
+ */
+export string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+
+  Ran r = runApplet(core, cli, dir, string[]("ls", "-a", dir));
+  t.eqI32(r.status, 2, "an unimplemented flag is a usage error: " + r.err);
+  t.isTrue(r.err.indexOf("not implemented") >= 0, r.err);
+
+  // The control, and it is not decoration: without it a broken `ls` gives the same 2 for a different
+  // reason, and the test would be asserting that `ls` does not work.
+  Ran plain = runApplet(core, cli, dir, string[]("ls", dir));
+  t.eqI32(plain.status, 0, "and ls itself still answers: " + plain.err);
+  t.isTrue(plain.out.indexOf("m1.txt") >= 0, plain.out);
+
+  // The name box does not have. `dispatch` says so with a sentinel rather than a status, because "no
+  // such applet" and "it ran and failed" are different facts — `box` turns this into the usage error
+  // that `box.test.ts` still asserts end to end, since `main` reads argv from the process.
+  t.eqI32(runApplet(core, cli, dir, string[]("nope")).status, UNKNOWN, "an unknown applet is UNKNOWN");
+
   cli.remove(dir, true).wait();
   return t.report();
 }

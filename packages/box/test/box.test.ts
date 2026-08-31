@@ -274,14 +274,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // implements — a locale-aware one is a different thing and is not implemented — and `ls` to a pipe
     // is already one name per line, so the vector is `ls -1` without having to ask for it.
     // A directory with dotfiles in it, since hiding them is half of what `ls` means by default.
-    // **`ls -a` stays, and finding out why was worth the detour.** A flag the applet has not
-    // implemented must be refused rather than ignored — `lib/flags.wac`'s whole purpose. It cannot be
-    // asked through the vectors, because those run a *shell* and `ls` is one of the five shadowed
-    // names: the builtin wins, and the builtin accepts `-a`. `box(["ls", "-a"])` reaches the applet;
-    // a script cannot, and `packages/sh` has no `command` to bypass a builtin with.
-    const dashA = await box(["ls", "-a", "packages/platform"]);
-    assertEquals(dashA.code, 2, `ls -a should be a usage error: ${JSON.stringify(dashA.err)}`);
-    assertEquals(dashA.err.includes("not implemented"), true, dashA.err);
+    // **`ls -a` moved to `applets_test.wac`, and getting it there produced the tool the rest of this
+    // migration was missing.** It cannot be asked through the vectors: those run a *shell*, `ls` is one
+    // of the five shadowed names, the builtin wins and the builtin accepts `-a`. So `replay.wac` grew
+    // `runApplet`, which builds a captured `Frame` and calls `dispatch` directly — no shell, no
+    // process, and the flag reaches the applet that refuses it. Everything about flags and refusals
+    // for those five names was invisible before it.
 
     // **The failed-read reasons moved to `applets_test.wac`, and stayed a live differential.** They
     // could not become vectors — the fixture needs a file at mode 0, and a `Fixture` has no mode — but
