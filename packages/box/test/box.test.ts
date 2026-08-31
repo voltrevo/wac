@@ -218,26 +218,11 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // dialect is the literal characters — which matches nothing and exits 1, and is how a version of
     // that test passed while asserting nothing (wac-mono 0104).
 
-    // A name that does not fit a ustar header is refused, which is what tar.wac has always claimed.
-    // There was no check, so the header writer copied the first 100 bytes and archived the entry
-    // under a different name. GitHub wac-mono#23.
-    const deep = await Deno.makeTempDir({ prefix: "wac-box-tar-" });
-    const longDir = `${deep}/${"d".repeat(40)}`;
-    await Deno.mkdir(longDir);
-    await Deno.writeTextFile(`${longDir}/${"f".repeat(70)}`, "x");
-    const tarred = new Deno.Command(built, {
-      args: ["tar", "."],
-      cwd: deep,
-      stdout: "null",
-      stderr: "piped",
-    }).outputSync();
-    assertEquals(tarred.code, 1, "an unarchivable name is a failure");
-    assertEquals(
-      new TextDecoder().decode(tarred.stderr).includes("longer than the 100 bytes"),
-      true,
-      "and says why",
-    );
-    await Deno.remove(deep, { recursive: true });
+    // **Moved to `packages/box/test/wac/tar_test.wac`** — wac-mono#23, a name that does not fit a
+    // ustar header. There was no check, so the header writer copied the first hundred bytes and
+    // archived the entry under a *different* name: an archive that unpacks to something other than
+    // what went in, which is the worst thing an archiver can do quietly. The symlink case below stays,
+    // for a reason that is a capability rather than an oracle.
 
     // **Moved to `packages/box/test/wac/unreadable_test.wac`.** `find` and `du` over a subtree they
     // cannot enter — GitHub wac-mono#20, where both printed a partial answer and exited 0 — is a wac
