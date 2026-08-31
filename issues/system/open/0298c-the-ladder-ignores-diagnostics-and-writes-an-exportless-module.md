@@ -72,12 +72,36 @@ only signal, and it is one you have to be looking for.
 
 ## Where it is
 
-`bootstrap/rust-ladder`. The ladder drives wacc and then writes the module; it does not consult the
-diagnostics wacc produced, or does not treat a non-empty set as fatal. Two things worth doing and they
-are separable:
+`bootstrap/rust-ladder`. **Established 2026-08-31: the diagnostics are produced and nobody asks for
+them.** The driver the ladder drives, `bootstrap/drivers/spec_cases.wac`, already exports every entry
+point needed:
 
-1. **Fail on diagnostics.** The route that builds the compiler should be at least as strict as
-   `wac build`, not less.
+    drv_parseErrors    dumpErrors(...)
+    drv_typeErrors     the type-checking phase
+    drv_declineFiles   blockedFiles(paths, sources, entry)   — why the *linked* build declined
+    drv_buildFiles     emitFiles(...)                        — the one the ladder calls
+    drv_seal           withManifestSection(...)              — and the other one
+
+`bootstrap/rust-ladder/src/wacc.rs` calls **`drv_files` and `drv_seal`, and nothing else**. So this is
+not a missing capability or a diagnostic that is hard to obtain — it is two calls nobody makes.
+`wac build` gets its `no such field` from the same compiler through the same phases.
+
+The driver says the hazard itself, three lines above `drv_parseErrors`:
+
+> a program wac would reject still comes out the other side as a module, which is why asking `emit`
+> whether something was refused answered "no" sixty-one times. These are the two phases that do the
+> rejecting.
+
+**`drv_declineFiles` is the one that matters most here**, and it is easy to miss when reading this
+issue's reproduction. `st.mode` on a `Stat` without that field is caught by the *checker* — so
+`drv_typeErrors` would answer — but the shape that produced the empty manifest is the **emitter
+declining**, which is what `blockedFiles` reports and what a parse-or-type check alone would miss.
+
+Two things worth doing and they are separable:
+
+1. **Fail on diagnostics**, which means calling `drv_parseErrors`, `drv_typeErrors` *and*
+   `drv_declineFiles` after `drv_buildFiles` and refusing a non-empty answer from any of them. The
+   route that builds the compiler should be at least as strict as `wac build`, not less.
 2. **Refuse an empty export list.** The compiler already carries the sentence for the neighbouring
    case — *"its export section is empty and its manifest promises exports"* — and it cannot fire here,
    because the manifest promised none either. A module whose manifest lists no exports at all is not a

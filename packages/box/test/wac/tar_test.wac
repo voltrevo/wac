@@ -1,0 +1,49 @@
+// What `tar` refuses, and says.
+//
+//     wac test --allow-read --allow-write packages/box/test/wac/tar_test.wac
+//
+// From `box.test.ts`. `tar.wac`'s header has always claimed these refusals; for a while it only
+// claimed them. A ustar header has a hundred bytes for a name and there was no check, so the header
+// writer copied the first hundred and archived the entry **under a different name** — an archive that
+// unpacks to something other than what went in, which is the worst thing an archiver can do quietly.
+// GitHub wac-mono#23.
+//
+// **The symlink half of this stayed behind**, and not for want of an oracle: its fixture needs three
+// *links*, and `Cli` can read a link and cannot make one — `issues/system/0300c`.
+
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture } from "./cases.wac";
+import { Ran, layFixtures, runCase } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-tar"; }
+
+/** `n` copies of `c`, for building a name of a stated length. */
+string repeated(string c, i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + c; }
+  return out;
+}
+
+export string test_a_name_too_long_for_a_ustar_header_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  // Forty and seventy, so that neither component is over the limit and the *path* is: `./` plus 40
+  // plus `/` plus 70 is 113. A test that made one long component would be asking a different and
+  // easier question, since a single oversized name is caught by the first thing that looks at it.
+  string longDir = repeated("d", 40);
+  string longFile = repeated("f", 70);
+  t.isTrue(cli.mkdir(dir + "/" + longDir, true).wait().ok(), "made the long directory");
+  t.isTrue(cli.writeFile(dir + "/" + longDir + "/" + longFile, "x".toBytes()).wait().ok(),
+           "and the long file in it");
+
+  Ran r = runCase(core, cli, dir, "tar .");
+  t.eqI32(r.status, 1, "an unarchivable name is a failure");
+  t.isTrue(r.err.indexOf("longer than the 100 bytes") >= 0, r.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

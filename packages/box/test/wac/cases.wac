@@ -15,6 +15,7 @@
 // those answers in process. Data two languages hold twice is data that drifts.
 
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
 
 /** Every invocation, run through a shell so that redirection and pipelines are available. */
 export string[] cases() {
@@ -26,6 +27,10 @@ export string[] cases() {
     "wc -w mixed.txt", "wc -c nonl.txt", "wc mixed.txt",
     "head -3 long.txt", "head -c 12 long.txt", "head -n -25 long.txt",
     "tail -3 long.txt", "tail -c 12 long.txt", "tail -n +28 long.txt",
+    // No count at all, against a 30-line file, so the answer is the *default* and not the file. GNU's
+    // is ten; box's has to be, and until this was captured nothing said so — `box.test.ts` asked it by
+    // running GNU with an explicit `-10`, which cannot see a wrong default on either side.
+    "head long.txt", "tail long.txt",
     "cat -n mixed.txt", "cat -b mixed.txt", "cat -s mixed.txt",
     "cat -A tabs.txt", "cat -e mixed.txt", "cat -t tabs.txt",
     "cat -v bin.txt", "cat nonl.txt words.txt", "cut -f2 tabs.txt",
@@ -360,7 +365,116 @@ export string[] appletCases() {
     // file rather than in total; `head` and `tail` write a `==> name <==` banner and a blank line
     // between. Those headers are most of what these assert.
     "wc m1.txt m2.txt",
-    "wc -l m1.txt m2.txt"
+    "wc -l m1.txt m2.txt",
+
+    // ── The applets `box.test.ts`'s agreement sweep covered and no vector did ──
+    //
+    // Path arithmetic, which is all string work and has no fixture at all. `basename` with a suffix
+    // is the form that has a second operand, and `dirname` on a bare name is the one that answers `.`
+    // rather than "".
+    "basename /a/b/c.txt", "basename /a/b/c.txt .txt", "basename plain",
+    // **Every one of these is a trailing slash**, because that is the whole of both applets:
+    // `basename a/b/` used to answer with what follows the final slash, which is nothing.
+    // GitHub wac-mono#10.
+    "basename a/b/", "basename a/b", "basename /", "basename //", "basename a//", "basename a", "basename /a", "basename a//b//", "basename /usr/lib/",
+    "dirname a/b/", "dirname a/b", "dirname /", "dirname //", "dirname a//", "dirname a", "dirname /a", "dirname a//b//", "dirname /usr/lib/",
+    // `echo` is deliberately not a getopt program — `echo -x` prints `-x` — so these say that the
+    // shared flag parser is *not* applied to it, which is a claim about `flagsChecked` as much as
+    // about `echo`.
+    "echo hello", "echo -n hi; echo .", "echo -x", "echo a  b",
+    // Status, and nothing else. `true` and `false` exist to be the two ends of `$?`.
+    "true; echo st=$?", "false; echo st=$?",
+    // A numeric option that was *asked for* against one never given: `Args.num` said zero for both,
+    // so `head -0` printed the default ten. GitHub wac-mono#8.
+    "head -0 prose.txt", "head -n 0 prose.txt", "tail -0 prose.txt", "tail -n 0 prose.txt",
+    // The shared flag parser, over a file rather than a pipeline.
+    "sort prose.txt", "sort -r prose.txt", "sort -u prose.txt", "tac prose.txt",
+    // Numeric sorting, where a string comparison and a numeric one disagree on every line.
+    "sort -n nums.txt", "sort -n -r nums.txt", "sort -n -u nums.txt",
+    // And the numeric operand that `-n` used to swallow.
+    "grep -n 123 numeric.txt", "sort -n numeric.txt",
+    // `--` ends the options, so an operand may begin with a dash. Without it `cat -- -x` treated both
+    // as flags, found no operand, read empty standard input and exited **0** — a silent wrong answer.
+    // GitHub wac-mono#11. The file is made by the script rather than by a fixture, because a `-x` in
+    // `appletFixtures()` would appear in every `ls` case's output.
+    // A numeric sort key outside i32, which used to wrap: `4294967296` and `0` compared equal, so
+    // `-nu` dropped one of them. GitHub wac-mono#12. The file is written by the script because the two
+    // cases want different contents.
+    "printf '4294967296\\n1\\n2147483648\\n-1\\n' > w; sort -n w",
+    "printf '4294967296\\n0\\n' > w; sort -nu w",
+    // A read that fails is not an end of input. `readChunk` answers with bytes and cannot say
+    // "broken", so every filter treated a half-read as a whole one and exited 0 — the failure mode
+    // where the program is the last thing suspected. GitHub wac-mono#18.
+    // The flags the sweep asked over one file, kept at the same spellings: `-3` and `-n 2` are the
+    // attached and detached forms of the same option.
+    "head -3 prose.txt", "tail -n 2 prose.txt", "sha512sum prose.txt", "base32 prose.txt",
+    // **The other applets that walk text**, over `uni.txt`. `issues/system/0143` named these as
+    // candidates for the assumption `wc -w` had; they do not have it, and these cases are what says so
+    // next year as well as today.
+    //
+    // **`tr` is spelled with a redirect and that is the point of this row.** `box.test.ts` ran it as
+    // `tr a-z A-Z uni.txt`, which GNU refuses — "extra operand" — and compared *stdout only* with
+    // stderr discarded, so it asserted that two empty strings are equal. Reading from standard input
+    // is the only way to hand `tr` a file, and the vector captures the exit status too, so a row that
+    // fails on both sides can no longer look like a row that agrees.
+    // **`rev` is deliberately not in this row.** It is the one applet here that is *not* byte-oriented:
+    // `applets/rev.wac` says "by character, not by byte" in its first line and walks scalars through
+    // `unicode`'s decoder unconditionally. The capture pins `LC_ALL=C`, where the real tool is
+    // byte-oriented, so the two answers disagree by construction and a captured vector would pin the
+    // wrong one. Our `rev`'s non-ASCII behaviour is written down rather than captured — the sibling
+    // question, whether it should follow the locale the way `wc` now does, is `issues/system/0301c`.
+    "fold -w 5 uni.txt", "cut -c 1-4 uni.txt", "cut -b 1-4 uni.txt",
+    "tr a-z A-Z < uni.txt",
+    // **The whole line, not the first field.** Taking `[0]` was how `wc -l file` came to drop the
+    // filename — the assertion threw the difference away, and the applet's comment claimed the real
+    // one does the same. It does not: only reading standard input has no name to print.
+    "wc -l prose.txt",
+    // `grep`, which brings the regex package in. Every flag against the real thing, plus the two
+    // statuses: no match is 1, and a bad pattern is a usage error.
+    "grep an prose.txt", "grep -i AN prose.txt", "grep -v an prose.txt",
+    "grep -n an prose.txt", "grep -c an prose.txt",
+    "grep zzznope prose.txt; echo st=$?",
+    "grep '[' prose.txt; echo st=$?",
+    // Only the four with a real counterpart: `hex` and `crc32` are ours, so bash answers 127 for
+    // them and there is nothing to capture. They are asked in `applets_test.wac` instead.
+    "cat adir", "wc adir", "sha256sum adir", "strings adir",
+    "printf 'contents\\n' > ./-x; cat -- ./-x",
+    "printf 'contents\\n' > ./-x; cat -- -x",
+    // base32 both ways, so the pair is a round trip rather than two independent spellings.
+    "base32 m2.txt", "base32 m2.txt | base32 -d",
+    // Listing and walking. `ls` of a name that is a file rather than a directory is the case that
+    // prints the name back; `find .` walks; `du` counts blocks, which is why it is asked of one file
+    // rather than of a tree whose block total depends on how the fixtures were written.
+    "ls", "ls m1.txt", "ls nosuch; echo st=$?",
+    // **`ls` had no comparison at all** until these: replacing its whole body with a default left the
+    // suite green, because `readDir`'s order is the filesystem's while `ls` sorts. The capture pins
+    // `LC_ALL=C`, which is the collation the applet implements — a locale-aware one is a different
+    // thing and is not implemented — and `ls` to a pipe is already one name per line, so this is
+    // `ls -1` without asking for it.
+    "mkdir -p t/a; touch t/f t/a/g; ls t",
+    "mkdir -p t/a; touch t/zz t/aa t/mm; ls t",
+    // **`find` and `du` are not here, and that is a finding rather than an omission** —
+    // `issues/system/0299c`. Adding them turned three cases red against GNU: `find .` answers in
+    // sorted order where GNU answers in directory order, `find . -name m1.txt` ignores `-name` and
+    // prints the whole walk, and `du m1.txt` reports **17** where GNU reports **4** — bytes where
+    // `du` means disk blocks. Two of those are wrong rather than merely different. The cases are in
+    // that issue, and belong here on the day they pass.
+    // **`mkdir`, `rm` and `ls` are *shadowed* names, and these cases reach the shell's builtin rather
+    // than box's applet.** `shadowed_test.wac` pins that set — `echo ls mkdir rm chmod` — and the
+    // replay runs a `Shell`, where a builtin wins and there is no `command` to bypass it with. So what
+    // these compare against GNU is the builtin, which is worth comparing and is not the same claim as
+    // the applet's. Anything that must reach the *applet* for these five goes through `runApplet` in
+    // `replay.wac`, which calls `dispatch` with a captured frame and no shell at all.
+    //
+    // The mutating three are safe as vector cases because `layFixtures` removes and re-lays the whole
+    // directory before every one, on the capture side and the replay side alike.
+    "mkdir d; ls",
+    "mkdir -p d/e/f; find d",
+    "rm m1.txt; ls",
+    "rm nosuch; echo st=$?",
+    "rm -f nosuch; echo st=$?",
+    "mkdir d; rmdir d; ls",
+    "rmdir nosuch; echo st=$?"
   );
 }
 
@@ -378,12 +492,42 @@ export Fixture[] appletFixtures() {
   // only the first is caught by the *content* rather than by a count. Not palindromes: `tac` reverses
   // each file in the order named rather than the concatenation, and the two are only distinguishable
   // when the lines are not symmetric.
+  // **Non-ASCII text, built from code points rather than written raw.** `issues/system/0143` named
+  // `fold`, `cut`, `tr` and `rev` as candidates for the assumption `wc -w` had, without claiming they
+  // held it — and they do not: GNU's are byte-oriented here, so byte-oriented is the *correct* answer
+  // for them and matching `wc` would break them. That is worth a comparison rather than a sentence,
+  // because "we looked once" is not a property a repository keeps.
+  //
+  // The U+00A0 is why this is `pushCodepoint` and not a literal: a raw non-breaking space in source is
+  // indistinguishable from a space to every reader of this file, and it is the byte the whole fixture
+  // turns on.
+  Buf uni = Buf.create();
+  uni.pushAll("h".toBytes()); uni.pushCodepoint(0x00E9); uni.pushAll("llo w".toBytes());
+  uni.pushCodepoint(0x00F6); uni.pushAll("rld".toBytes()); uni.pushCodepoint(0x00A0);
+  uni.pushAll("two\n".toBytes());
+  uni.pushCodepoint(0x00E9); uni.pushCodepoint(0x00E0); uni.pushCodepoint(0x2014);
+  uni.pushCodepoint(0x00FC); uni.push(0x0a);
   string m1 = "alpha\nbeta\ngamma\n";
   string m2 = "delta\nepsilon\n";
   return Fixture[](
     Fixture("fields.txt", fields.toBytes(), false),
     Fixture("prose.txt", prose.toBytes(), false),
     Fixture("m1.txt", m1.toBytes(), false),
-    Fixture("m2.txt", m2.toBytes(), false)
+    Fixture("m2.txt", m2.toBytes(), false),
+    // **Numbers, because a words fixture cannot catch a missing `-n`**: every line sorts as zero, so
+    // ignoring the flag and honouring it agree. Ignoring it is exactly what `sort` did until
+    // `seq 1 20 | sort -n` answered 1, 10, 11. The leading zero and the negative are the two that a
+    // string comparison puts in the wrong place.
+    Fixture("nums.txt", "10\n9\n100\n-5\n9\n0\n1000\n07\n".toBytes(), false),
+    // A numeric *operand*, which is a different question: `-n` is a value for `head` and `tail` and a
+    // boolean everywhere else, and when it was a value everywhere `grep -n 123` searched for its own
+    // filename and stopped numbering. GitHub wac-mono#5.
+    Fixture("numeric.txt", "123\nabc\n".toBytes(), false),
+    // **A directory, which is a fixture too.** An open that succeeds and a read that fails is a
+    // different code path from a path that does not exist, and a directory is the portable way to get
+    // one — GitHub wac-mono#18. `tools/wac/appletvectors.wac` once wrote this as an empty *file*, and
+    // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
+    Fixture("uni.txt", uni.bytes(), false),
+    Fixture("adir", u8[0](), true)
   );
 }

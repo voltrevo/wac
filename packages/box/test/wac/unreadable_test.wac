@@ -1,4 +1,5 @@
-// An unreadable directory is not an empty one — `find` and `du` over a subtree they cannot enter.
+// What the applets say about permissions they cannot get past — a subtree `find` and `du` cannot
+// enter, and a file `rm` cannot unlink.
 //
 // From `box.test.ts`, and it could not be written here until 2026-08-30. The assertion was never the
 // problem: it is two exit codes. The **fixture** was — making a directory unreadable needs a mode, and
@@ -47,5 +48,44 @@ export string test_find_and_du_fail_on_a_subtree_they_cannot_enter(Core core, Cl
 
   t.eqI32(found.status, 1, "find over an unreadable subtree fails: " + found.err);
   t.eqI32(counted.status, 1, "and so does du: " + counted.err);
+  return t.report();
+}
+
+/**
+ * `-f` ignores what is already *gone*, not everything that fails — GitHub wac-mono#17.
+ *
+ * `remove` answered a `bool`, so "no such file" and "permission denied" arrived identically and `-f`
+ * had to swallow both: it said nothing, exited 0, and left the file there. The fault category is what
+ * separates them, and these three cases are the separation — a file that cannot be unlinked, a file
+ * that was never there, and the same absence without `-f`.
+ *
+ * Mode `0500` on the directory rather than on the file: unlinking is a write to the *directory*, so a
+ * read-only file in a writable directory disappears happily. That is the detail this gets wrong if it
+ * is written from memory.
+ */
+export string test_rm_f_forgives_absence_and_reports_a_refusal(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir + "/sub", false).wait().ok(), "made the subdirectory");
+  t.isTrue(cli.writeFile(dir + "/sub/kept", "x".toBytes()).wait().ok(), "and a file in it");
+
+  t.isTrue(cli.chmod(dir + "/sub", 320).wait().ok(), "0500: may be listed, may not be unlinked from");
+  Ran stubborn = runCase(core, cli, dir, "rm -f sub/kept");
+  // Restored before the assertions, as everywhere else in this file: a directory whose mode denies
+  // writing is one the cleanup cannot empty.
+  cli.chmod(dir + "/sub", 448).wait();
+
+  t.eqI32(stubborn.status, 1, "rm -f reports a file it could not remove: " + stubborn.err);
+  t.isTrue(cli.stat(dir + "/sub/kept").wait().exists, "and the file is indeed still there");
+
+  // A file that was never there is still silent, which is GNU's behaviour and the whole point of `-f`.
+  t.eqI32(runCase(core, cli, dir, "rm -f nothing-here").status, 0, "rm -f on a missing file is 0");
+  // Without `-f` the same absence is an error, and says so in the host's words.
+  Ran loud = runCase(core, cli, dir, "rm nothing-here");
+  t.eqI32(loud.status, 1, "rm without -f reports a missing file");
+  t.isTrue(loud.err.indexOf("No such file") >= 0, loud.err);
+
+  cli.remove(dir, true).wait();
   return t.report();
 }

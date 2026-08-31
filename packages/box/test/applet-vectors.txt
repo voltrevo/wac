@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 74
+count: 152
 S 5
 seq 5
 X 0
@@ -1035,4 +1035,712 @@ O 29
  5 total
 
 E 0
+
+S 19
+basename /a/b/c.txt
+X 0
+O 6
+c.txt
+
+E 0
+
+S 24
+basename /a/b/c.txt .txt
+X 0
+O 2
+c
+
+E 0
+
+S 14
+basename plain
+X 0
+O 6
+plain
+
+E 0
+
+S 13
+basename a/b/
+X 0
+O 2
+b
+
+E 0
+
+S 12
+basename a/b
+X 0
+O 2
+b
+
+E 0
+
+S 10
+basename /
+X 0
+O 2
+/
+
+E 0
+
+S 11
+basename //
+X 0
+O 2
+/
+
+E 0
+
+S 12
+basename a//
+X 0
+O 2
+a
+
+E 0
+
+S 10
+basename a
+X 0
+O 2
+a
+
+E 0
+
+S 11
+basename /a
+X 0
+O 2
+a
+
+E 0
+
+S 15
+basename a//b//
+X 0
+O 2
+b
+
+E 0
+
+S 18
+basename /usr/lib/
+X 0
+O 4
+lib
+
+E 0
+
+S 12
+dirname a/b/
+X 0
+O 2
+a
+
+E 0
+
+S 11
+dirname a/b
+X 0
+O 2
+a
+
+E 0
+
+S 9
+dirname /
+X 0
+O 2
+/
+
+E 0
+
+S 10
+dirname //
+X 0
+O 2
+/
+
+E 0
+
+S 11
+dirname a//
+X 0
+O 2
+.
+
+E 0
+
+S 9
+dirname a
+X 0
+O 2
+.
+
+E 0
+
+S 10
+dirname /a
+X 0
+O 2
+/
+
+E 0
+
+S 14
+dirname a//b//
+X 0
+O 2
+a
+
+E 0
+
+S 17
+dirname /usr/lib/
+X 0
+O 5
+/usr
+
+E 0
+
+S 10
+echo hello
+X 0
+O 6
+hello
+
+E 0
+
+S 18
+echo -n hi; echo .
+X 0
+O 4
+hi.
+
+E 0
+
+S 7
+echo -x
+X 0
+O 3
+-x
+
+E 0
+
+S 9
+echo a  b
+X 0
+O 4
+a b
+
+E 0
+
+S 16
+true; echo st=$?
+X 0
+O 5
+st=0
+
+E 0
+
+S 17
+false; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 17
+head -0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 19
+head -n 0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 17
+tail -0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 19
+tail -n 0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 14
+sort prose.txt
+X 0
+O 160
+AEIOU aeiou
+Mixed Case Words
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 17
+sort -r prose.txt
+X 0
+O 160
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+Mixed Case Words
+AEIOU aeiou
+
+E 0
+
+S 17
+sort -u prose.txt
+X 0
+O 160
+AEIOU aeiou
+Mixed Case Words
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 13
+tac prose.txt
+X 0
+O 160
+Mixed Case Words
+AEIOU aeiou
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 16
+sort -n nums.txt
+X 0
+O 24
+-5
+0
+07
+9
+9
+10
+100
+1000
+
+E 0
+
+S 19
+sort -n -r nums.txt
+X 0
+O 24
+1000
+100
+10
+9
+9
+07
+0
+-5
+
+E 0
+
+S 19
+sort -n -u nums.txt
+X 0
+O 22
+-5
+0
+07
+9
+10
+100
+1000
+
+E 0
+
+S 23
+grep -n 123 numeric.txt
+X 0
+O 6
+1:123
+
+E 0
+
+S 19
+sort -n numeric.txt
+X 0
+O 8
+abc
+123
+
+E 0
+
+S 55
+printf '4294967296\n1\n2147483648\n-1\n' > w; sort -n w
+X 0
+O 27
+-1
+1
+2147483648
+4294967296
+
+E 0
+
+S 40
+printf '4294967296\n0\n' > w; sort -nu w
+X 0
+O 13
+0
+4294967296
+
+E 0
+
+S 17
+head -3 prose.txt
+X 0
+O 160
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 19
+tail -n 2 prose.txt
+X 0
+O 29
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 19
+sha512sum prose.txt
+X 0
+O 140
+9bc9e800c7d3fbe3488d68fd406f50ce5e9eb54b1d227a11b5f18b90d5f35f2b7970f3971501b90b4fb5ab077107c336bf63cd9c64ad4eb08d56dd28e9f8f30e  prose.txt
+
+E 0
+
+S 16
+base32 prose.txt
+X 0
+O 260
+KRUGKIDROVUWG2ZAMJZG653OEBTG66BANJ2W24DTEBXXMZLSEB2GQZJANRQXU6JAMRXWOLBAMFXG
+IIDEN5SXGIDJOQQGCZ3BNFXCAYLOMQQGCZ3BNFXCA5LOORUWYIDUNBSSA3DJNZSSA2LTEBRW63LG
+N5ZHIYLCNR4SA3DPNZTWK4RAORUGC3RAMVUWO2DUPEQGG33MOVWW44ZOBJAUKSKPKUQGCZLJN52Q
+UTLJPBSWIICDMFZWKICXN5ZGI4YK
+
+E 0
+
+S 17
+fold -w 5 uni.txt
+X 0
+O 33
+héll
+o wö
+rld 
+two
+éà�
+��ü
+
+E 0
+
+S 18
+cut -c 1-4 uni.txt
+X 0
+O 10
+hél
+éà
+
+E 0
+
+S 18
+cut -b 1-4 uni.txt
+X 0
+O 10
+hél
+éà
+
+E 0
+
+S 20
+tr a-z A-Z < uni.txt
+X 0
+O 29
+HéLLO WöRLD TWO
+éà—ü
+
+E 0
+
+S 15
+wc -l prose.txt
+X 0
+O 12
+3 prose.txt
+
+E 0
+
+S 17
+grep an prose.txt
+X 0
+O 131
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 20
+grep -i AN prose.txt
+X 0
+O 131
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 20
+grep -v an prose.txt
+X 0
+O 29
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 20
+grep -n an prose.txt
+X 0
+O 133
+1:The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 20
+grep -c an prose.txt
+X 0
+O 2
+1
+
+E 0
+
+S 34
+grep zzznope prose.txt; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 30
+grep '[' prose.txt; echo st=$?
+X 0
+O 5
+st=2
+
+E 33
+grep: Invalid regular expression
+
+S 8
+cat adir
+X 1
+O 0
+
+E 26
+cat: adir: Is a directory
+
+S 7
+wc adir
+X 1
+O 29
+      0       0       0 adir
+
+E 25
+wc: adir: Is a directory
+
+S 14
+sha256sum adir
+X 1
+O 0
+
+E 32
+sha256sum: adir: Is a directory
+
+S 12
+strings adir
+X 1
+O 0
+
+E 40
+strings: Warning: 'adir' is a directory
+
+S 39
+printf 'contents\n' > ./-x; cat -- ./-x
+X 0
+O 9
+contents
+
+E 0
+
+S 37
+printf 'contents\n' > ./-x; cat -- -x
+X 0
+O 9
+contents
+
+E 0
+
+S 13
+base32 m2.txt
+X 0
+O 25
+MRSWY5DBBJSXA43JNRXW4CQ=
+
+E 0
+
+S 25
+base32 m2.txt | base32 -d
+X 0
+O 14
+delta
+epsilon
+
+E 0
+
+S 2
+ls
+X 0
+O 69
+adir
+fields.txt
+m1.txt
+m2.txt
+numeric.txt
+nums.txt
+prose.txt
+uni.txt
+
+E 0
+
+S 9
+ls m1.txt
+X 0
+O 7
+m1.txt
+
+E 0
+
+S 21
+ls nosuch; echo st=$?
+X 0
+O 5
+st=2
+
+E 54
+ls: cannot access 'nosuch': No such file or directory
+
+S 35
+mkdir -p t/a; touch t/f t/a/g; ls t
+X 0
+O 4
+a
+f
+
+E 0
+
+S 40
+mkdir -p t/a; touch t/zz t/aa t/mm; ls t
+X 0
+O 11
+a
+aa
+mm
+zz
+
+E 0
+
+S 11
+mkdir d; ls
+X 0
+O 71
+adir
+d
+fields.txt
+m1.txt
+m2.txt
+numeric.txt
+nums.txt
+prose.txt
+uni.txt
+
+E 0
+
+S 22
+mkdir -p d/e/f; find d
+X 0
+O 12
+d
+d/e
+d/e/f
+
+E 0
+
+S 13
+rm m1.txt; ls
+X 0
+O 62
+adir
+fields.txt
+m2.txt
+numeric.txt
+nums.txt
+prose.txt
+uni.txt
+
+E 0
+
+S 21
+rm nosuch; echo st=$?
+X 0
+O 5
+st=1
+
+E 54
+rm: cannot remove 'nosuch': No such file or directory
+
+S 24
+rm -f nosuch; echo st=$?
+X 0
+O 5
+st=0
+
+E 0
+
+S 20
+mkdir d; rmdir d; ls
+X 0
+O 69
+adir
+fields.txt
+m1.txt
+m2.txt
+numeric.txt
+nums.txt
+prose.txt
+uni.txt
+
+E 0
+
+S 24
+rmdir nosuch; echo st=$?
+X 0
+O 5
+st=1
+
+E 60
+rmdir: failed to remove 'nosuch': No such file or directory
 

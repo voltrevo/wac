@@ -1,0 +1,168 @@
+// Where `wc -w` splits words, asked of the real `wc` one code point at a time.
+//
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/wcwords_test.wac
+//
+// From `box.test.ts`. `wc -w` used to split on ASCII whitespace and count a run as a word only if an
+// ASCII *printable* was in it. Both halves are the C locale's answer, and the comment defending them
+// said "there is no such locale to compare against" for the other one — which was wrong: `locale -a`
+// lists `C.utf8`, and `LC_ALL` on this machine **is** `C.UTF-8`, so every differential here was already
+// asking the real `wc` a UTF-8 question and getting away with it because no fixture had a byte over
+// 0x7F. On `spec/tour.wac` the gap was 110 words — `issues/system/0143`.
+//
+// **The oracle's environment is inherited, not pinned.** `LC_ALL=C` here would make this pass without
+// the fix, which is exactly how the gap survived. `runApplet` hands the applet this process's `Cli`, so
+// box reads the same ambient `LC_CTYPE` the spawned `wc` does — and since `issues/system/0297c` it
+// reads it at all. A box built without the environment falls back to the C locale and counts bytes,
+// which is correct POSIX behaviour and a different question from the one the real `wc` is answering.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, runApplet } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-wcwords"; }
+
+/** One code point, and what to call it when it disagrees. */
+struct Cp {
+  string name;
+  i32 cp;
+}
+
+/**
+ * Every row was measured against `wc -w` before it was written down, and the *shape* of the rule is
+ * why the list is not simply "more spaces":
+ *
+ *   - a separator ends a run. U+00A0 and U+202F are separators to `wc` and are **not** `iswspace` in
+ *     this locale, so a list built from `iswspace` gets them wrong;
+ *   - U+2028 and U+2029 are `iswspace` and are **not** separators — a run containing one is a single
+ *     word, so `a<U+2028>b` is one word and not two, and a fix that split on everything non-ASCII
+ *     fails here;
+ *   - U+2060 is a separator and is not a space in any category. It is on the list because `wc` says
+ *     so, which is the only reason anything is on this list.
+ */
+Cp[] separators() {
+  return Cp[](
+    Cp("nbsp", 0x00A0), Cp("em space", 0x2003), Cp("figure space", 0x2007),
+    Cp("ogham space", 0x1680), Cp("narrow nbsp", 0x202F), Cp("medium math space", 0x205F),
+    Cp("ideographic space", 0x3000), Cp("en quad", 0x2000), Cp("hair space", 0x200A),
+    Cp("word joiner", 0x2060),
+    Cp("line separator", 0x2028), Cp("paragraph separator", 0x2029), Cp("next line", 0x0085),
+    Cp("zero width space", 0x200B),
+    Cp("em dash", 0x2014), Cp("box drawing", 0x2500), Cp("e acute", 0x00E9),
+    Cp("emoji", 0x1F600)
+  );
+}
+
+/**
+ * The real `wc`, with this process's environment.
+ *
+ * Written as bytes on both sides rather than compared as text: a lossy decode of either answer would
+ * corrupt exactly the differential it was fetched for.
+ */
+string realWc(Cli cli, string[] args) {
+  Exec r = cli.exec("wc", args, u8[0]()).wait();
+  return string.fromBytes(r.stdout);
+}
+
+export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/case.txt";
+
+  // **The oracle has to be there**, and a missing `wc` would otherwise make every comparison below
+  // agree on the empty string. `Exec.error` is non-empty only when the program could not be started.
+  t.isTrue(cli.exec("wc", string[]("--version"), u8[0]()).wait().error == "", "there is a real wc");
+
+  Cp[] cps = separators();
+  for (i32 i = 0; i < cps.len(); i++) {
+    // Between two words, and alone. The second is what says whether the code point is a *word* on its
+    // own, which is a different question from whether it separates and has a different answer for
+    // U+200B (a word) and U+2028 (not one).
+    for (i32 shape = 0; shape < 2; shape++) {
+      Buf b = Buf.create();
+      if (shape == 0) { b.push(0x61); }        // 'a'
+      b.pushCodepoint(cps[i].cp);
+      if (shape == 0) { b.push(0x62); }        // 'b'
+      b.push(0x0a);
+      t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the case");
+
+      Ran got = runApplet(core, cli, dir, string[]("wc", "-w", path));
+      t.eqStr(got.out, realWc(cli, string[]("-w", path)),
+              "wc -w on " + cps[i].name + (shape == 0 ? " between" : " alone"));
+    }
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A character split across a read.
+ *
+ * Everything above fits in one 64 KiB chunk, so none of it reaches the code that holds a partial
+ * sequence until the next chunk arrives — the half of this that is not a table lookup. Each case puts
+ * a multi-byte character across the boundary at a different offset, so the sequence is broken after
+ * its first, second and third byte in turn.
+ *
+ * All three columns, not just `-w`: a mishandled character can move the byte or the line count too,
+ * and a comparison of one number cannot see it.
+ */
+export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/split.txt";
+
+  Cp[] wide = Cp[](Cp("em dash", 0x2014), Cp("emoji", 0x1F600));
+  u8[] word = "word ".toBytes();
+
+  for (i32 i = 0; i < wide.len(); i++) {
+    Buf one = Buf.create();
+    one.pushCodepoint(wide[i].cp);
+    i32 width = one.len;
+
+    for (i32 split = 1; split < width; split++) {
+      // The filler is words, so the counts either side of the boundary are non-trivial rather than one
+      // long run: a broken sequence that got dropped or doubled moves the answer.
+      i32 target = 65536 - split;
+      Buf b = Buf.create();
+      i32 at = 0;
+      while (b.len < target) { b.push(word[at % word.len()]); at++; }
+      b.pushCodepoint(wide[i].cp);
+      b.pushAll(" tail\n".toBytes());
+      t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the split case");
+
+      Ran got = runApplet(core, cli, dir, string[]("wc", path));
+      t.eqStr(got.out, realWc(cli, string[](path)),
+              wide[i].name + " broken after " + itoa(split) + " byte(s) at the chunk boundary");
+    }
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The file the issue was reported against: 110 words of em dash and box-drawing rule.
+ *
+ * A whole real document rather than a constructed case, which is what `issues/system/0143` was
+ * actually about — the table above says which code points are separators, and this says the answer
+ * still holds over a file nobody chose for its code points.
+ */
+export string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
+  T t = T.create();
+  string tour = cli.cwd().wait() + "/spec/tour.wac";
+  if (!cli.stat(tour).wait().exists) {
+    // Not a silent skip: this test is about a specific file, and if it is not there the run proved
+    // nothing rather than proving the counts agree.
+    t.fail("spec/tour.wac is not at " + tour + " — this must run from the repository root");
+    return t.report();
+  }
+
+  Ran got = runApplet(core, cli, cli.cwd().wait(), string[]("wc", "-w", tour));
+  t.eqStr(got.out, realWc(cli, string[]("-w", tour)), "wc -w on spec/tour.wac");
+  return t.report();
+}
