@@ -239,37 +239,16 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // `adir` is a directory *fixture* there, which the capture tool once wrote as an empty file — and
     // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
 
-    assertEquals((await box(["head", "-3", fixture])).out, sys("head", ["-3", fixture]), "head -N");
-    assertEquals((await box(["tail", "-n", "2", fixture])).out, sys("tail", ["-n", "2", fixture]), "tail -n N");
-    // The whole line, not just the first field. Taking `[0]` was how `wc -l file` came to drop the
-    // filename: the assertion threw away the difference, and the applet's comment claimed the real one
-    // does the same. It does not — only reading standard input has no name to print.
-    assertEquals((await box(["wc", "-l", fixture])).out, sys("wc", ["-l", fixture]), "wc -l over a file");
-    assertEquals(
-      (await box(["sha512sum", fixture])).out.split(" ")[0],
-      sys("sha512sum", [fixture]).split(" ")[0],
-      "sha512sum differs",
-    );
-    assertEquals((await box(["base32", fixture])).out, sys("base32", [fixture]), "base32 differs");
+    // **Moved to `appletCases()`**: `head -3` and `tail -n 2` — the attached and detached forms of
+    // one option — `sha512sum`, `base32`, every `grep` flag, and both of `grep`'s statuses. `wc -l`
+    // went with them *whole line and all*, which is the assertion that matters: taking `[0]` was how
+    // `wc -l file` came to drop the filename, the comparison throwing away the difference while the
+    // applet's comment claimed the real one does the same. It does not — only standard input has no
+    // name to print.
+    //
+    // `basename`, `dirname`, `echo`, `seq`, `true` and `false` are there too, in richer forms than
+    // these: every trailing-slash path rather than one, and the range ends rather than `seq 3`.
 
-    // grep, which brings the regex package in. Every flag against the real thing.
-    for (const args of [["grep", "an"], ["grep", "-i", "AN"], ["grep", "-v", "an"],
-                        ["grep", "-n", "an"], ["grep", "-c", "an"]]) {
-      assertEquals(
-        (await box([...args, fixture])).out,
-        sys("grep", [...args.slice(1), fixture]),
-        `${args.join(" ")} differs`,
-      );
-    }
-    assertEquals((await box(["grep", "zzznope", fixture])).code, 1, "no match exits 1, as grep does");
-    assertEquals((await box(["grep", "[", fixture])).code, 2, "a bad pattern is a usage error");
-
-    assertEquals((await box(["basename", "a/b/c.txt"])).out.trim(), "c.txt");
-    assertEquals((await box(["dirname", "a/b/c.txt"])).out.trim(), "a/b");
-    assertEquals((await box(["echo", "hello", "wac"])).out.trim(), "hello wac");
-    assertEquals((await box(["seq", "3"])).out.trim().split("\n").join(","), "1,2,3");
-    assertEquals((await box(["true"])).code, 0);
-    assertEquals((await box(["false"])).code, 1);
     assertEquals((await box(["nope"])).code, 2, "an unknown applet is a usage error");
     // Asked for is not got wrong. Reaching the usage message by mistake is 2; asking for it is 0, which
     // is what every tool this package imitates does and what a script testing `box --help` expects.

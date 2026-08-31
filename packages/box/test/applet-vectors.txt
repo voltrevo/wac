@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 134
+count: 146
 S 5
 seq 5
 X 0
@@ -1400,6 +1400,110 @@ O 13
 4294967296
 
 E 0
+
+S 17
+head -3 prose.txt
+X 0
+O 160
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 19
+tail -n 2 prose.txt
+X 0
+O 29
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 19
+sha512sum prose.txt
+X 0
+O 140
+9bc9e800c7d3fbe3488d68fd406f50ce5e9eb54b1d227a11b5f18b90d5f35f2b7970f3971501b90b4fb5ab077107c336bf63cd9c64ad4eb08d56dd28e9f8f30e  prose.txt
+
+E 0
+
+S 16
+base32 prose.txt
+X 0
+O 260
+KRUGKIDROVUWG2ZAMJZG653OEBTG66BANJ2W24DTEBXXMZLSEB2GQZJANRQXU6JAMRXWOLBAMFXG
+IIDEN5SXGIDJOQQGCZ3BNFXCAYLOMQQGCZ3BNFXCA5LOORUWYIDUNBSSA3DJNZSSA2LTEBRW63LG
+N5ZHIYLCNR4SA3DPNZTWK4RAORUGC3RAMVUWO2DUPEQGG33MOVWW44ZOBJAUKSKPKUQGCZLJN52Q
+UTLJPBSWIICDMFZWKICXN5ZGI4YK
+
+E 0
+
+S 15
+wc -l prose.txt
+X 0
+O 12
+3 prose.txt
+
+E 0
+
+S 17
+grep an prose.txt
+X 0
+O 131
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 20
+grep -i AN prose.txt
+X 0
+O 131
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 20
+grep -v an prose.txt
+X 0
+O 29
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 20
+grep -n an prose.txt
+X 0
+O 133
+1:The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 20
+grep -c an prose.txt
+X 0
+O 2
+1
+
+E 0
+
+S 34
+grep zzznope prose.txt; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 30
+grep '[' prose.txt; echo st=$?
+X 0
+O 5
+st=2
+
+E 33
+grep: Invalid regular expression
 
 S 8
 cat adir

@@ -400,6 +400,19 @@ export string[] appletCases() {
     // A read that fails is not an end of input. `readChunk` answers with bytes and cannot say
     // "broken", so every filter treated a half-read as a whole one and exited 0 — the failure mode
     // where the program is the last thing suspected. GitHub wac-mono#18.
+    // The flags the sweep asked over one file, kept at the same spellings: `-3` and `-n 2` are the
+    // attached and detached forms of the same option.
+    "head -3 prose.txt", "tail -n 2 prose.txt", "sha512sum prose.txt", "base32 prose.txt",
+    // **The whole line, not the first field.** Taking `[0]` was how `wc -l file` came to drop the
+    // filename — the assertion threw the difference away, and the applet's comment claimed the real
+    // one does the same. It does not: only reading standard input has no name to print.
+    "wc -l prose.txt",
+    // `grep`, which brings the regex package in. Every flag against the real thing, plus the two
+    // statuses: no match is 1, and a bad pattern is a usage error.
+    "grep an prose.txt", "grep -i AN prose.txt", "grep -v an prose.txt",
+    "grep -n an prose.txt", "grep -c an prose.txt",
+    "grep zzznope prose.txt; echo st=$?",
+    "grep '[' prose.txt; echo st=$?",
     // Only the four with a real counterpart: `hex` and `crc32` are ours, so bash answers 127 for
     // them and there is nothing to capture. They are asked in `applets_test.wac` instead.
     "cat adir", "wc adir", "sha256sum adir", "strings adir",
