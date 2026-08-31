@@ -202,3 +202,23 @@ not disagree — both arms said the port was still held, control included — wh
 not the host. Identical results across arms is the same tell as a run with no output at all.
 
 Worth someone checking from outside the process if it ever matters, with `ss` or an fd count.
+
+### Auditing the *other* host's discard sites found a bug I had introduced
+
+The twelve `let _ = complete(...)` annotations were audited on the wasmtime host and two were wrong.
+I never did that pass on v8, which is the same one-host omission this issue already records twice.
+Doing it found:
+
+- **`readChunk` is safe on both**, for different reasons — synchronous on wasmtime, and on v8 it
+  submits a ticket but blocks and collects it itself, so the guest never holds a `Pending` to
+  abandon. Worth writing down, because it looks exactly like the others from the outside.
+- **`readFile` and `readDir` are safe**: a file can be read again, so nothing is consumed.
+- **`readStdin`'s process-own-input path on v8 was broken, by me.** The capability drains the
+  pushback at the top, and that reader started from an empty buffer — so the bytes were *removed*
+  from where they were safely stored and then dropped. Worse than not draining at all. It also did
+  not hand back an answer nobody took. The wasmtime side had both halves; only v8 was missing them.
+
+That path is not reachable from the committed case, which feeds a child rather than the process's own
+input, so it was fixed by reading and confirmed only by the neighbouring arms still passing. It wants
+a case of its own — `cli.exec` can feed a program's standard input, which is the shape that reaches
+it.

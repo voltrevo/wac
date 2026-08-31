@@ -2543,12 +2543,24 @@ fn dispatch(
                     HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
             let worker = t.clone();
             std::thread::spawn(move || {
-                let mut buf = Vec::new();
+                // **Starts from what was put back, and hands back what nobody takes.** This is the
+                // process's own input rather than a child's feed, so there is no queue to decline
+                // from — the read has happened by the time anything can be asked, exactly like a
+                // socket. Both halves were missing: the drained `waiting` was dropped on the floor
+                // here, which is worse than not draining it, and an answer nobody collected went the
+                // same way. `issues/system/0310b`.
+                let mut buf = waiting.clone();
                 let a = match std::io::stdin().read_to_end(&mut buf) {
                     Ok(_) => Answer::Bytes(Some(buf)),
                     Err(_) => Answer::Bytes(Some(Vec::new())),
                 };
-                let _ = worker.complete(id, a);
+                if let Some(Answer::Bytes(Some(back))) = worker.complete(id, a) {
+                    HOST.with(|h| {
+                        if let Some(st) = h.borrow().as_ref() {
+                            st.pushback.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(back);
+                        }
+                    });
+                }
             });
             match ticket_pending(scope, "u8[]", id) {
                 Some(p) => rv.set(p),
