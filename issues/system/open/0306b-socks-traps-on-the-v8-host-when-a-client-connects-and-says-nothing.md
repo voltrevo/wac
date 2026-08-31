@@ -8,38 +8,41 @@
 - **Symptom:** `wac: packages/tor/src/socks.wac trapped`, and the proxy is gone. One TCP connection
   that is accepted and closed without sending a byte is enough.
 
-## Both halves are mine and both landed today
+## It is the async proxy on the v8 host, and it is intermittent
 
-This is the interaction of two changes, neither wrong on its own:
+- **Symptom**: `wac: packages/tor/src/socks.wac trapped`, with **no `$trap$message`** — ordinary wac
+  runtime traps (bounds, null) carry text, so this is not one of those.
+- **Rate**: roughly one run in four or five. That is the single most important fact about it and the
+  one I did not have at first.
 
-- `socks.wac` became three `async` pumps, so a client's read is parked in its own pump and the
-  proxy closes client sockets while that read is outstanding;
-- `issues/system/0304b` made `closeSocket` on the native v8 host actually reach a peer that has a
-  read parked, by shutting the connection down instead of dropping one of two descriptors.
+| arm | trapped |
+|---|---|
+| async proxy, v8 host **with** `0304b`'s fix | 2 of 9 |
+| async proxy, v8 host **without** it | 2 of 6 |
+| async proxy, **Deno** host | 0 of 6 |
 
-## Four controls, which is what makes it a real finding rather than a guess
+## Correction: `0304b` is not involved, and the first version of this issue said it was
 
-| proxy | host | result |
-|---|---|---|
-| synchronous (before the rewrite) | v8 **with** the fix | passes |
-| async | v8 **without** the fix | no trap — fails the old way, deadline waits |
-| async | **Deno** | passes the whole case, three streams and two clients |
-| **async** | **v8 with the fix** | **traps** |
+This was filed as the interaction of two changes — the async rewrite and `0304b`'s close fix —
+on the strength of four controls that were **one run each**. Against a failure that fires about
+20% of the time, a single clean run says nothing, and "no trap without the fix" was a coin landing
+heads. Repeated, the two v8 arms are indistinguishable.
 
-So it is neither change alone, and it is not the wac logic: the same module is fine on another host.
+That mattered beyond bookkeeping: the mitigation offered was to revert `0304b`, which would have
+removed a real fix for a bug it has nothing to do with and left this one exactly where it is.
 
-## What is ruled out
+## What is ruled out, by reduction rather than by argument
 
-**Not "closing a socket with a read parked".** That was the obvious mechanism and the attempted fix
-— a nullable `Pending<Read>` on `Client`, taken back with both `Core.cancel(id)` and
-`Pending.cancel()` before the close — does not stop it. In the failing path the *client* closes
-first, so the pump resumes from `End` and closes a socket with nothing outstanding.
+A standalone server with the proxy's shape does **not** trap, run repeatedly: an `async` accept pump,
+one pump per client, a `Vec<Client>` with `swapRemove`, a `gone` flag, `main` driving `core.drainFor`,
+and a pump that closes *other* parked pumps' sockets from inside its own continuation. It is in
+`packages/platform/test/wac/` while this is open.
 
-**Not the client cap.** `MAX_CLIENTS` is 32 and one connection reproduces it.
+Also ruled out: a nested `waitAny` inside a continuation — `startCircuit` only does
+`randomBytes().wait()`; and fixed-size machine state — `asyncsynth` allocates a machine's cells
+per call, not from a program-wide table.
 
-**Not the backpressure poll.** That branch never runs at one client.
-
-## Reproduction
+## Reproduction## Reproduction
 
 `packages/tor/test/wac/socksnet_test.wac` with a block that opens a TCP connection to the proxy port,
 sends nothing, and closes it. Everything before that in the case passes — the network stands up, a
@@ -50,10 +53,9 @@ written down here. The trap is reachable from the pushed tree; it is the test fo
 
 ## What to do next
 
-The trap is in the guest, so the guest is where the frame is. The Deno host prints a stack that
-names the function where the native one prints `trapped` and stops — running the built proxy under
-`.cache/built-wac-deno-cli/wac-deno-cli` was how the host difference was found in the first place, so
-the same route with a *deliberately trapping* input should name it.
+The Deno host does not trap, so it cannot name the frame. The wasmtime host in `native/` would, and
+its binary carries a seed built before `Core`/`Cli`, so `./bootstrap.sh --host wasmtime` is the
+price of a real stack.
 
-Failing that, the honest fallback is to revert one of the two changes and say which: the async proxy
-is worth more than the close fix, and the close fix is worth more than a proxy that traps.
+The other thread worth pulling is the missing `$trap$message`. Whatever traps is not going through
+the path that sets one, which is a much smaller search than "somewhere in the proxy".
