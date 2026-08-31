@@ -53,9 +53,15 @@ export i32 main(Core core, Cli cli) {
   Pending<Socket> pc = cli.connect(host, port);
   if (core.waitAny(i32[](pc.id), ms) < 0) {
     core.warn("patience: connect to " + host + " did not answer within " + itoa(ms) + "ms");
-    // The connect is still in flight and there is no handle to close, so its slot comes back
-    // only when the host's own attempt finishes — cancelling says "discard the answer", not
-    // "stop trying". Worth knowing before doing this in a loop.
+    // **The dial may already have succeeded**, which is the case this comment used to deny. If
+    // it completed as the deadline passed, the answer is in hand: a real socket, in the host's
+    // table, with the peer holding an open line. Cancelling *closes* such a socket, so the peer
+    // finds out rather than waiting on something nothing can reach — a dialled connection is the
+    // one thing in this family nothing else can want. `issues/system/0310b`.
+    //
+    // If it truly is still in flight there is nothing to close and the slot comes back when the
+    // host's own attempt finishes: cancelling says "discard the answer", not "stop trying". Both
+    // are worth knowing before doing this in a loop, and only the second used to be written here.
     pc.cancel();
     return 1;
   }
