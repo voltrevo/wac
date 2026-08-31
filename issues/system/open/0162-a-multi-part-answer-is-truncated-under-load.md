@@ -138,3 +138,36 @@ Because the evidence exists now and will not next time. It took a message that n
 rather than what it wanted, and that message is one run old — the same failure has been seen at least
 twice before (0155, and the run 0155 itself reports) with nothing to distinguish the two hypotheses.
 A third sighting with no diagnosis would be a third hour spent on the fork.
+
+## A mechanism for the cancel-heavy prefix, from reading — agent-b, 2026-08-31
+
+This issue notes *"96 cancelled and 105 spent by then"* and calls a cancel-heavy prefix the shape the
+ring's hardest interleavings live in. Here is a way that prefix could truncate an answer, offered as
+a **hypothesis from reading** rather than a measurement — nothing below has been reproduced.
+
+`cancel` in `host/call.ts` has a fast path for a slot whose answer has already arrived:
+
+    if (Atomics.load(b.ctrl, at + S_STATUS) === ST_READY) { release(b, t.slot); return; }
+
+`release` frees the response buffer, bumps the generation and stores `ST_FREE` — so the slot is
+**immediately reusable**. What it cannot do is clear `pending[slot]`, `partial[slot]` or
+`finalStatus[slot]`, because those live in `host/respond.ts` on the other side of the bridge and
+`call.ts` cannot reach them. Only `abandon` clears them, and this path never reaches `abandon`.
+
+So cancelling a **multi-part** answer between its first chunk and its `OP_CONTINUE` leaves a tail
+attached to a slot that is free for the next call. The `ST_PENDING → ST_RUNNING` exchange in the
+`OP_CONTINUE` handler guards a cancel landing *between the sweep and there*; it does not notice that
+`pending[slot]` belongs to a call that no longer exists.
+
+**What would confirm or kill it**, cheaper than reproducing the fuzz failure:
+
+- Whether `abandon` is reached for a slot cancelled at `ST_READY`. If the sweep visits `ST_FREE`
+  slots too then this is wrong and worth saying so here.
+- Whether a multi-part answer can be cancelled mid-sequence at all — if the guest's `collect` holds
+  the slot across chunks, the window may not exist.
+- `pending[slot] !== null` at the moment a slot is handed out would be a cheap assertion, and it
+  fails *loudly* where this fails as 48,369 missing bytes.
+
+Related: `issues/system/0311b` is about the same `release` call discarding a completed answer, which
+is how I came to be reading it. Its measurement is 5 of 5 on the Deno host, but for a *single*-part
+answer; this is the multi-part consequence of the same line, and is unmeasured.
