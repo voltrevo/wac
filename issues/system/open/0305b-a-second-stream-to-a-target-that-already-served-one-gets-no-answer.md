@@ -140,3 +140,28 @@ requires; a bare listener in this case is written to answer small and close. Eit
 close is what the second stream cannot survive, and both are testable by making the case's own
 listener behave like `dird` — answer large, or close first — which is a smaller step than it sounds
 now that the case can be its own target.
+
+## Reproduced without `dird`, and it is not the size either
+
+The case as its own target reproduces it with nothing of `dird` in the picture, which makes this
+self-contained. But the first framing of that run was wrong twice over, and both errors were the
+same one:
+
+    first response 2560 bytes  ->  round 1 gets 0
+    first response  320 bytes  ->  round 1 gets 0
+    first response    0 bytes  ->  round 1 gets 0
+
+So not the size. The earlier "20 bytes works" data point came from a differently *shaped* run — one
+that never read the response back and closed the client instead. Comparing it with these was the
+same uncontrolled comparison that produced "the circuit, not the target" above. A control has to
+differ in the one variable and this one differed in two.
+
+**What every failing run shares** is that the first stream ends *inbound*: the target closes, the
+exit sends RELAY_END, and the client sees end-of-stream. The one run that worked ended its stream
+*outbound* — the client closed first and `socks` sent the END. That fits the original report exactly,
+where `dird` closes as HTTP/1.0 requires.
+
+So the claim to test next is narrow and does not mention `dird`, sizes or exits: **a circuit whose
+stream was ended by an inbound RELAY_END cannot carry another stream.** The case can already build
+both teardown directions, so it is one edit away — send the response, then close the *client* first
+in one round and let the *target* close first in the other, with everything else identical.
