@@ -2139,6 +2139,25 @@ Neither needs the reference. If this file is deleted rather than ported, those t
 first — and a port that keeps only them is exactly the "removes the reference, so it cannot entrench
 what it deletes" shape this issue already identifies as safe either way.
 
+## A `.test.ts` was *added* to `platform` on 2026-08-31, which is the wrong direction
+
+Worth saying rather than letting the count move unexplained. `packages/platform/test/lostbytes_js.test.ts`
+is new, and this issue exists to remove files like it.
+
+It fits the row's own determination — *"the subject is TypeScript in every one"* — because the subject
+is the JavaScript **host**: `call.ts`'s bridge, which a wac test cannot reach, since a wac test runs
+under a `wac` binary and that is the other host. The wac-side case for the same defect already exists
+(`packages/platform/test/wac/lostbytes_test.wac`) and covers both Rust binaries; this covers the third
+host and no more.
+
+The thing it guards is `design/system/0001` D9: a wac program must not depend on its host. Four hosts
+disagreed about whether an abandoned read loses data, and three separate issues this month were one
+host being different from the others (`0207`, `0306b`, `0310b`). A case that runs on every host is
+the only form of that guarantee worth having, and one of the four could not be reached from wac.
+
+If the JavaScript hosts ever become reachable from a wac test, this file is the first thing to
+delete.
+
 ## Step 2: the classification was per package where the run is per directory — agent-b, 2026-08-31
 
 **Less of the running half was left than this said.** `testCommand` already spawns the binary when
