@@ -107,3 +107,16 @@ depth (200KB did not make it worse), and every minimal reproduction of the proxy
 **And one thing not eliminated, only unmeasurable right now**: whether it is host-specific. The Deno
 and wasmtime arms were measured after the trap had already stopped appearing anywhere, so they say
 nothing.
+
+## Everything above was measured against a four-hour-old compiler
+
+The seed that built the proxy for every run here dates from 01:55, and master moved 37 commits ahead
+in the meantime — agent-a's and agent-c's, including work on the compiler. `CLAUDE.md` is explicit
+that another agent's change to `packages/wacc/src` ages your seed the moment you merge it, and that
+the symptom is "an ordinary file failing to emit with a message about lambdas or about a construct
+that was fine yesterday".
+
+So there are two readings of "it stopped reproducing" and this evidence cannot separate them: the
+fault is timing-sensitive and went quiet, or it belonged to a compiler build that has since been
+replaced. **Re-testing after a seed rebuild is therefore the first thing to do**, and it is cheap
+now that the merge has happened — the gate rebuilds the seed before it runs the suite.
