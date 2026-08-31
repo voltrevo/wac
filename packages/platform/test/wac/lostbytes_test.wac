@@ -1,0 +1,158 @@
+/**
+ * Bytes taken by a reader nobody was waiting for, on both Rust hosts.
+ *
+ * `issues/system/0307b`. `recv` submits a ticket and hands the reading to a thread. That thread
+ * calls `Stream::read`, which **blocks and then drains** — so a caller who gives up does not stop
+ * it: the bytes still arrive, are still taken out of the queue, and were then handed to a ticket
+ * nobody held and dropped. The next `recv` began after a hole and nothing anywhere said so.
+ *
+ * A bounded read that expires and is retried is exactly the shape that loses data, and it is the
+ * shape `std/platform.wac`'s deadline idiom invites. `packages/tor` reads this way in three places.
+ *
+ * ## Why the fix declines to *take* the bytes, which took two wrong answers to reach
+ *
+ * The first version parked them in a map keyed by handle. Two readers are parked on the same queue
+ * — the abandoned one and the retry — and when the abandoned one won the race it filed the bytes
+ * somewhere the other was never going to look.
+ *
+ * The second put them back in the queue and notified, which is right and is not enough. Between
+ * taking the bytes and returning them there is a window: the writer can finish in it, and the other
+ * reader then sees the queue empty *and* done and answers `End` to the guest. Nothing put back
+ * afterwards unsays an `End`. That lost the payload about one run in three, and two separate
+ * all-green samples said it was fixed before a third disagreed.
+ *
+ * So `Stream::read_unless` asks whether the ticket is still live **under the same lock as the
+ * drain** and leaves the bytes alone if not. `unread` stays as the backstop for the narrower race
+ * where the caller gives up between that check and `complete`.
+ *
+ * A socket has no queue to decline from — its bytes are already off the kernel by the time anything
+ * can be asked — so that path keeps a per-handle table, cleared when the handle closes, because a
+ * handle is reused the instant it is free (`issues/system/0306b`).
+ *
+ * ## The shape of the case
+ *
+ * One program, run twice. `spawnSelf` gives a child whose handle goes to `recv` and `waitAny`
+ * exactly as a socket's does, so the parent and the child are the same module told apart by their
+ * first argument. The child waits and then writes; the parent lets a short bounded wait expire
+ * against an **empty** queue, abandons the ticket, and reads again.
+ *
+ * **The control arm is what makes this a test rather than a coincidence.** It skips the abandoned
+ * read and nothing else. Without it, "the second read saw nothing" has a dull explanation — a child
+ * that never wrote, a handle with nothing attached — and the program prints the same line either
+ * way. It is the arm that would catch this case rotting into one that cannot fail.
+ */
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+/**
+ * The child sleeps well past the parent's deadline, so the parent is certainly parked on an empty
+ * queue when it gives up — the case only exists when the reader has nothing yet and waits.
+ */
+const string PROGRAM =
+  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Read } from \"core\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "  if (mode == \"child\") {\n" +
+  "    core.delay(400).wait();\n" +
+  "    cli.write(\"PAYLOAD\".toBytes());\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "  Child kid = cli.spawnSelf(u8[][](\"child\".toBytes()), GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
+  "  if (mode != \"control\") {\n" +
+  "    Pending<Read> first = cli.recv(kid.handle);\n" +
+  "    core.waitAny(i32[](first.id), 50);\n" +
+  "    first.cancel();\n" +
+  "    core.cancel(first.id);\n" +
+  "  }\n" +
+  "  string got = \"\";\n" +
+  "  bool reading = true;\n" +
+  "  while (reading) {\n" +
+  "    match (cli.recv(kid.handle).wait()) {\n" +
+  "      case Data(b): { got = got + string.fromBytes(b); }\n" +
+  "      case End: { reading = false; }\n" +
+  "      case Failed(e): { reading = false; core.log(\"failed: \" + e); }\n" +
+  "    }\n" +
+  "  }\n" +
+  "  core.log(got == \"PAYLOAD\" ? \"VERDICT kept\" : \"VERDICT lost \\\"\" + got + \"\\\"\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/** Write the program once and run it under `wac`, both streams together. */
+string ran(Cli cli, string binary, string path, string mode) {
+  string[] argv = mode == ""
+    ? string[]("run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               path)
+    : string[]("run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               path, mode);
+  Exec r = cli.exec(binary, argv, u8[0]()).wait();
+  if (!r.ran()) { return "the binary did not run — " + r.error; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+string written(Cli cli) {
+  string dir = cli.cwd().wait() + "/.cache/lostbytes";
+  cli.mkdir(dir, true).wait();
+  string path = dir + "/probe.wac";
+  Change wrote = cli.writeFile(path, PROGRAM.toBytes()).wait();
+  if (wrote.fault != 0) { return ""; }
+  return path;
+}
+
+/**
+ * How many times the abandoned arm runs, and the number is not a guess.
+ *
+ * **A single run is not enough, and this was measured rather than assumed.** With the fix backed
+ * out of a host, one run of this case passed **3 times in 10** — the loss depends on which of two
+ * parked readers wins a race, so a one-shot check would wave a broken host through almost a third
+ * of the time. That is not a guard, it is a coin.
+ *
+ * The defect shows about 7 runs in 10, so requiring *every* one of five to keep the payload misses
+ * it with probability 0.3^5, near enough one in three hundred. Raise this if the case is ever seen
+ * flapping; do not lower it without re-measuring the rate it is derived from.
+ */
+const i32 TRIES = 5;
+
+void check(T t, Cli cli, string binary, string path, string host) {
+  // The canary first: if the control arm cannot see the payload, the abandoned arm proves nothing.
+  string control = ran(cli, binary, path, "control");
+  t.isTrue(contains(control, "VERDICT kept"),
+           host + ": the control arm did not see the payload, so this case cannot fail — " + control);
+
+  // **Every one of them, and the first failure is the one reported.** Reporting the last would hide
+  // a run that lost the payload behind a later one that happened not to.
+  string lost = "";
+  for (i32 i = 0; i < TRIES; i++) {
+    string abandoned = ran(cli, binary, path, "");
+    if (!contains(abandoned, "VERDICT kept") && lost == "") { lost = abandoned; }
+  }
+  t.eqStr(lost, "", host + ": a reader was abandoned and its bytes went with it");
+}
+
+export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core, Cli cli) {
+  T t = T.create();
+  string path = written(cli);
+  t.isTrue(path != "", "could not write the probe");
+  if (path == "") { return t.report(); }
+
+  check(t, cli, binaryPath(cli), path, "v8");
+
+  // **Both hosts, because this was in both** — the v8 host had the machinery to hand an unclaimed
+  // answer back and spent it on datagrams only, and the wasmtime host had no way to ask. A fix for
+  // one host is not a fix.
+  string why = nativeHostWhyNot(cli);
+  if (why == "") {
+    check(t, cli, nativeBinaryPath(core, cli, "lostbytes"), path, "wasmtime");
+  } else {
+    core.log("skipping the wasmtime arm: " + why);
+  }
+
+  cli.remove(path, false).wait();
+  return t.report();
+}

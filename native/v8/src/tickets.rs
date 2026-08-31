@@ -157,6 +157,16 @@ impl Tickets {
     /// `None` means there is no such ticket and never was one — a second `wait()` on a ticket, or
     /// an id the program made up. Waiting for it would be for ever, so saying so at once is both
     /// kinder and more correct.
+    /// Whether anyone is still waiting for `id`.
+    ///
+    /// Asked by a reader *before* it takes bytes off a queue. Taking them and finding out afterwards
+    /// is too late: the bytes are out, and another reader parked on the same queue can see it empty
+    /// — and, if the writer has finished in the meantime, conclude the stream ended. Putting them
+    /// back cannot unsay that. `issues/system/0307b`.
+    pub fn is_live(&self, id: i32) -> bool {
+        self.inner.lock().unwrap().live.contains(&id)
+    }
+
     pub fn take(&self, id: i32) -> Option<Answer> {
         let mut inner = self.inner.lock().unwrap();
         loop {

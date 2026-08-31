@@ -364,6 +364,35 @@ const ENOSPC: i32 = 28;
 /// under the native host against expectations captured from GNU. Fourteen of them differed by exactly
 /// this suffix. Nothing had compared the two hosts' *message text* before, because the Deno test that
 /// covered these ran the artefact under Deno.
+/// Put back the bytes a reader took for a ticket nobody claimed, for the next `recv` on that handle.
+///
+/// Only a non-empty `Data`. `End` and `Failed` describe a call that no longer exists, and neither is
+/// something the next reader is missing. `issues/system/0307b`.
+/// Put stream bytes nobody claimed back into the queue they came from.
+///
+/// Preferred to `park_read` wherever there *is* a queue: another reader may already be parked on it
+/// — a bounded read that timed out and was retried is exactly that — and it would never look in a
+/// side table. A socket has no queue, so that one still parks. `issues/system/0307b`.
+fn unread_bytes(q: &streams::Stream, unclaimed: Option<Answer>) {
+    if let Some(Answer::Read(ReadAnswer::Data(bytes))) = unclaimed {
+        q.unread(bytes);
+    }
+}
+
+fn park_read(
+    back: &Option<Arc<std::sync::Mutex<HashMap<i32, Vec<u8>>>>>,
+    handle: i32,
+    unclaimed: Option<Answer>,
+) {
+    if let Some(Answer::Read(ReadAnswer::Data(bytes))) = unclaimed {
+        if !bytes.is_empty() {
+            if let Some(map) = back {
+                map.lock().unwrap().entry(handle).or_default().extend(bytes);
+            }
+        }
+    }
+}
+
 fn message_of(e: &std::io::Error) -> String {
     let text = e.to_string();
     match text.rfind(" (os error ") {
@@ -552,6 +581,9 @@ struct HostState {
     /// `issues/system/0207`; this is where it waits for the next reader instead. Cleared with the
     /// socket, since a handle is reused.
     datagrams: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<Answer>>>>,
+    /// Stream bytes a reader took for a ticket nobody claimed — the same idea as `datagrams`, for
+    /// the resource it was never applied to. `issues/system/0307b`.
+    pushback: Arc<std::sync::Mutex<HashMap<i32, Vec<u8>>>>,
     /// Which socket each outstanding `receiveFrom` ticket is reading, so a dropped one knows where
     /// to put back an answer that arrived first.
     receiving: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
@@ -1170,6 +1202,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .map(|mm| mm.export_name.clone()),
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
             datagrams: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             receiving: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
             // channels, and this counter used to collide with the second of them — 0148.
@@ -2827,18 +2860,35 @@ fn dispatch(
                     None => throw(scope, "this program has no Pending<Read> to answer recv with"),
                 };
             };
+            // **What an abandoned reader already took, before asking the source for more.** Order
+            // is the whole of a stream's meaning, so these come first and whole. 0307b.
+            let waiting = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|st| st.pushback.lock().unwrap().remove(&handle))
+            });
+            if let Some(bytes) = waiting {
+                if !bytes.is_empty() {
+                    return match ticket_for(scope, "Read", Answer::Read(ReadAnswer::Data(bytes))) {
+                        Some(p) => rv.set(p),
+                        None => throw(scope, "this program has no Pending<Read> to answer recv with"),
+                    };
+                }
+            }
+            let back = HOST.with(|h| h.borrow().as_ref().map(|st| st.pushback.clone()));
             if let Source::Queue(q) = source {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };
                 let id = t.submit();
                 let worker = t.clone();
                 std::thread::spawn(move || {
-                    let bytes = q.read();
+                    // Declines to take them at all if nobody is waiting — see `read_unless`. The
+                    // `unread_bytes` below is the backstop for a caller that gives up between the
+                    // two. `issues/system/0307b`.
+                    let Some(bytes) = q.read_unless(|| !worker.is_live(id)) else { return };
                     let a = if bytes.is_empty() {
                         Answer::Read(ReadAnswer::End)
                     } else {
                         Answer::Read(ReadAnswer::Data(bytes))
                     };
-                    let _ = worker.complete(id, a);
+                    unread_bytes(&q, worker.complete(id, a));
                 });
                 match ticket_pending(scope, "Read", id) {
                     Some(p) => rv.set(p),
@@ -2857,7 +2907,7 @@ fn dispatch(
                     Ok(n) => Answer::Read(ReadAnswer::Data(buf[..n].to_vec())),
                     Err(e) => Answer::Read(ReadAnswer::Failed(message_of(&e))),
                 };
-                let _ = worker.complete(id, a);
+                park_read(&back, handle, worker.complete(id, a));
             });
             match ticket_pending(scope, "Read", id) {
                 Some(p) => rv.set(p),
@@ -2958,6 +3008,10 @@ fn dispatch(
                     if let Some(feed) = st.child_feeds.get(&handle) {
                         feed.finish();
                     }
+                    // **And any bytes parked for it**, for the reason given a few lines down about
+                    // a leftover datagram: the handle is reused, so what `0307b` set aside for this
+                    // socket would be handed to the next one to take the number.
+                    st.pushback.lock().unwrap().remove(&handle);
                     // **The child's handle stays in `child_exits`.** Its status is still worth
                     // asking for — a parent that stops a child and wants to know it is gone asks
                     // `exitCode` next — which is the wasmtime host's rule and the JavaScript hosts'.
