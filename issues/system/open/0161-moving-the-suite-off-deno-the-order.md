@@ -2387,7 +2387,13 @@ should, and the mutant runs that should not. Anyone doing it should check where 
 
 **Checked, because the whole proposal rests on it.** `buildProfile` is called at two places and
 `applyEdits` — the only thing that mutates a source — at two others, and they do not interleave: the
-profile compiles clean sources in both paths. **And there are two mutant-compiling sites, not one.**
-Besides the run loop there is the equivalence check, which compiles each mutant to find the provably
-equivalent ones before anything is measured. A change that isolated only the run loop would still
-push every equivalence build through the shared cache, which is the larger number of the two.
+profile compiles clean sources in both paths. **And the equivalence check is not a second site, which I said it was and it is not.** It compiles
+every mutant, so by count it is the larger number — but through `api.emitFiles(...)`, in process,
+with no subprocess and no `wac build`. It never reaches the build cache, which is also why this issue
+already measures it at *"66 ms each, about 3 seconds for 40"*. It applies no eviction pressure at
+all.
+
+So there is **one** site to isolate: the run loop, which spawns `wac test` against mutated sources
+and compiles a test aggregate each time. Corrected because the earlier wording pointed at a path that
+cannot affect the cache, which would have someone isolating the harmless one while the real one
+stayed shared.
