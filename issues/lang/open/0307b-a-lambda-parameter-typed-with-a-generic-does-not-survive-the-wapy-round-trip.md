@@ -1,0 +1,92 @@
+# 0307b — a lambda parameter typed with a generic loses its name, its type arguments and the lambda's body in wapy
+
+- **Status:** open
+- **Claimed by:** (nobody yet — add yourself before working it)
+- **Reported by:** agent-b
+- **Date:** 2026-08-31
+- **Kind:** bug
+- **Symptom:** wrong answer — the rendering is a different program
+
+## Reproduction
+
+```wac
+import { Map } from "core/map.wac";
+
+export i32 f(Map<string, i32> m) {
+  fn[i64(Map<string, i32>)] g = (Map<string, i32> e) => 7;
+  return 1;
+}
+```
+
+Rendered with `wapyOf` and read back with `dumpWapy`, against `dump` of the source, positions
+stripped — which is what `packages/wacc/test/wac/wapyroundtrip_test.wac` compares:
+
+    dump:  … g (lambda ((mut e (named Map ((prim string) (prim i32))))) ((return (int 7))))
+    wapy:  … g (lambda ((mut ? (named Map ()))))                        ((return (null))))
+
+Three things are lost from one node:
+
+- the parameter's **name** — `e` becomes `?`
+- the parameter type's **arguments** — `Map<string, i32>` becomes `Map`
+- the lambda's **body** — `(return (int 7))` becomes `(null)`
+
+## The controls, which make this narrow
+
+All three of these are in the dump above or were checked beside it, and all round-trip **identically**:
+
+| shape | survives? |
+|---|---|
+| a *function* parameter of the same type — `f(Map<string, i32> m)` | yes — it is intact in the same line |
+| the `fn[...]` type carrying it — `fn[i64(Map<string, i32>)]` | yes — intact in the same line |
+| a lambda parameter of a **non-generic** named type — `(Env e) => 7` | yes — the two dumps are identical |
+
+So it is not generics, not `Map`, and not lambdas: it is a **lambda parameter whose type has type
+arguments**. The same type one node away, on the enclosing function or in the funcref type, is fine.
+
+## Why it matters beyond the printer
+
+`wapy` is a second surface for the same language, and this makes a rendering that is a *different
+program* — the body is gone. `wapyroundtrip_test.wac`'s header is explicit that this comparison is the
+non-circular one, since the reader is a separate implementation written from `spec/spec/wapy.md`. A
+silent body loss is the worst shape it can find.
+
+## How it was found
+
+Writing `tools/wac/langfuzz.wac`, whose generated-expression nodes carry
+`fn[i64(Map<string, i64>)] evalIn` and build them with `(Map<string, i64> e) => …`. The file failed
+the round-trip test on its first gate run, which is the test doing its job on a new file.
+
+That file now passes an `Env` struct wrapping the map instead of the bare `Map<…>`, so it does not
+appear in `knownBad()` — the construct was avoidable there. It is not avoidable in general, which is
+why this is filed rather than only worked around.
+
+## A second loss in the same node: statements inside a lambda body
+
+Found immediately after, by fixing the first one. With the parameter type no longer generic, this
+lambda body still does not survive:
+
+```wac
+(Env e) => { if (isAnd) { return 1; } return 0; }
+```
+
+    dump:  (lambda ((mut e (named Env ()))) ((if (ident isAnd) ((return (int 1))) …
+    wapy:  (lambda ((mut e (named Env ()))) ((expr (ident isAnd)) (block ((expr (int 1))) …
+
+The `if` becomes a bare **expression** and its arm becomes a free-standing **block**; both `return`s
+become `expr`. As with the parameter case, the rendering is a program that computes something else —
+here it evaluates the condition, discards it, and runs both arms.
+
+That is the same shape as the two `knownBad()` entries reading *"a ternary inside a lambda —
+issues/lang/0297c"*: a lambda whose body is anything but a single expression comes back wrong. So a
+lambda can currently hold neither a ternary nor a statement.
+
+## Notes
+
+Two entries in `knownBad()` are *"a ternary inside a lambda — issues/lang/0297c"*, one is *"a
+type-argument chain with an inline lambda"*, and this issue adds the parameter type and the statement
+body. Five shapes, all lambdas losing something, so whoever takes this should check whether the
+lambda arm of the wapy printer is **one fault rather than five** before fixing them separately.
+
+The workaround in `tools/wac/langfuzz.wac` is worth knowing because it is cheap and general: keep
+every lambda a single call and put the branching in a named function. That file's `evalAndOr`,
+`evalDivMod`, `evalShift`, `evalTernary` and `evalCast` exist for this reason, and say so.

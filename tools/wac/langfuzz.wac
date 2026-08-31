@@ -77,6 +77,28 @@ export i64 wrapTo(i64 v, i32 ty) {
   return (v << 32) >> 32;
 }
 
+/**
+ * The values the generated program's locals hold, as the oracle evaluates it.
+ *
+ * **A struct around a map, rather than the map itself, and that is not a style choice.** A lambda
+ * whose parameter type carries type arguments does not survive the wapy round trip: the parameter
+ * loses its name, the type loses its arguments, and the *body* is replaced by null — so the
+ * rendering is a different program. `issues/lang/0307b`, found by this file failing
+ * `packages/wacc/test/wac/wapyroundtrip_test.wac` on its first gate run.
+ *
+ * A lambda parameter of a plain named type round-trips identically, which is the control in that
+ * issue and the reason this wrapper is enough. wac has no type aliases, so a one-field struct is how
+ * a name is given to a type here.
+ */
+export struct Env {
+  Map<string, i64> at;
+
+  Env create() { return Env(Map.create(hashString, stringEq)); }
+  i64 get(const this, string k) { return this.at.get(k).orElse(0); }
+  void set(this, string k, i64 v) { this.at.set(k, v); }
+  void remove(this, string k) { this.at.remove(k); }
+}
+
 /** The generated file's name in the virtual graph. It has no imports, so nothing resolves against it. */
 string entryName() { return "m.wac"; }
 
@@ -139,6 +161,52 @@ export Ran runProgram(Cli cli, string src) {
   return Ran(true, r.value, "");
 }
 
+
+// ── The evaluators the nodes' lambdas call ───────────────────────────────────────────────────────
+//
+// **Every `evalIn` below is a single call and contains no branching**, which is not a style
+// preference: neither a ternary nor an `if` survives inside a lambda through the wapy round trip.
+// The ternary case is `issues/lang/0297c`; the statement case is recorded in `issues/lang/0307b`,
+// where a lambda body of `if (c) { return x; } return y;` comes back as a bare expression followed
+// by a block, with the `if` and both `return`s gone.
+//
+// Keeping the branch in a named function sidesteps both and reads better anyway — the node builders
+// stay a line each, and the arithmetic is somewhere it can be pointed at.
+
+i64 evalAndOr(bool isAnd, Expr a, Expr b, Env e) {
+  if (isAnd) { return (a.evalIn(e) != 0) && (b.evalIn(e) != 0) ? 1 : 0; }
+  return (a.evalIn(e) != 0) || (b.evalIn(e) != 0) ? 1 : 0;
+}
+
+i64 evalDivMod(bool isDiv, Expr a, i64 d, i32 ty, Env e) {
+  if (isDiv) { return wrapTo(a.evalIn(e) / d, ty); }
+  return wrapTo(a.evalIn(e) % d, ty);
+}
+
+i64 evalShift(bool isLeft, Expr a, i64 sh, i32 ty, Env e) {
+  if (isLeft) { return wrapTo(a.evalIn(e) << sh, ty); }
+  return wrapTo(a.evalIn(e) >> sh, ty);
+}
+
+i64 evalTernary(Expr c, Expr t, Expr f, Env e) {
+  if (c.evalIn(e) != 0) { return t.evalIn(e); }
+  return f.evalIn(e);
+}
+
+/**
+ * `as@` keeps the low bits; `as~` clamps.
+ *
+ * The bounds are written out rather than derived, because deriving them would go through the
+ * arithmetic the cast is being checked against — the same rule `wrapTo` follows.
+ */
+i64 evalCast(bool truncates, Expr a, Env e) {
+  if (truncates) { return wrapTo(a.evalIn(e), TY_I32()); }
+  i64 v = a.evalIn(e);
+  if (v < (0 - 2147483648)) { return 0 - 2147483648; }
+  if (v > 2147483647) { return 2147483647; }
+  return v;
+}
+
 // ── The generator ────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -156,7 +224,7 @@ export Ran runProgram(Cli cli, string src) {
 export struct Expr {
   string src;
   i32 ty;
-  fn[i64(Map<string, i64>)] evalIn;
+  fn[i64(Env)] evalIn;
 }
 
 /** A local in scope: its name, its type, and the block depth it was declared at. */
@@ -172,12 +240,12 @@ export struct Gen {
   i32 depth;
   Vec<Local> locals;
   Vec<string> lines;
-  Map<string, i64> env;
+  Env env;
   string indent;
 
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
-               Map.create(hashString, stringEq), "  ");
+               Env.create(), "  ");
   }
 
   /**
@@ -230,21 +298,21 @@ export struct Gen {
   Expr literal(this, i32 ty) {
     if (ty == TY_BOOL()) {
       i64 b = this.coin() ? 1 : 0;
-      return Expr(b == 1 ? "true" : "false", ty, (Map<string, i64> e) => b);
+      return Expr(b == 1 ? "true" : "false", ty, (Env e) => b);
     }
     i64[] pool = ty == TY_I32()
       ? i64[](0, 1, 2, 0 - 1, 7, 255, 65536, 2147483647, 0 - 2147483647, 12345)
       : i64[](4294967296, 0 - 4294967296, 2147483648, 0 - 2147483649, 1000000000000,
               9223372036854775807, (0 - 9223372036854775807) - 1);
     i64 v = pool[this.rng.intTop(pool.len())];
-    return Expr(this.intLiteral(v, ty), ty, (Map<string, i64> e) => v);
+    return Expr(this.intLiteral(v, ty), ty, (Env e) => v);
   }
 
   Expr? variable(this, i32 ty) {
     Vec<Local> cands = this.inScope(ty);
     if (cands.len() == 0) { return null; }
     string name = cands.get(this.rng.intTop(cands.len())).name;
-    return Expr(name, ty, (Map<string, i64> e) => e.get(name).orElse(0));
+    return Expr(name, ty, (Env e) => e.get(name));
   }
 
   Expr? binary(this, i32 ty, i32 depth) {
@@ -256,7 +324,7 @@ export struct Gen {
         Expr a = this.expr(it, depth - 1);
         Expr b = this.expr(it, depth - 1);
         return Expr("(" + a.src + " " + cmpOpText(op) + " " + b.src + ")", ty,
-                    (Map<string, i64> e) => applyCmp(op, a.evalIn(e), b.evalIn(e)));
+                    (Env e) => applyCmp(op, a.evalIn(e), b.evalIn(e)));
       }
       bool isAnd = this.coin();
       Expr a = this.expr(TY_BOOL(), depth - 1);
@@ -266,9 +334,7 @@ export struct Gen {
       // operand had an effect. Nothing a generated expression does has one — there are no calls with
       // side effects and no assignment inside an expression — so the values agree either way.
       return Expr("(" + a.src + (isAnd ? " && " : " || ") + b.src + ")", ty,
-                  (Map<string, i64> e) => isAnd
-                    ? ((a.evalIn(e) != 0) && (b.evalIn(e) != 0) ? 1 : 0)
-                    : ((a.evalIn(e) != 0) || (b.evalIn(e) != 0) ? 1 : 0));
+                  (Env e) => evalAndOr(isAnd, a, b, e));
     }
 
     i32 which = this.rng.intTop(10);
@@ -280,7 +346,7 @@ export struct Gen {
       i64[] safe = i64[](1, 2, 3, 7, 10, 255);
       i64 d = safe[this.rng.intTop(safe.len())];
       return Expr("(" + a.src + (isDiv ? " / " : " % ") + itoa64(d) + ")", ty,
-                  (Map<string, i64> e) => wrapTo(isDiv ? a.evalIn(e) / d : a.evalIn(e) % d, ty));
+                  (Env e) => evalDivMod(isDiv, a, d, ty, e));
     }
     if (which == 6 || which == 7) {
       bool isLeft = which == 6;
@@ -289,12 +355,12 @@ export struct Gen {
       i32 bits = ty == TY_I64() ? 64 : 32;
       i64 sh = this.rng.intTop(bits) as i64;
       return Expr("(" + a.src + (isLeft ? " << " : " >> ") + itoa64(sh) + ")", ty,
-                  (Map<string, i64> e) => wrapTo(isLeft ? a.evalIn(e) << sh : a.evalIn(e) >> sh, ty));
+                  (Env e) => evalShift(isLeft, a, sh, ty, e));
     }
     i32 op = which;
     Expr b = this.expr(ty, depth - 1);
     return Expr("(" + a.src + " " + binOpText(op) + " " + b.src + ")", ty,
-                (Map<string, i64> e) => wrapTo(applyBin(op, a.evalIn(e), b.evalIn(e)), ty));
+                (Env e) => wrapTo(applyBin(op, a.evalIn(e), b.evalIn(e)), ty));
   }
 
   Expr ternary(this, i32 ty, i32 depth) {
@@ -302,7 +368,7 @@ export struct Gen {
     Expr t = this.expr(ty, depth - 1);
     Expr f = this.expr(ty, depth - 1);
     return Expr("(" + c.src + " ? " + t.src + " : " + f.src + ")", ty,
-                (Map<string, i64> e) => c.evalIn(e) != 0 ? t.evalIn(e) : f.evalIn(e));
+                (Env e) => evalTernary(c, t, f, e));
   }
 
   Expr expr(this, i32 ty, i32 depth) {
@@ -342,20 +408,14 @@ export struct Gen {
       Expr? a = this.variable(TY_I32());
       if (a is null) { return null; }
       Expr src = a!;
-      return Expr("(" + src.src + " as i64)", ty, (Map<string, i64> e) => src.evalIn(e));
+      return Expr("(" + src.src + " as i64)", ty, (Env e) => src.evalIn(e));
     }
     if (ty == TY_I32()) {
       Expr? v = this.variable(TY_I64());
       Expr a = v is null ? this.expr(TY_I64(), depth - 1) : v!;
       bool truncates = this.coin();
       return Expr("(" + a.src + (truncates ? " as@ i32" : " as~ i32") + ")", ty,
-                  (Map<string, i64> e) => truncates
-                    // `as@` keeps the low bits — the same narrowing `wrapTo` spells out.
-                    ? wrapTo(a.evalIn(e), TY_I32())
-                    // `as~` clamps, and the bounds are written here rather than derived, because a
-                    // derivation would go through the arithmetic the cast is being checked against.
-                    : (a.evalIn(e) < (0 - 2147483648) ? (0 - 2147483648)
-                       : (a.evalIn(e) > 2147483647 ? 2147483647 : a.evalIn(e))));
+                  (Env e) => evalCast(truncates, a, e));
     }
     return null;
   }
@@ -419,7 +479,7 @@ export struct Gen {
     Expr e = this.expr(l.ty, 1);
     this.emit(l.name + " " + binOpText(op) + "= " + e.src + ";");
     this.env.set(l.name,
-                 wrapTo(applyBin(op, this.env.get(l.name).orElse(0), e.evalIn(this.env)), l.ty));
+                 wrapTo(applyBin(op, this.env.get(l.name), e.evalIn(this.env)), l.ty));
   }
 
   void statements(this, i32 depth) {
