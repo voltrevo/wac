@@ -9608,7 +9608,21 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
       findLambdasLv(env, src, lexed, target, ret);
       string tw = "";
       match (target.kind) {
-        case LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
+case LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
+        // **A field target types the lambda too.** `h.f = (i32 x) => …` left `tw` empty, so the
+        // walk had no expected type for the lambda and declined the whole module — *a lambda … in
+        // a position the walk does not type yet*. The same lambda as a constructor argument was
+        // fine, which is what says the shape is supported and only this position was missed.
+        // `issues/lang/0303c`.
+        case LField(base, fieldTok): {
+          match (base.kind) {
+            case LIdent(btok): {
+              string ot = env.walkTypeOf(tokenTextOf(src, lexed, btok));
+              if (ot != "") { tw = env.fieldType(ot, tokenTextOf(src, lexed, fieldTok)); }
+            }
+            else: { }
+          }
+        }
         else: { }
       }
       findLambdasExpr(env, src, lexed, rhs, tw);

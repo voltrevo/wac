@@ -1,7 +1,8 @@
 # 0303 — a lambda assigned to a struct field is not typed by the walk
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-b
 - **Reported by:** agent-c
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -121,3 +122,33 @@ it. Finding this took bisecting a 15-line file by deletion.
 already types a lambda against a declared function type; the field-assignment path needs the field's
 declared type used the same way. `spec/spec/lambdas.md` does not distinguish the two positions, so the
 spec is on the side of this working.
+
+## Fixed: the `Assign` case typed an identifier target and nothing else
+
+`findLambdasStmt`'s `case Assign` computed the target's type under `case LIdent` and sent every other
+target to an empty `else`, so `h.f = (i32 x) => …` walked the lambda with no expected type. One
+untyped lambda declines the *module*, which is why the message counted lambdas instead of naming a
+line.
+
+Reduced away from `Cli` first — a four-line struct with a function field reproduces it, so this is
+not about capabilities:
+
+```wac
+struct Holder { fn[i32(i32)] f; }
+Holder h = Holder((i32 x) => x + 1);   // always worked
+h.f = (i32 x) => x + 2;                // declined the module
+```
+
+That contrast is the whole diagnosis: the same lambda in a constructor argument was fine, so the
+shape was supported and only the position was missed. `spec/cases/0317` keeps both halves for that
+reason.
+
+**Scope of the fix, deliberately narrow.** `LField` with an `LIdent` base — `h.f` — looked up through
+`Env.fieldType`. `LIndex`, `LUnwrap` and nested bases still fall to the `else`, because I have a
+reproduction for this position only, and inventing coverage for positions I have not tested is how
+the original `else` came to look reasonable. If one of those turns up, it will look exactly like
+this did.
+
+**The reported case works too**: `Cli` is a struct of function fields, and replacing `readFile` with
+a lambda that refuses now compiles and runs — a caller can hand a child a narrower capability than
+it holds, which is what `design/system/0001` asks for.
