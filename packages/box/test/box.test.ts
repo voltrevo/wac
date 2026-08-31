@@ -121,8 +121,12 @@ async function exists(path: string): Promise<boolean> {
 //       from our own source. Everything in `grants_test.wac` compares an applet against a sentence the
 //       helper hard-codes; delete this and the helper becomes an oracle agreeing with itself.
 //
-//       **two that are still undone work**: `cp`'s whole tier, and `bin/`, which is about what a
-//       *built* program declares rather than what a frame can withhold.
+//       **`bin/`, which is not undone work either.** It asserts the *shebang* of a built artefact —
+//       which grants a separately-built applet declares, and that a `wc` built with none cannot open a
+//       file when told to. A wac test could shell out to `wac app` and read that line; what stops it
+//       being worth doing is that the test spawns a build either way, so migrating saves no process
+//       and buys nothing. That is a different sentence from "cannot", and the difference has mattered
+//       three times in this file today.
 //   - **one test that needs a capability wac has not got.** `Cli` reads a symlink and cannot make one,
 //     so the `tar` fixture below cannot be built in wac. Also buildable, and additive:
 //     `issues/system/0300c`.
@@ -260,63 +264,27 @@ Deno.test("a file still needs the grant, and says so", async () => {
 // system `date` rather than our own parser, and `urlencode`/`urldecode` round-trip four strings
 // including one already percent-encoded.
 
-Deno.test("cp writes beside its target and renames, and none of the tier happens without the grant", async () => {
-  // `writeFile` was the only mutation the world had, which meant an application could
-  // create a file but never remove or move one — so it could not write safely either.
-  // These three ops are what `cp` needs to write beside its target and rename into place.
+Deno.test("cp and the write tier, through a real process", async () => {
+  // **Both claims moved, and what is left is the smoke test the boundary is entitled to.**
+  // `cp` leaving no temporary behind is `test/wac/writepath_test.wac`; `mkdir` refusing without the
+  // write grant is `test/wac/grants_test.wac`, which `childCliGranted` made possible.
+  //
+  // This keeps one spawned spelling of the tier, because every assertion above it in this file runs
+  // the applet as a value and none of them proves the *built* program can write at all. It is a smoke
+  // test and says so — one copy, one comparison, no attempt to re-state what the wac files now hold.
   const built = await Deno.makeTempFile({ prefix: "wac-box-m-" });
   const root = await Deno.makeTempDir({ prefix: "wac-box-fs-" });
   try {
     await buildApp(BOX, built, { read: true, write: true });
-    const box = (args: string[]) => {
-      const r = new Deno.Command(built, { args, stdout: "piped", stderr: "piped" }).outputSync();
-      return { code: r.code, err: new TextDecoder().decode(r.stderr) };
-    };
-    const exists = async (p: string) => {
-      try {
-        await Deno.stat(p);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    // **The rest of the tier is `test/wac/applets_test.wac`** — `mkdir -p` and its parents, `touch`
-    // leaving an existing file alone, `mv`, `rmdir` refusing a non-empty directory, `rm` needing `-r`.
-    // Those are assertions about our own behaviour and need neither a build nor a process.
-    //
-    // What is left here is the grant, which is a property of the built program and the host that
-    // enforces it — a test process holds grants of its own, so it cannot ask. `cp` writing beside its
-    // target *is* asserted in process now, since `issues/system/0166` was fixed and a frame carries a
-    // child's redirection; this keeps the spawned spelling of it, which is the smoke test the boundary
-    // is entitled to.
-    // The point of the tier: `cp` writes beside its target and renames, so the destination
-    // is never seen half-written and no temporary name survives a successful copy.
-    assertEquals(box(["cp", "README.md", `${root}/copy`]).code, 0);
+    const r = new Deno.Command(built, {
+      args: ["cp", "README.md", `${root}/copy`], stdout: "piped", stderr: "piped",
+    }).outputSync();
+    assertEquals(r.code, 0, new TextDecoder().decode(r.stderr));
     assertEquals(
       await Deno.readTextFile(`${root}/copy`),
       await Deno.readTextFile("README.md"),
-      "cp copied it",
+      "the built program copied it",
     );
-    const left: string[] = [];
-    for await (const e of Deno.readDir(root)) left.push(e.name);
-    // Just the copy: `moved` was the `mv` step, which is in the wac file now.
-    assertEquals(left.sort().join(","), "copy", `a temporary file survived: ${left}`);
-
-    // And without the write grant none of it happens, whatever the arguments say.
-    const readOnly = await Deno.makeTempFile({ prefix: "wac-box-ro-" });
-    try {
-      await buildApp(BOX, readOnly, { read: true });
-      const r = new Deno.Command(readOnly, {
-        args: ["mkdir", `${root}/denied`],
-        stdout: "piped",
-        stderr: "piped",
-      }).outputSync();
-      assertEquals(r.code, 1, "mkdir without the grant should fail");
-      assertEquals(await exists(`${root}/denied`), false, "and should make nothing");
-    } finally {
-      await Deno.remove(readOnly);
-    }
   } finally {
     await Deno.remove(built);
     await Deno.remove(root, { recursive: true });

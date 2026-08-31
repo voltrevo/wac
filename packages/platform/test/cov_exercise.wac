@@ -55,6 +55,7 @@ import {
   test_a_substitute_capability_answers_exactly_as_the_host_frame_does as fram__a_substitute_capability_answers_exactly_as_the_host_frame_does,
   test_a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input as fram__a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input,
   test_the_two_frames_agree_on_the_binary_as_well as fram__the_two_frames_agree_on_the_binary_as_well,
+  test_a_withheld_capability_answers_as_a_host_does as fram__a_withheld_capability_answers_as_a_host_does,
 } from "./wac/frame_test.wac";
 import {
   test_a_child_that_redirects_its_output_writes_the_file as fram2__a_child_that_redirects_its_output_writes_the_file,
@@ -320,6 +321,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (fram__the_two_frames_agree_on_the_binary_as_well(core, cli).len() > 0) {
     core.warn("error: FAILED frame_test test_the_two_frames_agree_on_the_binary_as_well");
+    bad = bad + 1;
+  }
+  if (fram__a_withheld_capability_answers_as_a_host_does(core, cli).len() > 0) {
+    core.warn("error: FAILED frame_test test_a_withheld_capability_answers_as_a_host_does");
     bad = bad + 1;
   }
   if (fram2__a_child_that_redirects_its_output_writes_the_file(core, cli).len() > 0) {

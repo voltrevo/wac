@@ -97,3 +97,34 @@ export string test_rm_f_without_the_write_grant_is_a_denial(Core core, Cli cli) 
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * Without the write grant, none of the tier happens — whatever the arguments say.
+ *
+ * `mkdir` rather than `cp` on purpose: it is the shortest path to the claim. `cp` writing beside its
+ * target and renaming is three operations, and a test that used it would be asking whether the *first*
+ * one is refused while looking like it asks about all three.
+ *
+ * The second assertion is the one worth having. A refusal that returned 1 and made the directory
+ * anyway would pass on the status alone, and that is the failure mode a capability check has: the
+ * answer is right and the effect happened.
+ */
+export string test_without_the_write_grant_nothing_is_made(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string wanted = dir + "/denied";
+
+  Grants readOnly = Grants(true, false, true);
+  Ran denied = runGranted(core, cli, dir, string[]("mkdir", wanted), readOnly);
+  t.eqI32(denied.status, 1, "mkdir without the grant should fail: " + denied.err);
+  t.isFalse(cli.stat(wanted).wait().exists, "and should make nothing");
+
+  // The control: the same command with the grant does make it, so the refusal is the grant talking.
+  t.eqI32(runGranted(core, cli, dir, string[]("mkdir", wanted), Grants.everything()).status, 0,
+          "and with the grant it is made");
+  t.isTrue(cli.stat(wanted).wait().exists, "the directory is there");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
