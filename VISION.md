@@ -48,3 +48,37 @@ async void answer(Sys sys, Socket sock) {
 **Not yet.**
 
 ---
+
+---
+
+## JavaScript calls it
+
+```wac
+export string greet(string who) {
+  return "hello \{who}";
+}
+
+export enum Shape {
+  Circle(f64 r),
+  Square(f64 side)
+
+  f64 area(const this) {
+    match (this) {
+      case Circle(r): return 3.14159 * r * r;
+      case Square(side): return side * side;
+    }
+  }
+}
+```
+
+```ts
+import { greet, Shape } from "./shapes.ts";   // generated from shapes.wac
+
+greet("wac");                 // "hello wac"
+Shape.Circle(2).area();       // 12.56636
+```
+
+JavaScript imports a wac module as a module, with types. An enum arrives as a class with its variant
+constructors and its methods, held by reference: wac compiles to WebAssembly GC, so the object on the
+JavaScript side *is* the one in the module. The glue is generated, so a signature cannot drift from
+what it calls. **Done.**
