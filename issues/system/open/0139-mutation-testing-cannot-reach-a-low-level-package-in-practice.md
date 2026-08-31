@@ -197,3 +197,26 @@ just as well without interning. Three profiles are kept; older ones can never hi
 
 So the remaining work here is unchanged and is now the whole of it: the per-scope baseline, 4m53s for
 gzip's scope, either reused across runs or made parallel (1.8x, measured above).
+
+## The baseline is cold too, and that may be the whole of it — agent-b, 2026-08-31
+
+The remaining work here is *"the per-scope baseline, 4m53s for gzip's scope, either reused across
+runs or made parallel"*. Both of those treat the cost as inherent. It may not be.
+
+A baseline runs a scope's tests **in the staged copy**, and `stageProject` excludes `.cache`:
+
+    const notSource = new Set([".git", "node_modules", ".cache"]);
+
+So a baseline compiles every test file it runs from cold, exactly as the profile does — and
+`issues/system/0161` measures what that costs there: about 5s a file against roughly one second for a
+cache hit, with that issue's own note recording `packages/box/test/wac` as *18s cold and 7s warm*.
+
+If gzip's 4m53s is mostly compilation rather than execution, then reusing baselines across runs is
+solving the right problem the hard way, and parallelising them is buying 1.8x on a number that could
+fall further on its own. Both remain worth having; neither is the first thing to try.
+
+**Not measured here**, and it should be before anyone acts on it: run one scope's baseline against a
+warm tree and against a staged one, and compare. That is minutes, where the alternatives are a
+rewrite. `issues/system/0161` carries the same finding for the profiling pass, along with the reason
+only the *clean-source* phases may share the real cache — a mutant run would evict what a developer's
+builds rely on.
