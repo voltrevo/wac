@@ -1,7 +1,7 @@
 # 0296 — a lambda capturing the enclosing lambda's parameter emits an invalid module
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -102,3 +102,50 @@ found it.
 The failure is loud, which is the one good thing about it: the module is written and refused rather
 than loading and misbehaving. `bootstrap.sh` refusing to install a compiler that cannot rebuild its own
 command is the same shape of guard, and is what catches this class in the compiler's own source.
+
+## Isolated: the enclosing lambda's *parameter*, whatever its type — agent-b, 2026-08-31
+
+The wasmtime host names it where the v8 one says only that the engine will not load the module:
+
+    failed to compile: wasm[0]::function[286]::$lambda$0/4:22
+    Invalid input WebAssembly code at offset 73606: type mismatch: expected (ref null $type), found i64
+
+Four cases:
+
+| the inner lambda captures | result |
+|---|---|
+| the enclosing lambda's parameter, `i64` | invalid wasm |
+| the enclosing lambda's parameter, `FileResult` — a reference | invalid wasm |
+| a **local of the enclosing function**, `i64` | compiles |
+| only a reference local, `i32[]` | compiles |
+
+The `i64` message made "capturing a primitive" the obvious reading and it is wrong: a reference
+parameter fails the same way. What matters is that the captured name is a **parameter of the
+enclosing lambda** rather than a local of the enclosing function. Nesting alone is fine — the third
+row is two lambdas deep.
+
+### The mechanism, traced
+
+Capturing a **function's** parameter works — reference or primitive, both compile. The machinery is
+`Env.noteParamCell`, which records a captured parameter so a cell can be built for it, and it keys
+each entry by `walkFuncLine`/`walkFuncCol`: *"where the function currently being walked is, so a
+captured parameter can be keyed by it"*.
+
+**Those two fields are only ever set from a function's or a method's `nameTok`** — `emit.wac:9221`,
+`:9230`, `:9262`, `:9294`, `:9474`, `:9515` — and never from a lambda. So while walking a nested
+lambda, they still name the enclosing *function*. A capture of the enclosing lambda's parameter is
+recorded against a function that has no parameter of that name, no cell is ever built, and the raw
+value is handed to a capture record whose fields are cell types. That is the
+`expected (ref null $type), found i64`.
+
+**`Env.lambdaCapturesParam` is dead** — one occurrence in the whole compiler, its own declaration.
+Its comment describes the safeguard for exactly this case: *"such a lambda is declined … handing on
+a raw parameter would be an invalid module rather than a wrong answer"*. The decline was never
+wired up, and the `paramCell` mechanism that superseded it covers functions only. So the module the
+comment promises to refuse is the module that gets written.
+
+**Two ways out**, and the choice is a real one rather than an oversight to patch: key param cells by
+the lambda when walking a lambda body, so lambda parameters get cells like function parameters do;
+or implement the decline the dead field documents, which turns an invalid module into a refusal and
+is much the smaller change. The second is strictly better than today's behaviour even if the first
+is the eventual answer.
