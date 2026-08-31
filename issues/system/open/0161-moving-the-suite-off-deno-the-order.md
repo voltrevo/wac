@@ -2257,3 +2257,45 @@ This profiled 60 files where a real run profiles those plus the wac entries. The
 quoted all fortnight — including by me, all day, as a reason to ask before running anything — is from
 a tree with 380 profileable `.test.ts` files, and there are now 60. It should be re-derived once the
 explain path gathers what the real one does, and not before.
+## The native share is 82% and it barely helps — agent-b, 2026-08-31
+
+Re-measured with `--explain-selection` working and gathering both kinds of test file:
+
+    profiling 340 test file(s) across 40 scope(s)…
+      profile: 280 file(s) taken from `wac test --coverage`
+
+So step 2 delivers what it promised — **280 of 340 files profiled natively**, where the package-level
+rule would have taken far fewer. And the run is still about half an hour.
+
+**The 53-second figure does not transfer, and this is the thing to correct in the section above.**
+That measurement is `wac test --coverage packages/` — *one* invocation over a directory, 83 files at
+0.64s apiece. `buildProfile` invokes the binary **once per file**, so it pays the compile 280 times.
+Observed here: roughly 5s a file natively, eight times the rate the directory figure suggests.
+
+That is why "sourcing wac profiles natively is not a rounding error on a 26-minute pass" has not
+turned into a shorter pass. The cost is per *invocation*, not per file of work, and the native path
+changed which binary pays it rather than how often.
+
+**What would actually make this cheap**, and neither is done: profile a whole directory in one
+`wac test --coverage` call and split the JSON by entry afterwards — which is what the 53-second
+measurement did — or keep a warm compiler across invocations. The first is the shape the tool already
+assumes for the Deno side, one spawn per file, and is the reason the whole pass is slow rather than
+the native/Deno split being the reason.
+
+**And a smaller correction.** The six-minute pass reported earlier today was profiling 60 files
+because the explain path could not see wac tests; it was cheap because it was blind, not because
+anything improved. The honest figure for a working `--explain-selection` on `--package gzip` is what
+is above.
+
+**The numbers, both runs side by side.**
+
+|  | 2026-08-16 | 2026-08-31 |
+|---|---|---|
+| files profiled | 380 | 340 |
+| taken natively | 83 | **280** |
+| selection | 20 narrowed, 20 widened, 0 unhit | **identical** |
+| wall clock | 26m45s | ~28m |
+
+The selection matching exactly is the useful half: it says the profile sees what it saw a fortnight
+ago, so the 19 `unhit` reported before this fix were entirely the blind gatherer and not a real
+coverage hole. Two thousand one hundred and eight tests across 36,242 lines.
