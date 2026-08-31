@@ -185,3 +185,30 @@ notice at all.
 So this is not offered as `issues/system/0162` — that report shows no reassembly error. It is a
 requirement on whatever fixes this issue: **clearing `pending` is not enough, and a fix that only
 addresses the answer leaves the request half of the same asymmetry in place.**
+
+## How big this actually is: seventeen places it could happen, eight where it can
+
+The count above — seventeen `T.*` call sites over eight kinds — is where the defect *could* occur,
+because every one of them is built with the same `drop`. Where it *can* occur is narrower, and worth
+saying so, since "one defect across every capability" reads as far more alarming than the truth and
+will get this triaged wrongly.
+
+The host's `cancel` is reached only by `Pending.cancel()`, which is `this.drop(this.id)`. Nothing in
+`std/platform.wac` cancels on a caller's behalf, and **`Core.cancel(id)` does not reach it at all** —
+that is `sched.off(id)`, the scheduler's half, which takes back a continuation and leaves the ticket
+alone. So the reachable set is the explicit `.cancel()` calls, and in package sources there are
+**eight**, against seventy-five `waitAny` sites.
+
+Two things follow.
+
+**The blast radius is enumerable.** Eight call sites can be read, and each one asked whether losing
+an answer there matters. `packages/tor/src/link.wac`'s two are the pattern: one closes its socket
+immediately afterwards so nothing is lost, and the other is a dial whose remedy turned out to be
+`issues/system/0310b`'s close.
+
+**And the split invites a different bug.** The two halves of *stop caring* are separated by who may
+write, so a caller doing only `core.cancel(p.id)` leaves the ticket live — no lost answer, a leaked
+slot — and a caller doing only `p.cancel()` leaves the scheduler's continuation. `platform.wac` says
+a caller wanting both does both and calls that *"worth a single call one day"*. Sixty-seven bounded
+waits that never cancel either half are not obviously wrong — most re-wait rather than give up — but
+nobody has counted which do which, and `CALL_SLOTS` is finite.
