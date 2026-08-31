@@ -1,6 +1,7 @@
 # 0300a — a generic function returning `T?` emits invalid wasm when `T` is a primitive
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** agent-b
 - **Reported by:** agent-a
 - **Date:** 2026-08-31
@@ -128,3 +129,31 @@ Substitution itself is exact-match — `Env.substituted` compares `subFrom[i] ==
 for `T` and not for `T?`; nullability is carried as a flag on the `Ty` and the `?` is appended by
 each caller (`isNullableTy(t) ? "?" : ""`). A caller that appends before substituting, or forgets to
 re-ask after, gets exactly this.
+
+## Fixed: the `else` arm dropped the `?` that the `Prim` arm adds
+
+`typeOfTyName`'s `Nullable` case matched on the **inner** type's AST shape. `Prim` got `pn + "?"`;
+everything else went to an arm returning the inner name alone. A type parameter is a `Named`, so
+`T?` went that way — harmless for `P?`, whose name already denotes a nullable reference, and wrong
+for `i32?`, which is a reference to a *box*. Hence a signature saying bare `i32` while `return null`
+pushed nothing.
+
+The fix asks the question again after substitution, which is the only point at which the spelling has
+become primitive.
+
+**The fix's own first version was wrong** and is worth recording. It asked `isWritableValType(n)` —
+the predicate a few lines up — which counts `anyref` and `i31ref`, the two the `Prim` arm returns
+*without* a `?` because they are already references, and `u8`/`u16`, which it does not box. It would
+have spelled `anyref?`. The shipped version mirrors that arm's three questions instead, and
+`spec/cases/0316` instantiates the generic at `i32`, `i64` **and** `string` so the two lists cannot
+drift apart again.
+
+**Reachability**, because this is type lowering and everything depends on it: only the `else` branch
+changed, and only for an inner name that spells a primitive. A literal `i32?` is a `Prim` and never
+arrives there; `P?` and `i32[]?` return exactly what they returned before. The new behaviour can fire
+only where the old code demonstrably emitted invalid wasm.
+
+**Verified**: the reproduction compiles and runs with the right values at three instantiations, the
+corpus is 318 of 318, and `corpusemit_test` — every corpus file through the emitter, which declares
+"at least 1204s" and took ~30 minutes — passes. The rest of `packages/wacc` ran 48 minutes without a
+failure before my timeout cut it; the gate covers that remainder, since it excludes heavy files.

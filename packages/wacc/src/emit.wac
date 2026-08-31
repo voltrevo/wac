@@ -6251,7 +6251,27 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           }
           return "";
         }
-        else: { return typeOfTyName(env, src, lexed, inner); }
+        // **A type parameter is a `Named`, not a `Prim`, so it arrives here.** `T?` in a generic
+        // body reaches this arm, and returning the inner name alone drops the `?` — which is
+        // harmless for a struct, whose name already denotes a nullable reference, and wrong for a
+        // primitive, which is a reference to a **box**. The spelling only becomes primitive after
+        // substitution, so the question has to be asked again here rather than above, where `inner`
+        // is still `T`. `issues/lang/0300a`: the signature of `firstOf<i32>` said it returned a bare
+        // `i32` while `return null` pushed nothing, and the engine refused the module.
+        else: {
+          string n = typeOfTyName(env, src, lexed, inner);
+          // **The same three questions the `Prim` arm asks, and not `isWritableValType`.** That
+          // predicate counts `anyref` and `i31ref`, which the arm above deliberately returns
+          // *without* a `?` because they are already references, and it counts `u8`/`u16`, which
+          // that arm does not box. Reaching for the nearby predicate instead of mirroring the arm
+          // would have spelled `anyref?` for `T?` at an `anyref`.
+          if (n == "string" || n == "anyref" || n == "i31ref") { return n; }
+          if (n == "i32" || n == "u32" || n == "i64" || n == "u64"
+              || n == "f32" || n == "f64" || n == "bool") {
+            return n + "?";
+          }
+          return n;
+        }
       }
     }
   }
