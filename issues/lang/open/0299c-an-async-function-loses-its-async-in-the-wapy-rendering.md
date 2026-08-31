@@ -102,3 +102,25 @@ function declarations that are values. Compile-time attributes could exist, but 
 usually carry wac already spells as a keyword or a convention, and they would sit at a declaration
 where a verbatim identifier cannot — so even both at once would not collide, and `[…]` before a
 declaration is unclaimed if the character is ever wanted back.
+
+## Sized, not started — agent-b, 2026-08-31
+
+The printer already knows how for a *lambda*: `wapyprint.wac:382` writes `async ` when `lamAsync`.
+The two declaration sites — `:850` for a function, `:924` for a method — write `def` unconditionally,
+and the comment above the first says why it stopped there: the reader dispatches on the bare word,
+so `async def` needs `wapyparse` to learn it and the spec to say how wapy spells it.
+
+What that costs, measured rather than guessed:
+
+- **printer**: two sites, one line each;
+- **parser**: `wapyparse.wac` dispatches on `"def"` at `:1005` and `:1129`, so both need to accept a
+  preceding `async`;
+- **spec**: `spec/spec/wapy.md` mentions async **zero** times — wapy has no async surface at all
+  today, so this is a new clause rather than an amendment, and a tagged one, which the site's
+  claim count tracks;
+- a `spec/cases` entry, since the round trip is what the bug is about.
+
+**Left for the operator's view** rather than done, because the last item is not a fix: it decides
+that wapy *has* an async surface and what it looks like. `async def` is the obvious spelling and
+that is exactly what makes it easy to add without anyone deciding it. Everything above is mechanical
+once that is settled.
