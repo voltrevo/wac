@@ -149,3 +149,26 @@ and nothing distinguishes them: a tag is a function, its attributes are that fun
 parameters and its children are a parameter. So attributes are typed wherever they appear, a tag that
 takes no children refuses them, and `<dvi>` is an unresolved name rather than an element nobody
 meant. **Not yet.**
+
+---
+
+## Tags a name cannot reach
+
+```wac
+Node label(string id, string @for, Node[] kids) {   // `for` is a keyword; `@for` is the name
+  return <"label" id={id} for={@for}>{kids}</"label">;
+}
+
+Node field(string who) {
+  return <label id="who" for={who}>Name</label>;
+}
+```
+
+A tag is a name only when it can be one. `"label"` is a literal, so a tag whose name is not an
+identifier — a hyphenated custom element, a namespaced one — is reachable too, and inside a literal
+element an attribute name is a string rather than an identifier.
+
+Where the name really is a parameter, `@for` writes it: a verbatim identifier is any word taken as a
+name, so a keyword can be one and nothing is renamed. It costs a mark at the definition and nothing
+at any use — an attribute is matched by spelling, so the call site stays bare. Defining a tag is how
+the vocabulary grows, and `core`'s `label` is exactly this. **Not yet.**
