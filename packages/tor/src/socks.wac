@@ -29,18 +29,31 @@
 // here, but the distinction is worth naming: `curl --socks5-hostname` is safe and
 // `curl --socks5` is not, and they differ by nothing else.
 //
-// ## Waiting on everything at once
+// ## A pump per thing, not a wait list
 //
-// One worker, many handles. The loop holds exactly one outstanding `recv` per live socket
-// plus one `accept`, hands the whole list to `waitAny`, and re-issues whichever answered.
-// `box nc` is the two-handle version of the same shape.
+// Three `async` functions share a `Proxy`: one on the guard link, one on the listener, and one per
+// client. Each `await` carries its own continuation, so there is no list to rebuild and no position
+// to translate back into "whose read was that".
 //
-// An outstanding call holds one of the platform's `CALL_SLOTS`, so the number of handles that
-// can be watched is bounded by it. `MAX_CLIENTS` is derived from that constant rather than
-// written out, because the ring has been four slots, then sixteen, then 128, and a transcribed
-// number becomes a limit nobody can explain. It is set below the ceiling with room to spare
-// rather than at it, because exceeding the ring does not degrade — it deadlocks, with the held
-// slots unable to complete.
+// **What this replaced is worth stating, because it was the file's own warning.** The loop held one
+// outstanding `recv` per live socket plus one `accept`, handed the lot to `waitAny`, and kept an
+// `owner` array beside it to say what each index belonged to — with a comment that an arithmetic
+// slip there "routes a stranger's bytes". `relayd.wac` made the same removal first and its header
+// says what it was worth. `packages/tor/test/wac/socksnet_test.wac` is what made the change safe to
+// make: two clients live at once, each asserted to get its own document.
+//
+// An outstanding call still holds one of the platform's `CALL_SLOTS`, so `MAX_CLIENTS` is still
+// derived from that constant rather than written out — the ring has been four slots, then sixteen,
+// then 128, and a transcribed number becomes a limit nobody can explain.
+//
+// ## What changed in behaviour, rather than in shape
+//
+// **Backpressure polls.** At `MAX_CLIENTS` the old loop stopped issuing `accept` and re-issued it
+// the moment a slot freed, which meant every path that dropped a client had to remember to re-arm —
+// five separate lines, each a chance to forget. A pump cannot suspend on "a slot freed": that needs
+// a ticket a program mints and the scheduler dispatches, which is `issues/lang/0300b`. So it waits
+// `FULL_POLL_MS` and looks again. The client still waits in the backlog rather than being refused,
+// which is the property that mattered.
 
 import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
@@ -102,40 +115,84 @@ struct Client {
   i32 phase;
   /** Bytes from the client not yet parsed (phases 0-1) or not yet sent (phases 2-4). */
   u8[] pending;
-  /** Whether `read` is a live ticket. False while we are refusing to read, for backlog. */
-  bool reading;
-  Pending<Read> read;
   /** The destination, kept from phase 1 so BEGIN can be sent once the circuit is up. */
   string target;
+  /**
+   * Dropped by somebody else, so this client's pump stops.
+   *
+   * New with one pump per client. The old loop dropped a client and simply never selected it again;
+   * a pump parked on `await cli.recv(c.sock)` has to be told, because the guard's branch is what
+   * ends a stream and the client's own pump is what is waiting.
+   */
+  bool gone;
 }
 
-/** Stop watching a client, and tell its exit the stream is over. */
-void dropClient(Cli cli, Guard g, Vec<Building> circuits, Vec<Client> clients, i32 i) {
-  Client c = clients.get(i);
-  if (c.reading) { c.read.cancel(); }
+/**
+ * Everything the three pumps share.
+ *
+ * **A struct passed down rather than captured**, which is `relayd.wac`'s shape and not a style
+ * choice: `asynclower.wac` works on free-function declarations and has no notion of a receiver, so
+ * an `async` method is refused by the emitter — `issues/lang/0301b`, and `spec/cases/0315` is the
+ * case that says so. A parameter is a parameter either way.
+ */
+struct Proxy {
+  Network net;
+  Guard guard;
+  Vec<Client> clients;
+  Vec<Building> circuits;
+  i32 nextCircId;
+  i32 listener;
+  /** Set when the guard link dies, which is what ends every pump and the drain loop with them. */
+  bool stopped;
+}
+
+/**
+ * Stop watching a client, and tell its exit the stream is over.
+ *
+ * **By client rather than by index**, which the pumps make necessary. `swapRemove` moves the last
+ * client into the freed slot, so an index held across a suspension names whoever landed there — and
+ * this file's own warning about an arithmetic slip routing a stranger's bytes is about exactly that
+ * hazard in its old form. A pump holds its `Client`; the index is looked up here, where nothing can
+ * suspend between finding it and using it.
+ */
+void dropClient(Cli cli, Proxy x, Client c) {
+  if (c.gone) { return; }
+  c.gone = true;
+  // **Closing is how a parked pump is woken**, rather than cancelling its ticket. The client's read
+  // lives in its own pump now, so nothing here can reach it — and it does not need to: the close
+  // makes that `await` answer `End`, the pump sees `gone`, and it returns. That only became true
+  // when `issues/system/0304b` was fixed; before it, a close behind a parked read reached nobody.
   cli.closeSocket(c.sock);
-  if (c.phase >= 3 && !g.link.dead && c.circIdx >= 0) {
+  if (c.phase >= 3 && !x.guard.link.dead && c.circIdx >= 0) {
     // REASON_MISC. The exit should learn the stream ended even though the circuit has not,
     // or it holds the far side open until its own timeout. Phase 2 has no stream yet.
-    sendCells(g.link, circuits.get(c.circIdx).circ.endCell(c.streamId, 1));
+    sendCells(x.guard.link, x.circuits.get(c.circIdx).circ.endCell(c.streamId, 1));
   }
-  clients.swapRemove(i);
+  // Found by handle: a socket handle is unique among live clients, and identity is not something
+  // this language offers to compare.
+  for (i32 i = 0; i < x.clients.len(); i++) {
+    if (x.clients.get(i).sock == c.sock) { x.clients.swapRemove(i); return; }
+  }
 }
 
-/** Send what a client has queued, as far as its circuit's package windows allow. */
-void drain(Cli cli, Guard g, Vec<Building> circuits, Client c) {
+/**
+ * Send what a client has queued, as far as its circuit's package windows allow.
+ *
+ * **It no longer re-arms the read.** In the old loop this ended by issuing `cli.recv` when the
+ * backlog allowed, because the wait list was rebuilt from whatever each client had outstanding. A
+ * pump owns its own read now, so re-arming here would give one client two live tickets on one
+ * socket. The backlog rule it enforced lives in `pumpClient`, which is the thing that decides
+ * whether to go round again.
+ */
+void drain(Cli cli, Proxy x, Client c) {
   if (c.phase == 4 && c.circIdx >= 0) {
-    Circuit circ = circuits.get(c.circIdx).circ;
+    Circuit circ = x.circuits.get(c.circIdx).circ;
     while (c.pending.len() > 0 && circ.maySend(c.streamId)) {
       i32 n = c.pending.len() < CELL_DATA ? c.pending.len() : CELL_DATA;
-      sendCells(g.link, circ.dataCell(c.streamId, sliceOf(c.pending, 0, n)));
+      sendCells(x.guard.link, circ.dataCell(c.streamId, sliceOf(c.pending, 0, n)));
       circ.spend(c.streamId);
       c.pending = sliceOf(c.pending, n, c.pending.len());
     }
-  }
-  if (!c.reading && c.pending.len() < CLIENT_BACKLOG) {
-    c.read = cli.recv(c.sock);
-    c.reading = true;
   }
 }
 
@@ -151,6 +208,364 @@ i32 portOf(string target) {
     v = v * 10 + (b[i] - '0');
   }
   return v;
+}
+
+/**
+ * Close a client without telling the exit, for the one case that is owed nothing.
+ *
+ * A stream that just ended needs no RELAY_END back, and a client still in phase 3 never had one to
+ * end. `dropClient` sends one; this is the other half, kept separate so the difference is visible
+ * rather than a flag.
+ */
+void forget(Cli cli, Proxy x, Client c) {
+  if (c.gone) { return; }
+  c.gone = true;
+  cli.closeSocket(c.sock);
+  for (i32 i = 0; i < x.clients.len(); i++) {
+    if (x.clients.get(i).sock == c.sock) { x.clients.swapRemove(i); return; }
+  }
+}
+
+/** The client on `ci` with stream `id`, or null. */
+Client? streamOwner(Proxy x, i32 ci, i32 id) {
+  for (i32 i = 0; i < x.clients.len(); i++) {
+    Client q = x.clients.get(i);
+    if (q.circIdx == ci && q.phase >= 3 && q.streamId == id) { return q; }
+  }
+  return null;
+}
+
+/**
+ * Everything arriving from the guard: circuit handshakes, and cells for open streams.
+ *
+ * **One pump instead of a branch of a wait list.** The old loop put the guard's read at index 0 of
+ * an `ids` array with `-2` beside it in an `owner` array, and turned the answer back into "the
+ * guard" by hand. `relayd.wac` describes what that costs — "a position has to be turned back into
+ * (connection, source, circuit) by hand, which the comment above them called the bug they existed
+ * to avoid" — and this is the same removal.
+ */
+async void pumpGuard(Core core, Cli cli, Proxy x) {
+  while (!x.stopped) {
+    Read got = await cli.recv(x.guard.link.sock);
+    bool linkLive = false;
+    match (got) {
+      case Data(bytes): { linkLive = feedLink(x.guard.link, bytes); }
+      case End: { }
+      // A guard that closed and a guard whose connection failed are both fatal to this proxy, but
+      // an operator reading the log needs to know which — one is a relay going away, the other is
+      // the network under us.
+      case Failed(why): { core.warn("tor: the link to the guard failed: " + why); }
+    }
+    if (!linkLive) {
+      core.warn("tor: the link to the guard is gone");
+      x.stopped = true;
+      return;
+    }
+
+    while (true) {
+      u8[] cell = takeCell(x.guard.link);
+      if (cell.len() == 0) { break; }
+      handleCell(core, cli, x, cell);
+      if (x.stopped) { return; }
+    }
+    if (x.guard.link.dead) { x.stopped = true; return; }
+  }
+}
+
+/**
+ * One cell from the guard, dispatched to the circuit it names.
+ *
+ * **Dispatch first**, as it always did: handing a cell to the wrong `Circuit` advances the wrong
+ * ciphers, and there is no recovering from that — the hop would stop recognising us.
+ */
+void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
+  i32 cid = cellCircId(cell, 0, ID_WIDE);
+  i32 ci = -1;
+  for (i32 i = 0; i < x.circuits.len(); i++) {
+    if (x.circuits.get(i).circId == cid) { ci = i; }
+  }
+  if (ci < 0) { return; }
+  Building b = x.circuits.get(ci);
+
+  if (b.state < circuitReady()) {
+    if (advanceCircuit(core, x.net, x.guard, b, cell) == circuitReady()) {
+      core.log("circuit " + itoa(ci) + " for port " + itoa(b.port) + ": " + b.description);
+    }
+    // Ready or failed, the clients parked on it can move: one to sending BEGIN, the other to
+    // being told so rather than waiting for a reply that is not coming.
+    if (b.state == circuitReady() || b.state == circuitFailed()) {
+      for (i32 i = x.clients.len() - 1; i >= 0; i--) {
+        Client p = x.clients.get(i);
+        if (p.circIdx != ci || p.phase != 2) { continue; }
+        if (b.state == circuitFailed()) {
+          cli.send(p.sock, socksReply(repFailure())).wait();
+          dropClient(cli, x, p);
+          continue;
+        }
+        p.streamId = b.circ.beginStream();
+        p.phase = 3;
+        core.log("stream " + itoa(p.streamId) + " -> " + p.target + " on circuit " + itoa(ci));
+        sendCells(x.guard.link, b.circ.beginCell(p.streamId, p.target));
+      }
+    }
+    return;
+  }
+
+  Received got = b.circ.receive(cell);
+  if (got.toSend.len() > 0) { sendCells(x.guard.link, got.toSend); }
+  if (got.kind == gotBroken() || got.kind == gotDestroyed()) {
+    core.warn("tor: circuit " + itoa(ci) + " was destroyed");
+    b.state = circuitFailed();
+    for (i32 i = x.clients.len() - 1; i >= 0; i--) {
+      Client q = x.clients.get(i);
+      if (q.circIdx == ci) { dropClient(cli, x, q); }
+    }
+    return;
+  }
+
+  Client? owner = streamOwner(x, ci, got.streamId);
+  // A cell for a stream we have forgotten. Ordinary: the client closed and we sent RELAY_END while
+  // data was already in flight the other way.
+  if (owner is null) {
+    // A SENDME is credit, which may unblock a client sitting on a full buffer, and it carries no
+    // stream of its own to find.
+    for (i32 i = 0; i < x.clients.len(); i++) { drain(cli, x, x.clients.get(i)); }
+    return;
+  }
+  Client c = owner!;
+
+  if (got.kind == gotConnected() && c.phase == 3) {
+    c.phase = 4;
+    cli.send(c.sock, socksReply(repOk())).wait();
+    drain(cli, x, c);
+  } else if (got.kind == gotData() && c.phase == 4) {
+    if (!cli.send(c.sock, got.data).wait()) { dropClient(cli, x, c); }
+  } else if (got.kind == gotEnd()) {
+    core.log("stream " + itoa(c.streamId) + " ended: " + endReasonName(got.data));
+    if (c.phase == 3) {
+      // It never opened, so the client is still waiting for a reply rather than for data. Telling
+      // it *why* is the whole point of the reason mapping.
+      cli.send(c.sock, socksReply(replyForEndReason(got.data))).wait();
+    }
+    // Phase 3 is owed nothing and phase 4's stream is the one that just ended, so neither needs the
+    // RELAY_END `dropClient` would send.
+    forget(cli, x, c);
+  }
+  for (i32 i = 0; i < x.clients.len(); i++) { drain(cli, x, x.clients.get(i)); }
+}
+
+/**
+ * Keep accepting, each arrival getting a pump of its own.
+ *
+ * **Backpressure changed shape here, and it is a behaviour change rather than a translation.** The
+ * old loop stopped issuing `accept` at `MAX_CLIENTS` and re-issued it the moment a slot freed — the
+ * backlog held the connection, so a client waited instead of failing, and every path that dropped a
+ * client had to remember to re-arm. That "re-arm on every drop" was five separate lines, each one a
+ * chance to forget.
+ *
+ * A pump cannot suspend on "a slot freed": that needs a ticket the program mints and the scheduler
+ * dispatches, which is `issues/lang/0300b`. So it waits and looks again. The client still waits in
+ * the backlog rather than being refused, which is the property that mattered; what it costs is up to
+ * `FULL_POLL_MS` of delay before a freed slot is noticed.
+ */
+const i32 FULL_POLL_MS = 25;
+
+/**
+ * How long the drain waits for a continuation before looking at the link itself.
+ *
+ * Only a heartbeat. `drainFor` answers as soon as the work is done rather than waiting its budget
+ * out — measured: one ready continuation against a 2000ms budget returns in 1ms, and nothing
+ * outstanding against 300ms returns in 0 — so this bounds nothing the pumps do. It exists so a
+ * guard link that died without any read completing is noticed rather than waited on for ever.
+ *
+ * **The value does not matter, and a first draft of this comment said at length that it did.** It
+ * claimed `drainFor` waited the whole budget and that 1000 cost this case 1.8s against the old
+ * loop's 4.5s. Both halves were wrong: warm runs are 4.0s at 1000 and 4.5s at 50 against 4.3-4.7s
+ * for the loop it replaced, and the difference that started it was a rebuild counted as run time.
+ * One sample each, and a mechanism invented to explain the gap between them.
+ */
+const i32 IDLE_MS = 50;
+
+async void pumpAccept(Core core, Cli cli, Proxy x) {
+  while (!x.stopped) {
+    if (x.clients.len() >= MAX_CLIENTS) {
+      i64 unused = await core.delay(FULL_POLL_MS);
+      continue;
+    }
+    Socket incoming = await cli.accept(x.listener);
+    if (x.stopped) { return; }
+    if (incoming.handle < 0) {
+      core.warn("tor: accept failed: " + incoming.error);
+      x.stopped = true;
+      return;
+    }
+    Client c = Client(incoming.handle, -1, 0, 0, u8[0](), "", false);
+    x.clients.push(c);
+    pumpClient(core, cli, x, c);
+  }
+}
+
+/**
+ * One client, from its greeting to its last byte.
+ *
+ * **This is the whole point of the change.** The phases were a state machine because the loop could
+ * only ever be told "something happened on index 7" and had to work out where that client had got
+ * to. A pump is the state: `phase` survives only because the *guard* also advances it — a circuit
+ * finishing and a stream opening are things that happen to a client while it is not reading.
+ *
+ * The read is local. An earlier draft stored it on the `Client` so the guard's side could cancel it,
+ * which needed a placeholder ticket at accept — `Pending<Read>` has no empty value — and a cancel of
+ * that placeholder is what stopped the first draft of this rewrite from ever answering a greeting.
+ * Closing the socket wakes the pump just as well and costs nothing to express.
+ */
+async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
+  while (!x.stopped && !c.gone) {
+    // The backlog rule the old `drain` enforced when it re-armed: stop reading from a client whose
+    // queued bytes the circuit has not taken yet, or a fast client with a slow exit grows `pending`
+    // without bound.
+    if (c.pending.len() >= CLIENT_BACKLOG) {
+      i64 unused = await core.delay(FULL_POLL_MS);
+      continue;
+    }
+
+    Read got = await cli.recv(c.sock);
+    if (c.gone || x.stopped) { return; }
+
+    u8[] chunk = u8[0]();
+    bool ended = false;
+    match (got) {
+      case Data(bytes): { chunk = bytes; }
+      case End: { ended = true; }
+      // A client whose connection failed is dropped like one that closed; the warning is what
+      // distinguishes a browser that navigated away from a network that broke under it.
+      case Failed(why): { core.warn("tor: a client connection failed: " + why); ended = true; }
+    }
+    if (ended) { dropClient(cli, x, c); return; }
+    c.pending = concat(c.pending, chunk);
+
+    if (c.phase == 0 && !greeted(core, cli, x, c)) { return; }
+    if (c.phase == 1 && !requested(core, cli, x, c)) { return; }
+    drain(cli, x, c);
+  }
+}
+
+/**
+ * Phase 0: the greeting. Answers whether the client is still alive.
+ *
+ * VER, NMETHODS, METHODS. We answer "no authentication" without reading the methods: a client that
+ * did not offer it will reject the reply, which is its business.
+ */
+bool greeted(Core core, Cli cli, Proxy x, Client c) {
+  if (c.pending.len() < 2) { return true; }
+  i32 need = 2 + c.pending[1];
+  if (c.pending.len() < need) { return true; }
+  if (c.pending[0] != 0x05) {
+    core.warn("tor: a client spoke SOCKS version " + itoa(c.pending[0]));
+    dropClient(cli, x, c);
+    return false;
+  }
+  cli.send(c.sock, u8[](0x05, 0x00)).wait();
+  c.pending = sliceOf(c.pending, need, c.pending.len());
+  c.phase = 1;
+  return true;
+}
+
+/**
+ * Phase 1: the CONNECT request, and the circuit it needs. Answers whether the client is still alive.
+ *
+ * Circuit reuse is by port because that is what the exit was chosen for: an exit that accepts 443
+ * need not accept 25, and asking it is how a stream fails after three handshakes rather than before
+ * any.
+ */
+bool requested(Core core, Cli cli, Proxy x, Client c) {
+  if (c.pending.len() >= 2 && c.pending[1] != 0x01) {
+    // BIND and UDP ASSOCIATE. Tor has no equivalent of either.
+    cli.send(c.sock, socksReply(repBadCommand())).wait();
+    dropClient(cli, x, c);
+    return false;
+  }
+  string target = targetOf(c.pending);
+  if (target == "") { return true; }
+  if (target == "!") {
+    cli.send(c.sock, socksReply(repBadAddress())).wait();
+    dropClient(cli, x, c);
+    return false;
+  }
+  c.pending = sliceOf(c.pending, requestLength(c.pending), c.pending.len());
+  c.target = target;
+
+  i32 want = portOf(target);
+  i32 use = -1;
+  for (i32 i = 0; i < x.circuits.len(); i++) {
+    Building b = x.circuits.get(i);
+    if (b.port == want && b.state != circuitFailed()) { use = i; }
+  }
+  if (use < 0) {
+    // A failed circuit's slot is free. Every client on it was dropped when it failed, so nothing
+    // holds the index and it can be written over — which matters because the slots are otherwise
+    // permanent: six requests for ports no exit carries would fill the table with corpses and
+    // refuse everything after, for the life of the process.
+    i32 slot = -1;
+    for (i32 i = 0; i < x.circuits.len(); i++) {
+      if (x.circuits.get(i).state == circuitFailed()) { slot = i; }
+    }
+    // Still nothing, and full: reclaim a circuit nobody is using. Without this, six requests for
+    // six different ports wedge the proxy for good — and those six all *succeeded*, which is the
+    // awkward part. A working circuit that no longer has a stream on it is exactly the thing to take.
+    if (slot < 0 && x.circuits.len() >= MAX_CIRCUITS) {
+      for (i32 i = 0; i < x.circuits.len() && slot < 0; i++) {
+        bool busy = false;
+        for (i32 j = 0; j < x.clients.len(); j++) {
+          if (x.clients.get(j).circIdx == i) { busy = true; }
+        }
+        if (!busy) { slot = i; }
+      }
+      if (slot >= 0) {
+        // Told, not dropped. The three relays hold key material and the exit holds an open
+        // connection until they hear otherwise.
+        core.log("retiring idle circuit " + itoa(slot) + " (port " +
+                 itoa(x.circuits.get(slot).port) + ") to make room for " + itoa(want));
+        sendCells(x.guard.link, encodeDestroy(x.circuits.get(slot).circId, destroyRequested()));
+      }
+    }
+    if (slot < 0 && x.circuits.len() >= MAX_CIRCUITS) {
+      core.warn("tor: " + itoa(MAX_CIRCUITS) + " circuits already, refusing port " + itoa(want));
+      cli.send(c.sock, socksReply(repFailure())).wait();
+      dropClient(cli, x, c);
+      return false;
+    }
+    Building fresh = startCircuit(core, x.net, x.guard, want, x.nextCircId);
+    x.nextCircId = x.nextCircId + 1;
+    if (slot < 0) {
+      x.circuits.push(fresh);
+      use = x.circuits.len() - 1;
+    } else {
+      x.circuits.set(slot, fresh);
+      use = slot;
+    }
+    if (fresh.state == circuitFailed()) {
+      // It never reached the wire — no exit carries the port. The slot stays free for the next
+      // attempt, which is the whole point of looking for one above.
+      cli.send(c.sock, socksReply(repNotAllowed())).wait();
+      dropClient(cli, x, c);
+      return false;
+    }
+    core.log("building circuit " + itoa(use) + " for port " + itoa(want));
+  }
+  c.circIdx = use;
+
+  if (x.circuits.get(use).state == circuitReady()) {
+    c.streamId = x.circuits.get(use).circ.beginStream();
+    c.phase = 3;
+    core.log("stream " + itoa(c.streamId) + " -> " + target + " on circuit " + itoa(use));
+    sendCells(x.guard.link, x.circuits.get(use).circ.beginCell(c.streamId, target));
+  } else {
+    // Parked. `handleCell` sends its BEGIN when the last hop answers.
+    c.phase = 2;
+  }
+  // Anything the client sent after the request — an eager TLS ClientHello, say — waits in `pending`
+  // until RELAY_CONNECTED, and `drain` sends it then.
+  return true;
 }
 
 export i32 main(Core core, Cli cli) {
@@ -173,339 +588,40 @@ export i32 main(Core core, Cli cli) {
   Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, true);
   if (!net.ok) { return 1; }
 
-  // One guard, pinned, carrying every circuit. Choosing a fresh guard per circuit would
-  // present the network a new entry point for each destination, which is the thing guards
-  // exist to prevent.
+  // One guard, pinned, carrying every circuit. Choosing a fresh guard per circuit would present the
+  // network a new entry point for each destination, which is the thing guards exist to prevent.
   Guard guard = connectGuard(core, cli, net);
   if (!guard.ok) { return 1; }
   core.log("guard: " + guard.nickname);
 
-  // **Loopback, and not by default — by name.** For a SOCKS proxy the address is not a detail: bound
-  // here it serves the person at this keyboard, and bound to every interface it is an open proxy that
-  // launders anyone's traffic into the Tor network under this client's exits. Every other SOCKS
-  // implementation binds loopback for the same reason. `listen` took a port alone until issue 0025,
-  // so this warned on every start about a configuration it could not choose.
+  // Loopback only: a SOCKS port reachable from the network launders anyone's traffic into the Tor
+  // network under this client's exits. `listen` took a port alone until issue 0025.
   Socket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
     core.warn("tor: cannot listen on 127.0.0.1:" + itoa(port) + ": " + listener.error);
     cli.closeSocket(guard.link.sock);
     return 1;
   }
-  // **`listener.port`, not `port`.** They differ exactly when it matters: port 0 asks the kernel for
-  // a free one, and this line reported the request rather than the answer — so a proxy started with
-  // `0` announced itself on `127.0.0.1:0`, which nothing can connect to and no reader can correct.
-  // `dird.wac` has always logged the bound port; this said the wanted one. Found by
-  // `socksnet_test.wac`, which starts it on 0 so two agents running the suite cannot collide.
+  // `listener.port`, not `port`: with 0 the kernel chooses, and this line reported the request
+  // rather than the answer until `socksnet_test.wac` started it on 0 and could not find it.
   core.log("socks5 on 127.0.0.1:" + itoa(listener.port) + ", circuits built on demand per port");
 
-  Vec<Client> clients = Vec.create();
-  Vec<Building> circuits = Vec.create();
-  i32 nextCircId = 0x80000002;
-  Pending<Socket> acc = cli.accept(listener.handle);
-  bool accepting = true;
-  Pending<Read> linkRead = cli.recv(guard.link.sock);
+  Proxy x = Proxy(net, guard, Vec.create(), Vec.create(), 0x80000002, listener.handle, false);
+  pumpGuard(core, cli, x);
+  pumpAccept(core, cli, x);
 
-  while (true) {
-    // The wait list, and beside it what each entry belongs to: -2 the guard, -1 the
-    // listener, otherwise a client's index. Built rather than computed, because the offsets
-    // shift as clients come and go and an arithmetic slip here routes a stranger's bytes.
-    Vec<i32> ids = Vec.create();
-    Vec<i32> owner = Vec.create();
-    ids.push(linkRead.id);
-    owner.push(-2);
-    if (accepting) { ids.push(acc.id); owner.push(-1); }
-    for (i32 i = 0; i < clients.len(); i++) {
-      if (clients.get(i).reading) {
-        ids.push(clients.get(i).read.id);
-        owner.push(i);
-      }
-    }
-
-    i32 w = core.waitAny(ids.toArray(), -1);
-    if (w < 0) { break; }
-    i32 who = owner.get(w);
-
-    // ── The guard ────────────────────────────────────────────────────────────
-    if (who == -2) {
-      bool linkLive = false;
-      match (linkRead.wait()) {
-        case Data(bytes): { linkLive = feedLink(guard.link, bytes); }
-        case End: { }
-        // A guard that closed and a guard whose connection failed are both fatal to this proxy, but
-        // an operator reading the log needs to know which — one is a relay going away, the other is
-        // the network under us.
-        case Failed(why): { core.warn("tor: the link to the guard failed: " + why); }
-      }
-      if (!linkLive) {
-        core.warn("tor: the link to the guard is gone");
-        break;
-      }
-      linkRead = cli.recv(guard.link.sock);
-
-      while (true) {
-        u8[] cell = takeCell(guard.link);
-        if (cell.len() == 0) { break; }
-
-        // Every cell names its circuit, and this is the only place that knows them all.
-        // Dispatch first: handing a cell to the wrong `Circuit` advances the wrong ciphers,
-        // and there is no recovering from that — the hop would stop recognising us.
-        i32 cid = cellCircId(cell, 0, ID_WIDE);
-        i32 ci = -1;
-        for (i32 i = 0; i < circuits.len(); i++) {
-          if (circuits.get(i).circId == cid) { ci = i; }
-        }
-        if (ci < 0) { continue; }
-        Building b = circuits.get(ci);
-
-        if (b.state < circuitReady()) {
-          if (advanceCircuit(core, net, guard, b, cell) == circuitReady()) {
-            core.log("circuit " + itoa(ci) + " for port " + itoa(b.port) + ": " +
-                     b.description);
-          }
-          // Ready or failed, the clients parked on it can move: one to sending BEGIN, the
-          // other to being told so rather than waiting for a reply that is not coming.
-          if (b.state == circuitReady() || b.state == circuitFailed()) {
-            for (i32 i = clients.len() - 1; i >= 0; i--) {
-              Client p = clients.get(i);
-              if (p.circIdx != ci || p.phase != 2) { continue; }
-              if (b.state == circuitFailed()) {
-                cli.send(p.sock, socksReply(repFailure())).wait();
-                dropClient(cli, guard, circuits, clients, i);
-                if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-                continue;
-              }
-              p.streamId = b.circ.beginStream();
-              p.phase = 3;
-              core.log("stream " + itoa(p.streamId) + " -> " + p.target +
-                       " on circuit " + itoa(ci));
-              sendCells(guard.link, b.circ.beginCell(p.streamId, p.target));
-            }
-          }
-          continue;
-        }
-
-        Received got = b.circ.receive(cell);
-        if (got.toSend.len() > 0) { sendCells(guard.link, got.toSend); }
-        if (got.kind == gotBroken() || got.kind == gotDestroyed()) {
-          core.warn("tor: circuit " + itoa(ci) + " was destroyed");
-          b.state = circuitFailed();
-          for (i32 i = clients.len() - 1; i >= 0; i--) {
-            if (clients.get(i).circIdx == ci) {
-              dropClient(cli, guard, circuits, clients, i);
-              if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-            }
-          }
-          continue;
-        }
-
-        i32 target = -1;
-        for (i32 i = 0; i < clients.len(); i++) {
-          Client q = clients.get(i);
-          if (q.circIdx == ci && q.phase >= 3 && q.streamId == got.streamId) { target = i; }
-        }
-        // A cell for a stream we have forgotten. Ordinary: the client closed and we sent
-        // RELAY_END while data was already in flight the other way.
-        if (target < 0) { continue; }
-        Client c = clients.get(target);
-
-        if (got.kind == gotConnected() && c.phase == 3) {
-          c.phase = 4;
-          cli.send(c.sock, socksReply(repOk())).wait();
-          drain(cli, guard, circuits, c);
-        } else if (got.kind == gotData() && c.phase == 4) {
-          if (!cli.send(c.sock, got.data).wait()) {
-            dropClient(cli, guard, circuits, clients, target);
-            if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-          }
-        } else if (got.kind == gotEnd()) {
-          core.log("stream " + itoa(c.streamId) + " ended: " + endReasonName(got.data));
-          if (c.phase == 3) {
-            // It never opened, so the client is still waiting for a reply rather than for
-            // data. Telling it *why* is the whole point of the reason mapping.
-            cli.send(c.sock, socksReply(replyForEndReason(got.data))).wait();
-          }
-          // Phase 3 is owed nothing and phase 4's stream is the one that just ended, so
-          // neither needs the RELAY_END `dropClient` would send.
-          if (c.reading) { c.read.cancel(); }
-          cli.closeSocket(c.sock);
-          clients.swapRemove(target);
-          if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-        }
-      }
-      if (guard.link.dead) { break; }
-
-      // A SENDME may have arrived, which is credit, which may unblock a client that has
-      // been sitting on a full buffer.
-      for (i32 i = 0; i < clients.len(); i++) { drain(cli, guard, circuits, clients.get(i)); }
-      continue;
-    }
-
-    // ── A new SOCKS connection ───────────────────────────────────────────────
-    if (who == -1) {
-      Socket incoming = acc.wait();
-      if (incoming.handle < 0) {
-        core.warn("tor: accept failed: " + incoming.error);
-        break;
-      }
-      clients.push(Client(incoming.handle, -1, 0, 0, u8[0](), true,
-                          cli.recv(incoming.handle), ""));
-      if (clients.len() < MAX_CLIENTS) {
-        acc = cli.accept(listener.handle);
-      } else {
-        // At capacity. Not accepting is right rather than accepting-and-refusing: the
-        // backlog holds the connection, so a client waits instead of failing, and the
-        // `accept` is re-issued the moment a slot frees.
-        accepting = false;
-      }
-      continue;
-    }
-
-    // ── A SOCKS client sent something ────────────────────────────────────────
-    Client c = clients.get(who);
-    u8[] chunk = u8[0]();
-    bool gone = false;
-    match (c.read.wait()) {
-      case Data(bytes): { chunk = bytes; }
-      case End: { gone = true; }
-      // A client whose connection failed is dropped like one that closed; the warning is what
-      // distinguishes a browser that navigated away from a network that broke under it.
-      case Failed(why): { core.warn("tor: a client connection failed: " + why); gone = true; }
-    }
-    c.reading = false;
-    if (gone) {
-      dropClient(cli, guard, circuits, clients, who);
-      if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-      continue;
-    }
-    c.pending = concat(c.pending, chunk);
-
-    if (c.phase == 0) {
-      // VER, NMETHODS, METHODS. We answer "no authentication" without reading the methods:
-      // a client that did not offer it will reject the reply, which is its business.
-      if (c.pending.len() < 2) { c.read = cli.recv(c.sock); c.reading = true; continue; }
-      i32 need = 2 + c.pending[1];
-      if (c.pending.len() < need) { c.read = cli.recv(c.sock); c.reading = true; continue; }
-      if (c.pending[0] != 0x05) {
-        core.warn("tor: a client spoke SOCKS version " + itoa(c.pending[0]));
-        dropClient(cli, guard, circuits, clients, who);
-        if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-        continue;
-      }
-      cli.send(c.sock, u8[](0x05, 0x00)).wait();
-      c.pending = sliceOf(c.pending, need, c.pending.len());
-      c.phase = 1;
-    }
-
-    if (c.phase == 1) {
-      if (c.pending.len() >= 2 && c.pending[1] != 0x01) {
-        // BIND and UDP ASSOCIATE. Tor has no equivalent of either.
-        cli.send(c.sock, socksReply(repBadCommand())).wait();
-        dropClient(cli, guard, circuits, clients, who);
-        if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-        continue;
-      }
-      string target = targetOf(c.pending);
-      if (target == "") { c.read = cli.recv(c.sock); c.reading = true; continue; }
-      if (target == "!") {
-        cli.send(c.sock, socksReply(repBadAddress())).wait();
-        dropClient(cli, guard, circuits, clients, who);
-        if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-        continue;
-      }
-      c.pending = sliceOf(c.pending, requestLength(c.pending), c.pending.len());
-      c.target = target;
-
-      // A circuit for this port, or a new one. Reuse is by port because that is what the
-      // exit was chosen for: an exit that accepts 443 need not accept 25, and asking it is
-      // how a stream fails after three handshakes rather than before any.
-      i32 want = portOf(target);
-      i32 use = -1;
-      for (i32 i = 0; i < circuits.len(); i++) {
-        Building b = circuits.get(i);
-        if (b.port == want && b.state != circuitFailed()) { use = i; }
-      }
-      if (use < 0) {
-        // A failed circuit's slot is free. Every client on it was dropped when it failed, so
-        // nothing holds the index and it can be written over — which matters because the
-        // slots are otherwise permanent: six requests for ports no exit carries would fill
-        // the table with corpses and refuse everything after, for the life of the process.
-        // Six connections is not many, and they used to be reachable from any interface — the proxy
-        // binds loopback now (issue 0025), so they are at least six from this machine.
-        i32 slot = -1;
-        for (i32 i = 0; i < circuits.len(); i++) {
-          if (circuits.get(i).state == circuitFailed()) { slot = i; }
-        }
-        // Still nothing, and full: reclaim a circuit nobody is using. Without this, six
-        // requests for six different ports wedge the proxy for good — and those six all
-        // *succeeded*, which is the awkward part. A working circuit that no longer has a
-        // stream on it is exactly the thing to take.
-        if (slot < 0 && circuits.len() >= MAX_CIRCUITS) {
-          for (i32 i = 0; i < circuits.len() && slot < 0; i++) {
-            bool busy = false;
-            for (i32 j = 0; j < clients.len(); j++) {
-              if (clients.get(j).circIdx == i) { busy = true; }
-            }
-            if (!busy) { slot = i; }
-          }
-          if (slot >= 0) {
-            // Told, not dropped. The three relays hold key material and the exit holds an
-            // open connection until they hear otherwise.
-            core.log("retiring idle circuit " + itoa(slot) + " (port " +
-                     itoa(circuits.get(slot).port) + ") to make room for " + itoa(want));
-            sendCells(guard.link,
-                      encodeDestroy(circuits.get(slot).circId, destroyRequested()));
-          }
-        }
-        if (slot < 0 && circuits.len() >= MAX_CIRCUITS) {
-          core.warn("tor: " + itoa(MAX_CIRCUITS) + " circuits already, refusing port " +
-                    itoa(want));
-          cli.send(c.sock, socksReply(repFailure())).wait();
-          dropClient(cli, guard, circuits, clients, who);
-          if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-          continue;
-        }
-        Building fresh = startCircuit(core, net, guard, want, nextCircId);
-        nextCircId += 1;
-        if (slot < 0) {
-          circuits.push(fresh);
-          use = circuits.len() - 1;
-        } else {
-          circuits.set(slot, fresh);
-          use = slot;
-        }
-        if (fresh.state == circuitFailed()) {
-          // It never reached the wire — no exit carries the port. The slot stays free for
-          // the next attempt, which is the whole point of looking for one above.
-          cli.send(c.sock, socksReply(repNotAllowed())).wait();
-          dropClient(cli, guard, circuits, clients, who);
-          if (!accepting) { acc = cli.accept(listener.handle); accepting = true; }
-          continue;
-        }
-        core.log("building circuit " + itoa(use) + " for port " + itoa(want));
-      }
-      c.circIdx = use;
-
-      if (circuits.get(use).state == circuitReady()) {
-        c.streamId = circuits.get(use).circ.beginStream();
-        c.phase = 3;
-        core.log("stream " + itoa(c.streamId) + " -> " + target + " on circuit " + itoa(use));
-        sendCells(guard.link, circuits.get(use).circ.beginCell(c.streamId, target));
-      } else {
-        // Parked. The guard branch sends its BEGIN when the last hop answers.
-        c.phase = 2;
-      }
-      // Anything the client sent after the request — an eager TLS ClientHello, say — waits
-      // in `pending` until RELAY_CONNECTED, and `drain` sends it then.
-    }
-
-    drain(cli, guard, circuits, c);
-    if (guard.link.dead) { break; }
+  // **The drain is the loop now.** What stood here was a `waitAny` over a rebuilt list of every
+  // outstanding read with an `owner` array beside it to say whose each one was; every read carries
+  // its own continuation, so there is nothing to rebuild and no position to translate back.
+  // `relayd.wac` made the same removal and its header says what it was worth.
+  while (!x.stopped) {
+    i32 ran = core.drainFor(IDLE_MS);
+    if (ran > 0) { continue; }
+    if (x.guard.link.dead) { x.stopped = true; }
   }
 
-  for (i32 i = clients.len() - 1; i >= 0; i--) {
-    Client c = clients.get(i);
-    if (c.reading) { c.read.cancel(); }
-    cli.closeSocket(c.sock);
+  for (i32 i = x.clients.len() - 1; i >= 0; i--) {
+    cli.closeSocket(x.clients.get(i).sock);
   }
   cli.closeSocket(listener.handle);
   cli.closeSocket(guard.link.sock);
