@@ -14,6 +14,7 @@
 import { Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
+import { splitOn } from "./replay.wac";
 
 string dispatchPath() { return "packages/box/src/box.wac"; }
 string readmePath() { return "packages/box/README.md"; }
@@ -212,25 +213,6 @@ string[] wordsIn(string text) {
 }
 
 bool isBlank(string ch) { return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"; }
-
-string[] splitOn(string text, string sep) {
-  if (text == "") { return string[0](); }
-  i32 n = 1;
-  for (i32 i = 0; i + sep.len() <= text.len(); i++) {
-    if (text.slice(i, i + sep.len()) == sep) { n = n + 1; }
-  }
-  string[] out = string[n](fill: "");
-  i32 k = 0;
-  i32 from = 0;
-  for (i32 i = 0; i + sep.len() <= text.len(); i++) {
-    if (text.slice(i, i + sep.len()) != sep) { continue; }
-    out[k] = text.slice(from, i);
-    k = k + 1;
-    from = i + sep.len();
-  }
-  out[k] = text.slice(from, text.len());
-  return out;
-}
 
 string[] sortedOf(string[] xs) {
   string[] out = string[xs.len()](fill: "");

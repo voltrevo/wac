@@ -20,7 +20,7 @@ import { Cli, Core, Exec } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Ran, runApplet, runAppletIn } from "./replay.wac";
+import { Ran, realOut, runApplet, runAppletIn } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-streaming"; }
@@ -38,12 +38,6 @@ u8[] spanningText() {
     b.pushAll(("word" + itoa(i) + " alpha beta gamma delta epsilon\n").toBytes());
   }
   return b.bytes();
-}
-
-/** The real tool, with this process's environment. */
-string realOut(Cli cli, string prog, string[] args) {
-  Exec r = cli.exec(prog, args, u8[0]()).wait();
-  return string.fromBytes(r.stdout);
 }
 
 /**

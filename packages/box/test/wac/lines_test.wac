@@ -19,7 +19,7 @@ import { Cli, Core, Exec } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Ran, runApplet } from "./replay.wac";
+import { Ran, realOut, runApplet } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-lines"; }
@@ -45,12 +45,6 @@ u8[] manyLines() {
     if (i % 11 == 0) { b.pushAll("repeated\nrepeated\n".toBytes()); }
   }
   return b.bytes();
-}
-
-/** The real tool, with this process's environment. */
-string realOut(Cli cli, string prog, string[] args) {
-  Exec r = cli.exec(prog, args, u8[0]()).wait();
-  return string.fromBytes(r.stdout);
 }
 
 export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli cli) {

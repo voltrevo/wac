@@ -1,0 +1,258 @@
+// `sponge`, `zstd`, `json`, `stat`, `uuid`, `shuf` and `paste` — the batch of applets whose backing is
+// a package rather than a loop.
+//
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/batch_test.wac
+//
+// From `box.test.ts`. **`yes` did not come with them**, and the reason is a process lifecycle rather
+// than an oracle: it never stops on its own and is ended by closing the pipe it writes to, which a
+// frame run does not have. It stays where a real process is.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, differs, runApplet, runAppletIn, splitOn, trimEnd } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-batch"; }
+
+/**
+ * `sponge`: the applet that only exists because of the atomic write.
+ *
+ * `box sort f | box sponge f` works where `sort f > f` cannot, because the shell truncates `f` before
+ * `sort` has read a byte of it. That is the whole point, and the second assertion — that no temporary
+ * file survived — is the half that says *how* it works rather than that it did.
+ */
+export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string target = dir + "/inplace";
+
+  t.isTrue(cli.writeFile(target, "delta\nalpha\ncharlie\nbravo\n".toBytes()).wait().ok(), "wrote it");
+  Ran sorted = runApplet(core, cli, dir, string[]("sort", target));
+  t.eqI32(sorted.status, 0, "sort ran: " + sorted.err);
+
+  Ran soak = runAppletIn(core, cli, dir, string[]("sponge", target), sorted.outBytes);
+  t.eqI32(soak.status, 0, "sponge ran: " + soak.err);
+  t.eqStr(string.fromBytes(cli.readFile(target).wait().bytes), "alpha\nbravo\ncharlie\ndelta\n",
+          "sorted in place");
+
+  // **One entry, and it is the target.** `sponge` writes beside the file and renames, so a run that
+  // left its temporary behind would still pass the content assertion above — this is the half that says
+  // the atomicity was real rather than that the answer happened to be right.
+  //
+  // Unwrapped with `!` after the null check, which is what `applets/ls.wac` does — a `string[]?` is not
+  // indexable, and an `is null` guard narrows it in neither branch.
+  string[]? listed = cli.readDir(dir).wait();
+  if (listed is null) {
+    t.fail("the case directory is not listable");
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+  string[] left = listed!;
+  t.eqI32(left.len(), 1, "left behind: " + itoa(left.len()) + " entries");
+  if (left.len() > 0) { t.eqStr(left[0], "inplace", "and it is the target"); }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** `zstd`, the largest package here, round-tripped over a real file. */
+export string test_zstd_round_trips(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
+  t.isTrue(raw.len() > 0, "README.md is readable and not empty");
+
+  Ran squeezed = runAppletIn(core, cli, dir, string[]("zstd"), raw);
+  t.eqI32(squeezed.status, 0, "zstd ran: " + squeezed.err);
+  t.isTrue(squeezed.outBytes.len() < raw.len(), "zstd did not compress");
+  t.eqStr(differs(runAppletIn(core, cli, dir, string[]("unzstd"), squeezed.outBytes).outBytes, raw), "",
+          "zstd round trip");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `json`: canonical output, and a real parse error.
+ *
+ * Two spellings of one document canonicalise identically, which is the property that makes this worth
+ * having on a pipe rather than as a pretty-printer. Without `-c` it is a validator: silent and 0, so
+ * it composes.
+ */
+export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  Ran canon = runAppletIn(core, cli, dir, string[]("json", "-c"),
+                          "{\"b\":1,\"a\":[2, 3 ],\"c\":\"x\"}".toBytes());
+  t.eqStr(trimEnd(canon.out), "{\"b\":1,\"a\":[2,3],\"c\":\"x\"}", "canonical output");
+
+  Ran spaced = runAppletIn(core, cli, dir, string[]("json", "-c"),
+                           "{ \"b\" : 1 , \"a\" : [ 2 , 3 ] , \"c\" : \"x\" }".toBytes());
+  t.eqStr(spaced.out, canon.out, "two spellings canonicalise the same");
+
+  Ran valid = runAppletIn(core, cli, dir, string[]("json"), "[1,2,3]".toBytes());
+  t.eqI32(valid.status, 0, "a valid document is 0");
+  t.eqI32(valid.outBytes.len(), 0, "a validator says nothing");
+
+  Ran bad = runAppletIn(core, cli, dir, string[]("json"), "{\"a\":}".toBytes());
+  t.eqI32(bad.status, 1, "an invalid document is 1");
+  t.isTrue(bad.err.indexOf("invalid JSON at byte") >= 0, bad.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `stat`: the capability nothing surfaced.
+ *
+ * The mtime is RFC 3339 and recent, which is `datetime` doing the work — and it is checked against the
+ * system `date` rather than against our own parser, so the two are not one function agreeing with its
+ * own inverse.
+ */
+export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string[] fmt = string[]("-u", "+%Y-%m-%dT%H:%M");
+  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+  t.isTrue(cli.writeFile(dir + "/sized", "12345".toBytes()).wait().ok(), "wrote five bytes");
+
+  Ran st = runApplet(core, cli, dir, string[]("stat", dir + "/sized", dir));
+  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+  t.eqI32(st.status, 0, "stat ran: " + st.err);
+  string[] rows = splitOn(trimEnd(st.out), "\n");
+  t.eqI32(rows.len(), 2, "two operands, two rows: " + st.out);
+  if (rows.len() == 2) {
+    t.isTrue(rows[0].indexOf(" file 5 ") >= 0, rows[0]);
+    t.isTrue(rows[1].indexOf(" directory ") >= 0, rows[1]);
+
+    // The last field is the mtime. To the minute, against the system clock read on *both* sides of the
+    // write, and accepted against either — a run that straddles a minute boundary is otherwise a flake
+    // that appears once a week and is blamed on the clock capability.
+    string[] fields = splitOn(rows[0], " ");
+    string when = fields[fields.len() - 1];
+    t.isTrue(when.len() >= 16, "an mtime that is RFC 3339: " + when);
+    t.isTrue(when.slice(0, 16) == before || when.slice(0, 16) == after,
+             "the file was written now: " + when + " between " + before + " and " + after);
+  }
+
+  t.eqI32(runApplet(core, cli, dir, string[]("stat", dir + "/absent")).status, 1,
+          "a missing path is an error");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** Whether every character is a lowercase hex digit. */
+bool isHex(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    bool digit = b[i] >= 0x30 && b[i] <= 0x39;
+    bool lower = b[i] >= 0x61 && b[i] <= 0x66;
+    if (!digit && !lower) { return false; }
+  }
+  return b.len() > 0;
+}
+
+/**
+ * `uuid`: version 4, and different every time.
+ *
+ * The shape is checked field by field rather than with a pattern, because the two fields that carry
+ * the *meaning* — the `4` and the variant nibble — are the ones a generator gets wrong while still
+ * producing something that looks like a UUID.
+ */
+export string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  string[] ids = splitOn(trimEnd(runApplet(core, cli, dir, string[]("uuid", "-20")).out), "\n");
+  t.eqI32(ids.len(), 20, "twenty asked for");
+
+  for (i32 i = 0; i < ids.len(); i++) {
+    string[] parts = splitOn(ids[i], "-");
+    if (parts.len() != 5) { t.fail("not five fields: " + ids[i]); continue; }
+    t.isTrue(parts[0].len() == 8 && parts[1].len() == 4 && parts[2].len() == 4
+             && parts[3].len() == 4 && parts[4].len() == 12, "field widths: " + ids[i]);
+    for (i32 k = 0; k < 5; k++) { t.isTrue(isHex(parts[k]), "hex only: " + ids[i]); }
+    t.eqStr(parts[2].slice(0, 1), "4", "version 4: " + ids[i]);
+    string v = parts[3].slice(0, 1);
+    t.isTrue(v == "8" || v == "9" || v == "a" || v == "b", "variant: " + ids[i]);
+
+    // Distinct. Twenty is small enough that the quadratic comparison is cheaper than a set.
+    for (i32 k = 0; k < i; k++) { t.isTrue(ids[k] != ids[i], "twenty draws repeated: " + ids[i]); }
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `shuf`: a permutation, not a sample — and **a different one each time**.
+ *
+ * The last part is what the others cannot see. `below`, the rejection-sampled index the shuffle draws,
+ * could return a constant and every earlier assertion would still hold: swapping each element with
+ * position zero is a permutation and it differs from the input. It is also *the same* permutation on
+ * every run. Probabilistic in the direction that cannot fail by accident — 200! orders, and this asks
+ * only that two of three runs differ. wac-mono 0005.
+ */
+export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  Buf b = Buf.create();
+  for (i32 i = 0; i < 200; i++) { b.pushAll(("line" + itoa(i) + "\n").toBytes()); }
+  string path = dir + "/lines";
+  t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote 200 lines");
+
+  string first = trimEnd(runApplet(core, cli, dir, string[]("shuf", path)).out);
+  string[] shuffled = splitOn(first, "\n");
+  t.eqI32(shuffled.len(), 200, "a permutation has the same length");
+
+  // Same lines: every input line appears exactly once. Counted rather than sorted, because a sort here
+  // would be a second implementation of the thing that has to be right.
+  i32 seen = 0;
+  for (i32 i = 0; i < 200; i++) {
+    string want = "line" + itoa(i);
+    for (i32 k = 0; k < shuffled.len(); k++) { if (shuffled[k] == want) { seen++; } }
+  }
+  t.eqI32(seen, 200, "the same lines, each exactly once");
+
+  t.eqI32(splitOn(trimEnd(runApplet(core, cli, dir, string[]("shuf", "-5", path)).out), "\n").len(), 5,
+          "and -5 is a sample of five");
+
+  string again = trimEnd(runApplet(core, cli, dir, string[]("shuf", path)).out);
+  string third = trimEnd(runApplet(core, cli, dir, string[]("shuf", path)).out);
+  t.isTrue(first != again || first != third || again != third,
+           "three shuffles of the same input gave one order: the draw is not random");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** `paste`, against the real one — including the ragged case, where the shorter file runs out. */
+export string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string p1 = dir + "/p1";
+  string p2 = dir + "/p2";
+  t.isTrue(cli.writeFile(p1, "a\nb\n".toBytes()).wait().ok(), "wrote p1");
+  t.isTrue(cli.writeFile(p2, "1\n2\n3\n".toBytes()).wait().ok(), "wrote p2 — one line longer");
+
+  Exec theirs = cli.exec("paste", string[](p1, p2), u8[0]()).wait();
+  t.isTrue(theirs.error == "", "there is a real paste: " + theirs.error);
+  t.eqStr(runApplet(core, cli, dir, string[]("paste", p1, p2)).out,
+          string.fromBytes(theirs.stdout), "paste over files of different lengths");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
