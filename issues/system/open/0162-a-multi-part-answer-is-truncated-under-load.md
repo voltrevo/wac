@@ -273,3 +273,31 @@ load" — and leaves two readings:
 
 The second reading has had no attention in this issue and is the cheaper one to falsify: it needs
 only the length store and its reader, both of which are a few lines, rather than an interleaving.
+
+### Three legs that cannot all be true — agent-b, 2026-08-31
+
+Following the arithmetic to its end produces a contradiction rather than a mechanism, and the
+contradiction is worth more than another candidate:
+
+1. **553 cannot be this call's data.** `fits = min(body.length, room.length)`, `room` is a pooled
+   buffer (131,072) or the inline area, and every slot's inline area is exactly `INLINE_BYTES` —
+   `new Uint8Array(sab, INLINE_OFFSET + i * INLINE_BYTES, INLINE_BYTES)`, uniform. So a reply of the
+   48,922 owed delivers 48,922 or 4,096. Never 553.
+2. **Therefore `S_RES_LEN` was written by something other than this call's reply**, since `write` is
+   the only thing that stores it and it stores `fits`.
+3. **But the slot cannot be recycled while its owner is inside `collect`.** Only two places store
+   `ST_FREE`: `release`, which the guest calls at the end of its own loop, and `abandon`, which the
+   sweep reaches only for `ST_CANCELLED`. A guest blocked in `awaitReady` cannot cancel its own
+   ticket, so nothing takes the slot from under it.
+
+Two of those are right and one is wrong. I could not tell which, and say so rather than pick — the
+tempting third story here is that the plain `Atomics.store(S_STATUS, ST_PENDING)` this issue already
+flags lets a recycled slot be stomped, and leg 3 says the recycling it needs cannot happen.
+
+**Where I would look next**, in order of cost: whether `awaitReady` can return without the slot being
+this call's (a spurious wake, or a generation this loop never re-checks); whether any capability
+answers on a slot it does not own; and whether `S_RES_LEN` is ever stored outside `write` in a host
+that is not `respond.ts` — the browser and node hosts were not read for this.
+
+Recorded because a contradiction narrows the search where a fourth mechanism would widen it. Two
+mechanisms have already been proposed in this issue and retracted, one of them mine today.
