@@ -152,3 +152,21 @@ claiming a handle is unique among live clients, and it is not — closing thirty
 proxy has not seen every `End` before `accept` reissues the numbers. That is a real defect and is
 fixed by giving `Client` an id that is never recycled. It is **not** this bug: with the fix, 5 of 5
 still trap.
+
+### Reduction, with the current seed: the pump *shape* is not enough
+
+A standalone server built to `socks`'s shape does **not** trap, run repeatedly against the same
+compiler that traps `socks` 5 times in 5. It has: an `async` accept pump, one pump per client, a
+`Vec<Client>` with `swapRemove`, a `gone` flag, `main` driving `core.drainFor`, a pump that closes
+*other* parked pumps' sockets from inside its own continuation, and `send(...).wait()` inside a
+continuation. Then, one at a time:
+
+| added to the minimal server | result |
+|---|---|
+| 33 concurrent clients — filling `MAX_CLIENTS` and one past it | 0 of 3 |
+| a third long-lived pump, beside accept and clients | 0 of 3 |
+
+So it is not the shape, not the client count, and not the number of concurrent machines. What
+`socks` still has that this does not: a TLS link, circuits and their cell machinery, the per-client
+phase state, and a much larger module. Those are the next things to add one at a time — the file is
+`packages/platform/test/wac/tmppumpd.wac` in a worktree and is not committed.
