@@ -1,0 +1,49 @@
+// `yes`: the only applet that never ends on its own.
+//
+//     wac test --allow-read --allow-write packages/box/test/wac/yes_test.wac
+//
+// From `box.test.ts`, where it was the last thing said to need a process — "it stops because `write`
+// reports the closed pipe, and closing a pipe is a process lifecycle a frame does not have".
+//
+// **A frame has exactly that**, and `frame.wac` says so twenty lines into the file: output is capped at
+// 8 MiB, `write` answers false past it, and *"`packages/box`'s `yes` is written as
+// `while (cli.write(block)) {}` precisely so a full buffer stops it"*. The applet's stopping condition
+// and the frame's cap were built for each other; only the test had not noticed.
+//
+// The pipe and the cap are not the same mechanism, and that is worth saying rather than glossing: a
+// closed pipe is the reader leaving, a full buffer is the writer running out of room. What `yes`
+// depends on is neither — it is that `write` can answer false at all, which is the property both have
+// and the reason `write` returns a bool.
+
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { main } from "../../src/box.wac";
+
+export string test_yes_stops_when_the_sink_stops_taking(Core core, Cli cli) {
+  T t = T.create();
+
+  Frame f = Frame.of(string[]("yes", "wac"), u8[0](), cli.cwd().wait(), false);
+  // **This returns.** That is the assertion, and nothing after it would run if it were wrong — a `yes`
+  // that ignored `write`'s answer would spin here until the run was killed, which is the failure this
+  // test is for and the one a timeout reports as an unhelpful nothing.
+  i32 code = main(childCore(f, core), childCli(f, cli));
+
+  string out = string.fromBytes(f.out.bytes());
+  t.isTrue(out.len() > 0, "yes wrote something");
+  t.eqStr(out.slice(0, 8), "wac\nwac\n", "it wrote its operand, repeatedly");
+
+  // It stopped because the sink refused, not because it decided to. `overflowed` is recorded rather
+  // than inferred precisely so this is askable: a child that stops cleanly leaves nothing in the bytes
+  // themselves to say they are short.
+  t.isTrue(f.overflowed, "yes stopped because the buffer filled, not for some other reason");
+  t.isTrue(out.len() > 1000000, "and it filled it: " + itoa(out.len()) + " bytes");
+
+  // Every byte is the operand repeated — a `yes` that stopped early for a *different* reason could
+  // still have written a plausible prefix, so the length above and the shape here are two claims.
+  t.eqI32(out.len() % 4, 0, "whole repetitions of 'wac\\n'");
+  t.eqI32(code, 0, "and it ended cleanly");
+
+  return t.report();
+}

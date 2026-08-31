@@ -118,14 +118,17 @@ async function exists(path: string): Promise<boolean> {
 //   - **one test that needs a capability wac has not got.** `Cli` reads a symlink and cannot make one,
 //     so the `tar` fixture below cannot be built in wac. Also buildable, and additive:
 //     `issues/system/0300c`.
-//   - **`yes`, which needs a sink that can refuse.** A frame collects output in a buffer that never
-//     closes, and `yes` stops precisely because `write` reports a closed pipe. That is a gap in what a
-//     `Frame` can model rather than a fact about processes — a frame with a byte limit would express it.
 //   - **the network tests**, and these are the only ones I would keep spawning on purpose. A server and
 //     a client with a real socket between them is a claim *about* the process boundary, so testing it
 //     across one is the point rather than the cost.
 //
-// So: one shape worth keeping, and three that are undone work with issue numbers on them.
+// So: one shape worth keeping, and two that are undone work with issue numbers on them.
+//
+// **Two entries came off this list by being checked rather than argued**, which is the reason it now
+// reads the way it does. `main` was said to be unreachable because it reads argv from the process — a
+// frame supplies argv. `yes` was said to need a pipe to be closed — a frame's buffer fills and `write`
+// answers false, which is the property `yes` actually depends on and the reason `write` returns a bool
+// at all. Both were written here as facts about the world; neither survived opening the file.
 
 Deno.test("rm -f without the write grant is a denial, not a silence", async () => {
   // `-f` forgives a file that is already *gone*, not a filesystem it was never allowed to touch. The
@@ -625,31 +628,12 @@ Deno.test("box's network applets: a wac server and a wac client, over real TCP",
   }
 });
 
-Deno.test("yes stops when the pipe it writes to is closed", async () => {
-  // **What is left of "box's newest batch".** `sponge`, `zstd`, `json`, `stat`, `uuid`, `shuf` and
-  // `paste` are `packages/box/test/wac/batch_test.wac` now — including `sponge`'s second assertion,
-  // that no temporary file survived, which is the half saying the atomicity was real rather than that
-  // the answer happened to be right.
-  //
-  // **`yes` could not go with them, and it is the clearest case in this file of why some cannot.**
-  // Every other applet here is judged by what it writes, which a frame captures. This one never ends on
-  // its own: it stops because `write` reports the closed pipe, and *that* is why `write` returns a bool
-  // at all. Closing the read end of a pipe and waiting for the child to die is a process lifecycle, and
-  // an in-process frame has no pipe to close.
-  const built = await Deno.makeTempFile({ prefix: "wac-yes-" });
-  try {
-    await buildApp(BOX, built, { read: true, write: true });
-    const yes = new Deno.Command(built, { args: ["yes", "wac"], stdout: "piped", stderr: "null" }).spawn();
-    const reader = yes.stdout.getReader();
-    const first = await reader.read();
-    assertEquals(new TextDecoder().decode(first.value).startsWith("wac\nwac\n"), true);
-    await reader.cancel();
-    const status = await yes.status;
-    assertEquals(status.success || status.signal !== null, true, "yes stopped when the pipe closed");
-  } finally {
-    await Deno.remove(built);
-  }
-});
+// **Moved to `packages/box/test/wac/yes_test.wac`, and this one was wrong too.** The note said `yes`
+// stops because `write` reports a closed pipe, and that closing a pipe is a process lifecycle a frame
+// does not have. A frame has exactly that: output is capped at 8 MiB and `write` answers false past it,
+// and `frame.wac` says twenty lines in that *"`packages/box`'s `yes` is written as
+// `while (cli.write(block)) {}` precisely so a full buffer stops it"*. The applet's stopping condition
+// and the frame's cap were built for each other; only this test had not noticed.
 
 Deno.test("httpd serves a directory, and refuses to leave it", async () => {
   // The first applet that composes the network *and* the filesystem. The path check is the
