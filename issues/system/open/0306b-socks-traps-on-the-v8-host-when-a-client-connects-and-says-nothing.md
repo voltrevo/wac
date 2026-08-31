@@ -5,15 +5,14 @@
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
-- **Symptom:** `wac: packages/tor/src/socks.wac trapped`, and the proxy is gone. One TCP connection
-  that is accepted and closed without sending a byte is enough.
+- **Symptom:** `wac: packages/tor/src/socks.wac trapped`, and the proxy is gone. Intermittent — about
+  one run in four or five, so a single clean run means nothing.
 
 ## It is the async proxy on the v8 host, and it is intermittent
 
-- **Symptom**: `wac: packages/tor/src/socks.wac trapped`, with **no `$trap$message`** — ordinary wac
-  runtime traps (bounds, null) carry text, so this is not one of those.
-- **Rate**: roughly one run in four or five. That is the single most important fact about it and the
-  one I did not have at first.
+**No `$trap$message`**, which narrows it: ordinary wac runtime traps — bounds, null — carry text, so
+this is not one of those. And the rate is the single most important fact about it, and the one I did
+not have when this was filed.
 
 | arm | trapped |
 |---|---|
@@ -42,7 +41,7 @@ Also ruled out: a nested `waitAny` inside a continuation — `startCircuit` only
 `randomBytes().wait()`; and fixed-size machine state — `asyncsynth` allocates a machine's cells
 per call, not from a program-wide table.
 
-## Reproduction## Reproduction
+## Reproduction
 
 `packages/tor/test/wac/socksnet_test.wac` with a block that opens a TCP connection to the proxy port,
 sends nothing, and closes it. Everything before that in the case passes — the network stands up, a
