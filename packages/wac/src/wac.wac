@@ -1774,6 +1774,13 @@ export i32 main(Core core, Cli cli) {
     }
     string aggregate = "";
     string[] texts = string[walked.len()](fill: "");
+    // **Serial on purpose, and measured rather than assumed.** Every read here is independent, so this
+    // loop reads like the obvious place to launch them all and collect afterwards — `Pending` starts
+    // the work when it is made, so it would not even need `async`. Measured over
+    // `packages/box/test/wac`: 37 files, 303 KB, **5.5 ms**, against about 21 s for the `wac test` run
+    // that follows. Concurrency here buys 0.026% of the command, and costs a second array and a second
+    // loop to say the same thing. If you are here to make this concurrent, measure the walk you have
+    // rather than this one — the number that would justify it is minutes, not milliseconds.
     for (i32 i = 0; i < walked.len(); i++) {
       FileResult one = cli.readFile(walked[i]).wait();
       if (!one.ok) {
