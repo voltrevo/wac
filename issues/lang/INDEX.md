@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0306b](open/0306b-a-comparison-of-two-i64-constants-is-folded-on-their-low-32-bits.md) | `-9223372036854775807 - 1 < 0` answers false; two i64 **constants** compare on their low 32 bits only, so anything whose low word is non-negative is wrong and the same value in a variable is right | bug | wrong answer |
 | [0305b](open/0305b-the-checker-passes-a-nonexistent-method-on-a-generics-returned-option.md) | `m.get("x").noSuchMethodAtAll(0)` passes `wac check` with "no diagnostics" and is refused by the emitter, which names the method but no line; a *named* `Option` and a chained user generic are both diagnosed correctly | diagnostic | compile error |
 | [0302b](open/0302b-two-async-calls-do-not-interleave-under-load-and-the-spec-says-they-do.md) | `[§wac-async-drain-7cvj4bn]` promises two async calls in flight interleave; under load they measurably do not — two serial runs in eight at load 6.6, none on a quiet machine. `ticks` awaits a 1ms timer, so on a busy box the next timer is already expired when it is registered and `Sched.run` can dispatch one machine twice before the other runs. It fails exactly when a gate is busiest, so it turns somebody else's push red with a message that reads like a regression | bug | a flaky test that is really a spec claim |
 | [0303c](closed/0303c-a-lambda-assigned-to-a-struct-field-is-not-typed-by-the-walk.md) | `c.readFile = (string p) => …` makes the emitter decline the whole module; the same lambda bound to a typed local first and then assigned compiles and runs. So it is the *position* that is untyped rather than the lambda — a `let` with an explicit function type reaches the walk, a field assignment does not. Costs the shape of the code where it is wanted most: `issues/system/0302c` wants a helper handing a frame's child fewer grants than its parent, and the natural spelling is a run of field assignments, each now needing a named local restating the type the field already declares. **The diagnostic is half the issue** — it names a count (*90 lambdas, 1 in a position the walk does not type yet*) and no line, column or file, though the emitter knows which one because it counted it; finding this took bisecting a 15-line file by deletion | bug | declined |
@@ -62,7 +63,7 @@ has been fixed and why.
 
 ## Closed
 
-244 issues, 208 closed.
+245 issues, 208 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

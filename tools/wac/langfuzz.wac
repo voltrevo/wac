@@ -15,10 +15,21 @@
 // ## This was a TypeScript tool
 //
 // `tools/fuzz.ts`, ported for `issues/system/0161` step 6. The generator is the same one and the
-// draws are **bit-identical**: `Rng.intTop` below is `floor(next() * n)` computed in 64-bit
-// integers, which is what the TypeScript computed in doubles, so a seed names the same program in
-// both. That matters because `issues/lang/0281b` — `as~` to i32 wrapping instead of clamping — was
-// found by the TypeScript at a seed, and the seed still means what it meant.
+// *draw* is the same one: `Rng.intTop` is `floor(next() * n)` computed in 64-bit integers, which is
+// what the TypeScript computed in doubles, and not `Rng.upto`'s modulo — `packages/wactest/src/rng.wac`
+// measures those two families disagreeing on 37% of draws.
+//
+// **Whether a seed names the same program here is not verified, and this file does not claim it.**
+// Matching the draw is necessary and nowhere near sufficient: the *sequence* has to match too — the
+// same number of draws, at the same moduli, in the same order — and that is a property of every line
+// of the generator rather than of `Rng`. It has already been wrong once. `Rng.bool()` in the
+// TypeScript is `next() < 0.5`, true on the **low** half, and I first wrote it as `intTop(2) == 1` at
+// four sites; every boolean decision came out the other way and nothing failed, because a fuzzer
+// generating different programs is still a fuzzer. See `coin` below.
+//
+// What would earn the claim is a differential: have both tools print the program for a seed and
+// compare the text. Until someone runs it, treat a seed as naming a program *in this tool* — which is
+// all a regression test needs, and less than `issues/lang/0281b`'s seed would need to be replayed.
 //
 // ## What the oracle can and cannot see, which the port changes
 //
@@ -37,6 +48,7 @@
 // replacing it with `as@ i32` would quietly make the oracle agree with whatever the compiler does.
 import { CallResult, Cli, Core, LoadedModule } from "std/platform.wac";
 import { Map } from "core/map.wac";
+import { Option } from "core/option.wac";
 import { Vec } from "core/vec.wac";
 import { hashString, stringEq } from "core/hash.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
@@ -168,6 +180,17 @@ export struct Gen {
                Map.create(hashString, stringEq), "  ");
   }
 
+  /**
+   * One coin, spelled the way the TypeScript spells it.
+   *
+   * `Rng.bool()` there is `next() < 0.5` — **true on the low half**, which is `intTop(2) == 0` and
+   * not `== 1`. I wrote it inverted at all four sites and it cost nothing to run and everything to
+   * claim: every boolean decision came out the other way, so a seed named a different program while
+   * the header said seeds transfer. Nothing fails when this is wrong, which is why it is one function
+   * with the rule written on it.
+   */
+  bool coin(this) { return this.rng.intTop(2) == 0; }
+
   string fresh(this, string prefix) {
     string name = prefix + itoa(this.n);
     this.n = this.n + 1;
@@ -206,7 +229,7 @@ export struct Gen {
 
   Expr literal(this, i32 ty) {
     if (ty == TY_BOOL()) {
-      i64 b = this.rng.intTop(2) as i64;
+      i64 b = this.coin() ? 1 : 0;
       return Expr(b == 1 ? "true" : "false", ty, (Map<string, i64> e) => b);
     }
     i64[] pool = ty == TY_I32()
@@ -226,16 +249,16 @@ export struct Gen {
 
   Expr? binary(this, i32 ty, i32 depth) {
     if (ty == TY_BOOL()) {
-      if (this.rng.intTop(2) == 1) {
+      if (this.coin()) {
         // A comparison of integers. Both operands are the same width, which is what wac requires.
-        i32 it = this.rng.intTop(2) == 1 ? TY_I32() : TY_I64();
+        i32 it = this.coin() ? TY_I32() : TY_I64();
         i32 op = this.rng.intTop(6);
         Expr a = this.expr(it, depth - 1);
         Expr b = this.expr(it, depth - 1);
         return Expr("(" + a.src + " " + cmpOpText(op) + " " + b.src + ")", ty,
                     (Map<string, i64> e) => applyCmp(op, a.evalIn(e), b.evalIn(e)));
       }
-      bool isAnd = this.rng.intTop(2) == 1;
+      bool isAnd = this.coin();
       Expr a = this.expr(TY_BOOL(), depth - 1);
       Expr b = this.expr(TY_BOOL(), depth - 1);
       // **Both arms are evaluated here and only one may be there.** `&&` and `||` short-circuit in
@@ -303,7 +326,63 @@ export struct Gen {
     return this.literal(ty);
   }
 
+  /**
+   * A cast, which is the construct this generator exists for more than any other.
+   *
+   * `issues/lang/0281b` was `as~` to i32 wrapping where it should clamp, and it survived every
+   * feature-at-a-time sweep because it needs a cast crossed with a width and a value near the edge.
+   *
+   * Both directions take a *variable* rather than any expression, for a reason that is about wac
+   * rather than about generators: a literal operand is typed by the context the cast sits in, so
+   * `(0 as i64)` inside an i64 expression is an i64-to-i64 cast and a compile error. The same reason
+   * every i64 literal above is chosen outside i32's range.
+   */
+  Expr? cast(this, i32 ty, i32 depth) {
+    if (ty == TY_I64()) {
+      Expr? a = this.variable(TY_I32());
+      if (a is null) { return null; }
+      Expr src = a!;
+      return Expr("(" + src.src + " as i64)", ty, (Map<string, i64> e) => src.evalIn(e));
+    }
+    if (ty == TY_I32()) {
+      Expr? v = this.variable(TY_I64());
+      Expr a = v is null ? this.expr(TY_I64(), depth - 1) : v!;
+      bool truncates = this.coin();
+      return Expr("(" + a.src + (truncates ? " as@ i32" : " as~ i32") + ")", ty,
+                  (Map<string, i64> e) => truncates
+                    // `as@` keeps the low bits — the same narrowing `wrapTo` spells out.
+                    ? wrapTo(a.evalIn(e), TY_I32())
+                    // `as~` clamps, and the bounds are written here rather than derived, because a
+                    // derivation would go through the arithmetic the cast is being checked against.
+                    : (a.evalIn(e) < (0 - 2147483648) ? (0 - 2147483648)
+                       : (a.evalIn(e) > 2147483647 ? 2147483647 : a.evalIn(e))));
+    }
+    return null;
+  }
+
   // ── Statements ─────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Run `body` in a nested scope: locals declared inside go out of scope at the end, and values they
+   * assigned to *outer* locals stay.
+   *
+   * The locals are a flat `Vec` with the block depth on each, so entering is `depth + 1` and leaving
+   * is popping back to the mark — the inner names are exactly the ones pushed after it. That avoids
+   * needing to iterate the environment, which `Map` does not offer.
+   */
+  void block(this, fn[void()] body) {
+    i32 mark = this.locals.len();
+    string savedIndent = this.indent;
+    this.depth = this.depth + 1;
+    this.indent = this.indent + "  ";
+    body();
+    this.indent = savedIndent;
+    this.depth = this.depth - 1;
+    while (this.locals.len() > mark) {
+      Option<Local> gone = this.locals.pop();
+      if (gone.isSome()) { this.env.remove(gone.unwrap().name); }
+    }
+  }
 
   Local declare(this, i32 ty, Expr init) {
     string name = this.fresh("v");
