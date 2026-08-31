@@ -67,9 +67,16 @@ true.
     ok:      (t) => cls.Pending$bool.of(pack(t), ok, settled, drop),
     …
 
-So this is **one** defect across `recv`, `readStdin`, `accept`, `connect` and the rest, where the
-Rust hosts had it five times with three different remedies (`issues/system/0310b`). Only `recv` has
-been measured here; the others follow from the shared function rather than from separate runs.
+So this is **one** defect across every capability that answers a `Pending` — seventeen call sites
+over eight kinds:
+
+    T.socket   4     T.ok    3     T.text   2     T.i32   2
+    T.child    2     T.bytes 2     T.read   1     T.datagram 1
+
+where the Rust hosts had it five times with three different remedies (`issues/system/0310b`). Only
+`recv` has been measured here; the others follow from the shared function rather than from separate
+runs, which is a weaker claim and is meant to be — `0307b` was filed off a shape whose path turned
+out not to reach it.
 
 **That cuts both ways and the second half is the awkward one.** One function is one place to fix —
 and a shared `drop` has no idea *what* was consumed or who could still want it, which is precisely
