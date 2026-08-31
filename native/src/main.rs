@@ -400,6 +400,14 @@ struct Host {
     /// this map for `receiveFrom` since `issues/system/0207`; this is the same thing for reads.
     /// `issues/system/0308b`.
     reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
+    /// Live `accept` tickets per listener, oldest first.
+    ///
+    /// A connection cannot be handed to a thread already blocked in `listener.accept()` — it is
+    /// waiting in the kernel for a *different* one — so leaving the socket somewhere for it to find
+    /// does nothing, which was measured. What works is giving it to a ticket that is still live:
+    /// the answer goes to whoever is waiting, whichever thread happened to take the connection.
+    /// `issues/system/0310b`.
+    accepting: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<i32>>>>,
     /// Bytes a reader took for a ticket nobody claimed, waiting for the next `recv` on that handle.
     ///
     /// `Stream::read` blocks and then *drains*, and a socket read takes bytes off the socket. So a
@@ -441,6 +449,7 @@ impl Host {
             output_error: String::new(),
             handles: Arc::new(std::sync::Mutex::new(Handles::default())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             as_child: None,
             cwd: Vec::new(),
@@ -2038,6 +2047,8 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
+            let listen_handle = h;
+            let waiting = caller.data().accepting.clone();
             let Some(Sock::Listening(listener)) = socket_at(caller, h) else {
                 if !caller.data().grants.net {
                     return settle_now(caller, Kind::Socket, denied_net(), results);
@@ -2050,6 +2061,9 @@ fn dispatch(
                 );
             };
             let id = caller.data().tickets.submit();
+            // Registered so a connection taken for a ticket nobody wants can be handed to this one
+            // wherever it is waiting. `issues/system/0310b`.
+            caller.data().accepting.lock().unwrap().entry(h).or_default().push_back(id);
             let table = caller.data().tickets.clone();
             let table_handles = caller.data().handles.clone();
             std::thread::spawn(move || {
@@ -2074,12 +2088,33 @@ fn dispatch(
                 // Parked under the *listener*, so the next `accept` on it gets the connection that
                 // was already made rather than waiting for another. Closing it would be defensible
                 // and is worse: the client is told nothing and has to guess.
-                // **Parking it here does not work, and was measured not to** — still 0 of 8.
-                // The retry's thread is already blocked inside `listener.accept()` by the time this
-                // runs, and nothing can hand it a connection that arrived on another thread; it
-                // waits for a *second* client that never comes. A fix has to complete the other
-                // ticket rather than leave a socket somewhere for it to find. `issues/system/0310b`.
-                let _ = table.complete(id, outcome);
+                // **A connection is consumed to make this**, whatever the comment here used to
+                // say. The socket is in the table by now, so an answer nobody takes leaves a client
+                // attached to a handle that will never be handed out. 0 of 8 kept before this.
+                //
+                // **Given to a ticket that is still live, not left somewhere to be found.** Parking
+                // it under the listener was tried and measured at 0 of 8 unchanged: the retry is
+                // already blocked in `accept()` waiting for a *different* connection and cannot be
+                // handed this one. Completing its ticket reaches it wherever it is waiting.
+                // `issues/system/0310b`.
+                waiting.lock().unwrap().get_mut(&listen_handle).map(|q| q.retain(|&t| t != id));
+                let mut answer = table.complete(id, outcome);
+                while let Some(unclaimed) = answer.take() {
+                    let next = waiting
+                        .lock()
+                        .unwrap()
+                        .get_mut(&listen_handle)
+                        .and_then(|q| q.pop_front());
+                    match next {
+                        // Whoever is waiting gets it. If that one has also gone, round again —
+                        // each turn consumes a ticket, so this cannot spin.
+                        Some(other) => answer = table.complete(other, unclaimed),
+                        // Nobody at all. The connection is orphaned and that is still the open half
+                        // of `0310b`: it is in the table, and closing it would tell the client
+                        // nothing. Left rather than pretended about.
+                        None => break,
+                    }
+                }
             });
             return pending_for(caller, Kind::Socket, id, results);
         }

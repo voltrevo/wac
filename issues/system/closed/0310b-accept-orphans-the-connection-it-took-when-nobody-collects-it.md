@@ -1,7 +1,8 @@
 # 0310 — `accept` orphans the connection it took, and `readStdin` lost the whole of standard input
 
-- **Status:** open — the `accept` half. `readStdin` is fixed below.
+- **Status:** closed — both halves fixed. One limit stated at the end.
 - **Claimed by:** agent-b
+- **Fixed in:** `native/src/main.rs`, 2026-08-31
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -18,7 +19,7 @@ broken:
 | `recv` | bytes off a queue or socket | fixed — `0307b`, `0308b` |
 | `receiveFrom` | a datagram | fixed on v8 by `0207`; synchronous on wasmtime, so it cannot arise |
 | `readStdin` | the whole of standard input | **1 of 8 kept**; fixed below |
-| `accept` | a connection off the backlog | **0 of 8 kept**; open |
+| `accept` | a connection off the backlog | **0 of 8 kept**; fixed below |
 
 Both measured against controls that keep the payload 8 times in 8.
 
@@ -57,3 +58,33 @@ Both sites carried `// Nothing was consumed to make this, so there is nothing to
 blanket sentence a script wrote across twelve `let _ =` annotations while fixing `0307b`. It is false
 at three of them, and it made two real defects read as considered and dismissed. The others were
 re-read and hold. A mechanical edit that writes a *claim* rather than a marker is worth avoiding.
+
+## `accept` — fixed by completing a live ticket, which is what the failed attempt pointed at
+
+The prediction above held. A connection cannot be handed to a thread already blocked in
+`listener.accept()`, because that thread is waiting in the kernel for a *different* one — so leaving
+the socket somewhere for it to find does nothing, and measured nothing. What reaches it is completing
+its **ticket**: the answer arrives wherever it is waiting, whichever thread happened to take the
+connection.
+
+`accepting: HashMap<listener, VecDeque<ticket_id>>` holds the live accept tickets per listener. A
+thread whose own ticket is gone pops the next live one and completes that instead, and goes round if
+that one has also gone — each turn consumes a ticket, so it cannot spin.
+
+| | abandoned | control |
+|---|---|---|
+| before | 0 of 8 kept | 8 of 8 |
+| after | **8 of 8 kept** | 8 of 8 |
+
+`0308b`'s drop-window case still passes 5 of 5 alongside it, and `packages/platform` is 42 of 45 —
+the three failures being the `deno`-not-found artifact of running a package directly, which passes
+under `wac task test`.
+
+## The limit, stated rather than papered over
+
+**If no accept ticket is live at all, the connection is still orphaned.** It sits in the handle table
+with a client attached and nothing will hand it out. Closing it instead would tell the client
+nothing, and the honest options are to close it *and* say so, or to keep it for a future accept —
+which is the parking that does not work while a thread is blocked. Worth its own issue if a server is
+ever seen leaking connections this way; the shape that reaches it is giving up on every outstanding
+accept and then issuing none.
