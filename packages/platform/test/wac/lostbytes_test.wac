@@ -67,7 +67,7 @@ const string PROGRAM =
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  if (mode != \"control\") {\n" +
   "    Pending<Read> first = cli.recv(kid.handle);\n" +
-  "    core.waitAny(i32[](first.id), 50);\n" +
+  "    if (mode == \"late\") { core.delay(600).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
   "    first.cancel();\n" +
   "    core.cancel(first.id);\n" +
   "  }\n" +
@@ -133,6 +133,15 @@ void check(T t, Cli cli, string binary, string path, string host) {
     if (!contains(abandoned, "VERDICT kept") && lost == "") { lost = abandoned; }
   }
   t.eqStr(lost, "", host + ": a reader was abandoned and its bytes went with it");
+
+  // **And the other order, which is `issues/system/0308b`.** Above, the caller gives up long before
+  // the bytes arrive, so the reader declines to take them. Here it gives up *after* they have landed
+  // and been filed under a still-live ticket, so `drop` is holding an answer that came off a stream
+  // once — and discarded it, 0 of 10 on both hosts, until it learned which handle to give it back
+  // to. One run is enough for this one: it was deterministic, not a race.
+  string late = ran(cli, binary, path, "late");
+  t.isTrue(contains(late, "VERDICT kept"),
+           host + ": the answer was dropped with the ticket that had already collected it — " + late);
 }
 
 export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core, Cli cli) {

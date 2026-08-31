@@ -324,9 +324,29 @@ struct AsChild {
 /// waiting, which is what closes the window another reader could see as an ended stream. The
 /// `unread` after `complete` is the backstop for the narrower race where the caller gives up
 /// *between* the two. `issues/system/0307b`.
-fn deliver(stream: &streams::Stream, table: &Tickets, id: i32) {
-    let Some(bytes) = stream.read_unless(|| !table.is_live(id)) else { return };
-    unread_bytes(stream, table.complete(id, Outcome::Bytes(bytes)));
+fn deliver(
+    stream: &streams::Stream,
+    table: &Tickets,
+    id: i32,
+    reading: &std::sync::Mutex<HashMap<i32, i32>>,
+) {
+    let Some(bytes) = stream.read_unless(|| !table.is_live(id)) else {
+        reading.lock().unwrap().remove(&id);
+        return;
+    };
+    match table.complete(id, Outcome::Bytes(bytes)) {
+        // Nobody was waiting, and `unread_bytes` has already put them back — so there is nothing for
+        // a later `drop` to hand over and the note can go.
+        unclaimed @ Some(_) => {
+            unread_bytes(stream, unclaimed);
+            reading.lock().unwrap().remove(&id);
+        }
+        // **Filed under a live ticket, so the note stays.** This is exactly the state `drop` has to
+        // clean up after: the answer is sitting in `done` and the caller may still give up on it.
+        // Forgetting the handle here is what made the first version of this fix do nothing at all —
+        // `drop` found the answer and had nowhere to put it. `issues/system/0308b`.
+        None => {}
+    }
 }
 
 /// Put stream bytes nobody claimed back into the stream they came from.
@@ -373,6 +393,13 @@ struct Host {
     output_error: String,
     /// Children this program spawned, and the handles that name their streams.
     handles: Arc<std::sync::Mutex<Handles>>,
+    /// Which handle a read ticket is reading, so a *dropped* one knows where to put its answer.
+    ///
+    /// A ticket id does not say what it was reading, and `drop` is given nothing else — so an answer
+    /// that arrived before the caller gave up had nowhere to go and was binned. The v8 host has kept
+    /// this map for `receiveFrom` since `issues/system/0207`; this is the same thing for reads.
+    /// `issues/system/0308b`.
+    reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
     /// Bytes a reader took for a ticket nobody claimed, waiting for the next `recv` on that handle.
     ///
     /// `Stream::read` blocks and then *drains*, and a socket read takes bytes off the socket. So a
@@ -413,6 +440,7 @@ impl Host {
             output: None,
             output_error: String::new(),
             handles: Arc::new(std::sync::Mutex::new(Handles::default())),
+            reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             as_child: None,
             cwd: Vec::new(),
@@ -2033,13 +2061,17 @@ fn dispatch(
             // On a thread either way: a child or a peer that has not written yet must not stop this
             // program from reading another, which is exactly what a pipeline and a relay both do.
             let id = caller.data().tickets.submit();
+            // **Which handle this ticket is reading**, so a `drop` that finds an answer already in
+            // hand knows where to put it back. `issues/system/0308b`.
+            caller.data().reading.lock().unwrap().insert(id, h);
             let table = caller.data().tickets.clone();
             // Which of the child's two streams is decided *before* anything starts: the first
             // version started a reader on standard output and then started a second on the error
             // stream when it noticed the handle was the wrong one, leaving a thread parked on a
             // stream nobody would collect.
             if let Some(stream) = child_stream(caller, h) {
-                std::thread::spawn(move || deliver(&stream, &table, id));
+                let noted = caller.data().reading.clone();
+                std::thread::spawn(move || deliver(&stream, &table, id, &noted));
                 return pending_for(caller, Kind::Read, id, results);
             }
             // **The child's own end of its filesystem channel**: what its parent answered. Reserved,
@@ -2049,7 +2081,8 @@ fn dispatch(
             if h == PARENT_FS_HANDLE {
                 if let Some(streams) = caller.data().as_child.as_ref() {
                     let answers = streams.fsrep.clone();
-                    std::thread::spawn(move || deliver(&answers, &table, id));
+                    let noted = caller.data().reading.clone();
+                    std::thread::spawn(move || deliver(&answers, &table, id, &noted));
                     return pending_for(caller, Kind::Read, id, results);
                 }
             }
@@ -2062,7 +2095,8 @@ fn dispatch(
             if h == STDIN_HANDLE {
                 if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
                     let fed = streams.stdin.clone();
-                    std::thread::spawn(move || deliver(&fed, &table, id));
+                    let noted = caller.data().reading.clone();
+                    std::thread::spawn(move || deliver(&fed, &table, id, &noted));
                     return pending_for(caller, Kind::Read, id, results);
                 }
                 let mut buf = [0u8; 65536];
@@ -2547,6 +2581,10 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
+            // Collected, so nothing can be given up on any more and the handle note goes. Kept
+            // until here rather than dropped at completion, because the window between the two is
+            // the whole of `issues/system/0308b`.
+            caller.data().reading.lock().unwrap().remove(&id);
             let outcome = caller.data().tickets.take(id).ok_or_else(|| {
                 // A ticket resolves once. Asking twice, or asking for one that was cancelled, is a
                 // program error rather than a value this can invent.
@@ -2616,14 +2654,26 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
-            // **This one drops bytes every time, and is not fixed here.** 0 of 10 on both hosts
-            // against a 6-of-6 control — `issues/system/0308b`, which is open. `drop` is what a guest's
-            // `Pending.cancel` reaches, so an answer that landed between the caller giving up and
-            // this call is discarded — `issues/system/0307b`'s defect on the narrowest path of all.
-            // Handing it back needs the ticket's *handle*, which a ticket id does not carry; the v8
-            // host keeps a `receiving` map for exactly this and only for datagrams. Left explicit
-            // rather than commented as harmless, which is what a mechanical edit made it say.
-            let _ = caller.data().tickets.discard(id);
+            // **What the ticket already held goes back where it came from.** `drop` is what a
+            // guest's `Pending.cancel` reaches, and an answer that landed between the caller giving
+            // up and this call has come off a stream once — discarding it lost the bytes every time,
+            // 0 of 10 on both hosts. `issues/system/0308b`.
+            //
+            // Which handle it was reading is the thing an id does not say, and `reading` is why this
+            // can ask. Into the **queue** for a child's stream, because another reader may be parked
+            // on it and a side table is somewhere it would never look; into the per-handle table for
+            // a socket, which has no queue to go back to. That is `0307b`'s rule, unchanged.
+            let held = caller.data().tickets.discard(id);
+            let whose = caller.data().reading.lock().unwrap().remove(&id);
+            if let (Some(Outcome::Bytes(bytes)), Some(h)) = (held, whose) {
+                if !bytes.is_empty() {
+                    if let Some(q) = child_stream(caller, h) {
+                        q.unread(bytes);
+                    } else {
+                        caller.data().pushback.lock().unwrap().entry(h).or_default().extend(bytes);
+                    }
+                }
+            }
         }
         // The whole of D6 in one arm: a runtime that answered zero here would make every program
         // that used the capability wrong in a way nothing could see.

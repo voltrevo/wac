@@ -584,6 +584,10 @@ struct HostState {
     /// Stream bytes a reader took for a ticket nobody claimed — the same idea as `datagrams`, for
     /// the resource it was never applied to. `issues/system/0307b`.
     pushback: Arc<std::sync::Mutex<HashMap<i32, Vec<u8>>>>,
+    /// Which handle a read ticket is reading, so a *dropped* one knows where to put its answer back.
+    /// `receiving` is this for `receiveFrom` and has been since `0207`; this is reads.
+    /// `issues/system/0308b`.
+    reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
     /// Which socket each outstanding `receiveFrom` ticket is reading, so a dropped one knows where
     /// to put back an answer that arrived first.
     receiving: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
@@ -1203,6 +1207,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
             datagrams: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
             receiving: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
             // channels, and this counter used to collide with the second of them — 0148.
@@ -2874,9 +2879,17 @@ fn dispatch(
                 }
             }
             let back = HOST.with(|h| h.borrow().as_ref().map(|st| st.pushback.clone()));
+            let note = |id: i32| {
+                HOST.with(|h| {
+                    if let Some(st) = h.borrow().as_ref() {
+                        st.reading.lock().unwrap().insert(id, handle);
+                    }
+                });
+            };
             if let Source::Queue(q) = source {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };
                 let id = t.submit();
+                note(id);
                 let worker = t.clone();
                 std::thread::spawn(move || {
                     // Declines to take them at all if nobody is waiting — see `read_unless`. The
@@ -2899,6 +2912,7 @@ fn dispatch(
             let Source::Socket(mut stream) = source else { unreachable!() };
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let id = t.submit();
+            note(id);
             let worker = t.clone();
             std::thread::spawn(move || {
                 let mut buf = [0u8; 65536];
@@ -3415,6 +3429,8 @@ fn dispatch(
                 });
                 // `readChunk` is `fn[Read()]` — not a ticket — so this one blocks on the table
                 // rather than handing a `Pending` back.
+                // Collected, so nothing can be given up on and the handle note goes — `0308b`.
+                HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().remove(&id); } });
                 let built = match table().and_then(|t| t.take(id)) {
                     Some(Answer::Read(ReadAnswer::Data(b))) => build_read_data(scope, &b),
                     Some(Answer::Read(ReadAnswer::Failed(w))) => build_read_failed(scope, &w),
@@ -3622,6 +3638,8 @@ fn dispatch(
             let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             // **This blocks**, which is what `wait()` means: the guest asked for the answer and
             // there is nothing else for this thread to do until the work that produces it lands.
+            // Collected, so nothing can be given up on and the handle note goes — `0308b`.
+            HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().remove(&id); } });
             let answer = table().and_then(|t| t.take(id));
             match answer {
                 Some(Answer::I32(n)) => {
@@ -3722,6 +3740,39 @@ fn dispatch(
                 // discarding it is right; for a `receiveFrom` the answer *is* a datagram, read off
                 // the socket once. `issues/system/0207`.
                 if let Some(answer) = t.drop_ticket(id) {
+                    // **A read's bytes go back too**, and for the same reason the datagram does:
+                    // they came off a stream once, and an answer that landed between the caller
+                    // giving up and this call was being binned every time. `issues/system/0308b`.
+                    let reading = HOST.with(|h| {
+                        h.borrow().as_ref().and_then(|st| st.reading.lock().unwrap().remove(&id))
+                    });
+                    if let (Some(handle), Answer::Read(ReadAnswer::Data(ref bytes))) =
+                        (reading, &answer)
+                    {
+                        if !bytes.is_empty() {
+                            let queue = HOST.with(|h| {
+                                h.borrow().as_ref().and_then(|st| {
+                                    match st.sockets.lock().unwrap().get(&handle) {
+                                        Some(Sock::Queue(q)) => Some(q.clone()),
+                                        _ => None,
+                                    }
+                                })
+                            });
+                            match queue {
+                                // Into the queue, so a reader parked on it is woken by them.
+                                Some(q) => q.unread(bytes.clone()),
+                                // A socket has none, so they wait under the handle instead.
+                                None => {
+                                    if let Some(map) = HOST.with(|h| {
+                                        h.borrow().as_ref().map(|st| st.pushback.clone())
+                                    }) {
+                                        map.lock().unwrap().entry(handle).or_default()
+                                            .extend(bytes.iter().copied());
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let socket = HOST.with(|h| {
                         h.borrow().as_ref().and_then(|st| st.receiving.lock().unwrap().remove(&id))
                     });

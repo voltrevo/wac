@@ -1,7 +1,8 @@
 # 0308 — dropping a ticket throws away an answer that had already arrived
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** agent-b
+- **Fixed in:** `native/src/`, `native/v8/src/`, 2026-08-31
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -60,3 +61,39 @@ never look; into the per-handle table for a socket, which has no queue to return
 - `Cap::Discard` (wasmtime) and `Cap::Drop` (v8) consult it and hand the bytes back.
 - Measure against the 0-of-10 baseline above, not against a single green run —
   `0307b` took three wrong answers because a small sample said yes each time.
+
+## Fixed on both hosts — agent-b, 2026-08-31
+
+A `reading: HashMap<ticket_id, handle>` on each host, filled where `Cap::Recv` submits, consulted by
+`Cap::Discard` (wasmtime) and `Cap::Drop` (v8). The bytes go back the way `0307b` established: into
+the **queue** for a child's stream, so a reader parked on it is woken by them, and into the
+per-handle table for a socket, which has no queue to return to.
+
+| | drop-window arm | control |
+|---|---|---|
+| before | 0/10 on both hosts | 6/6 |
+| after | **10/10 on both hosts** | 10/10 |
+
+`packages/platform/test/wac/lostbytes_test.wac` grew a `late` arm for it — the existing one cannot
+reach this window, because it gives up 350ms before the bytes arrive. Canaried at **0 of 6**: with
+the handle lookup returning nothing the case fails every time.
+
+### The first version of this fix did nothing, and the baseline is what said so
+
+`deliver` removed the note as soon as `complete` returned — and `complete` returning `None` means the
+answer was **filed under a live ticket**, which is exactly the state `drop` has to clean up after. So
+the note was released at the one instant it mattered, and `drop` found the answer with nowhere to put
+it. The trace said `held=true, whose=None`, which named it precisely.
+
+The note now lives from the `recv` that creates the ticket until the answer is **collected** or
+**dropped**, because the window between completion and collection is the whole of this issue.
+
+**Three fixes in this area have now needed a measured baseline to expose them** — `0307b`'s side
+table (raced), its `unread` (beaten to the guest by an `End`), and this one (freed the map too
+early). Each looked right and each passed a hopeful check. Running the arm ten times against a
+known-bad number is the only thing that has reliably worked.
+
+**And one sloppy canary, caught by reading it.** The first attempt to back this fix out added a dead
+`if let` with `None` *beside* the real branch, disabling nothing — a canary that would have
+"confirmed" the test against a build that still had the fix. Back it out by breaking the thing the
+fix turns on, and check the build actually changed.
