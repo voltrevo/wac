@@ -200,14 +200,9 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // no operand, read empty standard input and exited 0. The case makes its own `-x` rather than
     // taking a fixture, because a `-x` in `appletFixtures()` would appear in every `ls` case's output.
 
-    // A numeric sort key outside i32. It used to wrap: `4294967296` and `0` compared equal, so
-    // `-nu` dropped one of them. GitHub wac-mono#12.
-    const wide = await Deno.makeTempFile({ prefix: "wac-box-wide-" });
-    await Deno.writeTextFile(wide, "4294967296\n1\n2147483648\n-1\n");
-    assertEquals((await box(["sort", "-n", wide])).out, sys("sort", ["-n", wide]), "sort -n past i32");
-    await Deno.writeTextFile(wide, "4294967296\n0\n");
-    assertEquals((await box(["sort", "-nu", wide])).out, sys("sort", ["-nu", wide]), "sort -nu past i32");
-    await Deno.remove(wide);
+    // **Moved to `appletCases()`** — wac-mono#12, where a numeric sort key outside i32 wrapped, so
+    // `4294967296` and `0` compared equal and `-nu` dropped one of them. Two cases, each writing its
+    // own file, because they want different contents.
 
     // `split`'s suffixes past `zz`. GNU reserves a leading `z` as the marker that the suffix has
     // grown, so two letters run `aa`..`yz` and the next name is `zaaa` — this used to leave the
@@ -230,21 +225,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     await Deno.remove(ours, { recursive: true });
     await Deno.remove(theirs, { recursive: true });
 
-    // A pattern that exhausts the backtracking budget is not a match. It used to be counted as one,
-    // because only NO_MATCH was checked. GitHub wac-mono#26.
-    //
-    // Spelled twice, because `grep` reads *basic* regular expressions and this was written extended:
-    // `(a|a)*b` in basic is the literal characters, which matches nothing and exits 1, and the test that
-    // caught that was this one (wac-mono 0104). `\(a\|a\)*b` is the same pattern in the dialect `grep`
-    // actually speaks, and `-E` is the other way round.
-    const patho = await Deno.makeTempFile({ prefix: "wac-box-patho-" });
-    await Deno.writeTextFile(patho, "a".repeat(30) + "\n");
-    for (const argv of [["grep", "\\(a\\|a\\)*b", patho], ["grep", "-E", "(a|a)*b", patho]]) {
-      const gave = await box(argv);
-      assertEquals(gave.code, 2, `budget exhaustion should exit 2 for ${argv[1]}, got ${gave.code}`);
-      assertEquals(gave.out, "", `and should print no matches for ${argv[1]}`);
-    }
-    await Deno.remove(patho);
+    // **Moved to `applets_test.wac`** — wac-mono#26, where a pattern exhausting the backtracking
+    // budget was counted as a match because only `NO_MATCH` was checked. Written down rather than
+    // captured: GNU's `grep` has no budget to exhaust and answers 1 for this pattern, so the exit 2 is
+    // ours to state. It is still spelled twice there, basic and `-E`, because `(a|a)*b` in the basic
+    // dialect is the literal characters — which matches nothing and exits 1, and is how a version of
+    // that test passed while asserting nothing (wac-mono 0104).
 
     // A name that does not fit a ustar header is refused, which is what tar.wac has always claimed.
     // There was no check, so the header writer copied the first 100 bytes and archived the entry

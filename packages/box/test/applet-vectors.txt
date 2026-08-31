@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 128
+count: 130
 S 5
 seq 5
 X 0
@@ -1378,6 +1378,26 @@ X 0
 O 8
 abc
 123
+
+E 0
+
+S 55
+printf '4294967296\n1\n2147483648\n-1\n' > w; sort -n w
+X 0
+O 27
+-1
+1
+2147483648
+4294967296
+
+E 0
+
+S 40
+printf '4294967296\n0\n' > w; sort -nu w
+X 0
+O 13
+0
+4294967296
 
 E 0
 

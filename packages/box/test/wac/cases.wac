@@ -392,6 +392,11 @@ export string[] appletCases() {
     // as flags, found no operand, read empty standard input and exited **0** — a silent wrong answer.
     // GitHub wac-mono#11. The file is made by the script rather than by a fixture, because a `-x` in
     // `appletFixtures()` would appear in every `ls` case's output.
+    // A numeric sort key outside i32, which used to wrap: `4294967296` and `0` compared equal, so
+    // `-nu` dropped one of them. GitHub wac-mono#12. The file is written by the script because the two
+    // cases want different contents.
+    "printf '4294967296\\n1\\n2147483648\\n-1\\n' > w; sort -n w",
+    "printf '4294967296\\n0\\n' > w; sort -nu w",
     "printf 'contents\\n' > ./-x; cat -- ./-x",
     "printf 'contents\\n' > ./-x; cat -- -x",
     // base32 both ways, so the pair is a round trip rather than two independent spellings.

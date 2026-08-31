@@ -269,3 +269,34 @@ export string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) 
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A pattern that exhausts the backtracking budget is **not a match** — GitHub wac-mono#26.
+ *
+ * It used to be counted as one, because only `NO_MATCH` was checked. The answer is box's own rather
+ * than GNU's: GNU's `grep` has no budget to exhaust and answers 1 for this pattern, so there is
+ * nothing to capture and this is written down instead.
+ *
+ * **Spelled twice, and that is the point.** `grep` reads *basic* regular expressions, where
+ * `(a|a)*b` is the literal characters — which matches nothing and exits 1, and is how a version of
+ * this test passed while asserting nothing (wac-mono 0104). `\(a\|a\)*b` is the same pattern in the
+ * dialect `grep` actually speaks, and `-E` is the other way round.
+ */
+export string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  // Thirty `a`s and no `b`: the pattern can never succeed, and every path has to be tried to know it.
+  cli.writeFile(dir + "/patho", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".toBytes()).wait();
+
+  Ran basic = runCase(core, cli, dir, "grep '\\(a\\|a\\)*b' patho");
+  t.eqI32(basic.status, 2, "budget exhaustion exits 2 in the basic dialect: " + basic.err);
+  t.eqStr(basic.out, "", "and prints no matches");
+
+  Ran extended = runCase(core, cli, dir, "grep -E '(a|a)*b' patho");
+  t.eqI32(extended.status, 2, "and the same pattern under -E: " + extended.err);
+  t.eqStr(extended.out, "", "and prints no matches either");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
