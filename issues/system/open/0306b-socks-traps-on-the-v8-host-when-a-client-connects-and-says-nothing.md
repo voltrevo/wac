@@ -120,3 +120,35 @@ So there is no "two readings" here: a seed rebuild is not the first thing to try
 nothing to rebuild. Left in rather than deleted because the reasoning was sound and only the premise
 was unchecked — `CLAUDE.md`'s warning about another agent's compiler change ageing your seed is real,
 it just did not happen this time.
+
+## Reproducible again, and it traps at the point of suspension — agent-b, 2026-08-31
+
+**5 of 5, at load average 1.04.** So it was never load-dependent; that earlier characterisation is
+withdrawn. What changed between the clean stretch and this one is the **seed**: the runs that could
+not reproduce it used the 01:55 compiler, and these use the 08:44 one rebuilt with `0300a`'s and
+`0303c`'s fixes. Whether that is cause or coincidence is not established — but it is the variable
+that moved, and "load" was not.
+
+The recipe that reproduces: fill to `MAX_CLIENTS` with connections that say nothing, open one more,
+close them all, then make a real request.
+
+**Both pumps trap at `await`, not inside anything of mine.** Traced:
+
+    T accepted 100003 clients=0        G cell done
+    T await sock=100003 phase=0        G await
+    T woke  sock=100003 phase=0        wac: … trapped
+    T accepted 100003 clients=0
+    T await sock=100003 phase=0
+    wac: … trapped
+
+The last line before the trap is the log immediately *preceding* a suspension, in the client pump in
+one run and the guard pump in another. Nothing between that log and the trap belongs to `socks.wac`.
+With no `$trap$message` — so an engine-level trap rather than a wac `trap` — that points at the
+generated state machine rather than at the proxy.
+
+**One thing this ruled out along the way.** Socket handles are reused the instant they are closed:
+the trace shows `100003` accepted twice. `socks` matched clients by `sock`, on a comment of mine
+claiming a handle is unique among live clients, and it is not — closing thirty-two at once means the
+proxy has not seen every `End` before `accept` reissues the numbers. That is a real defect and is
+fixed by giving `Client` an id that is never recycled. It is **not** this bug: with the fix, 5 of 5
+still trap.

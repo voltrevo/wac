@@ -100,6 +100,17 @@ const i32 CLIENT_BACKLOG = 32768;
 
 /** A SOCKS connection, and the Tor stream carrying it. */
 struct Client {
+  /**
+   * This client's identity, which the socket handle cannot be.
+   *
+   * **Handles are reused the moment they are closed.** The first draft matched clients by `sock`,
+   * on the reasoning that a handle is unique among live clients — and it is not: closing thirty-two
+   * at once means `socks` has not seen every `End` before `accept` hands the same number out again,
+   * so two `Client`s carry one handle and `dropClient` removes whichever it finds first. That is
+   * this file's own warning about routing a stranger's bytes, in the shape the rewrite gave it.
+   * `issues/system/0306b`.
+   */
+  i32 id;
   i32 sock;
   /** Which circuit in `circuits`; -1 until a destination is known. */
   i32 circIdx;
@@ -136,6 +147,8 @@ struct Client {
  * case that says so. A parameter is a parameter either way.
  */
 struct Proxy {
+  /** Hands out `Client.id`; never reused, unlike a socket handle. */
+  i32 nextClientId;
   Network net;
   Guard guard;
   Vec<Client> clients;
@@ -171,7 +184,7 @@ void dropClient(Cli cli, Proxy x, Client c) {
   // Found by handle: a socket handle is unique among live clients, and identity is not something
   // this language offers to compare.
   for (i32 i = 0; i < x.clients.len(); i++) {
-    if (x.clients.get(i).sock == c.sock) { x.clients.swapRemove(i); return; }
+    if (x.clients.get(i).id == c.id) { x.clients.swapRemove(i); return; }
   }
 }
 
@@ -222,7 +235,7 @@ void forget(Cli cli, Proxy x, Client c) {
   c.gone = true;
   cli.closeSocket(c.sock);
   for (i32 i = 0; i < x.clients.len(); i++) {
-    if (x.clients.get(i).sock == c.sock) { x.clients.swapRemove(i); return; }
+    if (x.clients.get(i).id == c.id) { x.clients.swapRemove(i); return; }
   }
 }
 
@@ -399,7 +412,8 @@ async void pumpAccept(Core core, Cli cli, Proxy x) {
       x.stopped = true;
       return;
     }
-    Client c = Client(incoming.handle, -1, 0, 0, u8[0](), "", false);
+    Client c = Client(x.nextClientId, incoming.handle, -1, 0, 0, u8[0](), "", false);
+    x.nextClientId = x.nextClientId + 1;
     x.clients.push(c);
     pumpClient(core, cli, x, c);
   }
@@ -606,7 +620,7 @@ export i32 main(Core core, Cli cli) {
   // rather than the answer until `socksnet_test.wac` started it on 0 and could not find it.
   core.log("socks5 on 127.0.0.1:" + itoa(listener.port) + ", circuits built on demand per port");
 
-  Proxy x = Proxy(net, guard, Vec.create(), Vec.create(), 0x80000002, listener.handle, false);
+  Proxy x = Proxy(1, net, guard, Vec.create(), Vec.create(), 0x80000002, listener.handle, false);
   pumpGuard(core, cli, x);
   pumpAccept(core, cli, x);
 
