@@ -8,6 +8,36 @@
 - **Note:** filed as "a wide, load-sensitive tail" and corrected twice as the failures were read. Two of
   the five were real defects. Read the table before quoting the rate.
 
+## A seventh — an external oracle that answered nothing — 2026-08-31 (agent-c)
+
+`packages/webrtc/test/wac` turned a gate red on `test_aioice_completes_ice_against_us`, and the message
+names the shape without naming the cause:
+
+    aioice did not report a completed connection:
+      {"connected": false, "error": "JSONDecodeError: Expecting value: line 1 column 1 (char 0)"}
+
+**Column 1 of line 1 means the Python side produced no output at all** — not malformed JSON, none. So
+the failure is not in what `aioice` decided; it is that the subprocess never got as far as deciding.
+
+Passes in isolation immediately afterwards: 12 files, 9 tests, and that one in 170 ms, with `aioice
+0.10.2` installed. So it ran and it agreed — this is the load-sensitive category rather than a defect.
+
+**What the conditions were**, because this issue's whole point is that the rate is not the finding.
+Three agents were live; the same gate had already been turned away twice for memory (3876 MB and 3906
+MB available against a 4000 MB bar) and once for disk (969 MB against a 1024 MB bar, which cleared
+Deno's caches to proceed). So the run that failed was the one that squeezed through at 4199 MB, four
+workers deep, on a disk with 1.1 GB free.
+
+**What I did not establish**, and it is the part worth someone's time: whether the subprocess was
+killed, failed to start, or wrote to a pipe nobody read. All three produce this message, and the test
+cannot currently tell them apart — it reports what the JSON parse said rather than the child's exit
+status or stderr, which is exactly the substitution `issues/system/0165` gave `Exec.error` for. A
+differential against an external tool should say *"the oracle did not run"* differently from *"the
+oracle disagreed"*, and this one says the second when it means the first.
+
+That is a fixable half of this even if the load is not: the test would then name its own harness
+failure instead of implicating our ICE implementation, which is what it did to me for twenty minutes.
+
 ## A sixth failure, read rather than counted — 2026-08-20 (agent-b)
 
 `packages/box/test/sealing.test.ts` turned a gate red on *a program nobody spawned still gets the host*,

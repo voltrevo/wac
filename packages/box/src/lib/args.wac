@@ -124,6 +124,31 @@ export Args parseFrom(Cli cli, i32 first, string name) {
 }
 
 /** The same, over arguments somebody already has. `first` is where the applet's own begin. */
+/**
+ * `--long` or `--long=value` as the short flag it stands for, or the argument unchanged.
+ *
+ * Unchanged is the important half: an option no table claims must reach `refuseFlags` **spelled as it
+ * was written**, or the refusal names something the user did not type. That was the failure this
+ * whole area came from — `sort --key=2` lost its first two bytes to the loop that reads `-iv`, and the
+ * message named the *dash*: `sort: invalid option -- '-'`.
+ */
+string shortFormOf(string name, string s) {
+  u8[] b = s.toBytes();
+  if (b.len() < 3 || b[0] != '-' || b[1] != '-') { return s; }
+  string body = s.slice(2, s.len());
+  i32 eq = body.indexOf("=");
+  string opt = eq < 0 ? body : body.slice(0, eq);
+  i32 letter = longToShort(name, opt);
+  if (letter < 0) { return s; }
+  // Attached, because that is the spelling the loop below already handles for a value: `--lines=5`
+  // becomes `-n5`. With no `=`, a flag that takes a value picks the next argument up on its own, which
+  // is `--lines 5` and is what GNU does too.
+  u8[] one = u8[1](fill: 0);
+  one[0] = letter;
+  string flag = "-" + string.fromBytes(one);
+  return eq < 0 ? flag : flag + body.slice(eq + 1, body.len());
+}
+
 export Args parseList(string[] argv, i32 first, string name) {
   // **One pass.** It used to count positionals, allocate, then fill — and the two walks disagreed
   // about whether `-n 2` consumes the `2`, so `tail -n 2 file` allocated two slots and wrote one,
@@ -151,8 +176,14 @@ export Args parseList(string[] argv, i32 first, string name) {
     // so. Everything after it is an operand, including a later `--`.
     if (!optionsOver && s == "--") { optionsOver = true; i++; continue; }
     if (optionsOver || !isFlag(s)) { scratch[at] = s; at++; i++; continue; }
+    // **A long option is rewritten to its short spelling, here and nowhere else.** `--lines=5` becomes
+    // `-n5` and `--ignore-case` becomes `-i`, and then the loop below parses it exactly as if it had
+    // been written that way — which is why no applet had to change to gain long options, and why one
+    // cannot support `-n` and not `--lines`. `longFlags` below is the table.
+    s = shortFormOf(name, s);
     u8[] b = s.toBytes();
-    // `--name` and `--name=value`: recorded, not decomposed. `--` itself was taken above.
+    // `--name` and `--name=value` that no table claims: recorded, not decomposed. `--` itself was taken
+    // above, and `--help` is answered by `dispatch` before any applet sees it.
     if (b[1] == '-') {
       if (longOpt == "") { longOpt = s; }
       i++;
@@ -242,6 +273,78 @@ export Args parseList(string[] argv, i32 first, string name) {
  * a perfectly good one, while `head -n` takes a value that has to be a number and `x` is a mistake. The
  * parser could not tell them apart, so it quietly ignored every value it could not read as digits.
  */
+/**
+ * The **long** spelling of each short flag an applet implements, as GNU spells it.
+ *
+ * One entry per implemented flag, `long=c` separated by commas, `c` being the short letter the applet
+ * already understands. `parseList` rewrites `--long` and `--long=value` into that short form before it
+ * parses anything, so **no applet changed to gain long options** — an applet that handles `-n` handles
+ * `--lines=5` for free, and cannot handle one and not the other.
+ *
+ * **Every row was read off the real tool's `--help`, not written from memory**, and getting the
+ * derivation right took three passes: the first missed `strings -n`/`--bytes`, whose long form is on a
+ * continuation line, and `tr -c, -C, --complement`, where two short flags share one long name; the
+ * second matched short flags inside the *description* text, so `cat`'s `-b, --number-nonblank …
+ * overrides -n` bound `n` to `--number-nonblank` instead of to `--number`. `test/flags.test.ts` derives
+ * it again from the installed tools and compares, so a row that drifts fails rather than quietly
+ * accepting a spelling GNU does not have.
+ *
+ * **A short flag with no long form is simply absent**, which is a real category rather than an
+ * omission: `cat -e` is "equivalent to -vE", `grep -I` is shorthand for `--binary-files=without-match`,
+ * and GNU gives neither a long name. Absent means `refuseFlags` reports `--whatever` as unimplemented,
+ * which is what it did for every long option before this.
+ *
+ * **Exact matches only.** GNU accepts any unambiguous prefix — `--ign` for `--ignore-case` — and this
+ * does not. Prefix matching makes the set of accepted spellings depend on the *rest* of the table, so
+ * adding a flag can silently take a spelling away from another one; that is a decision worth making
+ * deliberately rather than inheriting.
+ */
+export string longFlags(string name) {
+  if (name == "base32" || name == "base64") { return "decode=d,wrap=w"; }
+  if (name == "cat") {
+    return "show-all=A,show-ends=E,show-tabs=T,number-nonblank=b,number=n,squeeze-blank=s," +
+           "show-nonprinting=v";
+  }
+  if (name == "cut") { return "bytes=b,characters=c,delimiter=d,fields=f"; }
+  if (name == "fold") { return "width=w"; }
+  if (name == "grep") {
+    return "extended-regexp=E,files-without-match=L,text=a,count=c,ignore-case=i," +
+           "files-with-matches=l,line-number=n,quiet=q,invert-match=v,line-regexp=x";
+  }
+  if (name == "head" || name == "tail") { return "bytes=c,lines=n"; }
+  if (name == "id") { return "group=g,name=n,user=u"; }
+  if (name == "mkdir") { return "parents=p"; }
+  if (name == "rm") { return "recursive=r,force=f"; }
+  if (name == "shuf") { return "head-count=n"; }
+  if (name == "sort") { return "numeric-sort=n,reverse=r,unique=u"; }
+  if (name == "split") { return "lines=l"; }
+  if (name == "strings") { return "bytes=n"; }
+  if (name == "tr") { return "complement=C,delete=d,squeeze-repeats=s,truncate-set1=t"; }
+  if (name == "uniq") { return "count=c,repeated=d,unique=u"; }
+  if (name == "wc") { return "bytes=c,lines=l,words=w"; }
+  return "";
+}
+
+/**
+ * The short letter `--opt` means for this applet, or `-1`.
+ *
+ * `opt` is the name alone — `parseList` has already taken off the dashes and any `=value`.
+ */
+export i32 longToShort(string name, string opt) {
+  string table = longFlags(name);
+  if (table == "" || opt == "") { return -1; }
+  i32 from = 0;
+  while (from <= table.len()) {
+    i32 end = from;
+    while (end < table.len() && table.slice(end, end + 1) != ",") { end++; }
+    string entry = table.slice(from, end);
+    i32 eq = entry.indexOf("=");
+    if (eq > 0 && entry.slice(0, eq) == opt) { return entry.toBytes()[eq + 1]; }
+    from = end + 1;
+  }
+  return -1;
+}
+
 bool takesNumber(string name, i32 letter) {
   // `-c` counts bytes where `-n` counts lines; everything else about them is the same.
   if (name == "head" || name == "tail") { return letter == 'n' || letter == 'c'; }

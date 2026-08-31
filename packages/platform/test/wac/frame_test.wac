@@ -25,7 +25,8 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec, FAULT_NOT_GRANTED, FileResult, Stat } from "std/platform.wac";
+import { Frame, Grants, childCliGranted } from "../../src/frame.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
@@ -150,3 +151,76 @@ export string test_the_two_frames_agree_on_the_binary_as_well(Core core, Cli cli
   return t.report();
 }
 
+
+/**
+ * A frame's child can be given **fewer** capabilities than its parent, and a withheld one answers
+ * exactly what a host answers a program that was never granted it.
+ *
+ * `childCli` hands the parent's authority on untouched, which is right for the shell — a child is as
+ * trusted as the shell that spawned it, `issues/system/0028` — and left a frame unable to model the
+ * one thing this system is organised around. `childCliGranted` is the other half:
+ * `issues/system/0302c`.
+ *
+ * **Each capability is asked with a control beside it.** A refusal proves nothing on its own: the same
+ * failure would appear if the path were wrong, the fixture missing, or the frame's `cwd` unresolved.
+ * The pair is what says the grant is doing the work.
+ */
+export string test_a_withheld_capability_answers_as_a_host_does(Core core, Cli cli) {
+  T t = T.create();
+  string dir = root(cli) + "/.cache/wac-frame-grants";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/subject";
+  t.isTrue(cli.writeFile(path, "alpha\n".toBytes()).wait().ok(), "wrote the subject");
+
+  Frame f = Frame.of(string[]("probe"), u8[0](), dir, false);
+
+  // Read: granted reads, withheld refuses with the host's sentence and the fault that names the
+  // category — `FAULT_NOT_GRANTED`, not `FAULT_DENIED`. Nothing denied anything; the program was never
+  // handed a filesystem, and `issues/system/0193` is where that distinction was drawn.
+  Cli all = childCliGranted(f, cli, Grants.everything());
+  t.isTrue(all.readFile(path).wait().ok, "with the grant, the read works");
+  Cli noRead = childCliGranted(f, cli, Grants(false, true, true));
+  FileResult denied = noRead.readFile(path).wait();
+  t.isFalse(denied.ok, "without it, the read is refused");
+  t.eqStr(denied.error, "Not granted to this application", denied.error);
+  t.eqI32(denied.fault, FAULT_NOT_GRANTED(), "and it is not-granted rather than denied");
+
+  // `stat` too, and this is the one worth asking separately: `Stat` says to check `fault` before
+  // trusting `exists`, precisely so "there is nothing here" and "I could not look" stay different
+  // answers. A withheld `stat` that reported `exists = false` with no fault would be the first of
+  // those, and would read as a missing file.
+  Stat blind = noRead.stat(path).wait();
+  t.eqI32(blind.fault, FAULT_NOT_GRANTED(), "a withheld stat faults rather than answering absent");
+  t.isTrue(all.stat(path).wait().exists, "and with the grant it sees the file");
+  t.isTrue(noRead.readDir(dir).wait() is null, "a withheld readDir lists nothing");
+
+  // Write: the effect matters as much as the answer. A refusal that returned a fault and made the file
+  // anyway would pass on the message alone, which is the failure mode a capability check has.
+  Cli noWrite = childCliGranted(f, cli, Grants(true, false, true));
+  string made = dir + "/made";
+  t.neI32(noWrite.writeFile(made, "x".toBytes()).wait().fault, 0, "a withheld write refuses");
+  t.isFalse(cli.stat(made).wait().exists, "and writes nothing");
+  t.neI32(noWrite.mkdir(dir + "/sub", false).wait().fault, 0, "and so does mkdir");
+  t.isFalse(cli.stat(dir + "/sub").wait().exists, "which also makes nothing");
+  t.eqI32(all.writeFile(made, "x".toBytes()).wait().fault, 0, "with the grant the write lands");
+  t.isTrue(cli.stat(made).wait().exists, "and the file is there");
+
+  // Env: null, because that is what a host answers, and `issues/system/0261c` is the open question
+  // about it — `env` cannot say whether a variable is unset or withheld. Answering anything else here
+  // would invent a distinction the capability does not have.
+  Cli noEnv = childCliGranted(f, cli, Grants(true, true, false));
+  t.isTrue(noEnv.env("PATH").wait() is null, "a withheld env answers null");
+
+  // **Nothing at all**, which is the world a program built with no flags runs in, and the case the
+  // three above cannot stand in for: each of them withholds one capability while keeping the others,
+  // so none of them asks whether the *combination* holds. `Grants.nothing()` is the shorthand for it
+  // and is what `packages/box`'s refusal tests are written against.
+  Cli none = childCliGranted(f, cli, Grants.nothing());
+  t.isFalse(none.readFile(path).wait().ok, "with nothing granted, the read is refused");
+  t.neI32(none.writeFile(dir + "/none", "x".toBytes()).wait().fault, 0, "and so is the write");
+  t.isTrue(none.env("PATH").wait() is null, "and the environment is not there");
+  t.isFalse(cli.stat(dir + "/none").wait().exists, "and nothing was made");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

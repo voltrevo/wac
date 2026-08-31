@@ -13,7 +13,8 @@
 import { Cli, Core, FileResult } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
-import { Ran, layFixtures, runCase } from "./replay.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, differs, layFixtures, runApplet, runCase } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-writepath"; }
@@ -100,6 +101,43 @@ export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli 
   FileResult f = cli.readFile(dir + "/out").wait();
   t.isTrue(f.ok, "and made the file");
   t.eqStr(string.fromBytes(f.bytes), "through\n", "and wrote the same bytes to it");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `cp` writes beside its target and renames, so no temporary name survives a successful copy.
+ *
+ * The tier this is named for — `writeFile`, `remove`, `rename` — exists because `writeFile` was the
+ * only mutation the world had, which meant an application could create a file and never move or remove
+ * one, so it could not write *safely* either.
+ *
+ * **The directory listing is the assertion, not the copy.** A `cp` that wrote its destination directly
+ * would pass every content check here and fail only under a reader that arrived mid-write, which is not
+ * a thing a test can schedule. What it cannot hide is the temporary it left behind.
+ */
+export string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  string source = cli.cwd().wait() + "/README.md";
+  u8[] want = cli.readFile(source).wait().bytes;
+  t.isTrue(want.len() > 0, "README.md is readable and not empty");
+
+  t.eqI32(runApplet(core, cli, dir, string[]("cp", source, dir + "/copy")).status, 0, "cp ran");
+  t.eqStr(differs(cli.readFile(dir + "/copy").wait().bytes, want), "", "cp copied it");
+
+  string[]? listed = cli.readDir(dir).wait();
+  if (listed is null) {
+    t.fail("the case directory is not listable");
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+  string[] left = listed!;
+  t.eqI32(left.len(), 1, "a temporary file survived: " + itoa(left.len()) + " entries");
+  if (left.len() > 0) { t.eqStr(left[0], "copy", "and the one left is the copy"); }
 
   cli.remove(dir, true).wait();
   return t.report();

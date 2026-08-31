@@ -382,7 +382,7 @@ not type. `Args.longOpt` keeps it whole, and since no applet here implements a s
 answer needs no table:
 
 ```
-$ box ls --all      ls: long options are not implemented: --all
+$ box ls --all      ls: long option not implemented: --all
 ```
 
 That is the one statement that is true of every applet, so this half of the check runs for all of them

@@ -45,10 +45,20 @@ export bool refuseFlags(Core core, Args a) {
   }
   // **No applet here implements a single long option**, so there is no table for them and no need of
   // one: the statement that covers every case is that this program takes short options only. GNU
-  // separates "a long option we do not have" from "a long option nobody has" and this cannot, so it
-  // claims neither — saying "unrecognized" would blame a caller who wrote `--reverse`, which is real.
+  // separated "a long option we do not have" from "a long option nobody has" and this could not, so
+  // it claimed neither. Half of that is fixed: `longFlags` in `lib/args.wac` lists what each applet
+  // takes, so `--reverse` no longer reaches here at all. The rest is below.
   if (a.longOpt != "") {
-    core.warn(a.name + ": long options are not implemented: " + a.longOpt);
+    // **Still not "unrecognized", and the reason is now sharper than it was.** `longFlags` gives every
+    // long option this applet *does* take, so what reaches here is one it does not — but that is still
+    // two cases wearing one coat: a spelling GNU has and we have not (`sort --key`), and one nobody has
+    // (`sort --nope`). GNU says `unrecognized option '--nope'` and is entitled to, because for GNU there
+    // is no third possibility. Saying it here would blame a caller who wrote something real.
+    //
+    // Separating them needs a table of what the real tool documents, the long-option twin of `gnuFlags`
+    // beside `implementedFlags` — `issues/system/0303c`. Until then this names the applet's gap and
+    // claims nothing about anyone else's.
+    core.warn(a.name + ": long option not implemented: " + a.longOpt);
     return true;
   }
   if (!flagsChecked(a.name)) { return false; }

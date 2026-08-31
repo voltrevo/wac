@@ -108,42 +108,43 @@ async function exists(path: string): Promise<boolean> {
 //   cp and tee's destinations                                       -> writepath_test.wac
 //   diff's fourteen shapes                                          -> diff_test.wac
 //
-// **What cannot move, and this is the useful half of the list.** Four shapes, each represented below or
-// further down this file:
+// **What is left, and none of it is a wall.** Asked directly whether these are blockers or just work
+// nobody has done, the answer is the second, and saying "cannot move" was hiding that:
 //
-//   - a test that needs *fewer* grants than it holds. `runApplet` hands the applet `childCli(f, cli)`,
-//     which passes the parent's grants straight through, so an in-process frame can have the test's
-//     authority or more and never less — `issues/system/0302c`. Every refusal test is here for that one
-//     reason, and there are five of them, each building and spawning an executable to assert an exit
-//     code and a sentence.
-//   - a test that needs a capability wac has not got. `Cli` can read a symlink and cannot make one —
-//     `issues/system/0300c` — so the fixture for the `tar` case below cannot be built in wac at all.
-//   - a test of `main` rather than of an applet. `main` reads argv from the process; `dispatch` is the
-//     half a frame can call.
-//   - a test about a process lifecycle: `yes` stopping when its pipe closes, a server and a client with
-//     a socket between them.
+//   - **grants, which are no longer one category but two.** `childCliGranted` — the helper
+//     `issues/system/0302c` asked for — withholds `read`, `write` or `env` from a frame's child, each
+//     answering what a host answers an ungranted program, and two tests moved on the strength of it.
+//     What is left divides:
+//
+//       **one that must stay however good the helper gets.** "a file still needs the grant, and says
+//       so" is the only test that reads `Not granted to this application` from a *host* rather than
+//       from our own source. Everything in `grants_test.wac` compares an applet against a sentence the
+//       helper hard-codes; delete this and the helper becomes an oracle agreeing with itself.
+//
+//       **`bin/`, which is not undone work either.** It asserts the *shebang* of a built artefact —
+//       which grants a separately-built applet declares, and that a `wc` built with none cannot open a
+//       file when told to. A wac test could shell out to `wac app` and read that line; what stops it
+//       being worth doing is that the test spawns a build either way, so migrating saves no process
+//       and buys nothing. That is a different sentence from "cannot", and the difference has mattered
+//       three times in this file today.
+//   - **one test that needs a capability wac has not got.** `Cli` reads a symlink and cannot make one,
+//     so the `tar` fixture below cannot be built in wac. Also buildable, and additive:
+//     `issues/system/0300c`.
+//   - **the network tests**, and these are the only ones I would keep spawning on purpose. A server and
+//     a client with a real socket between them is a claim *about* the process boundary, so testing it
+//     across one is the point rather than the cost.
+//
+// So: one shape worth keeping, and two that are undone work with issue numbers on them.
+//
+// **Two entries came off this list by being checked rather than argued**, which is the reason it now
+// reads the way it does. `main` was said to be unreachable because it reads argv from the process — a
+// frame supplies argv. `yes` was said to need a pipe to be closed — a frame's buffer fills and `write`
+// answers false, which is the property `yes` actually depends on and the reason `write` returns a bool
+// at all. Both were written here as facts about the world; neither survived opening the file.
 
-Deno.test("rm -f without the write grant is a denial, not a silence", async () => {
-  // `-f` forgives a file that is already *gone*, not a filesystem it was never allowed to touch. The
-  // three cases that need a mode — a file that cannot be unlinked, one that was never there, and the
-  // same absence without `-f` — are `test/wac/unreadable_test.wac` now. This one stayed because it is
-  // about the grant: the program is built to read and not to write, and no in-process frame can be
-  // given less than this test process holds.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-rmf-" });
-  const guarded = await Deno.makeTempDir({ prefix: "wac-box-rmf-d-" });
-  try {
-    await buildApp(BOX, built, { read: true });
-    const runner = await appRunner(BOX, { read: true });
-    assertEquals(
-      (await runner.run(["rm", "-f", `${guarded}/nothing-here`])).code,
-      1,
-      "no write grant is denial",
-    );
-  } finally {
-    await Deno.remove(built);
-    await Deno.remove(guarded, { recursive: true });
-  }
-});
+// **Moved to `packages/box/test/wac/grants_test.wac`.** It stayed here because an in-process frame
+// could not be given fewer grants than the test holds; `childCliGranted` in `frame.wac` now can, so it
+// went — with a control beside it, so the refusal is the grant talking and not `rm` being broken.
 
 Deno.test("tar refuses a symlink rather than following it", async () => {
   // GitHub wac-mono#25, where `tar` walked into a link to a directory, stored it under the link's name,
@@ -191,39 +192,11 @@ Deno.test("tar refuses a symlink rather than following it", async () => {
   }
 });
 
-Deno.test("the dispatcher: an unknown applet, --help, and the usage listing", async () => {
-  // **`main`, not `dispatch`.** `test/wac/applets_test.wac` asserts that `dispatch` answers `UNKNOWN`
-  // for a name it has not got; turning that sentinel into a usage error, and answering `--help` at all,
-  // is `main`'s job, and `main` reads argv from the process. There is no frame call that reaches it.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-usage-" });
-  try {
-    await buildApp(BOX, built, { read: true });
-    const runner = await appRunner(BOX, { read: true });
-    const box = (args: string[]) => runner.run(args);
-
-    assertEquals((await box(["nope"])).code, 2, "an unknown applet is a usage error");
-    for (const how of ["help", "--help", "-h"]) {
-      const asked = await box([how]);
-      assertEquals(asked.code, 0, `box ${how} should succeed, got ${asked.code}`);
-      assertEquals(asked.err.includes("usage: box"), true, `box ${how} should print the usage`);
-    }
-
-    // The usage message lists every applet, wrapped. Nothing looked at it, so `wrapped` could return the
-    // empty string — and the list of what this program can do would simply be missing.
-    const help = await box([]);
-    assertEquals(help.code, 2, "no applet is a usage error");
-    for (const name of ["cat", "grep", "sha256sum", "zstd"]) {
-      assertEquals(help.err.includes(name), true, `usage does not list ${name}:\n${help.err}`);
-    }
-    const appletLines = help.err.split("\n").filter((l) => l.startsWith("  ") && !l.includes(":"));
-    assertEquals(appletLines.length > 1, true, `the applet list is not wrapped at all:\n${help.err}`);
-    for (const line of appletLines) {
-      assertEquals(line.length <= 74, true, `a usage line is ${line.length} wide: ${line}`);
-    }
-  } finally {
-    await Deno.remove(built);
-  }
-});
+// **Moved to `packages/box/test/wac/dispatcher_test.wac`, and it should not have been here at all.**
+// The note that kept it said `main` reads argv from the process and so no frame call could reach it.
+// That was wrong: `Frame.of` takes an argv and `childCli` answers `argCount` and `arg` out of it —
+// `frame.wac:282` says so in as many words. `main(childCore(f, core), childCli(f, cli))` runs the whole
+// program with its streams captured. Nothing was blocking it; I had not looked.
 
 Deno.test("a file still needs the grant, and says so", async () => {
   // **What is left of "box works as a filter".** The filter half — `wc` and `sha256sum` over standard
@@ -231,9 +204,18 @@ Deno.test("a file still needs the grant, and says so", async () => {
   // `packages/box/test/wac/applets_test.wac` against expectations captured once. Reading standard input
   // is not a capability, so none of it needed a built program.
   //
-  // This half does. The claim is about an application handed **no filesystem**, and in process the frame
-  // inherits the suite's own capabilities — so an in-process version would asserted nothing. It is one of
-  // the things `issues/system/0193` lists as staying: the grants a *built* applet asks for.
+  // **This half stays, and the reason it gives is no longer the reason.** It said an in-process frame
+  // inherits the suite's capabilities so the test would assert nothing. That was true until
+  // `childCliGranted` — `packages/box/test/wac/grants_test.wac` now makes this exact assertion in a
+  // frame, `cat` against a withheld read.
+  //
+  // What that leaves is better than what it replaced. The in-process version compares the applet
+  // against a sentence the *helper* hard-codes; this one compares it against the sentence a real host
+  // actually produces. Delete it and `childCliGranted` becomes an oracle agreeing with itself: the
+  // helper could drift from every host and all six in-process grant assertions would stay green.
+  //
+  // So it is not a duplicate — it is the anchor the duplicate hangs from, and it is the *only* test
+  // that reads the phrase from a host rather than from our own source.
   //
   // "Not granted to this application" is `faultWords`' phrase for `FAULT_NOT_GRANTED`. "Permission
   // denied" would be wrong: nothing denied anything, the program was never handed a filesystem.
@@ -282,63 +264,27 @@ Deno.test("a file still needs the grant, and says so", async () => {
 // system `date` rather than our own parser, and `urlencode`/`urldecode` round-trip four strings
 // including one already percent-encoded.
 
-Deno.test("cp writes beside its target and renames, and none of the tier happens without the grant", async () => {
-  // `writeFile` was the only mutation the world had, which meant an application could
-  // create a file but never remove or move one — so it could not write safely either.
-  // These three ops are what `cp` needs to write beside its target and rename into place.
+Deno.test("cp and the write tier, through a real process", async () => {
+  // **Both claims moved, and what is left is the smoke test the boundary is entitled to.**
+  // `cp` leaving no temporary behind is `test/wac/writepath_test.wac`; `mkdir` refusing without the
+  // write grant is `test/wac/grants_test.wac`, which `childCliGranted` made possible.
+  //
+  // This keeps one spawned spelling of the tier, because every assertion above it in this file runs
+  // the applet as a value and none of them proves the *built* program can write at all. It is a smoke
+  // test and says so — one copy, one comparison, no attempt to re-state what the wac files now hold.
   const built = await Deno.makeTempFile({ prefix: "wac-box-m-" });
   const root = await Deno.makeTempDir({ prefix: "wac-box-fs-" });
   try {
     await buildApp(BOX, built, { read: true, write: true });
-    const box = (args: string[]) => {
-      const r = new Deno.Command(built, { args, stdout: "piped", stderr: "piped" }).outputSync();
-      return { code: r.code, err: new TextDecoder().decode(r.stderr) };
-    };
-    const exists = async (p: string) => {
-      try {
-        await Deno.stat(p);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    // **The rest of the tier is `test/wac/applets_test.wac`** — `mkdir -p` and its parents, `touch`
-    // leaving an existing file alone, `mv`, `rmdir` refusing a non-empty directory, `rm` needing `-r`.
-    // Those are assertions about our own behaviour and need neither a build nor a process.
-    //
-    // What is left here is the grant, which is a property of the built program and the host that
-    // enforces it — a test process holds grants of its own, so it cannot ask. `cp` writing beside its
-    // target *is* asserted in process now, since `issues/system/0166` was fixed and a frame carries a
-    // child's redirection; this keeps the spawned spelling of it, which is the smoke test the boundary
-    // is entitled to.
-    // The point of the tier: `cp` writes beside its target and renames, so the destination
-    // is never seen half-written and no temporary name survives a successful copy.
-    assertEquals(box(["cp", "README.md", `${root}/copy`]).code, 0);
+    const r = new Deno.Command(built, {
+      args: ["cp", "README.md", `${root}/copy`], stdout: "piped", stderr: "piped",
+    }).outputSync();
+    assertEquals(r.code, 0, new TextDecoder().decode(r.stderr));
     assertEquals(
       await Deno.readTextFile(`${root}/copy`),
       await Deno.readTextFile("README.md"),
-      "cp copied it",
+      "the built program copied it",
     );
-    const left: string[] = [];
-    for await (const e of Deno.readDir(root)) left.push(e.name);
-    // Just the copy: `moved` was the `mv` step, which is in the wac file now.
-    assertEquals(left.sort().join(","), "copy", `a temporary file survived: ${left}`);
-
-    // And without the write grant none of it happens, whatever the arguments say.
-    const readOnly = await Deno.makeTempFile({ prefix: "wac-box-ro-" });
-    try {
-      await buildApp(BOX, readOnly, { read: true });
-      const r = new Deno.Command(readOnly, {
-        args: ["mkdir", `${root}/denied`],
-        stdout: "piped",
-        stderr: "piped",
-      }).outputSync();
-      assertEquals(r.code, 1, "mkdir without the grant should fail");
-      assertEquals(await exists(`${root}/denied`), false, "and should make nothing");
-    } finally {
-      await Deno.remove(readOnly);
-    }
   } finally {
     await Deno.remove(built);
     await Deno.remove(root, { recursive: true });
@@ -481,33 +427,10 @@ async function pipedThrough(binary: string, args: string[], input: string): Prom
   return new TextDecoder().decode(r.stdout);
 }
 
-Deno.test("a streaming applet with no grants still says why", async () => {
-  // **What is left of "streaming applets hold a chunk, not the input".** The comparisons went to
-  // `packages/box/test/wac/streaming_test.wac`: `wc` and `strings` against the real ones over a fixture
-  // spanning several chunks, a 200,000-byte run that must come back as *one* string rather than one per
-  // read, `tr` through standard input because it takes no file operand, `hex`'s framing as a length, and
-  // `crc32` against a CRC table written out there — the one case that is order-dependent over every
-  // byte, so a chunk handed over twice or not at all changes the answer.
-  //
-  // **This half cannot follow them, and the reason is the interesting one.** `runApplet` builds a frame
-  // whose `Cli` is `childCli(f, cli)`, and that passes the parent's grants straight through: an
-  // in-process frame can be given the same authority as the test or more, never less. A refusal test
-  // needs *fewer*, so it needs a real process with a real grant set — which is what `appRunner` with an
-  // empty world is. Every refusal assertion in this file is here for that one reason.
-  //
-  // The message shape is the claim, not just the status: a denied read must say why, which a
-  // bool-returning `openInput` could not.
-  const fixture = await Deno.makeTempFile({ prefix: "wac-stream-in-" });
-  try {
-    await Deno.writeTextFile(fixture, "alpha beta\n");
-    const ungranted = await appRunner(BOX, {});
-    const r = await ungranted.run(["cat", fixture]);
-    assertEquals(r.code, 1);
-    assertEquals(r.err.includes("Not granted to this application"), true, r.err);
-  } finally {
-    await Deno.remove(fixture);
-  }
-});
+// **Moved to `packages/box/test/wac/grants_test.wac`** as `test_a_denied_read_says_why`, for the same
+// reason: `childCliGranted` can withhold `read`, and a withheld capability answers exactly what a host
+// answers an ungranted program — `FAULT_NOT_GRANTED` and "Not granted to this application". The
+// message shape was always the claim here, not the status.
 
 // **Moved to `packages/box/test/wac/lines_test.wac`.** `head`, `tail`, `nl` and `uniq` against the real
 // ones over a multi-chunk fixture with blank lines, adjacent duplicates and non-ASCII in it, and over
@@ -649,31 +572,12 @@ Deno.test("box's network applets: a wac server and a wac client, over real TCP",
   }
 });
 
-Deno.test("yes stops when the pipe it writes to is closed", async () => {
-  // **What is left of "box's newest batch".** `sponge`, `zstd`, `json`, `stat`, `uuid`, `shuf` and
-  // `paste` are `packages/box/test/wac/batch_test.wac` now — including `sponge`'s second assertion,
-  // that no temporary file survived, which is the half saying the atomicity was real rather than that
-  // the answer happened to be right.
-  //
-  // **`yes` could not go with them, and it is the clearest case in this file of why some cannot.**
-  // Every other applet here is judged by what it writes, which a frame captures. This one never ends on
-  // its own: it stops because `write` reports the closed pipe, and *that* is why `write` returns a bool
-  // at all. Closing the read end of a pipe and waiting for the child to die is a process lifecycle, and
-  // an in-process frame has no pipe to close.
-  const built = await Deno.makeTempFile({ prefix: "wac-yes-" });
-  try {
-    await buildApp(BOX, built, { read: true, write: true });
-    const yes = new Deno.Command(built, { args: ["yes", "wac"], stdout: "piped", stderr: "null" }).spawn();
-    const reader = yes.stdout.getReader();
-    const first = await reader.read();
-    assertEquals(new TextDecoder().decode(first.value).startsWith("wac\nwac\n"), true);
-    await reader.cancel();
-    const status = await yes.status;
-    assertEquals(status.success || status.signal !== null, true, "yes stopped when the pipe closed");
-  } finally {
-    await Deno.remove(built);
-  }
-});
+// **Moved to `packages/box/test/wac/yes_test.wac`, and this one was wrong too.** The note said `yes`
+// stops because `write` reports a closed pipe, and that closing a pipe is a process lifecycle a frame
+// does not have. A frame has exactly that: output is capped at 8 MiB and `write` answers false past it,
+// and `frame.wac` says twenty lines in that *"`packages/box`'s `yes` is written as
+// `while (cli.write(block)) {}` precisely so a full buffer stops it"*. The applet's stopping condition
+// and the frame's cap were built for each other; only this test had not noticed.
 
 Deno.test("httpd serves a directory, and refuses to leave it", async () => {
   // The first applet that composes the network *and* the filesystem. The path check is the
