@@ -396,7 +396,7 @@ stopped naming a path.
 Every tool that reached the reference asks wacc now, and repointing them was not busywork — three
 found bugs on the day they were pointed at the compiler that ships:
 
-- **`tools/fuzz.ts`** → `issues/lang/0281b`: `as~` to `i32` wraps instead of clamping when its
+- **tools/fuzz.ts** (deleted 2026-08-31; its generator is `tools/wac/langfuzz.wac`) → `issues/lang/0281b`: `as~` to `i32` wraps instead of clamping when its
   operand is a constant. Two of the first forty programs.
 - **`tools/fuzzBoundary.ts`** → `issues/lang/0282b`: wacc's bindgen emits neither `>>> 0` nor
   `BigInt.asUintN`, so every `u32`/`u64` above the signed range reaches JavaScript negative. The
@@ -425,7 +425,7 @@ refused now — `run` and `bindgen` keep theirs, which mean something.
 | the import walk | `harness/wacFiles.ts` | `bootstrap/js/flatten.js` does the same walk in JavaScript and is load-bearing for the bootstrap, so it cannot drift unnoticed. |
 | the spec corpus | packages/wacc/tools/specCases.ts | extracts the spec's own programs with the reference's answers, which is what makes them an oracle — `issues/lang/0105`. |
 | the wapy printer | `packages/wacc/test/wac/wapyroundtrip_test.wac` | renders wac to wapy so wacc can read it back. The one thing the reference has and wacc has not. |
-| the tools | `tools/fuzz.ts`, `tools/fuzzBoundary.ts` | the fuzzer is repointed; `fuzzBoundary` fuzzes the reference's *own* bindgen, which is a different question. |
+| the tools | tools/fuzz.ts (now `tools/wac/langfuzz.wac`), `tools/fuzzBoundary.ts` | the fuzzer is repointed; `fuzzBoundary` fuzzes the reference's *own* bindgen, which is a different question. |
 | mutation | `tools/mutate.ts`, `tools/mutate/operators.ts` | needs **tokens**, and deliberately not a regex. Agreed: a wac program, not a subcommand. |
 | the sanctioned one | bootstrap/ts/same_fixed_point.ts | the `W1 == X1` comparison. It exists to compare against the reference and is the evidence for deleting it. Goes in the final commit. |
 

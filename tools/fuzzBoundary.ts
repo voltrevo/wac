@@ -2,7 +2,7 @@
 //
 //   deno run -A tools/fuzzBoundary.ts [--count N] [--seed S] [--verbose]
 //
-// `tools/fuzz.ts` asks whether a wac program computes the right answer. This asks a narrower
+// `tools/wac/langfuzz.wac` asks whether a wac program computes the right answer. This asks a narrower
 // question with a free oracle: **does a value survive the crossing unchanged?** For every bindable
 // type it emits `export T id(T x) { return x; }`, sends a generated value out through the bindgen
 // wrappers and back, and compares. The expected answer is the value that went in, so there is no
@@ -35,7 +35,37 @@
 // The paragraph below is kept for what it recorded. Not a candidate for design/lang/0003's
 // step 3 — see issues/lang/0105 for the ones that are.
 import { waccArtifacts } from "../harness/waccBuild.ts";
-import { Rng } from "./fuzz.ts";
+/**
+ * xorshift32, so a failure reproduces from its seed.
+ *
+ * **Its own copy, since 2026-08-31.** This imported `Rng` from tools/fuzz.ts, which was the last
+ * thing keeping that file alive: its generator moved to `tools/wac/langfuzz.wac` for
+ * `issues/system/0161` step 6, and the one import held a whole TypeScript module in the tree.
+ *
+ * This tool does *not* move with it. Its subject is the JavaScript boundary — it sends values out
+ * through the bindgen wrappers and back through a dynamic import — so it belongs on the Deno side by
+ * the same rule that keeps `packages/platform`'s TypeScript there. Twelve duplicated lines are the
+ * cheaper half of that trade.
+ *
+ * `int` is `floor(next() * n)`, the top-bits draw, matching `Rng.intTop` in
+ * `packages/wactest/src/rng.wac` rather than that file's `upto`, which is a modulo and lands
+ * elsewhere on 37% of draws.
+ */
+export class Rng {
+  private s: number;
+  constructor(seed: number) { this.s = seed >>> 0; }
+  next(): number {
+    let x = this.s;
+    x ^= x << 13; x >>>= 0;
+    x ^= x >>> 17;
+    x ^= x << 5; x >>>= 0;
+    this.s = x;
+    return x / 0x100000000;
+  }
+  int(n: number): number { return Math.floor(this.next() * n); }
+  bool(): boolean { return this.next() < 0.5; }
+  pick<T>(xs: readonly T[]): T { return xs[this.int(xs.length)]; }
+}
 
 // ── Types the boundary can carry ──────────────────────────────────────────────
 

@@ -14,8 +14,8 @@
 //
 // ## This was a TypeScript tool
 //
-// `tools/fuzz.ts`, ported for `issues/system/0161` step 6. The generator is the same one and the
-// *draw* is the same one: `Rng.intTop` is `floor(next() * n)` computed in 64-bit integers, which is
+// Ported from tools/fuzz.ts for `issues/system/0161` step 6, which deleted it. The generator is the
+// same one and the *draw* is the same one: `Rng.intTop` is `floor(next() * n)` computed in 64-bit integers, which is
 // what the TypeScript computed in doubles, and not `Rng.upto`'s modulo — `packages/wactest/src/rng.wac`
 // measures those two families disagreeing on 37% of draws.
 //
@@ -31,17 +31,20 @@
 // compare the text. Until someone runs it, treat a seed as naming a program *in this tool* — which is
 // all a regression test needs, and less than `issues/lang/0281b`'s seed would need to be replayed.
 //
-// ## `tools/fuzz.ts` is still there, and not by oversight
+// ## The TypeScript is gone, and what held it alive
 //
-// The repository's rule is that a second copy is a copy that drifts, so the TypeScript should go now
-// that this works. It cannot yet: **`tools/fuzzBoundary.ts:38` imports `Rng` from it.** That tool is
-// a separate sweep — it asks a narrower question about the boundary rather than about answers — and
-// deleting `fuzz.ts` under it would break it.
+// The repository's rule is that a second copy is a copy that drifts, so tools/fuzz.ts went once this
+// worked. One thing held it: `tools/fuzzBoundary.ts` imported its `Rng`, and deleting under that
+// import would have broken a tool with nothing to do with this one.
 //
-// So the order for `issues/system/0161` step 6 is: port `fuzzBoundary.ts` too, or give it its own
-// generator, and then delete both TypeScript files together. Until then the drift risk is real and
-// worth stating: the generator here has already diverged from that one in at least the retry
-// behaviour of `expr`, and nothing compares them.
+// **That tool does not follow this one to wac, and should not.** Its subject is the JavaScript
+// boundary — it sends values out through the bindgen wrappers and back through a dynamic import — so
+// it belongs on the Deno side by the rule that keeps `packages/platform`'s TypeScript there. It has
+// its own twelve-line `Rng` now, which is the cheaper half of that trade.
+//
+// The order matters and is worth stating, because the obvious one is wrong: the import had to be cut
+// before the delete, and "port the other tool too" was the wrong plan for a tool whose subject is the
+// host.
 //
 // ## What the oracle can and cannot see, which the port changes
 //
