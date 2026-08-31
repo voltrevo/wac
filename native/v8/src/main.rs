@@ -2894,8 +2894,25 @@ fn dispatch(
                     // this since `issues/system/0123`, which is where the wording below comes from:
                     // ending the queues is what the child's *parent* needs, and a reader parked on
                     // its output has to find out.
-                    if let Some(Sock::Queue(q)) = st.sockets.lock().unwrap().remove(&handle) {
-                        q.finish();
+                    match st.sockets.lock().unwrap().remove(&handle) {
+                        Some(Sock::Queue(q)) => q.finish(),
+                        // **Dropping a `TcpStream` is not closing the connection when a `recv` is
+                        // parked on it.** `recv` takes its own descriptor with `try_clone`, which
+                        // dups the fd, so removing this entry drops one of two and the peer is told
+                        // nothing: a client reading to end-of-stream waits for ever. With no read
+                        // outstanding there is no dup, the drop is the close, and it works — which
+                        // is why this went unseen until something read from a proxy.
+                        // `issues/system/0304b`, and its probe is
+                        // `packages/platform/test/wac/closewhilereading_test.wac`.
+                        //
+                        // `shutdown` acts on the *connection* rather than on a descriptor, so it
+                        // reaches the peer however many clones are live. The error is dropped for
+                        // the same reason the rest of this handler drops errors: a socket already
+                        // gone is the state the caller asked for.
+                        Some(Sock::Stream(sk)) => {
+                            let _ = sk.shutdown(std::net::Shutdown::Both);
+                        }
+                        _ => {}
                     }
                     // Its input too: a child parked reading what nobody will send is stopped just as
                     // surely as one writing where nobody reads, and `closeFeed` is the capability

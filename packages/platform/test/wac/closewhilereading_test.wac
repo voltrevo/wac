@@ -1,4 +1,4 @@
-// Does closing a socket with a read outstanding on it still tell the peer? No.
+// Does closing a socket with a read outstanding on it still tell the peer?
 //
 // **The probe `issues/system/0304b` asks for.** `packages/tor/src/socks.wac` ends a client the way
 // every path in that file ends one — `c.read.cancel()` and then `cli.closeSocket(c.sock)` — and the
@@ -9,9 +9,9 @@
 // **The answer, and it is not the one the issue was filed on.** Three arms differing only in what is
 // outstanding on the server's socket at the moment it closes:
 //
-//     nothing outstanding    the client sees `End`      — correct
-//     a live `recv`          the client sees nothing    — the bug
-//     a cancelled `recv`     the client sees nothing    — the same bug
+//     nothing outstanding    the client sees `End`
+//     a live `recv`          the client sees `End`      — and saw nothing until 2026-08-31
+//     a cancelled `recv`     the client sees `End`      — likewise
 //
 // So cancelling is a red herring. `0304b` was filed as "`socks` does not close a client's socket"
 // because `socks.wac` cancels before closing and `dird.wac`, whose peers do see `End`, does not —
@@ -126,21 +126,12 @@ export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, C
   t.isTrue(plain.ended, "the control: a close with nothing outstanding reaches the peer — " +
                         plain.detail);
 
-  // **These two assert the bug, not the fix, and that is deliberate.** A test that asserted the
-  // right behaviour would be red for everyone until `issues/system/0304b` is closed, and the rule
-  // here is that a blocker of that kind is an issue rather than a red suite. So this pins what the
-  // platform does today — and inverts the day it stops, which is the point: whoever fixes the close
-  // gets a failure naming this file and this issue rather than silence.
   Saw live = exchange(core, cli, t, MODE_LIVE_READ, "a live read outstanding");
-  t.isTrue(live.timedOut,
-           "a close behind a *live* read is still swallowed — " + live.detail +
-           ". If this failed, `issues/system/0304b` is fixed: change these two back to `.ended` " +
-           "and drop the deadline in `socksnet_test.wac`, which spends ten seconds on it");
+  t.isTrue(live.ended, "a close behind a *live* read reaches the peer — " + live.detail);
 
   Saw cancelled = exchange(core, cli, t, MODE_CANCELLED, "after a cancel");
-  t.isTrue(cancelled.timedOut,
-           "and so is one behind a cancelled read — " + cancelled.detail +
-           ". The two arms agreeing is the finding: cancelling has nothing to do with it");
+  t.isTrue(cancelled.ended, "and so does one behind a cancelled read — " + cancelled.detail +
+                            ". The two arms agreeing is the finding: cancelling never mattered");
 
   return t.report();
 }

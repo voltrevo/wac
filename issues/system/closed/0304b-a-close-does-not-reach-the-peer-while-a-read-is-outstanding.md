@@ -1,7 +1,8 @@
 # 0304 — `closeSocket` does not reach the peer while a `recv` is outstanding
 
-- **Status:** open
-- **Claimed by:** (nobody)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -52,13 +53,20 @@ its ~14s waiting out a deadline for this, and asserts the bytes and the proxy's 
 `stream 1 ended: done` rather than the close, so the suite is not red for it. A proxy also leaks a
 connection per request against `MAX_CONNS`, since the socket is never released.
 
-## What would close it
+## Fixed: `recv` dups the descriptor, and dropping one of two closes nothing
 
-The probe is written and fails on two of its three arms, so this is reproducible in six lines
-without any of Tor in the way. Whether the fix is in the host's socket handling or in what
-`closeSocket` does with an outstanding call is the open question — `Pending.cancel()` runs the host's
-`drop` while a continuation registered by `then` is only taken back by `Core.cancel(id)`
-(`issues/lang/0300b` records the same pairing), and a socket held by a call nobody took back would
-behave exactly like this.
+`Cap::CloseSocket` in `native/v8/src/main.rs` removed the handle from the socket table and let the
+`TcpStream` drop, which is a close only when that is the last descriptor. `recv` takes its own with
+`sk.try_clone()` — so with a read parked there are two, the drop takes one, and the peer is told
+nothing. With nothing outstanding there is no clone, the drop *is* the close, and it works. That is
+every row of the table, and it is also why cancelling made no difference: a cancelled read's
+duplicate is just as alive as a live one's.
 
-When it is fixed, `socksnet_test.wac` can assert the close and gets three times faster.
+The fix is to `shutdown(Both)` a `Sock::Stream` instead of relying on the drop, because `shutdown`
+acts on the connection rather than on a descriptor and reaches the peer however many clones exist.
+
+**The other two hosts have the same contract and their own implementations.** The wasmtime host in
+`native/` and the JavaScript hosts in `packages/platform/host/` were not checked here. The probe is
+host-agnostic, so pointing it at each is the way to find out rather than assuming.
+
+`packages/tor/test/wac/socksnet_test.wac` now asserts the close and runs in ~4s instead of ~14s.

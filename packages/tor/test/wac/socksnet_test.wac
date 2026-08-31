@@ -5,10 +5,12 @@
 // defeats the point of the file: heavy tests do not run in the push gate, and a test written to
 // give `socks.wac` its first coverage has to be in the lane that runs.
 //
-// **14s, and ten of them are a bug.** Standing the network up and carrying a stream is ~4s; the rest
-// is `carry` waiting out `READ_MS` for a close that never comes, which is `issues/system/0304b`.
-// So this gets three times faster the day that is fixed, and the number here is what it costs
-// today rather than what it ought to cost.
+// **~4s, and it was 14s until the bug it found was fixed.** Ten of those seconds were `carry`
+// waiting out `READ_MS` for a close that never came — `issues/system/0304b`, which this case found
+// and which turned out to be the platform rather than Tor: `closeSocket` dropped a `TcpStream`
+// whose descriptor `recv` had already duplicated with `try_clone`, so a peer parked on a read was
+// told nothing. Fixed the same day by shutting the connection down rather than dropping one of two
+// descriptors.
 //
 // **Why it did not exist.** `cov_ledger.wac` records `socks.wac` as never exercised: the only thing
 // that drove it end to end was `ctor_live_test.wac`, which needs a C tor on the machine and is in
@@ -340,16 +342,11 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               Carried r = carry(core, cli, got, tport,
                                 "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                 "Host: 127.0.0.1\r\n\r\n");
-              // **What is asserted is the bytes, not the close.** The whole document arrives —
-              // 2,561 bytes, the number the exit relay reports writing — and then `socks` does not
-              // close the client socket, so a reader waiting for `End` waits forever. That is
-              // `issues/system/0304b`, filed from this case and then narrowed by the probe in
-              // `packages/platform/test/wac/closewhilereading_test.wac`: it is not `socks`'s bug at
-              // all. A close does not reach the peer while *any* `recv` is outstanding, and a proxy
-              // always has one parked on its client.
-              // Asserting the close here would make the suite red for a bug that is written down,
-              // so this asserts what is true and the issue carries what is not.
-              t.isTrue(r.body.len() > 0, "the proxy carried a stream — " + r.why +
+              // The close is asserted, and was not for the first few hours of this file's life:
+              // `0304b` made it unassertable, so the case checked the bytes and the proxy's own
+              // account instead rather than turn the shared suite red for a filed bug. That is the
+              // whole of what it cost to have a test in the lane that runs while the fix was found.
+              t.isTrue(r.ok, "the proxy carried a stream — " + r.why +
                                          ". socks said: " + logOf(cli, proxy));
               t.isTrue(contains(r.body, "200") || contains(r.body, "network-status-version"),
                        "and what came back is the document the target serves, not an empty " +
