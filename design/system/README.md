@@ -57,7 +57,11 @@ which is worth more to the next reader than deleting it.
 |---|---|---|
 | [0001](0001-a-self-contained-system.md) | a self-contained system: a filesystem, processes and users in wac, with the ssh and browser demos as its terminals | active |
 | [0002](0002-the-whole-tor-stack.md) | the whole Tor stack: relays, authorities and onion services, and a network of our own | active |
+| [0003](0003-an-ethereum-centric-reference-distribution.md) | an Ethereum-centric reference distribution: what arriving looks like | destination |
 | [0004](0004-rendering-that-backs-a-desktop.md) | rendering that backs a desktop: one surface, from a kernel or from a tab | proposal |
 | [0005](0005-git-in-wac.md) | git in wac: a client that can clone this repository and be believed | met |
 | [0006](0006-candidates-for-what-to-build-next.md) | candidates for what to build next, and the oracle each one would have | candidates, none chosen |
-| [0007](0007-quic-and-the-datagram-capability.md) | QUIC, and the datagram capability it needs first |
+| [0007](0007-quic-and-the-datagram-capability.md) | QUIC, and the datagram capability it needs first | done |
+| [0008](0008-webrtc-in-wac.md) | WebRTC in wac | met |
+| [0009](0009-a-typescript-to-javascript-bundler-written-in-wac.md) | a TypeScript-to-JavaScript bundler, written in wac | built and in use |
+| [0010](0010-a-handle-carries-its-own-methods.md) | a handle carries its own methods: `sock.recv()`, never `sys.recv(sock)` | decided, unbuilt |
