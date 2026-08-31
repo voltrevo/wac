@@ -224,3 +224,27 @@ That leaves the interleavings where **both** writes belong to live calls on the 
 the harder question and the one the section above was already pointing at. Written down so the
 generation-check variant does not have to be re-derived; it is the first thing that looks like it
 would explain this and it does not.
+
+### And the intra-`write` ordering is sound, so deferral alone does not open a window
+
+The section above notes that `write` runs through the scheduler while the `OP_CONTINUE` that reads
+`pending[slot]` is handled inline, and asks about the interleaving. Within a single `write` there is
+no window, because the stores are in the right order:
+
+    Atomics.store(S_RES_LEN, fits);
+    Atomics.store(S_RES_STATUS, tail.length > 0 ? STATUS_MORE : status);
+    pending[slot] = tail; finalStatus[slot] = status;      // before publication
+    …
+    Atomics.compareExchange(S_STATUS, ST_RUNNING, ST_READY)   // the release barrier
+
+A guest blocks in `awaitReady` until that exchange, so it cannot ask for a tail that has not been
+recorded. Deferring the whole of `write` moves all of it together, which the guest cannot observe.
+The losing-exchange path also sets `pending[slot] = null` rather than leaving it, so a write that
+loses the slot cleans up after itself.
+
+**What the arithmetic still wants explaining.** After a 131,072-byte first piece the tail owed is
+48,922, and any `reply` of that tail would deliver either all of it (a pooled buffer is big enough)
+or 4,096 of it with `STATUS_MORE` (if the pool were empty and it fell to the inline area). Neither is
+553. So the second write's *body* really was 553 bytes — `pending[slot]` held something that was not
+this call's tail — and the two eliminations above say it was not a late write for a recycled slot and
+not a torn store within one write. That is worth knowing before the next attempt.
