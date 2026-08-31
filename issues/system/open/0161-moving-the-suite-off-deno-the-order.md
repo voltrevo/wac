@@ -2215,3 +2215,45 @@ meant killed here — so there is one rule rather than two paths that agree by c
 scope, so the claim here is the predicate's unit tests and the measured table above, not a native
 share against a control. Whoever runs the sweep should expect the realised share to be *below* 192
 files: the profile evidence is the second gate, and some of these directories will hold oracle tests.
+
+## `--explain-selection` has been dead since the day after it produced these numbers — agent-b, 2026-08-31
+
+Every figure in "What step 2 costs to verify" came from `--explain-selection` on 2026-08-16. **The
+flag has not run since 2026-08-17**, when two commits that day — `b4a92b50` and `ecb7c732` — put
+`const hostless` below the `if (explain)` block. That block runs at module level and calls
+`testDirs`, which reads `hostless`, so the mode dies immediately with
+
+    ReferenceError: Cannot access 'hostless' before initialization
+
+Nothing in the suite runs it, so a fortnight passed. Fixed by lifting three empty `Set`s above the
+block, with the reason written where the next person will hit it.
+
+### Ran, and the result is a finding rather than a timing
+
+    profiling 60 test file(s) across 40 scope(s)…
+    profile: 133 test(s) across 60 file(s), 18453 covered line(s)
+    selection: 1 narrowed, 20 widened, 19 unhit, of 40 mutant(s)
+
+against this issue's own `20 narrowed, 20 widened, 0 unhit, of 40` from 380 files. Narrowing has
+collapsed and nineteen mutants now report *none reached by any test*.
+
+**That is the explain path being blind to wac tests, not the tool getting worse.** It gathers its
+files with `testFilesIn` alone:
+
+    const files = await testFilesIn(scope.map((d) => `${root}/${d}`));
+
+while the real profiling path adds `wacEntriesIn` for hostless directories. So it sees the 60
+remaining `.test.ts` files and none of the 474 `*_test.wac` ones — and `gzip`'s inflate tests are
+wac, which is why their lines look unreachable. It is exactly what this issue warns of, *"a mutant
+scored against a suite that no longer contains its test — silently, and as a better score"*,
+happening inside the diagnostic built to catch it.
+
+**The real run is not affected**: step 2 gave that path `hostlessDirs` and `wacEntriesIn`, so it
+gathers both. Only the explain mode is short, and the fix is to mirror those two lines.
+
+### So the 26m45s is not refuted, it is not comparable
+
+This profiled 60 files where a real run profiles those plus the wac entries. The number that has been
+quoted all fortnight — including by me, all day, as a reason to ask before running anything — is from
+a tree with 380 profileable `.test.ts` files, and there are now 60. It should be re-derived once the
+explain path gathers what the real one does, and not before.

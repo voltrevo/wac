@@ -564,6 +564,16 @@ console.log(
 //
 // Read-only by construction: it never mutates a file and never spawns a test other than the
 // profiling pass, so it cannot produce a score and does not pretend to. `issues/system/0161`.
+// **Declared here rather than beside their prose below**, because `--explain-selection` runs at
+// module level and calls `testDirs`, which reads `hostless`. With the declarations further down that
+// is a temporal dead zone and the mode dies with `Cannot access 'hostless' before initialization` —
+// which it has done since 2026-08-17, so the flag that exists to measure this tool has not run since
+// the day after the measurement `issues/system/0161` still quotes. Empty sets, so lifting them costs
+// nothing and the comments explaining each stay where they are read.
+const hostless = new Set<string>();
+const hostlessDirs = new Set<string>();
+const nativeRunnableDirs = new Set<string>();
+
 if (explain) {
   // **Staged, like every other measurement here.** This mode mutates nothing, which makes it
   // tempting to profile the working tree directly — and that is exactly the mistake the staging
@@ -993,7 +1003,7 @@ let unmeasurable: typeof toRun = [];
  * them is scoped to its *own* package and run with `wac test`, rather than measured against dependents
  * that never touch it. `issues/system/0183`.
  */
-const hostless = new Set<string>();
+// (declared above the `--explain-selection` block; see the note there)
 /**
  * Test *directories* holding no `.test.ts`, which is not the same question as the package.
  *
@@ -1004,7 +1014,7 @@ const hostless = new Set<string>();
  *
  * Kept beside `hostless` rather than replacing it: `isBlindScope` means the package and is right to.
  */
-const hostlessDirs = new Set<string>();
+// (declared above the `--explain-selection` block; see the note there)
 /**
  * Directories that may be *run* by the binary — `hostlessDirs`, and every wac entry in them profiled
  * natively with nothing skipped.
@@ -1015,7 +1025,7 @@ const hostlessDirs = new Set<string>();
  * killed it. `wacShare` already refuses a profile whose `skipped` is non-empty, so membership in
  * `profile.native` is exactly the evidence needed, and it was being computed and thrown away.
  */
-const nativeRunnableDirs = new Set<string>();
+// (declared above the `--explain-selection` block; see the note there)
 /** Mutants measured through `wac test` rather than `deno test`, for the report. */
 let viaWac: typeof toRun = [];
 let profile: Profile | null = null;
