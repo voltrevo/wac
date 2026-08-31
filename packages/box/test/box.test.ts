@@ -339,101 +339,17 @@ Deno.test("a file still needs the grant, and says so", async () => {
 
 
 
-Deno.test("wc -w splits words where wc(1) splits them, including the code points that are not spaces", async () => {
-  // `wc -w` used to split on ASCII whitespace and count a run as a word only if an ASCII *printable* was
-  // in it. Both halves are the C locale's answer, and the comment defending them said "there is no such
-  // locale to compare against" for the other one — which was wrong: `locale -a` lists `C.utf8`, and
-  // `LC_ALL` on this machine **is** `C.UTF-8`, so every differential here was already asking the real
-  // `wc` a UTF-8 question and getting away with it because no fixture had a byte over 0x7F. On
-  // `spec/tour.wac` the gap was 110 words (issues/system 0143).
-  //
-  // The real one is spawned with the ambient environment on purpose. Pinning `LC_ALL=C` here would make
-  // this pass without the fix, which is exactly how the gap survived.
-  const dir = await Deno.makeTempDir({ prefix: "wac-box-words-" });
-  try {
-    // **`env` is granted, and that is part of the claim now.** `wc` reads `LC_CTYPE`/`LC_ALL` since
-    // `issues/system/0297c`, so a box built without the environment falls back to the C locale and
-    // counts bytes — correct POSIX behaviour, and not what the real `wc` beside it is doing, which has
-    // the ambient `C.UTF-8`. Withholding it here compares two different questions and the answers
-    // differ on the very first non-ASCII case.
-    const runner = await appRunner(BOX, { read: true, env: true });
-    const wcOut = (args: string[]) => {
-      const r = new Deno.Command("wc", { args, stdout: "piped", stderr: "null" }).outputSync();
-      return new TextDecoder().decode(r.stdout);
-    };
-    const real = (path: string) => wcOut(["-w", path]);
-    // All three columns, for the cases where a mishandled character could move the byte or line count
-    // as well as the word count.
-    const sysWc = (path: string) => wcOut([path]);
-    // Every row measured against `wc -w` before it was written down, and the *shape* of the rule is the
-    // reason the list is not just "more spaces":
-    //
-    //   - a separator ends a run. U+00A0 and U+202F are separators to `wc` and are **not** `iswspace`
-    //     in this locale, so a list built from `iswspace` gets them wrong;
-    //   - U+2028 and U+2029 are `iswspace` and are **not** separators — a run containing one is a single
-    //     word, so `a\u{2028}b` is one, not two, and a fix that split on everything non-ASCII fails here;
-    //   - U+2060 is a separator and is not a space in any category. It is on the list because `wc` says
-    //     so, which is the only reason anything is on this list.
-    const cases: [string, string][] = [
-      ["nbsp", "\u{00A0}"], ["em space", "\u{2003}"], ["figure space", "\u{2007}"],
-      ["ogham space", "\u{1680}"], ["narrow nbsp", "\u{202F}"], ["medium math space", "\u{205F}"],
-      ["ideographic space", "\u{3000}"], ["en quad", "\u{2000}"], ["hair space", "\u{200A}"],
-      ["word joiner", "\u{2060}"],
-      ["line separator", "\u{2028}"], ["paragraph separator", "\u{2029}"], ["next line", "\u{0085}"],
-      ["zero width space", "\u{200B}"],
-      ["em dash", "\u{2014}"], ["box drawing", "\u{2500}"], ["e acute", "\u{00E9}"],
-      ["emoji", "\u{1F600}"],
-    ];
-    for (const [name, ch] of cases) {
-      // Between two words, and alone: the second is what says whether the code point is a *word* on its
-      // own, which is a different question from whether it separates and has a different answer for
-      // U+200B (a word) and U+2028 (not one).
-      for (const [shape, text] of [["between", `a${ch}b\n`], ["alone", `${ch}\n`]]) {
-        const path = `${dir}/case.txt`;
-        await Deno.writeTextFile(path, text);
-        const got = await runner.run(["wc", "-w", path]);
-        assertEquals(got.out, real(path), `wc -w on ${name} ${shape}`);
-      }
-    }
-    // **A character split across a read.** Everything above fits in one 64 KiB chunk, so none of it
-    // reaches the code that holds a partial sequence until the next chunk arrives — the half of this
-    // that is not a table lookup. Each case puts a multi-byte character across the boundary at a
-    // different offset, so the sequence is broken after its first, second and third byte in turn.
-    for (const [ch, name] of [["\u{2014}", "em dash"], ["\u{1F600}", "emoji"]]) {
-      const bytes = new TextEncoder().encode(ch).length;
-      for (let split = 1; split < bytes; split++) {
-        const path = `${dir}/split.txt`;
-        // The filler is words, so the counts either side of the boundary are non-trivial rather than
-        // one long run: a broken sequence that got dropped or doubled moves the answer.
-        const filler = "word ".repeat(20000).slice(0, 65536 - split);
-        await Deno.writeTextFile(path, `${filler}${ch} tail\n`);
-        const got = await runner.run(["wc", path]);
-        assertEquals(got.out, sysWc(path), `${name} broken after ${split} byte(s) at the chunk boundary`);
-      }
-    }
-
-    // And the file the issue was reported against, which is 110 words of em dash and box-drawing rule.
-    const tour = new URL("../../../spec/tour.wac", import.meta.url).pathname;
-    assertEquals((await runner.run(["wc", "-w", tour])).out, real(tour), "wc -w on spec/tour.wac");
-
-    // **The other applets that walk text**, which 0143 named as candidates for the same assumption
-    // without claiming they had it. They do not: GNU's `fold`, `cut` and `tr` are byte-oriented here
-    // too, so byte-oriented is the *correct* answer for them and matching `wc` would break them. That
-    // is worth a comparison rather than a sentence, because "we looked once" is not a property a
-    // repository keeps.
-    const uni = `${dir}/uni.txt`;
-    await Deno.writeTextFile(uni, "h\u{00E9}llo w\u{00F6}rld\u{00A0}two\n\u{00E9}\u{00E0}\u{2014}\u{00FC}\n");
-    for (const args of [["fold", "-w", "5"], ["cut", "-c", "1-4"], ["cut", "-b", "1-4"],
-                        ["tr", "a-z", "A-Z"], ["rev"]]) {
-      const r = new Deno.Command(args[0], { args: [...args.slice(1), uni], stdout: "piped", stderr: "null" })
-        .outputSync();
-      assertEquals((await runner.run([...args, uni])).out, new TextDecoder().decode(r.stdout),
-        `${args.join(" ")} on non-ASCII text`);
-    }
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
+// **Moved to `packages/box/test/wac/wcwords_test.wac`** — `issues/system/0143`, where `wc -w` split on
+// ASCII whitespace and counted a run as a word only if an ASCII printable was in it. Eighteen code
+// points between two words and alone, a character broken across the 64 KiB chunk boundary at every
+// offset, and `spec/tour.wac` itself, all against the real `wc` through `cli.exec` with the ambient
+// environment — pinning `LC_ALL=C` is how the gap survived, so the wac version does not pin it either.
+//
+// `fold`, `cut` and `tr` over non-ASCII went to `appletCases()` instead, over a new `uni.txt` fixture.
+// **One of those four rows had been asserting nothing**: it ran `tr a-z A-Z uni.txt`, which the real
+// `tr` refuses as an extra operand, and compared stdout only with stderr discarded — two empty strings.
+// The vector spells it `tr a-z A-Z < uni.txt` and captures the status as well. `rev` is deliberately
+// not in that row; `cases.wac` says why, and `issues/system/0301c` is the question it raises.
 
 Deno.test("fsdump reads an image, names its operands, and refuses what is not one", async () => {
   // **What is left of "the applets that read several files read all of them".** The fifteen applets and

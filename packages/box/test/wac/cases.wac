@@ -15,6 +15,7 @@
 // those answers in process. Data two languages hold twice is data that drifts.
 
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
 
 /** Every invocation, run through a shell so that redirection and pipelines are available. */
 export string[] cases() {
@@ -407,6 +408,23 @@ export string[] appletCases() {
     // The flags the sweep asked over one file, kept at the same spellings: `-3` and `-n 2` are the
     // attached and detached forms of the same option.
     "head -3 prose.txt", "tail -n 2 prose.txt", "sha512sum prose.txt", "base32 prose.txt",
+    // **The other applets that walk text**, over `uni.txt`. `issues/system/0143` named these as
+    // candidates for the assumption `wc -w` had; they do not have it, and these cases are what says so
+    // next year as well as today.
+    //
+    // **`tr` is spelled with a redirect and that is the point of this row.** `box.test.ts` ran it as
+    // `tr a-z A-Z uni.txt`, which GNU refuses — "extra operand" — and compared *stdout only* with
+    // stderr discarded, so it asserted that two empty strings are equal. Reading from standard input
+    // is the only way to hand `tr` a file, and the vector captures the exit status too, so a row that
+    // fails on both sides can no longer look like a row that agrees.
+    // **`rev` is deliberately not in this row.** It is the one applet here that is *not* byte-oriented:
+    // `applets/rev.wac` says "by character, not by byte" in its first line and walks scalars through
+    // `unicode`'s decoder unconditionally. The capture pins `LC_ALL=C`, where the real tool is
+    // byte-oriented, so the two answers disagree by construction and a captured vector would pin the
+    // wrong one. Our `rev`'s non-ASCII behaviour is written down rather than captured — the sibling
+    // question, whether it should follow the locale the way `wc` now does, is `issues/system/0301c`.
+    "fold -w 5 uni.txt", "cut -c 1-4 uni.txt", "cut -b 1-4 uni.txt",
+    "tr a-z A-Z < uni.txt",
     // **The whole line, not the first field.** Taking `[0]` was how `wc -l file` came to drop the
     // filename — the assertion threw the difference away, and the applet's comment claimed the real
     // one does the same. It does not: only reading standard input has no name to print.
@@ -474,6 +492,21 @@ export Fixture[] appletFixtures() {
   // only the first is caught by the *content* rather than by a count. Not palindromes: `tac` reverses
   // each file in the order named rather than the concatenation, and the two are only distinguishable
   // when the lines are not symmetric.
+  // **Non-ASCII text, built from code points rather than written raw.** `issues/system/0143` named
+  // `fold`, `cut`, `tr` and `rev` as candidates for the assumption `wc -w` had, without claiming they
+  // held it — and they do not: GNU's are byte-oriented here, so byte-oriented is the *correct* answer
+  // for them and matching `wc` would break them. That is worth a comparison rather than a sentence,
+  // because "we looked once" is not a property a repository keeps.
+  //
+  // The U+00A0 is why this is `pushCodepoint` and not a literal: a raw non-breaking space in source is
+  // indistinguishable from a space to every reader of this file, and it is the byte the whole fixture
+  // turns on.
+  Buf uni = Buf.create();
+  uni.pushAll("h".toBytes()); uni.pushCodepoint(0x00E9); uni.pushAll("llo w".toBytes());
+  uni.pushCodepoint(0x00F6); uni.pushAll("rld".toBytes()); uni.pushCodepoint(0x00A0);
+  uni.pushAll("two\n".toBytes());
+  uni.pushCodepoint(0x00E9); uni.pushCodepoint(0x00E0); uni.pushCodepoint(0x2014);
+  uni.pushCodepoint(0x00FC); uni.push(0x0a);
   string m1 = "alpha\nbeta\ngamma\n";
   string m2 = "delta\nepsilon\n";
   return Fixture[](
@@ -494,6 +527,7 @@ export Fixture[] appletFixtures() {
     // different code path from a path that does not exist, and a directory is the portable way to get
     // one — GitHub wac-mono#18. `tools/wac/appletvectors.wac` once wrote this as an empty *file*, and
     // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
+    Fixture("uni.txt", uni.bytes(), false),
     Fixture("adir", u8[0](), true)
   );
 }

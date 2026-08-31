@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 148
+count: 152
 S 5
 seq 5
 X 0
@@ -1439,6 +1439,46 @@ UTLJPBSWIICDMFZWKICXN5ZGI4YK
 
 E 0
 
+S 17
+fold -w 5 uni.txt
+X 0
+O 33
+héll
+o wö
+rld 
+two
+éà�
+��ü
+
+E 0
+
+S 18
+cut -c 1-4 uni.txt
+X 0
+O 10
+hél
+éà
+
+E 0
+
+S 18
+cut -b 1-4 uni.txt
+X 0
+O 10
+hél
+éà
+
+E 0
+
+S 20
+tr a-z A-Z < uni.txt
+X 0
+O 29
+HéLLO WöRLD TWO
+éà—ü
+
+E 0
+
 S 15
 wc -l prose.txt
 X 0
@@ -1574,7 +1614,7 @@ E 0
 S 2
 ls
 X 0
-O 61
+O 69
 adir
 fields.txt
 m1.txt
@@ -1582,6 +1622,7 @@ m2.txt
 numeric.txt
 nums.txt
 prose.txt
+uni.txt
 
 E 0
 
@@ -1625,7 +1666,7 @@ E 0
 S 11
 mkdir d; ls
 X 0
-O 63
+O 71
 adir
 d
 fields.txt
@@ -1634,6 +1675,7 @@ m2.txt
 numeric.txt
 nums.txt
 prose.txt
+uni.txt
 
 E 0
 
@@ -1650,13 +1692,14 @@ E 0
 S 13
 rm m1.txt; ls
 X 0
-O 54
+O 62
 adir
 fields.txt
 m2.txt
 numeric.txt
 nums.txt
 prose.txt
+uni.txt
 
 E 0
 
@@ -1680,7 +1723,7 @@ E 0
 S 20
 mkdir d; rmdir d; ls
 X 0
-O 61
+O 69
 adir
 fields.txt
 m1.txt
@@ -1688,6 +1731,7 @@ m2.txt
 numeric.txt
 nums.txt
 prose.txt
+uni.txt
 
 E 0
 
