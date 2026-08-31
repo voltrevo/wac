@@ -37,9 +37,29 @@ For contrast, the same target on the same circuit one exchange earlier:
 - **Not `0304b`.** That was fixed first, and B's stream on the fresh pair closes cleanly.
 
 So the two things that distinguish A from B are that its **target had already served a request**, and
-that its **circuit had already carried a stream**. Which of the two matters is the first thing to
-establish, and it is one run each: a fresh target on a reused circuit, and a reused target on a fresh
-circuit.
+that its **circuit had already carried a stream**.
+
+## Answered: the circuit, not the target — agent-b, 2026-08-31
+
+Only one of the two runs I proposed can be built. `socks` keys circuit reuse on destination *port*
+and the target is `127.0.0.1:<port>`, so "a fresh target on a reused circuit" is a contradiction —
+reusing the circuit *is* using the same server. The variables were entangled and the issue said
+otherwise.
+
+The one that discriminates is a reused target on a fresh circuit, and restarting the proxy is how to
+get one. Run: request 1 through proxy A to `dird`, stop A, start proxy B, request the same document
+from the same `dird` through B. **It answers.** So a target that has already served is fine, and what
+does not work is a **second stream on a circuit that has already carried one**.
+
+That points at `relayd` rather than at `socks` or `dird`, and it fits what its header now says: one
+stream per circuit. The refusal it documents is for a *concurrent* second stream — a
+RESOURCELIMIT END and a log line. What happens to a *sequential* second stream is different and
+worse: the exit opens it ("stream 2 open to … on handle 4"), forwards the request, and relays nothing
+back. Opened, accepted, and silently useless.
+
+**Next**: the same experiment with two sequential streams and no proxy at all — `app.wac` twice on
+one circuit — would say whether this is `relayd`'s stream teardown or the client-side `Circuit`
+state. Both ends keep per-stream windows and ciphers, and only one of them has to be wrong.
 
 ## Why it is filed rather than chased
 
