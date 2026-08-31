@@ -2352,10 +2352,14 @@ for exactly the keys the real tree holds and finds an empty cache to ask.
 it would cost more than the compiles it saves. The fix is to let the staged run *reach* the real
 cache rather than to copy it.
 
-Worth checking before anyone does: a profile run compiles **mutated** sources, so it must not leave
-entries a later real build would hit. The key includes the source texts, so a mutant keys differently
-rather than poisoning anything — but that is the property the change depends on and it should be
-demonstrated rather than assumed.
+**Checked, since the change depends on it.** A profile run compiles *mutated* sources, so it must not
+leave entries a later real build would hit. `buildCachePath` hashes the sources themselves —
+
+    h.eat(texts[i]);
+
+— so a mutant hashes differently and keys to its own entry. It can miss; it cannot be mistaken for
+the clean source. That is also why the aggregate's filename is deliberately kept out of the key: the
+name carries the clock and would miss every time, and the text goes in instead.
 
 **So the ordering of levers in this issue is wrong.** Native profiling, the invocation count and the
 Deno/wac split are all second-order; the pass is 340 cold compiles, and the cache is sitting next to
