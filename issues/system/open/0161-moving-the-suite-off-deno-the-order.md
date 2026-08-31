@@ -2384,3 +2384,10 @@ The two phases are not alike, which is what makes this workable:
 So the change is narrower than "let the staged run see `.cache`": it is *the profiling pass* that
 should, and the mutant runs that should not. Anyone doing it should check where the boundary falls in
 `stageProject`'s callers rather than in `stageProject` itself, since the same staged root serves both.
+
+**Checked, because the whole proposal rests on it.** `buildProfile` is called at two places and
+`applyEdits` — the only thing that mutates a source — at two others, and they do not interleave: the
+profile compiles clean sources in both paths. **And there are two mutant-compiling sites, not one.**
+Besides the run loop there is the equivalence check, which compiles each mutant to find the provably
+equivalent ones before anything is measured. A change that isolated only the run loop would still
+push every equivalence build through the shared cache, which is the larger number of the two.
