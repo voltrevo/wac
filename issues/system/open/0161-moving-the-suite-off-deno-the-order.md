@@ -2364,3 +2364,23 @@ name carries the clock and would miss every time, and the text goes in instead.
 **So the ordering of levers in this issue is wrong.** Native profiling, the invocation count and the
 Deno/wac split are all second-order; the pass is 340 cold compiles, and the cache is sitting next to
 it excluded by name.
+
+### If the staged run reaches the real cache, only the *profile* may
+
+The cache is bounded, not unbounded: `sweepBuildCache` keeps a fixed number of artefacts and
+`$WAC_BUILD_CACHE_KEEP` overrides the count. So the hazard of sharing it is not bloat, it is
+**eviction** — a mutation pass compiles a mutated tree once per mutant, and those compiles would push
+out the entries a developer's own builds rely on. The cache would end up holding nothing but mutants
+and the machine would get slower at everything else.
+
+The two phases are not alike, which is what makes this workable:
+
+- **`buildProfile` runs once, on the staged copy, before any mutant is applied.** Its compiles are of
+  the *clean* sources, so its artefacts are exactly the ones a real build wants. Sharing here is a
+  gain both ways.
+- **The mutant runs compile mutated sources.** Their artefacts are worth nothing to anyone else and
+  there are as many as there are mutants. These must stay in the staged tree.
+
+So the change is narrower than "let the staged run see `.cache`": it is *the profiling pass* that
+should, and the mutant runs that should not. Anyone doing it should check where the boundary falls in
+`stageProject`'s callers rather than in `stageProject` itself, since the same staged root serves both.
