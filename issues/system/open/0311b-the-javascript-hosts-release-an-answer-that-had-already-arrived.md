@@ -55,6 +55,29 @@ That is the second time today a filing from a recognised shape was half wrong �
 datagram and the datagram path could not have it. The shape tells you where to look and never what is
 true.
 
+## One function, *every* capability — which is the opposite of the Rust hosts
+
+`provider.ts` builds every `Pending` kind with the **same** `drop`:
+
+    const drop = (id: number) => { cancel(b, unpack(id)); };
+    …
+    i32:     (t) => cls.Pending$i32.of(pack(t), i32, settled, drop),
+    bytes:   (t) => cls.Pending$u8Arr.of(pack(t), bytes, settled, drop),
+    chunk:   (t) => cls.Pending$u8Arr.of(pack(t), chunk, settled, drop),
+    ok:      (t) => cls.Pending$bool.of(pack(t), ok, settled, drop),
+    …
+
+So this is **one** defect across `recv`, `readStdin`, `accept`, `connect` and the rest, where the
+Rust hosts had it five times with three different remedies (`issues/system/0310b`). Only `recv` has
+been measured here; the others follow from the shared function rather than from separate runs.
+
+**That cuts both ways and the second half is the awkward one.** One function is one place to fix —
+and a shared `drop` has no idea *what* was consumed or who could still want it, which is precisely
+the knowledge the remedy needs. `0310b`'s answer differed by capability: put bytes back in a queue,
+hand a connection to a live ticket, close a dialled socket. A single `cancel(b, ticket)` can do none
+of those, so the fix has to give the kinds their own drops — and then the `waitAny` problem below
+applies to each.
+
 ## One function, three hosts — checked rather than assumed
 
 The measurement above is Deno's. The title says Node and the browser too, and that is by
