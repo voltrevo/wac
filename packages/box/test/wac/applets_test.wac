@@ -8,7 +8,7 @@
 // reading what we wrote, `httpd`, `nc`, the grants a *built* applet asks for, and the memory a streaming
 // applet holds. `issues/system/0193` has the list and the reasons.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
@@ -224,4 +224,43 @@ export string test_urlencode_escapes_a_component(Core core, Cli cli) {
 string one(Core core, Cli cli, string dir, string given) {
   cli.writeFile(dir + "/datum", given.toBytes()).wait();
   return runCase(core, cli, dir, "urlencode datum").out;
+}
+
+/**
+ * The two failures `mkdir` and `rmdir` exist to distinguish, said the way GNU says them — issue 0009.
+ *
+ * **The reason is compared, not the whole line.** box prefixes `applet: path: ` where GNU writes
+ * `mkdir: cannot create directory 'd': `, and that difference is house style rather than a defect.
+ * What matters is that the reason is the *category's* own words and not the host's, which vary per
+ * platform — "os error 17" under Deno, "already exists" in a browser.
+ *
+ * Live rather than captured for that reason: a vector holds stderr byte for byte, and these two lines
+ * are deliberately not byte-identical.
+ */
+export string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir + "/full/inner", true).wait().ok(), "a directory with something in it");
+
+  Ran twice = runCase(core, cli, dir, "mkdir full");
+  t.eqI32(twice.status, 1, "mkdir over an existing directory fails");
+  Ran notEmpty = runCase(core, cli, dir, "rmdir full");
+  t.eqI32(notEmpty.status, 1, "rmdir of a non-empty directory fails");
+
+  // GNU's wording, which is where the two strings below come from rather than from memory.
+  Exec gnuMkdir = cli.exec("mkdir", string[](dir + "/full"), u8[0]()).wait();
+  Exec gnuRmdir = cli.exec("rmdir", string[](dir + "/full"), u8[0]()).wait();
+  t.isTrue(gnuMkdir.ran() && gnuRmdir.ran(), "the real tools ran");
+  t.isTrue(string.fromBytes(gnuMkdir.stderr).indexOf("File exists") >= 0,
+           string.fromBytes(gnuMkdir.stderr));
+  t.isTrue(string.fromBytes(gnuRmdir.stderr).indexOf("Directory not empty") >= 0,
+           string.fromBytes(gnuRmdir.stderr));
+
+  // ...and box says the same reason, in its own shape.
+  t.isTrue(twice.err.indexOf("File exists") >= 0, twice.err);
+  t.isTrue(notEmpty.err.indexOf("Directory not empty") >= 0, notEmpty.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
 }
