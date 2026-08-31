@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 146
+count: 148
 S 5
 seq 5
 X 0
@@ -1601,6 +1601,26 @@ st=2
 
 E 54
 ls: cannot access 'nosuch': No such file or directory
+
+S 35
+mkdir -p t/a; touch t/f t/a/g; ls t
+X 0
+O 4
+a
+f
+
+E 0
+
+S 40
+mkdir -p t/a; touch t/zz t/aa t/mm; ls t
+X 0
+O 11
+a
+aa
+mm
+zz
+
+E 0
 
 S 11
 mkdir d; ls

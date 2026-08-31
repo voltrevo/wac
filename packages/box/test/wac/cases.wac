@@ -424,13 +424,26 @@ export string[] appletCases() {
     // prints the name back; `find .` walks; `du` counts blocks, which is why it is asked of one file
     // rather than of a tree whose block total depends on how the fixtures were written.
     "ls", "ls m1.txt", "ls nosuch; echo st=$?",
+    // **`ls` had no comparison at all** until these: replacing its whole body with a default left the
+    // suite green, because `readDir`'s order is the filesystem's while `ls` sorts. The capture pins
+    // `LC_ALL=C`, which is the collation the applet implements — a locale-aware one is a different
+    // thing and is not implemented — and `ls` to a pipe is already one name per line, so this is
+    // `ls -1` without asking for it.
+    "mkdir -p t/a; touch t/f t/a/g; ls t",
+    "mkdir -p t/a; touch t/zz t/aa t/mm; ls t",
     // **`find` and `du` are not here, and that is a finding rather than an omission** —
     // `issues/system/0299c`. Adding them turned three cases red against GNU: `find .` answers in
     // sorted order where GNU answers in directory order, `find . -name m1.txt` ignores `-name` and
     // prints the whole walk, and `du m1.txt` reports **17** where GNU reports **4** — bytes where
     // `du` means disk blocks. Two of those are wrong rather than merely different. The cases are in
     // that issue, and belong here on the day they pass.
-    // The mutating three. Safe as vector cases because `layFixtures` removes and re-lays the whole
+    // **`mkdir`, `rm` and `ls` are *shadowed* names, and these cases reach the shell's builtin rather
+    // than box's applet.** `shadowed_test.wac` pins that set — `echo ls mkdir rm chmod` — and the
+    // replay runs a `Shell`, where a builtin wins and there is no `command` to bypass it with. So what
+    // these compare against GNU is the builtin, which is worth comparing and is not the same claim as
+    // the applet's. `box.test.ts` keeps the assertions that must reach the applet, `ls -a` among them.
+    //
+    // The mutating three are safe as vector cases because `layFixtures` removes and re-lays the whole
     // directory before every one, on the capture side and the replay side alike.
     "mkdir d; ls",
     "mkdir -p d/e/f; find d",

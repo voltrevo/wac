@@ -397,3 +397,75 @@ export string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli) {
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * The applets that recurse, over a nested tree — the two mutants that survived, wac-mono 0005.
+ *
+ * **The tree has to have a subdirectory, and that is asserted rather than assumed.** The Deno version
+ * walked `packages/platform`, and an earlier one walked `packages/platform/src`, which is *flat*:
+ * every file in it is a `.wac`, so neither applet ever descended and the comparison said nothing about
+ * recursion. Gutting either applet's `MAX_DEPTH` to zero left both assertions passing. The tree here
+ * is built three deep for that reason, and the depth is checked before the comparison is believed.
+ *
+ * **Each side is asked its own question, which is why this is not a vector.** box's `du` answers in
+ * bytes and refuses `-s`, so GNU is asked `du -sb`; and `find`'s order is the filesystem's on one side
+ * and sorted on the other, so both are sorted before comparing. A vector holds one script and one
+ * answer, and neither of those pairs is one script.
+ */
+export string test_find_and_du_descend(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir + "/t/a/b", true).wait().ok(), "three levels");
+  cli.writeFile(dir + "/t/f", "one\n".toBytes()).wait();
+  cli.writeFile(dir + "/t/a/g", "two\n".toBytes()).wait();
+  cli.writeFile(dir + "/t/a/b/h", "three\n".toBytes()).wait();
+
+  // The guard: a walk that never descended would still match a flat tree, which is how the mutants
+  // survived. `t/a/b/h` is three levels down, so an answer without it is an answer that stopped.
+  Ran ours = runCase(core, cli, dir, "find t");
+  t.isTrue(ours.out.indexOf("t/a/b/h") >= 0,
+           "the walk reached the deepest file — without this a MAX_DEPTH of zero passes: " + ours.out);
+
+  Exec realFind = cli.execWithIn("find", string[]("t"), u8[0](), string[](), false, false, dir).wait();
+  t.isTrue(realFind.ran(), "the real find ran: " + realFind.error);
+  t.eqStr(sortedLines(ours.out), sortedLines(string.fromBytes(realFind.stdout)), "find differs");
+
+  // `du -sb` is the invocation box's `du` answers, and it refuses `-s` itself, so only GNU is given it.
+  Ran mine = runCase(core, cli, dir, "du t");
+  Exec realDu = cli.execWithIn("du", string[]("-sb", "t"), u8[0](), string[](), false, false, dir).wait();
+  t.isTrue(realDu.ran(), "the real du ran: " + realDu.error);
+  t.eqStr(firstField(mine.out), firstField(string.fromBytes(realDu.stdout)), "du differs from du -sb");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** Lines sorted and rejoined, so two walks in different orders can be compared. */
+string sortedLines(string all) {
+  string[] lines = string[256](fill: "");
+  i32 n = 0;
+  string rest = all;
+  while (rest.len() > 0 && n < 256) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    if (line != "") { lines[n] = line; n = n + 1; }
+    if (nl < 0) { break; }
+    rest = rest.slice(nl + 1, rest.len());
+  }
+  for (i32 i = 1; i < n; i++) {
+    string v = lines[i];
+    i32 j = i - 1;
+    while (j >= 0 && lines[j] > v) { lines[j + 1] = lines[j]; j = j - 1; }
+    lines[j + 1] = v;
+  }
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + lines[i] + "\n"; }
+  return out;
+}
+
+/** Everything before the first tab — `du`'s number, without its name. */
+string firstField(string line) {
+  i32 tab = line.indexOf("\t");
+  return tab < 0 ? line : line.slice(0, tab);
+}
