@@ -224,6 +224,59 @@ const string CONNECT_PROGRAM =
   "  return 0;\n" +
   "}\n";
 
+/**
+ * `readStdin` on the program's **own** input rather than a parent's feed — `0310b`.
+ *
+ * The cases above go through `spawnSelf`, which hands a child a queue. This one goes through
+ * `cli.exec`, which gives a program real bytes on its own standard input: a different branch
+ * with no queue to decline from, and the one that was fixed by reading because nothing here
+ * reached it. Only the *late* ordering is reachable — `exec` supplies all of standard input up
+ * front, so the first read has certainly landed by the time the caller gives up — and that is
+ * exactly the ordering the branch got wrong.
+ *
+ * It could not be measured on the wasmtime host at all until `issues/system/0313b` was fixed:
+ * `Cli.exec` was refused there for every program, so this probe read 0 of 3 on *both* arms and
+ * looked like a broken instrument. A bug that hides evidence about other bugs.
+ */
+const string OWNSTDIN_PROGRAM =
+  "import { Core, Cli, Pending, Exec } from \"std/platform.wac\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "\n" +
+  "  if (mode == \"eater\" || mode == \"eatercontrol\") {\n" +
+  "    if (mode == \"eater\") {\n" +
+  "      // The bytes are already here — `exec` gave them to us — so this is the give-up-after case.\n" +
+  "      Pending<u8[]> first = cli.readStdin();\n" +
+  "      core.delay(250).wait();\n" +
+  "      first.cancel();\n" +
+  "      core.cancel(first.id);\n" +
+  "    }\n" +
+  "    u8[] got = cli.readStdin().wait();\n" +
+  "    cli.write((\"SAW:\" + string.fromBytes(got)).toBytes());\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "\n" +
+  "  if (n < 2) { core.log(\"VERDICT lost — no binary given\"); return 1; }\n" +
+  "  string binary = string.fromBytes(cli.arg(1).wait());\n" +
+  "  // **Where this program lives is passed in, not assumed.** The first version computed it, which\n" +
+  "  // was true only while the file sat where the standalone probe put it — embedded in a case that\n" +
+  "  // writes it somewhere else, the child could never find itself and every arm failed alike.\n" +
+  "  if (n < 3) { core.log(\"VERDICT lost — no path given\"); return 1; }\n" +
+  "  string self = string.fromBytes(cli.arg(2).wait());\n" +
+  "  string kid = mode == \"control\" ? \"eatercontrol\" : \"eater\";\n" +
+  "  Exec r = cli.exec(binary,\n" +
+  "                    string[](\"run\", \"--allow-read\", \"--allow-write\", \"--allow-run\",\n" +
+  "                             \"--allow-env\", \"--allow-net\", self, kid),\n" +
+  "                    \"PAYLOAD\".toBytes()).wait();\n" +
+  "  if (!r.ran()) { core.log(\"VERDICT lost — the binary did not run: \" + r.error); return 1; }\n" +
+  "  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);\n" +
+  "  core.log(said.indexOf(\"SAW:PAYLOAD\") >= 0\n" +
+  "             ? \"VERDICT kept\" : \"VERDICT lost — the child saw \\\"\" + said + \"\\\"\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
 /** Write the program once and run it under `wac`, both streams together. */
 string ran(Cli cli, string binary, string path, string mode) {
   string[] argv = mode == ""
@@ -330,6 +383,20 @@ void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath
            host + ": an accept given up on after the connection arrived lost it — " + lateAcc);
 }
 
+/** `readStdin` on the process's own input, which needs the binary to exec itself. */
+void checkOwnStdin(T t, Cli cli, string binary, string path, string host) {
+  Exec c = cli.exec(binary, string[]("run", "--allow-read", "--allow-write", "--allow-run",
+                                     "--allow-env", "--allow-net", path, "control", binary, path),
+                    u8[0]()).wait();
+  t.isTrue(contains(string.fromBytes(c.stdout) + string.fromBytes(c.stderr), "VERDICT kept"),
+           host + ": the own-stdin control saw nothing, so its case cannot fail");
+  Exec a = cli.exec(binary, string[]("run", "--allow-read", "--allow-write", "--allow-run",
+                                     "--allow-env", "--allow-net", path, "abandon", binary, path),
+                    u8[0]()).wait();
+  t.isTrue(contains(string.fromBytes(a.stdout) + string.fromBytes(a.stderr), "VERDICT kept"),
+           host + ": an abandoned readStdin on the program's own input took it with it");
+}
+
 /** `connect`, whose remedy is to close rather than to hand on — see `CONNECT_PROGRAM`. */
 void checkDialled(T t, Cli cli, string binary, string path, string host) {
   t.isTrue(contains(ran(cli, binary, path, "control"), "VERDICT kept"),
@@ -372,6 +439,12 @@ export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core
       checkTaken(t, cli, nat, stdinPath, acceptPath, "wasmtime");
       checkDialled(t, cli, nat, dialPath, "wasmtime");
     }
+    string ownPath = writtenAs(cli, "ownstdin", OWNSTDIN_PROGRAM);
+    checkOwnStdin(t, cli, binaryPath(cli), ownPath, "v8");
+    if (why == "") {
+      checkOwnStdin(t, cli, nativeBinaryPath(core, cli, "lostbytes"), ownPath, "wasmtime");
+    }
+    cli.remove(ownPath, false).wait();
     cli.remove(dialPath, false).wait();
     cli.remove(stdinPath, false).wait();
     cli.remove(acceptPath, false).wait();
