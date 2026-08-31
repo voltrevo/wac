@@ -248,3 +248,28 @@ or 4,096 of it with `STATUS_MORE` (if the pool were empty and it fell to the inl
 553. So the second write's *body* really was 553 bytes — `pending[slot]` held something that was not
 this call's tail — and the two eliminations above say it was not a late write for a recycled slot and
 not a torn store within one write. That is worth knowing before the next attempt.
+
+### 553 cannot be a piece of this call's tail, whatever the interleaving
+
+`fits = Math.min(body.length, room.length)` and `room` is either a pooled buffer (131,072) or the
+slot's inline area (4,096). So **every** split of the 48,922-byte tail owed after the first piece
+delivers 48,922 or 4,096. There is no interleaving, no pool pressure and no scheduler ordering that
+makes it 553: the number is not reachable from this call's data by that code.
+
+    got  131,625 = 131,072 + 553
+    owed after the first piece = 48,922
+    a reply of 48,922 delivers 48,922 (pooled) or 4,096 (inline, with STATUS_MORE)
+
+That removes a whole family of guesses — anything of the form "the tail was chunked differently under
+load" — and leaves two readings:
+
+1. **The body really was 553 bytes**, so `pending[slot]` held something that was not this call's
+   tail. Then the question is which call produces a 553-byte answer and how it reached this slot;
+   the three notes above rule out a late write for a recycled slot, a torn store inside one `write`,
+   and a stale tail surviving a cancel.
+2. **The body was right and `S_RES_LEN` was not** — the reader took 553 bytes of a correct buffer.
+   That points at `readRes` and the length store rather than at `pending` at all, and nothing above
+   has looked there.
+
+The second reading has had no attention in this issue and is the cheaper one to falsify: it needs
+only the length store and its reader, both of which are a few lines, rather than an interleaving.
