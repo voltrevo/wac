@@ -380,3 +380,39 @@ exact. One of those is still wrong and I have not found which.
 Two mechanisms and one exoneration have now been proposed here and withdrawn, two of them mine today.
 The pattern in all three is the same: a chain that holds at every link except the one nobody checked
 because it was the assumption the chain started from.
+
+## The nonce check cannot tell truncation from a corrupted `size` field — agent-b, 2026-08-31
+
+This issue opens by saying the report *"says which, and it says truncated: the first four bytes are
+this call's own nonce"*. That inference does not hold, and it has been steering the search.
+
+The one capability reads four things out of the request and validates two of them:
+
+    const nonce    = v.getInt32(0, true);    // echoed back, so the guest matches on it
+    const delay    = v.getInt32(4, true);
+    const size     = v.getInt32(8, true);    // decides the answer's length — never validated
+    const declared = v.getInt32(12, true);   // checked against p.length
+    …
+    for (let i = 16; i < p.length; i++) …    // every payload byte checked against the nonce
+
+So the **payload** is fully verified and the **length** is verified, while `size` — the one field
+that decides how many bytes come back — is read and trusted. A four-byte change there passes every
+check in the handler.
+
+Trace it: the guest asks 179,994 with nonce 203; `size` arrives as 131,625; the handler faithfully
+builds 131,625 bytes beginning with nonce 203; the guest reports *"answer for 203 is 131625 bytes,
+wanted 179994"*, checks the first four bytes, finds its own nonce, and concludes **truncated**. That
+is the reported message exactly, with a correct bridge and a correct producer.
+
+**So the nonce rules out crossing and not corruption**, and `0155` closed on the observation that
+those two want opposite fixes. This report was taken to have settled which; it settled less than
+that.
+
+**The three-line diagnostic**: have the handler echo the `size` it read — there is room at offset 4
+of the answer — and have the guest compare it with what it asked for. If they differ the fault is in
+the request path and nothing in `respond.ts`, `call.ts` or the scheduler needs looking at; if they
+agree, truncation is confirmed and the five legs above genuinely do contradict.
+
+Offered as an **untested avenue**, which is what the two retractions above earn. Unlike those, it is
+consistent with every verified constraint rather than needing one of them to be wrong — and it costs
+one run of the fuzz to settle either way.
