@@ -400,6 +400,17 @@ struct Host {
     /// this map for `receiveFrom` since `issues/system/0207`; this is the same thing for reads.
     /// `issues/system/0308b`.
     reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
+    /// A connection a *dropped* accept had already taken, waiting for the next accept on that
+    /// listener.
+    ///
+    /// **The two orderings need different remedies, which is why both exist.** A thread that finds
+    /// its ticket gone hands the connection to a *live* ticket, because the retry is already blocked
+    /// inside `accept()` and cannot be given anything left lying about. A `drop` that finds the
+    /// answer in hand has the opposite problem: the retry has not been issued yet, so there is no
+    /// live ticket to hand to and the connection has to wait here for one. Parking alone measured
+    /// 0 of 8 on the first ordering; handing on alone measured 0 of 6 on the second.
+    /// `issues/system/0310b`.
+    parked_accepts: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<Outcome>>>>,
     /// Live `accept` tickets per listener, oldest first.
     ///
     /// A connection cannot be handed to a thread already blocked in `listener.accept()` — it is
@@ -449,6 +460,7 @@ impl Host {
             output_error: String::new(),
             handles: Arc::new(std::sync::Mutex::new(Handles::default())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            parked_accepts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             as_child: None,
@@ -1622,6 +1634,12 @@ fn dispatch(
                 let id = caller.data().tickets.submit();
                 let table = caller.data().tickets.clone();
                 let back = caller.data().pushback.clone();
+                // **Registered under standard input's handle**, so a `drop` that finds the
+                // answer already in hand knows where to put it — `Cap::Discard` hands it to
+                // `pushback`, which the next `readStdin` drains before reading more. Without this
+                // the early ordering was fixed and the late one still lost the lot, 0 of 6.
+                // `issues/system/0310b`.
+                caller.data().reading.lock().unwrap().insert(id, STDIN_HANDLE);
                 std::thread::spawn(move || {
                     // **Everything, and it stops early if nobody is waiting any more.** Reading to
                     // EOF for a ticket that has been given up on used to lose the lot — 1 run in 8
@@ -1652,6 +1670,8 @@ fn dispatch(
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             let back = caller.data().pushback.clone();
+            // Same, for the process's own input.
+            caller.data().reading.lock().unwrap().insert(id, STDIN_HANDLE);
             std::thread::spawn(move || {
                 use std::io::Read;
                 // The process's own input has no queue to decline from — the read has happened by
@@ -2047,6 +2067,12 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
+            // A connection a dropped accept already took is answered before waiting for another.
+            let already = caller.data().parked_accepts.lock().unwrap()
+                .get_mut(&h).and_then(|q| q.pop_front());
+            if let Some(outcome) = already {
+                return settle_now(caller, Kind::Socket, outcome, results);
+            }
             let listen_handle = h;
             let waiting = caller.data().accepting.clone();
             let Some(Sock::Listening(listener)) = socket_at(caller, h) else {
@@ -2064,6 +2090,10 @@ fn dispatch(
             // Registered so a connection taken for a ticket nobody wants can be handed to this one
             // wherever it is waiting. `issues/system/0310b`.
             caller.data().accepting.lock().unwrap().entry(h).or_default().push_back(id);
+            // And which listener it belongs to, so a `drop` holding an accepted connection knows
+            // whose queue to pass it on to. `issues/system/0310b` — without this the late ordering
+            // lost the connection, 0 of 6, while the early one was fixed.
+            caller.data().reading.lock().unwrap().insert(id, h);
             let table = caller.data().tickets.clone();
             let table_handles = caller.data().handles.clone();
             std::thread::spawn(move || {
@@ -2747,6 +2777,30 @@ fn dispatch(
             // a socket, which has no queue to go back to. That is `0307b`'s rule, unchanged.
             let held = caller.data().tickets.discard(id);
             let whose = caller.data().reading.lock().unwrap().remove(&id);
+            // **An accepted connection is handed on, not put down.** There is nowhere to put a
+            // socket back — it is already in the table with a client attached — so it goes to the
+            // next accept still waiting on that listener, exactly as the accept thread does when it
+            // finds its own ticket gone. `issues/system/0310b`.
+            if let (Some(Outcome::Socket(slot, _, _, _, _)), Some(listener)) = (&held, whose) {
+                if *slot >= 0 {
+                    let next = caller.data().accepting.lock().unwrap()
+                        .get_mut(&listener).and_then(|q| q.pop_front());
+                    match (next, held.clone()) {
+                        (Some(other), Some(answer)) => {
+                            let _ = caller.data().tickets.complete(other, answer);
+                            return Ok(());
+                        }
+                        // Nobody waiting yet — the retry comes *after* the give-up in this
+                        // ordering, so it waits here for it rather than being dropped.
+                        (None, Some(answer)) => {
+                            caller.data().parked_accepts.lock().unwrap()
+                                .entry(listener).or_default().push_back(answer);
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            }
             if let (Some(Outcome::Bytes(bytes)), Some(h)) = (held, whose) {
                 if !bytes.is_empty() {
                     if let Some(q) = child_stream(caller, h) {

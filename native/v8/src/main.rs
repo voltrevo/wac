@@ -584,6 +584,12 @@ struct HostState {
     /// Stream bytes a reader took for a ticket nobody claimed — the same idea as `datagrams`, for
     /// the resource it was never applied to. `issues/system/0307b`.
     pushback: Arc<std::sync::Mutex<HashMap<i32, Vec<u8>>>>,
+    /// A connection a *dropped* accept had already taken, waiting for the next accept on that
+    /// listener. The two orderings need different remedies: a thread whose ticket is gone hands the
+    /// connection to a **live** ticket, because the retry is already blocked inside `accept()`; a
+    /// `drop` holding the answer has no live ticket to hand to, because the retry has not been
+    /// issued yet, so it waits here. `issues/system/0310b`.
+    parked_accepts: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<Answer>>>>,
     /// Live `accept` tickets per listener, oldest first. A connection cannot be handed to a thread
     /// already blocked in `listener.accept()` — it waits in the kernel for a *different* one — so a
     /// thread whose ticket is gone completes somebody else's instead. `issues/system/0310b`.
@@ -1211,6 +1217,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
             datagrams: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            parked_accepts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
             receiving: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -2446,6 +2453,17 @@ fn dispatch(
             }
         }
         Cap::ReadStdin => {
+            // **What an abandoned read already took, in front of the rest.** A `drop` holding this
+            // capability's answer leaves it under standard input's handle, and this is where it is
+            // collected — without it the late ordering lost the lot on this host, 0 of 6, while the
+            // early one was fixed. `issues/system/0310b`.
+            let waiting: Vec<u8> = HOST
+                .with(|h| {
+                    h.borrow()
+                        .as_ref()
+                        .and_then(|st| st.pushback.lock().unwrap().remove(&STDIN_HANDLE))
+                })
+                .unwrap_or_default();
             // **All of it, to the end** — the unbounded read, as against `readChunk`'s bounded one.
             // A frame's input answers here too, because an applet that reads all of stdin should get
             // what its caller handed it rather than the terminal behind them both.
@@ -2469,11 +2487,12 @@ fn dispatch(
             if let Some(q) = from_parent {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };
                 let id = t.submit();
+                    HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
                 let worker = t.clone();
                 std::thread::spawn(move || {
                     // To the end, which is what this capability is: every chunk until the parent
                     // says there are no more.
-                    let mut all = Vec::new();
+                    let mut all = waiting.clone();
                     loop {
                         // **Stops if nobody is waiting.** Reading to EOF for a ticket that has been
                         // given up on lost the whole of standard input — 1 run in 6 on this host,
@@ -2521,6 +2540,7 @@ fn dispatch(
             }
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let id = t.submit();
+                    HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
             let worker = t.clone();
             std::thread::spawn(move || {
                 let mut buf = Vec::new();
@@ -2783,6 +2803,18 @@ fn dispatch(
                 }
                 return;
             };
+            // A connection a dropped accept already took is answered before waiting for another.
+            let already = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|st| {
+                    st.parked_accepts.lock().unwrap().get_mut(&handle).and_then(|q| q.pop_front())
+                })
+            });
+            if let Some(a) = already {
+                return match ticket_for(scope, "Socket", a) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Socket> for accept"),
+                };
+            }
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let listen_handle = handle;
             let waiting = HOST.with(|h| h.borrow().as_ref().map(|st| st.accepting.clone()));
@@ -2792,6 +2824,12 @@ fn dispatch(
             if let Some(ref w) = waiting {
                 w.lock().unwrap().entry(listen_handle).or_default().push_back(id);
             }
+            // Which listener, so a `drop` holding an accepted connection knows whose queue it is.
+            HOST.with(|h| {
+                if let Some(st) = h.borrow().as_ref() {
+                    st.reading.lock().unwrap().insert(id, listen_handle);
+                }
+            });
             let worker = t.clone();
             let sockets = HOST.with(|h| h.borrow().as_ref().map(|s| s.sockets.clone()));
             std::thread::spawn(move || {
@@ -3786,9 +3824,42 @@ fn dispatch(
                     let reading = HOST.with(|h| {
                         h.borrow().as_ref().and_then(|st| st.reading.lock().unwrap().remove(&id))
                     });
-                    if let (Some(handle), Answer::Read(ReadAnswer::Data(ref bytes))) =
-                        (reading, &answer)
-                    {
+                    // **`Read` *or* `Bytes`.** `recv` answers a `Read`; `readStdin` answers
+                    // `Answer::Bytes`, and matching only the first left its late ordering losing the
+                    // lot — 0 of 6 — while its early one was fixed. The question is whether bytes
+                    // came off a stream, not which capability spelled them. `issues/system/0310b`.
+                    // **An accepted connection is handed on or parked, never put down.** There is
+                    // nowhere to put a socket back: it is in the table with a client attached. If an
+                    // accept is still waiting on that listener it gets it; if none is — the retry
+                    // comes after the give-up in this ordering — it waits for one.
+                    // `issues/system/0310b`.
+                    if let (Some(listener), Answer::Socket(slot, _, _, _, _)) = (reading, &answer) {
+                        if *slot >= 0 {
+                            let next = HOST.with(|h| {
+                                h.borrow().as_ref().and_then(|st| {
+                                    st.accepting.lock().unwrap()
+                                        .get_mut(&listener).and_then(|q| q.pop_front())
+                                })
+                            });
+                            match next {
+                                Some(other) => { let _ = t.complete(other, answer); }
+                                None => HOST.with(|h| {
+                                    if let Some(st) = h.borrow().as_ref() {
+                                        st.parked_accepts.lock().unwrap()
+                                            .entry(listener).or_default().push_back(answer);
+                                    }
+                                }),
+                            }
+                            rv.set_undefined();
+                            return;
+                        }
+                    }
+                    let taken: Option<&Vec<u8>> = match &answer {
+                        Answer::Read(ReadAnswer::Data(b)) => Some(b),
+                        Answer::Bytes(Some(b)) => Some(b),
+                        _ => None,
+                    };
+                    if let (Some(handle), Some(bytes)) = (reading, taken) {
                         if !bytes.is_empty() {
                             let queue = HOST.with(|h| {
                                 h.borrow().as_ref().and_then(|st| {

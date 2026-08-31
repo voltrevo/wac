@@ -91,10 +91,10 @@ const string STDIN_PROGRAM =
   "export i32 main(Core core, Cli cli) {\n" +
   "  i32 n = cli.argCount().wait();\n" +
   "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
-  "  if (mode == \"child\" || mode == \"childcontrol\") {\n" +
-  "    if (mode == \"child\") {\n" +
+  "  if (mode == \"child\" || mode == \"childcontrol\" || mode == \"childlate\") {\n" +
+  "    if (mode == \"child\" || mode == \"childlate\") {\n" +
   "      Pending<u8[]> first = cli.readStdin();\n" +
-  "      core.waitAny(i32[](first.id), 50);\n" +
+  "      if (mode == \"childlate\") { core.delay(900).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
   "      first.cancel();\n" +
   "      core.cancel(first.id);\n" +
   "    }\n" +
@@ -103,7 +103,7 @@ const string STDIN_PROGRAM =
   "    return 0;\n" +
   "  }\n" +
   "\n" +
-  "  string kidArg = mode == \"control\" ? \"childcontrol\" : \"child\";\n" +
+  "  string kidArg = mode == \"control\" ? \"childcontrol\" : (mode == \"late\" ? \"childlate\" : \"child\");\n" +
   "  Child kid = cli.spawnSelf(u8[][](kidArg.toBytes()), GRANT_ALL(), \".\", false, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  core.delay(300).wait();\n" +
@@ -125,8 +125,7 @@ const string STDIN_PROGRAM =
   "  }\n" +
   "  core.log(got == \"SAW:PAYLOAD\" ? \"VERDICT kept\" : \"VERDICT lost \\\"\" + got + \"\\\"\");\n" +
   "  return 0;\n" +
-  "}\n" +
-  "\n";
+  "}\n";
 
 /** An abandoned `accept` used to orphan the connection it had taken — `0310b`. */
 const string ACCEPT_PROGRAM =
@@ -161,7 +160,7 @@ const string ACCEPT_PROGRAM =
   "  if (mode != \"control\") {\n" +
   "    // Parked on an empty backlog, then given up on — the client dials at 300ms.\n" +
   "    Pending<Socket> first = cli.accept(listener.handle);\n" +
-  "    core.waitAny(i32[](first.id), 50);\n" +
+  "    if (mode == \"late\") { core.delay(900).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
   "    first.cancel();\n" +
   "    core.cancel(first.id);\n" +
   "  }\n" +
@@ -175,8 +174,7 @@ const string ACCEPT_PROGRAM =
   "  Socket got = second.wait();\n" +
   "  core.log(got.handle >= 0 ? \"VERDICT kept\" : \"VERDICT lost — \" + got.error);\n" +
   "  return 0;\n" +
-  "}\n" +
-  "\n";
+  "}\n";
 
 /** Write the program once and run it under `wac`, both streams together. */
 string ran(Cli cli, string binary, string path, string mode) {
@@ -268,6 +266,20 @@ void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath
   string acc = ran(cli, binary, acceptPath, "");
   t.isTrue(contains(acc, "VERDICT kept"),
            host + ": an abandoned accept orphaned the connection it had taken — " + acc);
+
+  // ── The *other* ordering for both, which is the half I first shipped without ──
+  //
+  // Each of these can be given up on **before** the answer arrives or **after** it is in hand, and
+  // the two need different remedies. Declining to take it fixes the first and does nothing for the
+  // second; handing it on fixes the second and cannot reach the first, where the retry is already
+  // blocked inside the call. `readStdin` and `accept` were each fixed on one ordering, measured
+  // 8 of 8, and reported done — and each still lost everything on the other, 0 of 6.
+  string lateIn = ran(cli, binary, stdinPath, "late");
+  t.isTrue(contains(lateIn, "VERDICT kept"),
+           host + ": a readStdin given up on after its answer landed lost it — " + lateIn);
+  string lateAcc = ran(cli, binary, acceptPath, "late");
+  t.isTrue(contains(lateAcc, "VERDICT kept"),
+           host + ": an accept given up on after the connection arrived lost it — " + lateAcc);
 }
 
 export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core, Cli cli) {
