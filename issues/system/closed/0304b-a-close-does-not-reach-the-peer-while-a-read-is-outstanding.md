@@ -77,6 +77,11 @@ answer is sharper than the probe would have been:
 | Node (`host/nodeNet.js`) | `close: () => sock.destroy()` | correct — explicit |
 | **v8 (`native/v8/`)** | removed the entry and let the `TcpStream` drop | **the bug** |
 
+**And the right pattern was fifteen lines away.** `closeSend` — the half-close from
+`issues/system/0215` — does `s.shutdown(Shutdown::Write)` on the socket fetched by handle, in the
+same file, in the neighbouring capability. So this was not a host that did not know how to shut a
+socket down; it was one place that reached for the drop instead, next to one that did not.
+
 So the fix applied here is what the *other* Rust host has been doing all along, and the one that was
 wrong is the default. That is the useful part: it was not a misread contract shared across hosts —
 three of four call an explicit teardown, and only this one relied on a value going out of scope,
