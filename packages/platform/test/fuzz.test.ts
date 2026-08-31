@@ -79,9 +79,18 @@ const handlers = {
       if (p[i] !== ((nonce + i) & 0xff)) throw new Error(`request byte ${i} is wrong`);
     }
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-    const out = new Uint8Array(Math.max(4, size));
-    new DataView(out.buffer).setInt32(0, nonce, true);
-    for (let i = 4; i < out.length; i++) out[i] = (nonce + i) & 0xff;
+    // **Offset 4 carries the size this handler read** — `issues/system/0162`'s discriminator. The
+    // nonce rules out one call's answer landing on another and says nothing about the *request*
+    // arriving wrong: a handler told 131,625 faithfully builds 131,625 bytes, and the guest then
+    // reports a truncation that never happened. Echoing the size back is what tells those apart.
+    //
+    // It goes at offset 4 rather than at the end because a truncated answer still has its head,
+    // and the head is the only part a short answer is guaranteed to carry.
+    const out = new Uint8Array(Math.max(8, size));
+    const ov = new DataView(out.buffer);
+    ov.setInt32(0, nonce, true);
+    ov.setInt32(4, size, true);
+    for (let i = 8; i < out.length; i++) out[i] = (nonce + i) & 0xff;
     return out;
   },
 };
@@ -122,7 +131,7 @@ const BODY = `
   let nonce = 1, collected = 0, cancels = 0, timeouts = 0, chunked = 0;
 
   const answerOf = (bytes, entry) => {
-    if (bytes.length !== Math.max(4, entry.size)) {
+    if (bytes.length !== Math.max(8, entry.size)) {
       // **Say whose answer this actually is.** This used to report only the expected nonce and the
       // two lengths — "answer for 12 is 326 bytes, wanted 924" — which is equally consistent with a
       // truncated answer to *this* call and with another call's answer landing here, and those want
@@ -138,6 +147,16 @@ const BODY = `
       // lines away on a line nobody touched. And an escape is consumed by the template, so a newline
       // in a message has to be written twice over.)
       const found = bytes.length >= 4 ? readI32le(bytes) : null;
+      // The size the *handler* read, echoed at offset 4. The guard is not decoration: the answers
+      // this branch sees are short by definition, and while 131,625 bytes is long enough to hold it
+      // a four-byte one is not.
+      const said = bytes.length >= 8 ? readI32le(bytes.subarray(4)) : null;
+      const readSize = said === null
+        ? "handler read size: unknown, the answer is too short to carry it"
+        : said === entry.size
+        ? "handler read size " + said + " - what was asked, so the answer path truncated it"
+        : "handler read size " + said + " - not the " + entry.size +
+          " asked, so the request path corrupted it and no answer was ever truncated";
       const whose = found === null
         ? "too short to say whose it is"
         : found === entry.nonce
@@ -146,8 +165,9 @@ const BODY = `
         ? "the nonce belongs to cancelled call " + found + " - a recycled slot"
         : "the nonce is " + found + ", another live call's - crossed";
       throw new Error(
-        "answer for " + entry.nonce + " is " + bytes.length + " bytes, wanted " + Math.max(4, entry.size) +
+        "answer for " + entry.nonce + " is " + bytes.length + " bytes, wanted " + Math.max(8, entry.size) +
         "\\n  " + whose +
+        "\\n  " + readSize +
         "\\n  slot " + entry.t.slot + " gen " + entry.t.gen +
         ", " + live.length + " live, " + cancels + " cancelled and " + spent.size + " spent so far",
       );
@@ -160,7 +180,14 @@ const BODY = `
       throw new Error("asked as " + entry.nonce + ", answered as " + got + " in slot " + entry.t.slot + " gen " + entry.t.gen);
     }
     // Every byte, not just the nonce: a response reassembled out of order would keep its head.
-    for (let i = 4; i < bytes.length; i++) {
+    //
+    // **From 8, not 4, and that is four bytes of oracle given up.** Offsets 4-7 carry the echoed
+    // size (issues/system/0162 - no backticks in here, they would end the worker source) and no
+    // longer follow the pattern, so a reassembly fault landing
+    // exactly there is now invisible to this check. Accepted deliberately: the four bytes buy the
+    // one thing this loop cannot tell you, which is whether the answer was short because it was
+    // truncated or because the handler was asked for the wrong size.
+    for (let i = 8; i < bytes.length; i++) {
       if (bytes[i] !== ((got + i) & 0xff)) throw new Error("answer byte " + i + " is wrong for " + got);
     }
   };

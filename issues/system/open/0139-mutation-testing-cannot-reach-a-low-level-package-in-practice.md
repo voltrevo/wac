@@ -211,12 +211,33 @@ So a baseline compiles every test file it runs from cold, exactly as the profile
 `issues/system/0161` measures what that costs there: about 5s a file against roughly one second for a
 cache hit, with that issue's own note recording `packages/box/test/wac` as *18s cold and 7s warm*.
 
-If gzip's 4m53s is mostly compilation rather than execution, then reusing baselines across runs is
-solving the right problem the hard way, and parallelising them is buying 1.8x on a number that could
-fall further on its own. Both remain worth having; neither is the first thing to try.
+### Retracted the same day, before anyone acted on it — agent-b, 2026-08-31
 
-**Not measured here**, and it should be before anyone acts on it: run one scope's baseline against a
-warm tree and against a staged one, and compare. That is minutes, where the alternatives are a
-rewrite. `issues/system/0161` carries the same finding for the profiling pass, along with the reason
-only the *clean-source* phases may share the real cache — a mutant run would evict what a developer's
-builds rely on.
+**The reasoning above is wrong, twice over.** It is left standing because the mistake is the useful
+part: it reads as a tidy mechanism and was never traced.
+
+The repo's `.cache` is where *tests* keep scratch files, and says nothing about whether a build is
+cold. `buildCachePath` (`packages/wac/src/wac.wac:457`) roots the build cache at `wacHomeOf(cli)` —
+`$WAC_HOME`, **outside the checkout** — so the staged copy shares it.
+
+Reading the key predicts the opposite of what I wrote. It eats `WAC_COMPILER_ID`, the command, the
+`target`, the grants and the source `texts`; `testCommand` passes the scope **relative** with `cwd`
+set to the staged root, a baseline runs unmutated sources, and the V8 host sets `WAC_COMPILER_ID`
+itself when it is unset (`native/v8/src/main.rs:794`), so the tool's environment cannot withhold it.
+Every component is identical to a run in the real checkout: **a staged baseline should hit.**
+
+And the profiling half cannot be fixed by staging at all. `wac.wac:1879` reads `WAC_PROFILE` before
+the key is built at 1882 and sets `cachePath = ""` — because a hit would serve the *plain* module to
+a run whose whole purpose is the counters, and the profile would come back empty, which reads as
+"this entry has no tests" rather than as an error. `--coverage` and `--trace` are refused on the same
+line. That bypass is load-bearing and is not a staging artefact.
+
+So the two proposals at the top of this section are **not** undermined; there may be no cold-cache
+story here at all. What survives is the *per-invocation* cost on `issues/system/0161`: `buildProfile`
+spawns the binary once per file and pays a compile each time, ~5s a file against the 0.64s/file one
+directory-wide `wac test --coverage` achieves. That is about spawns rather than staging, and its
+remedy — profile a directory in one call and split the JSON by entry — is untouched by any of this.
+
+**The check is unchanged and still worth running:** time one scope's baseline staged against the same
+scope in the checkout. Predicted close, because both should hit. If the staged one is far slower, the
+key is missing something this reading says it has, and *that* is the finding.
