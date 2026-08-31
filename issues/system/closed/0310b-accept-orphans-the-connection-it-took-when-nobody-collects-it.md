@@ -186,3 +186,19 @@ ticket that may be gone", and the fix differs three ways: decline-or-put-back, h
 close. Each time I assumed the previous remedy generalised it did not — parking measured 0 of 8 where
 handing on worked, and handing on would be meaningless here. The description is shared; the remedy is
 a property of *what was consumed and who could still want it*.
+
+### The close covers `listen` and `bindDatagram` too, and that cannot be probed from wac
+
+`connect` is not the only caller answering `Outcome::Socket`. `listen` and `bindDatagram` do as
+well, and the close path is unconditional — only the `shutdown` is specific to `Sock::Open`, while
+`handles.close(slot)` sets the slot to `None` and drops the `Arc`, which frees a listener's port and
+a datagram socket alike. So all three are covered by one branch, and an `accept` is excluded because
+it has a listener noted against its ticket.
+
+**Read rather than measured, and the reason is worth keeping.** A probe cannot see this from inside
+wac: an abandoned `listen`'s port is only ever known through the answer that was abandoned, so
+nothing in the program can dial it to find out. The attempt confirmed only that the instrument could
+not disagree — both arms said the port was still held, control included — which indicts the probe and
+not the host. Identical results across arms is the same tell as a run with no output at all.
+
+Worth someone checking from outside the process if it ever matters, with `ss` or an fd count.
