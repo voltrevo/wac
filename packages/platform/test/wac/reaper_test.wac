@@ -1,0 +1,60 @@
+/**
+ * The daemon reaper's bound, tested at both ends.
+ *
+ * `tools/wac/suitehouse.wac` kills processes that mention **this workspace's own** `.cache` and are
+ * older than two hours. The path condition is the safety property — three agents share the machine
+ * and their workspace paths differ, so one agent's sweep cannot reach another's processes even in
+ * principle. It is not a refinement of the age test: `ps` reports PID 1 as a fortnight old, so an
+ * age rule on its own would reap `init`.
+ *
+ * What a test can check cheaply is the **bound**, which is what protects a live test from its own
+ * housekeeping. A process started a moment ago must survive the real threshold — and must *not*
+ * survive a zero one, because that second half is what says the first is a bound rather than a rule
+ * that never fires. Checking only the survival would pass just as well on a reaper that does
+ * nothing at all.
+ *
+ * `issues/system/0136`: nine servers from this workspace were still running after 33 and 45 hours,
+ * holding 3 GB on a box whose gate refuses to start below 4,000 MB. The sweeps that issue produced
+ * are about names in `/tmp` and cannot see a process.
+ */
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { reapOlderThan } from "../../../../tools/wac/suitehouse.wac";
+
+/** A process whose command line carries this workspace's `.cache`, which is what the rule matches. */
+void started(Cli cli, string script) {
+  cli.writeFile(script, "sleep 120\n".toBytes()).wait();
+  // `setsid` and detached, so it outlives the shell that starts it and this test can ask about it.
+  cli.execWith("/bin/sh", string[]("-c", "setsid /bin/sh " + script + " >/dev/null 2>&1 &"),
+               u8[0](), string[0](fill: ""), false, false).wait();
+}
+
+bool alive(Cli cli, string script) {
+  Exec r = cli.execWith("/bin/ps", string[]("-eo", "args", "--no-headers"), u8[0](),
+                        string[0](fill: ""), false, false).wait();
+  return string.fromBytes(r.stdout).indexOf(script) >= 0;
+}
+
+export string test_the_reaper_spares_what_is_young_and_takes_what_is_not(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/reaperprobe";
+  cli.mkdir(dir, true).wait();
+  string script = dir + "/held.sh";
+
+  started(cli, script);
+  core.delay(400).wait();
+  t.isTrue(alive(cli, script), "the probe did not start, so neither half below means anything");
+
+  // The real bound is two hours; a process seconds old is nowhere near it.
+  reapOlderThan(core, cli, 7200000 as i64);
+  core.delay(300).wait();
+  t.isTrue(alive(cli, script), "the reaper killed a process that had only just started");
+
+  // And a bound of zero, which everything is past.
+  reapOlderThan(core, cli, 0 as i64);
+  core.delay(500).wait();
+  t.isTrue(!alive(cli, script), "the reaper spared a process past its bound, so it never fires");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
