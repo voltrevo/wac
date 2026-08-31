@@ -6,6 +6,10 @@ the only thing on this page that refers to an implementation.
 An entry is an example, not an argument. A want that cannot be shown as a program somebody would
 want to write does not belong here.
 
+No test reads this page. Nothing here is a fixture, a list some guard checks, or a promise a
+suite holds anybody to — an entry can be rewritten, reordered or deleted without running anything,
+and a guard that made an edit here fail a build would be the wrong guard.
+
 ---
 
 ## What wac is for
@@ -49,8 +53,6 @@ async void answer(Sys sys, Socket sock) {
 
 ---
 
----
-
 ## JavaScript calls it
 
 ```wac
@@ -81,7 +83,9 @@ Shape.Circle(2).area();       // 12.56636
 JavaScript imports a wac module as a module, with types. An enum arrives as a class with its variant
 constructors and its methods, held by reference: wac compiles to WebAssembly GC, so the object on the
 JavaScript side *is* the one in the module. The glue is generated, so a signature cannot drift from
-what it calls. **Done.**
+what it calls.
+
+**Done.**
 
 ---
 
@@ -102,6 +106,7 @@ T? find<T>(T[] xs, fn[bool(T)] p) {
 Most of a program is this. It takes no capability, so it cannot reach the world, and the signature is
 the whole of that argument — nothing else had to be arranged. Absence is a type rather than a
 sentinel, a loop says what it walks rather than how it counts, and a predicate is a value.
+
 **Not yet.**
 
 ---
@@ -123,7 +128,9 @@ i32 scan(Sys sys) {
 `scan` runs to completion inside the program — its own scheduler, less authority than the caller
 holds, and nothing spawned. A grant can only be removed: a subsystem asking for more than its parent
 holds gets what its parent holds, so the ceiling falls as you go inward and never rises. It is what
-the host does when it runs `main`, one level up. **Not yet.**
+the host does when it runs `main`, one level up.
+
+**Not yet.**
 
 ---
 
@@ -148,7 +155,9 @@ template language beside it.
 and nothing distinguishes them: a tag is a function, its attributes are that function's named
 parameters and its children are a parameter. So attributes are typed wherever they appear, a tag that
 takes no children refuses them, and `<dvi>` is an unresolved name rather than an element nobody
-meant. **Not yet.**
+meant.
+
+**Not yet.**
 
 ---
 
@@ -171,7 +180,9 @@ element an attribute name is a string rather than an identifier.
 Where the name really is a parameter, `@for` writes it: a verbatim identifier is any word taken as a
 name, so a keyword can be one and nothing is renamed. It costs a mark at the definition and nothing
 at any use — an attribute is matched by spelling, so the call site stays bare. Defining a tag is how
-the vocabulary grows, and `core`'s `label` is exactly this. **Not yet.**
+the vocabulary grows, and `core`'s `label` is exactly this.
+
+**Not yet.**
 
 ---
 
@@ -182,6 +193,7 @@ import { itoa } from "@/packages/fmt/src/itoa.wac";
 ```
 
 A header says where something is, not how many directories away the reader happens to be standing.
+
 **Done.**
 
 ---
@@ -211,7 +223,9 @@ i32 totalLength(Vec<string> lines) {
 The same head walks an array and a `Vec`, so they read as one language rather than two libraries, and
 an index that exists only to be a cursor never appears. The head keeps its parentheses and its type:
 every other head in the language has both, and a redundancy the eye can rest on is worth more than a
-character saved. **Not yet.**
+character saved.
+
+**Not yet.**
 
 ---
 
@@ -229,7 +243,9 @@ async void both(Sys sys) {
 
 Both reads are in flight before either is awaited, because starting the work and waiting for it are
 different acts. Concurrency is what you get by *not* awaiting yet — there is no parallel construct,
-no task type and nothing to join. **Not yet.**
+no task type and nothing to join.
+
+**Not yet.**
 
 ---
 
@@ -251,4 +267,5 @@ async Result<u8[], string> readAll(Sys sys, Socket sock) {
 Three outcomes, all named, none forgettable: a read that ended and a read that broke are different
 answers and neither can be mistaken for the other. The failure is returned rather than reported, so
 the caller decides what it means — and a partial read cannot be handed back as if it were whole.
+
 **Not yet.**

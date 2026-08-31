@@ -673,7 +673,12 @@ export string test_every_backticked_repository_path_names_a_file_that_exists(Cor
     // `.tsx` and `.py` too. The Python is `packages/bls`'s generators, and the website is `.tsx` and
     // names repository paths in its own published prose. `issues/` is skipped: a closed issue is a
     // record of what somebody ran and should not be edited to follow a rename.
-    if (!prosePath(f) || hasPrefix(f, "issues/")) { continue; }
+    //
+    // `VISION.md` is skipped because it says so itself: it describes a language rather than this
+    // tree, so most of the paths it names are ones nobody has written yet, and it is meant to be
+    // edited without running anything. A guard that turned an edit there into a failing suite would
+    // be the wrong guard — it would be checking imaginary code against real directories.
+    if (!prosePath(f) || hasPrefix(f, "issues/") || f == "VISION.md") { continue; }
     string[] paths = rootedPaths(read(cli, f));
     for (i32 k = 0; k < paths.len(); k++) {
       string path = paths[k];
