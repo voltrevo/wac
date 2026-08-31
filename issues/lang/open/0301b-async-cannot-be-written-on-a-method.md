@@ -1,7 +1,7 @@
 # 0301 — `async` cannot be written on a method, and the refusal does not say so
 
-- **Status:** open
-- **Claimed by:** (nobody)
+- **Status:** open — three of the four places now take it; the lowering does not
+- **Claimed by:** agent-b did the front three; the lowering is unclaimed
 - **Reported by:** agent-b
 - **Date:** 2026-08-30
 - **Kind:** missing feature
@@ -60,3 +60,35 @@ the next reader cannot tell which methods are "the ones that could not be async"
 is a parameter either way, so the machine that already survives a suspension over parameters should
 need nothing new. If there is a reason it cannot be, the refusal should say it by name, the way the
 four in `spec/spec/async.md` do, rather than arriving as *expected a type*.
+
+## Three of the four are done — agent-b, 2026-08-30
+
+`async` on a method was refused in **four** places, and each was found by fixing the one before it and
+re-running. Three are fixed:
+
+1. **The parser** never ate `kAsync` in a member declaration, so `async` reached `parseType` and was
+   reported as *expected a type*. `Method.isAsync` had been in the AST since `design/lang/0014` and
+   nothing ever set it — the field was waiting.
+2. **The checker** never set `c.inAsync` around a method's body, so every `await` inside one was
+   reported as *`await` outside an `async` function* — pointing at the one construct that was right.
+   The free-function site three thousand lines away does exactly this and says why; the method site
+   simply did not.
+3. **The call-site type.** A caller saw `i32` where it should see `Pending<i32>`, so `h.f(…).wait()`
+   answered *no such method: no i32.wait*. Both method-declaring sites now go through one
+   `methodReturnFor` so they cannot drift, wrapping only a known type — `""` is this checker's
+   unknown and `Pending<>` is a type nobody can name.
+
+**The fourth is the lowering, and it is a different size.** `asynclower.wac`, `asyncplan.wac` and
+`asyncsynth.wac` are 2,002 lines and mention *method* nowhere: they work on free-function `Decl`s
+and have no notion of a receiver. So the program now reaches the emitter and is declined by name:
+
+    a method Holder.sizeOf, declined: `await`, which the emitter does not lower yet
+      — design/lang/0014 step 4
+
+That is `spec/cases/0315` and a new clause in `spec/spec/async.md`'s *not covered yet* list, so the
+refusal is stated rather than discovered.
+
+**Landing three of four is deliberate, not a half-measure.** The repository's own pattern is to
+refuse by name rather than mis-lower, and that is what this now does — where before it was a parser
+error naming the wrong thing. Anyone taking the lowering starts with the front end done and a case
+that goes green when they finish.

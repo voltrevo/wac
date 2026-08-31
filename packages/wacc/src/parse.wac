@@ -2331,6 +2331,13 @@ Decl parseStructDecl(P p, bool exported) {
     bool fieldConst = !isOverride && p.at1(kConst()) && p.kindAt(1) != kThis();
     if (fieldConst) { p.advance(); }
 
+    // `async T name(this, …)` — the same place it sits on a free function, between whatever
+    // qualifies the declaration and the type the *body* answers. `Method.isAsync` has been in the
+    // AST since `design/lang/0014` and nothing ever set it, so an `async` here arrived at
+    // `parseType` and was reported as *expected a type* — a diagnostic about the parser's position
+    // rather than about the feature. `issues/lang/0301b`.
+    bool memberAsync = p.eat(kAsync());
+
     Ty memberType = parseType(p);
     i32 memberTok = -1;
     memberTok = declName(p, perrExpected(), "member name");
@@ -2363,7 +2370,7 @@ Decl parseStructDecl(P p, bool exported) {
       }
       p.expect(kRparen());
       methods.push(Method(memberTok, memberType, params.take(), parseBlock(p),
-        isOverride, overrideTok, hasThis, thisConst, mTypeParams, false));
+        isOverride, overrideTok, hasThis, thisConst, mTypeParams, memberAsync));
     } else {
       p.fail(perrExpected());
       while (!p.at1(kRbrace()) && !p.at1(kSemi()) && !p.at1(kEof())) { p.advance(); }

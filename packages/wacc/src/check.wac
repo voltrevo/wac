@@ -9792,8 +9792,9 @@ export void declareModule(C c, Program prog, string[] only) {
           bool gen = typeParams.len() > 0;
           c.declareMethod(ename, tokenText(c, methods[mi].nameTok),
                           !methods[mi].hasThis, methods[mi].thisConst,
-                          gen ? writtenTy(c, methods[mi].returnType)
-                              : typeOfTy(c, methods[mi].returnType), emps,
+                          methodReturnFor(gen ? writtenTy(c, methods[mi].returnType)
+                                              : typeOfTy(c, methods[mi].returnType),
+                                          methods[mi].isAsync), emps,
                           methods[mi].body, ownParamNames(c, methods[mi].typeParams));
         }
       }
@@ -9845,8 +9846,9 @@ export void declareModule(C c, Program prog, string[] only) {
           }
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
-                          ownLetters ? writtenTy(c, methods[i].returnType)
-                                     : typeOfTy(c, methods[i].returnType), mps,
+                          methodReturnFor(ownLetters ? writtenTy(c, methods[i].returnType)
+                                                     : typeOfTy(c, methods[i].returnType),
+                                          methods[i].isAsync), mps,
                           methods[i].body, ownParamNames(c, methods[i].typeParams));
           c.activeParamCount = savedActive;
         }
@@ -10252,7 +10254,15 @@ void checkMethodBodies(C c, string owner, string parent, Method[] methods) {
       c.noteFuncArity(funcrefArityOfTy(c, methods[mi].params[i].type));
     }
     declareAll(c, methods[mi].body);
+    // Set around the body and put back, exactly as the free-function site does: `await` is only a
+    // thing inside an `async` function, and this is the only place that knows which kind this one
+    // is. It was not set here at all, so an `async` method's body was checked as though it were
+    // ordinary and every `await` in it reported *`await` outside an `async` function* — pointing at
+    // the one construct that was right. `issues/lang/0301b`.
+    bool wasAsyncM = c.inAsync;
+    c.inAsync = methods[mi].isAsync;
     checkAll(c, methods[mi].body, methods[mi].returnType);
+    c.inAsync = wasAsyncM;
     c.popScope();
     // At the **return type**, where the reference puts it. A `Method` carries no position of its own —
     // unlike a `Decl`, which is why the top-level version reports at the declaration — and the return
@@ -10509,3 +10519,17 @@ export void checkModule(C c, Program prog) {
     }
   }
 }
+
+/**
+ * A method's declared return as its **callers** see it: `Pending<T>` when it is `async`.
+ *
+ * The same rule as the free-function path — `design/lang/0014` D3, the type written is what the
+ * *body* answers and the caller receives a ticket of it — and the same guard on `""`, which is this
+ * checker's unknown: wrapping it would make `Pending<>`, a type nobody can name.
+ *
+ * Both method-declaring sites go through here so the two cannot drift. `issues/lang/0301b`.
+ */
+string methodReturnFor(string written, bool isAsync) {
+  return isAsync && written != "" ? "Pending<" + written + ">" : written;
+}
+
