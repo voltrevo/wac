@@ -2616,7 +2616,8 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
-            // **This one can drop bytes, and is not fixed here.** `drop` is what a guest's
+            // **This one drops bytes every time, and is not fixed here.** 0 of 10 on both hosts
+            // against a 6-of-6 control — `issues/system/0308b`, which is open. `drop` is what a guest's
             // `Pending.cancel` reaches, so an answer that landed between the caller giving up and
             // this call is discarded — `issues/system/0307b`'s defect on the narrowest path of all.
             // Handing it back needs the ticket's *handle*, which a ticket id does not carry; the v8

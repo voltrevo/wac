@@ -192,6 +192,11 @@ abandoned one loses the lot, and there is no handle to put it back under the way
 sites are marked in `native/src/main.rs` rather than quietly given a `let _ =`. Worth its own issue
 if anything is found to read that way with a deadline.
 
+**`drop` can still lose an answer, and calling it "the narrowest path" was wrong** — measured
+afterwards it is **0 of 10 on both hosts** against a 6-of-6 control, which is deterministic rather
+than narrow. It is `issues/system/0308b` and it is open. What follows was written before that
+measurement and is left because the reasoning about *why* it is hard to fix still holds.
+
 **`drop` can still lose an answer, on the narrowest path.** `Cap::Discard` is what a guest's
 `Pending.cancel` reaches, so bytes that landed between the caller giving up and the drop are
 discarded. Handing them back needs the ticket's *handle*, and a ticket id does not carry one — the
