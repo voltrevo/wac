@@ -14,6 +14,12 @@
 // **The sentence is the claim, not the status.** A test that withheld a capability and got some other
 // message would prove that the *helper* refuses, not that the applet behaves as it does when a real
 // host refuses it — and every refusal in `box` is checked by its words.
+//
+// **Which is why one spawned test stays in `box.test.ts` and must not be tidied away.** Everything
+// here compares an applet against a sentence `childCliGranted` hard-codes. "a file still needs the
+// grant, and says so" compares it against the sentence a real host produces. Without it this file is
+// an oracle agreeing with itself: the helper could drift from all four hosts and every assertion below
+// would stay green.
 
 import { Cli, Core } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";

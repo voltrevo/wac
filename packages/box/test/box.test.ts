@@ -111,11 +111,18 @@ async function exists(path: string): Promise<boolean> {
 // **What is left, and none of it is a wall.** Asked directly whether these are blockers or just work
 // nobody has done, the answer is the second, and saying "cannot move" was hiding that:
 //
-//   - **three tests that need *fewer* grants than they hold** — down from five, because the helper that
-//     `issues/system/0302c` asked for now exists. `childCliGranted` withholds `read`, `write` or `env`
-//     from a frame's child, each answering what a host answers an ungranted program. Two moved on the
-//     strength of it; what is left is `cp`'s whole tier and `bin/`, which is about what a *built*
-//     program declares rather than what a frame can withhold, so it may genuinely belong here.
+//   - **grants, which are no longer one category but two.** `childCliGranted` — the helper
+//     `issues/system/0302c` asked for — withholds `read`, `write` or `env` from a frame's child, each
+//     answering what a host answers an ungranted program, and two tests moved on the strength of it.
+//     What is left divides:
+//
+//       **one that must stay however good the helper gets.** "a file still needs the grant, and says
+//       so" is the only test that reads `Not granted to this application` from a *host* rather than
+//       from our own source. Everything in `grants_test.wac` compares an applet against a sentence the
+//       helper hard-codes; delete this and the helper becomes an oracle agreeing with itself.
+//
+//       **two that are still undone work**: `cp`'s whole tier, and `bin/`, which is about what a
+//       *built* program declares rather than what a frame can withhold.
 //   - **one test that needs a capability wac has not got.** `Cli` reads a symlink and cannot make one,
 //     so the `tar` fixture below cannot be built in wac. Also buildable, and additive:
 //     `issues/system/0300c`.
@@ -193,9 +200,18 @@ Deno.test("a file still needs the grant, and says so", async () => {
   // `packages/box/test/wac/applets_test.wac` against expectations captured once. Reading standard input
   // is not a capability, so none of it needed a built program.
   //
-  // This half does. The claim is about an application handed **no filesystem**, and in process the frame
-  // inherits the suite's own capabilities — so an in-process version would asserted nothing. It is one of
-  // the things `issues/system/0193` lists as staying: the grants a *built* applet asks for.
+  // **This half stays, and the reason it gives is no longer the reason.** It said an in-process frame
+  // inherits the suite's capabilities so the test would assert nothing. That was true until
+  // `childCliGranted` — `packages/box/test/wac/grants_test.wac` now makes this exact assertion in a
+  // frame, `cat` against a withheld read.
+  //
+  // What that leaves is better than what it replaced. The in-process version compares the applet
+  // against a sentence the *helper* hard-codes; this one compares it against the sentence a real host
+  // actually produces. Delete it and `childCliGranted` becomes an oracle agreeing with itself: the
+  // helper could drift from every host and all six in-process grant assertions would stay green.
+  //
+  // So it is not a duplicate — it is the anchor the duplicate hangs from, and it is the *only* test
+  // that reads the phrase from a host rather than from our own source.
   //
   // "Not granted to this application" is `faultWords`' phrase for `FAULT_NOT_GRANTED`. "Permission
   // denied" would be wrong: nothing denied anything, the program was never handed a filesystem.
