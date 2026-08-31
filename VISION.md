@@ -252,10 +252,10 @@ no task type and nothing to join.
 ## A stream ends, or fails, and says which
 
 ```wac
-async Result<u8[], string> readAll(Sys sys, Socket sock) {
+async Result<u8[], string> readAll(Socket sock) {
   Buf got = Buf.create();
   while (true) {
-    match (await sys.recv(sock)) {
+    match (await sock.recv()) {
       case Data(bytes): { got.append(bytes); }
       case End:         { return Result.Ok(got.bytes()); }
       case Failed(why): { return Result.Err(why); }
@@ -267,5 +267,9 @@ async Result<u8[], string> readAll(Sys sys, Socket sock) {
 Three outcomes, all named, none forgettable: a read that ended and a read that broke are different
 answers and neither can be mistaken for the other. The failure is returned rather than reported, so
 the caller decides what it means — and a partial read cannot be handed back as if it were whole.
+
+The socket is the whole of what it was handed. Reading one is a method on it rather than something
+asked of the system on the socket's behalf, so a handle carries its own authority and this function
+can touch one connection and nothing else.
 
 **Not yet.**
