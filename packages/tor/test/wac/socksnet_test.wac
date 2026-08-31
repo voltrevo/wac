@@ -481,24 +481,12 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               i32 tport2 = up2 ? portFrom(logOf(cli, second), "serving the directory on 127.0.0.1:")
                                : -1;
 
-              // **Both targets fresh.** The first attempt gave client A the same `dird` the
-              // single-client case had already used, and A got nothing: the exit opened its stream
-              // and forwarded 68 bytes, and the target answered with none. That is a question about
-              // `dird` serving a second connection, not about the proxy multiplexing two clients —
-              // so the two-client case uses two servers that have served nobody, and the `dird`
-              // question is left where it can be asked on its own.
-              Daemon third = start(cli,
-                line(cli, dirdMod, quoted(dir + "/v.consensus") + " " + quoted(dir + "/cert.cert") +
-                                   " " + quoted(dir + "/r1.desc") + " 0"),
-                dir + "/dird3.log");
-              bool up3 = third.ok() &&
-                         waitForLogWithin(core, cli, third, "serving the directory on 127.0.0.1:",
-                                          20000);
-              t.isTrue(up3, "a third target listened. It said: " + logOf(cli, third));
-              i32 tport3 = up3 ? portFrom(logOf(cli, third), "serving the directory on 127.0.0.1:")
-                               : -1;
-
-              Opened a = up3 ? opened(core, cli, got, tport3) : Opened(false, "no third target", -1);
+              // **Client A reuses the target the single-client case already used**, which is
+              // the shape `issues/system/0305b` was reported as: it answered nothing until the
+              // stream reader outliving its stream was fixed. A third server used to be started
+              // here to avoid it, and avoiding it is exactly why the bug survived — so this now
+              // walks straight into the case that used to fail.
+              Opened a = opened(core, cli, got, tport);  // the originally-reported case: the already-used dird
               Opened bb = up2 ? opened(core, cli, got, tport2) : Opened(false, "no second target", -1);
               t.isTrue(a.ok && bb.ok, "two clients both got a CONNECT reply — " + a.why + bb.why);
               if (a.ok && bb.ok) {
@@ -518,7 +506,6 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
                          "and no part of the consensus reached the wrong connection");
               }
               if (second.ok()) { stop(cli, second); }
-              if (third.ok()) { stop(cli, third); }
             }
             stop(cli, target);
           }
