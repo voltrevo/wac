@@ -96,7 +96,7 @@ import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type E
   from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
-import { classify, WAC_BIN } from "./mutate/native.ts";
+import { classify, isWacRun as runsNatively, WAC_BIN } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("wac task mutate");
@@ -783,9 +783,8 @@ function testDirs(m: Mutant): string[] {
  * skip a test, it fails the run.
  */
 /** Whether these targets are run by the binary rather than by Deno — see `testCommand`. */
-function isWacRun(dirs: string[]): boolean {
-  return dirs.length > 0 && dirs.every((d) => hostless.has(d.split("/")[1] ?? ""));
-}
+/** The two sets this tool fills; the rule itself is in `native.ts`, where it can be tested. */
+const isWacRun = (dirs: string[]): boolean => runsNatively(dirs, hostless, nativeRunnableDirs);
 
 function testCommand(work: string, dirs: string[], filter?: string): Deno.Command {
   // **The binary, for a scope whose tests are wac files.** `wac test` takes directories and finds the
@@ -994,6 +993,28 @@ let unmeasurable: typeof toRun = [];
  * that never touch it. `issues/system/0183`.
  */
 const hostless = new Set<string>();
+/**
+ * Test *directories* holding no `.test.ts`, which is not the same question as the package.
+ *
+ * `hostless` asks whether a **package** has any TypeScript test, and disqualifies the whole of it.
+ * `packages/wacc/test/wac` holds ninety wac test files and no TypeScript; the three `.test.ts` that
+ * disqualify it are one directory up, in `packages/wacc/test`. So the largest wac corpus in the
+ * repository is profiled and run through Deno on the strength of files the runner is never handed.
+ *
+ * Kept beside `hostless` rather than replacing it: `isBlindScope` means the package and is right to.
+ */
+const hostlessDirs = new Set<string>();
+/**
+ * Directories that may be *run* by the binary — `hostlessDirs`, and every wac entry in them profiled
+ * natively with nothing skipped.
+ *
+ * The second half is the one that matters and is easy to leave out. A directory with no `.test.ts`
+ * can still hold a wac test that wants a host oracle; the binary skips it, the rest pass, the run
+ * exits 0, and the mutant is scored **survived** by a suite that never ran the test which would have
+ * killed it. `wacShare` already refuses a profile whose `skipped` is non-empty, so membership in
+ * `profile.native` is exactly the evidence needed, and it was being computed and thrown away.
+ */
+const nativeRunnableDirs = new Set<string>();
 /** Mutants measured through `wac test` rather than `deno test`, for the report. */
 let viaWac: typeof toRun = [];
 let profile: Profile | null = null;
@@ -1124,14 +1145,35 @@ try {
     // nothing to a Deno-only walk, so its mutants had no coverage data and every one of them fell back
     // to running the whole package — 38 s a mutant for `gzip`, of which 36 is two differential entries
     // almost no mutant needs. `issues/system/0183`.
+    // **Which directories hold no TypeScript test**, asked of the directory the runner is handed
+    // rather than of its package — see `hostlessDirs`. The same `testFilesIn` with a narrower
+    // argument, so this adds a walk per scope directory and no new notion of what a test is.
+    for (const d of scope) {
+      if ((await testFilesIn([`${workDirs[0]}/${d}`])).length === 0) hostlessDirs.add(d);
+    }
     const files = [
       ...await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`)),
-      ...await wacEntriesIn(
-        scope.filter((d) => hostless.has(d.split("/")[1] ?? "")).map((d) => `${workDirs[0]}/${d}`),
-      ),
+      ...await wacEntriesIn(scope.filter((d) => hostlessDirs.has(d)).map((d) => `${workDirs[0]}/${d}`)),
     ];
     const rel = files.map((f) => f.slice(workDirs[0].length + 1));
     profile = await buildProfile(workDirs[0], rel, (m) => console.log(m), { noCache: noProfileCache });
+    // **Now the profile can say which of those may also be *run* natively.** A directory qualifies
+    // when it has wac entries and every one of them was profiled with nothing skipped; anything
+    // else stays on the Deno path, which is slower and cannot produce a false survival.
+    for (const d of scope) {
+      if (!hostlessDirs.has(d)) continue;
+      const entries = (await wacEntriesIn([`${workDirs[0]}/${d}`]))
+        .map((f) => f.slice(workDirs[0].length + 1));
+      if (entries.length > 0 && entries.every((f) => profile!.native.has(f))) {
+        nativeRunnableDirs.add(d);
+      }
+    }
+    const gained = [...nativeRunnableDirs].filter((d) => !hostless.has(d.split("/")[1] ?? ""));
+    if (gained.length > 0) {
+      console.log(`  native: ${gained.length} director(ies) run by the binary that the package ` +
+                  `test would have sent to Deno — ${gained.slice(0, 3).join(", ")}` +
+                  `${gained.length > 3 ? ", …" : ""}`);
+    }
     console.log(
       `  profile: ${profile.home.size} test(s) across ${rel.length} file(s), ` +
       `${profile.known.size} covered line(s)`);

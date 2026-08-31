@@ -1,7 +1,7 @@
 # 0161 — moving the suite off Deno: the order, and what blocks each step
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b — step 2, the classification half (2026-08-31)
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
 - **Kind:** missing feature
@@ -2138,3 +2138,53 @@ claims have nothing to do with the reference and would have to survive any port 
 Neither needs the reference. If this file is deleted rather than ported, those two claims want a home
 first — and a port that keeps only them is exactly the "removes the reference, so it cannot entrench
 what it deletes" shape this issue already identifies as safe either way.
+
+## Step 2: the classification was per package where the run is per directory — agent-b, 2026-08-31
+
+**Less of the running half was left than this said.** `testCommand` already spawns the binary when
+`isWacRun(dirs)`, `native.ts` maps the exit codes and `native.test.ts` pins every mapping. What was
+left is narrower, and it is not the mixed-set problem either.
+
+`isWacRun` asked whether every directory's **package** holds a `.test.ts`. The runner is handed
+directories:
+
+| directory | wac entries | `.test.ts` in the package |
+|---|---:|---:|
+| `packages/wacc/test/wac` | 90 | 3 |
+| `packages/platform/test/wac` | 44 | 31 |
+| `packages/box/test/wac` | 34 | 17 |
+| `packages/webrtc/test/wac` | 12 | 1 |
+| `packages/sh/test/wac` | 5 | 3 |
+| `packages/ts/test/wac` | 5 | 2 |
+| `packages/raster/test/wac` | 2 | 1 |
+
+**192 wac test files in 7 directories, none of which contains a single `.test.ts`.** `wacc`'s three
+sit in `packages/wacc/test`, one level above the ninety they disqualify. The same test gates
+`wacEntriesIn` when the profile is built, so those files were invisible to *selection* as well —
+mutants reaching them fell back to running the whole package, which `0183` records as the expensive
+case.
+
+So the change is to ask `testFilesIn` about the directory rather than the package. `hostless` stays
+as it is, because `isBlindScope` means the package and is right to.
+
+**And the directory question alone is not enough to *run* natively.** A directory with no `.test.ts`
+can still hold a wac test that wants a host oracle: the binary skips it, the rest pass, the run exits
+0, and the mutant is scored **survived** by a suite that never ran the test that would have killed
+it. `wacShare` already refuses a profile whose `skipped` is non-empty — that refusal was computed and
+thrown away, so `Profile` now carries `native`, the files that profiled with nothing skipped, and a
+directory may be run natively only when every wac entry in it is there. Both halves of the rule are
+in `native.ts` as a pure predicate with four cases in `native.test.ts`, rather than needing a sweep
+to look at.
+
+An old cached profile has no `native` field and reads as the empty set, so it declines to run
+anything natively — slow, and unable to be wrong.
+
+**What is still open is what this section originally said was open**: a **mixed** set still goes to
+Deno entire, because `testCommand` returns one command. After step 3 deletes the wrappers, the wac
+half of such a set cannot run under Deno at all, and a mutant nothing ran reads as survived. That is
+the merge described above and it is the part that can silently change a score.
+
+**Not verified by a sweep.** `--explain-selection --package gzip` is 26m45s and there is no cheaper
+scope, so the claim here is the predicate's unit tests and the measured table above, not a native
+share against a control. Whoever runs the sweep should expect the realised share to be *below* 192
+files: the profile evidence is the second gate, and some of these directories will hold oracle tests.

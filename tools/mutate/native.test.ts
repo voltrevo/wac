@@ -9,7 +9,7 @@
 //
 // Skipped without a binary, as `tools/wac/seedfresh_test.wac` skips without a seed.
 
-import { classify, WAC_BIN, wacTestArgs } from "./native.ts";
+import { classify, isWacRun, WAC_BIN, wacTestArgs } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
 /** A file with several passing tests and no host oracle, so every code below is reachable. */
@@ -122,4 +122,45 @@ Deno.test("wacTestArgs puts the filter before the entry, and omits it when there
   }
   const without = wacTestArgs("a/b_test.wac");
   if (without.join(" ") !== "test a/b_test.wac") throw new Error(`built ${JSON.stringify(without)}`);
+});
+
+// ── `isWacRun`, the rule `issues/system/0161` step 2 widened ────────────────────────────────────
+//
+// A pure predicate over two sets, so it is tested here rather than by a 27-minute sweep. What it
+// decides is which runner scores a mutant, and the failure it must not have is a false *survival*.
+
+Deno.test("a scope whose packages hold no TypeScript test runs natively, as it always did", () => {
+  const pkgs = new Set(["gzip"]);
+  if (!isWacRun(["packages/gzip/test/wac"], pkgs, new Set())) {
+    throw new Error("the package rule stopped working");
+  }
+});
+
+Deno.test("wacc's wac directory qualifies by directory though its package does not", () => {
+  // The case this was written for. `packages/wacc/test` holds three `.test.ts`, so the package is
+  // not hostless and every one of the ninety wac files below it went to Deno.
+  const pkgs = new Set<string>();
+  const dirs = new Set(["packages/wacc/test/wac"]);
+  if (isWacRun(["packages/wacc/test/wac"], pkgs, new Set())) {
+    throw new Error("a directory with no proof ran natively");
+  }
+  if (!isWacRun(["packages/wacc/test/wac"], pkgs, dirs)) {
+    throw new Error("a directory the profile proved runnable did not run natively");
+  }
+});
+
+Deno.test("one unproven directory in the set sends the whole run to Deno", () => {
+  // All-or-nothing on purpose: `testCommand` returns one command. A mixed set needs two and their
+  // results merged, which is the half still to do — and until it exists, the safe answer for a
+  // mixed set is the slow one. Getting this wrong is how a wac test silently does not run.
+  const dirs = new Set(["packages/wacc/test/wac"]);
+  if (isWacRun(["packages/wacc/test/wac", "packages/platform/test"], new Set(), dirs)) {
+    throw new Error("a mixed set ran natively, so the TypeScript half would not have run");
+  }
+});
+
+Deno.test("an empty scope is not a native run", () => {
+  if (isWacRun([], new Set(["gzip"]), new Set(["packages/gzip/test/wac"]))) {
+    throw new Error("`wac test` with no directories has nothing to select from");
+  }
 });

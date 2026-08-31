@@ -86,6 +86,7 @@ Deno.test("a stored profile comes back as the shape that went in", async () => {
     home: new Map([["t one", "t/a.test.ts"], ["t two", "t/b.test.ts"]]),
     testFiles: ["t/a.test.ts", "t/b.test.ts"],
     cost: new Map([["t/a.test.ts", 12], ["t/b.test.ts", 34]]),
+    native: new Set(["t/a.test.ts"]),
   };
   const key = `roundtrip-${crypto.randomUUID()}`;
   try {
@@ -97,6 +98,12 @@ Deno.test("a stored profile comes back as the shape that went in", async () => {
     if (back.home.get("t two") !== "t/b.test.ts") throw new Error("home lost");
     if (back.cost.get("t/b.test.ts") !== 34) throw new Error("cost lost");
     if (back.testFiles.join() !== "t/a.test.ts,t/b.test.ts") throw new Error("testFiles lost");
+    // **`native` decides what the binary is allowed to *run*, so losing it is not a slow cache —
+    // it is a silent change of runner.** A `Set` does not survive `JSON.stringify` any more than
+    // the others do, and an empty one here reads as "nothing may run natively", which is the safe
+    // direction and therefore the one that would never show up as a failure.
+    if (!back.native.has("t/a.test.ts")) throw new Error("native lost");
+    if (back.native.has("t/b.test.ts")) throw new Error("native gained a file it was not given");
   } finally {
     await Deno.remove(`.cache/mutate-profile/${key}.json`).catch(() => {});
   }
@@ -116,6 +123,7 @@ Deno.test("test names are stored once, not once per line they reach", async () =
     home: new Map(names.map((n) => [n, "t/x.test.ts"])),
     testFiles: ["t/x.test.ts"],
     cost: new Map([["t/x.test.ts", 1]]),
+    native: new Set<string>(),
   };
   const key = `intern-${crypto.randomUUID()}`;
   try {

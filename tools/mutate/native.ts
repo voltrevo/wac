@@ -73,3 +73,34 @@ export function classify(code: number): NativeVerdict {
       return { kind: "abort", why: `unexpected exit ${code} from \`wac test\`` };
   }
 }
+
+/**
+ * Whether these directories are run by the binary rather than by Deno.
+ *
+ * Two ways to qualify, and the second is the one `issues/system/0161` step 2 needed.
+ *
+ * **By package**, which is the original rule: every directory belongs to a package holding no
+ * `.test.ts` at all. Kept exactly as it was so nothing that ran natively stops doing so.
+ *
+ * **By directory**, which is new: every directory is one the profile proved runnable — no
+ * TypeScript test in it, and every wac entry inside profiled by `wac test --coverage` with nothing
+ * skipped. The package question disqualifies `packages/wacc/test/wac`, ninety wac files and no
+ * TypeScript, on the strength of three `.test.ts` a level above it that the runner is never handed.
+ *
+ * The directory rule needs the profile's evidence and not just the absent `.test.ts`, because a
+ * directory can hold a wac test that wants a host oracle. The binary skips such a test, the others
+ * pass, the run exits 0, and the mutant is recorded **survived** by a suite that never ran the test
+ * that would have killed it. False survivals are the one direction that cannot be spot-checked, and
+ * `wacShare` already refuses a partial profile — this reads the refusal it was making anyway.
+ *
+ * An empty list is not a native run: `wac test` with no directories has nothing to select from.
+ */
+export function isWacRun(
+  dirs: string[],
+  hostlessPackages: ReadonlySet<string>,
+  nativeRunnableDirs: ReadonlySet<string>,
+): boolean {
+  if (dirs.length === 0) return false;
+  if (dirs.every((d) => hostlessPackages.has(d.split("/")[1] ?? ""))) return true;
+  return dirs.every((d) => nativeRunnableDirs.has(d));
+}
