@@ -77,8 +77,15 @@ export string test_ps_refuses_what_it_has_not_got_rather_than_ignoring_it(Core c
   Ran flag = runSealed(core, cli, "ps -e");
   t.eqI32(flag.status, 1, "ps -e");
   t.isTrue(flag.err.indexOf("invalid option -- 'e'") >= 0, flag.err);
-  Ran long = runSealed(core, cli, "ps --help");
+  // **Not `--help`, which is answered now.** It used to be the example here, and it was the wrong one
+  // even then: box's own operand errors end "Try 'ps --help' for more information.", so the one long
+  // option every applet promises was the one being asserted as refused. `--forest` is a real `ps` flag
+  // box has not got, which is what this is about.
+  Ran long = runSealed(core, cli, "ps --forest");
   t.isTrue(long.err.indexOf("long options are not implemented") >= 0, long.err);
+  Ran helped = runSealed(core, cli, "ps --help");
+  t.eqI32(helped.status, 0, "--help is an answer, not a refusal");
+  t.isTrue(helped.out.indexOf("usage: ps") >= 0, helped.out);
   return t.report();
 }
 

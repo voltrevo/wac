@@ -58,7 +58,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `readStdin`, `write`, `writeErr` | — |
 | | `openInput`, `readChunk`, `outputError` | `--allow-read` for a file |
 | | `readFile`, `stat`, `linkStat`, `readDir` | `--allow-read` |
-| | `writeFile`, `mkdir`, `remove`, `rename`, `setExecutable` | `--allow-write` |
+| | `writeFile`, `mkdir`, `remove`, `rename`, `setExecutable`, `chmod` | `--allow-write` |
 | | `openOutput` (to a file) | `--allow-write` |
 | | `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket`, `closeSend` | `--allow-net` |
 | | `bindDatagram`, `receiveFrom`, `sendTo` | `--allow-net` — UDP, and the same one grant |
@@ -855,6 +855,7 @@ What the translation costs is the interesting part, and it is not the plumbing:
 | `readFile`, `writeFile`, `stat`, `readDir`, `mkdir`, `remove`, `openInput`, `readChunk`, `openOutput` | the Origin Private File System |
 | `rename` | **a copy and a delete, so not atomic** |
 | `setExecutable` | **refused** — OPFS has no mode bits, so `FAULT_UNSUPPORTED`: the capability is here and the backing cannot |
+| `chmod` | **refused**, for the same reason and with the same fault — a whole mode is no more expressible in OPFS than one bit of one |
 | `readStdin` | always empty |
 | `env` | every variable unset |
 | `connect`, `listen`, `accept`, `recv`, `send` | **refused** |

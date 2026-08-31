@@ -8,7 +8,7 @@
 //
 // The format, and every part of it is load-bearing:
 //
-//     // expect: refused | emits | traps <fn> | answers <fn> = <value>
+//     // expect: refused | declined | emits | traps <fn> | answers <fn> = <value>
 //     // why: what the case is about — a case that cannot say is a puzzle
 //     // from: optional provenance
 //     // ---- name.wac ----  — optional file marks; the entry is `main.wac` when there are several
@@ -164,6 +164,7 @@ Expect parseExpect(string spec) {
   string s = trim(spec);
   if (s == "emits") { return Expect("emits", "", ""); }
   if (s == "refused") { return Expect("refused", "", ""); }
+  if (s == "declined") { return Expect("declined", "", ""); }
   if (startsWith(s, "traps ")) {
     string name = trim(s.slice(6, s.len()));
     return name == "" ? Expect("", "", "") : Expect("traps", name, "");

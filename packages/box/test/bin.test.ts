@@ -23,9 +23,10 @@
 // with everything else. `tools/lane.test.ts` caps the lane at twelve exclusions, and a slot spent on a
 // second of work is a slot not available to something that needs one.
 
-import { buildApp } from "../../platform/build.ts";
-// The *other* builder, and the reason there are two here — see the test at the end of this file.
-import { buildApp as buildAppCommand } from "../../../harness/buildApp.ts";
+// One builder, because there is one kind of application: `wac app`'s. The self-contained
+// `deno` target that used to build the shell above is gone — a wac program needs a `wac` on
+// the machine that runs it, which is the decision `wac app`'s own help states.
+import { buildApp } from "../../../harness/buildApp.ts";
 import { bounded } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -118,7 +119,7 @@ Deno.test("a program in /bin is the same program down every route a command can 
 Deno.test("a stage with nowhere left to write is stopped, on the host that runs a `wac app`", async () => {
   const app = await Deno.makeTempFile({ prefix: "wac-bin-app-" });
   try {
-    await buildAppCommand("packages/box/src/bin/sealedsh.wac", app, {});
+    await buildApp("packages/box/src/bin/sealedsh.wac", app, {});
 
     // Ten seconds against a case that answers in well under one. The number is a detector rather
     // than a margin: reaching it means nothing ever refused a write.

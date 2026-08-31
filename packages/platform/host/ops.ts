@@ -115,6 +115,13 @@ export const OP = {
    * one of the three.
    */
   EXEC_WITH_IN: 59,
+  /**
+   * "Set this file's permission bits" — see `Cli.chmod` in `platform.wac`.
+   *
+   * `SET_EXECUTABLE` above is the narrow form and stays: it promises one bit and changes one bit,
+   * which is what a git checkout wants. This promises the mode. `issues/system/0296c`.
+   */
+  CHMOD: 60,
   // **`Cli.load`, `Cli.call` and `Cli.unload` have no opcode**, and that is the design rather than an
   // omission. A loaded module lives in the *caller's own realm* and its capabilities are built against
   // the caller's own bridge — so nothing about it crosses to the launcher, and the three are

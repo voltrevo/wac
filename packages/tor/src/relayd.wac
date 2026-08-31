@@ -24,24 +24,51 @@
 // the certificate. `design/0002` D4 was revised to require exactly this — a relay that cannot make
 // its own link certificate cannot rotate it, and a real relay rotates it every few hours.
 //
-// ## One connection at a time
+// ## Many connections, since 2026-08-30
 //
-// The same limitation `packages/ssh`'s sshd has and for the same reason: `accept` blocks, and the
-// world offers no way to wait on a listener and a live connection together *and* act on whichever
-// speaks. `waitAny` can wait on two tickets, but a relay needs to be reading from every connection
-// it has while accepting new ones, and that is a scheduler rather than a wait. Named here rather
-// than left to be discovered: this relay is a demonstration that the protocol works, not a relay
-// anybody should run.
+// This said *one connection at a time* until `d8ba9da6`, and the reason it gave was exact: `accept`
+// blocks, `waitAny` can wait on two tickets, but a relay needs to be reading from every connection
+// it has while accepting new ones, "and that is a scheduler rather than a wait". A scheduler is
+// what `async`/`await` is — `armAccept` is an `async void` that loops on `await cli.accept(…)` and
+// starts an `armOne` per connection, so `MAX_CONNS` of 64 is the bound now rather than one.
+//
+// **`packages/ssh`'s sshd still has it**, and the cross-reference is kept because the reason is
+// still shared: an `async` method is refused by the emitter (`issues/lang/0301b`), and sshd reads
+// through `Conn`'s methods, so it cannot take this route until that lands.
+//
+// Still a demonstration that the protocol works rather than a relay anybody should run — but for
+// what it does not do below, not for how many peers it can hold.
 //
 // ## What it does not do
 //
-// **EXTEND2 is parsed and refused.** `relaycircuit.wac` reads the cell and names the next hop, and
-// acting on it means opening an outbound connection while an inbound one is live — which is the
-// concurrency this program does not have. A client extending through this relay gets a DESTROY
-// rather than silence.
-//
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
+//
+// **One stream per circuit at a time**, and the "at a time" was won on 2026-08-31. A second
+// RELAY_BEGIN while one is still open is answered *"a second stream on one circuit is not
+// supported"* and an END with RESOURCELIMIT. That matters outside this file: `socks.wac` reuses a
+// circuit per destination *port*, so two SOCKS clients asking for the same port share a circuit and
+// the second is refused — which reads at the client as "the exit is out of resources" and looks like
+// a proxy bug.
+//
+// **Sequential streams used to fail silently, which was worse than the refusal.** Every stream after
+// the first got a socket and the request and had nobody reading its answers, because a stream reader
+// outlived its stream — see the note in `armOne`. `issues/system/0305b`, and
+// `packages/tor/test/wac/socksnet_test.wac` runs three streams down one circuit to keep it fixed.
+//
+// ## It does extend, and this said otherwise for four weeks
+//
+// *"EXTEND2 is parsed and refused … a client extending through this relay gets a DESTROY"* stood
+// here until 2026-08-31 and stopped being true on **2026-08-05**, in `178f9c0d` — "a relay acts on
+// EXTEND2, with `waitAny` over both connections". The reason it gave was that acting on the cell
+// "means opening an outbound connection while an inbound one is live — which is the concurrency this
+// program does not have", and that is the same sentence the paragraph above it used to make about
+// accepting. Both are gone; `armExtend` opens the outbound hop and hands the handshake on.
+//
+// Left as a heading rather than deleted because two false claims in one header is a pattern worth
+// seeing: each described a limit that the concurrency work removed, and neither was noticed because
+// a comment saying a program is *less* capable than it is never fails a test. Three-hop circuits
+// through these relays are what `network_tor_test.wac` builds, which is the standing evidence.
 
 import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
          FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std/platform.wac";
@@ -874,6 +901,20 @@ async void armOne(Core core, Cli cli, Relay x, Conn c, i32 source, i32 circId) {
     if (source != 0 && back < 0) { disarm(c, source, circId); return; }
     feedConn(core, cli, x, c, source, back, r);
     if (!c.live) { disarm(c, source, circId); forget(core, cli, x, c); return; }
+    // **A stream reader outlives its stream unless it is told.** `armOne` already leaves when its
+    // *circuit* goes; a stream ending is the same event one level down, and it was not handled: the
+    // far-end close sets `hasStream = false` and closes the socket but leaves `streamArmed` true, so
+    // this loop went back to awaiting a ticket that would never answer and `armConn` — which arms on
+    // `hasStream && !streamArmed` — could never start a reader for the *next* stream on that
+    // circuit. Every stream after the first got a socket, got the request, and had nobody reading
+    // its answers. `issues/system/0305b`.
+    //
+    // **Only source 2 needs this, and that is not an oversight about the other two.** A next-hop
+    // reader's `hasNext` goes false only where the circuit itself is being dropped, and the
+    // `findCirc(...) < 0` check above already makes that reader leave and clears its flag. A stream
+    // is the one thing here that can end while its circuit lives on, so it is the one case nothing
+    // else notices.
+    if (source == 2 && back >= 0 && !c.circs[back]!.hasStream) { disarm(c, source, circId); return; }
     // **Feeding can create circuits**, and a reader only ever re-reads its own source — so the sweep
     // that starts a reader for anything newly readable still has to happen here. It is the one thing
     // the loop does not replace: the old `fed` called it for the same reason.

@@ -883,6 +883,17 @@ export function nodeWorld(
         fs.rename(P(unstr(p.subarray(4, 4 + n))), P(unstr(p.subarray(4 + n))))
       );
     },
+    [OP.CHMOD]: (p) => {
+      if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
+      const ch = fs.chmod;
+      if (ch === undefined) {
+        return changeBytes(FAULT_UNSUPPORTED, "this filesystem has no mode bits to set");
+      }
+      const mode = readI32le(p) & 0o7777;
+      const path = P(unstr(p.subarray(4)));
+      // The mode as given — see the Deno host, and `SET_EXECUTABLE` below for the narrow form.
+      return changed(async () => { await ch(path, mode); });
+    },
     [OP.SET_EXECUTABLE]: (p) => {
       if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
       const chmod = fs.chmod;

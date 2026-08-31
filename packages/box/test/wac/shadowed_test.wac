@@ -76,8 +76,15 @@ export string test_the_shadowed_names_are_the_ones_we_think_they_are(Core core, 
   string joined = "";
   for (i32 i = 0; i < got.len(); i++) { joined = joined + (i == 0 ? "" : " ") + got[i]; }
   // Pinned, so a builtin gaining an applet twin — or an applet gaining a builtin — is a decision
-  // somebody makes rather than a thing that happens. `issues/system/0201` measured these four.
-  t.eqStr(joined, "echo ls mkdir rm",
+  // somebody makes rather than a thing that happens. `issues/system/0201` measured the first four.
+  //
+  // **`chmod` is the fifth, added 2026-08-30 with the applet.** The builtin came first and could not
+  // work on a host mount, because `Fs.chmod` refused there for want of a `Cli` capability wider than
+  // `setExecutable` — `issues/system/0296c`. Compared the three ways this file's message asks for,
+  // under `LC_ALL=C` as the repository does: GNU, `box chmod` and the builtin agree on the mode
+  // applied, on `invalid mode: '8x9'`, and on the missing-operand path down to the `Try 'chmod
+  // --help'` line. So it is shadowed and **not** divergent.
+  t.eqStr(joined, "echo ls mkdir rm chmod",
           "the set of names that are both a builtin and an applet has changed");
   return t.report();
 }
@@ -117,10 +124,15 @@ export string test_a_shadowed_name_that_is_not_known_to_diverge_is_named(Core co
   // `echo` and `ls` were compared three ways on 2026-08-20 — GNU, the applet, the builtin — and agree.
   // They are shadowed and harmless, which is worth stating: the defect is not shadowing, it is the two
   // error paths that do not go through `operands.wac`.
+  //
+  // `chmod` was compared the same three ways on 2026-08-30, under `LC_ALL=C` as this repository does:
+  // the mode applied is `-rw-r-----` from all three, `invalid mode: '8x9'` from all three, and the
+  // missing-operand path is identical down to `Try 'chmod --help'`. The applet goes through
+  // `operands.wac`, which is why it does not join `mkdir` and `rm` below.
   string news = "";
   for (i32 i = 0; i < got.len(); i++) {
     if (knownDivergent(got[i])) { continue; }
-    if (got[i] == "echo" || got[i] == "ls") { continue; }
+    if (got[i] == "echo" || got[i] == "ls" || got[i] == "chmod") { continue; }
     news = news + " " + got[i];
   }
   t.eqStr(news, "",

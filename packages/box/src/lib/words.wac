@@ -24,3 +24,16 @@ export bool isWordSeparator(i32 cp) {
   if (cp == 0x202F || cp == 0x205F || cp == 0x2060) { return true; }
   return cp == 0x3000;
 }
+
+/**
+ * The same question in the **C locale**, where a character is a byte — `issues/system/0297c`.
+ *
+ * Only ASCII whitespace ends a word, and a byte over 0x7F ends nothing: under `LC_ALL=C` the two bytes
+ * of U+00A0 are two ordinary characters, so `a\xc2\xa0b` is **one** word to `wc -w` where it is two in a
+ * UTF-8 locale. Passing such a byte to `isWordSeparator` above answers for the code point that byte
+ * value happens to name, which is how box came to give the UTF-8 answer in every locale.
+ */
+export bool isWordSeparatorC(i32 b) {
+  if (b >= 0x80) { return false; }
+  return b == ' ' || (b >= '\t' && b <= '\r');
+}

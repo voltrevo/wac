@@ -186,6 +186,7 @@ enum Cap {
     Remove,
     Mkdir,
     SetExecutable,
+    Chmod,
     /// `Cli.exec` — a host program, run to completion.
     Exec,
     /// `Cli.load`, `Cli.call`, `Cli.unload` — a module in this isolate. `issues/system/0240c`.
@@ -266,6 +267,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
         ("Cli", "setExecutable") => Cap::SetExecutable,
+        ("Cli", "chmod") => Cap::Chmod,
         ("Cli", "execWithIn") => Cap::Exec,
         // **Answered, and the answer is "not here".** `issues/system/0240c` gave the JavaScript hosts
         // `load`/`call` in `provider.ts`, where a module can be driven in the caller's own realm
@@ -2892,8 +2894,25 @@ fn dispatch(
                     // this since `issues/system/0123`, which is where the wording below comes from:
                     // ending the queues is what the child's *parent* needs, and a reader parked on
                     // its output has to find out.
-                    if let Some(Sock::Queue(q)) = st.sockets.lock().unwrap().remove(&handle) {
-                        q.finish();
+                    match st.sockets.lock().unwrap().remove(&handle) {
+                        Some(Sock::Queue(q)) => q.finish(),
+                        // **Dropping a `TcpStream` is not closing the connection when a `recv` is
+                        // parked on it.** `recv` takes its own descriptor with `try_clone`, which
+                        // dups the fd, so removing this entry drops one of two and the peer is told
+                        // nothing: a client reading to end-of-stream waits for ever. With no read
+                        // outstanding there is no dup, the drop is the close, and it works — which
+                        // is why this went unseen until something read from a proxy.
+                        // `issues/system/0304b`, and its probe is
+                        // `packages/platform/test/wac/closewhilereading_test.wac`.
+                        //
+                        // `shutdown` acts on the *connection* rather than on a descriptor, so it
+                        // reaches the peer however many clones are live. The error is dropped for
+                        // the same reason the rest of this handler drops errors: a socket already
+                        // gone is the state the caller asked for.
+                        Some(Sock::Stream(sk)) => {
+                            let _ = sk.shutdown(std::net::Shutdown::Both);
+                        }
+                        _ => {}
                     }
                     // Its input too: a child parked reading what nobody will send is stopped just as
                     // surely as one writing where nobody reads, and `closeFeed` is the capability
@@ -3083,7 +3102,7 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
             }
         }
-        Cap::Rename | Cap::Remove | Cap::Mkdir | Cap::SetExecutable => {
+        Cap::Rename | Cap::Remove | Cap::Mkdir | Cap::SetExecutable | Cap::Chmod => {
             // Four mutations behind one grant, because they are one authority: the ability to change
             // what is on disk. Each answers a `Change`, and a refusal is `FAULT_NOT_GRANTED` rather
             // than the operating system's `FAULT_DENIED` — this build cannot, as against this file
@@ -3112,6 +3131,14 @@ fn dispatch(
                     Cap::Mkdir => {
                         let parents = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
                         if parents { std::fs::create_dir_all(&a) } else { std::fs::create_dir(&a) }
+                    }
+                    Cap::Chmod => {
+                        // The whole mode, written as given. `setExecutable` below reads the mode and
+                        // changes one bit, because one bit is all it promises; this promises the mode.
+                        // `issues/system/0296c`.
+                        use std::os::unix::fs::PermissionsExt;
+                        let mode = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) as u32 & 0o7777;
+                        std::fs::set_permissions(&a, std::fs::Permissions::from_mode(mode))
                     }
                     _ => {
                         use std::os::unix::fs::PermissionsExt;
