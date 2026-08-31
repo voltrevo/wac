@@ -61,4 +61,24 @@ export struct Rng {
    * divides by zero and traps. Answering `0` is what the majority of the guarded copies chose.
    */
   i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+
+  /**
+   * A draw in `[0, n)` from the **top** bits — the other family, and here for a caller that has to
+   * match a host generator rather than merely be reproducible.
+   *
+   * `floor(u / 2^32 * n)` computed in 64 bits, where `u` is the unsigned reading of `next()`. That is
+   * what `Math.floor(rng.next() * n)` computes in doubles when `next()` returns `x / 2^32`: `u < 2^32`
+   * and the callers' `n` are small, so the product stays well under 2^53 and no rounding is possible
+   * on either side. `tools/wac/langfuzz.wac` needs it because the TypeScript it ports found
+   * `issues/lang/0281b` at a seed, and a seed only names the same program if the draws match.
+   *
+   * **Not interchangeable with `upto`.** The header above measures the two families disagreeing on
+   * 37% of draws; picking the wrong one silently generates a different corpus from the same seed,
+   * which is the failure that looks like nothing happening.
+   */
+  i32 intTop(this, i32 n) {
+    if (n <= 0) { return 0; }
+    u64 u = this.next() as u64;
+    return ((u * (n as@ u32 as u64)) >> 32) as@ i32;
+  }
 }

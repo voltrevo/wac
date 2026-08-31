@@ -1,0 +1,72 @@
+/**
+ * The language fuzzer's own two checks: that its spine works, and that its oracle can disagree.
+ *
+ * `tools/wac/langfuzz.wac` generates wac programs and checks each against an oracle built from the
+ * same tree that produced it. Both halves of that can fail silently — a spine that cannot load a
+ * module reports nothing, and an oracle that agrees by construction reports nothing — so both are
+ * pinned here rather than left to a green sweep, which is what either failure looks like.
+ */
+import { Cli, Core } from "std/platform.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { Vec } from "core/vec.wac";
+import { Outcome, Ran, runProgram, sweep, wrapTo, TY_I32, TY_I64 } from "./langfuzz.wac";
+
+/**
+ * The spine, on a program with no generator behind it.
+ *
+ * Written and run before any of the generator was ported, because every unknown was on this path —
+ * whether a virtual single-file graph compiles with `Res.empty()`, whether `load` and `call` reach an
+ * export taking nothing, and what a host without `load` answers. It earned that order immediately:
+ * the first run said *"this module carries no wac.manifest section"*, because `buildLinked` emits
+ * bytes and `wac build` is what wraps them. Finding that here cost three lines; finding it under a
+ * finished generator would have looked like the generator emitting something unloadable.
+ */
+export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
+  Ran r = runProgram(cli, "export i32 main() { return 6 * 7; }");
+  if (!r.ok) { return "the spine did not run: " + r.why; }
+  if (r.value != 42) { return "the spine ran and answered " + itoa(r.value) + ", wanted 42"; }
+  return "";
+}
+
+/**
+ * A sweep over seeds fixed here, so this is a regression rather than a search.
+ *
+ * A fresh seed every run is a test that fails for a different reason each time and gets muted; a
+ * fixed set means a disagreement stays reported until it is fixed. Searching is what the command line
+ * is for — `--count` and `--seed` reach further than any suite should.
+ */
+export string test_a_small_sweep_agrees_with_its_oracle(Core core, Cli cli) {
+  Vec<Outcome> bad = sweep(cli, 40, 1);
+  if (bad.len() == 0) { return ""; }
+  Outcome first = bad.get(0);
+  return itoa(bad.len()) + " of 40 disagreed; seed " + itoa(first.seed) + ": " + first.why
+       + "\n--- the program\n" + first.src;
+}
+
+/**
+ * The oracle is not a mirror: it computes the answer a different way, and this says so.
+ *
+ * A generated program's expected value comes from `wrapTo` and the `apply*` helpers rather than from
+ * running the program, so the sweep above can only mean something if those disagree with a wrong
+ * program. Canaried by hand on 2026-08-31 — inverting `applyBin`'s `OP_ADD` to subtract turned the
+ * 40-program sweep from green to **5 disagreements**, the first at seed 5.
+ *
+ * What is pinned here is the cheap, permanent half of that: `wrapTo` narrows to i32 by sign-extending
+ * the low 32 bits, spelled out rather than delegated to `as@ i32`. If someone replaces it with the
+ * cast, this stays green *and* the fuzzer quietly starts agreeing with whatever the compiler does —
+ * so the value below is one that a wrong narrowing gets wrong.
+ */
+export string test_the_oracle_narrows_without_asking_the_compiler(Core core, Cli cli) {
+  // 2^31 as an i64: the first value that is not an i32. Sign-extending its low 32 bits gives the
+  // minimum, which is what a wrapping narrow must produce and a clamping one must not.
+  i64 justPast = 2147483648;
+  i64 got = wrapTo(justPast, TY_I32());
+  if (got != (0 - 2147483648)) {
+    return "wrapTo(2^31, i32) answered " + itoa64(got) + ", wanted -2147483648 — the oracle is no "
+         + "longer narrowing the way a wasm i32 does";
+  }
+  if (wrapTo(justPast, TY_I64()) != justPast) {
+    return "wrapTo at i64 changed a value that already fits";
+  }
+  return "";
+}
