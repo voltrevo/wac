@@ -3854,6 +3854,26 @@ fn dispatch(
                             return;
                         }
                     }
+                    // **An abandoned `connect` is closed, not handed on.** Nothing else wants this
+                    // connection — it is a line this program dialled and stopped caring about — so
+                    // left alone the handle never leaves the table and the peer holds an open line
+                    // to nobody. An accept has a listener noted against it and was handled above; a
+                    // socket answer with no note is a dial. `issues/system/0310b`.
+                    if let (None, Answer::Socket(slot, _, _, _, _)) = (reading, &answer) {
+                        if *slot >= 0 {
+                            HOST.with(|h| {
+                                if let Some(st) = h.borrow().as_ref() {
+                                    if let Some(Sock::Stream(sk)) =
+                                        st.sockets.lock().unwrap().remove(slot)
+                                    {
+                                        let _ = sk.shutdown(std::net::Shutdown::Both);
+                                    }
+                                }
+                            });
+                        }
+                        rv.set_undefined();
+                        return;
+                    }
                     let taken: Option<&Vec<u8>> = match &answer {
                         Answer::Read(ReadAnswer::Data(b)) => Some(b),
                         Answer::Bytes(Some(b)) => Some(b),

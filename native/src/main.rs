@@ -2801,6 +2801,23 @@ fn dispatch(
                     }
                 }
             }
+            // **An abandoned `connect` is closed, not handed on.** The other capabilities here take
+            // something a *later* call wants — bytes, a connection off the backlog — so the answer
+            // is to pass it along. Nothing else wants this one: it is a line this program dialled
+            // and then stopped caring about. Left alone the handle never leaves the table and the
+            // peer holds an open connection to nobody, which the probe sees as a read that never
+            // ends. Told rather than left guessing. `issues/system/0310b`.
+            //
+            // An accept is distinguished by having a listener noted against it, and was handled
+            // above; a socket answer with no note is a dial.
+            if let (Some(Outcome::Socket(slot, _, _, _, _)), None) = (&held, whose) {
+                if *slot >= 0 {
+                    if let Some(Sock::Open(s)) = socket_at(caller, *slot) {
+                        let _ = s.shutdown(std::net::Shutdown::Both);
+                    }
+                    caller.data().handles.lock().unwrap().close(*slot);
+                }
+            }
             if let (Some(Outcome::Bytes(bytes)), Some(h)) = (held, whose) {
                 if !bytes.is_empty() {
                     if let Some(q) = child_stream(caller, h) {

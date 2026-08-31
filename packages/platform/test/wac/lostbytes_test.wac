@@ -176,6 +176,54 @@ const string ACCEPT_PROGRAM =
   "  return 0;\n" +
   "}\n";
 
+/**
+ * An abandoned `connect` used to leak the line it had dialled — `0310b`.
+ *
+ * The third remedy in this family, and the reason the family needed three. The others take
+ * something a *later* call wants, so the answer is to hand it on or put it back. Nothing else
+ * wants this connection, so the answer is to close it and let the peer find out. Handing it on
+ * would be meaningless and leaving it is a handle that never returns and a peer holding a line
+ * to nobody — which this sees as a read that never ends.
+ */
+const string CONNECT_PROGRAM =
+  "import { Core, Cli, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Read } from \"core\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "\n" +
+  "  Socket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
+  "  if (listener.handle < 0) { core.log(\"no listener: \" + listener.error); return 1; }\n" +
+  "\n" +
+  "  Pending<Socket> dialling = cli.connect(\"127.0.0.1\", listener.port);\n" +
+  "  if (mode == \"control\") {\n" +
+  "    // Collected rather than abandoned, and closed properly — the peer must see the end either way.\n" +
+  "    Socket mine = dialling.wait();\n" +
+  "    if (mine.handle >= 0) { cli.closeSocket(mine.handle); }\n" +
+  "  } else {\n" +
+  "    // Long enough that the connection is certainly made and the answer is in hand.\n" +
+  "    core.delay(400).wait();\n" +
+  "    dialling.cancel();\n" +
+  "    core.cancel(dialling.id);\n" +
+  "  }\n" +
+  "\n" +
+  "  Socket served = cli.accept(listener.handle).wait();\n" +
+  "  if (served.handle < 0) { core.log(\"VERDICT lost — nothing arrived: \" + served.error); return 1; }\n" +
+  "\n" +
+  "  Pending<Read> r = cli.recv(served.handle);\n" +
+  "  if (core.waitAny(i32[](r.id), 1500) < 0) {\n" +
+  "    core.log(\"VERDICT leaked — the peer is still holding the connection open\");\n" +
+  "    return 1;\n" +
+  "  }\n" +
+  "  match (r.wait()) {\n" +
+  "    case End: { core.log(\"VERDICT kept — the abandoned connection was closed\"); }\n" +
+  "    case Data(b): { core.log(\"VERDICT odd — data on a connection nobody wrote to\"); }\n" +
+  "    case Failed(e): { core.log(\"VERDICT kept — the peer went away: \" + e); }\n" +
+  "  }\n" +
+  "  return 0;\n" +
+  "}\n";
+
 /** Write the program once and run it under `wac`, both streams together. */
 string ran(Cli cli, string binary, string path, string mode) {
   string[] argv = mode == ""
@@ -282,6 +330,15 @@ void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath
            host + ": an accept given up on after the connection arrived lost it — " + lateAcc);
 }
 
+/** `connect`, whose remedy is to close rather than to hand on — see `CONNECT_PROGRAM`. */
+void checkDialled(T t, Cli cli, string binary, string path, string host) {
+  t.isTrue(contains(ran(cli, binary, path, "control"), "VERDICT kept"),
+           host + ": the connect control did not see the close, so its case cannot fail");
+  string got = ran(cli, binary, path, "");
+  t.isTrue(contains(got, "VERDICT kept"),
+           host + ": an abandoned connect left the peer holding the line — " + got);
+}
+
 export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core, Cli cli) {
   T t = T.create();
   string path = written(cli);
@@ -307,10 +364,15 @@ export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core
   string acceptPath = writtenAs(cli, "accept", ACCEPT_PROGRAM);
   t.isTrue(stdinPath != "" && acceptPath != "", "could not write the other two probes");
   if (stdinPath != "" && acceptPath != "") {
+    string dialPath = writtenAs(cli, "connect", CONNECT_PROGRAM);
     checkTaken(t, cli, binaryPath(cli), stdinPath, acceptPath, "v8");
+    checkDialled(t, cli, binaryPath(cli), dialPath, "v8");
     if (why == "") {
-      checkTaken(t, cli, nativeBinaryPath(core, cli, "lostbytes"), stdinPath, acceptPath, "wasmtime");
+      string nat = nativeBinaryPath(core, cli, "lostbytes");
+      checkTaken(t, cli, nat, stdinPath, acceptPath, "wasmtime");
+      checkDialled(t, cli, nat, dialPath, "wasmtime");
     }
+    cli.remove(dialPath, false).wait();
     cli.remove(stdinPath, false).wait();
     cli.remove(acceptPath, false).wait();
   }

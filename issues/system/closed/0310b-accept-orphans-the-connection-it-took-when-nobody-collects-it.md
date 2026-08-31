@@ -20,6 +20,7 @@ broken:
 | `receiveFrom` | a datagram | fixed on v8 by `0207`; synchronous on wasmtime, so it cannot arise |
 | `readStdin` | the whole of standard input | **1 of 8 kept**; fixed below |
 | `accept` | a connection off the backlog | **0 of 8 kept**; fixed below |
+| `connect` | a line this program dialled | **leaked every time**; fixed below |
 
 Both measured against controls that keep the payload 8 times in 8.
 
@@ -155,3 +156,33 @@ The `late` arms were added to the case *before* the embedded probe programs lear
 fell through to the early path and passed. A test that cannot fail is worse than none, and it was
 caught by grepping for the mode string rather than by the green run. It is canaried now: disabling
 the v8 accept handback fails with *"v8: an accept given up on after the connection arrived lost it"*.
+
+## A fifth: an abandoned `connect` leaks the line — agent-b, 2026-08-31
+
+The sweep listed four capabilities. There are five, and the one I missed needed a **third** remedy.
+
+An abandoned `connect` leaves the socket in the table with a peer attached: the handle never comes
+back and the other end holds an open line to nobody. Seen from the listening side — accept what the
+abandoned dial made, then read — a close gives `End` at once and a leak waits out the deadline:
+
+| | abandoned | control |
+|---|---|---|
+| before | **leaked, every run** | closed |
+| after | **5 of 5 closed** on both hosts | 5 of 5 |
+
+**Why the other remedies do not apply.** Every other capability here takes something a *later call
+wants* — bytes off a queue, a connection off the backlog — so the answer is to put it back or hand it
+on. Nothing else wants this one: it is a line this program dialled and then stopped caring about.
+Handing it on would be meaningless and parking it is a leak with extra steps. The honest answer is to
+**close it**, so the peer finds out rather than waiting.
+
+Distinguishing it costs nothing: an `accept` has a listener noted against its ticket, so a socket
+answer with **no** note is a dial.
+
+### Three remedies, one description
+
+That is the thing to carry out of this issue. All five are "a capability hands a consumed thing to a
+ticket that may be gone", and the fix differs three ways: decline-or-put-back, hand-on-or-park, and
+close. Each time I assumed the previous remedy generalised it did not — parking measured 0 of 8 where
+handing on worked, and handing on would be meaningless here. The description is shared; the remedy is
+a property of *what was consumed and who could still want it*.
