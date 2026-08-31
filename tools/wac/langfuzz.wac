@@ -31,6 +31,18 @@
 // compare the text. Until someone runs it, treat a seed as naming a program *in this tool* — which is
 // all a regression test needs, and less than `issues/lang/0281b`'s seed would need to be replayed.
 //
+// ## `tools/fuzz.ts` is still there, and not by oversight
+//
+// The repository's rule is that a second copy is a copy that drifts, so the TypeScript should go now
+// that this works. It cannot yet: **`tools/fuzzBoundary.ts:38` imports `Rng` from it.** That tool is
+// a separate sweep — it asks a narrower question about the boundary rather than about answers — and
+// deleting `fuzz.ts` under it would break it.
+//
+// So the order for `issues/system/0161` step 6 is: port `fuzzBoundary.ts` too, or give it its own
+// generator, and then delete both TypeScript files together. Until then the drift risk is real and
+// worth stating: the generator here has already diverged from that one in at least the retry
+// behaviour of `expr`, and nothing compares them.
+//
 // ## What the oracle can and cannot see, which the port changes
 //
 // The TypeScript computed expected values with `BigInt`: arbitrary precision, and no relation to the
@@ -188,6 +200,31 @@ i64 evalShift(bool isLeft, Expr a, i64 sh, i32 ty, Env e) {
   return wrapTo(a.evalIn(e) >> sh, ty);
 }
 
+/** A generated helper function: what it is called, what it takes, and its body's oracle. */
+export struct Helper {
+  string name;
+  i32 ret;
+  Vec<i32> params;
+  Vec<string> paramNames;
+  Expr body;
+}
+
+/**
+ * A call to a generated helper.
+ *
+ * The callee's body is evaluated in an environment of **just its parameters**, which is exactly what
+ * wac gives it: there are no closures at function scope, so a helper cannot see the caller's locals.
+ * An oracle that evaluated the body in the caller's environment would agree with a compiler that
+ * wrongly let the body see them.
+ */
+i64 evalCall(Helper h, Vec<Expr> args, Env e) {
+  Env callEnv = Env.create();
+  for (i32 k = 0; k < h.paramNames.len(); k++) {
+    callEnv.set(h.paramNames.get(k), args.get(k).evalIn(e));
+  }
+  return h.body.evalIn(callEnv);
+}
+
 i64 evalTernary(Expr c, Expr t, Expr f, Env e) {
   if (c.evalIn(e) != 0) { return t.evalIn(e); }
   return f.evalIn(e);
@@ -240,12 +277,14 @@ export struct Gen {
   i32 depth;
   Vec<Local> locals;
   Vec<string> lines;
+  Vec<string> helpers;
+  Vec<Helper> sigs;
   Env env;
   string indent;
 
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
-               Env.create(), "  ");
+               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ");
   }
 
   /**
@@ -376,8 +415,11 @@ export struct Gen {
       Expr? v = this.variable(ty);
       return v is null ? this.literal(ty) : v!;
     }
+    // Seven arms, the same seven the TypeScript draws from and in its order. An arm that answers
+    // null is retried rather than substituted, because substituting would change what the *next*
+    // draw means, and the sequence is what a seed names.
     for (i32 attempt = 0; attempt < 6; attempt++) {
-      i32 choice = this.rng.intTop(5);
+      i32 choice = this.rng.intTop(7);
       if (choice == 0) { return this.literal(ty); }
       if (choice == 1) {
         Expr? v = this.variable(ty);
@@ -385,8 +427,14 @@ export struct Gen {
       } else if (choice <= 3) {
         Expr? b = this.binary(ty, depth);
         if (!(b is null)) { return b!; }
-      } else {
+      } else if (choice == 4) {
         return this.ternary(ty, depth);
+      } else if (choice == 5) {
+        Expr? c = this.cast(ty, depth);
+        if (!(c is null)) { return c!; }
+      } else {
+        Expr? h = this.callHelper(ty, depth);
+        if (!(h is null)) { return h!; }
       }
     }
     return this.literal(ty);
@@ -418,6 +466,142 @@ export struct Gen {
                   (Env e) => evalCast(truncates, a, e));
     }
     return null;
+  }
+
+  /**
+   * A helper function generated alongside `main`, so a call has somewhere to go.
+   *
+   * **The body is generated against its parameters alone**, which is what wac gives it — there are no
+   * closures at function scope. Generating it against the caller's scope would produce a program that
+   * does not compile, and the sweep would report a compile failure that is the generator's fault
+   * rather than the compiler's.
+   */
+  void makeHelper(this) {
+    string name = this.fresh("h");
+    i32 ret = this.rng.intTop(3);
+    i32 nparams = this.rng.intTop(3);
+    Vec<i32> params = Vec<i32>.create();
+    Vec<string> paramNames = Vec<string>.create();
+    for (i32 k = 0; k < nparams; k++) {
+      params.push(this.rng.intTop(3));
+      paramNames.push("p" + itoa(k));
+    }
+
+    // Swap the scope out for the parameters, generate, and swap it back. A parameter's value at
+    // generation time is 0; the call site supplies the real one.
+    Vec<Local> savedLocals = this.locals;
+    Env savedEnv = this.env;
+    this.locals = Vec<Local>.create();
+    this.env = Env.create();
+    for (i32 k = 0; k < nparams; k++) {
+      this.locals.push(Local(paramNames.get(k), params.get(k), 0));
+      this.env.set(paramNames.get(k), 0);
+    }
+    Expr body = this.expr(ret, 3);
+    this.locals = savedLocals;
+    this.env = savedEnv;
+
+    string sig = "";
+    for (i32 k = 0; k < nparams; k++) {
+      sig = sig + (k == 0 ? "" : ", ") + typeText(params.get(k)) + " " + paramNames.get(k);
+    }
+    this.helpers.push(typeText(ret) + " " + name + "(" + sig + ") { return " + body.src + "; }");
+    this.sigs.push(Helper(name, ret, params, paramNames, body));
+  }
+
+  Expr? callHelper(this, i32 ty, i32 depth) {
+    Vec<Helper> usable = Vec<Helper>.create();
+    for (i32 i = 0; i < this.sigs.len(); i++) {
+      if (this.sigs.get(i).ret == ty) { usable.push(this.sigs.get(i)); }
+    }
+    if (usable.len() == 0) { return null; }
+    Helper h = usable.get(this.rng.intTop(usable.len()));
+
+    // The arguments go in a `Vec` and the lambda captures **the Vec**, not a local reused per
+    // iteration: captures are by reference, so a shared local would give every argument the last
+    // expression built.
+    Vec<Expr> args = Vec<Expr>.create();
+    string text = "";
+    for (i32 k = 0; k < h.params.len(); k++) {
+      Expr a = this.expr(h.params.get(k), depth - 1);
+      args.push(a);
+      text = text + (k == 0 ? "" : ", ") + a.src;
+    }
+    return Expr(h.name + "(" + text + ")", ty, (Env e) => evalCall(h, args, e));
+  }
+
+  /**
+   * A branch that is *not* taken: generated into a sandbox so it compiles and typechecks but cannot
+   * affect the answer.
+   *
+   * A compiler is as likely to mis-emit the unexecuted arm as the executed one, and an arm that is
+   * never entered is where a wrong emission goes unnoticed — so the generator fills it with real code
+   * and the oracle ignores it. Nothing declared inside can be read afterwards, because `block` pops
+   * it.
+   */
+  void deadBranch(this) {
+    this.block(() => { this.deadDeclaration(); });
+  }
+
+  void deadDeclaration(this) {
+    i32 t = this.rng.intTop(3);
+    this.declare(t, this.expr(t, 2));
+  }
+
+  /**
+   * A counted loop, in each of the three forms.
+   *
+   * The trip count is fixed and the body is a straight-line run of assignments to an *existing*
+   * local, so the oracle can run the same run the same number of times. `continue` and `break` fire
+   * on an iteration chosen up front — the shape that found the do-while bug, where `continue` skipped
+   * the condition.
+   *
+   * **The counter's values differ between the forms**, which is why all three are here: `for` sees
+   * 0..trips-1 in the body, while `while` and `do` increment first and see 1..trips. An oracle using
+   * one sequence for all three would agree with a compiler that made the same mistake.
+   */
+  void loop(this, i32 form) {
+    i32 trips = 1 + this.rng.intTop(4);
+    Vec<Local> existing = this.inScope(TY_I32());
+    Local acc = existing.len() == 0
+      ? this.declare(TY_I32(), this.literal(TY_I32()))
+      : existing.get(0);
+    string i = this.fresh("i");
+    Expr step = this.expr(TY_I32(), 1);
+    bool useContinue = this.coin();
+    i32 contAt = this.rng.intTop(trips);
+    bool useBreak = !useContinue && this.coin();
+    i32 breakAt = 1 + this.rng.intTop(trips);   // never the first, so the body runs at least once
+
+    string ind = this.indent + "  ";
+    if (form == 1) {
+      this.emit("for (i32 " + i + " = 0; " + i + " < " + itoa(trips) + "; " + i + "++) {");
+    } else if (form == 0) {
+      this.emit("i32 " + i + " = 0;");
+      this.emit("while (" + i + " < " + itoa(trips) + ") {");
+      // `continue` in a while re-tests the condition, so the counter must advance before it.
+      this.lines.push(ind + i + " = " + i + " + 1;");
+    } else {
+      this.emit("i32 " + i + " = 0;");
+      this.emit("do {");
+      this.lines.push(ind + i + " = " + i + " + 1;");
+    }
+    if (useContinue) { this.lines.push(ind + "if (" + i + " == " + itoa(contAt) + ") { continue; }"); }
+    if (useBreak) { this.lines.push(ind + "if (" + i + " == " + itoa(breakAt) + ") { break; }"); }
+    this.lines.push(ind + acc.name + " = " + acc.name + " + " + step.src + ";");
+    if (form == 2) {
+      this.emit("} while (" + i + " < " + itoa(trips) + ");");
+    } else {
+      this.emit("}");
+    }
+
+    // The oracle: the same decisions, in the same order, over the counter values this form sees.
+    for (i32 k = 0; k < trips; k++) {
+      i32 iv = form == 1 ? k : k + 1;
+      if (useContinue && iv == contAt) { continue; }
+      if (useBreak && iv == breakAt) { break; }
+      this.env.set(acc.name, wrapTo(this.env.get(acc.name) + step.evalIn(this.env), TY_I32()));
+    }
   }
 
   // ── Statements ─────────────────────────────────────────────────────────────────────────────────
@@ -453,7 +637,7 @@ export struct Gen {
   }
 
   void statement(this, i32 depth) {
-    i32 kind = this.rng.intTop(3);
+    i32 kind = this.rng.intTop(depth <= 0 ? 3 : 8);
     if (kind == 0) {
       i32 ty = this.rng.intTop(3);
       this.declare(ty, this.expr(ty, 2));
@@ -469,17 +653,45 @@ export struct Gen {
       this.env.set(l.name, e.evalIn(this.env));
       return;
     }
-    // Compound assignment, over the integer types only.
-    Vec<Local> cands = this.inScope(TY_I32());
-    Vec<Local> more = this.inScope(TY_I64());
-    for (i32 i = 0; i < more.len(); i++) { cands.push(more.get(i)); }
-    if (cands.len() == 0) { this.declare(TY_I32(), this.expr(TY_I32(), 1)); return; }
-    Local l = cands.get(this.rng.intTop(cands.len()));
-    i32 op = this.rng.intTop(3);
-    Expr e = this.expr(l.ty, 1);
-    this.emit(l.name + " " + binOpText(op) + "= " + e.src + ";");
-    this.env.set(l.name,
-                 wrapTo(applyBin(op, this.env.get(l.name), e.evalIn(this.env)), l.ty));
+    if (kind == 2) {
+      Vec<Local> cands = this.inScope(TY_I32());
+      Vec<Local> more = this.inScope(TY_I64());
+      for (i32 i = 0; i < more.len(); i++) { cands.push(more.get(i)); }
+      if (cands.len() == 0) { this.declare(TY_I32(), this.expr(TY_I32(), 1)); return; }
+      Local l = cands.get(this.rng.intTop(cands.len()));
+      i32 op = this.rng.intTop(3);
+      Expr e = this.expr(l.ty, 1);
+      this.emit(l.name + " " + binOpText(op) + "= " + e.src + ";");
+      this.env.set(l.name, wrapTo(applyBin(op, this.env.get(l.name), e.evalIn(this.env)), l.ty));
+      return;
+    }
+    if (kind == 3) {
+      // **The taken arm is decided at generation time**, so the untaken one can be filled with code
+      // that must compile and cannot be read. Deciding it here rather than at evaluation is what
+      // keeps the oracle a straight line through the program.
+      Expr c = this.expr(TY_BOOL(), 2);
+      bool taken = c.evalIn(this.env) != 0;
+      this.emit("if (" + c.src + ") {");
+      this.arm(taken, depth);
+      this.emit("} else {");
+      this.arm(!taken, depth);
+      this.emit("}");
+      return;
+    }
+    if (kind < 7) { this.loop(kind - 4); return; }
+    this.emit("{");
+    this.nested(depth);
+    this.emit("}");
+  }
+
+  /** One arm of an `if`: the real thing when it runs, a sandbox when it does not. */
+  void arm(this, bool live, i32 depth) {
+    if (live) { this.nested(depth); return; }
+    this.deadBranch();
+  }
+
+  void nested(this, i32 depth) {
+    this.block(() => { this.statements(depth - 1); });
   }
 
   void statements(this, i32 depth) {
@@ -489,10 +701,13 @@ export struct Gen {
 
   /** Build one program: its source, and the value `main()` must return. */
   Program program(this) {
+    for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
     this.statements(3);
     Expr result = this.expr(TY_I32(), 3);
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
-    string src = "export i32 main() {\n";
+    string src = "";
+    for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
+    src = src + "export i32 main() {\n";
     for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
     return Program(src + "  return " + result.src + ";\n}\n", want);
   }
@@ -592,4 +807,61 @@ export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
     }
   }
   return bad;
+}
+
+// ── The command line ─────────────────────────────────────────────────────────────────────────────
+
+string flagValue(Cli cli, string name, string fallback) {
+  i32 n = cli.argCount().wait();
+  for (i32 i = 0; i + 1 < n; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == name) { return string.fromBytes(cli.arg(i + 1).wait()); }
+  }
+  return fallback;
+}
+
+bool hasFlag(Cli cli, string name) {
+  i32 n = cli.argCount().wait();
+  for (i32 i = 0; i < n; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == name) { return true; }
+  }
+  return false;
+}
+
+i32 numberOr(string s, i32 fallback) {
+  if (s.len() == 0) { return fallback; }
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    i32 c = s.toBytes()[i];
+    if (c < '0' || c > '9') { return fallback; }
+    v = v * 10 + (c - '0');
+  }
+  return v;
+}
+
+/**
+ * Sweep, and say what disagreed.
+ *
+ * **The whole program is printed for a failure and nothing is printed for a pass**, because the
+ * program *is* the report: a seed reproduces it, but only if the generator has not changed since,
+ * and the generator changes. The text does not go stale.
+ */
+export i32 main(Core core, Cli cli) {
+  i32 count = numberOr(flagValue(cli, "--count", ""), 200);
+  i32 seed = numberOr(flagValue(cli, "--seed", ""), 1);
+  bool verbose = hasFlag(cli, "--verbose");
+
+  Vec<Outcome> bad = sweep(cli, count, seed);
+  if (verbose) {
+    core.log("swept " + itoa(count) + " program(s) from seed " + itoa(seed));
+  }
+  if (bad.len() == 0) {
+    core.log("no disagreements in " + itoa(count) + " program(s) from seed " + itoa(seed));
+    return 0;
+  }
+  for (i32 i = 0; i < bad.len(); i++) {
+    Outcome o = bad.get(i);
+    core.warn("seed " + itoa(o.seed) + ": " + o.why + "\n" + o.src);
+  }
+  core.warn(itoa(bad.len()) + " of " + itoa(count) + " disagreed");
+  return 1;
 }

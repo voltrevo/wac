@@ -74,6 +74,35 @@ This is the intersection the fuzzer exists for. A wrong *fold* is invisible unle
 then selects between two arms that differ, which is a comparison inside a ternary inside an
 expression — three features crossed, and no feature-at-a-time sweep puts them together.
 
+## The same fault in a ternary, which widens what this is about — 2026-08-31
+
+The generator grew loops, casts and helpers and immediately produced a second shape:
+
+```wac
+export i32 main() { return (((true ? 2147483648 : 2147483648) / 3) as~ i32); }
+```
+
+Expected `715827882`; answers **−715827882**, which is `2147483648` read as an i32 (−2147483648),
+divided by 3. The literal lost its top half inside the ternary.
+
+The controls say it is about **context**, not about ternaries:
+
+| shape | answer |
+|---|---|
+| `i64 v = (true ? 2147483648 : 2147483648);` then clamp | correct |
+| `i64 a = 2147483648; i64 v = (true ? a : a);` then clamp | correct |
+| `((2147483648 / 3) as~ i32)` — arithmetic, no ternary | correct |
+| `(((true ? 2147483648 : 2147483648) / 3) as~ i32)` | **wrong** |
+
+So with an expected type the literal is an i64, and plain arithmetic types it by its own width. What
+fails is a wide literal under an operator **whose result type is not its operand type** and with no
+expected type to inherit — a ternary, and the comparison at the top of this issue. `spec/tour.wac`
+says a literal too wide for i32 is an i64 *by its own width*, so both are the same rule not being
+applied.
+
+That is one fault with two faces, which is why it is here rather than in a second issue. A fix should
+be tested against both reproductions.
+
 ## Notes
 
 `issues/lang/0281b` was `as~` to i32 wrapping instead of clamping **when its operand is constant**, so

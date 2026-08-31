@@ -35,23 +35,37 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * fixed set means a disagreement stays reported until it is fixed. Searching is what the command line
  * is for — `--count` and `--seed` reach further than any suite should.
  *
- * **Four seeds are known-open and excused by number: 9, 53, 84 and 131.** They all reproduce
- * `issues/lang/0306b` — a comparison of two i64 constants folded on their low 32 bits — which this
- * sweep found on its first corpus.
+ * **Ten seeds are known-open and excused by number**, listed in `knownOpen` below. Every one of them
+ * reproduces `issues/lang/0306b` — a wide integer literal losing its top half under an operator whose
+ * result type is not its operand type, with no expected type to inherit. The sweep found the
+ * comparison face of it first and the ternary face after the generator grew loops and casts.
  *
  * Excused as a *subset*, not as an expected count: the run passes when the seeds that disagree are
- * among these four, so fixing `0306b` leaves this green rather than turning it red for having got
- * better. A disagreement at any other seed still fails, which is the property worth keeping. What
- * this deliberately does not do is assert the wrong answers — that would hold the bug in place, and a
- * test that pins today's behaviour is how an open decision stops being one.
+ * among these, so fixing `0306b` leaves this green rather than turning it red for having got better.
+ * A disagreement at any other seed still fails, which is the property worth keeping. It deliberately
+ * does not assert the wrong answers — that would hold the bug in place.
+ *
+ * **This list is derived from a run and goes stale when the generator changes.** It has already
+ * happened once: adding helpers, branches and loops moved the failures from 9/53/84/131 to these ten,
+ * because a seed names a sequence of draws and new arms consume different ones. If you change the
+ * generator, re-derive it rather than adding to it — a list that is not the list of actual failures
+ * reads as knowledge, which is the mistake `wapyroundtrip_test.wac` records making.
  */
+/** The seeds whose disagreement is `issues/lang/0306b`, derived from a run on 2026-08-31. */
+i32[] knownOpen() { return i32[](16, 21, 42, 52, 54, 74, 77, 119, 128, 188); }
+
+bool has(i32[] xs, i32 v) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == v) { return true; } }
+  return false;
+}
+
 export string test_a_small_sweep_agrees_with_its_oracle(Core core, Cli cli) {
   Vec<Outcome> bad = sweep(cli, 200, 1);
   string unexplained = "";
   i32 n = 0;
   for (i32 i = 0; i < bad.len(); i++) {
     i32 seed = bad.get(i).seed;
-    if (seed == 9 || seed == 53 || seed == 84 || seed == 131) { continue; }
+    if (has(knownOpen(), seed)) { continue; }
     n = n + 1;
     if (n == 1) {
       unexplained = "seed " + itoa(seed) + ": " + bad.get(i).why + "\n--- the program\n"
