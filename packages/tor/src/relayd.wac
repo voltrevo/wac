@@ -44,6 +44,14 @@
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
 //
+// **One stream per circuit.** A second RELAY_BEGIN on a circuit that already carries one is answered
+// *"a second stream on one circuit is not supported"* and an END with RESOURCELIMIT. Written down
+// here because it is not a detail of this file: `socks.wac` reuses a circuit per destination *port*,
+// so two SOCKS clients asking for the same port share a circuit and the second one is refused by
+// this relay — which reads at the client as "the exit is out of resources" and looks like a proxy
+// bug. It cost exactly that confusion in `packages/tor/test/wac/socksnet_test.wac`, whose two-client
+// case now uses two ports for this reason.
+//
 // ## It does extend, and this said otherwise for four weeks
 //
 // *"EXTEND2 is parsed and refused … a client extending through this relay gets a DESTROY"* stood

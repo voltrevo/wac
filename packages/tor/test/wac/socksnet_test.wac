@@ -94,6 +94,25 @@ struct Carried {
 }
 
 /**
+ * A SOCKS5 connection taken as far as its CONNECT reply, and left open.
+ *
+ * **Two of these at once is the case that matters.** `socks.wac` multiplexes clients by hand — a
+ * `waitAny` list rebuilt every pass with an `owner` array beside it, whose own comment says an
+ * arithmetic slip there "routes a stranger's bytes". One client cannot catch that: the failure needs
+ * two connections live at the same time, so that an index off by one delivers A's bytes to B.
+ *
+ * So `carry` is split. `opened` gets a connection to the point where the proxy is carrying it and
+ * stops; the case opens two, sends on both, and only then reads either. Sequential clients would
+ * exercise removal and circuit reuse but never overlap, which is the half that cannot go wrong
+ * quietly.
+ */
+struct Opened {
+  bool ok;
+  string why;
+  i32 handle;
+}
+
+/**
  * A SOCKS5 CONNECT to `127.0.0.1:target` through the proxy, and one HTTP request down it.
  *
  * Written here rather than imported because there is no SOCKS5 *client* in this repository —
@@ -104,6 +123,53 @@ struct Carried {
  * authentication", a CONNECT naming an IPv4 address, and a ten-byte reply whose second byte is the
  * verdict. `socksReply` in `socks5.wac` is what builds that reply, so the two halves meet here.
  */
+Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
+  i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
+  if (h < 0) { return Opened(false, "could not connect to the proxy on " + itoa(proxy), -1); }
+
+  cli.send(h, u8[](0x05, 0x01, 0x00)).wait();
+  u8[] hello = readSome(core, cli, h, 2);
+  if (hello.len() < 2 || hello[0] != 0x05 || hello[1] != 0x00) {
+    cli.closeSocket(h);
+    return Opened(false, "the proxy did not accept a no-auth greeting", -1);
+  }
+
+  cli.send(h, u8[](0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
+                   ((target / 256) & 0xFF), (target & 0xFF))).wait();
+  u8[] reply = readSome(core, cli, h, 10);
+  if (reply.len() < 2 || reply[0] != 0x05) {
+    cli.closeSocket(h);
+    return Opened(false, "the proxy answered no reply, or one that was not SOCKS5", -1);
+  }
+  if (reply[1] != 0x00) {
+    cli.closeSocket(h);
+    return Opened(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1]), -1);
+  }
+  return Opened(true, "", h);
+}
+
+/** Send a request on an already-open connection and read the answer to its end. */
+Carried answered(Core core, Cli cli, i32 h, string request) {
+  cli.send(h, request.toBytes()).wait();
+  string all = "";
+  bool reading = true;
+  while (reading) {
+    Pending<Read> p = cli.recv(h);
+    if (core.waitAny(i32[](p.id), READ_MS) < 0) {
+      p.cancel();
+      cli.closeSocket(h);
+      return Carried(false, "went quiet after " + itoa(all.len()) + " byte(s)", all);
+    }
+    match (p.wait()) {
+      case Data(got): { all = all + string.fromBytes(got); }
+      case End: { reading = false; }
+      case Failed(why): { reading = false; }
+    }
+  }
+  cli.closeSocket(h);
+  return Carried(true, "", all);
+}
+
 Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
   i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
   if (h < 0) { return Carried(false, "could not connect to the proxy on " + itoa(proxy), ""); }
@@ -355,6 +421,72 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // where the bytes came from somewhere other than a circuit.
               t.isTrue(contains(logOf(cli, proxy), "stream 1 ended: done"),
                        "and socks saw the stream open and end on its circuit");
+
+              // ── Two clients at once, which is the case the `owner` array can get wrong ──
+              //
+              // Both are opened and both send before either reads, so the proxy is carrying two
+              // streams on one circuit at the same time. The answers are made deliberately
+              // unmistakable — one real document, one 404 — because the failure this guards
+              // against is not "no bytes" but *the other client's* bytes, and two 200s that both
+              // look plausible would let a swap pass.
+              // **Two targets, because one exit carries one stream per circuit.** `socks` reuses a
+              // circuit per destination *port*, so two clients asking for the same port share a
+              // circuit — and `relayd` answers the second RELAY_BEGIN with *"a second stream on one
+              // circuit is not supported"*, which reaches the client as "the exit is out of
+              // resources" and reads exactly like a proxy bug. It is not; it is the relay's stated
+              // limit, now stated in its header too. Two ports means two circuits and two streams,
+              // which is also the more interesting case: it exercises building a second circuit
+              // while the first is live.
+              Daemon second = start(cli,
+                line(cli, dirdMod, quoted(dir + "/v.consensus") + " " + quoted(dir + "/cert.cert") +
+                                   " " + quoted(dir + "/r1.desc") + " 0"),
+                dir + "/dird2.log");
+              t.isTrue(second.ok(), "a second target started — " + second.error);
+              bool up2 = second.ok() &&
+                         waitForLogWithin(core, cli, second, "serving the directory on 127.0.0.1:",
+                                          20000);
+              t.isTrue(up2, "and listened. It said: " + logOf(cli, second));
+              i32 tport2 = up2 ? portFrom(logOf(cli, second), "serving the directory on 127.0.0.1:")
+                               : -1;
+
+              // **Both targets fresh.** The first attempt gave client A the same `dird` the
+              // single-client case had already used, and A got nothing: the exit opened its stream
+              // and forwarded 68 bytes, and the target answered with none. That is a question about
+              // `dird` serving a second connection, not about the proxy multiplexing two clients —
+              // so the two-client case uses two servers that have served nobody, and the `dird`
+              // question is left where it can be asked on its own.
+              Daemon third = start(cli,
+                line(cli, dirdMod, quoted(dir + "/v.consensus") + " " + quoted(dir + "/cert.cert") +
+                                   " " + quoted(dir + "/r1.desc") + " 0"),
+                dir + "/dird3.log");
+              bool up3 = third.ok() &&
+                         waitForLogWithin(core, cli, third, "serving the directory on 127.0.0.1:",
+                                          20000);
+              t.isTrue(up3, "a third target listened. It said: " + logOf(cli, third));
+              i32 tport3 = up3 ? portFrom(logOf(cli, third), "serving the directory on 127.0.0.1:")
+                               : -1;
+
+              Opened a = up3 ? opened(core, cli, got, tport3) : Opened(false, "no third target", -1);
+              Opened bb = up2 ? opened(core, cli, got, tport2) : Opened(false, "no second target", -1);
+              t.isTrue(a.ok && bb.ok, "two clients both got a CONNECT reply — " + a.why + bb.why);
+              if (a.ok && bb.ok) {
+                cli.send(a.handle, ("GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
+                                    "Host: 127.0.0.1\r\n\r\n").toBytes()).wait();
+                cli.send(bb.handle, ("GET /nothing-is-served-here HTTP/1.0\r\n" +
+                                     "Host: 127.0.0.1\r\n\r\n").toBytes()).wait();
+                Carried ra = answered(core, cli, a.handle, "");
+                Carried rb = answered(core, cli, bb.handle, "");
+                t.isTrue(contains(ra.body, "network-status-version"),
+                         "the client that asked for the consensus got the consensus — " + ra.why +
+                         ", " + itoa(ra.body.len()) + " bytes");
+                t.isTrue(contains(rb.body, "404"),
+                         "and the one that asked for nothing got the 404, rather than the other " +
+                         "client's document — " + rb.why + ", " + itoa(rb.body.len()) + " bytes");
+                t.isTrue(!contains(rb.body, "network-status-version"),
+                         "and no part of the consensus reached the wrong connection");
+              }
+              if (second.ok()) { stop(cli, second); }
+              if (third.ok()) { stop(cli, third); }
             }
             stop(cli, target);
           }
