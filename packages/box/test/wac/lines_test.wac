@@ -1,0 +1,156 @@
+// The line-oriented applets, against the real ones — and the two things about them that are not a
+// comparison.
+//
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/lines_test.wac
+//
+// From `box.test.ts`. `tail` was written off as unstreamable, wrongly: it has to *reach* the end but
+// only has to *hold* N lines, and `head` is better still — it stops reading once it has them.
+// Converting them turned up two bugs the old fixture could not see, because it had no blank lines and
+// no text outside ASCII: `nl` numbered blank lines, and `rev` reversed bytes rather than characters,
+// so an em dash came back as three replacement characters.
+//
+// **`rev` is not compared against the real one here**, and that is deliberate rather than an omission.
+// Ours walks scalars whatever the locale says; the real one follows `LC_CTYPE` and is byte-oriented
+// under `LC_ALL=C`. So a spawned comparison would assert something different depending on the
+// environment the suite happened to run in, which is the opposite of what a test is for. Its
+// non-ASCII answer is written down below instead, and `issues/system/0301c` is the open question.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, runApplet } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-lines"; }
+
+/**
+ * The fixture: several 64 KiB chunks, with blank lines, repeats and non-ASCII in it.
+ *
+ * Every ingredient is there because something got it wrong — the blank lines for `nl`, the adjacent
+ * duplicates for `uniq`, the multi-byte characters for `rev`, and the length so that none of it fits
+ * in one read.
+ */
+u8[] manyLines() {
+  Buf b = Buf.create();
+  for (i32 i = 0; i < 4000; i++) {
+    b.pushAll(("line " + itoa(i) + " ").toBytes());
+    b.pushCodepoint(0x2014);                                   // em dash
+    b.pushAll(" ".toBytes());
+    // "ünïcode", by code point: wac has no `\u{…}` escape yet, and a raw ü in a fixture is a byte
+    // sequence nobody reviewing this file can count.
+    b.pushCodepoint(0x00FC); b.pushAll("n".toBytes()); b.pushCodepoint(0x00EF);
+    b.pushAll("code\n".toBytes());
+    if (i % 7 == 0) { b.push(0x0a); }
+    if (i % 11 == 0) { b.pushAll("repeated\nrepeated\n".toBytes()); }
+  }
+  return b.bytes();
+}
+
+/** The real tool, with this process's environment. */
+string realOut(Cli cli, string prog, string[] args) {
+  Exec r = cli.exec(prog, args, u8[0]()).wait();
+  return string.fromBytes(r.stdout);
+}
+
+export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  string many = dir + "/many.txt";
+  string nonl = dir + "/nonl.txt";
+  t.isTrue(cli.writeFile(many, manyLines()).wait().ok(), "wrote the long fixture");
+  // A file with no final newline: `head`, `tail` and `rev` preserve that and `nl` and `uniq` add one.
+  // Not uniform, so each is asked rather than assumed.
+  t.isTrue(cli.writeFile(nonl, "alpha\nbravo".toBytes()).wait().ok(), "wrote the unterminated one");
+
+  string[][] invocations = string[][](
+    string[]("head"), string[]("head", "-3"),
+    string[]("tail"), string[]("tail", "-3"), string[]("tail", "-1"),
+    string[]("nl"), string[]("uniq"), string[]("uniq", "-c")
+  );
+
+  for (i32 i = 0; i < invocations.len(); i++) {
+    string[] inv = invocations[i];
+    for (i32 f = 0; f < 2; f++) {
+      string path = f == 0 ? many : nonl;
+      string[] argv = string[inv.len() + 1](fill: "");
+      for (i32 k = 0; k < inv.len(); k++) { argv[k] = inv[k]; }
+      argv[inv.len()] = path;
+
+      string[] theirs = string[inv.len()](fill: "");
+      for (i32 k = 1; k < inv.len(); k++) { theirs[k - 1] = inv[k]; }
+      theirs[inv.len() - 1] = path;
+
+      Ran got = runApplet(core, cli, dir, argv);
+      t.eqStr(got.out, realOut(cli, inv[0], theirs),
+              inv[0] + (inv.len() > 1 ? " " + inv[1] : "") + (f == 0 ? "" : " unterminated"));
+    }
+  }
+
+  // `tail -N` asking for more lines than exist.
+  t.eqStr(runApplet(core, cli, dir, string[]("tail", "-100000", many)).out,
+          realOut(cli, "tail", string[]("-100000", many)), "tail past the start");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `rev` reverses characters, not bytes.
+ *
+ * Written down rather than compared, for the reason in this file's header. The em dash is the case:
+ * reversing its three bytes produces three invalid sequences, which is what ours used to do and what
+ * the real one still does in a byte-oriented locale.
+ */
+export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/rev.txt";
+
+  Buf in = Buf.create();
+  in.pushAll("a".toBytes()); in.pushCodepoint(0x2014); in.pushCodepoint(0x00FC);
+  in.pushAll("b\n".toBytes());
+  t.isTrue(cli.writeFile(path, in.bytes()).wait().ok(), "wrote the case");
+
+  Buf want = Buf.create();
+  want.pushAll("b".toBytes()); want.pushCodepoint(0x00FC); want.pushCodepoint(0x2014);
+  want.pushAll("a\n".toBytes());
+
+  t.eqStr(runApplet(core, cli, dir, string[]("rev", path)).out, string.fromBytes(want.bytes()),
+          "rev moves whole scalars");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Half a megabyte with no newline in it: one line, and it must not take quadratic time.
+ *
+ * The first line reader appended with `concat` and rescanned from the start after every refill; on a
+ * 300 MB version of this it had not finished after two minutes. The assertion is a wall-clock bound
+ * rather than a count of anything, so it is loose on purpose — quadratic here is minutes, and the
+ * question is which side of that we are on rather than how fast the machine is today.
+ */
+export string test_one_very_long_line_is_linear(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/oneline.txt";
+
+  i32 width = 500000;
+  u8[] line = u8[width](fill: 0x78);                 // 'x'
+  t.isTrue(cli.writeFile(path, line).wait().ok(), "wrote half a megabyte with no newline");
+
+  i64 started = core.monotonicNanos().wait();
+  Ran got = runApplet(core, cli, dir, string[]("tail", "-1", path));
+  i64 elapsed = core.monotonicNanos().wait() - started;
+
+  t.eqI32(got.out.len(), width, "one very long line comes back whole");
+  t.isTrue(elapsed < 15000000000, "a single long line should be linear, not quadratic");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

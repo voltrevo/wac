@@ -760,78 +760,14 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
   }
 });
 
-Deno.test("line-oriented applets stream too, and stay faithful at the edges", async () => {
-  // `tail` was written off as unstreamable, wrongly: it has to *reach* the end but only
-  // has to *hold* N lines. `head` is better still — it stops reading once it has them.
-  //
-  // Converting them turned up two bugs that predate this and that the old fixture could
-  // not see, because it had no blank lines and no text outside ASCII: `nl` numbered blank
-  // lines, and `rev` reversed bytes rather than characters, so an em dash came back as
-  // three replacement characters.
-  const fixture = await Deno.makeTempFile({ prefix: "wac-lines-in-" });
-  const nonl = await Deno.makeTempFile({ prefix: "wac-lines-nonl-" });
-  const oneline = await Deno.makeTempFile({ prefix: "wac-lines-one-" });
-  try {
-
-    // Spans several 64K chunks, with blank lines, repeats and non-ASCII in it.
-    const rows: string[] = [];
-    for (let i = 0; i < 4000; i++) {
-      rows.push(`line ${i} — ünïcode`);
-      if (i % 7 === 0) rows.push("");
-      if (i % 11 === 0) rows.push("repeated");
-      if (i % 11 === 0) rows.push("repeated");
-    }
-    await Deno.writeTextFile(fixture, rows.join("\n") + "\n");
-    await Deno.writeTextFile(nonl, "alpha\nbravo");
-    // One line and no newline at all: the shape that made the first line reader quadratic.
-    await Deno.writeTextFile(oneline, "x".repeat(500_000));
-
-    // **In a worker, not a process.** This test is about what the applets *answer*, and the first test
-    // in this file already makes that comparison through `appRunner` — 1ms a run against about 110ms
-    // for the built executable, for byte-identical output. Nineteen runs here were two seconds of
-    // Deno starting up. The tests that are genuinely about a process boundary still build one.
-    const runner = await appRunner(BOX, { read: true });
-    const box = async (args: string[], file: string) => (await runner.run([...args, file])).out;
-    const sys = (cmd: string, args: string[], file: string) =>
-      new TextDecoder().decode(
-        new Deno.Command(cmd, { args: [...args, file], stdout: "piped", stderr: "null" })
-          .outputSync().stdout,
-      );
-
-    for (const [mine, real] of [
-      [["head"], ["head"]],
-      [["head", "-3"], ["head", "-3"]],
-      [["tail"], ["tail"]],
-      [["tail", "-3"], ["tail", "-3"]],
-      [["tail", "-1"], ["tail", "-1"]],
-      [["nl"], ["nl"]],
-      [["rev"], ["rev"]],
-      [["uniq"], ["uniq"]],
-      [["uniq", "-c"], ["uniq", "-c"]],
-    ] as const) {
-      assertEquals(await box([...mine], fixture), sys(real[0], real.slice(1), fixture), `${mine.join(" ")}`);
-      // A file with no final newline: `head`, `tail` and `rev` preserve that and `nl` and
-      // `uniq` add one. Not uniform, so each is checked rather than assumed.
-      assertEquals(await box([...mine], nonl), sys(real[0], real.slice(1), nonl), `${mine.join(" ")} unterminated`);
-    }
-
-    // `tail -N` asks for more lines than exist, and for exactly one.
-    assertEquals(await box(["tail", "-100000"], fixture), sys("tail", ["-100000"], fixture), "tail past the start");
-
-    // Half a megabyte with no newline in it: one line, and it must not take quadratic time.
-    // The first reader appended with `concat` and rescanned from the start after every
-    // refill; on a 300MB version of this it had not finished after two minutes.
-    const started = performance.now();
-    assertEquals((await box(["tail", "-1"], oneline)).length, 500_000, "one very long line");
-    assertEquals(
-      performance.now() - started < 15_000,
-      true,
-      "a single long line should be linear, not quadratic",
-    );
-  } finally {
-    for (const f of [fixture, nonl, oneline]) await Deno.remove(f);
-  }
-});
+// **Moved to `packages/box/test/wac/lines_test.wac`.** `head`, `tail`, `nl` and `uniq` against the real
+// ones over a multi-chunk fixture with blank lines, adjacent duplicates and non-ASCII in it, and over
+// a file with no final newline — which the five do not treat alike, so each is asked. The quadratic
+// guard travels with them: half a megabyte on one line, `tail -1`, timed with `core.monotonicNanos`.
+//
+// `rev` did **not** travel as a comparison. Ours walks scalars whatever the locale says and the real
+// one follows `LC_CTYPE`, so spawning it would assert a different thing depending on the environment
+// the suite ran in. Its non-ASCII answer is written down there instead — `issues/system/0301c`.
 
 /**
  * A port nobody is using, taken by binding one and letting go.
