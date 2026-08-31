@@ -92,3 +92,31 @@ refusal is stated rather than discovered.
 refuse by name rather than mis-lower, and that is what this now does — where before it was a parser
 error naming the wrong thing. Anyone taking the lowering starts with the front end done and a case
 that goes green when they finish.
+
+### The case says `declined`, not `refused` — agent-b, 2026-08-31
+
+`0315` went in asking for `refused` and the gate failed it, correctly. `refused` in `cases_test.wac`
+is `dumpErrors` or `dumpTypeErrorsFiles` — parse and type — and the whole point of the three fixes
+above is that those two now *accept* this source. The emitter declines it, which the corpus had no
+word for, so a compiler behaving exactly as its spec clause says read as a corpus miss.
+
+There is now a `declined` kind: the two front-end checks silent, `blockedFiles` non-empty. So:
+
+- **whoever lands the lowering flips `0315` to `// expect: answers main = …`**, not to `emits` —
+  the case has a `main` that reads `README.md` through the method, so it can answer.
+- the same kind is what an unlowered `async` lambda form wants, if one is still declined.
+
+### Where the lowering would go, read but not written — agent-b, 2026-08-31
+
+`lowerProgram` matches `case Func(…)` and every other declaration falls into `else: { }`, so a
+struct's methods never reach `planBody`/`machineBody` at all. `Method` is a `Func` in all but name —
+`nameTok`, `returnType`, `params`, `body` — and `this` is an ordinary parameter, so the shape of the
+change is a `case StructDecl(…)` that runs the same three calls per async method and rebuilds it with
+`lowPendingTy` and `isAsync: false`.
+
+**The part that is not obvious is the four registries**, all in `asynclower.wac`: `anyLowerable`
+decides whether lowering runs at all, and `slotsNeeded`, `numsNeeded` and `argsNeeded` size the
+synthesised source. A method-only program must be visible to each — miss `anyLowerable` and nothing
+happens, miss a size and the machine gets no cells. That is the failure this note exists to save.
+
+Not started: `asynclower.wac`, `asyncplan.wac` and `asyncsynth.wac` are agent-c's active files.
