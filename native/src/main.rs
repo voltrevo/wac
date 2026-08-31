@@ -2108,7 +2108,14 @@ fn dispatch(
                     }
                 };
                 // Nothing was consumed to make this, so there is nothing to hand back.
-                let _ = caller.data().tickets.discard(id);
+                // Forget which handle this was reading: it is finished with, and the note is
+                // only for a `drop` that finds an answer in hand. Without this, every `recv` that
+                // ends synchronously — standard input, a handle that is not there — leaves an entry
+                // behind, and the map grows for as long as the program reads. `issues/system/0308b`.
+                // Same note, same reason: this path answers `Read.Failed` and is done with the
+            // ticket, so nothing should be left pointing at a handle. `issues/system/0308b`.
+            let _ = caller.data().tickets.discard(id);
+            caller.data().reading.lock().unwrap().remove(&id);
                 results[0] = match n {
                     Ok(0) => make_read_end(caller)?,
                     Ok(n) => make_read_data(caller, &buf[..n])?,
