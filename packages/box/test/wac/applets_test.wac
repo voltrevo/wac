@@ -1,5 +1,10 @@
 // `box`'s applets, asked in this process rather than built and spawned.
 //
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/applets_test.wac
+//
+// `--allow-run` is for the two tests at the foot of this file, which ask GNU directly rather than
+// replaying a capture — the replay itself needs no oracle at all.
+//
 // The tests here came out of `box.test.ts`, which builds a program and runs it — 554 processes on a suite
 // run, most of them the *oracle* side. What each of these asserts is either our own behaviour, which needs
 // no oracle at all, or an expectation captured once by `tools/wac/appletvectors.wac`.

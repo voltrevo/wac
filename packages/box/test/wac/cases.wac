@@ -388,6 +388,12 @@ export string[] appletCases() {
     "sort -n nums.txt", "sort -n -r nums.txt", "sort -n -u nums.txt",
     // And the numeric operand that `-n` used to swallow.
     "grep -n 123 numeric.txt", "sort -n numeric.txt",
+    // `--` ends the options, so an operand may begin with a dash. Without it `cat -- -x` treated both
+    // as flags, found no operand, read empty standard input and exited **0** — a silent wrong answer.
+    // GitHub wac-mono#11. The file is made by the script rather than by a fixture, because a `-x` in
+    // `appletFixtures()` would appear in every `ls` case's output.
+    "printf 'contents\\n' > ./-x; cat -- ./-x",
+    "printf 'contents\\n' > ./-x; cat -- -x",
     // base32 both ways, so the pair is a round trip rather than two independent spellings.
     "base32 m2.txt", "base32 m2.txt | base32 -d",
     // Listing and walking. `ls` of a name that is a file rather than a directory is the case that

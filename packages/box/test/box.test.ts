@@ -158,6 +158,13 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // link to a directory was indistinguishable from the directory: it was walked into, stored under
     // the link's name, and a self-referential one grew the path until something trapped. `linkStat`
     // is what made the claim enforceable. GitHub wac-mono#25.
+    //
+    // **This one cannot move, and the reason is a capability rather than an oracle.** The fixture
+    // needs three *symlinks*, and `Cli` can read a link — `linkStat` — and not make one. It is the
+    // shape `chmod` was in until `issues/system/0296c`: the reading half present, the writing half
+    // absent, so a test can ask about a link nobody in this system can create. `native_hostfs_test`
+    // says the same thing from the other side: "there is no `ln` in this system, so a script cannot
+    // create its own". Filed as `issues/system/0300c`.
     const linked = await Deno.makeTempDir({ prefix: "wac-box-link-" });
     await Deno.mkdir(`${linked}/real`);
     await Deno.writeTextFile(`${linked}/real/f`, "x");
@@ -189,12 +196,9 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     await Deno.remove(listing);
     await Deno.remove(linked, { recursive: true });
 
-    // `--` ends the options, so an operand may begin with a dash. Without it `cat -- -x` treated
-    // both as flags, found no operand, read empty standard input and exited 0. GitHub wac-mono#11.
-    const dashDir = await Deno.makeTempDir({ prefix: "wac-box-dash-" });
-    await Deno.writeTextFile(`${dashDir}/-x`, "contents\n");
-    assertEquals((await box(["cat", "--", `${dashDir}/-x`])).out, "contents\n", "cat -- -x");
-    await Deno.remove(dashDir, { recursive: true });
+    // **`--` moved to `appletCases()`** — wac-mono#11, where `cat -- -x` treated both as flags, found
+    // no operand, read empty standard input and exited 0. The case makes its own `-x` rather than
+    // taking a fixture, because a `-x` in `appletFixtures()` would appear in every `ls` case's output.
 
     // A numeric sort key outside i32. It used to wrap: `4294967296` and `0` compared equal, so
     // `-nu` dropped one of them. GitHub wac-mono#12.

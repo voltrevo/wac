@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 126
+count: 128
 S 5
 seq 5
 X 0
@@ -1378,6 +1378,22 @@ X 0
 O 8
 abc
 123
+
+E 0
+
+S 39
+printf 'contents\n' > ./-x; cat -- ./-x
+X 0
+O 9
+contents
+
+E 0
+
+S 37
+printf 'contents\n' > ./-x; cat -- -x
+X 0
+O 9
+contents
 
 E 0
 
