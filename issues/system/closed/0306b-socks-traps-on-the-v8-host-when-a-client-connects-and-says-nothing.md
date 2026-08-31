@@ -227,9 +227,14 @@ A pump parks in `recv`. Another pump's continuation closes that client's socket.
 calls `recv` on a handle the host has already removed from its table — and this host threw, killing
 the program.
 
-**Every other host answers.** `native/src/main.rs` settles `Read.Failed` and says why it is `Failed`
-rather than `End`: *"which would tell a reader the peer had finished rather than that there was never
-one."* Deno answers too. That is exactly the host-specificity established above — v8 was the only one
+**Every other host answers, and this is checked in the code rather than inferred from a run.**
+`native/src/main.rs` settles `Read.Failed` and says why it is `Failed` rather than `End`: *"which
+would tell a reader the peer had finished rather than that there was never one."* `deno.ts`'s
+`OP.RECV` ends `if (c === undefined) return failed("not an open socket")` — a value, not a throw.
+
+Worth saying how that was established, because the obvious evidence was no good: the Deno arm of the
+host table above was measured during the stretch when the bug was not firing, and that whole stretch
+is voided for host comparisons. A 0-of-6 from it says nothing. The line above says it instead. That is exactly the host-specificity established above — v8 was the only one
 that died.
 
 And the rule was already written down **one branch up**, for `PARENT_FS_HANDLE`: *"An absent parent
