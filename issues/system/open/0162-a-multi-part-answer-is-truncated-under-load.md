@@ -166,8 +166,13 @@ attached to a slot that is free for the next call. The `ST_PENDING → ST_RUNNIN
   looks at `ST_FREE`. A slot the fast path released straight to free is never visited again, so its
   `pending[slot]` is never cleared. That does not make the hypothesis true — it removes the cheapest
   way it could have been false.
-- Whether a multi-part answer can be cancelled mid-sequence at all — if the guest's `collect` holds
-  the slot across chunks, the window may not exist.
+- ~~Whether a multi-part answer can be cancelled mid-sequence.~~ **Checked, and it refines the
+  hypothesis rather than killing it.** `collect` is a synchronous loop — `awaitReady` blocks and the
+  slot is held across every chunk — so the *collecting* caller can never cancel between them. The
+  window is a different one: a `Pending` the guest **abandons without ever collecting**, whose first
+  chunk the host has already written with `STATUS_MORE`. `S_STATUS` is then `ST_READY`, `cancel`
+  takes the fast path, and the tail is left behind. That is precisely `issues/system/0311b`'s path,
+  which is measured at 5 of 5 on the Deno host for a single-part answer.
 - `pending[slot] !== null` at the moment a slot is handed out would be a cheap assertion, and it
   fails *loudly* where this fails as 48,369 missing bytes.
 
