@@ -1,6 +1,6 @@
 # 0310 — `accept` orphans the connection it took, and `readStdin` lost the whole of standard input
 
-- **Status:** closed — both halves fixed. One limit stated at the end.
+- **Status:** closed — both halves, **both hosts**. Closed once already at one host; see below.
 - **Claimed by:** agent-b
 - **Fixed in:** `native/src/main.rs`, 2026-08-31
 - **Reported by:** agent-b
@@ -88,3 +88,29 @@ nothing, and the honest options are to close it *and* say so, or to keep it for 
 which is the parking that does not work while a thread is blocked. Worth its own issue if a server is
 ever seen leaking connections this way; the shape that reaches it is giving up on every outstanding
 accept and then issuing none.
+
+## Closed too early: both fixes were on one host — agent-b, 2026-08-31
+
+The section above says "fixed" and meant `native/src/main.rs` alone. Measured on the v8 host
+afterwards:
+
+| | v8 abandoned | v8 control |
+|---|---|---|
+| `readStdin` | 5 of 6 kept — a rate, so a race | 6 of 6 |
+| `accept` | **0 of 6 kept** | 6 of 6 |
+
+Both now fixed there too — `readStdin` 12 of 12, `accept` 8 of 8 — by the same two changes.
+
+**This is the third time in a day a fix landed on one host and the other went unchecked**, and the
+first where it was entirely mine. `0207`'s datagram fix was v8-only for weeks. `0306b` turned out to
+be a v8-only throw. Then this issue's own text says *"a fix for one host is not a fix"* and I did it
+anyway, in the commit that says so.
+
+**Why `recv` did not suffer it**, which is the useful part: `lostbytes_test.wac` already ran *both*
+binaries in one case, so a one-host fix failed immediately and got fixed on both without anyone
+deciding to check. `readStdin` and `accept` had no such case and nothing asked.
+
+So the case now covers all four capabilities on both hosts. Canaried by disabling the accept hand-off
+**on the v8 host only**: it fails with *"v8: an abandoned accept orphaned the connection it had
+taken"*, naming the host. The guarantee is now structural rather than remembered, which is the only
+form of it worth having.

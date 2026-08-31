@@ -584,6 +584,10 @@ struct HostState {
     /// Stream bytes a reader took for a ticket nobody claimed — the same idea as `datagrams`, for
     /// the resource it was never applied to. `issues/system/0307b`.
     pushback: Arc<std::sync::Mutex<HashMap<i32, Vec<u8>>>>,
+    /// Live `accept` tickets per listener, oldest first. A connection cannot be handed to a thread
+    /// already blocked in `listener.accept()` — it waits in the kernel for a *different* one — so a
+    /// thread whose ticket is gone completes somebody else's instead. `issues/system/0310b`.
+    accepting: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<i32>>>>,
     /// Which handle a read ticket is reading, so a *dropped* one knows where to put its answer back.
     /// `receiving` is this for `receiveFrom` and has been since `0207`; this is reads.
     /// `issues/system/0308b`.
@@ -1207,6 +1211,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
             datagrams: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
             receiving: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
@@ -2470,13 +2475,24 @@ fn dispatch(
                     // says there are no more.
                     let mut all = Vec::new();
                     loop {
-                        let chunk = q.read();
+                        // **Stops if nobody is waiting.** Reading to EOF for a ticket that has been
+                        // given up on lost the whole of standard input — 1 run in 6 on this host,
+                        // 7 in 8 on the other. Whatever was already gathered goes back at the front
+                        // of the queue for the next `readStdin`. `issues/system/0310b`.
+                        let Some(chunk) = q.read_unless(|| !worker.is_live(id)) else {
+                            q.unread(all);
+                            return;
+                        };
                         if chunk.is_empty() {
                             break;
                         }
                         all.extend_from_slice(&chunk);
                     }
-                    let _ = worker.complete(id, Answer::Bytes(Some(all)));
+                    // And the narrow order, where it is given up on between the last read and
+                    // here: put back rather than dropped.
+                    if let Some(Answer::Bytes(Some(back))) = worker.complete(id, Answer::Bytes(Some(all))) {
+                        q.unread(back);
+                    }
                 });
                 match ticket_pending(scope, "u8[]", id) {
                     Some(p) => rv.set(p),
@@ -2768,7 +2784,14 @@ fn dispatch(
                 return;
             };
             let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let listen_handle = handle;
+            let waiting = HOST.with(|h| h.borrow().as_ref().map(|st| st.accepting.clone()));
             let id = t.submit();
+            // Registered so a connection taken for a ticket nobody wants can be handed to this one
+            // wherever it is waiting. `issues/system/0310b`.
+            if let Some(ref w) = waiting {
+                w.lock().unwrap().entry(listen_handle).or_default().push_back(id);
+            }
             let worker = t.clone();
             let sockets = HOST.with(|h| h.borrow().as_ref().map(|s| s.sockets.clone()));
             std::thread::spawn(move || {
@@ -2795,7 +2818,24 @@ fn dispatch(
                     }
                     Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
-                let _ = worker.complete(id, a);
+                // **A connection is consumed to make this.** The socket is in the table by now,
+                // so an answer nobody takes leaves a client attached to a handle that will never be
+                // handed out — 0 of 6 kept on this host. Given to a ticket that is still live rather
+                // than parked, because a thread blocked in `accept()` cannot be handed a connection
+                // that arrived on another one. `issues/system/0310b`.
+                if let Some(ref w) = waiting {
+                    w.lock().unwrap().get_mut(&listen_handle).map(|q| q.retain(|&x| x != id));
+                }
+                let mut answer = worker.complete(id, a);
+                while let Some(unclaimed) = answer.take() {
+                    let next = waiting.as_ref().and_then(|w| {
+                        w.lock().unwrap().get_mut(&listen_handle).and_then(|q| q.pop_front())
+                    });
+                    match next {
+                        Some(other) => answer = worker.complete(other, unclaimed),
+                        None => break,
+                    }
+                }
             });
             match ticket_pending(scope, "Socket", id) {
                 Some(p) => rv.set(p),
