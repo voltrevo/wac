@@ -1,6 +1,6 @@
 # 0294 — sshd serves one client at a time, and the shared `Fs` depends on it
 
-- **Status:** open — the decision is answered below and proven on `dird`; `sshd` remains
+- **Status:** open — the decision is answered below and proven on `dird`. What remains is blocked on `issues/lang/0300b`, not on the decision
 - **Claimed by:** agent-b, 2026-08-30 — answering the decision and proving it on `dird` first
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -168,3 +168,30 @@ than a locking discipline for the whole `Fs`.
 Not started here, because `sshd`'s interrupt machinery (`askInterrupt`, `Keystrokes`, `Conn.ready`)
 is split ten mentions in `packages/ssh` and ten in `packages/sh`, and another agent is working in
 `packages/sh`.
+
+## What blocks the rest, and it is not this issue — agent-b, 2026-08-30
+
+`dird` and `relayd` were portable for a reason neither of them states: **their reads have no
+deadline.** An onion service's introduction circuit is silent by design, and an accept loop waits for
+ever on purpose. Every other candidate bounds its reads — `packages/tor`'s circuit layer at thirty
+seconds, because *"a relay that says nothing for thirty seconds is wedged"* — and a bounded read
+cannot be `await`ed.
+
+`issues/lang/0300b` has the mechanism: the only deadline is `core.waitAny(ids, ms)`, which **blocks**,
+so inside an async function it stalls every other continuation; and a bounded wait cannot be written
+around it in a package, because `Sched.run` dispatches through `waitAny` over *host* ids and a
+program-made ticket has none.
+
+**Do not repeat the dead end.** A race combinator over `Pending` looks writable and half-works:
+poll it and `settled()` answers, so a test that checks the flag passes. Only the `await` hangs. It
+cost me an hour and a wrong claim; the issue records the misreading beside the mechanism.
+
+So the remaining ports — `sshd`, `hsserviced`, `hsfetch`, `hsconnect`, `app` — wait on one of:
+
+- **`0300b` being fixed**, after which every bounded read converts with no change in behaviour; or
+- **relayd's route**: delete the per-read deadlines and move them to a supervising
+  `core.drainFor(budget)`. That works, `relayd` proves it, and it changes *when a Tor client notices
+  a silent relay* while restructuring three client `main`s that have no supervising loop today.
+
+The second is a decision about a security-sensitive path rather than a translation, which is why it
+is written here rather than done.
