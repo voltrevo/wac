@@ -183,3 +183,32 @@ import { itoa } from "@/packages/fmt/src/itoa.wac";
 
 A header says where something is, not how many directories away the reader happens to be standing.
 **Done.**
+
+---
+
+## Iterate over a thing, not over its indices
+
+```wac
+Vec<string> nonEmpty(string[] lines) {
+  Vec<string> out = Vec.create();
+  for (string line in lines) {
+    if (line.len() > 0) {
+      out.push(line);
+    }
+  }
+  return out;
+}
+
+i32 totalLength(Vec<string> lines) {
+  i32 n = 0;
+  for (string line in lines) {
+    n = n + line.len();
+  }
+  return n;
+}
+```
+
+The same head walks an array and a `Vec`, so they read as one language rather than two libraries, and
+an index that exists only to be a cursor never appears. The head keeps its parentheses and its type:
+every other head in the language has both, and a redundancy the eye can rest on is worth more than a
+character saved. **Not yet.**
