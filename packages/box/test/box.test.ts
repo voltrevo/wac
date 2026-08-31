@@ -672,85 +672,25 @@ async function pipedThrough(binary: string, args: string[], input: string): Prom
   return new TextDecoder().decode(r.stdout);
 }
 
-Deno.test("streaming applets hold a chunk, not the input", async () => {
-  // The point of `openInput`/`readChunk`. Correctness first — a streaming rewrite is easy
-  // to get subtly wrong at a chunk boundary, and every case here is one that a
-  // whole-input loop would have got right for free:
+Deno.test("a streaming applet with no grants still says why", async () => {
+  // **What is left of "streaming applets hold a chunk, not the input".** The comparisons went to
+  // `packages/box/test/wac/streaming_test.wac`: `wc` and `strings` against the real ones over a fixture
+  // spanning several chunks, a 200,000-byte run that must come back as *one* string rather than one per
+  // read, `tr` through standard input because it takes no file operand, `hex`'s framing as a length, and
+  // `crc32` against a CRC table written out there — the one case that is order-dependent over every
+  // byte, so a chunk handed over twice or not at all changes the answer.
   //
-  //   wc       a word split across two reads is one word, not two
-  //   strings  a run split across two reads is one run, not two short ones
-  //   crc32    the checksum is order-dependent across every chunk
-  //   tr, hex  per byte, so only the framing can go wrong
+  // **This half cannot follow them, and the reason is the interesting one.** `runApplet` builds a frame
+  // whose `Cli` is `childCli(f, cli)`, and that passes the parent's grants straight through: an
+  // in-process frame can be given the same authority as the test or more, never less. A refusal test
+  // needs *fewer*, so it needs a real process with a real grant set — which is what `appRunner` with an
+  // empty world is. Every refusal assertion in this file is here for that one reason.
+  //
+  // The message shape is the claim, not just the status: a denied read must say why, which a
+  // bool-returning `openInput` could not.
   const fixture = await Deno.makeTempFile({ prefix: "wac-stream-in-" });
   try {
-    // Deliberately larger than one 64K chunk and not a multiple of it, so boundaries land
-    // in the middle of words and runs rather than tidily between them.
-    const CHUNK = 1 << 16;
-    const parts: string[] = [];
-    for (let i = 0; i < 5000; i++) parts.push(`word${i} alpha beta gamma delta epsilon\n`);
-    const text = parts.join("");
-    assertEquals(text.length > 3 * CHUNK, true, "the fixture must span several chunks");
-    await Deno.writeTextFile(fixture, text);
-
-    // In a worker: what is under test is `openInput`/`readChunk` inside the applet, and a chunk
-    // boundary falls in the same place whether the program was started as a process or not.
-    const runner = await appRunner(BOX, { read: true });
-    const box = async (args: string[]) => await runner.run(args);
-    const sys = (cmd: string, args: string[]) =>
-      new TextDecoder().decode(
-        new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).outputSync().stdout,
-      );
-
-    // The real `wc` pads its columns; the numbers are what is under test.
-    const cols = (s: string) => s.trim().split(/\s+/).slice(0, 3).join(" ");
-    assertEquals(cols((await box(["wc", fixture])).out), cols(sys("wc", [fixture])), "wc across chunks");
-    // Through standard input, because `tr` takes no file operand — GNU's does not either, and this one
-    // stopped pretending to (wac-mono 0098). The streaming property is the same either way.
-    assertEquals(
-      (await runner.run(["tr", "a-z", "A-Z"], { stdin: text })).out,
-      text.toUpperCase(),
-      "tr across chunks",
-    );
-
-    // A run that spans several chunks must come out as one string, not several.
-    const spanning = await Deno.makeTempFile({ prefix: "wac-stream-span-" });
-    try {
-      const run = new Uint8Array(200_000 + 2);
-      run[0] = 0;
-      run.fill(65, 1, 200_001);
-      run[200_001] = 0;
-      await Deno.writeFile(spanning, run);
-      assertEquals(
-        (await box(["strings", spanning])).out,
-        sys("strings", ["-n4", spanning]),
-        "a 200K run spanning three chunks is one string",
-      );
-    } finally {
-      await Deno.remove(spanning);
-    }
-
-    assertEquals((await box(["strings", fixture])).out, sys("strings", ["-n4", fixture]), "strings");
-    assertEquals((await box(["hex", fixture])).out.length, text.length * 2 + 1, "hex is 2 chars a byte");
-    assertEquals(
-      (await box(["crc32", fixture])).out.split(" ")[0],
-      (() => {
-        const table = new Uint32Array(256);
-        for (let i = 0; i < 256; i++) {
-          let c = i;
-          for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-          table[i] = c >>> 0;
-        }
-        let crc = 0xFFFFFFFF;
-        for (const b of new TextEncoder().encode(text)) crc = table[(crc ^ b) & 0xFF] ^ (crc >>> 8);
-        return ((crc ^ 0xFFFFFFFF) >>> 0).toString(16).padStart(8, "0");
-      })(),
-      "crc32 across chunks",
-    );
-
-    // The reason the message shape matters: a denied read must still say why, which a
-    // bool-returning `openInput` could not.
-    // A world with no grants at all, which `appRunner` builds the same way a process would: the
-    // refusal is the runtime's, not the launcher's.
+    await Deno.writeTextFile(fixture, "alpha beta\n");
     const ungranted = await appRunner(BOX, {});
     const r = await ungranted.run(["cat", fixture]);
     assertEquals(r.code, 1);

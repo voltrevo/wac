@@ -99,7 +99,18 @@ export Ran runCase(Core core, Cli cli, string dir, string script) {
  * than against a number.
  */
 export Ran runApplet(Core core, Cli cli, string dir, string[] argv) {
-  Frame f = Frame.of(argv, u8[0](), dir, false);
+  return runAppletIn(core, cli, dir, argv, u8[0]());
+}
+
+/**
+ * The same, with something on standard input.
+ *
+ * `tr` is the applet that needs it and the reason is not incidental: it takes no file operand, and
+ * GNU's does not either — ours stopped pretending to in wac-mono 0098. So the only way to hand it
+ * input is the way a user would.
+ */
+export Ran runAppletIn(Core core, Cli cli, string dir, string[] argv, u8[] stdin) {
+  Frame f = Frame.of(argv, stdin, dir, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   i32 status = dispatch(c, l, Fs.onHost(l, 0), parseList(argv, 1, argv[0]), argv[0]);
