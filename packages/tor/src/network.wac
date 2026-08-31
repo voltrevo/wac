@@ -105,10 +105,20 @@ import { itoa } from "../../fmt/src/itoa.wac";
 /**
  * How long a node has to announce itself before the run is abandoned.
  *
- * Two minutes because a relay derives an RSA identity at startup and a busy machine makes that slow;
- * a default that assumed a quiet one would turn load into a failure. A description that expects to
- * fail — the control runs, which stand a network up deliberately broken — says `timeout 5000` and
- * gets its answer in seconds instead.
+ * Two minutes for the *staging* below, not for key generation. This said "because a relay derives an
+ * RSA identity at startup and a busy machine makes that slow", and that reason is wrong by two orders
+ * of magnitude: measured 2026-08-31, RSA-1024 is **224–593 ms** across sixteen seeds on the native
+ * host and **426–864 ms** on the Deno host, both taken while a suite was running. Sixteen identities
+ * cost 5.2s in total.
+ *
+ * What actually takes the time is the second stage: a relay binds, writes a descriptor, and can only
+ * begin serving once an authority has built a consensus out of every relay's descriptor — so this
+ * bounds a round trip through other processes, which is why it is minutes and why load moves it.
+ *
+ * Recorded because a bound justified by the wrong cost cannot be argued with later: anyone who
+ * measured keygen would find it fast, conclude the number was superstition, and either cut it or
+ * leave it alone for the wrong reason. A description that expects to fail — the control runs, which
+ * stand a network up deliberately broken — says `timeout 5000` and gets its answer in seconds.
  */
 const i32 READY_TIMEOUT_MS = 120000;
 

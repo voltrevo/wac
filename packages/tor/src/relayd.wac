@@ -24,14 +24,20 @@
 // the certificate. `design/0002` D4 was revised to require exactly this — a relay that cannot make
 // its own link certificate cannot rotate it, and a real relay rotates it every few hours.
 //
-// ## One connection at a time
+// ## Many connections, since 2026-08-30
 //
-// The same limitation `packages/ssh`'s sshd has and for the same reason: `accept` blocks, and the
-// world offers no way to wait on a listener and a live connection together *and* act on whichever
-// speaks. `waitAny` can wait on two tickets, but a relay needs to be reading from every connection
-// it has while accepting new ones, and that is a scheduler rather than a wait. Named here rather
-// than left to be discovered: this relay is a demonstration that the protocol works, not a relay
-// anybody should run.
+// This said *one connection at a time* until `d8ba9da6`, and the reason it gave was exact: `accept`
+// blocks, `waitAny` can wait on two tickets, but a relay needs to be reading from every connection
+// it has while accepting new ones, "and that is a scheduler rather than a wait". A scheduler is
+// what `async`/`await` is — `armAccept` is an `async void` that loops on `await cli.accept(…)` and
+// starts an `armOne` per connection, so `MAX_CONNS` of 64 is the bound now rather than one.
+//
+// **`packages/ssh`'s sshd still has it**, and the cross-reference is kept because the reason is
+// still shared: an `async` method is refused by the emitter (`issues/lang/0301b`), and sshd reads
+// through `Conn`'s methods, so it cannot take this route until that lands.
+//
+// Still a demonstration that the protocol works rather than a relay anybody should run — but for
+// what it does not do below, not for how many peers it can hold.
 //
 // ## What it does not do
 //
