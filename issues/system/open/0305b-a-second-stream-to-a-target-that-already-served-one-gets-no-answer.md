@@ -165,3 +165,30 @@ So the claim to test next is narrow and does not mention `dird`, sizes or exits:
 stream was ended by an inbound RELAY_END cannot carry another stream.** The case can already build
 both teardown directions, so it is one edit away — send the response, then close the *client* first
 in one round and let the *target* close first in the other, with everything else identical.
+
+## The answer: only the first stream on a circuit gets a response back
+
+Four rounds, identical but for who closes first:
+
+    round 0  client closes   request in 18,  response back 21
+    round 1  client closes   request in 18,  response back 0
+    round 2  target closes   request in 18,  response back 0
+    round 3  target closes   request in 18,  response back 0
+
+Round 1 fails while closing client-first, so the teardown direction is not it either. What every row
+agrees on is that **the request always arrives** — 18 bytes reach the target every round — and the
+response comes back only on the **first** stream the circuit ever carries.
+
+That is the whole of it, and it needs no mention of `dird`, of response sizes, of exits, or of who
+closes. It also explains the very first evidence, which said the same thing and was not read that
+way: `relayd`'s "68 bytes in, 0 bytes out" is a request forwarded and nothing relayed back.
+
+**So `relayd` carries one stream per circuit for the life of the circuit, not one at a time**, and it
+only *detects* the concurrent case. Its header now documents the limit; what it documents is the
+refusal, which is the case that is handled. A sequential second stream is accepted, connected,
+handed the request — and its answers go nowhere. Refused would have been better than that, and
+saying so is the smaller fix if the real one is far.
+
+**Four wrong characterisations preceded this**, each killed by the next control: the target, the
+circuit-not-target, the response size, the teardown direction. Every one was an uncontrolled
+comparison — two things varying, one named. The reproduction now varies exactly one.
