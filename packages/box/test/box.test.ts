@@ -79,112 +79,101 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-Deno.test("box's applets agree with the system tools they imitate", async () => {
-  // The widest test of the world so far, and a differential one: every applet here is
-  // compared against the real utility rather than against my idea of it. `sha256sum` and
-  // `base64` go through this repo's own crypto and codec packages, so this is also the
-  // first application to compose several packages at once.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-" });
-  const input = "alpha beta\ngamma\ndelta epsilon zeta\n";
-  const fixture = await Deno.makeTempFile({ prefix: "wac-box-in-" });
+// **What was here: "box's applets agree with the system tools they imitate".**
+//
+// It was the widest test in this file and it is gone, because every comparison in it now lives
+// somewhere that does not need a process. What is below is the residue — three claims that were inside
+// it, share nothing with each other, and each need a real program for a different reason. They are
+// three tests now rather than one, because a test named for agreeing with system tools that runs no
+// system tool is a name that lies.
+//
+// Where the rest went, and why that destination:
+//
+//   captured vector          `test/wac/cases.wac`         GNU agrees byte for byte
+//   live differential        `test/wac/*_test.wac`        GNU agrees, but not byte for byte
+//   written expectation      `test/wac/*_test.wac`        GNU cannot answer, or we differ on purpose
+//
+//   cat rev nl base64 sha256sum wc, the flag sweep, basename/dirname,
+//   grep -n, sort -n, seq, head/tail, `--`, ls, fold/cut/tr        -> appletCases()
+//   head/tail with no count                                        -> cases()
+//   wc -w over eighteen code points, and across a chunk boundary    -> wcwords_test.wac
+//   head tail nl uniq, and rev's characters                         -> lines_test.wac
+//   wc strings hex crc32 tr, across chunk boundaries                -> streaming_test.wac
+//   gzip gunzip crc32 date urlencode                                -> packaged_test.wac
+//   sponge zstd json stat uuid shuf paste                           -> batch_test.wac
+//   fsdump                                                          -> fsdump_test.wac
+//   tar, and the ustar name limit                                   -> tar_test.wac
+//   split's pieces, failed-read reasons, unimplemented flags        -> applets_test.wac
+//   find/du on an unreadable subtree, rm -f                         -> unreadable_test.wac
+//   cp and tee's destinations                                       -> writepath_test.wac
+//   diff's fourteen shapes                                          -> diff_test.wac
+//
+// **What cannot move, and this is the useful half of the list.** Four shapes, each represented below or
+// further down this file:
+//
+//   - a test that needs *fewer* grants than it holds. `runApplet` hands the applet `childCli(f, cli)`,
+//     which passes the parent's grants straight through, so an in-process frame can have the test's
+//     authority or more and never less. Every refusal test is here for that one reason.
+//   - a test that needs a capability wac has not got. `Cli` can read a symlink and cannot make one —
+//     `issues/system/0300c` — so the fixture for the `tar` case below cannot be built in wac at all.
+//   - a test of `main` rather than of an applet. `main` reads argv from the process; `dispatch` is the
+//     half a frame can call.
+//   - a test about a process lifecycle: `yes` stopping when its pipe closes, a server and a client with
+//     a socket between them.
+
+Deno.test("rm -f without the write grant is a denial, not a silence", async () => {
+  // `-f` forgives a file that is already *gone*, not a filesystem it was never allowed to touch. The
+  // three cases that need a mode — a file that cannot be unlinked, one that was never there, and the
+  // same absence without `-f` — are `test/wac/unreadable_test.wac` now. This one stayed because it is
+  // about the grant: the program is built to read and not to write, and no in-process frame can be
+  // given less than this test process holds.
+  const built = await Deno.makeTempFile({ prefix: "wac-box-rmf-" });
+  const guarded = await Deno.makeTempDir({ prefix: "wac-box-rmf-d-" });
   try {
     await buildApp(BOX, built, { read: true });
-    await Deno.writeTextFile(fixture, input);
-
-    // In this process, not a subprocess. `appRunner` is the launcher half of a built program, so
-    // "running box" is a worker rather than a whole second Deno — 64ms against 112ms, measured, for
-    // byte-identical output. The executable is still built above, because the tests that are *about*
-    // process boundaries need a real one.
-    //
-    // **There is no `sys` helper here any more.** Every comparison against a real utility that this
-    // test used to make is now a captured vector, so nothing left in this function runs GNU. What
-    // remains asks box questions GNU cannot answer — refusals, grants, the dispatcher's own usage —
-    // and the one comparison that still needs a live oracle went to `applets_test.wac`, where a wac
-    // test can call `cli.exec` itself.
     const runner = await appRunner(BOX, { read: true });
-    const box = (args: string[]) => runner.run(args);
+    assertEquals(
+      (await runner.run(["rm", "-f", `${guarded}/nothing-here`])).code,
+      1,
+      "no write grant is denial",
+    );
+  } finally {
+    await Deno.remove(built);
+    await Deno.remove(guarded, { recursive: true });
+  }
+});
 
-    // **`cat`, `rev`, `nl`, `base64`, `sha256sum` and `wc` moved to `appletCases()`.** Each is
-    // byte-for-byte against the real tool there, over `m1.txt`/`m2.txt` rather than this fixture, and
-    // over two files as well as one — which is the stronger question, since wac-mono 0096 was ten
-    // applets reading only the first of several. `wc`'s column padding travels with it: the vector
-    // holds the real tool's whole line, filename included, so a loosened comparison cannot creep back.
-    // Flags, which every applet gets from one shared parser.
-    // **The flag sweep and both numeric cases moved to `appletCases()`**, with two fixtures of their
-    // own. `nums.txt` exists because a words fixture cannot catch a missing `-n` — every line sorts as
-    // zero, so ignoring the flag and honouring it agree, which is what `sort` did until
-    // `seq 1 20 | sort -n` answered 1, 10, 11. `numeric.txt` is the other half: `-n` is a value for
-    // `head` and `tail` and a boolean everywhere else, and while it was a value everywhere
-    // `grep -n 123` searched for its own filename and stopped numbering. GitHub wac-mono#5.
-
-    // **Both moved to `appletCases()`.** The eighteen trailing-slash paths through `basename` and
-    // `dirname` — wac-mono#10, where `basename a/b/` answered with what follows the final slash, which
-    // is nothing — and the four `head`/`tail` zeroes from wac-mono#8, where `Args.num` said zero for
-    // an option asked for and one never given alike, so `head -0` printed the default ten. Both are
-    // byte-for-byte against GNU there, captured once instead of spawning the real tool per case.
-
-    // **`grep -n 123`, `sort -n` and the `seq` range ends are `appletCases()` now.** The seq pair is
-    // wac-mono#7 and #6 — the counter wrapping and printing for ever at i32 max, and the formatter
-    // answering with a bare "-" at i32 min — and both are pinned there against literal answers,
-    // because GNU's `seq` and this one agree and a literal is what says *which* answer.
-
-    // **`urlencode` and the missing-final-newline case have their own homes now.** `urlencode` is
-    // `applets_test.wac`: its expectations are written down rather than captured, because there is no
-    // portable system tool to ask — `jq -Rr @uri` and Python disagree about `~`. The newline case is
-    // `diff_test.wac`, beside the rest of `diff`, since what it asserts is the marker GNU prints —
-    // `\ No newline at end of file` — rather than a hunk to compare. GitHub wac-mono#9 and #22.
-
-    // **What is left of wac-mono#17 is the grant.** The three cases that need a *mode* — a file in a
-    // `0500` directory that `rm -f` must report rather than forgive, a missing file it must forgive,
-    // and the same absence without `-f` — are `unreadable_test.wac` now, since `Cli.chmod` can build
-    // that fixture (`issues/system/0296c`). This one cannot move: a program with **no write grant**
-    // must answer denial rather than "there was nothing to do", and in process a frame inherits the
-    // suite's own capabilities, so there is nothing to withhold.
-    const guarded = await Deno.makeTempDir({ prefix: "wac-box-rmf-" });
-    try {
-      assertEquals((await box(["rm", "-f", `${guarded}/nothing-here`])).code, 1, "no write grant is denial");
-    } finally {
-      await Deno.remove(guarded, { recursive: true });
-    }
-
-    // **Moved to `applets_test.wac`.** The two failures `mkdir` and `rmdir` exist to distinguish,
-    // said the way GNU says them — issue 0009 — and it is the *reason* that is compared rather than
-    // the whole line, since box prefixes `applet: path: ` where GNU writes `mkdir: cannot create
-    // directory 'd': `. That is house style; what matters is that the words are the category's and
-    // not the host's, which vary per platform. It stays a live differential there rather than a
-    // vector, precisely because the two lines are deliberately not byte-identical.
-
-    // Symbolic links are refused, which tar.wac's header has always claimed. `stat` follows, so a
-    // link to a directory was indistinguishable from the directory: it was walked into, stored under
-    // the link's name, and a self-referential one grew the path until something trapped. `linkStat`
-    // is what made the claim enforceable. GitHub wac-mono#25.
-    //
-    // **This one cannot move, and the reason is a capability rather than an oracle.** The fixture
-    // needs three *symlinks*, and `Cli` can read a link — `linkStat` — and not make one. It is the
-    // shape `chmod` was in until `issues/system/0296c`: the reading half present, the writing half
-    // absent, so a test can ask about a link nobody in this system can create. `native_hostfs_test`
-    // says the same thing from the other side: "there is no `ln` in this system, so a script cannot
-    // create its own". Filed as `issues/system/0300c`.
-    const linked = await Deno.makeTempDir({ prefix: "wac-box-link-" });
+Deno.test("tar refuses a symlink rather than following it", async () => {
+  // GitHub wac-mono#25, where `tar` walked into a link to a directory, stored it under the link's name,
+  // and grew the path until something trapped on a self-referential one.
+  //
+  // **This is the capability case, and it is the whole reason `issues/system/0300c` is filed.** The
+  // assertions are two exit codes and a listing — nothing a wac test could not say. The *fixture* is
+  // three symlinks, and `Cli` carries `linkStat` to ask what a name is while carrying nothing that
+  // makes one. So the test cannot move until the language can build its own fixture, and it is written
+  // here rather than left undone.
+  const built = await Deno.makeTempFile({ prefix: "wac-box-link-" });
+  const linked = await Deno.makeTempDir({ prefix: "wac-box-link-d-" });
+  const listing = await Deno.makeTempFile({ prefix: "wac-box-tar-", suffix: ".tar" });
+  try {
+    await buildApp(BOX, built, { read: true });
     await Deno.mkdir(`${linked}/real`);
     await Deno.writeTextFile(`${linked}/real/f`, "x");
     await Deno.symlink("real", `${linked}/toDir`);
     await Deno.symlink("real/f", `${linked}/toFile`);
     await Deno.symlink("loop", `${linked}/loop`);          // points at itself
-    const tarred2 = new Deno.Command(built, {
-      args: ["tar", "."],
-      cwd: linked,
-      stdout: "piped",
-      stderr: "piped",
+    const tarred = new Deno.Command(built, {
+      args: ["tar", "."], cwd: linked, stdout: "piped", stderr: "piped",
     }).outputSync();
-    const said = new TextDecoder().decode(tarred2.stderr);
-    assertEquals(tarred2.code, 1, "a refused entry is a failure");
+    const said = new TextDecoder().decode(tarred.stderr);
+    assertEquals(tarred.code, 1, "a refused entry is a failure");
     for (const name of ["toDir", "toFile", "loop"]) {
       assertEquals(said.includes(name), true, `${name} should be refused: ${said}`);
     }
-    // And the archive it did produce is a real one: GNU tar lists the ordinary file and no link.
-    const listing = await Deno.makeTempFile({ prefix: "wac-box-tar-", suffix: ".tar" });
-    await Deno.writeFile(listing, tarred2.stdout);
+
+    // Refused *and left out* — an archive that names a link it declined to follow is worse than one
+    // that fails, because it unpacks to something other than what went in.
+    await Deno.writeFile(listing, tarred.stdout);
     const listed = new Deno.Command("tar", { args: ["-tf", listing], stdout: "piped" }).outputSync();
     const inArchive = new TextDecoder().decode(listed.stdout);
     assertEquals(inArchive.includes("./real/f"), true, inArchive);
@@ -193,100 +182,30 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
       false,
       `a refused link must not be in the archive: ${inArchive}`,
     );
+  } finally {
+    await Deno.remove(built);
     await Deno.remove(listing);
     await Deno.remove(linked, { recursive: true });
+  }
+});
 
-    // **`--` moved to `appletCases()`** — wac-mono#11, where `cat -- -x` treated both as flags, found
-    // no operand, read empty standard input and exited 0. The case makes its own `-x` rather than
-    // taking a fixture, because a `-x` in `appletFixtures()` would appear in every `ls` case's output.
-
-    // **Moved to `appletCases()`** — wac-mono#12, where a numeric sort key outside i32 wrapped, so
-    // `4294967296` and `0` compared equal and `-nu` dropped one of them. Two cases, each writing its
-    // own file, because they want different contents.
-
-    // **Moved to `applets_test.wac`** — wac-mono#14, `split`'s suffixes past `zz`. GNU reserves a
-    // leading `z` as the marker that the suffix has grown, so two letters run `aa`..`yz` and the next
-    // name is `zaaa`; this used to leave the alphabet and emit `z676`. The comparison there is a
-    // *directory listing* rather than standard output, which `split` does not write to at all, and GNU
-    // runs in a directory of its own through `execWithIn`. 700 pieces, both ways, in 94 ms — where
-    // this built a second binary with the write grant and spawned two processes.
-
-    // **Moved to `applets_test.wac`** — wac-mono#26, where a pattern exhausting the backtracking
-    // budget was counted as a match because only `NO_MATCH` was checked. Written down rather than
-    // captured: GNU's `grep` has no budget to exhaust and answers 1 for this pattern, so the exit 2 is
-    // ours to state. It is still spelled twice there, basic and `-E`, because `(a|a)*b` in the basic
-    // dialect is the literal characters — which matches nothing and exits 1, and is how a version of
-    // that test passed while asserting nothing (wac-mono 0104).
-
-    // **Moved to `packages/box/test/wac/tar_test.wac`** — wac-mono#23, a name that does not fit a
-    // ustar header. There was no check, so the header writer copied the first hundred bytes and
-    // archived the entry under a *different* name: an archive that unpacks to something other than
-    // what went in, which is the worst thing an archiver can do quietly. The symlink case below stays,
-    // for a reason that is a capability rather than an oracle.
-
-    // **Moved to `packages/box/test/wac/unreadable_test.wac`.** `find` and `du` over a subtree they
-    // cannot enter — GitHub wac-mono#20, where both printed a partial answer and exited 0 — is a wac
-    // test now. It was here only because the *fixture* needed `Deno.chmod`: making a directory
-    // unreadable is a mode, and `Cli` carried `setExecutable`, which is one bit. `issues/system/0296c`
-    // widened it, so the test went where the rest of box's are, and gained a root check the version
-    // here depended on silently.
-
-    // **Moved, and split by whether GNU has the tool** — wac-mono#18, where `readChunk` answers with
-    // bytes and cannot say "broken", so every filter treated a half-read as a whole one and exited 0.
-    // A directory is the portable way to get an open that succeeds and a read that does not.
-    // `cat`, `wc`, `sha256sum` and `strings` are `appletCases()` against the real tools; `hex` and
-    // `crc32` are ours, so bash answers 127 for them and they are written down in `applets_test.wac`.
-    // `adir` is a directory *fixture* there, which the capture tool once wrote as an empty file — and
-    // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
-
-    // **Moved to `appletCases()`**: `head -3` and `tail -n 2` — the attached and detached forms of
-    // one option — `sha512sum`, `base32`, every `grep` flag, and both of `grep`'s statuses. `wc -l`
-    // went with them *whole line and all*, which is the assertion that matters: taking `[0]` was how
-    // `wc -l file` came to drop the filename, the comparison throwing away the difference while the
-    // applet's comment claimed the real one does the same. It does not — only standard input has no
-    // name to print.
-    //
-    // `basename`, `dirname`, `echo`, `seq`, `true` and `false` are there too, in richer forms than
-    // these: every trailing-slash path rather than one, and the range ends rather than `seq 3`.
+Deno.test("the dispatcher: an unknown applet, --help, and the usage listing", async () => {
+  // **`main`, not `dispatch`.** `test/wac/applets_test.wac` asserts that `dispatch` answers `UNKNOWN`
+  // for a name it has not got; turning that sentinel into a usage error, and answering `--help` at all,
+  // is `main`'s job, and `main` reads argv from the process. There is no frame call that reaches it.
+  const built = await Deno.makeTempFile({ prefix: "wac-box-usage-" });
+  try {
+    await buildApp(BOX, built, { read: true });
+    const runner = await appRunner(BOX, { read: true });
+    const box = (args: string[]) => runner.run(args);
 
     assertEquals((await box(["nope"])).code, 2, "an unknown applet is a usage error");
-    // Asked for is not got wrong. Reaching the usage message by mistake is 2; asking for it is 0, which
-    // is what every tool this package imitates does and what a script testing `box --help` expects.
     for (const how of ["help", "--help", "-h"]) {
       const asked = await box([how]);
       assertEquals(asked.code, 0, `box ${how} should succeed, got ${asked.code}`);
       assertEquals(asked.err.includes("usage: box"), true, `box ${how} should print the usage`);
     }
 
-    // **Moved to `applets_test.wac`** — wac-mono 0005, the two mutants that survived. The tree there
-    // is built three deep rather than borrowed from `packages/platform`, and the depth is *asserted*
-    // before the comparison is believed: an earlier version of this walked `packages/platform/src`,
-    // which is flat, so neither applet ever descended and gutting either one's `MAX_DEPTH` to zero
-    // left both assertions passing.
-    //
-    // Each side is asked its own question there, which is why it is not a vector: box's `du` answers
-    // in bytes and refuses `-s`, so GNU is asked `du -sb`, and `find`'s order is the filesystem's on
-    // one side and sorted on the other.
-
-    // **`ls` is `appletCases()` now**, and it had no comparison at all before this migration:
-    // replacing its whole body with a default left the suite green, because `readDir`'s order is the
-    // filesystem's while `ls` sorts. The capture pins `LC_ALL=C`, which is the collation the applet
-    // implements — a locale-aware one is a different thing and is not implemented — and `ls` to a pipe
-    // is already one name per line, so the vector is `ls -1` without having to ask for it.
-    // A directory with dotfiles in it, since hiding them is half of what `ls` means by default.
-    // **`ls -a` moved to `applets_test.wac`, and getting it there produced the tool the rest of this
-    // migration was missing.** It cannot be asked through the vectors: those run a *shell*, `ls` is one
-    // of the five shadowed names, the builtin wins and the builtin accepts `-a`. So `replay.wac` grew
-    // `runApplet`, which builds a captured `Frame` and calls `dispatch` directly — no shell, no
-    // process, and the flag reaches the applet that refuses it. Everything about flags and refusals
-    // for those five names was invisible before it.
-
-    // **The failed-read reasons moved to `applets_test.wac`, and stayed a live differential.** They
-    // could not become vectors — the fixture needs a file at mode 0, and a `Fixture` has no mode — but
-    // a wac test can spawn `cat` and `base64` itself through `cli.exec`, so the wac version asks GNU
-    // the question at the moment it asks box rather than replaying an answer recorded earlier. It also
-    // stopped pinning `LC_ALL=C` on the oracle, which had been removing the question along with the
-    // variable: box's `faultWords` table is English, and a translated locale is a real disagreement.
     // The usage message lists every applet, wrapped. Nothing looked at it, so `wrapped` could return the
     // empty string — and the list of what this program can do would simply be missing.
     const help = await box([]);
@@ -299,14 +218,8 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     for (const line of appletLines) {
       assertEquals(line.length <= 74, true, `a usage line is ${line.length} wide: ${line}`);
     }
-
-    // **`head` and `tail` with no count moved to `cases()`**, beside the `head -3 long.txt` family and
-    // over the same 30-line fixture. It reads better there for a reason that is not tidiness: this
-    // version ran GNU with an explicit `-10`, so it compared box's default against a *number* rather
-    // than against GNU's default, and could not have seen the two disagree.
   } finally {
     await Deno.remove(built);
-    await Deno.remove(fixture);
   }
 });
 
