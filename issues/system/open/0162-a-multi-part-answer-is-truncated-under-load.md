@@ -322,7 +322,7 @@ read for this.
 Recorded because a contradiction narrows the search where a fourth mechanism would widen it. Two
 mechanisms have already been proposed in this issue and retracted, one of them mine today.
 
-## The contradiction resolves the other way: the bridge is exonerated — agent-b, 2026-08-31
+## RETRACTED — the bridge is *not* exonerated; the producer cannot be short — agent-b, 2026-08-31
 
 The three legs above all hold. `S_RES_LEN` is stored in exactly one place — `respond.ts`'s `write`,
 as `fits` — and read in exactly one, `readRes`. Response buffers are uniformly `BUF_BYTES` and inline
@@ -352,3 +352,31 @@ answers a 179,994-byte request — the request is the fuzzer's, so the size is k
 is identifiable. Nor does it explain *why* the producer stopped at 131,625, which is suspiciously
 close to `BUF_BYTES` and may be a second buffer boundary somewhere upstream. Both are cheaper
 questions than the interleaving this issue has been asking for a fortnight.
+
+### Retracting the exoneration above, within the hour
+
+The producer is provably correct, and I did not check it before concluding. `fuzz.test.ts`'s one
+capability is
+
+    const out = new Uint8Array(Math.max(4, size));
+    new DataView(out.buffer).setInt32(0, nonce, true);
+    for (let i = 4; i < out.length; i++) out[i] = (nonce + i) & 0xff;
+    return out;
+
+`size` is read from the request *before* the `await`, and the request is a copied slice rather than a
+view on a recycled buffer. So the handler returns exactly `size` bytes and cannot hand `write` a short
+body.
+
+The arithmetic in that section is still true — a body of 131,625 would produce exactly the reported
+pieces, and 553 is its unique remainder. What does not follow is the conclusion, because the
+antecedent is false. **"If X then exactly this" is not "therefore X"** when X is independently
+impossible, and I wrote it up as a resolution without testing X.
+
+**So the contradiction stands, unresolved**, and all four of its legs now hold: 553 is not reachable
+from this call's tail, `S_RES_LEN` has exactly one writer and one reader, the buffers are uniform,
+the generation moves in only two guest-side places unreachable mid-`collect` — and the producer is
+exact. One of those is still wrong and I have not found which.
+
+Two mechanisms and one exoneration have now been proposed here and withdrawn, two of them mine today.
+The pattern in all three is the same: a chain that holds at every link except the one nobody checked
+because it was the assumption the chain started from.
