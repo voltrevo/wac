@@ -122,40 +122,39 @@ Pin[] pins() {
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 885, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chmod on a host mount is " +
+    Pin("packages/fs/src/fs.wac", 882, "case Host(cli): { return cli.chmod(path, mode).wait(); }", false,
+        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
+        "is driven by `test/host.test.ts` and " +
+        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
+        "stops, not where the testing does."),
+    Pin("packages/fs/src/fs.wac", 939, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chown on a host mount is " +
         "not implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 942, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chown on a host mount is " +
-        "not implemented\"); }", false,
+    Pin("packages/fs/src/fs.wac", 981, "case Host(cli): {", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 984, "case Host(cli): {", false,
+    Pin("packages/fs/src/fs.wac", 985, "case Host(cli2): { return cli.rename(from, to).wait(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 988, "case Host(cli2): { return cli.rename(from, to).wait(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 989, "else: { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not " +
+    Pin("packages/fs/src/fs.wac", 986, "else: { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not " +
         "implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 995, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is " +
+    Pin("packages/fs/src/fs.wac", 992, "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is " +
         "not implemented\"); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
@@ -170,14 +169,14 @@ Pin[] pins() {
         "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
         "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
         "built program."),
-    Pin("packages/fs/src/fs.wac", 1064, "if (path.len() < m.at.len()) { return NODE_NONE(); }", true,
+    Pin("packages/fs/src/fs.wac", 1061, "if (path.len() < m.at.len()) { return NODE_NONE(); }", true,
         "A path shorter than the mount that owns it. `mountOf` picks by `underMount`, which " +
         "requires the mount point to be a whole-component prefix, so a path it returns is " +
         "never shorter than the mount's own `at`. The one caller that reached it was " +
         "`writeFile`'s parent lookup for a mount point itself, and that now answers before it " +
         "gets here. Kept because `find` is called with `parentOf(path)` from several places " +
         "and a future one could pass something shorter."),
-    Pin("packages/fs/src/fs.wac", 1473, "if (cut < 0) { return path; }", true,
+    Pin("packages/fs/src/fs.wac", 1470, "if (cut < 0) { return path; }", true,
         "`baseOf` on a path with no slash in it. Every path reaching this package is absolute " +
         "— the shell resolves before it calls — so there is always at least the leading " +
         "one. Kept because it is a general helper and returning the whole string is the right " +
@@ -255,19 +254,19 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/fs.wac", 1063, "if (m.root < 0) { return NODE_NONE(); }", false,
+    Pin("packages/fs/src/fs.wac", 1060, "if (m.root < 0) { return NODE_NONE(); }", false,
         "`find` on a mount whose bytes are not in the node pool. `root` is -1 for every " +
         "backing but `Memory`, and every caller matches those backings out before walking, so " +
         "this answers for a call none of them makes. Kept, and the comment above it is the " +
         "argument: it was unreachable in exactly this way when a missing arm turned it into a " +
         "trap."),
-    Pin("packages/fs/src/fs.wac", 1247, "if (name.len() == 0) { return -1; }", false,
+    Pin("packages/fs/src/fs.wac", 1244, "if (name.len() == 0) { return -1; }", false,
         "A `/proc/` path whose pid is the empty string. Every path reaching `procPid` has " +
         "been through `at`, which collapses `//` and drops a trailing slash, so the component " +
         "after `/proc` is never empty — `/proc//cmdline` and `/proc/` are both driven by " +
         "`procOps` and both arrive here as something else. The guard is against a future " +
         "caller that does not normalise first."),
-    Pin("packages/fs/src/fs.wac", 1372, "if (found is null) { return u8[0](); }", false,
+    Pin("packages/fs/src/fs.wac", 1369, "if (found is null) { return u8[0](); }", false,
         "`procBytes` for a pid with no process. `synthKind` calls `procPid`, which answers -1 " +
         "for a pid that is not in the table, and a path whose kind is `SYNTH_NONE` never gets " +
         "as far as reading bytes — so `/proc/9999/cmdline` (driven, in `procOps`) is " +
@@ -339,7 +338,13 @@ Rule[] rules() {
          "README says why there is not one: `chmod` is a *builtin*, along with `echo`, " +
          "`test`, `ls` and `chown`, because 'a builtin is what the shell must answer itself'. " +
          "So this is not an oversight waiting for a small change; driving it means arguing " +
-         "with that decision, and the cheaper honest answer is this entry."),
+         "with that decision, and the cheaper honest answer is this entry. **Half of that " +
+         "argument expired on 2026-08-30**: `issues/system/0296c` added a `chmod` applet, so " +
+         "a sealed session does now reach `chmod` without leaving the parent. It does not " +
+         "reach *this* line — the applet asks `Fs.chmod`, which is the whole mode, and " +
+         "`setExecutable` is the one-bit call `git`'s checkout wants. So the entry stands " +
+         "and its second sentence no longer does: an applet exists, and it is not a driver " +
+         "for this."),
     Rule("packages/fs/src/remote.wac", "Chan c", "decl", false,
          "The child's half of the channel: every one of these writes a question and waits for " +
          "its parent's answer. The *wire* underneath them is covered — `fs_test.wac` " +
