@@ -106,9 +106,27 @@ how the first two attempts at `0307b` went wrong. Whoever takes it should decide
 slot carries the handle or the guest keeps the request buffer alive, because everything else follows
 from that.
 
-**A cheaper answer worth considering first**: do not let `cancel` release a ready slot at all — leave
-it settled and let the *host* notice on the next `recv` for that handle. That moves the work to the
-side that owns the queue and needs no new op, at the cost of a slot lingering until then.
+**The cheap guest-side answer does not work, and it is the one to reach for.** The guest knows the
+handle — `recv` is `(handle) => T.read(send(OP.RECV, i32le(handle)))`, so a per-call `drop` could
+capture it — and could stash the bytes under that handle and hand them straight back from the next
+`recv`. All of it in shared code, no new op, and it is exactly the `pushback` map that fixed the Rust
+hosts.
+
+It breaks `waitAny`. A `Pending` is not only something to `wait()` on: `core.waitAny(ids, ms)` asks
+the **host** which of those tickets has settled —
+
+    (ids: Int32Array, millis: number) => {
+      const tickets = Array.from(ids, unpack);
+      const settled = waitAny(b, tickets, millis);
+
+— and a locally-invented ticket is in no slot table, so it can never be reported settled. A program
+that bounds its retry, which is the very shape that loses the bytes, would then wait on an id the
+host has never heard of until its deadline. Trading a lost read for a stall is not a fix.
+
+The Rust hosts avoid this because `settled_now` mints a **real** ticket that `waitAny` can see; the
+guest here cannot mint one, since only the host writes a response. So the answer has to reach the
+host, which is what makes this three files rather than one — and that is the constraint to design
+against rather than a detail to discover halfway.
 
 ## Why it matters beyond tidiness
 
