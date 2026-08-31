@@ -15,9 +15,10 @@
 
 import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
-import { Loaded, Ran, layFixtures, load, runApplet, runCase, show } from "./replay.wac";
+import { Loaded, Ran, differs, layFixtures, load, runApplet, runCase, show } from "./replay.wac";
 import { UNKNOWN } from "../../src/box.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
@@ -569,6 +570,54 @@ export string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
   // such applet" and "it ran and failed" are different facts — `box` turns this into the usage error
   // that `box.test.ts` still asserts end to end, since `main` reads argv from the process.
   t.eqI32(runApplet(core, cli, dir, string[]("nope")).status, UNKNOWN, "an unknown applet is UNKNOWN");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `split` writes many files, and they are the real `split`'s files piece for piece.
+ *
+ * From `box.test.ts`. `split` is the first applet to open more than one output — everything else opens
+ * a file, writes it and closes it — which is why it is worth comparing the *pieces* rather than an exit
+ * status.
+ *
+ * **250 lines at 100 to a piece**, so the last one is short and the boundary is not exact. The second
+ * assertion is the exact-boundary case from the other direction: there must be no fourth piece, because
+ * an applet that opens the next output before knowing it has anything to put in it leaves an empty file
+ * behind and GNU does not.
+ *
+ * `split -100` and `split -l 100` are the same request; ours takes the attached form and GNU wants the
+ * flag, which is a spelling difference rather than a divergence.
+ */
+export string test_split_writes_the_same_pieces_as_the_real_split(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  Buf b = Buf.create();
+  for (i32 i = 1; i <= 250; i++) { b.pushAll((itoa(i) + "\n").toBytes()); }
+  string big = dir + "/big.txt";
+  t.isTrue(cli.writeFile(big, b.bytes()).wait().ok(), "wrote 250 lines");
+
+  t.eqI32(runApplet(core, cli, dir, string[]("split", "-100", big, dir + "/part-")).status, 0,
+          "split ran");
+  Exec theirs = cli.exec("split", string[]("-l", "100", big, dir + "/real-"), u8[0]()).wait();
+  t.isTrue(theirs.error == "", "there is a real split: " + theirs.error);
+  t.eqI32(theirs.status, 0, "and it ran: " + string.fromBytes(theirs.stderr));
+
+  string[] suffixes = string[]("aa", "ab", "ac");
+  for (i32 i = 0; i < suffixes.len(); i++) {
+    u8[] mine = cli.readFile(dir + "/part-" + suffixes[i]).wait().bytes;
+    u8[] real = cli.readFile(dir + "/real-" + suffixes[i]).wait().bytes;
+    t.isTrue(real.len() > 0, "the real split wrote real-" + suffixes[i]);
+    t.eqStr(differs(mine, real), "", "part-" + suffixes[i] + " differs");
+  }
+
+  // No fourth piece. 250 lines at 100 is three, and an applet that opens the next output before it
+  // knows there is anything to write leaves an empty one behind.
+  t.isFalse(cli.stat(dir + "/part-ad").wait().exists, "an empty fourth piece was created");
+  t.isFalse(cli.stat(dir + "/real-ad").wait().exists, "and the real one did not make one either");
 
   cli.remove(dir, true).wait();
   return t.report();

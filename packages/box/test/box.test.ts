@@ -863,35 +863,25 @@ Deno.test("httpd serves a directory, and refuses to leave it", async () => {
   }
 });
 
-Deno.test("split writes many files, and wget writes one", async () => {
-  // `split` is the first applet to open more than one output — everything else opens a
-  // file, writes it and closes it. `wget` is `get` with the output pointed at a file, and
-  // is three lines different from it: `openOutput` moves where `cli.write` goes, so the
-  // fetch does not know.
-  const built = await Deno.makeTempFile({ prefix: "wac-split-" });
-  const dir = await Deno.makeTempDir({ prefix: "wac-split-d-" });
+Deno.test("wget writes one file, fetched from box's own httpd", async () => {
+  // `wget` is `get` with the output pointed at a file, and is three lines different from it:
+  // `openOutput` moves where `cli.write` goes, so the fetch does not know.
+  //
+  // **The `split` half of this test moved to `packages/box/test/wac/applets_test.wac`** — 250 lines at
+  // 100 to a piece, compared against the real `split` piece for piece, including the assertion that
+  // there is no empty fourth one. None of that needed a process.
+  //
+  // **This half needs two.** A server and a client, both of them wac programs, with a real socket
+  // between them and a file at the end of it. `runApplet` runs one applet in one frame; nothing about
+  // it makes a second program to talk to, so this is a boundary test in the plainest sense.
+  const built = await Deno.makeTempFile({ prefix: "wac-wget-" });
+  const dir = await Deno.makeTempDir({ prefix: "wac-wget-d-" });
   try {
     await buildApp(BOX, built, { read: true, write: true, net: true });
-    const lines = Array.from({ length: 250 }, (_, i) => `${i + 1}`).join("\n") + "\n";
-    await Deno.writeTextFile(`${dir}/big.txt`, lines);
-
     const run = (args: string[], cwd: string) =>
       new Deno.Command(built, { args, cwd, stdout: "piped", stderr: "piped" }).outputSync();
-    assertEquals(run(["split", "-100", "big.txt", "part-"], dir).code, 0);
-
-    // Against the real one, piece for piece.
-    new Deno.Command("split", { args: ["-l", "100", "big.txt", "real-"], cwd: dir }).outputSync();
-    for (const s of ["aa", "ab", "ac"]) {
-      assertEquals(
-        await Deno.readTextFile(`${dir}/part-${s}`),
-        await Deno.readTextFile(`${dir}/real-${s}`),
-        `part-${s} differs`,
-      );
-    }
-    // And no fourth piece: an exact boundary must not open a file it never writes to.
-    let missing = false;
-    try { await Deno.stat(`${dir}/part-ad`); } catch { missing = true; }
-    assertEquals(missing, true, "an empty fourth piece was created");
+    const lines = Array.from({ length: 250 }, (_, i) => `${i + 1}`).join("\n") + "\n";
+    await Deno.writeTextFile(`${dir}/big.txt`, lines);
 
     // wget, against box's own httpd — two wac programs and a file at the end of it.
     await withPort(async (port) => {
@@ -912,85 +902,12 @@ Deno.test("split writes many files, and wget writes one", async () => {
   }
 });
 
-Deno.test("tar writes an archive GNU tar can read", async () => {
-  // The widest applet here: `readDir` and `stat` to walk a tree, `readFile` per entry,
-  // `write` to stream it out. Tested against the real format rather than against itself —
-  // a round trip with its own reader would pass with a checksum that is wrong in a
-  // self-consistent way, which is exactly the mistake ustar's checksum invites.
-  const built = await Deno.makeTempFile({ prefix: "wac-tar-" });
-  const dir = await Deno.makeTempDir({ prefix: "wac-tar-d-" });
-  try {
-    await buildApp(BOX, built, { read: true, write: true });
-    await Deno.mkdir(`${dir}/src/deep`, { recursive: true });
-    // An empty directory only survives if the directory's own entry is written.
-    await Deno.mkdir(`${dir}/src/empty`);
-    await Deno.writeTextFile(`${dir}/src/a.txt`, "hello\n");
-    await Deno.writeTextFile(`${dir}/src/deep/b.txt`, "world\n");
-    // Exactly one block, so the padding path has to write nothing rather than a block.
-    await Deno.writeFile(`${dir}/src/exact.dat`, new Uint8Array(512).fill(7));
-    // And one that is not, so it has to write some.
-    await Deno.writeFile(`${dir}/src/ragged.dat`, new Uint8Array(700).fill(9));
-
-    const tar = new Deno.Command(built, {
-      args: ["tar", "src"], cwd: dir, stdout: "piped", stderr: "piped",
-    }).outputSync();
-    assertEquals(tar.code, 0, new TextDecoder().decode(tar.stderr));
-    await Deno.writeFile(`${dir}/out.tar`, tar.stdout);
-    // Two zero blocks end an archive; without them GNU tar reads the entries and then
-    // says "unexpected EOF", which a round trip with itself would not notice.
-    assertEquals(tar.stdout.length % 512, 0, "an archive is whole blocks");
-
-    const listed = new Deno.Command("tar", {
-      args: ["-tf", "out.tar"], cwd: dir, stdout: "piped", stderr: "piped",
-    }).outputSync();
-    assertEquals(listed.code, 0, new TextDecoder().decode(listed.stderr));
-    const entries = new TextDecoder().decode(listed.stdout).trim().split("\n").sort();
-    assertEquals(
-      entries.join(","),
-      "src/,src/a.txt,src/deep/,src/deep/b.txt,src/empty/,src/exact.dat,src/ragged.dat",
-      entries.join(","),
-    );
-
-    // Extraction, compared tree to tree. This is the assertion that the checksum, the
-    // sizes and the padding are all right at once.
-    await Deno.mkdir(`${dir}/ex`);
-    const ex = new Deno.Command("tar", {
-      args: ["-xf", "out.tar", "-C", "ex"], cwd: dir, stderr: "piped",
-    }).outputSync();
-    assertEquals(ex.code, 0, new TextDecoder().decode(ex.stderr));
-    const diff = new Deno.Command("diff", {
-      args: ["-r", "src", "ex/src"], cwd: dir, stdout: "piped", stderr: "piped",
-    }).outputSync();
-    assertEquals(diff.code, 0, new TextDecoder().decode(diff.stdout));
-
-    // And through box's own compressor, which is the composition worth having.
-    const gz = new Deno.Command(built, {
-      args: ["gzip"], cwd: dir, stdin: "piped", stdout: "piped",
-    }).spawn();
-    const w = gz.stdin.getWriter();
-    w.write(tar.stdout).then(() => w.close());
-    await Deno.writeFile(`${dir}/out.tgz`, (await gz.output()).stdout);
-    await Deno.mkdir(`${dir}/ex2`);
-    const ex2 = new Deno.Command("tar", {
-      args: ["-xzf", "out.tgz", "-C", "ex2"], cwd: dir, stderr: "piped",
-    }).outputSync();
-    assertEquals(ex2.code, 0, new TextDecoder().decode(ex2.stderr));
-    const diff2 = new Deno.Command("diff", {
-      args: ["-r", "src", "ex2/src"], cwd: dir, stdout: "piped",
-    }).outputSync();
-    assertEquals(diff2.code, 0, new TextDecoder().decode(diff2.stdout));
-
-    assertEquals(
-      new Deno.Command(built, { args: ["tar", "absent"], cwd: dir, stderr: "piped" })
-        .outputSync().code,
-      1,
-      "a missing path is an error",
-    );
-  } finally {
-    await Deno.remove(built);
-    await Deno.remove(dir, { recursive: true });
-  }
-});
+// **Moved to `packages/box/test/wac/tar_test.wac`**, beside the ustar name-limit case that was already
+// there. GNU tar lists, extracts and `diff -r`s what box writes — through box's `gzip` as well as raw —
+// and it is checked against the real format rather than against our own reader, because a round trip
+// with our reader passes with a checksum that is wrong in a self-consistent way, which is exactly the
+// mistake ustar's checksum invites. Perturbing the expected listing shows GNU tar really does find all
+// seven entries, `src/empty/` among them: the empty directory survives only if its own entry is written.
 
 
 Deno.test("gets: TLS 1.3 in wac, against a real TLS server", async () => {

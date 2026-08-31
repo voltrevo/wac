@@ -14,7 +14,7 @@
 import { Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
-import { splitOn } from "./replay.wac";
+import { joinWith, sortedOf, splitOn } from "./replay.wac";
 
 string dispatchPath() { return "packages/box/src/box.wac"; }
 string readmePath() { return "packages/box/README.md"; }
@@ -214,20 +214,3 @@ string[] wordsIn(string text) {
 
 bool isBlank(string ch) { return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"; }
 
-string[] sortedOf(string[] xs) {
-  string[] out = string[xs.len()](fill: "");
-  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
-  for (i32 i = 1; i < out.len(); i++) {
-    string held = out[i];
-    i32 k = i - 1;
-    while (k >= 0 && out[k] > held) { out[k + 1] = out[k]; k = k - 1; }
-    out[k + 1] = held;
-  }
-  return out;
-}
-
-string joinWith(string[] xs, string sep) {
-  string out = "";
-  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : sep) + xs[i]; }
-  return out;
-}

@@ -11,10 +11,10 @@
 // **The symlink half of this stayed behind**, and not for want of an oracle: its fixture needs three
 // *links*, and `Cli` can read a link and cannot make one — `issues/system/0300c`.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
-import { Ran, layFixtures, runCase } from "./replay.wac";
+import { Ran, joinWith, layFixtures, realOut, runApplet, runAppletIn, runCase, sortedOf, splitOn, trimEnd } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-tar"; }
@@ -43,6 +43,71 @@ export string test_a_name_too_long_for_a_ustar_header_is_refused(Core core, Cli 
   Ran r = runCase(core, cli, dir, "tar .");
   t.eqI32(r.status, 1, "an unarchivable name is a failure");
   t.isTrue(r.err.indexOf("longer than the 100 bytes") >= 0, r.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The archive `box tar` writes is one **GNU tar** can read, list and extract.
+ *
+ * From `box.test.ts`. The widest applet here: `readDir` and `stat` to walk a tree, `readFile` per
+ * entry, `write` to stream it out. Tested against the real format rather than against itself — a round
+ * trip with our own reader would pass with a checksum that is wrong in a self-consistent way, which is
+ * exactly the mistake ustar's checksum invites.
+ *
+ * The tree is built for the cases that go wrong separately: an **empty directory**, which survives only
+ * if the directory's own entry is written; a file of **exactly one block**, so the padding path has to
+ * write nothing rather than a block; and one that is **not** a whole block, so it has to write some.
+ */
+export string test_gnu_tar_can_read_list_and_extract_what_box_writes(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  t.isTrue(cli.mkdir(dir + "/src/deep", true).wait().ok(), "made the nested directory");
+  t.isTrue(cli.mkdir(dir + "/src/empty", true).wait().ok(), "and an empty one");
+  t.isTrue(cli.writeFile(dir + "/src/a.txt", "hello\n".toBytes()).wait().ok(), "wrote a.txt");
+  t.isTrue(cli.writeFile(dir + "/src/deep/b.txt", "world\n".toBytes()).wait().ok(), "wrote b.txt");
+  t.isTrue(cli.writeFile(dir + "/src/exact.dat", u8[512](fill: 7)).wait().ok(), "exactly one block");
+  t.isTrue(cli.writeFile(dir + "/src/ragged.dat", u8[700](fill: 9)).wait().ok(), "and a ragged one");
+
+  Ran archive = runApplet(core, cli, dir, string[]("tar", "src"));
+  t.eqI32(archive.status, 0, "tar ran: " + archive.err);
+  // Two zero blocks end an archive; without them GNU tar reads the entries and then says "unexpected
+  // EOF", which a round trip with our own reader would not notice.
+  t.eqI32(archive.outBytes.len() % 512, 0, "an archive is whole blocks");
+  string tarPath = dir + "/out.tar";
+  t.isTrue(cli.writeFile(tarPath, archive.outBytes).wait().ok(), "wrote the archive");
+
+  // **Absolute paths throughout**, because `Cli.exec` runs the child where this program is and takes no
+  // working directory — `execWithIn` is the one that does, and nothing here needs it.
+  string[] listed = sortedOf(splitOn(trimEnd(realOut(cli, "tar", string[]("-tf", tarPath))), "\n"));
+  t.eqStr(joinWith(listed, ","),
+          "src/,src/a.txt,src/deep/,src/deep/b.txt,src/empty/,src/exact.dat,src/ragged.dat",
+          "the entries GNU tar finds");
+
+  // **Extraction, compared tree to tree.** This is the assertion that the checksum, the sizes and the
+  // padding are all right at once — a listing alone reads only the headers.
+  t.isTrue(cli.mkdir(dir + "/ex", true).wait().ok(), "made the extraction directory");
+  Exec ex = cli.exec("tar", string[]("-xf", tarPath, "-C", dir + "/ex"), u8[0]()).wait();
+  t.eqI32(ex.status, 0, "GNU tar extracted it: " + string.fromBytes(ex.stderr));
+  Exec cmp = cli.exec("diff", string[]("-r", dir + "/src", dir + "/ex/src"), u8[0]()).wait();
+  t.eqI32(cmp.status, 0, "the extracted tree matches: " + string.fromBytes(cmp.stdout));
+
+  // And through box's own compressor, which is the composition worth having: two applets of ours and
+  // one of theirs, where a fault in either of ours shows up as an unreadable archive.
+  Ran gz = runAppletIn(core, cli, dir, string[]("gzip"), archive.outBytes);
+  t.eqI32(gz.status, 0, "gzip ran: " + gz.err);
+  string tgzPath = dir + "/out.tgz";
+  t.isTrue(cli.writeFile(tgzPath, gz.outBytes).wait().ok(), "wrote the compressed archive");
+  t.isTrue(cli.mkdir(dir + "/ex2", true).wait().ok(), "made the second extraction directory");
+  Exec ex2 = cli.exec("tar", string[]("-xzf", tgzPath, "-C", dir + "/ex2"), u8[0]()).wait();
+  t.eqI32(ex2.status, 0, "GNU tar read our gzip: " + string.fromBytes(ex2.stderr));
+  Exec cmp2 = cli.exec("diff", string[]("-r", dir + "/src", dir + "/ex2/src"), u8[0]()).wait();
+  t.eqI32(cmp2.status, 0, "and the tree still matches: " + string.fromBytes(cmp2.stdout));
+
+  t.eqI32(runApplet(core, cli, dir, string[]("tar", "absent")).status, 1, "a missing path is an error");
 
   cli.remove(dir, true).wait();
   return t.report();
