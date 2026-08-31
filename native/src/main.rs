@@ -680,7 +680,25 @@ fn manifest_of(wasm: &[u8], what: &str) -> Result<Arc<Manifest>, wasmtime::Error
 /// no second form of it that could drift.
 fn run_seed(args: &[String]) -> Result<i32, wasmtime::Error> {
     let wasm = SEED.expect("a seed");
-    let m = manifest_of(wasm, "the built-in compiler")?;
+    let mut m = manifest_of(wasm, "the built-in compiler")?;
+    // **The seed holds everything and the program narrows it**, which is `issues/system/0257c`'s
+    // ruling — a host may implement *running a module* and must not implement the *command
+    // surface*. `--allow-run` is read by the wac-side command, not here; what this hands over is the
+    // ceiling, and `load_module` intersects it with whatever the program then asks for.
+    //
+    // **Without this the seed got only what its own manifest declared**, so `run` was never granted
+    // and `Cli.exec` was refused for every program on this host while working on the other — the
+    // same four-line program answering `EXEC ok` under v8 and `Not granted to this application`
+    // here. `issues/system/0313b`. The v8 host has had this block since `0264c`; this one did not,
+    // which is the drift two parallel `run_seed`s invite.
+    //
+    // `manifest_of` answers an `Arc` and this one is a line old, so it is still the only reference
+    // and `get_mut` succeeds. Written to fail loudly rather than silently keep the old ceiling if
+    // that ever stops being true.
+    let raised = Arc::get_mut(&mut m).ok_or_else(|| {
+        wasmtime::Error::msg("the seed's manifest was shared before its grants were set")
+    })?;
+    raised.grants = manifest::Grants { read: true, write: true, env: true, net: true, run: true };
     let program_args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
     run(m, wasm, program_args)
 }

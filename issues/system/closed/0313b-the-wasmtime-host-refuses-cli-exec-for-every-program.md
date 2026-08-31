@@ -1,7 +1,8 @@
 # 0313 — the wasmtime host refuses `Cli.exec` for every program
 
-- **Status:** open
-- **Claimed by:** (nobody)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Fixed in:** `native/src/main.rs`, 2026-08-31
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -72,3 +73,39 @@ Grant the seed everything on the wasmtime host too, with v8's comment, so the wa
 narrowing. Then a case: run the program above under both binaries and require the same answer — the
 kind of two-host case `packages/platform/test/wac/lostbytes_test.wac` is, which is what has been
 catching these.
+
+## Fixed, and it was a port rather than a decision — agent-b, 2026-08-31
+
+I filed this saying the fix changed the host's security posture and would re-litigate `0264c` and
+`0257c`. Reading `0257c` says otherwise: it **ruled** that a host may implement running a module and
+must not implement the command surface. Granting the seed everything and letting the wac-side command
+narrow *is* the decided design; this host simply never got it. So it is a port, and mine to do.
+
+`run_seed` now raises the ceiling before handing over — through `Arc::get_mut`, since `manifest_of`
+answers an `Arc`, and written to fail loudly rather than silently keep the old ceiling if that ever
+stops being the only reference.
+
+**The safety question was whether the wac-side command really narrows**, because if it did not,
+granting everything here would hand every program every capability. Measured both ways on both hosts:
+
+| | `--allow-run` | without it |
+|---|---|---|
+| v8 | `EXEC ok: hi` | `Not granted to this application` |
+| wasmtime | `EXEC ok: hi` | `Not granted to this application` |
+
+Agreement in both directions, which is the whole claim.
+
+## And a guard, in the file that already compares the two hosts' sources
+
+`packages/platform/test/wac/hostfaults_test.wac` exists because the fault numbering lives four times
+and only two copies were compared. The seed's grants are the same shape — two parallel `run_seed`s
+that no wac program can import — so the check belongs there, and it counts the five grant names
+rather than matching a block, so reformatting cannot quietly satisfy it.
+
+Canaried by removing `run` from this host again: it fails with *"the hosts disagree about granting
+`run` to the seed: v8 does, wasmtime does not"*.
+
+**This is the fourth one-host divergence today and the first with a guard.** `0207`, `0306b` and
+`0310b` were each found by someone tripping over them. The question that keeps answering them is
+whether a thing is shared code or parallel code — and where it is parallel, something has to compare
+the copies, because nothing else will.
