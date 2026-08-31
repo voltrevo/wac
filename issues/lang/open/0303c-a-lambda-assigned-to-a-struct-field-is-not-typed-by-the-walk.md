@@ -34,6 +34,44 @@ c.readFile = refuse;
 So it is the *position* that is untyped, not the lambda. A `let` binding with an explicit function
 type reaches the walk; an assignment to a field of a struct does not.
 
+## Corrected 2026-08-31 — it is two gaps, and the two build paths disagree about it
+
+**I fixed the wrong half first, and the attempt is what found the real shape.** Recorded because the
+next person will otherwise repeat it.
+
+The emitter's pre-pass at `emit.wac:9587` types only `LIdent` as an assignment target — a field target
+falls to `else` with no type, and `env.lambdaSigs[n] = isFuncrefType(want) ? want : ""` records the
+empty string, which *is* the decline. Adding an `LField` case there (resolve the base with
+`env.walkTypeOf`, then `env.fieldType(owner, field)`) makes `wac build` compile the reproduction and
+run it. Verified: a lambda straight into a `Cli` field, no typed local, compiles and answers.
+
+**And that is not enough, because `wac build` was never the strict path.** With the emitter fixed, the
+same source compiled by `packages/platform/build.ts` — which goes through `harness/waccBuild.ts` and a
+ladder-built wacc — is refused by the *checker*:
+
+    packages/platform/src/frame.wac:292:18 [check] nothing here wants a function, so this lambda has no type
+
+Six of them, one per field assignment. Not a stale cache: clearing `.cache/waccapi` and rebuilding the
+asset from the ladder reproduces it exactly.
+
+**So the two paths disagree, and that is the larger finding.** The same file is accepted by `wac build`
+and refused by the app builder, and the disagreement is about a *check* error rather than an emit one.
+`issues/system/0298c` is the neighbouring shape — the ladder not asking for diagnostics — and this is
+the mirror of it: one path asks the checker and the other does not.
+
+**What is odd and unexplained**, and is the thread to pull: the same assignment in an *entry* file
+compiles under both. `Holder h; h.f = (i32 x) => x + 2;` is fine, and so is `Cli c = childCli(f, cli);
+c.readFile = …` written directly in a program. Only the same shape *inside an imported module* is
+refused. So it may not be the position at all — it may be how an import's locals are typed on that
+path. `typeOfLvalue` in `check.wac:3227` handles `LField` correctly on its face, and
+`check.wac:8675` sets `c.expected` from it before checking the right-hand side, so on a plain reading
+the checker should already have the type.
+
+Both changes were reverted rather than left in: the emitter half alone is a fix with no caller, since
+the code that wanted it (`childCliGranted`) has to keep its typed locals to satisfy the other path.
+The typed-local workaround is three lines and works everywhere, so nothing is blocked — what is worth
+someone's time is the disagreement, not the workaround.
+
 ## Why it matters
 
 The workaround is one extra line and works, so nothing is blocked. What it costs is the shape of the
