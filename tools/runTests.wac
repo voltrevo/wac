@@ -1544,6 +1544,11 @@ export i32 main(Core core, Cli cli) {
 
   guardCodeCache(core, cli);
   sweepStaleTemp(core, cli);
+  // The processes those temp entries belonged to, which no sweep over `/tmp` can see — `0136`.
+  // Here as well as in the `sweep` subcommand: this is the path every suite takes, and putting it
+  // only beside the manual one meant it never ran unless somebody typed it. Two call sites of
+  // `sweepStaleTemp` and I matched the first.
+  reapStaleDaemons(core, cli);
   dropUnreachableTranspiles(core, cli);
 
   // **The cooldown starts here, not where the lock was taken** — `issues/system/0283b`. Everything

@@ -286,11 +286,25 @@ export string mergedTimes(string existing, string[] fresh) {
  */
 const i64 STALE_MS = 7200000 as i64;
 
-export void reapStaleDaemons(Core core, Cli cli) { reapOlderThan(core, cli, STALE_MS); }
+export void reapStaleDaemons(Core core, Cli cli) {
+  reapMatching(core, cli, cli.cwd().wait() + "/.cache/", STALE_MS);
+}
 
-/** The rule, with its bound named, so a test can ask what it does at both ends of it. */
-export void reapOlderThan(Core core, Cli cli, i64 staleMs) {
-  string mine = cli.cwd().wait() + "/.cache/";
+/**
+ * The rule with both of its conditions named, so a test can exercise them without becoming a hazard.
+ *
+ * **The first version let a test pass a bound and nothing else**, and a bound of zero — the only way
+ * to show the rule fires at all — then matched every process under this workspace's `.cache`. Run in
+ * a suite lane that is one of four, it killed another lane's build, which reported
+ * `greet.wac for node did not build:` with nothing after the colon, because a killed process leaves
+ * no error text. The case passed alone and broke the suite: exactly the shape a two-hour bound was
+ * supposed to make impossible, reintroduced by the test for it.
+ *
+ * So `needle` is a parameter too. A caller proving the bound fires narrows to its own probe; the
+ * housekeeping call passes the whole of `.cache`, which is what it means.
+ */
+export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
+  string mine = needle;
   Exec listed = cli.execWith("/bin/ps", string[]("-eo", "pid,etimes,args", "--no-headers"),
                              u8[0](), string[0](fill: ""), false, false).wait();
   if (!listed.ran()) { return; }

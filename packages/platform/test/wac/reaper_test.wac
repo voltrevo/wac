@@ -19,7 +19,7 @@
  */
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
-import { reapOlderThan } from "../../../../tools/wac/suitehouse.wac";
+import { reapMatching } from "../../../../tools/wac/suitehouse.wac";
 
 /** A process whose command line carries this workspace's `.cache`, which is what the rule matches. */
 void started(Cli cli, string script) {
@@ -46,12 +46,14 @@ export string test_the_reaper_spares_what_is_young_and_takes_what_is_not(Core co
   t.isTrue(alive(cli, script), "the probe did not start, so neither half below means anything");
 
   // The real bound is two hours; a process seconds old is nowhere near it.
-  reapOlderThan(core, cli, 7200000 as i64);
+  reapMatching(core, cli, script, 7200000 as i64);
   core.delay(300).wait();
   t.isTrue(alive(cli, script), "the reaper killed a process that had only just started");
 
-  // And a bound of zero, which everything is past.
-  reapOlderThan(core, cli, 0 as i64);
+  // And a bound of zero, which everything is past — **narrowed to this probe's own path**.
+  // Passing the whole of `.cache` here would reap every other lane's daemons and builds, and it did:
+  // a suite lane killed another's `greet.wac` build, which then failed with an empty reason.
+  reapMatching(core, cli, script, 0 as i64);
   core.delay(500).wait();
   t.isTrue(!alive(cli, script), "the reaper spared a process past its bound, so it never fires");
 
