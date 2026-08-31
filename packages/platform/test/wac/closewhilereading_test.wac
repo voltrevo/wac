@@ -1,0 +1,137 @@
+// Does closing a socket with a read outstanding on it still tell the peer?
+//
+// **The probe `issues/system/0304b` asks for.** `packages/tor/src/socks.wac` ends a client the way
+// every path in that file ends one — `c.read.cancel()` and then `cli.closeSocket(c.sock)` — and the
+// peer never sees the close: it reads the whole response and then waits for an end-of-stream that
+// does not arrive. `dird.wac` closes the same way and its peers *do* see `End`, and the one thing
+// that differs is the cancelled `recv` outstanding on the socket.
+//
+// **The answer, and it is not the one the issue was filed on.** Three arms differing only in what is
+// outstanding on the server's socket at the moment it closes:
+//
+//     nothing outstanding    the client sees `End`
+//     a live `recv`          the client sees `End`      — and saw nothing until 2026-08-31
+//     a cancelled `recv`     the client sees `End`      — likewise
+//
+// So cancelling is a red herring. `0304b` was filed as "`socks` does not close a client's socket"
+// because `socks.wac` cancels before closing and `dird.wac`, whose peers do see `End`, does not —
+// and the live-read arm fails identically. What breaks a close is *any* pending read.
+//
+// **The control is the load-bearing row**, and the first draft of this file did not have one. It
+// issued the `recv` in both arms and called the uncancelled one the control, so the control was
+// itself "a close behind a live read": both failed, and a control that fails for the same reason as
+// the case proves nothing — it reads as a harness that never sees a close at all. Three arms is the
+// smallest set that separates "cancel breaks it" from "any outstanding read breaks it".
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Socket, Pending } from "std/platform.wac";
+import { Read } from "core";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/**
+ * Long enough that a loopback close cannot lose a race, short enough that pinning a bug is cheap.
+ *
+ * Two of the three arms wait this out on every run, so it is 2s of the suite. A close on loopback is
+ * immediate when it happens at all — the control proves that in well under a millisecond — so this
+ * is three orders of magnitude of margin rather than a guess.
+ */
+const i32 WAIT_MS = 1000;
+
+/** What is outstanding on the server socket when it is closed. */
+const i32 MODE_NO_READ = 0;
+const i32 MODE_LIVE_READ = 1;
+const i32 MODE_CANCELLED = 2;
+
+/** What the client saw after the server closed. */
+struct Saw {
+  bool ended;      // the peer's close arrived, as `End` or as a failure
+  bool timedOut;   // nothing arrived before the deadline — the symptom `0304b` reports
+  string detail;
+}
+
+/**
+ * Read once, bounded.
+ *
+ * Bounded because the whole question is whether something arrives, and an unbounded read turns "no"
+ * into a hang with no output — `wac test` buffers a file's output until it finishes, which is how
+ * `socksnet_test.wac` produced six minutes of nothing.
+ */
+Saw sawClose(Core core, Cli cli, i32 h) {
+  Pending<Read> p = cli.recv(h);
+  if (core.waitAny(i32[](p.id), WAIT_MS) < 0) {
+    p.cancel();
+    return Saw(false, true, "nothing arrived within " + itoa(WAIT_MS) + "ms");
+  }
+  match (p.wait()) {
+    case Data(got): { return Saw(false, false, "got " + itoa(got.len()) + " byte(s), not a close"); }
+    case End: { return Saw(true, false, "End"); }
+    case Failed(why): { return Saw(true, false, "Failed: " + why); }
+  }
+  return Saw(false, false, "unreachable");
+}
+
+/**
+ * One connection, closed by the server, with `cancelFirst` deciding whether a read was outstanding.
+ *
+ * The server half issues its `recv` *before* deciding, so the two arms differ in exactly one call
+ * rather than in the shape of what ran.
+ */
+Saw exchange(Core core, Cli cli, T t, i32 mode, string arm) {
+  Socket listener = cli.listen("127.0.0.1", 0).wait();
+  if (listener.handle < 0) {
+    t.fail(arm + ": could not listen — " + listener.error);
+    return Saw(false, false, "no listener");
+  }
+
+  Pending<Socket> accepting = cli.accept(listener.handle);
+  i32 client = cli.connect("127.0.0.1", listener.port).wait().handle;
+  if (client < 0) {
+    t.fail(arm + ": could not connect to 127.0.0.1:" + itoa(listener.port));
+    cli.closeSocket(listener.handle);
+    return Saw(false, false, "no client");
+  }
+
+  Socket served = accepting.wait();
+  if (served.handle < 0) {
+    t.fail(arm + ": accept failed — " + served.error);
+    cli.closeSocket(client);
+    cli.closeSocket(listener.handle);
+    return Saw(false, false, "no accept");
+  }
+
+  // `mode` decides what is outstanding when the close happens, and the first draft got this wrong:
+  // it issued the `recv` in *both* arms and called the uncancelled one "the control", so the control
+  // was "a close behind a live read" while its message said "no read outstanding". Both failed, and
+  // a control that fails for the same reason as the case proves nothing. Three arms, and only the
+  // first is a real control.
+  if (mode == MODE_NO_READ) {
+    // Nothing outstanding at all.
+  } else {
+    Pending<Read> pending = cli.recv(served.handle);
+    if (mode == MODE_CANCELLED) { pending.cancel(); }
+  }
+  cli.closeSocket(served.handle);
+
+  Saw saw = sawClose(core, cli, client);
+  cli.closeSocket(client);
+  cli.closeSocket(listener.handle);
+  return saw;
+}
+
+export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, Cli cli) {
+  T t = T.create();
+
+  // The control first, so a failure in the case cannot be read as "this harness never sees a close".
+  Saw plain = exchange(core, cli, t, MODE_NO_READ, "no read outstanding");
+  t.isTrue(plain.ended, "the control: a close with nothing outstanding reaches the peer — " +
+                        plain.detail);
+
+  Saw live = exchange(core, cli, t, MODE_LIVE_READ, "a live read outstanding");
+  t.isTrue(live.ended, "a close behind a *live* read reaches the peer — " + live.detail);
+
+  Saw cancelled = exchange(core, cli, t, MODE_CANCELLED, "after a cancel");
+  t.isTrue(cancelled.ended, "and so does one behind a cancelled read — " + cancelled.detail +
+                            ". The two arms agreeing is the finding: cancelling never mattered");
+
+  return t.report();
+}
