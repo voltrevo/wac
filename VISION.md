@@ -172,3 +172,14 @@ Where the name really is a parameter, `@for` writes it: a verbatim identifier is
 name, so a keyword can be one and nothing is renamed. It costs a mark at the definition and nothing
 at any use — an attribute is matched by spelling, so the call site stays bare. Defining a tag is how
 the vocabulary grows, and `core`'s `label` is exactly this. **Not yet.**
+
+---
+
+## Imports name the project
+
+```wac
+import { itoa } from "@/packages/fmt/src/itoa.wac";
+```
+
+A header says where something is, not how many directories away the reader happens to be standing.
+**Done.**
