@@ -68,17 +68,33 @@ module was refused. **That was an artefact of testing the two shapes on two diff
 properly — coretext struct, entry file, strict path — it is refused there too. There is no entry/import
 distinction; there is a `wac build`/app-builder distinction, which is the next item.
 
-### The disagreement, which stands and is the wider finding
+### The disagreement — and it is a *masking* relationship, which is the wider finding
 
-**`wac build` does not surface these check errors at all.** It compiled every one of these cases
-"successfully", including ones the checker had rejected. The app builder, through
-`harness/waccBuild.ts` and a ladder-built wacc, reports them and refuses. Not a stale cache: clearing
-`.cache/waccapi` and rebuilding from the ladder reproduces it exactly.
+I first wrote that `wac build` "does not surface these check errors at all" and compiled every case
+successfully. **That is wrong as stated and the correct version is more interesting.** Measured both
+ways, on the same file, with and without the emitter fix:
 
-That is the mirror of `issues/system/0298c` — there the ladder does not ask for diagnostics; here one
-path asks the checker and the other does not. Either the check error is real, in which case `wac build`
-is emitting artefacts from programs it should refuse, or it is not, in which case the app builder
-refuses correct programs. Both are worth more than this issue's original subject.
+| | `wac build` | the app builder |
+|---|---|---|
+| **without** the emitter fix | refuses — *emit* decline, a count and no line | refuses — `[check]`, line and column |
+| **with** the emitter fix | **accepts** and writes a module | refuses — `[check]`, line and column |
+
+So the emit decline was *masking* the check error. Nothing was ever silently accepted until the
+emitter was fixed, at which point `wac build` stopped having a reason to refuse and never asked the
+checker for the one it had.
+
+Two things follow, and the second is why this matters beyond one diagnostic:
+
+- **Fixing the emitter alone would have made `wac build` accept a program the checker rejects.** That
+  is a worse state than the bug: a green build whose artefact came from source the compiler's own
+  checker refused. It is the reason the emitter fix is not in the tree.
+- **`wac build` and the app builder do not ask the same questions**, and the difference is invisible
+  until something changes which of the two reasons fires first. `issues/system/0298c` is the same shape
+  one level down — the ladder not asking for diagnostics at all.
+
+For contrast, `wac build` reports an ordinary type error properly: `st.mode` on a `Stat` without that
+field gives `no such field`, a line and a caret. So this is not "`wac build` skips checking" — it is
+that *this* diagnostic reaches one path and not the other.
 
 ### Nothing was left in the tree
 
