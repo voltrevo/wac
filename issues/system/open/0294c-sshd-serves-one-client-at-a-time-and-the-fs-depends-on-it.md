@@ -1,7 +1,7 @@
 # 0294 — sshd serves one client at a time, and the shared `Fs` depends on it
 
-- **Status:** open — needs a decision before any port
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** open — the decision is answered below and proven on `dird`; `sshd` remains
+- **Claimed by:** agent-b, 2026-08-30 — answering the decision and proving it on `dird` first
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** design decision
@@ -47,6 +47,56 @@ Two things need answering first, and neither is the lowering's business:
   session that wrote for itself from one that did not. With two sessions overlapping, "after a
   session ends" no longer names a moment when the filesystem is quiet.
 
+## The decision — agent-b, 2026-08-30
+
+**Neither per-session, nor copy-on-write, nor a lock. The question is narrower than all three, and
+the answer is a rule about where a suspension may fall.**
+
+`design/lang/0014` D2 settles it: this concurrency is cooperative and single-threaded. `.wait()`
+deliberately is *not* a yield point — "3080 existing sites were written when a `.wait()` was a leaf" —
+and a continuation runs only at a suspension or under `core.drain()`. So **no two pieces of wac code
+ever run at once**, and nothing can observe a half-written value. There are no data races here to
+lock against, and nothing to copy defensively.
+
+What there is, is **lost updates across a suspension**, and only that. The rule:
+
+> A read-modify-write of shared state must not straddle an `await`.
+
+That is checkable by reading, it needs no runtime support, and it is the whole of what concurrency
+costs a program in this language.
+
+### Why `dird` is unsafe today, stated as that rule
+
+The hazard is not "two requests touch `docs`". It is that `docs` is **threaded through a parameter
+and a return value**, so `answer` holds a private copy across its `recv`:
+
+```wac
+docs = answer(core, cli, conn, docs);   // caller writes back what the callee captured
+```
+
+Two overlapping calls both start from the same `docs`. If A files a descriptor and B — which began
+before A returned — writes back the copy it captured, **A's descriptor is gone**, and nothing fails.
+The suspension that makes this possible is the `recv` inside `answer`'s own loop, between the read
+(`dirStep(pending.bytes(), docs)`) and the write.
+
+So the fix is not to guard the state. It is to **stop copying it out**: hold the mutable part in one
+cell, read it where it is used and write it back with no suspension in between. The immutable parts —
+the consensus, the certificate, the microdescriptors — are never written and can be shared by
+everybody with no ceremony at all.
+
+### What this means for `sshd`'s `Fs`
+
+The same rule, and the same reading. The question is not "what does one `Fs` under two sessions
+mean" in the abstract; it is *which operations on it read and then write across an `await`*. A
+capability call that reads, suspends, and writes back is the shape to find. `save(…)` after a session
+ends is the one the issue already names, and under this rule it is stated precisely: it is not that
+"after a session ends" stops naming a quiet moment, it is that `save` must not begin before every
+in-flight write has completed — which is a barrier, not a lock.
+
+That is a smaller and more answerable question than the three options above, and it is why `dird`
+goes first: it has one mutable field and one writer, so the rule can be proved there before it is
+applied to a filesystem.
+
 ## `dird` is the same shape, and its state is even more explicit
 
 `packages/tor/src/dird.wac` has the identical loop, and threads its state through the serial
@@ -82,3 +132,39 @@ leaving as an unexamined "it blocks".
 `packages/tor/src/relayd.wac` is the one that has already been ported, in `design/lang/0014` A6, and
 it is the evidence the transform pays off: two `then`-plus-re-arm trampolines became `while` loops
 with an `await` in them, and `network_tor_test` stayed green.
+
+## `dird` is done, and the rule held — agent-b, 2026-08-30
+
+`packages/tor/src/dird.wac` is A1's shape now: `accepting` is `async` and calls `answer` **without
+awaiting it**, so a client that stops mid-request no longer holds the door. `DirDocuments` stopped
+being a parameter and a return value and became one cell, which is the whole of the fix — the read at
+`dirStep` and the write at `filed` are consecutive statements with no suspension between them.
+
+**The head-of-line block is now a test rather than a paragraph.**
+`test_a_stalled_client_does_not_hold_the_door` opens a connection, sends a request line with no blank
+line after it, holds the socket open, and asks a second client for the consensus.
+
+That test was checked against the code it describes, which turned out to matter more than expected:
+
+- on the ported `dird` it passes in ~290ms;
+- on the **pre-port** `dird` it does not fail — it **hangs**. The first run took ten minutes and was
+  killed. The stalled client owns the accept loop, so the second connection is never accepted and an
+  unbounded read waits for ever.
+
+So the assertion is bounded — `waitAny(ids, 5000)` — and a regression now fails in 5.7 seconds with a
+message naming this issue, instead of costing a gate. A test that hangs where it means to fail is
+worse than no test, and this one would have.
+
+All 48 files in `packages/tor/test/wac` pass, including `network_tor_test` and `ctor_live_test`.
+
+### What is left, and what it needs
+
+`sshd` is the remaining instance, and the rule above turns its second open question into a
+concrete one. "When is the image saved" is not a question about when a session ends; it is: **`save`
+must not begin while any write is in flight.** That is a barrier — a count of outstanding writers, or
+a save deferred until the last session's continuation has run — and it is a smaller thing to design
+than a locking discipline for the whole `Fs`.
+
+Not started here, because `sshd`'s interrupt machinery (`askInterrupt`, `Keystrokes`, `Conn.ready`)
+is split ten mentions in `packages/ssh` and ten in `packages/sh`, and another agent is working in
+`packages/sh`.
