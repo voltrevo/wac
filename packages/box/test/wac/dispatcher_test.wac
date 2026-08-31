@@ -1,0 +1,84 @@
+// The dispatcher itself: an unknown applet, `--help`, and the usage listing.
+//
+//     wac test --allow-read --allow-write packages/box/test/wac/dispatcher_test.wac
+//
+// From `box.test.ts`, where it was left behind on a claim that turned out to be false. The note said
+// this could not move because "`main` reads argv from the process" — but `Frame.of` takes an argv and
+// `childCli` answers `argCount` and `arg` out of it, which is stated plainly in `frame.wac:282`. So
+// `main(childCore(f, core), childCli(f, cli))` runs the whole program, argv and all, with its streams
+// captured. Nothing was blocking this; I had not looked.
+//
+// `applets_test.wac` asserts what `dispatch` answers for a name it has not got — `UNKNOWN`, a sentinel
+// rather than a status. This is the other half: what `main` turns that into.
+
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { main } from "../../src/box.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { splitOn } from "./replay.wac";
+
+/** What `box` said, running the whole program in a frame. */
+struct Said {
+  i32 code;
+  string out;
+  string err;
+}
+
+Said box(Core core, Cli cli, string[] argv) {
+  Frame f = Frame.of(argv, u8[0](), cli.cwd().wait(), false);
+  i32 code = main(childCore(f, core), childCli(f, cli));
+  return Said(code, string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()));
+}
+
+export string test_an_unknown_applet_is_a_usage_error(Core core, Cli cli) {
+  T t = T.create();
+  Said said = box(core, cli, string[]("nope"));
+  t.eqI32(said.code, 2, "an unknown applet is a usage error");
+  // The name it did not have, quoted back. A usage message that did not say which name failed would
+  // be the same message for every typo.
+  t.isTrue(said.err.indexOf("unknown applet 'nope'") >= 0, said.err);
+  t.isTrue(said.err.indexOf("usage: box") >= 0, said.err);
+  return t.report();
+}
+
+export string test_help_is_answered_three_ways(Core core, Cli cli) {
+  T t = T.create();
+  string[] spellings = string[]("help", "--help", "-h");
+  for (i32 i = 0; i < spellings.len(); i++) {
+    Said said = box(core, cli, string[](spellings[i]));
+    t.eqI32(said.code, 0, "box " + spellings[i] + " should succeed: " + said.err);
+    t.isTrue(said.err.indexOf("usage: box") >= 0, "box " + spellings[i] + ": " + said.err);
+  }
+  return t.report();
+}
+
+/**
+ * The usage message lists every applet, wrapped.
+ *
+ * Nothing looked at it, so `wrapped` could return the empty string — and the list of what this program
+ * can do would simply be missing, with the exit status and the first line both still right.
+ */
+export string test_the_usage_lists_every_applet_and_wraps_it(Core core, Cli cli) {
+  T t = T.create();
+  Said help = box(core, cli, string[0]());
+  t.eqI32(help.code, 2, "no applet at all is a usage error");
+
+  string[] want = string[]("cat", "grep", "sha256sum", "zstd");
+  for (i32 i = 0; i < want.len(); i++) {
+    t.isTrue(help.err.indexOf(want[i]) >= 0, "usage does not list " + want[i] + ":\n" + help.err);
+  }
+
+  // The applet list is the indented lines that are not `label:` lines. More than one of them is the
+  // claim: one would mean the wrapper returned the whole list on a single line.
+  string[] lines = splitOn(help.err, "\n");
+  i32 listed = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = lines[i];
+    if (line.len() < 2 || line.slice(0, 2) != "  " || line.indexOf(":") >= 0) { continue; }
+    listed++;
+    t.isTrue(line.len() <= 74, "a usage line is " + itoa(line.len()) + " wide: " + line);
+  }
+  t.isTrue(listed > 1, "the applet list is not wrapped at all:\n" + help.err);
+  return t.report();
+}

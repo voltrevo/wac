@@ -108,20 +108,24 @@ async function exists(path: string): Promise<boolean> {
 //   cp and tee's destinations                                       -> writepath_test.wac
 //   diff's fourteen shapes                                          -> diff_test.wac
 //
-// **What cannot move, and this is the useful half of the list.** Four shapes, each represented below or
-// further down this file:
+// **What is left, and none of it is a wall.** Asked directly whether these are blockers or just work
+// nobody has done, the answer is the second, and saying "cannot move" was hiding that:
 //
-//   - a test that needs *fewer* grants than it holds. `runApplet` hands the applet `childCli(f, cli)`,
-//     which passes the parent's grants straight through, so an in-process frame can have the test's
-//     authority or more and never less — `issues/system/0302c`. Every refusal test is here for that one
-//     reason, and there are five of them, each building and spawning an executable to assert an exit
-//     code and a sentence.
-//   - a test that needs a capability wac has not got. `Cli` can read a symlink and cannot make one —
-//     `issues/system/0300c` — so the fixture for the `tar` case below cannot be built in wac at all.
-//   - a test of `main` rather than of an applet. `main` reads argv from the process; `dispatch` is the
-//     half a frame can call.
-//   - a test about a process lifecycle: `yes` stopping when its pipe closes, a server and a client with
-//     a socket between them.
+//   - **five tests that need *fewer* grants than they hold.** `childCli` passes the parent's
+//     capabilities straight through, so an in-process frame can have the test's authority or more and
+//     never less. Buildable — `Cli.of` takes the functions one at a time, so substituting a refusing
+//     `writeFile` is a few lines over three decisions. `issues/system/0302c` is the decisions.
+//   - **one test that needs a capability wac has not got.** `Cli` reads a symlink and cannot make one,
+//     so the `tar` fixture below cannot be built in wac. Also buildable, and additive:
+//     `issues/system/0300c`.
+//   - **`yes`, which needs a sink that can refuse.** A frame collects output in a buffer that never
+//     closes, and `yes` stops precisely because `write` reports a closed pipe. That is a gap in what a
+//     `Frame` can model rather than a fact about processes — a frame with a byte limit would express it.
+//   - **the network tests**, and these are the only ones I would keep spawning on purpose. A server and
+//     a client with a real socket between them is a claim *about* the process boundary, so testing it
+//     across one is the point rather than the cost.
+//
+// So: one shape worth keeping, and three that are undone work with issue numbers on them.
 
 Deno.test("rm -f without the write grant is a denial, not a silence", async () => {
   // `-f` forgives a file that is already *gone*, not a filesystem it was never allowed to touch. The
@@ -191,39 +195,11 @@ Deno.test("tar refuses a symlink rather than following it", async () => {
   }
 });
 
-Deno.test("the dispatcher: an unknown applet, --help, and the usage listing", async () => {
-  // **`main`, not `dispatch`.** `test/wac/applets_test.wac` asserts that `dispatch` answers `UNKNOWN`
-  // for a name it has not got; turning that sentinel into a usage error, and answering `--help` at all,
-  // is `main`'s job, and `main` reads argv from the process. There is no frame call that reaches it.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-usage-" });
-  try {
-    await buildApp(BOX, built, { read: true });
-    const runner = await appRunner(BOX, { read: true });
-    const box = (args: string[]) => runner.run(args);
-
-    assertEquals((await box(["nope"])).code, 2, "an unknown applet is a usage error");
-    for (const how of ["help", "--help", "-h"]) {
-      const asked = await box([how]);
-      assertEquals(asked.code, 0, `box ${how} should succeed, got ${asked.code}`);
-      assertEquals(asked.err.includes("usage: box"), true, `box ${how} should print the usage`);
-    }
-
-    // The usage message lists every applet, wrapped. Nothing looked at it, so `wrapped` could return the
-    // empty string — and the list of what this program can do would simply be missing.
-    const help = await box([]);
-    assertEquals(help.code, 2, "no applet is a usage error");
-    for (const name of ["cat", "grep", "sha256sum", "zstd"]) {
-      assertEquals(help.err.includes(name), true, `usage does not list ${name}:\n${help.err}`);
-    }
-    const appletLines = help.err.split("\n").filter((l) => l.startsWith("  ") && !l.includes(":"));
-    assertEquals(appletLines.length > 1, true, `the applet list is not wrapped at all:\n${help.err}`);
-    for (const line of appletLines) {
-      assertEquals(line.length <= 74, true, `a usage line is ${line.length} wide: ${line}`);
-    }
-  } finally {
-    await Deno.remove(built);
-  }
-});
+// **Moved to `packages/box/test/wac/dispatcher_test.wac`, and it should not have been here at all.**
+// The note that kept it said `main` reads argv from the process and so no frame call could reach it.
+// That was wrong: `Frame.of` takes an argv and `childCli` answers `argCount` and `arg` out of it —
+// `frame.wac:282` says so in as many words. `main(childCore(f, core), childCli(f, cli))` runs the whole
+// program with its streams captured. Nothing was blocking it; I had not looked.
 
 Deno.test("a file still needs the grant, and says so", async () => {
   // **What is left of "box works as a filter".** The filter half — `wc` and `sha256sum` over standard

@@ -75,8 +75,12 @@ export string optionRefusal(string name, string letter) {
   // *second dash* — `ls: invalid option -- '-'`, naming a character the caller never typed. This
   // implements no long option, so that is the answer, and it needs no table; GNU's split between one
   // it has and one nobody has is a distinction this cannot draw, so it draws neither.
+  //
+  // Singular, and that is `packages/box` talking: its applets do take long options now, so a
+  // blanket "long options are not implemented" is false there. The builtins here still take none —
+  // the sentence is shared, the reason for it is not.
   if (b.len() > 1 && b[0] == '-' && b[1] == '-') {
-    return name + ": long options are not implemented: " + letter + "\n";
+    return name + ": long option not implemented: " + letter + "\n";
   }
   if (b.len() == 1 && gnuHas(name, b[0])) {
     // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.

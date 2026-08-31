@@ -159,11 +159,11 @@ Deno.test("the two sentences reach a caller", async () => {
 
     // A long option is one thing, not a run of short ones. Read as short flags, `--key=2` refused the
     // *dash*: "sort: invalid option -- '-'", a message naming a character the caller did not choose.
-    assertEquals(box(["sort", "--key=2"]).err, "sort: long options are not implemented: --key=2");
+    assertEquals(box(["sort", "--key=2"]).err, "sort: long option not implemented: --key=2");
     // Every applet, not only the ones with a short-flag table — the claim is about this whole program.
     // These are dropped silently otherwise, which is the ignoring this file exists to end.
-    assertEquals(box(["ls", "--all"]).err, "ls: long options are not implemented: --all");
-    assertEquals(box(["diff", "--unified"]).err, "diff: long options are not implemented: --unified");
+    assertEquals(box(["ls", "--all"]).err, "ls: long option not implemented: --all");
+    assertEquals(box(["diff", "--unified"]).err, "diff: long option not implemented: --unified");
     // And `echo` here too: GNU's prints `--nonsense` and says nothing.
     assertEquals(box(["echo", "--nonsense"]).err, "");
     // `--` still ends the options rather than being one.
@@ -171,4 +171,110 @@ Deno.test("the two sentences reach a caller", async () => {
   } finally {
     await Deno.remove(built);
   }
+});
+// Appended to packages/box/test/flags.test.ts.
+
+/**
+ * The long options a real tool documents, as a map from short letter to long name.
+ *
+ * **Only the option column.** A description mentioning another flag is not a definition of it, and
+ * reading the whole line binds the wrong pair: `cat`'s `-b, --number-nonblank   number nonempty output
+ * lines, overrides -n` would record `-n` as meaning `--number-nonblank`, which is `-b`'s name. That is
+ * the mistake this helper exists to not make, and it was made twice while deriving the table.
+ *
+ * **A long form may sit on the next line.** `strings -n <number>` documents `--bytes=<number>`
+ * underneath it, so a lone `--long` on the following line belongs to the option above.
+ *
+ * **Several short flags may share one long name**: `tr -c, -C, --complement` and `rm -r, -R,
+ * --recursive` each document two letters for one spelling.
+ */
+async function gnuLongOptions(tool: string): Promise<Map<string, string>> {
+  const r = await new Deno.Command(tool, { args: ["--help"], stdout: "piped", stderr: "piped" })
+    .output().catch(() => null);
+  const help = r === null ? "" : new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+  const lines = help.split("\n");
+  // The option column is everything before the description, which starts at the first run of two or
+  // more spaces.
+  const column = (line: string) => {
+    const body = line.replace(/^\s+/, "");
+    const gap = body.search(/\s{2,}/);
+    return gap === -1 ? body : body.slice(0, gap);
+  };
+  const found = new Map<string, string>();
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s+-/.test(lines[i])) continue;
+    const col = column(lines[i]);
+    const shorts = [...col.matchAll(/(?<![\w-])-([A-Za-z])(?![\w-])/g)].map((m) => m[1]);
+    let long = col.match(/--([a-z][a-z0-9-]*)/);
+    if (long === null && i + 1 < lines.length && /^\s+--/.test(lines[i + 1])) {
+      long = column(lines[i + 1]).match(/--([a-z][a-z0-9-]*)/);
+    }
+    if (shorts.length === 0 || long === null) continue;
+    for (const sh of shorts) if (!found.has(sh)) found.set(sh, long[1]);
+  }
+  return found;
+}
+
+/** `longFlags`, read out of `lib/args.wac`, joining the concatenated pieces of one return. */
+function longTableOf(source: string): Map<string, string> {
+  const body = source.split("export string longFlags(string name) {")[1]?.split('\n  return "";')[0];
+  if (body === undefined) throw new Error("longFlags is not in args.wac in the shape this test reads");
+  const out = new Map<string, string>();
+  // An entry may span lines: `return "a=b," +\n  "c=d";`. Collapse each `if` body to one string first.
+  for (const chunk of body.split(/\n(?=\s*if \(name)/)) {
+    const names = [...chunk.matchAll(/name == "([a-z0-9]+)"/g)].map((m) => m[1]);
+    const pieces = [...chunk.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+      .map((m) => m[1])
+      .filter((p) => !names.includes(p));
+    if (names.length === 0 || pieces.length === 0) continue;
+    for (const n of names) out.set(n, pieces.join(""));
+  }
+  return out;
+}
+
+Deno.test("longFlags is what the installed tools document, not what someone remembered", async () => {
+  // The same argument as `gnuFlags` above, one level along. A long option that box accepts under a
+  // spelling GNU does not have is worse than one it refuses: a script written against box would not
+  // run anywhere else, and nothing would say so until it was tried.
+  const args = await Deno.readTextFile(new URL("../src/lib/args.wac", import.meta.url));
+  const flags = await Deno.readTextFile(new URL("../src/lib/flags.wac", import.meta.url));
+  const longs = longTableOf(args);
+  const implemented = tableOf(flags, "implementedFlags");
+
+  const wrong: string[] = [];
+  let checked = 0;
+  for (const [applet, letters] of implemented) {
+    const documented = await gnuLongOptions(applet);
+    if (documented.size === 0) continue;                 // no such tool here, or no help to read
+    checked++;
+    const ours = new Map<string, string>();
+    for (const entry of (longs.get(applet) ?? "").split(",").filter((e) => e !== "")) {
+      const [name, letter] = entry.split("=");
+      ours.set(letter, name);
+    }
+    for (const [letter, name] of ours) {
+      // Every long option we accept must be the one the real tool documents for that letter.
+      const real = documented.get(letter);
+      if (real === undefined) {
+        wrong.push(`${applet}: --${name} is offered for -${letter}, which documents no long form`);
+      } else if (real !== name) {
+        wrong.push(`${applet}: -${letter} is --${real} to the real tool and --${name} here`);
+      }
+      // And it must be a flag the applet actually implements, or it is a spelling for nothing.
+      if (!letters.includes(letter)) {
+        wrong.push(`${applet}: --${name} maps to -${letter}, which ${applet} does not implement`);
+      }
+    }
+  }
+  assertEquals(wrong.join("\n"), "", `${wrong.length} row(s) disagree with the installed tools`);
+
+  // **A floor on the evidence, as the `gnuFlags` check above has.** An image with no coreutils reads no
+  // help, derives an empty map for every applet, skips every one of them and reports nothing wrong —
+  // which is indistinguishable from a table that is right. The number is the count of applets whose
+  // help was actually read, not of rows compared.
+  assertEquals(
+    checked > 12,
+    true,
+    `only ${checked} of the tools were installed — is this the right image?`,
+  );
 });

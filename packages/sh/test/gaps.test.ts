@@ -76,8 +76,8 @@ Deno.test("a long option is one word, not a bundle of short ones", async () => {
     // **One scanner is left here**, and it is `ls` in `exec.wac`. The others — `options`, `head`'s
     // counter, `tr`'s loop — went with the programs they belonged to (wac-mono 0103), and
     // `packages/box/test/flags.test.ts` asks the same question of the applets that replaced them.
-    assertEquals(err("ls --all"), "ls: long options are not implemented: --all");
-    assertEquals(err("ls --sort=size"), "ls: long options are not implemented: --sort=size");
+    assertEquals(err("ls --all"), "ls: long option not implemented: --all");
+    assertEquals(err("ls --sort=size"), "ls: long option not implemented: --sort=size");
     // `echo` is not a getopt program: GNU's prints `--nonsense` and says nothing.
     assertEquals(err("echo --nonsense"), "");
     // And a name this shell does not have at all is 127 rather than an option complaint, which is the
