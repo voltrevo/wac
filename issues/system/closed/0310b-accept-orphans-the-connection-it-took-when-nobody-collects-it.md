@@ -222,3 +222,24 @@ That path is not reachable from the committed case, which feeds a child rather t
 input, so it was fixed by reading and confirmed only by the neighbouring arms still passing. It wants
 a case of its own — `cli.exec` can feed a program's standard input, which is the shape that reaches
 it.
+
+### A live site, and a comment that said it could not happen
+
+`packages/tor/src/link.wac`'s `connectRelay` bounds a dial at 15 seconds and cancels on timeout,
+under this comment:
+
+> Nothing to close — there is no handle yet — so cancelling the dial is all there is.
+
+That is the assumption this issue disproves. A connection completing *as* the deadline passes leaves
+the answer in hand: the socket exists, it is in the table, and the relay is holding an open line. So
+a tor client dialling a slow relay leaked a handle and a connection on every timeout — and the
+comment asserted the opposite, which is why nobody looked.
+
+So the `connect` remedy serves a real call site rather than a hypothetical one. The other `cancel` in
+that file — `pumpFor`'s bounded `recv` — closes its socket immediately afterwards, so nothing there
+was ever lost; worth checking rather than assuming, since the two look alike.
+
+**A comment stating the thing that is not true is worse than no comment**, and this is the second
+today: the twelve `let _ =` annotations claimed nothing was consumed at three sites where something
+was. Both were written by someone reasoning about the code rather than measuring it, and both made a
+real defect read as considered.
