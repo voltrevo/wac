@@ -96,7 +96,8 @@ import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type E
   from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
-import { classify, isWacRun as runsNatively, WAC_BIN } from "./mutate/native.ts";
+import { classify, isWacRun as runsNatively, mergeRuns, WAC_BIN,
+  type NativeVerdict } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("wac task mutate");
@@ -1300,25 +1301,45 @@ try {
         for (const f of touched) await Deno.writeTextFile(`${work}/${f}`, sources.get(f)!);
         continue;
       }
-      const cmd = testCommand(work, runDirs, filter);
-      const child = cmd.spawn();
+      // **A mixed scope is two runs, not one.** `testCommand` returns a single command, so a set
+      // holding both a directory the binary runs and one Deno runs used to go to Deno entire. That
+      // is correct only while the wrappers exist: after `issues/system/0161` step 3 deletes them the
+      // wac half cannot run under Deno at all, so it silently does not run and the mutant reads as
+      // survived. Split here, merge below.
+      const wacHalf = runDirs.filter((d) => isWacRun([d]));
+      const denoHalf = runDirs.filter((d) => !isWacRun([d]));
+      const halves = wacHalf.length > 0 && denoHalf.length > 0 ? [wacHalf, denoHalf] : [runDirs];
       let timedOut = false;
       // The full scope's baseline, not the narrowed run's: a narrowed run is a subset and therefore
       // faster, so this errs towards a longer deadline, which is the safe direction for a scoring
       // rule that counts a timeout as a kill.
+      //
+      // **One deadline across both halves rather than one each**, so a mixed scope cannot quietly
+      // take twice as long as the baseline it is measured against.
       const deadline = deadlineFor(baselineMs.get(dirs.join(" ")) ?? 0);
-      const timer = setTimeout(() => {
-        timedOut = true;
-        try { child.kill("SIGKILL"); } catch { /* already gone */ }
-      }, deadline);
-      const { code, stdout, stderr } = await child.output();
-      clearTimeout(timer);
-
-      const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+      const startedAt = Date.now();
+      let output = "";
+      const verdicts: NativeVerdict[] = [];
+      for (const half of halves) {
+        const cmd = testCommand(work, half, filter);
+        const child = cmd.spawn();
+        const timer = setTimeout(() => {
+          timedOut = true;
+          try { child.kill("SIGKILL"); } catch { /* already gone */ }
+        }, Math.max(1, deadline - (Date.now() - startedAt)));
+        const { code, stdout, stderr } = await child.output();
+        clearTimeout(timer);
+        output += new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+        if (timedOut) break;
+        // A `wac test` run says which kind; a Deno run says only non-zero, which has always meant
+        // killed here. Both become the same type so one rule merges them.
+        verdicts.push(isWacRun(half)
+          ? classify(code)
+          : code !== 0 ? { kind: "killed" } : { kind: "survived" });
+      }
       // A timeout counts as killed: an infinite loop is a detected defect, not a silent one.
-      // Otherwise a Deno run says so with any non-zero, and a `wac test` run says which kind.
-      const verdict = isWacRun(runDirs) && !timedOut ? classify(code) : null;
-      const killed = timedOut || (verdict === null ? code !== 0 : verdict.kind === "killed");
+      const verdict = timedOut ? null : mergeRuns(verdicts);
+      const killed = timedOut || (verdict !== null && verdict.kind === "killed");
       const noVerdict = verdict === null || verdict.kind === "killed" || verdict.kind === "survived"
         ? undefined
         : verdict.kind === "no-tests-here"

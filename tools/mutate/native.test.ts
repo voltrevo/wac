@@ -9,7 +9,7 @@
 //
 // Skipped without a binary, as `tools/wac/seedfresh_test.wac` skips without a seed.
 
-import { classify, isWacRun, WAC_BIN, wacTestArgs } from "./native.ts";
+import { classify, isWacRun, mergeRuns, WAC_BIN, wacTestArgs } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
 /** A file with several passing tests and no host oracle, so every code below is reachable. */
@@ -163,4 +163,43 @@ Deno.test("an empty scope is not a native run", () => {
   if (isWacRun([], new Set(["gzip"]), new Set(["packages/gzip/test/wac"]))) {
     throw new Error("`wac test` with no directories has nothing to select from");
   }
+});
+
+// ── `mergeRuns`, for the mixed scopes step 3 creates ────────────────────────────────────────────
+
+Deno.test("a kill in either half is a kill", () => {
+  for (const parts of [
+    [{ kind: "killed" }, { kind: "survived" }],
+    [{ kind: "survived" }, { kind: "killed" }],
+    // Even when the other half could not run: the catch happened.
+    [{ kind: "killed" }, { kind: "abort", why: "nothing matched" }],
+  ] as const) {
+    if (mergeRuns([...parts]).kind !== "killed") throw new Error(`lost a kill in ${JSON.stringify(parts)}`);
+  }
+});
+
+Deno.test("an abort beside a survival is an abort, not a survival", () => {
+  // The rule that matters. The aborted half might have been the half that killed it, and reporting
+  // survival here inflates the score with a mutant nothing measured.
+  const got = mergeRuns([{ kind: "survived" }, { kind: "abort", why: "nothing matched the filter" }]);
+  if (got.kind !== "abort") throw new Error(`survival outvoted an abort: ${got.kind}`);
+});
+
+Deno.test("`no-tests-here` defers to the half that ran", () => {
+  if (mergeRuns([{ kind: "no-tests-here" }, { kind: "survived" }]).kind !== "survived") {
+    throw new Error("an absence outvoted a real run");
+  }
+  if (mergeRuns([{ kind: "no-tests-here" }, { kind: "killed" }]).kind !== "killed") {
+    throw new Error("an absence outvoted a kill");
+  }
+  if (mergeRuns([{ kind: "no-tests-here" }, { kind: "no-tests-here" }]).kind !== "no-tests-here") {
+    throw new Error("two absences made a verdict");
+  }
+});
+
+Deno.test("both halves surviving is the only way to survive", () => {
+  if (mergeRuns([{ kind: "survived" }, { kind: "survived" }]).kind !== "survived") {
+    throw new Error("two clean runs did not survive");
+  }
+  if (mergeRuns([]).kind !== "no-tests-here") throw new Error("nothing at all is not a verdict");
 });

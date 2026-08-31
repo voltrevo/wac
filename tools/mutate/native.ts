@@ -104,3 +104,34 @@ export function isWacRun(
   if (dirs.every((d) => hostlessPackages.has(d.split("/")[1] ?? ""))) return true;
   return dirs.every((d) => nativeRunnableDirs.has(d));
 }
+
+/**
+ * One verdict from the halves of a **mixed** scope — some directories run by the binary, the rest by
+ * Deno.
+ *
+ * Needed by step 3 of `issues/system/0161` rather than by anything today: while the wrappers exist a
+ * mixed set can go to Deno entire and the wac tests in it still run, through their wrappers. Delete
+ * the wrappers and that stops being true — the wac half cannot run under Deno at all, so it silently
+ * does not run, and a mutant nothing ran is recorded as **survived**.
+ *
+ * The order of the rules is the whole content:
+ *
+ * - **`killed` wins outright.** A half that caught the mutant caught it; that the other half could
+ *   not run does not make the catch less true.
+ * - **`abort` beats `survived`.** A half that could not run might have been the half that killed it,
+ *   so "everything I managed to run passed" is not a statement that the mutant survived. This is the
+ *   direction that matters: scoring it either way is a made-up number, and the made-up number here
+ *   flatters the suite.
+ * - **`no-tests-here` is an absence, not a verdict**, and defers to whatever the other half saw. Two
+ *   absences are still an absence.
+ */
+export function mergeRuns(parts: NativeVerdict[]): NativeVerdict {
+  if (parts.length === 0) return { kind: "no-tests-here" };
+  const killed = parts.find((v) => v.kind === "killed");
+  if (killed !== undefined) return killed;
+  const aborted = parts.find((v) => v.kind === "abort");
+  if (aborted !== undefined) return aborted;
+  const survived = parts.find((v) => v.kind === "survived");
+  if (survived !== undefined) return survived;
+  return { kind: "no-tests-here" };
+}
