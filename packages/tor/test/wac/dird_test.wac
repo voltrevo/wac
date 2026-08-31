@@ -20,7 +20,8 @@
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec, Pending } from "std/platform.wac";
+import { Read } from "core";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
@@ -255,4 +256,118 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   stop(cli, d);
   cli.remove(dir, true).wait();
   return t.report();
+}
+
+/**
+ * A client that stops mid-request must not hold the door.
+ *
+ * **This is what `issues/system/0294c` was filed about**, and the serial test above cannot see it: it
+ * makes one request at a time, so a server that serves one at a time passes it perfectly. The
+ * property the async port bought needs two clients at once to be visible at all.
+ *
+ * The stalled client sends a request line and no blank line, so `dird`'s parser never says `ready`
+ * and its `answer` suspends in `recv` waiting for the rest. Before the port that suspension *was*
+ * the accept loop — `answer` was called from it and returned a value it needed — so the second
+ * client would not have been accepted until the first was capped or gave up. `answer` is now called
+ * without being awaited, so accepting continues while the first client is parked.
+ *
+ * Bounded rather than open-ended: the good request either answers promptly or it does not, and a
+ * `waitForLogWithin`-style timeout would turn "blocked" into "slow" and pass. The stalled socket is
+ * held open for the whole check, because closing it is what would let a serial server through.
+ */
+export string test_a_stalled_client_does_not_hold_the_door(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/dird-stall";
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+
+  string mod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
+                            string[]("--allow-read", "--allow-net"));
+  t.isTrue(mod != "", "the server built");
+  if (mod == "") { return t.report(); }
+
+  string consensus = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+                           "consensus");
+  string certificate = strOf(jsonFile(cli, "packages/tor/test/data/authcert_generated.json"),
+                             "certificate");
+  string routerdesc = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+                            "descriptor");
+  cli.writeFile(dir + "/consensus", consensus.toBytes()).wait();
+  cli.writeFile(dir + "/cert", certificate.toBytes()).wait();
+  cli.writeFile(dir + "/desc", routerdesc.toBytes()).wait();
+
+  Daemon d = start(cli,
+    quoted(binaryPath(cli)) + " " + quoted(mod) + " " + quoted(dir + "/consensus") + " " +
+      quoted(dir + "/cert") + " " + quoted(dir + "/desc") + " 0",
+    dir + "/log");
+  t.isTrue(d.ok(), "dird started — " + d.error);
+  if (!d.ok()) { return t.report(); }
+
+  if (!waitForLogWithin(core, cli, d, "serving the directory on 127.0.0.1:", 20000)) {
+    t.fail("dird never said it listened. Its output was: " + logOf(cli, d));
+    stop(cli, d);
+    return t.report();
+  }
+  i32 port = portFrom(logOf(cli, d));
+  t.isTrue(port > 0, "and named the port it got");
+  if (port <= 0) { stop(cli, d); return t.report(); }
+
+  // The stalled client: a request line, no blank line, and the socket kept open.
+  i32 stalled = cli.connect("127.0.0.1", port).wait().handle;
+  t.isTrue(stalled >= 0, "the stalling client connected");
+  if (stalled < 0) { stop(cli, d); return t.report(); }
+  bool sent = cli.send(stalled, "GET /tor/status-vote/current/consensus HTTP/1.0\r\n".toBytes()).wait();
+  t.isTrue(sent, "and sent a request it will never finish");
+  // Long enough that the server has certainly read it and suspended, so this is not a race the
+  // second client wins by arriving first.
+  core.sleepMillis(200).wait();
+
+  // The second client, whose request is complete. Before the port this could not even be accepted.
+  //
+  // **Bounded, because the pre-port failure is a hang and not a wrong answer.** Reverting
+  // `dird.wac` and running this took ten minutes and was killed rather than reported: the stalled
+  // client holds the accept loop, so this connection is never served and an unbounded read waits for
+  // ever. A test that hangs instead of failing tells a future reader nothing and costs a whole gate,
+  // so the wait has a deadline and the deadline is the assertion.
+  Reply served = servedWithin(core, cli, port, "/tor/status-vote/current/consensus", 5000);
+  t.eqI32(served.status, 200,
+          "a second client is served while the first is still mid-request — got " +
+          itoa(served.status) + ". A status of -2 is the deadline: nothing answered, which is the "
+          + "head-of-line block issues/system/0294c describes.");
+  t.isTrue(served.body.len() > 0, "and got the consensus, not an empty body");
+
+  cli.closeSocket(stalled);
+  stop(cli, d);
+  return t.report();
+}
+
+/**
+ * `get`, with a deadline — `Reply(-2, "")` when nothing answered in time.
+ *
+ * `request` above reads until end-of-stream, which is right for a server that answers and closes and
+ * wrong for asking *whether* it answers at all. `waitAny(ids, ms)` is the platform's own deadline:
+ * one ticket, and a negative answer means it did not become ready.
+ */
+Reply servedWithin(Core core, Cli cli, i32 port, string target, i32 ms) {
+  i32 handle = cli.connect("127.0.0.1", port).wait().handle;
+  if (handle < 0) { return Reply(-1, ""); }
+  cli.send(handle, ("GET " + target + " HTTP/1.0\r\n\r\n").toBytes()).wait();
+
+  string all = "";
+  bool reading = true;
+  while (reading) {
+    Pending<Read> p = cli.recv(handle);
+    if (core.waitAny(i32[](p.id), ms) < 0) { cli.closeSocket(handle); return Reply(-2, ""); }
+    match (p.wait()) {
+      case Data(got): { all = all + string.fromBytes(got); }
+      case End: { reading = false; }
+      case Failed(why): { reading = false; }
+    }
+  }
+  cli.closeSocket(handle);
+
+  i32 at = all.indexOf("\r\n\r\n");
+  string head = at < 0 ? all : all.slice(0, at);
+  i32 sp = head.indexOf(" ");
+  return Reply(sp < 0 ? -1 : numberAt(head, sp + 1), at < 0 ? "" : all.slice(at + 4, all.len()));
 }

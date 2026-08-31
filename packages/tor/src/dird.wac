@@ -126,16 +126,31 @@ export i32 main(Core core, Cli cli) {
   }
   core.log("dird: serving the directory on 127.0.0.1:" + itoa(listener.port));
 
+  accepting(core, cli, listener.handle, Held(docs));
+  // Nothing has suspended yet: `accepting` ran as far as its first `await` and handed back a ticket.
+  // `drain` is what dispatches every continuation from here on, and it is the whole event loop.
+  core.drain();
+  return 0;
+}
+
+/**
+ * Accept for ever, and serve each client **without waiting for it**.
+ *
+ * `design/lang/0014` A1's program. `answer` is called and deliberately not awaited: it runs as far as
+ * its first suspension now and the rest of it is dispatched by `drain`, so a client that never
+ * finishes a request line no longer holds the door. That head-of-line block is what
+ * `issues/system/0294c` records as the reason to want this here — a directory port is reachable by
+ * anyone who can route to it.
+ */
+async void accepting(Core core, Cli cli, i32 listener, Held held) {
   while (true) {
-    Socket conn = cli.accept(listener.handle).wait();
+    Socket conn = await cli.accept(listener);
     if (conn.handle < 0) {
       core.warn("dird: accept: " + conn.error);
-      return 1;
+      return;
     }
-    docs = answer(core, cli, conn, docs);
-    cli.closeSocket(conn.handle);
+    answer(core, cli, conn, held);
   }
-  return 0;
 }
 
 /**
@@ -145,26 +160,36 @@ export i32 main(Core core, Cli cli) {
  * cap matters: without it a client that never finishes a request line holds this loop forever, and a
  * directory port is reachable by anyone who can route to it.
  */
-DirDocuments answer(Core core, Cli cli, Socket conn, DirDocuments docs) {
+async void answer(Core core, Cli cli, Socket conn, Held held) {
   Buf pending = Buf.create();
   while (true) {
-    DirAction act = dirStep(pending.bytes(), docs);
+    // **Read and write with no suspension between them**, which is the whole of what concurrency
+    // costs here — `issues/system/0294c`. This used to take `docs` as a parameter and hand a new one
+    // back, so each call held a private copy across its `recv` and the last writer won: a descriptor
+    // filed by one client was lost when another that started earlier returned its stale copy.
+    // Nothing would have failed. `held` is read where it is used and written immediately, and wac's
+    // concurrency is cooperative, so between those two lines no other client can run.
+    DirAction act = dirStep(pending.bytes(), held.docs);
     if (act.ready) {
       if (act.descriptor.len() > 0) {
-        docs = filed(docs, act.descriptor, act.blindedKey, MAX_STORED);
-        core.log("dird: stored a descriptor, " + itoa(docs.hsDescriptors.len()) + " held");
+        held.docs = filed(held.docs, act.descriptor, act.blindedKey, MAX_STORED);
+        core.log("dird: stored a descriptor, " + itoa(held.docs.hsDescriptors.len()) + " held");
       } else if (act.refusedFor != PUB_OK) {
         core.warn("dird: refused a descriptor, reason " + itoa(act.refusedFor));
       }
-      cli.send(conn.handle, act.response).wait();
-      return docs;
+      bool sent = await cli.send(conn.handle, act.response);
+      if (!sent) { core.warn("dird: the reply could not be sent"); }
+      cli.closeSocket(conn.handle);
+      return;
     }
     if (pending.bytes().len() > MAX_REQUEST + MAX_BODY) {
       core.warn("dird: a request larger than " + itoa(MAX_REQUEST + MAX_BODY) + " bytes, dropped");
-      return docs;
+      cli.closeSocket(conn.handle);
+      return;
     }
     bool more = false;
-    match (cli.recv(conn.handle).wait()) {
+    Read got = await cli.recv(conn.handle);
+    match (got) {
       case Data(bytes): {
         pending.pushAll(bytes);
         more = true;
@@ -172,8 +197,18 @@ DirDocuments answer(Core core, Cli cli, Socket conn, DirDocuments docs) {
       case End: { }
       case Failed(why): { core.warn("dird: the connection failed: " + why); }
     }
-    if (!more) { return docs; }
+    if (!more) { cli.closeSocket(conn.handle); return; }
   }
+}
+
+/**
+ * The one cell the documents live in.
+ *
+ * Not a parameter and a return value, which is what made the old shape lose updates: a value passed
+ * in is a *copy* for as long as the callee holds it, and `answer` holds it across a `recv`.
+ */
+struct Held {
+  DirDocuments docs;
 }
 
 u8[] readOr(Core core, Cli cli, string path) {
