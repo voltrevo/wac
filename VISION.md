@@ -82,3 +82,24 @@ JavaScript imports a wac module as a module, with types. An enum arrives as a cl
 constructors and its methods, held by reference: wac compiles to WebAssembly GC, so the object on the
 JavaScript side *is* the one in the module. The glue is generated, so a signature cannot drift from
 what it calls. **Done.**
+
+---
+
+## Ordinary code
+
+```wac
+/** The first element `p` accepts, or nothing. */
+T? find<T>(T[] xs, fn[bool(T)] p) {
+  for (T x in xs) {
+    if (p(x)) {
+      return x;
+    }
+  }
+  return null;
+}
+```
+
+Most of a program is this. It takes no capability, so it cannot reach the world, and the signature is
+the whole of that argument — nothing else had to be arranged. Absence is a type rather than a
+sentinel, a loop says what it walks rather than how it counts, and a predicate is a value.
+**Not yet.**
