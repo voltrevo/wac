@@ -1,0 +1,48 @@
+// expect: answers f = 7
+// why: `T?` in a generic body kept its `?` once `T` became a primitive
+//
+/**
+ * A generic that answers `T?`, instantiated at a **primitive**.
+ *
+ * `issues/lang/0300a`. The module the compiler emitted was refused by the engine — not a wrong
+ * answer but an invalid one, which is the worse failure: the program was accepted and could not run.
+ * The wasmtime host named it where the v8 host said only "rejected":
+ *
+ *     failed to compile: wasm[0]::function[1]::firstOf<i32>
+ *     Invalid input WebAssembly code at offset 971: type mismatch: expected i32 but nothing on stack
+ *
+ * **A nullable primitive is a reference to a box** — the one-field struct `i32?` really is — while a
+ * nullable struct is just the struct's own reference. `typeOfTyName`'s `Nullable` arm handled an
+ * inner `Prim` token and sent everything else to a branch that returned the inner name *without*
+ * the `?`. A type parameter is a `Named`, so `T?` went that way: harmless for `P?`, whose name
+ * already denotes a nullable reference, and wrong for `i32?`, whose signature came out as a bare
+ * `i32` while `return null` pushed nothing.
+ *
+ * So it needed all four of generic, nullable, `return null`, and a primitive argument; three of them
+ * compile. That is why this case pairs an empty call with a full one — the null path is the half
+ * that was broken, and a case that only asked for `7` would pass on the bug.
+ */
+T? firstOf<T>(T[] xs) {
+  if (xs.len() == 0) { return null; }
+  return xs[0];
+}
+
+export i32 f() {
+  i32? empty = firstOf(i32[0]());
+  if (!(empty is null)) { return 0 - 1; }
+  i32? full = firstOf(i32[](7, 8, 9));
+  if (full is null) { return 0 - 2; }
+
+  // **A second primitive and a reference**, because the first fix reached for `isWritableValType`
+  // — which counts `anyref` and `i31ref`, the two the `Prim` arm returns *without* a `?` because
+  // they are already references, and `u8`/`u16`, which it does not box. That version would have
+  // spelled `anyref?`. These two hold the arm and the fix to the same list.
+  i64? wide = firstOf(i64[](42 as i64));
+  if (wide is null) { return 0 - 3; }
+  string? text = firstOf(string[]("hi"));
+  if (text is null) { return 0 - 4; }
+  string? noText = firstOf(string[0](fill: ""));
+  if (!(noText is null)) { return 0 - 5; }
+
+  return full!;
+}

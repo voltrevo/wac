@@ -108,15 +108,15 @@ depth (200KB did not make it worse), and every minimal reproduction of the proxy
 and wasmtime arms were measured after the trap had already stopped appearing anywhere, so they say
 nothing.
 
-## Everything above was measured against a four-hour-old compiler
+## The seed is not stale after all, and the paragraph here said it was
 
-The seed that built the proxy for every run here dates from 01:55, and master moved 37 commits ahead
-in the meantime — agent-a's and agent-c's, including work on the compiler. `CLAUDE.md` is explicit
-that another agent's change to `packages/wacc/src` ages your seed the moment you merge it, and that
-the symptom is "an ordinary file failing to emit with a message about lambdas or about a construct
-that was fine yesterday".
+This said the measurements were made against a four-hour-old compiler while master moved 37 commits
+ahead "including work on the compiler". The second half was written without checking and is wrong:
+**none** of those 37 commits touch `packages/wacc/src`, `std` or `core` — they are design notes,
+issues, and `packages/box` tests. The seed dating from 01:55 is therefore current with respect to
+them, and `wac task seed` had nothing to rebuild.
 
-So there are two readings of "it stopped reproducing" and this evidence cannot separate them: the
-fault is timing-sensitive and went quiet, or it belonged to a compiler build that has since been
-replaced. **Re-testing after a seed rebuild is therefore the first thing to do**, and it is cheap
-now that the merge has happened — the gate rebuilds the seed before it runs the suite.
+So there is no "two readings" here: a seed rebuild is not the first thing to try, because there is
+nothing to rebuild. Left in rather than deleted because the reasoning was sound and only the premise
+was unchecked — `CLAUDE.md`'s warning about another agent's compiler change ageing your seed is real,
+it just did not happen this time.
