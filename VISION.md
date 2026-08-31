@@ -124,3 +124,28 @@ i32 scan(Sys sys) {
 holds, and nothing spawned. A grant can only be removed: a subsystem asking for more than its parent
 holds gets what its parent holds, so the ceiling falls as you go inward and never rises. It is what
 the host does when it runs `main`, one level up. **Not yet.**
+
+---
+
+## Markup is a value
+
+```wac
+import { div, p } from "core/html.wac";
+
+Node greeting(string who) {
+  return <p class="hi">Hello, {who}</p>;
+}
+
+Node page(string who) {
+  return <div><greeting who={who} /></div>;
+}
+```
+
+A tree of `Node`, an ordinary type from `core` — markup is data a program builds and returns, not a
+template language beside it.
+
+**Every tag is a name in scope.** `div` and `p` were handed over by an import, `greeting` is mine,
+and nothing distinguishes them: a tag is a function, its attributes are that function's named
+parameters and its children are a parameter. So attributes are typed wherever they appear, a tag that
+takes no children refuses them, and `<dvi>` is an unresolved name rather than an element nobody
+meant. **Not yet.**
