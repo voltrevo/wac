@@ -1,7 +1,8 @@
 # 0305 — a second stream to a target that already served one comes back empty
 
-- **Status:** open
-- **Claimed by:** (nobody)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -219,3 +220,27 @@ to check, rather than the socket or the flags, both of which the log exonerates.
 The stray line is worth keeping too: `relay command 3 on stream 1 (this circuit has no stream)` is a
 RELAY_END for a stream the exit has already torn down. Harmless on its own, but it says the two ends
 disagree about when stream 1 was over, which is the same seam.
+
+## Fixed: a stream reader outlived its stream
+
+One `core.log` at the arming site ended it. Four circuits, four readers armed, and **never a stream
+2** — so `armConn`'s `hasStream && !streamArmed` was never true again, which means `streamArmed` was
+still set from the first stream.
+
+The far-end close does `cli.closeSocket(k.streamSock); k.hasStream = false;` and leaves
+`streamArmed` alone. `armOne` then loops back to awaiting a ticket that will never answer, and no
+reader is ever started for the next stream on that circuit. Every stream after the first got a
+socket, got the request, and had nobody reading its answers — which is exactly what
+"68 bytes in, 0 bytes out" said in the first evidence collected, five characterisations ago.
+
+`armOne` already leaves when its *circuit* goes; the fix is the same exit one level down, for the
+stream. **Only source 2 needs it**: `hasNext` goes false only where the circuit is being dropped, and
+the existing `findCirc(...) < 0` check catches that. A stream is the one thing that can end while its
+circuit lives, so it is the one case nothing else notices.
+
+`socksnet_test.wac` runs three streams down one circuit and asserts each answer comes back. It reads
+0 bytes on rounds 1 and 2 without the fix, so it is a regression test rather than one that would pass
+either way.
+
+**`relayd`'s limit is now "one stream per circuit *at a time*"**, and its header says so — the
+sequential case failing silently was strictly worse than the refusal the concurrent case gets.

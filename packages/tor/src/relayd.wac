@@ -44,13 +44,17 @@
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
 //
-// **One stream per circuit.** A second RELAY_BEGIN on a circuit that already carries one is answered
-// *"a second stream on one circuit is not supported"* and an END with RESOURCELIMIT. Written down
-// here because it is not a detail of this file: `socks.wac` reuses a circuit per destination *port*,
-// so two SOCKS clients asking for the same port share a circuit and the second one is refused by
-// this relay — which reads at the client as "the exit is out of resources" and looks like a proxy
-// bug. It cost exactly that confusion in `packages/tor/test/wac/socksnet_test.wac`, whose two-client
-// case now uses two ports for this reason.
+// **One stream per circuit at a time**, and the "at a time" was won on 2026-08-31. A second
+// RELAY_BEGIN while one is still open is answered *"a second stream on one circuit is not
+// supported"* and an END with RESOURCELIMIT. That matters outside this file: `socks.wac` reuses a
+// circuit per destination *port*, so two SOCKS clients asking for the same port share a circuit and
+// the second is refused — which reads at the client as "the exit is out of resources" and looks like
+// a proxy bug.
+//
+// **Sequential streams used to fail silently, which was worse than the refusal.** Every stream after
+// the first got a socket and the request and had nobody reading its answers, because a stream reader
+// outlived its stream — see the note in `armOne`. `issues/system/0305b`, and
+// `packages/tor/test/wac/socksnet_test.wac` runs three streams down one circuit to keep it fixed.
 //
 // ## It does extend, and this said otherwise for four weeks
 //
@@ -897,6 +901,20 @@ async void armOne(Core core, Cli cli, Relay x, Conn c, i32 source, i32 circId) {
     if (source != 0 && back < 0) { disarm(c, source, circId); return; }
     feedConn(core, cli, x, c, source, back, r);
     if (!c.live) { disarm(c, source, circId); forget(core, cli, x, c); return; }
+    // **A stream reader outlives its stream unless it is told.** `armOne` already leaves when its
+    // *circuit* goes; a stream ending is the same event one level down, and it was not handled: the
+    // far-end close sets `hasStream = false` and closes the socket but leaves `streamArmed` true, so
+    // this loop went back to awaiting a ticket that would never answer and `armConn` — which arms on
+    // `hasStream && !streamArmed` — could never start a reader for the *next* stream on that
+    // circuit. Every stream after the first got a socket, got the request, and had nobody reading
+    // its answers. `issues/system/0305b`.
+    //
+    // **Only source 2 needs this, and that is not an oversight about the other two.** A next-hop
+    // reader's `hasNext` goes false only where the circuit itself is being dropped, and the
+    // `findCirc(...) < 0` check above already makes that reader leave and clears its flag. A stream
+    // is the one thing here that can end while its circuit lives on, so it is the one case nothing
+    // else notices.
+    if (source == 2 && back >= 0 && !c.circs[back]!.hasStream) { disarm(c, source, circId); return; }
     // **Feeding can create circuits**, and a reader only ever re-reads its own source — so the sweep
     // that starts a reader for anything newly readable still has to happen here. It is the one thing
     // the loop does not replace: the old `fed` called it for the same reason.

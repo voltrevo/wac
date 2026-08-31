@@ -41,7 +41,7 @@
 // hands control back. A test that wants to *talk to* the proxy while it is up cannot use it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Pending, Socket } from "std/platform.wac";
 import { Read } from "core";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir } from "../../../wactest/src/host.wac";
@@ -422,6 +422,38 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               t.isTrue(contains(logOf(cli, proxy), "stream 1 ended: done"),
                        "and socks saw the stream open and end on its circuit");
 
+              // ── Three streams down one circuit, which is `issues/system/0305b` ──
+              //
+              // **The case is its own target.** It listens, sends a CONNECT naming its own port,
+              // and calls `accept` afterwards — so nothing has to be in two places at once, and a
+              // target that does not log what it receives (`dird` does not) stops mattering.
+              //
+              // Every request always arrived; only the first stream's *answer* came back. A stream
+              // reader in `relayd` outlived its stream: the far-end close set `hasStream = false`
+              // and left `streamArmed` true, so `armConn` could never start a reader for the next
+              // stream on that circuit. Rounds 1 and 2 are the regression — they read 0 bytes
+              // before the fix and the full answer after.
+              Socket mine = cli.listen("127.0.0.1", 0).wait();
+              t.isTrue(mine.handle >= 0, "the case's own target listened — " + mine.error);
+              for (i32 round = 0; round < 3 && mine.handle >= 0; round++) {
+                Opened o = opened(core, cli, got, mine.port);
+                t.isTrue(o.ok, "round " + itoa(round) + " connected through the proxy — " + o.why);
+                if (!o.ok) { continue; }
+                cli.send(o.handle, "GET / HTTP/1.0\r\n\r\n".toBytes()).wait();
+                Socket from = cli.accept(mine.handle).wait();
+                t.isTrue(from.handle >= 0, "round " + itoa(round) + ": the exit dialled the target");
+                if (from.handle < 0) { cli.closeSocket(o.handle); continue; }
+                u8[] arrived = readSome(core, cli, from.handle, 6);
+                t.isTrue(arrived.len() > 0, "round " + itoa(round) + ": the request arrived");
+                cli.send(from.handle, "HTTP/1.0 200 OK\r\n\r\nhi".toBytes()).wait();
+                cli.closeSocket(from.handle);
+                Carried back = answered(core, cli, o.handle, "");
+                t.isTrue(contains(back.body, "hi"),
+                         "round " + itoa(round) + ": and the answer came back down the same circuit "
+                         + "— " + back.why + ", " + itoa(back.body.len()) + " bytes");
+              }
+              if (mine.handle >= 0) { cli.closeSocket(mine.handle); }
+
               // ── Two clients at once, which is the case the `owner` array can get wrong ──
               //
               // Both are opened and both send before either reads, so the proxy is carrying two
@@ -429,7 +461,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // unmistakable — one real document, one 404 — because the failure this guards
               // against is not "no bytes" but *the other client's* bytes, and two 200s that both
               // look plausible would let a swap pass.
-              // **Two targets, because one exit carries one stream per circuit.** `socks` reuses a
+              // **Two targets, because one exit carries one stream per circuit *at a time*.** `socks` reuses a
               // circuit per destination *port*, so two clients asking for the same port share a
               // circuit — and `relayd` answers the second RELAY_BEGIN with *"a second stream on one
               // circuit is not supported"*, which reaches the client as "the exit is out of
