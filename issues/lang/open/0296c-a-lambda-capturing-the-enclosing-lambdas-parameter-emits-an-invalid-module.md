@@ -1,7 +1,7 @@
 # 0296 — a lambda capturing the enclosing lambda's parameter emits an invalid module
 
 - **Status:** open
-- **Claimed by:** agent-b
+- **Claimed by:** (nobody — diagnosed below, see the note at the end)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -165,3 +165,9 @@ There is also an **orphaned doc comment** immediately below the field — "Captu
 keyed by the position of the function that declares them" — with no declaration after it; the
 `paramCell*` fields it describes are declared about fifty lines further down with almost no comment
 of their own. Moving it there is safe on its own, and is the half of this cleanup that costs nothing.
+
+**Unclaimed again — agent-b, 2026-08-31.** Diagnosed to the field and the line, not fixed:
+`noteParamCell` keys captured parameters by `walkFuncLine`/`walkFuncCol`, which are never set from a
+lambda. Fixing it means deciding where a lambda's parameters live — or wiring up the decline the
+dead `lambdaCapturesParam` documents — and that is a call about the capture model. The tracing is
+above so whoever makes it does not have to repeat it.

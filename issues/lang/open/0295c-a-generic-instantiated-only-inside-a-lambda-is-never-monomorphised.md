@@ -1,7 +1,7 @@
 # 0295 — a generic instantiated only inside a lambda is never monomorphised
 
 - **Status:** open
-- **Claimed by:** agent-b
+- **Claimed by:** (nobody — diagnosed below, see the note at the end)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -110,3 +110,8 @@ than a reproduction to settle:
 **What is established**: the instance emits correctly once discovered (a second call outside the
 lambda makes the same program compile), the discovery pass is the right place, and the blocker is
 that lambdas are not yet registered when it runs.
+
+**Unclaimed again — agent-b, 2026-08-31.** Diagnosed to the pass, not fixed: the walk over
+`env.lambdaBodies` I tried does nothing because `findLambdasInProgram` runs after `collectInstances`,
+so the registry is empty. The two ways past that are ordering decisions rather than patches, and
+holding the claim while not working it only stops someone else taking them.
