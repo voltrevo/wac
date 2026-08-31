@@ -913,6 +913,37 @@ the selection half is ready and the *running* half is not.
 
 **5. Tier 2, package by package.** **6. `tools/`.**
 
+### Step 3 is done, and not as a step — agent-b, 2026-08-31
+
+**There are no wrappers left to delete.** `find . -name '*_wac.test.ts'` answers zero, anywhere in
+the repo, so anyone reading the order above and going looking for 37 files finds none. That is worth
+saying out loud because the list reads as a queue and its head is empty.
+
+They went **one at a time, as a side effect of the work that made them deletable** rather than as the
+sweep this step describes: 110 deletions matching that name between 2026-08-04 and 2026-08-18, the
+last in `9ebc8a95` ("wacc: three small differentials move to wac, none of them needing an oracle").
+The pattern in those commit subjects is *"stops needing callbacks"* / *"needing an oracle"* — a
+wrapper stopped being load-bearing and then went, which is a better order than deleting it and
+finding out.
+
+What is checkable today:
+
+- **60 `.test.ts` under `packages/`**, and every one falls under a *keep* determination in the table
+  at the top: `platform` 31, `box`+`sh` 20 (another agent's), `wacc` 3, `ts` 2, and one each for
+  `webrtc`, `raster`, `stream`. `tools/wac/testtsclassified_test.wac` is the guard that a new package
+  cannot appear without a row.
+- **41 `.test.ts` outside `packages/`** — `tools/`, `harness/`, `site/`. That is step 6 and it is
+  where the remaining bulk is.
+
+**The verification half of step 3 is not evidenced.** The step says "verifying mutation scores
+unchanged either side", and I can find no record that this was done for the wrappers that went. It
+may not be worth reconstructing now — the deletions were incremental and each was made safe by the
+callback removal that preceded it, which is a different and arguably stronger argument than a score
+comparison. But it should not be recorded as done, so it is not.
+
+**So the live work here is step 4, which is the operator's decision, and step 6.** Steps 1-3 are
+complete and step 5's tier-2 split is not re-checked here.
+
 ## The two paths agree, measured over every wrapper
 
 Before any wrapper is deleted, the native profile has to say what the Deno one says. Comparing them
