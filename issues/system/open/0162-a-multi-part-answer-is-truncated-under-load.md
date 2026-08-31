@@ -161,8 +161,11 @@ attached to a slot that is free for the next call. The `ST_PENDING → ST_RUNNIN
 
 **What would confirm or kill it**, cheaper than reproducing the fuzz failure:
 
-- Whether `abandon` is reached for a slot cancelled at `ST_READY`. If the sweep visits `ST_FREE`
-  slots too then this is wrong and worth saying so here.
+- ~~Whether `abandon` is reached for a slot cancelled at `ST_READY`.~~ **Checked: it is not.** The
+  sweep is `if (st === ST_PENDING) take(s); else if (st === ST_CANCELLED) abandon(s);` and nothing
+  looks at `ST_FREE`. A slot the fast path released straight to free is never visited again, so its
+  `pending[slot]` is never cleared. That does not make the hypothesis true — it removes the cheapest
+  way it could have been false.
 - Whether a multi-part answer can be cancelled mid-sequence at all — if the guest's `collect` holds
   the slot across chunks, the window may not exist.
 - `pending[slot] !== null` at the moment a slot is handed out would be a cheap assertion, and it
