@@ -2179,10 +2179,18 @@ to look at.
 An old cached profile has no `native` field and reads as the empty set, so it declines to run
 anything natively — slow, and unable to be wrong.
 
-**What is still open is what this section originally said was open**: a **mixed** set still goes to
-Deno entire, because `testCommand` returns one command. After step 3 deletes the wrappers, the wac
-half of such a set cannot run under Deno at all, and a mutant nothing ran reads as survived. That is
-the merge described above and it is the part that can silently change a score.
+**And the mixed set, which this section said was the rest of step 2, is done too.** A scope holding
+both kinds is now two runs under one deadline — one each would let a mixed scope quietly take twice
+the baseline it is measured against — and `mergeRuns` in `native.ts` combines them. The order of its
+rules is the content: a kill in either half is a kill, since the catch happened whatever the other
+half did; an **abort beats a survival**, because the half that could not run might have been the one
+that would have killed it; and `no-tests-here` is an absence that defers. The second rule is the one
+that matters, and the wrong answer there is the one that flatters the suite.
+
+Both halves are mapped to the same verdict type before merging — a Deno run's non-zero has always
+meant killed here — so there is one rule rather than two paths that agree by construction.
+
+**So step 2 is complete and step 3 is unblocked**, with the caveat below.
 
 **Not verified by a sweep.** `--explain-selection --package gzip` is 26m45s and there is no cheaper
 scope, so the claim here is the predicate's unit tests and the measured table above, not a native
