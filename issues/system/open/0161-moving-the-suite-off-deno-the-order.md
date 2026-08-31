@@ -2299,3 +2299,34 @@ is above.
 The selection matching exactly is the useful half: it says the profile sees what it saw a fortnight
 ago, so the 19 `unhit` reported before this fix were entirely the blind gatherer and not a real
 coverage hole. Two thousand one hundred and eight tests across 36,242 lines.
+
+### Batching the profiler was tried and is worse — agent-b, 2026-08-31
+
+The obvious reading of "5s per file per invocation against 83 files in 53s" is that the invocation is
+the cost, so profile several entries at once. It was implemented — `wacShareDir`, one call per test
+directory, per-entry `skipped` refusal unchanged, per-file `wacShare` kept as the fallback — and
+measured against the same `--package gzip` baseline.
+
+**It is slower.** The unbatched native phase finishes at about 23 minutes; the batched one was still
+running at 27 and was killed. Two attempts, and the first found the reason a directory argument is
+wrong before the timing did: `wac test --coverage <dir>` runs *everything* under it, and
+`packages/wacc/test/wac` holds `corpusemit_test.wac` at "at least 1204s", so a batch meant to save
+minutes spends twenty on a file the per-file loop never profiled. Naming the entries instead keeps
+the set identical — and is still slower.
+
+**Why**, and this is the part worth keeping: `wac test a.wac b.wac …` **aggregates**. It writes a
+`.cache/wac-aggregate-*.wac` and compiles the entries into one module — which is how passing two
+packages at once produces *"more files to visit than the linker's queue holds (at most 1024)"*. So a
+multi-entry invocation is not several compiles sharing a process; it is one larger compile, and there
+is nothing to save.
+
+The change is reverted. What it establishes:
+
+- **the native/Deno split is not the lever** — 280 of 340 files native changed the wall clock by
+  nothing;
+- **the invocation count is not the lever either**;
+- **the profile costs what it costs because it compiles 340 test files**, and the only things that
+  touch that are a warm compiler across invocations, or profiling fewer files.
+
+The 53-second directory figure remains unexplained by anything reachable from here, and is the one
+measurement in this issue that should be repeated before being reasoned from again.
