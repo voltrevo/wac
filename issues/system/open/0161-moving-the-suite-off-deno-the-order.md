@@ -2330,3 +2330,33 @@ The change is reverted. What it establishes:
 
 The 53-second directory figure remains unexplained by anything reachable from here, and is the one
 measurement in this issue that should be repeated before being reasoned from again.
+
+### The 53 seconds was warm and every profile run is cold — agent-b, 2026-08-31
+
+This is the answer to why none of the levers moved, and it is one line of `stageProject`:
+
+    const notSource = new Set([".git", "node_modules", ".cache"]);
+
+**A profiling run compiles every test file cold.** The staged copy is a fresh tree with no `.cache`,
+so the build cache that `issues/system/0204` gave `wac test` is empty on every run — and this issue's
+own note measures the difference: *"`packages/box/test/wac` was 18s cold and 7s warm where a hit is
+about one second"*. One second against the ~5s a file observed tonight is the whole of the gap
+between the 53-second directory figure and everything measured since.
+
+**The keys would match.** `buildCachePath` keys on what the caller named plus the source texts, not
+on an absolute path — *"a directory with the same sources answers the same key"* — and `buildProfile`
+runs with `cwd` set to the staged root and passes the same relative entries. So the staged run asks
+for exactly the keys the real tree holds and finds an empty cache to ask.
+
+**And excluding `.cache` is right**, which is why this is not a bug: it was 815 MB here, and copying
+it would cost more than the compiles it saves. The fix is to let the staged run *reach* the real
+cache rather than to copy it.
+
+Worth checking before anyone does: a profile run compiles **mutated** sources, so it must not leave
+entries a later real build would hit. The key includes the source texts, so a mutant keys differently
+rather than poisoning anything — but that is the property the change depends on and it should be
+demonstrated rather than assumed.
+
+**So the ordering of levers in this issue is wrong.** Native profiling, the invocation count and the
+Deno/wac split are all second-order; the pass is 340 cold compiles, and the cache is sitting next to
+it excluded by name.
