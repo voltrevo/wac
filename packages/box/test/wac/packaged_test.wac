@@ -1,0 +1,163 @@
+// The applets that are a few lines over a package written in this repo.
+//
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/packaged_test.wac
+//
+// From `box.test.ts`. These are the point of `box`: each is a thin applet over a package built here
+// for TypeScript bindings and reused unchanged as the inside of a program.
+//
+// **The compression pair is checked in both directions against the system `gzip`**, so neither side
+// can be wrong in a way the other cancels out. A round trip through our own code alone would pass with
+// a compressor and a decompressor that agree on something nobody else can read.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, differs, runApplet, runAppletIn, trimEnd } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-packaged"; }
+
+/**
+ * `gzip` and `gunzip`, each against the system tool in the other direction.
+ *
+ * `README.md` is the input for the same reason `box.test.ts` used it: a real file with real redundancy
+ * in it, rather than a fixture chosen to compress well.
+ */
+export string test_gzip_and_the_system_gzip_read_each_others_output(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
+  t.isTrue(raw.len() > 0, "README.md is readable and not empty");
+
+  Ran squeezed = runAppletIn(core, cli, dir, string[]("gzip"), raw);
+  t.eqI32(squeezed.status, 0, "gzip ran: " + squeezed.err);
+  t.isTrue(squeezed.outBytes.len() < raw.len(), "gzip did not compress: " + itoa(squeezed.outBytes.len()));
+
+  // Ours reads its own.
+  t.eqStr(differs(runAppletIn(core, cli, dir, string[]("gunzip"), squeezed.outBytes).outBytes, raw), "",
+          "box could not read its own gzip");
+
+  // **The system one reads ours.** This is the direction that catches a header we invented.
+  Exec theirs = cli.exec("gunzip", string[](), squeezed.outBytes).wait();
+  t.isTrue(theirs.error == "", "there is a real gunzip: " + theirs.error);
+  t.eqStr(differs(theirs.stdout, raw), "", "the system gzip could not read box's");
+
+  // **And ours reads the system one's**, which catches a decompressor that only understands what our
+  // compressor happens to emit.
+  Exec sysGz = cli.exec("gzip", string[]("-c"), raw).wait();
+  t.isTrue(sysGz.error == "", "there is a real gzip: " + sysGz.error);
+  t.eqStr(differs(runAppletIn(core, cli, dir, string[]("gunzip"), sysGz.stdout).outBytes, raw), "",
+          "box could not read the system gzip's");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `crc32` against the checksum `gzip` itself carries, computed here.
+ *
+ * The table is written out rather than imported for the reason `streaming_test.wac` gives: importing
+ * the implementation under test would assert that a function equals itself.
+ */
+export string test_crc32_matches_an_independently_computed_checksum(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
+  t.isTrue(raw.len() > 0, "README.md is readable and not empty");
+
+  u32[] table = u32[256]();
+  for (i32 n = 0; n < 256; n++) {
+    u32 c = n as@ u32;
+    for (i32 k = 0; k < 8; k++) {
+      if ((c & 1) != 0) { c = 0xEDB88320 ^ (c >> 1); } else { c = c >> 1; }
+    }
+    table[n] = c;
+  }
+  u32 crc = 0xFFFFFFFF;
+  for (i32 i = 0; i < raw.len(); i++) {
+    crc = table[((crc ^ (raw[i] as@ u32)) & 0xFF) as@ i32] ^ (crc >> 8);
+  }
+  crc = crc ^ 0xFFFFFFFF;
+  string want = "";
+  for (i32 d = 7; d >= 0; d--) {
+    i32 nib = ((crc >> ((d * 4) as@ u32)) & 0xF) as@ i32;
+    want = want + "0123456789abcdef".slice(nib, nib + 1);
+  }
+
+  // `-` is the name for standard input, which is where this arrived from, and the two spaces are the
+  // spelling the applet shares with `sha256sum`.
+  Ran got = runAppletIn(core, cli, dir, string[]("crc32"), raw);
+  t.eqStr(trimEnd(got.out), want + "  -", "crc32 of README.md");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `date` is the clock capability with a package on top: it must be RFC 3339, and it must be *now*.
+ *
+ * **The oracle is the system `date`, not our own parser.** Reading the answer back with
+ * `packages/datetime`'s `parse` would be checking `format` against its own inverse, which agrees with
+ * itself whatever the clock said. GNU `date` is asked for the same instant in the same spelling.
+ *
+ * Taken *around* our call and accepted against either, so a run that straddles a minute boundary is
+ * not a flake. That is the whole reason two readings are taken rather than one.
+ */
+export string test_date_is_rfc3339_and_is_now(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  string[] fmt = string[]("-u", "+%Y-%m-%dT%H:%M");
+  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+  Ran got = runApplet(core, cli, dir, string[]("date"));
+  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+
+  t.eqI32(got.status, 0, "date ran: " + got.err);
+  string mine = trimEnd(got.out);
+  t.isTrue(before.len() == 16, "the oracle answered: " + before);
+  t.isTrue(mine.len() >= 20, "RFC 3339 is at least 20 characters: " + mine);
+  t.isTrue(mine.slice(mine.len() - 1, mine.len()) == "Z", "and ends in Z: " + mine);
+
+  string toTheMinute = mine.slice(0, 16);
+  t.isTrue(toTheMinute == before || toTheMinute == after,
+           "date is not now: " + mine + " between " + before + " and " + after);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Percent-encoding round-trips, including bytes that are not ASCII at all.
+ *
+ * `%already%20encoded` is on the list because it is the case where encoding is not idempotent: the `%`
+ * must itself be encoded, or decoding the result gives back something shorter than what went in.
+ */
+export string test_urlencode_round_trips(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  Buf uni = Buf.create();
+  uni.pushCodepoint(0x00FC); uni.pushAll("n".toBytes()); uni.pushCodepoint(0x00EF);
+  uni.pushAll("code ".toBytes()); uni.pushCodepoint(0x2713);          // ✓
+
+  string[] cases = string[]("a b/c?d=e&f#g", uni.toStr(), "plain", "%already%20encoded");
+  for (i32 i = 0; i < cases.len(); i++) {
+    u8[] input = (cases[i] + "\n").toBytes();
+    Ran encoded = runAppletIn(core, cli, dir, string[]("urlencode"), input);
+    t.eqI32(encoded.status, 0, "urlencode ran: " + encoded.err);
+    t.isTrue(encoded.out.indexOf(" ") < 0, "a space survived encoding: " + encoded.out);
+
+    Ran back = runAppletIn(core, cli, dir, string[]("urldecode"), encoded.outBytes);
+    t.eqStr(back.out, cases[i] + "\n", cases[i] + " did not round-trip");
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

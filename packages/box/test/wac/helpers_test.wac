@@ -1,0 +1,92 @@
+// The helpers the differential tests share, tested — because five files now believe them.
+//
+//     wac test --allow-read packages/box/test/wac/helpers_test.wac
+//
+// (`--allow-read` because the signature takes a `Cli`, not because anything here reads a file.)
+//
+// `differs` is the one that matters. Three round trips assert `differs(got, want) == ""`, so a version
+// that returned `""` unconditionally would make `gzip`, `zstd` and the system-`gzip` cross-reads all
+// pass while comparing nothing — and every one of them would still look like a comparison. An oracle
+// has to be able to disagree, and this is where that is established once rather than assumed five
+// times.
+//
+// `splitOn` earns its test differently: it replaced two copies that were not the same function. One
+// advanced its cursor by one after a match, the other by the separator's length. Worked out by hand
+// rather than assumed, the two agree on every separator that cannot overlap itself — `"a::b::c"` is
+// three fields either way — and diverge only on one that can, where the by-one version rescans the
+// tail of its own match and slices backwards. No caller passes such a separator, so this is a choice
+// of semantics rather than a bug that was biting; the standard one is kept and pinned below.
+
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { differs, splitOn, trimEnd } from "./replay.wac";
+
+export string test_differs_can_disagree(Core core, Cli cli) {
+  T t = T.create();
+
+  t.eqStr(differs(u8[](1, 2, 3), u8[](1, 2, 3)), "", "equal arrays agree");
+  t.eqStr(differs(u8[0](), u8[0]()), "", "and two empty ones do too");
+
+  // A changed byte, a changed length in each direction, and a difference at the very last index —
+  // the one a loop that stops early cannot see.
+  t.isTrue(differs(u8[](1, 2, 3), u8[](1, 9, 3)) != "", "a changed byte is a difference");
+  t.isTrue(differs(u8[](1, 2, 3), u8[](1, 2, 4)) != "", "including one in the last position");
+  t.isTrue(differs(u8[](1, 2), u8[](1, 2, 3)) != "", "a shorter answer is a difference");
+  t.isTrue(differs(u8[](1, 2, 3), u8[](1, 2)) != "", "and a longer one");
+  t.isTrue(differs(u8[0](), u8[](1)) != "", "and empty against non-empty");
+
+  // The message names where, because these compare hundreds of kilobytes and "they differ" is not
+  // something anybody can act on.
+  t.eqStr(differs(u8[](7, 8), u8[](7, 9)), "byte 1 is 8 want 9", "it says which byte");
+  t.eqStr(differs(u8[](7), u8[](7, 9)), "length 1 want 2", "and which length");
+
+  return t.report();
+}
+
+export string test_split_on_a_multi_character_separator(Core core, Cli cli) {
+  T t = T.create();
+
+  string[] one = splitOn("a\nb\nc", "\n");
+  t.eqI32(one.len(), 3, "three fields");
+  t.eqStr(one[0] + "|" + one[1] + "|" + one[2], "a|b|c", "in order");
+
+  // A two-character separator that cannot overlap itself: three fields, and both implementations
+  // agreed here. Kept because it is the shape every caller actually uses.
+  string[] two = splitOn("a::b::c", "::");
+  t.eqI32(two.len(), 3, "a two-character separator gives three fields");
+  t.eqStr(two[1], "b", "and the middle one is not empty");
+
+  // **The case that separates the two implementations.** `"aa"` in `"aaaa"` is two matches to a cursor
+  // that advances by the separator's length and three to one that advances by one — and the third
+  // "match" starts inside the second, so the by-one version slices from a position it has already
+  // passed. Three fields, both empty at the ends, is the standard answer.
+  string[] over = splitOn("aaaa", "aa");
+  t.eqI32(over.len(), 3, "a self-overlapping separator matches twice, not three times");
+  t.eqStr(over[0] + "|" + over[1] + "|" + over[2], "||", "and the fields between them are empty");
+
+  // Adjacent separators are empty fields, which is what a splitter is for — dropping them would make
+  // `a::::b` and `a::b` the same input.
+  t.eqI32(splitOn("a::::b", "::").len(), 3, "adjacent separators are an empty field");
+
+  // The edges: a leading and a trailing separator each produce an empty field rather than vanishing.
+  t.eqI32(splitOn("\na\n", "\n").len(), 3, "leading and trailing separators count");
+  t.eqStr(splitOn("nosep", "\n")[0], "nosep", "no separator is one field");
+  t.eqI32(splitOn("", "\n").len(), 0, "and the empty string is no fields at all");
+
+  return t.report();
+}
+
+export string test_trim_end_takes_only_trailing_newlines(Core core, Cli cli) {
+  T t = T.create();
+
+  t.eqStr(trimEnd("a\n"), "a", "one newline");
+  t.eqStr(trimEnd("a\n\n\n"), "a", "several");
+  t.eqStr(trimEnd("a"), "a", "none");
+  t.eqStr(trimEnd(""), "", "nothing at all");
+  t.eqStr(trimEnd("\n"), "", "only newlines");
+  // Not a general trim: leading whitespace and interior newlines stay, which matters because `wc`'s
+  // output is padded on the left and a trim would silently make a column comparison pass.
+  t.eqStr(trimEnd("  a\nb\n"), "  a\nb", "leading spaces and interior newlines are kept");
+
+  return t.report();
+}

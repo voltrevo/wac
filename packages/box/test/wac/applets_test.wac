@@ -1,5 +1,10 @@
 // `box`'s applets, asked in this process rather than built and spawned.
 //
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/applets_test.wac
+//
+// `--allow-run` is for the two tests at the foot of this file, which ask GNU directly rather than
+// replaying a capture — the replay itself needs no oracle at all.
+//
 // The tests here came out of `box.test.ts`, which builds a program and runs it — 554 processes on a suite
 // run, most of them the *oracle* side. What each of these asserts is either our own behaviour, which needs
 // no oracle at all, or an expectation captured once by `tools/wac/appletvectors.wac`.
@@ -8,11 +13,13 @@
 // reading what we wrote, `httpd`, `nc`, the grants a *built* applet asks for, and the memory a streaming
 // applet holds. `issues/system/0193` has the list and the reasons.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
-import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
+import { Loaded, Ran, differs, layFixtures, load, runApplet, runCase, show } from "./replay.wac";
+import { UNKNOWN } from "../../src/box.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-applets"; }
@@ -189,4 +196,429 @@ string sortedJoin(string[]? entries) {
   string out = "";
   for (i32 i = 0; i < names.len(); i++) { out = out + (i == 0 ? "" : " ") + names[i]; }
   return out;
+}
+
+/**
+ * `urlencode` encodes a **component**, not a path — GitHub wac-mono#9.
+ *
+ * Against fixed answers rather than a system tool, because there is not a portable one: `jq -Rr
+ * @uri` and `python -c` disagree about `~` and neither is installed everywhere. So this is one of the
+ * few applets whose expectation is written down rather than captured, and each row says which rule it
+ * is about.
+ */
+export string test_urlencode_escapes_a_component(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  // A slash is data here, not structure — the whole point of the applet.
+  t.eqStr(one(core, cli, dir, "a/b"), "a%2Fb\n", "a slash becomes %2F");
+  t.eqStr(one(core, cli, dir, "a b&c=d"), "a%20b%26c%3Dd\n", "space, ampersand and equals");
+  // Encoding is not idempotent: an input that already looks encoded is encoded again, or a caller
+  // cannot round-trip a literal percent.
+  t.eqStr(one(core, cli, dir, "%20"), "%2520\n", "a literal percent is escaped, not preserved");
+  // RFC 3986's unreserved set, which must survive untouched — including the tilde, which is where
+  // implementations differ.
+  t.eqStr(one(core, cli, dir, "plain-text_1.2~"), "plain-text_1.2~\n", "the unreserved set is left alone");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** `urlencode` over one datum, written to a file the applet then reads. Its trailing newline
+ *  is kept rather than trimmed — wac's strings have no `trim`, and the newline is part of what the
+ *  applet writes, so asserting it is asserting more rather than less. */
+string one(Core core, Cli cli, string dir, string given) {
+  cli.writeFile(dir + "/datum", given.toBytes()).wait();
+  return runCase(core, cli, dir, "urlencode datum").out;
+}
+
+/**
+ * The two failures `mkdir` and `rmdir` exist to distinguish, said the way GNU says them — issue 0009.
+ *
+ * **The reason is compared, not the whole line.** box prefixes `applet: path: ` where GNU writes
+ * `mkdir: cannot create directory 'd': `, and that difference is house style rather than a defect.
+ * What matters is that the reason is the *category's* own words and not the host's, which vary per
+ * platform — "os error 17" under Deno, "already exists" in a browser.
+ *
+ * Live rather than captured for that reason: a vector holds stderr byte for byte, and these two lines
+ * are deliberately not byte-identical.
+ */
+export string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir + "/full/inner", true).wait().ok(), "a directory with something in it");
+
+  Ran twice = runCase(core, cli, dir, "mkdir full");
+  t.eqI32(twice.status, 1, "mkdir over an existing directory fails");
+  Ran notEmpty = runCase(core, cli, dir, "rmdir full");
+  t.eqI32(notEmpty.status, 1, "rmdir of a non-empty directory fails");
+
+  // GNU's wording, which is where the two strings below come from rather than from memory.
+  Exec gnuMkdir = cli.exec("mkdir", string[](dir + "/full"), u8[0]()).wait();
+  Exec gnuRmdir = cli.exec("rmdir", string[](dir + "/full"), u8[0]()).wait();
+  t.isTrue(gnuMkdir.ran() && gnuRmdir.ran(), "the real tools ran");
+  t.isTrue(string.fromBytes(gnuMkdir.stderr).indexOf("File exists") >= 0,
+           string.fromBytes(gnuMkdir.stderr));
+  t.isTrue(string.fromBytes(gnuRmdir.stderr).indexOf("Directory not empty") >= 0,
+           string.fromBytes(gnuRmdir.stderr));
+
+  // ...and box says the same reason, in its own shape.
+  t.isTrue(twice.err.indexOf("File exists") >= 0, twice.err);
+  t.isTrue(notEmpty.err.indexOf("Directory not empty") >= 0, notEmpty.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A pattern that exhausts the backtracking budget is **not a match** — GitHub wac-mono#26.
+ *
+ * It used to be counted as one, because only `NO_MATCH` was checked. The answer is box's own rather
+ * than GNU's: GNU's `grep` has no budget to exhaust and answers 1 for this pattern, so there is
+ * nothing to capture and this is written down instead.
+ *
+ * **Spelled twice, and that is the point.** `grep` reads *basic* regular expressions, where
+ * `(a|a)*b` is the literal characters — which matches nothing and exits 1, and is how a version of
+ * this test passed while asserting nothing (wac-mono 0104). `\(a\|a\)*b` is the same pattern in the
+ * dialect `grep` actually speaks, and `-E` is the other way round.
+ */
+export string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  // Thirty `a`s and no `b`: the pattern can never succeed, and every path has to be tried to know it.
+  cli.writeFile(dir + "/patho", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".toBytes()).wait();
+
+  Ran basic = runCase(core, cli, dir, "grep '\\(a\\|a\\)*b' patho");
+  t.eqI32(basic.status, 2, "budget exhaustion exits 2 in the basic dialect: " + basic.err);
+  t.eqStr(basic.out, "", "and prints no matches");
+
+  Ran extended = runCase(core, cli, dir, "grep -E '(a|a)*b' patho");
+  t.eqI32(extended.status, 2, "and the same pattern under -E: " + extended.err);
+  t.eqStr(extended.out, "", "and prints no matches either");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `split`'s suffixes past `zz` — GitHub wac-mono#14.
+ *
+ * GNU reserves a leading `z` as the marker that the suffix has grown, so two letters run `aa`..`yz`
+ * and the next name is `zaaa`. This used to leave the alphabet entirely and emit `z676`, which sorts
+ * nowhere near where it was written — and 700 pieces is what it takes to get there, since the first
+ * 675 names are unremarkable.
+ *
+ * **The comparison is a directory listing, not standard output**, which is why this is not a vector:
+ * what `split` writes to stdout is nothing at all. GNU runs in a directory of its own through
+ * `execWithIn`, so the two sets of names cannot be confused for each other.
+ */
+export string test_splits_suffixes_are_gnus_past_zz(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  string body = "";
+  for (i32 i = 0; i < 700; i++) { body = body + itoa(i) + "\n"; }
+  t.isTrue(cli.mkdir(dir + "/ours", true).wait().ok(), "made ours");
+  t.isTrue(cli.mkdir(dir + "/theirs", true).wait().ok(), "made theirs");
+  t.isTrue(cli.writeFile(dir + "/ours/seven", body.toBytes()).wait().ok(), "wrote the source");
+  t.isTrue(cli.writeFile(dir + "/theirs/seven", body.toBytes()).wait().ok(), "and its twin");
+
+  runCase(core, cli, dir + "/ours", "split -1 seven");
+  Exec real = cli.execWithIn("split", string[]("-l", "1", "seven"), u8[0](), string[](),
+                             false, false, dir + "/theirs").wait();
+  t.isTrue(real.ran(), "the real split ran: " + real.error);
+
+  string ours = sortedNames(cli, dir + "/ours");
+  string theirs = sortedNames(cli, dir + "/theirs");
+  // **A floor, because two empty listings compare equal.** Counted rather than measured in
+  // characters: the first version asked for 3000 bytes and 701 short names came to about 2900, so the
+  // floor failed on a listing that was entirely correct.
+  t.isTrue(count(theirs) > 690, "GNU produced a listing to compare against — status " +
+           itoa(real.status) + " err " + string.fromBytes(real.stderr));
+  t.eqStr(ours, theirs, "every split suffix, all 700");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** How many names a listing holds, which is what a floor on it should be counting. */
+i32 count(string listing) {
+  i32 n = 0;
+  u8[] b = listing.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == ' ') { n = n + 1; } }
+  return n;
+}
+
+/** A directory's entries, sorted, as one line — the shape a listing comparison wants. */
+string sortedNames(Cli cli, string dir) {
+  string[]? got = cli.readDir(dir).wait();
+  if (got is null) { return "(unreadable)"; }
+  string[] names = got!;
+  // Insertion sort: the lists are a few hundred short strings and this file has no sort to hand.
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && names[j] > v) { names[j + 1] = names[j]; j = j - 1; }
+    names[j + 1] = v;
+  }
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) { out = out + " " + names[i]; }
+  return out;
+}
+
+/**
+ * The two filters with no counterpart, over a directory — GitHub wac-mono#18.
+ *
+ * `readChunk` answers with bytes and cannot say "broken", so every filter treated a half-read as a
+ * whole one and exited 0: the failure mode where the program is the last thing suspected. A directory
+ * is the portable way to get an open that *succeeds* and a read that does not.
+ *
+ * `cat`, `wc`, `sha256sum` and `strings` ask this in `appletCases()` against the real tools. `hex` and
+ * `crc32` are ours — bash answers 127 for them, so there is nothing to capture and the expectation is
+ * written down.
+ */
+export string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+
+  Ran hex = runCase(core, cli, dir, "hex adir");
+  t.eqI32(hex.status, 1, "hex of a directory fails rather than reading nothing");
+  t.eqStr(hex.out, "", "and writes no output");
+  t.isTrue(hex.err.indexOf("Is a directory") >= 0, hex.err);
+
+  Ran crc = runCase(core, cli, dir, "crc32 adir");
+  t.eqI32(crc.status, 1, "and so does crc32");
+  t.eqStr(crc.out, "", "which is the half that mattered: a checksum of nothing is a number");
+  t.isTrue(crc.err.indexOf("Is a directory") >= 0, crc.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The applets that recurse, over a nested tree — the two mutants that survived, wac-mono 0005.
+ *
+ * **The tree has to have a subdirectory, and that is asserted rather than assumed.** The Deno version
+ * walked `packages/platform`, and an earlier one walked `packages/platform/src`, which is *flat*:
+ * every file in it is a `.wac`, so neither applet ever descended and the comparison said nothing about
+ * recursion. Gutting either applet's `MAX_DEPTH` to zero left both assertions passing. The tree here
+ * is built three deep for that reason, and the depth is checked before the comparison is believed.
+ *
+ * **Each side is asked its own question, which is why this is not a vector.** box's `du` answers in
+ * bytes and refuses `-s`, so GNU is asked `du -sb`; and `find`'s order is the filesystem's on one side
+ * and sorted on the other, so both are sorted before comparing. A vector holds one script and one
+ * answer, and neither of those pairs is one script.
+ */
+export string test_find_and_du_descend(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir + "/t/a/b", true).wait().ok(), "three levels");
+  cli.writeFile(dir + "/t/f", "one\n".toBytes()).wait();
+  cli.writeFile(dir + "/t/a/g", "two\n".toBytes()).wait();
+  cli.writeFile(dir + "/t/a/b/h", "three\n".toBytes()).wait();
+
+  // The guard: a walk that never descended would still match a flat tree, which is how the mutants
+  // survived. `t/a/b/h` is three levels down, so an answer without it is an answer that stopped.
+  Ran ours = runCase(core, cli, dir, "find t");
+  t.isTrue(ours.out.indexOf("t/a/b/h") >= 0,
+           "the walk reached the deepest file — without this a MAX_DEPTH of zero passes: " + ours.out);
+
+  Exec realFind = cli.execWithIn("find", string[]("t"), u8[0](), string[](), false, false, dir).wait();
+  t.isTrue(realFind.ran(), "the real find ran: " + realFind.error);
+  t.eqStr(sortedLines(ours.out), sortedLines(string.fromBytes(realFind.stdout)), "find differs");
+
+  // `du -sb` is the invocation box's `du` answers, and it refuses `-s` itself, so only GNU is given it.
+  Ran mine = runCase(core, cli, dir, "du t");
+  Exec realDu = cli.execWithIn("du", string[]("-sb", "t"), u8[0](), string[](), false, false, dir).wait();
+  t.isTrue(realDu.ran(), "the real du ran: " + realDu.error);
+  t.eqStr(firstField(mine.out), firstField(string.fromBytes(realDu.stdout)), "du differs from du -sb");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** Lines sorted and rejoined, so two walks in different orders can be compared. */
+string sortedLines(string all) {
+  string[] lines = string[256](fill: "");
+  i32 n = 0;
+  string rest = all;
+  while (rest.len() > 0 && n < 256) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    if (line != "") { lines[n] = line; n = n + 1; }
+    if (nl < 0) { break; }
+    rest = rest.slice(nl + 1, rest.len());
+  }
+  for (i32 i = 1; i < n; i++) {
+    string v = lines[i];
+    i32 j = i - 1;
+    while (j >= 0 && lines[j] > v) { lines[j + 1] = lines[j]; j = j - 1; }
+    lines[j + 1] = v;
+  }
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + lines[i] + "\n"; }
+  return out;
+}
+
+/** Everything before the first tab — `du`'s number, without its name. */
+string firstField(string line) {
+  i32 tab = line.indexOf("\t");
+  return tab < 0 ? line : line.slice(0, tab);
+}
+
+/**
+ * Everything after the first `": "`, with any trailing newline gone.
+ *
+ * The program name is not the claim and cannot match: the host resolves `cat` through `PATH` and
+ * hands the child its resolved path as argv[0], so GNU says `/usr/bin/cat:` where box says `cat:`.
+ */
+string reasonOf(string line) {
+  string s = line;
+  while (s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n") { s = s.slice(0, s.len() - 1); }
+  i32 c = s.indexOf(": ");
+  return c < 0 ? s : s.slice(c + 2, s.len());
+}
+
+/**
+ * A failed read says what the real tool says — **against the real tool, live**.
+ *
+ * From `box.test.ts`, and it is the case that showed migration and vectorisation are different
+ * things. It cannot be a vector, because the fixture needs a file at mode 0 and the vectors' fixtures
+ * are `Fixture` values with no mode. It does not need to be: a wac test can spawn the oracle itself,
+ * so this asks GNU the question at the moment it asks box.
+ *
+ * The words come from `faultWords` in `platform.wac`, which exists because four copies of the list had
+ * already drifted and nothing compared any of them to the tool they imitate. Replacing the lookup
+ * `lib/input` used with the empty string left every message ending in a bare colon, and the suite
+ * green.
+ *
+ * **Both halves of the read path**, because they are separate code and drifted apart once: `cat`
+ * streams through `openInput`, `base64` takes the whole file through `readFile`, and each translates
+ * its own failure. `base64` is the oracle for the second because GNU words it the same way — `sort`
+ * says "cannot read:" and `tac` says "failed to open ... for reading", so either would be comparing a
+ * different sentence rather than the same reason.
+ *
+ * The oracle's environment is **inherited rather than pinned**. `LC_ALL=C` would remove the question
+ * along with the variable: box's table is English, so a run under a translated locale is a real
+ * disagreement and this should be the test that shows it.
+ */
+export string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  string denied = dir + "/unreadable";
+  string missing = dir + "/definitely-not-here";
+  t.isTrue(cli.writeFile(denied, "secret\n".toBytes()).wait().ok(), "wrote the file");
+  t.isTrue(cli.chmod(denied, 0).wait().ok(), "and closed it");
+
+  // **A control, as in `unreadable_test.wac`.** Mode 0 denies nothing to root, so as root the denied
+  // half of this test would compare two successes and pass without asking anything.
+  t.eqI32(cli.exec("cat", string[](denied), u8[0]()).wait().status, 1,
+          "the fixture is genuinely unreadable — running as root would make it 0");
+
+  string[] applets = string[]("cat", "cat", "base64", "base64");
+  string[] paths = string[](missing, denied, missing, denied);
+  for (i32 i = 0; i < applets.len(); i++) {
+    string what = applets[i] + " on " + (i % 2 == 0 ? "a missing file" : "an unreadable one");
+    Ran ours = runCase(core, cli, dir, applets[i] + " " + paths[i]);
+    Exec theirs = cli.exec(applets[i], string[](paths[i]), u8[0]()).wait();
+    t.isTrue(theirs.error == "", "the oracle ran: " + theirs.error);
+    t.eqStr(reasonOf(ours.err), reasonOf(string.fromBytes(theirs.stderr)),
+            "the reason for " + what + " differs from the real one's: " + ours.err);
+    t.eqI32(ours.status, 1, "a failed read exits 1, as " + applets[i] + " does");
+  }
+
+  cli.chmod(denied, 384).wait();          // 0600, so the cleanup can unlink it
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A flag an applet has not implemented is **refused**, not ignored — asked of the applet itself.
+ *
+ * `lib/flags.wac`'s whole purpose, and `ls` is where it is most visible: GNU's `ls -a` works, so this
+ * is box's own answer rather than a disagreement to capture. Ignoring a flag would mean `ls -a` and
+ * `ls` are the same command, which is the shape `find -name` is still in — `issues/system/0299c`.
+ *
+ * **It took `runApplet` to ask.** Through a script this reaches the shell's `ls` builtin, which accepts
+ * `-a` and answers 0; the first version of this test asserted 2 and got 0 from a command that was never
+ * box's. The five shadowed names all have this hole and this is the way through it.
+ */
+export string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+
+  Ran r = runApplet(core, cli, dir, string[]("ls", "-a", dir));
+  t.eqI32(r.status, 2, "an unimplemented flag is a usage error: " + r.err);
+  t.isTrue(r.err.indexOf("not implemented") >= 0, r.err);
+
+  // The control, and it is not decoration: without it a broken `ls` gives the same 2 for a different
+  // reason, and the test would be asserting that `ls` does not work.
+  Ran plain = runApplet(core, cli, dir, string[]("ls", dir));
+  t.eqI32(plain.status, 0, "and ls itself still answers: " + plain.err);
+  t.isTrue(plain.out.indexOf("m1.txt") >= 0, plain.out);
+
+  // The name box does not have. `dispatch` says so with a sentinel rather than a status, because "no
+  // such applet" and "it ran and failed" are different facts — `box` turns this into the usage error
+  // that `box.test.ts` still asserts end to end, since `main` reads argv from the process.
+  t.eqI32(runApplet(core, cli, dir, string[]("nope")).status, UNKNOWN, "an unknown applet is UNKNOWN");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `split` writes many files, and they are the real `split`'s files piece for piece.
+ *
+ * From `box.test.ts`. `split` is the first applet to open more than one output — everything else opens
+ * a file, writes it and closes it — which is why it is worth comparing the *pieces* rather than an exit
+ * status.
+ *
+ * **250 lines at 100 to a piece**, so the last one is short and the boundary is not exact. The second
+ * assertion is the exact-boundary case from the other direction: there must be no fourth piece, because
+ * an applet that opens the next output before knowing it has anything to put in it leaves an empty file
+ * behind and GNU does not.
+ *
+ * `split -100` and `split -l 100` are the same request; ours takes the attached form and GNU wants the
+ * flag, which is a spelling difference rather than a divergence.
+ */
+export string test_split_writes_the_same_pieces_as_the_real_split(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  Buf b = Buf.create();
+  for (i32 i = 1; i <= 250; i++) { b.pushAll((itoa(i) + "\n").toBytes()); }
+  string big = dir + "/big.txt";
+  t.isTrue(cli.writeFile(big, b.bytes()).wait().ok(), "wrote 250 lines");
+
+  t.eqI32(runApplet(core, cli, dir, string[]("split", "-100", big, dir + "/part-")).status, 0,
+          "split ran");
+  Exec theirs = cli.exec("split", string[]("-l", "100", big, dir + "/real-"), u8[0]()).wait();
+  t.isTrue(theirs.error == "", "there is a real split: " + theirs.error);
+  t.eqI32(theirs.status, 0, "and it ran: " + string.fromBytes(theirs.stderr));
+
+  string[] suffixes = string[]("aa", "ab", "ac");
+  for (i32 i = 0; i < suffixes.len(); i++) {
+    u8[] mine = cli.readFile(dir + "/part-" + suffixes[i]).wait().bytes;
+    u8[] real = cli.readFile(dir + "/real-" + suffixes[i]).wait().bytes;
+    t.isTrue(real.len() > 0, "the real split wrote real-" + suffixes[i]);
+    t.eqStr(differs(mine, real), "", "part-" + suffixes[i] + " differs");
+  }
+
+  // No fourth piece. 250 lines at 100 is three, and an applet that opens the next output before it
+  // knows there is anything to write leaves an empty one behind.
+  t.isFalse(cli.stat(dir + "/part-ad").wait().exists, "an empty fourth piece was created");
+  t.isFalse(cli.stat(dir + "/real-ad").wait().exists, "and the real one did not make one either");
+
+  cli.remove(dir, true).wait();
+  return t.report();
 }

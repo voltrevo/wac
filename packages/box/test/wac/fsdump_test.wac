@@ -1,0 +1,60 @@
+// `fsdump` reads a filesystem image, names its operands, and refuses what is not one.
+//
+//     wac test --allow-read --allow-write packages/box/test/wac/fsdump_test.wac
+//
+// From `box.test.ts`, where it was the last survivor of "the applets that read several files read all
+// of them" — the other fifteen are `appletCases()` now, captured against the real tools.
+//
+// **`fsdump` could not go with them because it has no external oracle at all**: it reads a filesystem
+// image, which is a format of ours, so there is nothing to capture an answer from. By
+// `issues/system/0193` that makes it a candidate for moving *in process* rather than for a vector, and
+// its own comment said it stayed "until something reads a repo-relative fixture from inside a frame".
+// `runApplet` is that something: the frame's `cwd` is this test's, so an absolute path built from
+// `cli.cwd()` reaches the fixture.
+//
+// The oracle here is the shape. `packages/fs/test/wac/image_test.wac` is where the *format* is checked;
+// what matters at this end is that the applet is wired up, labels its operands, and **fails** on
+// something that is not an image rather than printing an empty tree.
+
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Ran, runApplet, runAppletIn } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-fsdump"; }
+
+export string test_fsdump_reads_an_image_names_its_operands_and_refuses_what_is_not_one(Core core,
+                                                                                        Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  string img = cli.cwd().wait() + "/packages/fs/test/fixtures/image-v1.wacimg";
+  t.isTrue(cli.stat(img).wait().exists, "the image fixture is at " + img);
+
+  Ran dumped = runApplet(core, cli, dir, string[]("fsdump", img));
+  t.eqI32(dumped.status, 0, "fsdump ran: " + dumped.err);
+  t.isTrue(dumped.out.indexOf("mount /mnt") >= 0, dumped.out);
+  t.isTrue(dumped.out.indexOf("0600 claude") >= 0, dumped.out);
+
+  // An image on standard input reads the same as one named, which is the claim that the operand path
+  // and the stdin path are one reader rather than two.
+  Ran piped = runAppletIn(core, cli, dir, string[]("fsdump"), cli.readFile(img).wait().bytes);
+  t.eqStr(piped.out, dumped.out, "an image on standard input reads the same as one named");
+
+  // Two operands are labelled. This is the property wac-mono 0096 was about, in the one applet that
+  // could not be captured: reading only the first would print half of this and exit 0.
+  Ran twice = runApplet(core, cli, dir, string[]("fsdump", img, img));
+  t.eqStr(twice.out, img + ":\n" + dumped.out + img + ":\n" + dumped.out, "two images are labelled");
+
+  // And something that is not an image fails, rather than printing an empty tree — which is what a
+  // reader that trusted its input would do, and is indistinguishable from an image with nothing in it.
+  string notAnImage = dir + "/plain.txt";
+  t.isTrue(cli.writeFile(notAnImage, "alpha\nbeta\n".toBytes()).wait().ok(), "wrote a plain file");
+  Ran refused = runApplet(core, cli, dir, string[]("fsdump", notAnImage));
+  t.eqI32(refused.status, 1, "a file that is not an image should fail");
+  t.isTrue(refused.out.indexOf("cannot read this image") >= 0, refused.out + refused.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

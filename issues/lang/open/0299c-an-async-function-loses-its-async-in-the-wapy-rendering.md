@@ -56,3 +56,49 @@ The **lambda** case, in `issues/lang/0294c`. `wapyprint` emits `async` before a 
 list and it round-trips, because there the body is an expression rendered in wac's own syntax and the
 wac parser already reads `async (…) => …`. Only the `def` form is left, and only because it is wapy's
 own spelling.
+
+## The same parser change should retire `@export`, `@const` and `@override`
+
+*Added 2026-08-31 by agent-a, from a `VISION.md` discussion. Recorded here rather than as a second
+issue because it is the same change to the same production: once the reader dispatches on a modifier
+before `def` instead of on the bare word, these come along for nothing.*
+
+wapy spells wac's three declaration modifiers as decorators — `@export`, `@const` above a `class`,
+`@override` on a method — and refuses anything else with *"a decorator is `@export`, `@const` or
+`@override`"*. They should be prefix keywords instead:
+
+```wapy
+export def sum(p: Point) -> i32:
+const class Point:
+override def draw(this) -> void:
+```
+
+**Because they are not decorators, and a Python reader knows it.** A decorator in Python is a value
+applied to a function — `@staticmethod`, `@dataclass`, `@property` all mean `f = thing(f)` — so the
+first move on meeting `@export` is to look for where `export` was imported from. It is a keyword
+wearing a decorator's clothes: it borrows the notation and breaks the rule that makes the notation
+readable.
+
+**And Python already has the right shape**, which is the one this issue is about: `async def`. A
+modifier keyword before `def` is native and unremarkable there, and `export def` is the same
+sentence. Fixing the `async` half means teaching `wapyparse` exactly that dispatch, so the other
+three are a table of words rather than new machinery.
+
+It also **matches wac more closely**, which is wapy's whole job: wac writes `export i32 f()` and
+`const struct P`, so wapy writing `export def f()` and `const class P` is one correspondence rather
+than three special cases. `spec/spec/wapy.md`'s table loses three rows and gains one rule.
+
+### And it frees `@` on both surfaces
+
+wac uses `@` only inside an import string, where nothing else can reach it. If wapy stops using it,
+`@` is unclaimed everywhere — and `VISION.md` wants it for a **verbatim identifier**, `@class`, so
+that an attribute or field whose name collides with a keyword can be written rather than renamed.
+The alternatives were all taken: a backtick reads as a template literal to the JSX audience, and `#`
+is wapy's comment.
+
+Decorators were weighed as the other claimant and set aside. Python's kind cannot exist in wac —
+`@d def f` means rebinding a module-level name, and wac has neither module-level mutable bindings nor
+function declarations that are values. Compile-time attributes could exist, but everything they
+usually carry wac already spells as a keyword or a convention, and they would sit at a declaration
+where a verbatim identifier cannot — so even both at once would not collide, and `[…]` before a
+declaration is unclaimed if the character is ever wanted back.

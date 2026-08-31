@@ -1,0 +1,190 @@
+// The streaming applets hold a chunk, not the input.
+//
+//     wac test --allow-read --allow-write --allow-run packages/box/test/wac/streaming_test.wac
+//
+// From `box.test.ts`. The point of `openInput`/`readChunk`, and correctness first: a streaming rewrite
+// is easy to get subtly wrong at a chunk boundary, and every case here is one a whole-input loop would
+// have got right for free.
+//
+//     wc       a word split across two reads is one word, not two
+//     strings  a run split across two reads is one run, not two short ones
+//     crc32    the checksum is order-dependent across every chunk
+//     tr, hex  per byte, so only the framing can go wrong
+//
+// **What did not come with them is the grant case.** `box.test.ts` still builds a world with no grants
+// at all and checks that a denied read says why. It cannot move: `childCli` hands the applet the
+// *parent's* grants, so an in-process frame cannot be given fewer than the test itself holds, and a
+// refusal test needs exactly that.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, realOut, runApplet, runAppletIn } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-streaming"; }
+
+/** One 64 KiB read. The fixture is sized against this rather than against a round number. */
+const i32 CHUNK = 65536;
+
+/**
+ * Larger than one chunk and not a multiple of it, so boundaries land in the middle of words and runs
+ * rather than tidily between them.
+ */
+u8[] spanningText() {
+  Buf b = Buf.create();
+  for (i32 i = 0; i < 5000; i++) {
+    b.pushAll(("word" + itoa(i) + " alpha beta gamma delta epsilon\n").toBytes());
+  }
+  return b.bytes();
+}
+
+/**
+ * The first three whitespace-separated fields.
+ *
+ * The real `wc` pads its columns to a width that depends on the size of the numbers; the numbers are
+ * what is under test, so the padding is dropped rather than reproduced.
+ */
+string cols(string s) {
+  u8[] b = s.toBytes();
+  Buf out = Buf.create();
+  i32 found = 0;
+  i32 i = 0;
+  while (i < b.len() && found < 3) {
+    while (i < b.len() && (b[i] == 0x20 || b[i] == 0x09 || b[i] == 0x0a)) { i++; }
+    if (i >= b.len()) { break; }
+    if (found > 0) { out.push(0x20); }
+    while (i < b.len() && b[i] != 0x20 && b[i] != 0x09 && b[i] != 0x0a) { out.push(b[i]); i++; }
+    found++;
+  }
+  return out.toStr();
+}
+
+export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  u8[] text = spanningText();
+  t.isTrue(text.len() > 3 * CHUNK, "the fixture must span several chunks: " + itoa(text.len()));
+  string path = dir + "/spanning.txt";
+  t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
+
+  t.eqStr(cols(runApplet(core, cli, dir, string[]("wc", path)).out),
+          cols(realOut(cli, "wc", string[](path))), "wc across chunks");
+
+  t.eqStr(runApplet(core, cli, dir, string[]("strings", path)).out,
+          realOut(cli, "strings", string[]("-n4", path)), "strings across chunks");
+
+  // Two hex characters a byte, and a newline. A framing error is the only thing that can go wrong in a
+  // per-byte applet, and a length is what catches it.
+  t.eqI32(runApplet(core, cli, dir, string[]("hex", path)).out.len(), text.len() * 2 + 1,
+          "hex is two characters a byte");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A run of printable bytes spanning several chunks comes out as **one** string.
+ *
+ * The failure this is for is not a wrong byte: it is one 200,000-character string arriving as three
+ * shorter ones, each ending where a read did. A fixture of ordinary text cannot show it, because no
+ * run in it is longer than a word.
+ */
+export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/run.bin";
+
+  // NUL, 200,000 'A's, NUL: the terminators are what make it a *run* to `strings` rather than the
+  // whole file, so the boundaries it reports are the ones under test.
+  i32 width = 200000;
+  u8[] run = u8[width + 2](fill: 0x41);
+  run[0] = 0x00;
+  run[width + 1] = 0x00;
+  t.isTrue(cli.writeFile(path, run).wait().ok(), "wrote the spanning run");
+
+  t.eqStr(runApplet(core, cli, dir, string[]("strings", path)).out,
+          realOut(cli, "strings", string[]("-n4", path)),
+          "a 200K run spanning three chunks is one string");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `tr` through standard input, because it takes no file operand.
+ *
+ * GNU's does not either, and ours stopped pretending to in wac-mono 0098. The streaming property is
+ * the same either way, and the expectation is written down rather than spawned: `tr a-z A-Z` over
+ * ASCII is the one transformation this file can state exactly.
+ */
+export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  u8[] text = spanningText();
+  Buf want = Buf.create();
+  for (i32 i = 0; i < text.len(); i++) {
+    i32 c = text[i];
+    want.push(c >= 0x61 && c <= 0x7a ? c - 32 : c);
+  }
+
+  Ran got = runAppletIn(core, cli, dir, string[]("tr", "a-z", "A-Z"), text);
+  t.eqI32(got.status, 0, "tr ran: " + got.err);
+  t.eqStr(got.out, want.toStr(), "tr across chunks");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `crc32` across chunks, against a table built here.
+ *
+ * The checksum is the one case in this file that is genuinely order-dependent over every byte, so a
+ * chunk handed to the wrong place, twice, or not at all changes the answer — which is exactly what a
+ * length or a first line cannot see. The reference is the standard reflected CRC-32 table, written out
+ * rather than imported: importing the implementation under test would make this assert that a function
+ * equals itself.
+ */
+export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+
+  u8[] text = spanningText();
+  string path = dir + "/crc.txt";
+  t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
+
+  u32[] table = u32[256]();
+  for (i32 n = 0; n < 256; n++) {
+    u32 c = n as@ u32;
+    for (i32 k = 0; k < 8; k++) {
+      if ((c & 1) != 0) { c = 0xEDB88320 ^ (c >> 1); } else { c = c >> 1; }
+    }
+    table[n] = c;
+  }
+  u32 crc = 0xFFFFFFFF;
+  for (i32 i = 0; i < text.len(); i++) {
+    crc = table[((crc ^ (text[i] as@ u32)) & 0xFF) as@ i32] ^ (crc >> 8);
+  }
+  crc = crc ^ 0xFFFFFFFF;
+
+  // Eight hex digits, zero-padded — the applet's spelling, and the padding is part of it.
+  string want = "";
+  for (i32 d = 7; d >= 0; d--) {
+    i32 nib = ((crc >> ((d * 4) as@ u32)) & 0xF) as@ i32;
+    want = want + "0123456789abcdef".slice(nib, nib + 1);
+  }
+
+  Ran got = runApplet(core, cli, dir, string[]("crc32", path));
+  i32 sp = got.out.indexOf(" ");
+  t.eqStr(sp < 0 ? got.out : got.out.slice(0, sp), want, "crc32 across chunks: " + got.out);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

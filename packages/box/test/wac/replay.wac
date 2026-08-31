@@ -20,11 +20,13 @@
 // The header is not decoration: an expectation is only as portable as the environment it was taken in,
 // and when a replay disagrees the first question is whether *we* changed or the tools did.
 
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, Exec, FileResult } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";
+import { UNKNOWN, dispatch } from "../../src/box.wac";
+import { parseList } from "../../src/lib/args.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
@@ -76,6 +78,141 @@ export Ran runCase(Core core, Cli cli, string dir, string script) {
   sh.external = boxRun;
   sh.externalNames = boxNames;
   i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+}
+
+// ── Helpers the differential tests share ──────────────────────────────────────────────────────────
+//
+// These lived in four files with two copies each until 2026-08-31. They are here rather than there
+// because a second copy of a comparison is a comparison that drifts, and the two copies of `splitOn`
+// had already stopped being the same function: one advanced its cursor by **one** after a match, the
+// other by the separator's length. They agree on every separator that cannot overlap itself and differ
+// only on one that can, which no caller passes — so this is settling the semantics rather than fixing
+// a live bug. `helpers_test.wac` pins both halves of that.
+
+/** The string without its trailing newlines. */
+export string trimEnd(string s) {
+  string out = s;
+  while (out.len() > 0 && out.slice(out.len() - 1, out.len()) == "\n") {
+    out = out.slice(0, out.len() - 1);
+  }
+  return out;
+}
+
+/** `text` cut at every occurrence of `sep`. An empty input is no fields rather than one empty one. */
+export string[] splitOn(string text, string sep) {
+  if (text == "") { return string[0](); }
+  i32 n = 1;
+  i32 i = 0;
+  while (i + sep.len() <= text.len()) {
+    if (text.slice(i, i + sep.len()) == sep) { n++; i = i + sep.len(); } else { i++; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  i32 k = 0;
+  while (k + sep.len() <= text.len()) {
+    if (text.slice(k, k + sep.len()) == sep) {
+      out[at] = text.slice(from, k);
+      at++;
+      k = k + sep.len();
+      from = k;
+    } else {
+      k++;
+    }
+  }
+  out[at] = text.slice(from, text.len());
+  return out;
+}
+
+/**
+ * Whether two byte arrays differ, and where — the empty string when they do not.
+ *
+ * A length and a first difference rather than a bool, because "the round trip failed" is not a message
+ * anybody can act on and these compare hundreds of kilobytes.
+ */
+export string differs(u8[] got, u8[] want) {
+  if (got.len() != want.len()) {
+    return "length " + itoa(got.len()) + " want " + itoa(want.len());
+  }
+  for (i32 i = 0; i < got.len(); i++) {
+    if (got[i] != want[i]) {
+      return "byte " + itoa(i) + " is " + itoa(got[i]) + " want " + itoa(want[i]);
+    }
+  }
+  return "";
+}
+
+/**
+ * A real system tool's standard output, with **this process's environment**.
+ *
+ * Inherited rather than pinned on purpose: `LC_ALL=C` on an oracle removes the question along with the
+ * variable, which is how `issues/system/0143` survived for as long as it did.
+ */
+export string realOut(Cli cli, string prog, string[] args) {
+  Exec r = cli.exec(prog, args, u8[0]()).wait();
+  return string.fromBytes(r.stdout);
+}
+
+/**
+ * A sorted copy, by insertion — the lists here are entry names and column headings, never long.
+ *
+ * A *copy*, because the caller usually still wants the original order to compare against: `tar`'s
+ * listing is the archive's walk order while `ls`'s is sorted, and a differential that sorted in place
+ * would lose the ability to say which of the two it was looking at.
+ */
+export string[] sortedOf(string[] xs) {
+  string[] out = string[xs.len()](fill: "");
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string held = out[i];
+    i32 k = i - 1;
+    while (k >= 0 && out[k] > held) { out[k + 1] = out[k]; k = k - 1; }
+    out[k + 1] = held;
+  }
+  return out;
+}
+
+/** The strings joined with `sep` between them. */
+export string joinWith(string[] xs, string sep) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : sep) + xs[i]; }
+  return out;
+}
+
+/**
+ * One applet, driven straight at `dispatch` with no shell in between.
+ *
+ * **This is how a wac test reaches an applet that a script cannot.** `runCase` runs a `Shell`, and
+ * five of the names are shadowed — `echo ls mkdir rm chmod` are builtins as well as applets, the
+ * builtin wins, and `packages/sh` has no `command` to bypass one with. So a script asking `ls -a` asks
+ * the builtin, which accepts it, where box's applet refuses it. Everything about flags, refusals and
+ * usage for those five is invisible from the vector route and visible from here.
+ *
+ * `argv` is the whole command line, applet name first, exactly as `box` receives it: `parseList` is
+ * handed `first = 1` for the same reason `parseArgs` hands `parseFrom` a 1.
+ *
+ * **The status is `dispatch`'s, not the program's.** An unknown name answers `UNKNOWN` (-1) here,
+ * where `box` answers 2 — `main` is the half that turns "no such applet" into a usage error, and it
+ * reads argv from the process, so it is not reachable in-process. Compare against `UNKNOWN` rather
+ * than against a number.
+ */
+export Ran runApplet(Core core, Cli cli, string dir, string[] argv) {
+  return runAppletIn(core, cli, dir, argv, u8[0]());
+}
+
+/**
+ * The same, with something on standard input.
+ *
+ * `tr` is the applet that needs it and the reason is not incidental: it takes no file operand, and
+ * GNU's does not either — ours stopped pretending to in wac-mono 0098. So the only way to hand it
+ * input is the way a user would.
+ */
+export Ran runAppletIn(Core core, Cli cli, string dir, string[] argv, u8[] stdin) {
+  Frame f = Frame.of(argv, stdin, dir, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  i32 status = dispatch(c, l, Fs.onHost(l, 0), parseList(argv, 1, argv[0]), argv[0]);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
 }
 
