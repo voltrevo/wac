@@ -77,9 +77,30 @@ answer is sharper than the probe would have been:
 | Node (`host/nodeNet.js`) | `close: () => sock.destroy()` | correct — explicit |
 | **v8 (`native/v8/`)** | removed the entry and let the `TcpStream` drop | **the bug** |
 
+**And the right pattern was fifteen lines away.** `closeSend` — the half-close from
+`issues/system/0215` — does `s.shutdown(Shutdown::Write)` on the socket fetched by handle, in the
+same file, in the neighbouring capability. So this was not a host that did not know how to shut a
+socket down; it was one place that reached for the drop instead, next to one that did not.
+
 So the fix applied here is what the *other* Rust host has been doing all along, and the one that was
 wrong is the default. That is the useful part: it was not a misread contract shared across hosts —
 three of four call an explicit teardown, and only this one relied on a value going out of scope,
 which stops being a close the moment `recv` has taken its own descriptor with `try_clone`.
 
 `packages/tor/test/wac/socksnet_test.wac` now asserts the close and runs in ~4s instead of ~14s.
+
+## The same shape remains for listeners, and the symmetric fix does not exist
+
+Applying the mechanism rather than the symptom: `recv` is not the only capability that duplicates a
+descriptor. `accept` does `l.try_clone()` on a `Sock::Listener`, and the match this fix added handles
+`Queue` and `Stream` with `_ => {}` over `Listener` and `Datagram`. So closing a listener while an
+`accept` is parked drops one descriptor and the clone holds the port.
+
+**Left as a note rather than fixed, for two reasons.** `std::net::TcpStream` has `shutdown` and
+`TcpListener` does not, so the one-line fix has no counterpart — closing a listener properly means
+tracking the clone or going to the raw descriptor, which is a different change. And nothing here can
+show an effect: every server in this repository closes its listener at process exit, where the
+operating system reclaims the port anyway. A long-running program that closed a listener and expected
+the port free would see it.
+
+Recorded so the next person to meet it does not have to rediscover `try_clone` to explain it.
