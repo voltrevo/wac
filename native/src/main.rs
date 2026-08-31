@@ -2616,7 +2616,12 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
-            // Nothing was consumed to make this, so there is nothing to hand back.
+            // **This one can drop bytes, and is not fixed here.** `drop` is what a guest's
+            // `Pending.cancel` reaches, so an answer that landed between the caller giving up and
+            // this call is discarded — `issues/system/0307b`'s defect on the narrowest path of all.
+            // Handing it back needs the ticket's *handle*, which a ticket id does not carry; the v8
+            // host keeps a `receiving` map for exactly this and only for datagrams. Left explicit
+            // rather than commented as harmless, which is what a mechanical edit made it say.
             let _ = caller.data().tickets.discard(id);
         }
         // The whole of D6 in one arm: a runtime that answered zero here would make every program
@@ -2642,7 +2647,7 @@ fn settle_now(
     results: &mut [Val],
 ) -> Result<(), wasmtime::Error> {
     let id = caller.data().tickets.submit();
-    // Nothing was consumed to make this, so there is nothing to hand back.
+    // Submitted a line ago and nobody has had the chance to give it up, so this never comes back.
     let _ = caller.data().tickets.complete(id, outcome);
     pending_for(caller, kind, id, results)
 }

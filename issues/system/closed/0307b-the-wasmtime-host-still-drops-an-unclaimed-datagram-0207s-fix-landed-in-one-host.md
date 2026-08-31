@@ -192,6 +192,16 @@ abandoned one loses the lot, and there is no handle to put it back under the way
 sites are marked in `native/src/main.rs` rather than quietly given a `let _ =`. Worth its own issue
 if anything is found to read that way with a deadline.
 
+**`drop` can still lose an answer, on the narrowest path.** `Cap::Discard` is what a guest's
+`Pending.cancel` reaches, so bytes that landed between the caller giving up and the drop are
+discarded. Handing them back needs the ticket's *handle*, and a ticket id does not carry one — the
+v8 host keeps a `receiving` map for precisely this and only for datagrams. Marked in the source.
+
+Worth saying how that was nearly missed: the twelve `let _ =` annotations were applied by a script
+with one blanket comment, *"nothing was consumed to make this"*, and on this site that sentence is
+simply false. A mechanical edit wrote a wrong claim into the code and it read as considered. The
+other eleven were checked afterwards and hold; two were reworded to say why rather than assert it.
+
 **`#[must_use]` did not flag the sites that mattered.** The three spawned readers are
 `std::thread::spawn(move || table.complete(…))`, where the value is the closure's return and
 therefore used. The attribute found thirteen synchronous sites and none of the four that could lose
