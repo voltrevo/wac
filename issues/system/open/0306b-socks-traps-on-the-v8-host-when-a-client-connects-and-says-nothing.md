@@ -89,9 +89,15 @@ cores between two suites, not a load average. That is not something to manufactu
 that three suites at once get killed at about 70% with no failure reported, so loading the box to
 chase this would hand the other agents phantom failures.
 
-**The route back to it** is therefore to run the probe *while a gate is running*, which happens
-several times an hour anyway, rather than to build load. The probe is described above and is
-deliberately uncommitted.
+**The route back to it is not known.** Running the probe while another agent's gate was live —
+the contention every reproduction had — gives 0 of 6. So does restoring the probe to the exact shape
+that first trapped it: fill to the cap, one connection past it, close them all, then a real request.
+That shape had been simplified in between, which was a second uncontrolled change and is why it was worth
+putting back; it did not bring the trap with it.
+
+Tally: it reproduced readily for one stretch and has not reproduced in ~70 runs since, across a
+pristine host, four host variants, three probe shapes, a quiet machine, a loaded one, and a live
+gate beside it.
 
 **Things eliminated along the way**, each by a check rather than an argument, and all still true:
 the `0304b` interaction (rates indistinguishable), a stale circuit index (guard never fired), a
