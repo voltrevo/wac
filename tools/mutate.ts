@@ -584,7 +584,19 @@ if (explain) {
   await stageProject(root);
   console.log(`  measuring ${stagedFrom()}`);
   const scope = [...new Set(toRun.flatMap((t) => testDirs(t.mutant)))].sort();
-  const files = await testFilesIn(scope.map((d) => `${root}/${d}`));
+  // **The same two gatherers the real profiling pass uses**, which this mode did not have.
+  // `testFilesIn` finds `.test.ts` and nothing else, so with the suite's tests now mostly wac it saw
+  // 60 files where a real run sees those plus 474 `*_test.wac` — and every line covered only by a
+  // wac test read as unreachable. Measured on 2026-08-31: `1 narrowed, 20 widened, 19 unhit` against
+  // `20 narrowed, 20 widened, 0 unhit` when the tests were TypeScript. A selection report that
+  // cannot see half the suite is the failure this tool exists to detect, in the tool.
+  for (const d of scope) {
+    if ((await testFilesIn([`${root}/${d}`])).length === 0) hostlessDirs.add(d);
+  }
+  const files = [
+    ...await testFilesIn(scope.map((d) => `${root}/${d}`)),
+    ...await wacEntriesIn(scope.filter((d) => hostlessDirs.has(d)).map((d) => `${root}/${d}`)),
+  ];
   const rel = files.map((f) => f.slice(root.length + 1));
   console.log(`profiling ${rel.length} test file(s) across ${scope.length} scope(s)…`);
   const p = await buildProfile(root, rel, (m) => console.log(m), { noCache: noProfileCache });
