@@ -212,3 +212,28 @@ slot — and a caller doing only `p.cancel()` leaves the scheduler's continuatio
 a caller wanting both does both and calls that *"worth a single call one day"*. Sixty-seven bounded
 waits that never cancel either half are not obviously wrong — most re-wait rather than give up — but
 nobody has counted which do which, and `CALL_SLOTS` is finite.
+
+### Read all six, and none of them loses anything today
+
+Of the eight matches, two are prose — `std/platform.wac`'s own note and its generated copy in
+`packages/wacc/src/coretext.wac`. The six real ones:
+
+| site | cancels | what is lost |
+|---|---|---|
+| `tor/src/link.wac:116` | a dial | was a leaked connection; `issues/system/0310b` closes it now |
+| `tor/src/link.wac:168` | a bounded read | nothing — `closeSocket` follows immediately |
+| `platform/example/patience.wac:65` | a dial | as tor's, and the same remedy |
+| `platform/example/patience.wac:106` | a bounded read | nothing — `closeSocket` follows |
+| `platform/example/wacland.wac:89` | `sleepMillis` | nothing — a timer consumes nothing |
+| `platform/example/wacland.wac:125` | a tick | nothing — a timer |
+
+So **this defect currently costs nothing in this repository.** Every caller is a timer, a read whose
+socket closes straight after, or a dial that is now closed on drop. That is worth knowing before
+anyone spends the protocol change: it is a **latent** defect and a trap for the next caller, not
+active data loss.
+
+It does not make it wrong to fix — a bridge that discards an answer nobody has collected is a bad
+foundation, and the next bounded read that retries instead of closing will hit it silently. But it
+should be weighed against a change spanning `call.ts`, `respond.ts` and three host files, and against
+`0310b`'s finding that the remedy differs by what was consumed. Sizing it honestly is more useful
+than sizing it alarmingly.
