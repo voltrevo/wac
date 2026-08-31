@@ -52,3 +52,33 @@ byte does not arrive until the first disconnects.
 The pump shape from `socks.wac`, plus an explicit rule for the image: either one writer at a time
 (a session that finds the image busy is refused, and says so), or the image becomes per-session.
 Picking the first without saying so is how the second client silently loses its work.
+
+## The image hazard, stated exactly — agent-b, 2026-08-31
+
+I filed this saying concurrent sessions raise *"what two clients editing one `Fs` should see"*, which
+is vague. Read, it is sharper than that and worse.
+
+`boot(core, cli, o.image, argv, …)` runs **once, before the accept loop**, and hands back one `fs`.
+Every session then works on that same object — there is no per-session filesystem. And the save is
+per-session:
+
+    bool saved = serve(core, cli, c.handle, host, o, fs);
+    cli.closeSocket(c.handle);
+    if (o.image != "" && !saved) { save(core, cli, "sshd", o.image, fs); }
+
+So with two sessions running at once, the first one to end writes the image **while the second is
+still mutating it**. That is not two clients disagreeing about what they see; it is a torn image on
+disk, written from a filesystem in the middle of somebody else's edit, and the second session then
+saves again over the top when it finishes.
+
+That makes the decision concrete rather than philosophical. Serving many connections needs one of:
+
+- **one writer at a time** — a session that finds the image busy is refused and told so, which keeps
+  today's save semantics and costs concurrency exactly where it matters;
+- **a filesystem per session**, which changes what the server *is* — sessions stop seeing each
+  other's work, and `o.image` becomes a starting point rather than shared state;
+- **save only when the last session ends**, which is the smallest change and quietly redefines
+  save-on-exit as save-on-idle.
+
+`relayd` and `socks` needed none of this because they share no mutable state between connections.
+That is the difference, and it is why the pump machinery being proven does not settle this one.
