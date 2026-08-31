@@ -469,3 +469,71 @@ string firstField(string line) {
   i32 tab = line.indexOf("\t");
   return tab < 0 ? line : line.slice(0, tab);
 }
+
+/**
+ * Everything after the first `": "`, with any trailing newline gone.
+ *
+ * The program name is not the claim and cannot match: the host resolves `cat` through `PATH` and
+ * hands the child its resolved path as argv[0], so GNU says `/usr/bin/cat:` where box says `cat:`.
+ */
+string reasonOf(string line) {
+  string s = line;
+  while (s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n") { s = s.slice(0, s.len() - 1); }
+  i32 c = s.indexOf(": ");
+  return c < 0 ? s : s.slice(c + 2, s.len());
+}
+
+/**
+ * A failed read says what the real tool says — **against the real tool, live**.
+ *
+ * From `box.test.ts`, and it is the case that showed migration and vectorisation are different
+ * things. It cannot be a vector, because the fixture needs a file at mode 0 and the vectors' fixtures
+ * are `Fixture` values with no mode. It does not need to be: a wac test can spawn the oracle itself,
+ * so this asks GNU the question at the moment it asks box.
+ *
+ * The words come from `faultWords` in `platform.wac`, which exists because four copies of the list had
+ * already drifted and nothing compared any of them to the tool they imitate. Replacing the lookup
+ * `lib/input` used with the empty string left every message ending in a bare colon, and the suite
+ * green.
+ *
+ * **Both halves of the read path**, because they are separate code and drifted apart once: `cat`
+ * streams through `openInput`, `base64` takes the whole file through `readFile`, and each translates
+ * its own failure. `base64` is the oracle for the second because GNU words it the same way — `sort`
+ * says "cannot read:" and `tac` says "failed to open ... for reading", so either would be comparing a
+ * different sentence rather than the same reason.
+ *
+ * The oracle's environment is **inherited rather than pinned**. `LC_ALL=C` would remove the question
+ * along with the variable: box's table is English, so a run under a translated locale is a real
+ * disagreement and this should be the test that shows it.
+ */
+export string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  string denied = dir + "/unreadable";
+  string missing = dir + "/definitely-not-here";
+  t.isTrue(cli.writeFile(denied, "secret\n".toBytes()).wait().ok(), "wrote the file");
+  t.isTrue(cli.chmod(denied, 0).wait().ok(), "and closed it");
+
+  // **A control, as in `unreadable_test.wac`.** Mode 0 denies nothing to root, so as root the denied
+  // half of this test would compare two successes and pass without asking anything.
+  t.eqI32(cli.exec("cat", string[](denied), u8[0]()).wait().status, 1,
+          "the fixture is genuinely unreadable — running as root would make it 0");
+
+  string[] applets = string[]("cat", "cat", "base64", "base64");
+  string[] paths = string[](missing, denied, missing, denied);
+  for (i32 i = 0; i < applets.len(); i++) {
+    string what = applets[i] + " on " + (i % 2 == 0 ? "a missing file" : "an unreadable one");
+    Ran ours = runCase(core, cli, dir, applets[i] + " " + paths[i]);
+    Exec theirs = cli.exec(applets[i], string[](paths[i]), u8[0]()).wait();
+    t.isTrue(theirs.error == "", "the oracle ran: " + theirs.error);
+    t.eqStr(reasonOf(ours.err), reasonOf(string.fromBytes(theirs.stderr)),
+            "the reason for " + what + " differs from the real one's: " + ours.err);
+    t.eqI32(ours.status, 1, "a failed read exits 1, as " + applets[i] + " does");
+  }
+
+  cli.chmod(denied, 384).wait();          // 0600, so the cleanup can unlink it
+  cli.remove(dir, true).wait();
+  return t.report();
+}

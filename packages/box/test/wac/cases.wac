@@ -26,6 +26,10 @@ export string[] cases() {
     "wc -w mixed.txt", "wc -c nonl.txt", "wc mixed.txt",
     "head -3 long.txt", "head -c 12 long.txt", "head -n -25 long.txt",
     "tail -3 long.txt", "tail -c 12 long.txt", "tail -n +28 long.txt",
+    // No count at all, against a 30-line file, so the answer is the *default* and not the file. GNU's
+    // is ten; box's has to be, and until this was captured nothing said so — `box.test.ts` asked it by
+    // running GNU with an explicit `-10`, which cannot see a wrong default on either side.
+    "head long.txt", "tail long.txt",
     "cat -n mixed.txt", "cat -b mixed.txt", "cat -s mixed.txt",
     "cat -A tabs.txt", "cat -e mixed.txt", "cat -t tabs.txt",
     "cat -v bin.txt", "cat nonl.txt words.txt", "cut -f2 tabs.txt",

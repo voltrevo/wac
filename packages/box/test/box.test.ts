@@ -93,16 +93,16 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
 
     // In this process, not a subprocess. `appRunner` is the launcher half of a built program, so
     // "running box" is a worker rather than a whole second Deno — 64ms against 112ms, measured, for
-    // byte-identical output. The executable is still built above: `sysCode` compares against it,
-    // and the tests that are *about* process boundaries need a real one.
+    // byte-identical output. The executable is still built above, because the tests that are *about*
+    // process boundaries need a real one.
+    //
+    // **There is no `sys` helper here any more.** Every comparison against a real utility that this
+    // test used to make is now a captured vector, so nothing left in this function runs GNU. What
+    // remains asks box questions GNU cannot answer — refusals, grants, the dispatcher's own usage —
+    // and the one comparison that still needs a live oracle went to `applets_test.wac`, where a wac
+    // test can call `cli.exec` itself.
     const runner = await appRunner(BOX, { read: true });
     const box = (args: string[]) => runner.run(args);
-    const sysCode = (cmd: string, args: string[]) =>
-      new Deno.Command(cmd, { args, stdout: "null", stderr: "null" }).outputSync().code;
-    const sys = (cmd: string, args: string[]) => {
-      const r = new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).outputSync();
-      return new TextDecoder().decode(r.stdout);
-    };
 
     // **`cat`, `rev`, `nl`, `base64`, `sha256sum` and `wc` moved to `appletCases()`.** Each is
     // byte-for-byte against the real tool there, over `m1.txt`/`m2.txt` rather than this fixture, and
@@ -283,52 +283,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     assertEquals(dashA.code, 2, `ls -a should be a usage error: ${JSON.stringify(dashA.err)}`);
     assertEquals(dashA.err.includes("not implemented"), true, dashA.err);
 
-    // A directory of its own for the two unreadable paths, so nothing else in this test can see them.
-    const fixtureDir = await Deno.makeTempDir({ prefix: "wac-box-fail-" });
-    // **A failed read says what the real tool says.** The words come from `faultWords` in
-    // `platform.wac`, which exists because four copies of this list had already drifted — and nothing
-    // compared any of them to the tool they imitate. Replacing the lookup `lib/input` used with the
-    // empty string left every one of these messages ending in a bare colon, and the suite green. (That
-    // lookup was `whyUnread`, one of the four; it is `platform.wac`'s `readReason` now, beside the
-    // table, and `lib/input` calls it directly rather than wrapping it.)
-    const denied = `${fixtureDir}/unreadable`;
-    await Deno.writeTextFile(denied, "secret\n");
-    await Deno.chmod(denied, 0o000);
-    // Both halves of the read path, because they are separate code and drifted apart once: `cat` streams
-    // through `openInput`, `base64` takes the whole file through `readFile`, and each translates its own
-    // failure — `lib/input.wac` has a function per half. `base64` is the oracle for the second because GNU
-    // words it the same way; `sort` says "cannot read:", `tac` says "failed to open ... for reading", and
-    // comparing against either would be comparing a different sentence rather than the same reason.
-    for (const [applet, path] of [
-      ["cat", `${fixtureDir}/definitely-not-here`],
-      ["cat", denied],
-      ["base64", `${fixtureDir}/definitely-not-here`],
-      ["base64", denied],
-    ] as const) {
-      const ours = await box([applet, path]);
-      const theirs = new Deno.Command(applet, {
-        args: [path],
-        env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
-        clearEnv: true,
-        stdout: "null",
-        stderr: "piped",
-      }).outputSync();
-      // After the program name: `Deno.Command` resolves `cat` through PATH and hands it that path as
-      // argv[0], so the real one says `/usr/bin/cat:` where ours says `cat:`. The reason is the claim.
-      const reason = (line: string) => line.trim().split(": ").slice(1).join(": ");
-      assertEquals(
-        reason(ours.err),
-        reason(new TextDecoder().decode(theirs.stderr)),
-        `the reason ${applet} gave differs from the real one's: ${ours.err.trim()}`,
-      );
-      assertEquals(ours.code, 1, `a failed read exits 1, as ${applet} does`);
-    }
-
-    // The directory the two unreadable paths live in, removed here rather than left behind: this was
-    // one directory per run, and the machine had 1,061 of them on 2026-08-11 with the disk at 100%
-    // and every agent's push failing on it. `chmod 000` is why it needs the recursive form.
-    await Deno.chmod(denied, 0o600).catch(() => {});
-    await Deno.remove(fixtureDir, { recursive: true }).catch(() => {});
+    // **The failed-read reasons moved to `applets_test.wac`, and stayed a live differential.** They
+    // could not become vectors — the fixture needs a file at mode 0, and a `Fixture` has no mode — but
+    // a wac test can spawn `cat` and `base64` itself through `cli.exec`, so the wac version asks GNU
+    // the question at the moment it asks box rather than replaying an answer recorded earlier. It also
+    // stopped pinning `LC_ALL=C` on the oracle, which had been removing the question along with the
+    // variable: box's `faultWords` table is English, and a translated locale is a real disagreement.
     // The usage message lists every applet, wrapped. Nothing looked at it, so `wrapped` could return the
     // empty string — and the list of what this program can do would simply be missing.
     const help = await box([]);
@@ -342,15 +302,10 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
       assertEquals(line.length <= 74, true, `a usage line is ${line.length} wide: ${line}`);
     }
 
-    // head and tail against a file with more lines than they take.
-    const many = await Deno.makeTempFile();
-    try {
-      await Deno.writeTextFile(many, Array.from({ length: 15 }, (_, i) => i + 1).join("\n") + "\n");
-      assertEquals((await box(["head", many])).out, sys("head", ["-10", many]), "head differs");
-      assertEquals((await box(["tail", many])).out, sys("tail", ["-10", many]), "tail differs");
-    } finally {
-      await Deno.remove(many);
-    }
+    // **`head` and `tail` with no count moved to `cases()`**, beside the `head -3 long.txt` family and
+    // over the same 30-line fixture. It reads better there for a reason that is not tidiness: this
+    // version ran GNU with an explicit `-10`, so it compared box's default against a *number* rather
+    // than against GNU's default, and could not have seen the two disagree.
   } finally {
     await Deno.remove(built);
     await Deno.remove(fixture);
