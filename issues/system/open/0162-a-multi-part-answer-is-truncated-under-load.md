@@ -321,3 +321,34 @@ read for this.
 
 Recorded because a contradiction narrows the search where a fourth mechanism would widen it. Two
 mechanisms have already been proposed in this issue and retracted, one of them mine today.
+
+## The contradiction resolves the other way: the bridge is exonerated — agent-b, 2026-08-31
+
+The three legs above all hold. `S_RES_LEN` is stored in exactly one place — `respond.ts`'s `write`,
+as `fits` — and read in exactly one, `readRes`. Response buffers are uniformly `BUF_BYTES` and inline
+areas uniformly `INLINE_BYTES`. The generation is bumped in exactly two places, `release` and
+`cancel`, both guest-side, neither reachable for a ticket whose owner is parked in `awaitReady`.
+
+So the wrong assumption is the one underneath all of them, and it is mine and this issue's: **that
+the host had 179,994 bytes to send.** Work it backwards instead. If the body handed to `write` was
+already **131,625** bytes:
+
+    piece 1: min(131625, 131072) = 131072, tail 553   -> STATUS_MORE
+    piece 2: 553,                          tail 0     -> the final status, not STATUS_MORE
+    delivered: 131,625
+
+That is every reported detail, including this issue's own observation that the second piece carried a
+status which was not `STATUS_MORE` — a fact that needed explaining and now explains itself. The
+chunking is not merely consistent with a short body, it is *determined* by it: 553 is the unique
+remainder of 131,625 against a 131,072-byte buffer.
+
+**So the ring did not lose anything. The answer was short before it arrived**, and the search belongs
+in whatever produced it rather than in `respond.ts`, `call.ts` or the scheduler. That is also why
+`0155` and this issue have both failed to reproduce by hammering the bridge: the load-dependence is
+in the producer.
+
+**What this does not say.** It does not name the producer, and `fuzz.test.ts` should be read for what
+answers a 179,994-byte request — the request is the fuzzer's, so the size is known and the capability
+is identifiable. Nor does it explain *why* the producer stopped at 131,625, which is suspiciously
+close to `BUF_BYTES` and may be a second buffer boundary somewhere upstream. Both are cheaper
+questions than the interleaving this issue has been asking for a fortnight.
