@@ -16,9 +16,18 @@ not have when this was filed.
 
 | arm | trapped |
 |---|---|
-| async proxy, v8 host **with** `0304b`'s fix | 2 of 9 |
-| async proxy, v8 host **without** it | 2 of 6 |
+| async proxy, **v8** host with `0304b`'s fix | 2 of 9 |
+| async proxy, **v8** host without it | 2 of 6 |
 | async proxy, **Deno** host | 0 of 6 |
+| async proxy, **wasmtime** host | 0 of 6 |
+
+**So it is the v8 host.** Twelve clean runs on the two other hosts against roughly one in four on
+this one is about 3% by chance. The same module, the same `socks.wac`, the same network: two hosts
+carry it and one traps. That moves this off the wac code, which is where it was filed.
+
+Testing the wasmtime arm needed its seed rebuilt — its binary carried one from before `Core`/`Cli`,
+which is the gap recorded as "could not ask" when `issues/system/0304b` was closed.
+`./bootstrap.sh --host wasmtime` is the price, and it is now paid.
 
 ## Correction: `0304b` is not involved, and the first version of this issue said it was
 
