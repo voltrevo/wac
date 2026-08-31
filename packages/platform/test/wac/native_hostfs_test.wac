@@ -282,6 +282,16 @@ string[] agreed() {
     "test -e f/g; echo st=$?",
     "cd f/g",
     "echo y > f/g",
+    // ── `chmod`: the mode taking effect, not the call returning ──
+    //
+    // Asked through what it *does*, because `ls -l` carries an owner and a date that no two runs
+    // share. A file at mode 0 cannot be read and one at 644 can, so these compare the effect on all
+    // three. Possible at all only since `box` gained a `chmod` applet: the `SET_EXECUTABLE` entry in
+    // `conformance_test.wac`'s ledger records that a script case could not reach that capability
+    // because there was none. `issues/system/0296c`.
+    "chmod 000 f; cat f; echo st=$?",
+    "chmod 644 f; cat f; echo st=$?",
+    "chmod 000 sub; ls sub; echo st=$?",
     // ── `linkStat`: the difference between a link and what it points at ──
     "test -h link; echo st=$?",
     "test -h f; echo st=$?",

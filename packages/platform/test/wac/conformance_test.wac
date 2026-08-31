@@ -236,6 +236,13 @@ Cover[] coverage() {
     where("MKDIR", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `mkdir d2; ls; rmdir d2`"),
     where2("REMOVE", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `rm made`"),
     where2("RENAME", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `mv f moved`"),
+    where("CHMOD", "packages/platform/test/wac/native_hostfs_test.wac",
+      "native_hostfs: `chmod 000 f; cat f`, `chmod 644 f; cat f`, `chmod 000 sub; ls sub` — asked " +
+      "through what the mode *does* rather than through `ls -l`, whose owner and date no two runs " +
+      "share. Driven as scripts, so GNU and both hosts answer the same question. This is the " +
+      "comparison the `SET_EXECUTABLE` entry below says a script case could not reach, and the reason " +
+      "it could not was that there was no `chmod` applet; `issues/system/0296c` added the capability " +
+      "and the applet together, so the shell route reaches this one from the start"),
     where("SET_EXECUTABLE", "packages/platform/test/wac/setexecutable_test.wac",
       "setexecutable: a program built for both hosts, run on a file whose starting mode the test pins " +
       "with `chmod`, and the resulting mode compared — `setexecutable_test.wac`. **This entry was a " +

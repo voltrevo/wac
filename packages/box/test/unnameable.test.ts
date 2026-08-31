@@ -371,25 +371,33 @@ Deno.test("a directory that cannot be listed is a failure, not a name", async ()
 Deno.test("an operation we have not written says so, and blames no file", () => {
   const dir = Deno.makeTempDirSync({ prefix: "wac-unsupported-" });
   try {
-    const r = byteSh(shell, [], `cd ${dir}; mkdir o; chmod 700 o; echo status=$?`);
-    // The sentence is ours because no GNU phrase fits: GNU never fails here at all.
-    assertEquals(r.err.trim(), "chmod: chmod on a host mount is not implemented", r.err);
-    assertEquals(r.out.trim(), "status=1", r.out);
-    // Not "Permission denied", which is what it said before, and not "cannot access", which frames a
-    // fact about us as a fact about the path.
-    assertEquals(r.err.includes("Permission denied"), false, r.err);
-    assertEquals(r.err.includes("cannot access"), false, r.err);
+    // **`chmod` left this category on 2026-08-30** and is the control for it now. It was the example
+    // here for as long as `Fs.chmod` refused on a host mount for want of a `Cli` capability wider than
+    // `setExecutable`; `issues/system/0296c` gave it one. So the same script that used to demonstrate
+    // the fault now demonstrates that the fault is about the *operation* rather than about host mounts
+    // in general — which is the claim that makes `chown` below worth asserting.
+    const did = byteSh(shell, [], `cd ${dir}; mkdir o; chmod 700 o; echo status=$?`);
+    assertEquals(did.out.trim(), "status=0", did.err);
+    assertEquals(did.err.trim(), "", "chmod says nothing now that it works");
 
+    // `chown` has not been written, and says so. The sentence is ours because no GNU phrase fits:
+    // GNU never fails here at all.
     const own = byteSh(shell, [], `cd ${dir}; chown somebody o`);
     assertEquals(own.err.trim(), "chown: chown on a host mount is not implemented", own.err);
+    // Not "Permission denied", which is what it said before, and not "cannot access", which frames a
+    // fact about us as a fact about the path.
+    assertEquals(own.err.includes("Permission denied"), false, own.err);
+    assertEquals(own.err.includes("cannot access"), false, own.err);
 
-    // The canary: GNU *can* do this, so our refusal is about us rather than about the directory. A
-    // machine where `chmod` failed for a real reason would make the assertions above meaningless.
+    // The canary, moved to follow the subject: GNU *can* chown to yourself, so our refusal is about us
+    // rather than about the directory. A machine where it failed for a real reason would make the
+    // assertions above meaningless.
     const gnu = new Deno.Command("bash", {
-      args: ["-c", `cd "$1"; chmod 700 o; echo status=$?`, "bash", dir],
+      args: ["-c", `cd "$1"; chown "$(id -un)" o; echo status=$?`, "bash", dir],
       stdout: "piped",
+      stderr: "null",
     }).outputSync();
-    assertEquals(new TextDecoder().decode(gnu.stdout).trim(), "status=0", "bash could not chmod either");
+    assertEquals(new TextDecoder().decode(gnu.stdout).trim(), "status=0", "bash could not chown either");
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
