@@ -61,9 +61,19 @@ A test in the normal lane that stands the three pieces up and gets bytes through
 Then `socks.wac` becomes async tasks — an accept loop, a guard pump and one per client — and the
 `ids`/`owner` bookkeeping goes.
 
-## What is unresolved
+## Resolved, an hour later: three relays, and they extend
 
-Whether one relay is enough for the circuit `socks` wants to build. `relayd` parses EXTEND2 and
-refuses it, so only a one-hop circuit is available; `network_tor_test.wac` reports *"circuit built"*
-against three relays, and I did not establish which hop count `socks` insists on. If it needs more
-than one hop, this needs relays that can extend, and that is a larger piece than the fixture.
+The open question was whether one relay is enough. It is not — `socks.wac`'s own header says every
+SOCKS connection is "a stream on the same **three-hop** circuit", and `app.wac` is three-hop too.
+
+I wrote that this needed "relays that can extend, and that is a larger piece" because `relayd.wac`'s
+header said *"EXTEND2 is parsed and refused"*. That claim was stale by four weeks: `178f9c0d`, on
+2026-08-05, is "a relay acts on EXTEND2, with `waitAny` over both connections", and `armExtend`
+opens the outbound hop. `network_tor_test.wac` builds three-hop circuits through three of these
+relays on every exclusive run, which was the evidence sitting in plain sight.
+
+**So the fixture is three relays rather than one**, at ~1s each and started together, and nothing
+larger is needed. That is the third time on this issue that a comment describing an older build sent
+me the wrong way — the other two are fixed in the same commit as this correction. The rule that
+would have saved all three: a comment claiming a program is *less* capable than it is can never fail
+a test, so it is worth checking against the code before it is worth believing.

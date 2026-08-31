@@ -41,13 +41,22 @@
 //
 // ## What it does not do
 //
-// **EXTEND2 is parsed and refused.** `relaycircuit.wac` reads the cell and names the next hop, and
-// acting on it means opening an outbound connection while an inbound one is live — which is the
-// concurrency this program does not have. A client extending through this relay gets a DESTROY
-// rather than silence.
-//
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
+//
+// ## It does extend, and this said otherwise for four weeks
+//
+// *"EXTEND2 is parsed and refused … a client extending through this relay gets a DESTROY"* stood
+// here until 2026-08-31 and stopped being true on **2026-08-05**, in `178f9c0d` — "a relay acts on
+// EXTEND2, with `waitAny` over both connections". The reason it gave was that acting on the cell
+// "means opening an outbound connection while an inbound one is live — which is the concurrency this
+// program does not have", and that is the same sentence the paragraph above it used to make about
+// accepting. Both are gone; `armExtend` opens the outbound hop and hands the handshake on.
+//
+// Left as a heading rather than deleted because two false claims in one header is a pattern worth
+// seeing: each described a limit that the concurrency work removed, and neither was noticed because
+// a comment saying a program is *less* capable than it is never fails a test. Three-hop circuits
+// through these relays are what `network_tor_test.wac` builds, which is the standing evidence.
 
 import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
          FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std/platform.wac";
