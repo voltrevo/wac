@@ -65,23 +65,21 @@ duplicate is just as alive as a live one's.
 The fix is to `shutdown(Both)` a `Sock::Stream` instead of relying on the drop, because `shutdown`
 acts on the connection rather than on a descriptor and reaches the peer however many clones exist.
 
-## The other hosts, measured — and two of the four could not be asked
+## All four hosts, and the default was the only one wrong
 
-The probe is host-agnostic, so it was pointed at each rather than reasoned about:
+Two rows of this were "could not ask" when it was closed. They are answerable by reading, and the
+answer is sharper than the probe would have been:
 
-| host | result |
-|---|---|
-| native v8 (`native/v8/`) | had it; fixed here |
-| Deno (`.cache/built-wac-deno-cli`) | **passes** — the close reaches the peer already |
-| Node | could not run: `.cache/built-wac-node-cli` is empty, so there is no CLI to point at |
-| wasmtime (`native/`) | could not run: *"this module was built without Core and Cli"* — its binary
-  carries a seed that predates them |
+| host | what `closeSocket` does | verdict |
+|---|---|---|
+| wasmtime (`native/`) | `s.shutdown(Shutdown::Both)`, then closes the handle | already correct |
+| Deno | explicit teardown | correct — the probe passes on it |
+| Node (`host/nodeNet.js`) | `close: () => sock.destroy()` | correct — explicit |
+| **v8 (`native/v8/`)** | removed the entry and let the `TcpStream` drop | **the bug** |
 
-So this was one host's bug rather than a shared misreading of the contract, which is the useful part:
-the Deno host does the right thing with the same `closeSocket` contract in front of it.
-
-**The last two rows are harness limits and not passes**, and the difference matters — it would be
-easy for "could not ask" to become "fine" in a later reading. Answering them costs a Node CLI build
-and a `./bootstrap.sh --host wasmtime` respectively.
+So the fix applied here is what the *other* Rust host has been doing all along, and the one that was
+wrong is the default. That is the useful part: it was not a misread contract shared across hosts —
+three of four call an explicit teardown, and only this one relied on a value going out of scope,
+which stops being a close the moment `recv` has taken its own descriptor with `try_clone`.
 
 `packages/tor/test/wac/socksnet_test.wac` now asserts the close and runs in ~4s instead of ~14s.
