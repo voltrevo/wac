@@ -603,81 +603,16 @@ Deno.test("a file still needs the grant, and says so", async () => {
   assertEquals(denied.err.includes("Not granted to this application"), true, denied.err);
 });
 
-Deno.test("cp streams, and leaves nothing behind either way", async () => {
-  // `cp` read the whole file and wrote the whole file, so copying anything larger than
-  // memory was impossible and copying anything over a megabyte failed outright. It now
-  // pumps chunks into a temporary name and renames, which needs `openOutput` — without a
-  // streaming *sink* the read half alone would not have helped.
-  const dir = await Deno.makeTempDir({ prefix: "wac-cp-d-" });
-  try {
-    // The five megabytes below are the test; the process around them was not. A worker run crosses the
-    // same 1MB bridge buffer in the same chunks — that is what `appRunner` is, the launcher half of a
-    // built program — so the streaming property is unchanged and three Deno startups are not paid.
-    const runner = await appRunner(BOX, { read: true, write: true });
-    const cp = async (src: string, dst: string) => await runner.run(["cp", src, dst]);
+// **Moved to `packages/box/test/wac/writepath_test.wac`.** `cp` crossing chunk boundaries, copying
+// over an existing file, and leaving no temporary beside a failed target — all assertions about our
+// own behaviour, checkable with `cli.readFile` and `cli.readDir` in this process. The fixture is
+// 500,003 bytes there rather than 5,000,003: the property is that the copy crosses boundaries, and
+// seven of them shows it as well as seventy.
 
-    // Several times the 64K chunk and the 1MB bridge buffer, and not a multiple of either.
-    const size = 5_000_003;
-    const data = new Uint8Array(size);
-    for (let i = 0; i < size; i++) data[i] = (i * 31 + (i >> 13)) & 0xFF;
-    const src = `${dir}/src`;
-    await Deno.writeFile(src, data);
 
-    const r = await cp(src, `${dir}/dst`);
-    assertEquals(r.code, 0, r.err);
-    assertSameBytes(await Deno.readFile(`${dir}/dst`), data, "5MB copy");
+// **Moved to `packages/box/test/wac/writepath_test.wac`.** `tee`'s two destinations are a pipeline
+// and a `readFile`, neither of which needs a process.
 
-    // Over an existing file, and the rename must not leave the old contents.
-    await Deno.writeTextFile(`${dir}/dst`, "stale");
-    assertEquals((await cp(src, `${dir}/dst`)).code, 0);
-    assertSameBytes(await Deno.readFile(`${dir}/dst`), data, "copy over an existing file");
-
-    // A failure must not leave a temporary file lying next to the target.
-    assertEquals((await cp(`${dir}/absent`, `${dir}/never`)).code, 1, "a missing source fails");
-    const left: string[] = [];
-    for await (const e of Deno.readDir(dir)) left.push(e.name);
-    assertEquals(left.sort().join(","), "dst,src", `temporary files survived: ${left}`);
-
-    // And `write` goes back to standard output afterwards, which is what closes the file.
-    const out = await runner.run(["cat", src]);
-    assertSameBytes(out.bytes, data, "cat still writes to stdout after a cp");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("box's write-path applets: cp and tee", async () => {
-  // The first applets in `box` that write. `cp` needs no capability the world did not
-  // already have — it is `readFile` and `writeFile` — and `tee` is the first with two
-  // destinations at once.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-w-" });
-  const dst = await Deno.makeTempFile({ prefix: "wac-box-dst-" });
-  try {
-    await buildApp(BOX, built, { read: true, write: true });
-    const src = "packages/box/src/box.wac";
-
-    const cp = new Deno.Command(built, { args: ["cp", src, dst], stderr: "piped" }).outputSync();
-    assertEquals(cp.code, 0, new TextDecoder().decode(cp.stderr));
-    assertEquals(await Deno.readTextFile(dst), await Deno.readTextFile(src), "cp copied it");
-
-    const child = new Deno.Command(built, {
-      args: ["tee", dst],
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    const w = child.stdin.getWriter();
-    await w.write(new TextEncoder().encode("through\n"));
-    await w.close();
-    const r = await child.output();
-    assertEquals(r.code, 0, new TextDecoder().decode(r.stderr));
-    assertEquals(new TextDecoder().decode(r.stdout), "through\n", "tee wrote to stdout");
-    assertEquals(await Deno.readTextFile(dst), "through\n", "and to the file");
-  } finally {
-    await Deno.remove(built);
-    await Deno.remove(dst);
-  }
-});
 
 
 Deno.test("wc -w splits words where wc(1) splits them, including the code points that are not spaces", async () => {
