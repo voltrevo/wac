@@ -164,3 +164,24 @@ against rather than a detail to discover halfway.
 about whether a bounded read loses data is exactly the kind of difference that makes a program
 correct in the suite and wrong in the browser — and `0207`, `0306b` and `0310b` were all one host
 being different from the others.
+
+## The fix has to clear the *request* accumulator too — agent-b, 2026-08-31
+
+`cancel`'s fast path calls `release`, which is guest-side and cannot touch the host's per-slot state.
+`abandon` clears three things — `pending[slot]`, `partial[slot]` and (implicitly) `finalStatus[slot]`
+— and the fast path reaches none of them.
+
+`pending` is the obvious one and is what this issue is about. **`partial` is the one that is easy to
+miss**, and it is reachable: `OP_PUSH` answers `STATUS_ACK`, which puts the slot at `ST_READY`, so a
+guest that pushes one piece of an oversized request, sees the ack, and then gives up takes exactly
+this path. The pieces it already pushed stay on the slot, which is immediately reusable.
+
+What would follow is a later call's payload being joined with a dead call's pieces —
+`whole = joined(partial[slot], payload)`. In today's tree the handler's `p.length !== declared` check
+in `packages/platform/test/fuzz.test.ts` would catch that and say *"request reassembled to N bytes,
+declared M"*, which is not a symptom anyone has reported; a capability without such a check would not
+notice at all.
+
+So this is not offered as `issues/system/0162` — that report shows no reassembly error. It is a
+requirement on whatever fixes this issue: **clearing `pending` is not enough, and a fix that only
+addresses the answer leaves the request half of the same asymmetry in place.**
