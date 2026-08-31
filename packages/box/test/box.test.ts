@@ -231,21 +231,13 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // widened it, so the test went where the rest of box's are, and gained a root check the version
     // here depended on silently.
 
-    // A read that fails is not an end of input. `readChunk` answers with bytes and cannot say
-    // "broken", so every filter treated a half-read as a whole one and exited 0 — the failure mode
-    // where the program is the last thing suspected. `inputError` is the reason, asked once when the
-    // chunks stop. A directory is the portable way to get an open that succeeds and a read that does
-    // not. GitHub wac-mono#18.
-    for (const applet of ["cat", "wc", "hex", "crc32", "sha256sum", "strings"]) {
-      const r = (await box([applet, "/tmp"]));
-      assertEquals(r.code, 1, `${applet} of a directory should fail, got ${r.code}`);
-    }
-    // And the real ones agree that it is a failure.
-    assertEquals(
-      new Deno.Command("cat", { args: ["/tmp"], stdout: "null", stderr: "null" }).outputSync().code,
-      1,
-      "GNU cat agrees",
-    );
+    // **Moved, and split by whether GNU has the tool** — wac-mono#18, where `readChunk` answers with
+    // bytes and cannot say "broken", so every filter treated a half-read as a whole one and exited 0.
+    // A directory is the portable way to get an open that succeeds and a read that does not.
+    // `cat`, `wc`, `sha256sum` and `strings` are `appletCases()` against the real tools; `hex` and
+    // `crc32` are ours, so bash answers 127 for them and they are written down in `applets_test.wac`.
+    // `adir` is a directory *fixture* there, which the capture tool once wrote as an empty file — and
+    // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
 
     assertEquals((await box(["head", "-3", fixture])).out, sys("head", ["-3", fixture]), "head -N");
     assertEquals((await box(["tail", "-n", "2", fixture])).out, sys("tail", ["-n", "2", fixture]), "tail -n N");

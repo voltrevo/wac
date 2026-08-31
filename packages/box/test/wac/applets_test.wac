@@ -367,3 +367,33 @@ string sortedNames(Cli cli, string dir) {
   for (i32 i = 0; i < names.len(); i++) { out = out + " " + names[i]; }
   return out;
 }
+
+/**
+ * The two filters with no counterpart, over a directory — GitHub wac-mono#18.
+ *
+ * `readChunk` answers with bytes and cannot say "broken", so every filter treated a half-read as a
+ * whole one and exited 0: the failure mode where the program is the last thing suspected. A directory
+ * is the portable way to get an open that *succeeds* and a read that does not.
+ *
+ * `cat`, `wc`, `sha256sum` and `strings` ask this in `appletCases()` against the real tools. `hex` and
+ * `crc32` are ours — bash answers 127 for them, so there is nothing to capture and the expectation is
+ * written down.
+ */
+export string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+
+  Ran hex = runCase(core, cli, dir, "hex adir");
+  t.eqI32(hex.status, 1, "hex of a directory fails rather than reading nothing");
+  t.eqStr(hex.out, "", "and writes no output");
+  t.isTrue(hex.err.indexOf("Is a directory") >= 0, hex.err);
+
+  Ran crc = runCase(core, cli, dir, "crc32 adir");
+  t.eqI32(crc.status, 1, "and so does crc32");
+  t.eqStr(crc.out, "", "which is the half that mattered: a checksum of nothing is a number");
+  t.isTrue(crc.err.indexOf("Is a directory") >= 0, crc.err);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

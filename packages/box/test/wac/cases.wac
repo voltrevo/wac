@@ -397,6 +397,12 @@ export string[] appletCases() {
     // cases want different contents.
     "printf '4294967296\\n1\\n2147483648\\n-1\\n' > w; sort -n w",
     "printf '4294967296\\n0\\n' > w; sort -nu w",
+    // A read that fails is not an end of input. `readChunk` answers with bytes and cannot say
+    // "broken", so every filter treated a half-read as a whole one and exited 0 — the failure mode
+    // where the program is the last thing suspected. GitHub wac-mono#18.
+    // Only the four with a real counterpart: `hex` and `crc32` are ours, so bash answers 127 for
+    // them and there is nothing to capture. They are asked in `applets_test.wac` instead.
+    "cat adir", "wc adir", "sha256sum adir", "strings adir",
     "printf 'contents\\n' > ./-x; cat -- ./-x",
     "printf 'contents\\n' > ./-x; cat -- -x",
     // base32 both ways, so the pair is a round trip rather than two independent spellings.
@@ -452,6 +458,11 @@ export Fixture[] appletFixtures() {
     // A numeric *operand*, which is a different question: `-n` is a value for `head` and `tail` and a
     // boolean everywhere else, and when it was a value everywhere `grep -n 123` searched for its own
     // filename and stopped numbering. GitHub wac-mono#5.
-    Fixture("numeric.txt", "123\nabc\n".toBytes(), false)
+    Fixture("numeric.txt", "123\nabc\n".toBytes(), false),
+    // **A directory, which is a fixture too.** An open that succeeds and a read that fails is a
+    // different code path from a path that does not exist, and a directory is the portable way to get
+    // one — GitHub wac-mono#18. `tools/wac/appletvectors.wac` once wrote this as an empty *file*, and
+    // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
+    Fixture("adir", u8[0](), true)
   );
 }

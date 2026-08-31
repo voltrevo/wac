@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 130
+count: 134
 S 5
 seq 5
 X 0
@@ -1401,6 +1401,39 @@ O 13
 
 E 0
 
+S 8
+cat adir
+X 1
+O 0
+
+E 26
+cat: adir: Is a directory
+
+S 7
+wc adir
+X 1
+O 29
+      0       0       0 adir
+
+E 25
+wc: adir: Is a directory
+
+S 14
+sha256sum adir
+X 1
+O 0
+
+E 32
+sha256sum: adir: Is a directory
+
+S 12
+strings adir
+X 1
+O 0
+
+E 40
+strings: Warning: 'adir' is a directory
+
 S 39
 printf 'contents\n' > ./-x; cat -- ./-x
 X 0
@@ -1437,7 +1470,8 @@ E 0
 S 2
 ls
 X 0
-O 56
+O 61
+adir
 fields.txt
 m1.txt
 m2.txt
@@ -1467,7 +1501,8 @@ ls: cannot access 'nosuch': No such file or directory
 S 11
 mkdir d; ls
 X 0
-O 58
+O 63
+adir
 d
 fields.txt
 m1.txt
@@ -1491,7 +1526,8 @@ E 0
 S 13
 rm m1.txt; ls
 X 0
-O 49
+O 54
+adir
 fields.txt
 m2.txt
 numeric.txt
@@ -1520,7 +1556,8 @@ E 0
 S 20
 mkdir d; rmdir d; ls
 X 0
-O 56
+O 61
+adir
 fields.txt
 m1.txt
 m2.txt
