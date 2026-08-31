@@ -453,9 +453,31 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
                 if (held[i] >= 0) { cli.closeSocket(held[i]); }
               }
               if (extra >= 0) { cli.closeSocket(extra); }
+              // **Retried, because dropping a client is asynchronous and this asserts recovery.**
+              // Closing thirty-two sockets does not put the proxy back under its cap: each pump has
+              // to wake, see the end, and `dropClient` itself. Until enough of that has happened the
+              // proxy is still at `MAX_CLIENTS` and does not re-arm `accept`, so the connection sits
+              // in the kernel backlog and the read below waits out `READ_MS` against a proxy that is
+              // merely busy. It passed five times in five on an idle box and failed in the gate,
+              // where four lanes share the machine — the difference is how long the drain takes,
+              // which is exactly the thing that must not be assumed.
+              //
+              // This cannot mask what the case is for: the trap killed the proxy outright, and a
+              // dead proxy never serves however many times it is asked.
+              // A moment first, and a moment between tries: a `carry` issued while the proxy is
+              // still over its cap does not fail fast, it waits out `READ_MS` in the backlog. So
+              // the cheap thing is to let the drain happen rather than to pay ten seconds finding
+              // out it has not. `core.delay(…).wait()` is the sleep — `std/platform.wac` says so.
+              core.delay(250).wait();
               Carried afterCap = carry(core, cli, got, tport,
                                        "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                        "Host: 127.0.0.1\r\n\r\n");
+              for (i32 again = 0; again < 3 && afterCap.body.len() == 0; again++) {
+                core.delay(1000).wait();
+                afterCap = carry(core, cli, got, tport,
+                                 "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
+                                 "Host: 127.0.0.1\r\n\r\n");
+              }
               t.isTrue(afterCap.body.len() > 0,
                        "the proxy still serves after the cap fills and empties at once");
 
