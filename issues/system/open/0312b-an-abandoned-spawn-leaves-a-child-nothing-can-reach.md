@@ -51,3 +51,29 @@ that is the operator's to settle rather than mine.
 
 The child is unreachable but not unbounded: it exits on its own, and `wac` waits for its workers at
 exit. Nothing here leaks across runs.
+
+## Nobody actually writes fire-and-forget, which makes the first answer cheap — agent-b, 2026-08-31
+
+I argued against answer 1 on the grounds that `cli.spawnSelf(args, …)` as a bare statement is how
+fire-and-forget is spelled, and killing on drop would make it unwritable. That is true as a
+hypothetical and **not true of this repository**: there is no such call site. Every spawn collects
+its `Child` —
+
+    Child child  = sh.cli.spawn(…)          packages/sh/src/exec.wac
+    Child kid    = cli.spawn(…)             packages/tor/src/network.wac, twice
+    Child cached = cli.spawn(…)             packages/wac/src/wac.wac
+
+and the only matches that do not assign are warnings, comments, and `frame.wac` passing the funcrefs
+along.
+
+**The archetypal case argues the same way.** A shell's `&` is fire-and-forget if anything is, and
+`packages/sh` keeps the handle regardless — because `jobs` and `kill` need it. Wanting a child you
+can never reach turns out to be rarer than wanting one you can.
+
+So answer 1 — the handle owns the child, dropping the last `Pending` stops it — costs nothing today:
+no existing caller changes behaviour, because no existing caller drops one. That does not decide it,
+since the question is what the capability *should* mean rather than what happens to be written now,
+but it removes the objection I raised and makes the safer reading the cheap one.
+
+If it goes that way, `spawnDetached` can wait until something actually wants it, rather than being
+invented against a use nobody has.
