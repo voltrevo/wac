@@ -338,8 +338,12 @@ export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
     reaped = reaped + 1;
   }
   if (reaped > 0) {
+    // **Says what it matched**, because the housekeeping call and a test exercising the rule print
+    // the same line otherwise, and one of them reaping something is ordinary while the other is
+    // news. Reading `reaped 2` in a gate log without that, I took a test's kill for a leak found —
+    // it was the test with an unscoped bound taking its own probe *and* another lane's build.
     core.log("reaped " + itoa(reaped) + (reaped == 1 ? " stale daemon" : " stale daemons") +
-             " of this workspace's own, first pid " + first +
+             " matching " + needle + ", first pid " + first +
              " — a test that died before stop() (0136)");
   }
 }
