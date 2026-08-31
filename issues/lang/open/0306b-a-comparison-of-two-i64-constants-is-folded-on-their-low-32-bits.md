@@ -103,6 +103,72 @@ applied.
 That is one fault with two faces, which is why it is here rather than in a second issue. A fix should
 be tested against both reproductions.
 
+## Where each face lives — agent-b, 2026-08-31
+
+**Two faces, two sites.** They are the same rule not being applied, and they are not the same fix.
+
+### The ternary face: a blind `else` in `integerLiteralsFitI32`
+
+`packages/wacc/src/emit.wac:11551`. The walk knows `IntLit`, `Unary` and `Binary`, and ends:
+
+    else: { return true; }
+
+A `Ternary` falls into it and answers *"the literals fit an i32"*. The cast arm at `emit.wac:7762`
+uses that answer as its guard — the fix `issues/lang/0281b` landed —
+
+    if (from == "" && !isFloatLiteral(operand) && narrowIntegerName(to)
+        && !integerLiteralsFitI32(src, lexed, operand)) {
+      want2 = "i64";
+    }
+
+so with the wide literal one shape deeper than the walk can see, `want2` stays at the cast's target,
+`2147483648` emits as `i32.const -2147483648`, and the clamp `as~` promises has already been
+pre-empted. `0281b` fixed the bare literal; this is the same bug with a ternary in the way.
+
+The unsafe default is the whole of it: `else: return true` means *"nobody looked, so assume they
+fit"*, and every shape that carries a value out untouched is a silent hole. `Ternary` and
+`MatchExpr` are those shapes; `Cast` and `Call` are not, because they give the literal a type.
+
+**The ternary face is fixed — 2026-08-31.** `integerLiteralsFitI32` now has a `Ternary` case (its
+arms, not its condition, whose value does not leave the expression) and a `MatchExpr` case (each
+arm's value). Measured against the fuzzer's 200-seed sweep: **10 disagreements before, 3 after** —
+16, 42, 52, 54, 77, 119 and 128 all cleared.
+
+The `else: return true` default stays, with a comment saying what belongs above it: any shape that
+carries a value out untouched. `Cast` and `Call` do not, because they give the literal a type.
+
+### The comparison face: `operandType` answering empty, and its own comment
+
+`packages/wacc/src/emit.wac:8848`. It asks each side its type and answers the first non-empty one —
+and **a literal has no type of its own**, so two literals leave it empty and the caller reads empty
+as `i32`. The comment beneath it already says so, about floats:
+
+> Two literals leave this empty, and the caller reads empty as `i32`. `1.0 == 1.0` is therefore
+> compared with `i32.eq` against two `f64` constants — `§wac-cmpfloat` in `issues/lang/0116`'s list.
+
+So **this face is the integer twin of `cmpFloat`**, which `0116` records in detail, including that
+the obvious repair was tried and measured: answering `"f64"` when either side is a float literal
+fixed that case and broke *twelve* corpus files — `0 invalid` before, `12 invalid` after, and the
+same twelve back to zero when it came out. `bisect32` in `packages/fmt` returns an `f32` and computes
+with literals.
+
+That comment also names the fix it thinks is right, which is worth more than this reproduction:
+
+> The fix has to reach the `want` the emitter already has at the operator, which this function is not
+> given.
+
+So do not repair this one by deciding from the literals' family. It has been tried in the float case
+and it is the wrong shape of answer.
+
+**This face is what the three remaining seeds are.** `tools/wac/langfuzz_test.wac` excuses 21, 74 and
+188; seed 74's program carries `(-2147483649 <= 2147483648)` and `(-2147483649 > 1000000000000)`,
+neither of which goes near the walk the ternary fix touched.
+
+Seed 21 is worth noting for whoever takes this: its answer **changed** under the ternary fix, from
+727379968 to −2147483648, without becoming right. So that program carries both faces, and a fix for
+this one should be checked against it rather than against 74 alone — a single reproduction that
+happens to hold only one face is how half a bug gets closed.
+
 ## Notes
 
 `issues/lang/0281b` was `as~` to i32 wrapping instead of clamping **when its operand is constant**, so

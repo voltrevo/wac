@@ -35,10 +35,10 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * fixed set means a disagreement stays reported until it is fixed. Searching is what the command line
  * is for — `--count` and `--seed` reach further than any suite should.
  *
- * **Ten seeds are known-open and excused by number**, listed in `knownOpen` below. Every one of them
- * reproduces `issues/lang/0306b` — a wide integer literal losing its top half under an operator whose
- * result type is not its operand type, with no expected type to inherit. The sweep found the
- * comparison face of it first and the ternary face after the generator grew loops and casts.
+ * **Three seeds are known-open and excused by number**, listed in `knownOpen` below. Each reproduces
+ * what is left of `issues/lang/0306b` — a wide integer literal losing its top half under an operator
+ * whose result type is not its operand type, with no expected type to inherit. The ternary face of
+ * that issue is fixed; these are the comparison face.
  *
  * Excused as a *subset*, not as an expected count: the run passes when the seeds that disagree are
  * among these, so fixing `0306b` leaves this green rather than turning it red for having got better.
@@ -51,8 +51,18 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * generator, re-derive it rather than adding to it — a list that is not the list of actual failures
  * reads as knowledge, which is the mistake `wapyroundtrip_test.wac` records making.
  */
-/** The seeds whose disagreement is `issues/lang/0306b`, derived from a run on 2026-08-31. */
-i32[] knownOpen() { return i32[](16, 21, 42, 52, 54, 74, 77, 119, 128, 188); }
+/**
+ * The seeds whose disagreement is `issues/lang/0306b`, derived from a run on 2026-08-31.
+ *
+ * **Was ten; the ternary half of that issue is fixed and these three are the comparison half.** The
+ * fix taught `integerLiteralsFitI32` about ternaries, which cleared 16, 42, 52, 54, 77, 119 and 128.
+ * What is left is a comparison of two wide constants — seed 74 has `(-2147483649 <= 2147483648)` —
+ * which is a different site, `operandType` answering empty and the caller reading empty as i32.
+ *
+ * Seed 21 is worth a word: its answer *changed* under the fix, from 727379968 to -2147483648, so it
+ * carries both faces rather than only the second.
+ */
+i32[] knownOpen() { return i32[](21, 74, 188); }
 
 bool has(i32[] xs, i32 v) {
   for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == v) { return true; } }

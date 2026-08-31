@@ -11558,6 +11558,32 @@ bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
     case Binary(op, left, right): {
       return integerLiteralsFitI32(src, lexed, left) && integerLiteralsFitI32(src, lexed, right);
     }
+    // **A ternary passes its arms' values out untouched, so their literals are this expression's.**
+    // Missing here is what `issues/lang/0306b` was: `(((true ? 2147483648 : 2147483648) / 3) as~ i32)`
+    // answered -715827882, because the ternary fell to `else` below, this walk said the literals fit
+    // an i32, the cast arm therefore left `want2` at the target, and `2147483648` emitted as
+    // `i32.const -2147483648` before the clamp ever ran. `issues/lang/0281b` fixed the bare literal;
+    // a literal one shape deeper defeated the same guard.
+    //
+    // **The condition is not asked**, and that is the point of naming the arms rather than walking
+    // the node: a condition's value does not leave the ternary, so a wide literal inside it says
+    // nothing about the type this expression needs.
+    case Ternary(cond, then, els): {
+      return integerLiteralsFitI32(src, lexed, then) && integerLiteralsFitI32(src, lexed, els);
+    }
+    // A match expression is the same shape with more arms — the subject is its condition.
+    case MatchExpr(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        Expr? v = arms[i].value;
+        if (!(v is null) && !integerLiteralsFitI32(src, lexed, v!)) { return false; }
+      }
+      return true;
+    }
+    // **`true` is the unsafe default and stays deliberately.** Every remaining shape either gives the
+    // literal a type of its own — a `Cast` narrows it, a `Call` takes the parameter's — or does not
+    // carry one out at all. What made this a bug was that the two shapes above are neither, and the
+    // `else` arm cannot tell the difference: it answers "they fit" for anything nobody has looked at.
+    // A shape added to the language that passes a value through untouched belongs above this line.
     else: { return true; }
   }
 }
