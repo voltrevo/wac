@@ -107,3 +107,37 @@ the ticket's own `drop` — the host's — while a continuation registered by `t
 scheduler keyed by that id, and only `Core.cancel(id)` takes it back. The first version of the
 combinator above did the first and not the second, and the program said so on exit: *finished with 2
 continuation(s) still waiting*, exactly two per call.
+
+## The cheapest option costed — agent-b, 2026-08-31
+
+The three ways out above are not equally sized, and the first one is contained in a single file.
+
+**`core.promise<T>()` needs no host change.** `Sched.run` copies every registered id into `live` and
+hands the lot to `core.waitAny(live, budget)`, so a program-minted ticket only has to be kept out of
+that array:
+
+- mint into an id space the host never issues;
+- in `run`, dispatch any *resolved* program ticket directly, counting it in `ran`;
+- build `live` from host ids only, and return rather than call `waitAny` on an empty list when the
+  only things outstanding are unresolved program tickets.
+
+**The id space is free, and this is measured rather than assumed.** `native/v8/src/tickets.rs`
+allocates from `next_id: 1` and increments — monotonic, positive, never reused. So every negative
+id is permanently available. I had first written "ids are call-ring slots, 0..127, recycled", which
+is what `CALL_SLOTS = 128` suggests if you do not look: that constant bounds how many calls may be
+*outstanding*, not the ids they are given.
+
+By contrast the other two reach further out. `await e within ms` is a language form, so it is the
+parser, the checker and `asynclower.wac` — the last of which is where `issues/lang/0301b` is already
+stuck. A `waitAny` that yields is a change to what a host capability does, so it is four hosts.
+
+So the ordering by cost is clear even though the choice is still a design decision: one file, versus
+the compiler, versus every host. What it does *not* settle is whether a program-resolvable ticket is
+the right primitive to want — only that it is the cheap one.
+
+**What this unblocks, measured today.** Every remaining hand-rolled multiplexer in the repository is
+behind this issue or `0301b`. `packages/tor`'s three — `dird`, `relayd`, `socks` — are all `async`
+now; `app`, `link`, `hsserviced`, `bootstrap` and `network` use *bounded* waits and are behind this
+one; `ssh/conn.wac` reads through a method and is behind `0301b`. `fs/remote.wac` and
+`platform/frame.wac` mention `waitAny` only in comments — they hand tickets to callers rather than
+multiplexing, so they are not waiting on anything.
