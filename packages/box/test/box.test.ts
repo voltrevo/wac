@@ -113,7 +113,9 @@ async function exists(path: string): Promise<boolean> {
 //
 //   - a test that needs *fewer* grants than it holds. `runApplet` hands the applet `childCli(f, cli)`,
 //     which passes the parent's grants straight through, so an in-process frame can have the test's
-//     authority or more and never less. Every refusal test is here for that one reason.
+//     authority or more and never less — `issues/system/0302c`. Every refusal test is here for that one
+//     reason, and there are five of them, each building and spawning an executable to assert an exit
+//     code and a sentence.
 //   - a test that needs a capability wac has not got. `Cli` can read a symlink and cannot make one —
 //     `issues/system/0300c` — so the fixture for the `tar` case below cannot be built in wac at all.
 //   - a test of `main` rather than of an applet. `main` reads argv from the process; `dispatch` is the
