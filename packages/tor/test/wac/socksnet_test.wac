@@ -1,0 +1,213 @@
+// `socks.wac` stood up against relays of our own, which is the first thing that has ever run it.
+//
+// **Not heavy, and the first draft said it was.** Three relays and a proxy, each deriving keys,
+// sounded like a cost worth declaring — and it is 3s, because nothing here waits for a timeout when
+// every stage is served what it asks for. Declaring it heavy would have been the one marker that
+// defeats the point of the file: heavy tests do not run in the push gate, and a test written to
+// give `socks.wac` its first coverage has to be in the lane that runs.
+//
+// **Why it did not exist.** `cov_ledger.wac` records `socks.wac` as never exercised: the only thing
+// that drove it end to end was `ctor_live_test.wac`, which needs a C tor on the machine and is in
+// the exclusive lane, so the push gate never ran a line of it. `issues/system/0303b` is the whole
+// account. That matters because `socks.wac` is the last hand-rolled multiplexer in this package —
+// it rebuilds a `waitAny` list every pass with an `owner` array beside it, and its own comment says
+// an arithmetic slip there "routes a stranger's bytes" — and rewriting that as `async` tasks with
+// nothing to change it under is not a thing to do.
+//
+// ## Why three relays, when one would be cheaper
+//
+// `socks.wac` puts every SOCKS connection on the same **three-hop** circuit, so one relay cannot
+// answer it. I recorded that as a blocker on the strength of `relayd.wac`'s header saying *"EXTEND2
+// is parsed and refused"* — which stopped being true on 2026-08-05 in `178f9c0d`. Three relays that
+// extend is what `network_tor_test.wac` has been building circuits through all along.
+//
+// ## `builtProgram`, not `packages/platform/build.ts`
+//
+// `network_tor_test.wac` builds its nodes by shelling out to `deno run packages/platform/build.ts`
+// and spawning `.worker.js` bundles, because `network.wac` spawns worker bundles. Nothing here
+// needs that: the pieces are started directly as daemons, so `builtProgram` answers a cached module
+// this checkout's own binary runs, and no Deno is involved. That is also the standing instruction —
+// Deno is a bootstrap host and an oracle, not a build step.
+//
+// ## Not `network.wac`
+//
+// It orchestrates exactly these stages and is proven, but it runs a plan to completion and never
+// hands control back. A test that wants to *talk to* the proxy while it is up cannot use it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
+import { binaryPath, freshDir } from "../../../wactest/src/host.wac";
+import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+const i32 RELAYS = 3;
+
+/** Every program this needs, built once and cached under `.cache/`. */
+struct Built {
+  string relayd;
+  string gendesc;
+  string socks;
+  string why;
+}
+
+Built programs(Cli cli) {
+  string[] net = string[]("--allow-read", "--allow-write", "--allow-net");
+  string relayd = builtProgram(cli, "packages/tor/src/relayd.wac", "relayd", net);
+  string gendesc = builtProgram(cli, "packages/tor/src/gendesc.wac", "gendesc",
+                                string[]("--allow-read", "--allow-write"));
+  string socks = builtProgram(cli, "packages/tor/src/socks.wac", "socks", net);
+  string why = "";
+  if (relayd == "") { why = "relayd did not build"; }
+  if (gendesc == "") { why = "gendesc did not build"; }
+  if (socks == "") { why = "socks did not build"; }
+  return Built(relayd, gendesc, socks, why);
+}
+
+/** `<binary> <module> <args>`, which is how a built program is run. */
+string line(Cli cli, string mod, string args) {
+  return quoted(binaryPath(cli)) + " " + quoted(mod) + " " + args;
+}
+
+/**
+ * The port a relay says it got, from `listening on 127.0.0.1:<port>`.
+ *
+ * Port 0 rather than a number agreed in advance, because two agents run this suite at once and a
+ * fixed port makes that a collision reported as a protocol failure.
+ */
+i32 portFrom(string log, string marker) {
+  i32 at = log.indexOf(marker);
+  if (at < 0) { return -1; }
+  i32 i = at + marker.len();
+  i32 got = 0;
+  bool any = false;
+  while (i < log.len()) {
+    string c = log.slice(i, i + 1);
+    if (c < "0" || c > "9") { break; }
+    got = got * 10 + (c.toBytes()[0] - 48);
+    any = true;
+    i = i + 1;
+  }
+  return any ? got : -1;
+}
+
+export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/socksnet";
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  if (whyDir != "") { return t.report(); }
+
+  Built b = programs(cli);
+  t.eqStr(b.why, "", "the three programs built");
+  if (b.why != "") { return t.report(); }
+
+  // Distinct random seeds: two relays given the same one derive the same identity, and a consensus
+  // with two identical fingerprints is not a network.
+  for (i32 i = 0; i < RELAYS; i++) {
+    cli.writeFile(dir + "/s" + itoa(i + 1), core.randomBytes(32).wait()).wait();
+  }
+
+  // ── Stage one: the relays bind and write their descriptors ──────────────────
+  //
+  // All three are started before any is waited on. The authority's vote reads every descriptor, so
+  // waiting on the first to be *serving* here would deadlock: it cannot serve until the consensus
+  // exists, and the consensus cannot exist until all three have written.
+  // `Daemon(0, "", "")` rather than a started one: `fill:` evaluates once, so a `start(…)` here
+  // would spawn a process and write a log for a slot that is about to be overwritten three times.
+  Daemon[] relays = Daemon[RELAYS](fill: Daemon(0, "", ""));
+  for (i32 i = 0; i < RELAYS; i++) {
+    string n = itoa(i + 1);
+    relays[i] = start(cli,
+      line(cli, b.relayd, quoted(dir + "/s" + n) + " -p 0 -n wacnet" + n +
+                          " --descriptor " + quoted(dir + "/r" + n + ".desc") +
+                          (i == 0 ? " --seedline " + quoted(dir + "/seed.txt") : "") +
+                          " -C " + quoted(dir + "/v.consensus") +
+                          // **`-M` and `-m` as well as `-C`.** A client asks for
+                          // `consensus-microdesc`, not `consensus`: `socks.wac` bootstraps from the
+                          // microdescriptor consensus, and serving only the full one answers its
+                          // first request with a 404. `gendesc` writes both — `v.consensus.micro`
+                          // and the `.mds` beside it — so this costs nothing but saying so.
+                          " -M " + quoted(dir + "/v.consensus.micro") +
+                          " -m " + quoted(dir + "/v.consensus.mds") +
+                          " -K " + quoted(dir + "/cert.cert") +
+                          " -D " + quoted(dir + "/r1.desc") +
+                          " -D " + quoted(dir + "/r2.desc") +
+                          " -D " + quoted(dir + "/r3.desc")),
+      dir + "/relay" + n + ".log");
+    t.isTrue(relays[i].ok(), "relay " + n + " started — " + relays[i].error);
+  }
+
+  bool bound = true;
+  for (i32 i = 0; i < RELAYS; i++) {
+    if (!waitForLogWithin(core, cli, relays[i], "-byte descriptor for port", 60000)) {
+      t.fail("relay " + itoa(i + 1) + " never wrote a descriptor. It said: " +
+             logOf(cli, relays[i]));
+      bound = false;
+    }
+  }
+  if (!bound) { return stopAll(t, cli, relays); }
+
+  // ── Stage two: an authority, in one shot, over the descriptors they just wrote ──
+  Exec vote = cli.exec("/bin/sh", string[]("-c",
+    "cd " + quoted(dir) + " && exec " +
+    line(cli, b.gendesc, "keys.json cert vote v - r1.desc r2.desc r3.desc")), u8[0]()).wait();
+  t.isTrue(vote.ran() && vote.status == 0,
+           "the authority signed a consensus — " + string.fromBytes(vote.stderr));
+  if (!vote.ran() || vote.status != 0) { return stopAll(t, cli, relays); }
+
+  // ── Stage three: each relay finds the documents and begins serving ─────────
+  for (i32 i = 0; i < RELAYS; i++) {
+    if (!waitForLogWithin(core, cli, relays[i], "serving the consensus", 60000)) {
+      t.fail("relay " + itoa(i + 1) + " never served the consensus. It said: " +
+             logOf(cli, relays[i]));
+      return stopAll(t, cli, relays);
+    }
+  }
+
+  // ── Stage four: the proxy, which is the thing under test ───────────────────
+  // **Absolute paths rather than a `cd`.** `start` wraps what it is given as `{ exec <line>; }`, so
+  // a line beginning `cd …` becomes `exec cd …` and the shell answers *exec: cd: not found* — which
+  // is what the first run of this said, after every relay had come up correctly.
+  Daemon proxy = start(cli,
+    line(cli, b.socks, quoted(dir + "/seed.txt") + " " + quoted(dir + "/cert.fingerprint") + " 0"),
+    dir + "/socks.log");
+  t.isTrue(proxy.ok(), "socks started — " + proxy.error);
+  if (!proxy.ok()) { return stopAll(t, cli, relays); }
+
+  // It bootstraps from the seed line relay 1 wrote, fetches the consensus through it, picks a guard
+  // and says which. That is the whole of `bootstrap` and `connectGuard` — the part of `socks.wac`
+  // that runs before its wait loop does anything.
+  bool guarded = waitForLogWithin(core, cli, proxy, "guard: ", 60000);
+  t.isTrue(guarded, "socks bootstrapped and pinned a guard. It said: " + logOf(cli, proxy));
+  if (guarded) {
+    t.isTrue(contains(logOf(cli, proxy), "wacnet"),
+             "and the guard it pinned is one of ours, not a name from somewhere else");
+
+    // **The port it announces has to be the one it got.** Started on 0, this said
+    // `socks5 on 127.0.0.1:0` — it logged the port it was asked for rather than `listener.port`,
+    // so a proxy on a kernel-chosen port announced an address nothing can connect to. Nothing
+    // noticed because the only caller that had ever started it passed a fixed port. Asserted here
+    // rather than left to the next reader, since the case that catches it is the one that binds 0.
+    bool listening = waitForLogWithin(core, cli, proxy, "socks5 on 127.0.0.1:", 20000);
+    t.isTrue(listening, "socks said it was listening. It said: " + logOf(cli, proxy));
+    if (listening) {
+      i32 got = portFrom(logOf(cli, proxy), "socks5 on 127.0.0.1:");
+      t.isTrue(got > 0, "and named the port the kernel gave it, rather than the 0 it asked for — " +
+                        "got " + itoa(got));
+    }
+  }
+
+  stop(cli, proxy);
+  return stopAll(t, cli, relays);
+}
+
+/** Every relay stopped, whatever the case decided, then the report. */
+string stopAll(T t, Cli cli, Daemon[] relays) {
+  for (i32 i = 0; i < relays.len(); i++) {
+    if (relays[i].ok()) { stop(cli, relays[i]); }
+  }
+  return t.report();
+}

@@ -191,7 +191,12 @@ export i32 main(Core core, Cli cli) {
     cli.closeSocket(guard.link.sock);
     return 1;
   }
-  core.log("socks5 on 127.0.0.1:" + itoa(port) + ", circuits built on demand per port");
+  // **`listener.port`, not `port`.** They differ exactly when it matters: port 0 asks the kernel for
+  // a free one, and this line reported the request rather than the answer — so a proxy started with
+  // `0` announced itself on `127.0.0.1:0`, which nothing can connect to and no reader can correct.
+  // `dird.wac` has always logged the bound port; this said the wanted one. Found by
+  // `socksnet_test.wac`, which starts it on 0 so two agents running the suite cannot collide.
+  core.log("socks5 on 127.0.0.1:" + itoa(listener.port) + ", circuits built on demand per port");
 
   Vec<Client> clients = Vec.create();
   Vec<Building> circuits = Vec.create();
