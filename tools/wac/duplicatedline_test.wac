@@ -79,7 +79,10 @@ export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
   T t = T.create();
   // `site/` is the one npm subtree and is excluded from every repo-wide walk here; the four extensions
   // are the ones with prose in them.
-  string[] files = sourceFiles(core, cli, string[](".md", ".ts", ".wac", ".rs"), string[]("site/"));
+  // `vision/` joins `site/` as an exclusion, and for its own reason: it is maintained by hand and
+  // nothing programmatic runs over it, so an edit there must not be able to fail a build.
+  string[] files = sourceFiles(core, cli, string[](".md", ".ts", ".wac", ".rs"),
+                               string[]("site/", "vision/"));
 
   // **A floor, so a walk that resolved nothing cannot pass as a clean result** — which is the failure
   // this whole file is about, one level up.

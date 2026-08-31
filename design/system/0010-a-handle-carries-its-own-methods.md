@@ -1,7 +1,7 @@
 # 0010 — a handle carries its own methods
 
 - **Status:** decided, unbuilt — the rule is settled, no code has moved yet
-- **Decided by:** the operator, 2026-08-31, while settling `VISION.md`'s stream example
+- **Decided by:** the operator, 2026-08-31, while settling `vision/EXAMPLES.md`'s stream example
 - **Spans:** `std/platform.wac`, `packages/sh`, `packages/tor`, `packages/quic`, `packages/server`,
   `packages/webrtc`, and whatever `Sys` turns out to be
 
@@ -37,7 +37,7 @@ capability can touch one connection and nothing else, and that is checkable by r
 line. Today the same function takes `Cli` — the whole system, every file and every socket — because
 that is where `recv` lives, and the narrowing exists only in the author's intention.
 
-`VISION.md`'s stream example is the one-screen version:
+`vision/EXAMPLES.md`'s stream example is the one-screen version:
 
 ```wac
 async Result<u8[], string> readAll(Socket sock) { … await sock.recv() … }
@@ -63,6 +63,6 @@ the type system carries what is currently a convention.
 
 ## Related
 
-`answer(sys, sock)` in `VISION.md`'s server keeps both parameters, and deliberately: a handler body
+`answer(sys, sock)` in `vision/EXAMPLES.md`'s server keeps both parameters, and deliberately: a handler body
 is likely to want more than the connection. The rule is about where a method lives, not a ban on
 passing a capability.

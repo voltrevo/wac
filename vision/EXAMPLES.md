@@ -1,4 +1,4 @@
-# VISION
+# Examples
 
 What wac should read like, in programs. Each is marked **done** or **not yet**, and that marker is
 the only thing on this page that refers to an implementation.
@@ -6,22 +6,7 @@ the only thing on this page that refers to an implementation.
 An entry is an example, not an argument. A want that cannot be shown as a program somebody would
 want to write does not belong here.
 
-No test reads this page. Nothing here is a fixture, a list some guard checks, or a promise a
-suite holds anybody to — an entry can be rewritten, reordered or deleted without running anything,
-and a guard that made an edit here fail a build would be the wrong guard.
-
----
-
-## What wac is for
-
-Systems programming where **authority is a value**: a program does exactly what it was handed and
-nothing more, and that is a fact about its type rather than a sandbox around it.
-
-The same module runs in a browser, on Node, on Deno, on wasmtime and natively, without being
-rebuilt — so where a program runs stops being something the program knows.
-
-Enough language to write the stack in rather than a program on top of one: the compiler that
-compiles it, the shell that runs it, the cryptography that carries it.
+See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
