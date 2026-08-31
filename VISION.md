@@ -212,3 +212,43 @@ The same head walks an array and a `Vec`, so they read as one language rather th
 an index that exists only to be a cursor never appears. The head keeps its parentheses and its type:
 every other head in the language has both, and a redundancy the eye can rest on is worth more than a
 character saved. **Not yet.**
+
+---
+
+## A ticket is a value
+
+```wac
+async void both(Sys sys) {
+  Pending<u8[]> a = sys.readFile("a.txt");
+  Pending<u8[]> b = sys.readFile("b.txt");
+
+  u8[] first = await a;
+  u8[] second = await b;
+}
+```
+
+Both reads are in flight before either is awaited, because starting the work and waiting for it are
+different acts. Concurrency is what you get by *not* awaiting yet — there is no parallel construct,
+no task type and nothing to join. **Not yet.**
+
+---
+
+## A stream ends, or fails, and says which
+
+```wac
+async Result<u8[], string> readAll(Sys sys, Socket sock) {
+  Buf got = Buf.create();
+  while (true) {
+    match (await sys.recv(sock)) {
+      case Data(bytes): { got.append(bytes); }
+      case End:         { return Result.Ok(got.bytes()); }
+      case Failed(why): { return Result.Err(why); }
+    }
+  }
+}
+```
+
+Three outcomes, all named, none forgettable: a read that ended and a read that broke are different
+answers and neither can be mistaken for the other. The failure is returned rather than reported, so
+the caller decides what it means — and a partial read cannot be handed back as if it were whole.
+**Not yet.**
