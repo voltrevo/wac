@@ -294,10 +294,30 @@ Two of those are right and one is wrong. I could not tell which, and say so rath
 tempting third story here is that the plain `Atomics.store(S_STATUS, ST_PENDING)` this issue already
 flags lets a recycled slot be stomped, and leg 3 says the recycling it needs cannot happen.
 
-**Where I would look next**, in order of cost: whether `awaitReady` can return without the slot being
-this call's (a spurious wake, or a generation this loop never re-checks); whether any capability
-answers on a slot it does not own; and whether `S_RES_LEN` is ever stored outside `write` in a host
-that is not `respond.ts` — the browser and node hosts were not read for this.
+**The first of those is checked, and it sharpens the question rather than answering it.**
+`awaitReady` is
+
+    for (;;) {
+      const seen = Atomics.load(b.ctrl, DONE_SEQ);
+      if (Atomics.load(b.ctrl, at + S_STATUS) === ST_READY) return;
+      parkForHost(b, seen);
+    }
+
+— `ST_READY` and nothing else. The generation is read once, before the loop in `collect`, and never
+again. So the collect loop is **entirely unguarded against recycling between chunks**: if any path
+frees a slot whose owner is mid-collect, that owner returns from `awaitReady` on somebody else's
+answer and reads it with somebody else's `S_RES_LEN`, which is precisely the symptom — a body that
+cannot be a piece of its own tail.
+
+That does not resolve the contradiction; leg 3 still says nothing can free the slot. But it reduces
+the whole question to one line of enquiry: **find any path that stores `ST_FREE`, or bumps the
+generation, for a slot whose owner is inside `collect`.** If one exists the mechanism follows
+immediately and needs no further theory; if none does, leg 1 or leg 2 is wrong and the arithmetic
+needs re-reading.
+
+Still worth looking at, and not yet looked at: whether any capability answers on a slot it does not
+own, and whether `S_RES_LEN` is stored outside `write` in the browser and node hosts, which were not
+read for this.
 
 Recorded because a contradiction narrows the search where a fourth mechanism would widen it. Two
 mechanisms have already been proposed in this issue and retracted, one of them mine today.
