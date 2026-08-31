@@ -1,4 +1,4 @@
-// expect: refused
+// expect: declined
 // why: the front of the compiler takes an async method; the lowering does not know one yet
 // spec: §wac-async-method-declined-7kq2vnm
 import { Core, Cli, FileResult } from "std/platform.wac";
@@ -18,6 +18,11 @@ import { Core, Cli, FileResult } from "std/platform.wac";
  * That is the whole point of the case. Before those three changes the same source said *expected a
  * type … found 'async'* — a diagnostic about where the parser had got to, whose help line offered to
  * accept a type, which is advice that cannot be followed. `issues/lang/0301b`.
+ *
+ * **It asked for `refused` first, and that was the wrong word.** `refused` in the corpus means
+ * `dumpErrors` or `dumpTypeErrorsFiles` said something — parse and type, the front of the compiler.
+ * This case is precisely the source those two accept, so it read as a corpus miss on a compiler that
+ * was behaving correctly. `declined` is the third state and this is its first user.
  *
  * **Why a connection is the example rather than something smaller.** This shape is why it matters:
  * a struct that owns a socket and reads through a method on itself is what `packages/ssh`'s `Conn`,

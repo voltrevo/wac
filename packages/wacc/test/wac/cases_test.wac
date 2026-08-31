@@ -8,9 +8,10 @@
 // in this package needs the repository standing up to say that something is wrong somewhere; these say
 // what, in a program small enough to fix against.
 //
-// ## What the four expectations cost
+// ## What the five expectations cost
 //
 //     refused   `dumpErrors` per file, then `dumpTypeErrorsFiles` — in process, free
+//     declined  those two silent and `blockedFiles` **non**-empty — in process, free
 //     emits     the same two, silent, and `blockedFiles` empty — in process, free
 //     answers   emit, then **a process**: `wac <module.wasm> <fn>` prints what it returned
 //     traps     the same process, and the trap is what the run reports
@@ -104,7 +105,16 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
       why = "refused";
     } else {
       string blocked = blockedFiles(c.paths, c.sources, c.entry);
-      if (blocked != "") {
+      if (c.expect.kind == "declined") {
+        // **A refusal the front of the compiler cannot make.** `refused` above is `dumpErrors` and
+        // `dumpTypeErrorsFiles` — parse and type. A construct the parser and checker both accept and
+        // the *emitter* will not lower is a third state, and until this kind existed there was no way
+        // to write it down: `0315` asked for `refused`, got a clean check and a declining emitter, and
+        // read as a corpus miss. `design/lang/0014` step 4 declines by name on purpose, so this is
+        // the shape every unlowered async form arrives in, not a one-off.
+        ok = blocked != "";
+        why = "emitted — no file was blocked, so nothing declined it";
+      } else if (blocked != "") {
         ok = false;
         why = blocked;
       } else if (c.expect.kind == "answers" || c.expect.kind == "traps") {
