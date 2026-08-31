@@ -55,6 +55,22 @@ That is the second time today a filing from a recognised shape was half wrong �
 datagram and the datagram path could not have it. The shape tells you where to look and never what is
 true.
 
+## One function, three hosts — checked rather than assumed
+
+The measurement above is Deno's. The title says Node and the browser too, and that is by
+construction rather than by analogy: **`cancel` is defined once**, in `call.ts`, and reached through
+`provider.ts`, which builds every `Pending` for all three. There is no second implementation to
+diverge. `deno.ts`, `node.ts` and `browser.ts` are the *host* side — they answer the ops — and none
+of them has a `cancel` of its own.
+
+That asymmetry decides the shape of the fix. The **defect** is one function; the **remedy** is not,
+because putting bytes back means telling whichever host owns the queue, and that side is three files.
+So a fix is one edit plus three, not three edits.
+
+Worth stating because today's other host bugs were the opposite shape — `0207`, `0306b` and `0310b`
+were all *parallel* implementations that drifted, and the instinct they train is "check the other
+one". Here there is no other one to check.
+
 ## What this issue does *not* claim
 
 **It is not measured on these hosts.** The two Rust hosts were fixed against numbers — 0 of 10, 1 of
