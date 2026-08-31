@@ -360,7 +360,42 @@ export string[] appletCases() {
     // file rather than in total; `head` and `tail` write a `==> name <==` banner and a blank line
     // between. Those headers are most of what these assert.
     "wc m1.txt m2.txt",
-    "wc -l m1.txt m2.txt"
+    "wc -l m1.txt m2.txt",
+
+    // ── The applets `box.test.ts`'s agreement sweep covered and no vector did ──
+    //
+    // Path arithmetic, which is all string work and has no fixture at all. `basename` with a suffix
+    // is the form that has a second operand, and `dirname` on a bare name is the one that answers `.`
+    // rather than "".
+    "basename /a/b/c.txt", "basename /a/b/c.txt .txt", "basename plain", "basename /",
+    "dirname /a/b/c.txt", "dirname plain", "dirname /", "dirname a/b",
+    // `echo` is deliberately not a getopt program — `echo -x` prints `-x` — so these say that the
+    // shared flag parser is *not* applied to it, which is a claim about `flagsChecked` as much as
+    // about `echo`.
+    "echo hello", "echo -n hi; echo .", "echo -x", "echo a  b",
+    // Status, and nothing else. `true` and `false` exist to be the two ends of `$?`.
+    "true; echo st=$?", "false; echo st=$?",
+    // base32 both ways, so the pair is a round trip rather than two independent spellings.
+    "base32 m2.txt", "base32 m2.txt | base32 -d",
+    // Listing and walking. `ls` of a name that is a file rather than a directory is the case that
+    // prints the name back; `find .` walks; `du` counts blocks, which is why it is asked of one file
+    // rather than of a tree whose block total depends on how the fixtures were written.
+    "ls", "ls m1.txt", "ls nosuch; echo st=$?",
+    // **`find` and `du` are not here, and that is a finding rather than an omission** —
+    // `issues/system/0299c`. Adding them turned three cases red against GNU: `find .` answers in
+    // sorted order where GNU answers in directory order, `find . -name m1.txt` ignores `-name` and
+    // prints the whole walk, and `du m1.txt` reports **17** where GNU reports **4** — bytes where
+    // `du` means disk blocks. Two of those are wrong rather than merely different. The cases are in
+    // that issue, and belong here on the day they pass.
+    // The mutating three. Safe as vector cases because `layFixtures` removes and re-lays the whole
+    // directory before every one, on the capture side and the replay side alike.
+    "mkdir d; ls",
+    "mkdir -p d/e/f; find d",
+    "rm m1.txt; ls",
+    "rm nosuch; echo st=$?",
+    "rm -f nosuch; echo st=$?",
+    "mkdir d; rmdir d; ls",
+    "rmdir nosuch; echo st=$?"
   );
 }
 

@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 74
+count: 100
 S 5
 seq 5
 X 0
@@ -1035,4 +1035,230 @@ O 29
  5 total
 
 E 0
+
+S 19
+basename /a/b/c.txt
+X 0
+O 6
+c.txt
+
+E 0
+
+S 24
+basename /a/b/c.txt .txt
+X 0
+O 2
+c
+
+E 0
+
+S 14
+basename plain
+X 0
+O 6
+plain
+
+E 0
+
+S 10
+basename /
+X 0
+O 2
+/
+
+E 0
+
+S 18
+dirname /a/b/c.txt
+X 0
+O 5
+/a/b
+
+E 0
+
+S 13
+dirname plain
+X 0
+O 2
+.
+
+E 0
+
+S 9
+dirname /
+X 0
+O 2
+/
+
+E 0
+
+S 11
+dirname a/b
+X 0
+O 2
+a
+
+E 0
+
+S 10
+echo hello
+X 0
+O 6
+hello
+
+E 0
+
+S 18
+echo -n hi; echo .
+X 0
+O 4
+hi.
+
+E 0
+
+S 7
+echo -x
+X 0
+O 3
+-x
+
+E 0
+
+S 9
+echo a  b
+X 0
+O 4
+a b
+
+E 0
+
+S 16
+true; echo st=$?
+X 0
+O 5
+st=0
+
+E 0
+
+S 17
+false; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 13
+base32 m2.txt
+X 0
+O 25
+MRSWY5DBBJSXA43JNRXW4CQ=
+
+E 0
+
+S 25
+base32 m2.txt | base32 -d
+X 0
+O 14
+delta
+epsilon
+
+E 0
+
+S 2
+ls
+X 0
+O 35
+fields.txt
+m1.txt
+m2.txt
+prose.txt
+
+E 0
+
+S 9
+ls m1.txt
+X 0
+O 7
+m1.txt
+
+E 0
+
+S 21
+ls nosuch; echo st=$?
+X 0
+O 5
+st=2
+
+E 54
+ls: cannot access 'nosuch': No such file or directory
+
+S 11
+mkdir d; ls
+X 0
+O 37
+d
+fields.txt
+m1.txt
+m2.txt
+prose.txt
+
+E 0
+
+S 22
+mkdir -p d/e/f; find d
+X 0
+O 12
+d
+d/e
+d/e/f
+
+E 0
+
+S 13
+rm m1.txt; ls
+X 0
+O 28
+fields.txt
+m2.txt
+prose.txt
+
+E 0
+
+S 21
+rm nosuch; echo st=$?
+X 0
+O 5
+st=1
+
+E 54
+rm: cannot remove 'nosuch': No such file or directory
+
+S 24
+rm -f nosuch; echo st=$?
+X 0
+O 5
+st=0
+
+E 0
+
+S 20
+mkdir d; rmdir d; ls
+X 0
+O 35
+fields.txt
+m1.txt
+m2.txt
+prose.txt
+
+E 0
+
+S 24
+rmdir nosuch; echo st=$?
+X 0
+O 5
+st=1
+
+E 60
+rmdir: failed to remove 'nosuch': No such file or directory
 
