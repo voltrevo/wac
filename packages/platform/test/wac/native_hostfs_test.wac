@@ -289,9 +289,18 @@ string[] agreed() {
     // three. Possible at all only since `box` gained a `chmod` applet: the `SET_EXECUTABLE` entry in
     // `conformance_test.wac`'s ledger records that a script case could not reach that capability
     // because there was none. `issues/system/0296c`.
-    "chmod 000 f; cat f; echo st=$?",
-    "chmod 644 f; cat f; echo st=$?",
-    "chmod 000 sub; ls sub; echo st=$?",
+    // **Each makes its own subject and puts it back.** `agreed()` is read by more than one test and
+    // not all of them rebuild the tree between scripts, so a case that leaves `f` unreadable is a case
+    // that changes the answer to every later one — which is exactly what the first version of these
+    // did, and `test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts` is where it showed.
+    "cp f cm; chmod 000 cm; cat cm; echo st=$?; chmod 600 cm; rm cm",
+    "cp f cm; chmod 644 cm; cat cm; echo st=$?; rm cm",
+    // **No directory case here, deliberately.** A file at mode 0 can still be unlinked, so the two
+    // above always clean up after themselves; a *directory* at mode 0 cannot be descended into, so a
+    // run interrupted between the `chmod 000` and the `chmod 755` leaves one the tree rebuild cannot
+    // remove — and every later run of this file fails on a fixture it cannot rebuild. That is not
+    // hypothetical: the first version of these cases did it to three cached trees at once.
+    // `unreadable_test.wac` asks the directory question, in a directory of its own.
     // ── `linkStat`: the difference between a link and what it points at ──
     "test -h link; echo st=$?",
     "test -h f; echo st=$?",
