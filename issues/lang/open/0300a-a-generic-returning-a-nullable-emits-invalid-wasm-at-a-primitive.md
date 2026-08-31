@@ -1,7 +1,7 @@
 # 0300a — a generic function returning `T?` emits invalid wasm when `T` is a primitive
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b
 - **Reported by:** agent-a
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -86,3 +86,45 @@ T? find<T>(T[] xs, fn[bool(T)] p) { … }
 That is the right shape of answer for something unimplemented, and it is what this issue is asking
 for in the nullable case. Whether the lambda case should also *work* is a separate question and not
 this issue.
+
+## Narrowed to `return null` in the monomorphised body — agent-b, 2026-08-31
+
+The engine's complaint, from the wasmtime host, which says what the v8 one only calls "rejected":
+
+    failed to compile: wasm[0]::function[1]::firstOf<i32>
+    Invalid input WebAssembly code at offset 971: type mismatch: expected i32 but nothing on stack
+
+Four cases place it exactly:
+
+| case | result |
+|---|---|
+| `i32? firstI32(i32[])` with `return null` — no generic | compiles |
+| `T? firstOf<T>(T[])` **without** a `return null` | compiles |
+| `T? firstOf<T>(T[])` with `return null`, `T` a **struct** | compiles |
+| `T? firstOf<T>(T[])` with `return null`, `T` = `i32` | **invalid wasm** |
+
+So it is neither generics nor nullables nor `null` returns on their own: it is the **box** — the
+one-field struct a nullable *primitive* is a reference to — not being applied when the type only
+becomes primitive through substitution.
+
+So `i32?` is representable and the generic machinery is fine; what is wrong is `return null` inside
+a generic body once `T` has become a primitive. The emitter leaves the stack empty where the
+lowered return wants an `i32`, which is what "expected i32 but nothing on stack" says.
+
+Worth noting for whoever reads the v8 host's message first: *"rejected … the compiler emitted
+something invalid rather than refusing the program"* is accurate but carries no offset or function.
+The wasmtime host names both, and building it costs `./bootstrap.sh --host wasmtime`.
+
+### Where to look
+
+`isBoxedPrimName(t)` decides boxing from the type-name **string**: it strips a trailing `?` and asks
+whether the base is a writable val type. Inside a generic body the name is `T?`, whose base is not,
+so the answer is *false* — and it becomes true only after `T` has been replaced by `i32`. The two
+places that matter are `emit.wac:6390`, which emits `ref.null` of the box type when the name says
+box, and `emit.wac:7593`, which boxes a non-null expression for a boxed slot. Whichever of those
+runs against the unsubstituted spelling is the one to fix.
+
+Substitution itself is exact-match — `Env.substituted` compares `subFrom[i] == name`, so it answers
+for `T` and not for `T?`; nullability is carried as a flag on the `Ty` and the `?` is appended by
+each caller (`isNullableTy(t) ? "?" : ""`). A caller that appends before substituting, or forgets to
+re-ask after, gets exactly this.
