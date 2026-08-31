@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 117
+count: 126
 S 5
 seq 5
 X 0
@@ -1280,6 +1280,107 @@ O 0
 
 E 0
 
+S 14
+sort prose.txt
+X 0
+O 160
+AEIOU aeiou
+Mixed Case Words
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 17
+sort -r prose.txt
+X 0
+O 160
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+Mixed Case Words
+AEIOU aeiou
+
+E 0
+
+S 17
+sort -u prose.txt
+X 0
+O 160
+AEIOU aeiou
+Mixed Case Words
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 13
+tac prose.txt
+X 0
+O 160
+Mixed Case Words
+AEIOU aeiou
+The quick brown fox jumps over the lazy dog, and does it again and again until the line is comfortably longer than eighty columns.
+
+E 0
+
+S 16
+sort -n nums.txt
+X 0
+O 24
+-5
+0
+07
+9
+9
+10
+100
+1000
+
+E 0
+
+S 19
+sort -n -r nums.txt
+X 0
+O 24
+1000
+100
+10
+9
+9
+07
+0
+-5
+
+E 0
+
+S 19
+sort -n -u nums.txt
+X 0
+O 22
+-5
+0
+07
+9
+10
+100
+1000
+
+E 0
+
+S 23
+grep -n 123 numeric.txt
+X 0
+O 6
+1:123
+
+E 0
+
+S 19
+sort -n numeric.txt
+X 0
+O 8
+abc
+123
+
+E 0
+
 S 13
 base32 m2.txt
 X 0
@@ -1300,10 +1401,12 @@ E 0
 S 2
 ls
 X 0
-O 35
+O 56
 fields.txt
 m1.txt
 m2.txt
+numeric.txt
+nums.txt
 prose.txt
 
 E 0
@@ -1328,11 +1431,13 @@ ls: cannot access 'nosuch': No such file or directory
 S 11
 mkdir d; ls
 X 0
-O 37
+O 58
 d
 fields.txt
 m1.txt
 m2.txt
+numeric.txt
+nums.txt
 prose.txt
 
 E 0
@@ -1350,9 +1455,11 @@ E 0
 S 13
 rm m1.txt; ls
 X 0
-O 28
+O 49
 fields.txt
 m2.txt
+numeric.txt
+nums.txt
 prose.txt
 
 E 0
@@ -1377,10 +1484,12 @@ E 0
 S 20
 mkdir d; rmdir d; ls
 X 0
-O 35
+O 56
 fields.txt
 m1.txt
 m2.txt
+numeric.txt
+nums.txt
 prose.txt
 
 E 0

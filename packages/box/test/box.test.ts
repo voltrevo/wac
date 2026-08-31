@@ -110,29 +110,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // applets reading only the first of several. `wc`'s column padding travels with it: the vector
     // holds the real tool's whole line, filename included, so a loosened comparison cannot creep back.
     // Flags, which every applet gets from one shared parser.
-    for (const [args, cmd] of [
-      [["sort"], ["sort"]], [["sort", "-r"], ["sort", "-r"]], [["sort", "-u"], ["sort", "-u"]],
-      [["tac"], ["tac"]],
-    ] as [string[], string[]][]) {
-      assertEquals(
-        (await box([...args, fixture])).out,
-        sys(cmd[0], [...cmd.slice(1), fixture]),
-        `${args.join(" ")} differs`,
-      );
-    }
-    // `-n`, against a fixture that has numbers in it. The words fixture above cannot catch a
-    // missing `-n`: every line counts as zero, so ignoring the flag and honouring it agree.
-    // Ignoring it is exactly what this did until `seq 1 20 | sort -n` answered 1, 10, 11.
-    const numbers = await Deno.makeTempFile({ prefix: "wac-box-num-" });
-    await Deno.writeTextFile(numbers, ["10", "9", "100", "-5", "9", "0", "1000", "07"].join("\n") + "\n");
-    for (const flags of [["-n"], ["-n", "-r"], ["-n", "-u"]]) {
-      assertEquals(
-        (await box(["sort", ...flags, numbers])).out,
-        sys("sort", [...flags, numbers]),
-        `sort ${flags.join(" ")} differs`,
-      );
-    }
-    await Deno.remove(numbers);
+    // **The flag sweep and both numeric cases moved to `appletCases()`**, with two fixtures of their
+    // own. `nums.txt` exists because a words fixture cannot catch a missing `-n` — every line sorts as
+    // zero, so ignoring the flag and honouring it agree, which is what `sort` did until
+    // `seq 1 20 | sort -n` answered 1, 10, 11. `numeric.txt` is the other half: `-n` is a value for
+    // `head` and `tail` and a boolean everywhere else, and while it was a value everywhere
+    // `grep -n 123` searched for its own filename and stopped numbering. GitHub wac-mono#5.
 
     // **Both moved to `appletCases()`.** The eighteen trailing-slash paths through `basename` and
     // `dirname` — wac-mono#10, where `basename a/b/` answered with what follows the final slash, which
@@ -140,54 +123,16 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     // an option asked for and one never given alike, so `head -0` printed the default ten. Both are
     // byte-for-byte against GNU there, captured once instead of spawning the real tool per case.
 
-    // `-n` is a value for `head` and `tail` and a boolean everywhere else. It used to be a value
-    // everywhere, so a numeric operand vanished into it: `grep -n 123` searched for its filename
-    // and stopped numbering. GitHub wac-mono#5.
-    const numeric = await Deno.makeTempFile({ prefix: "wac-box-num2-" });
-    await Deno.writeTextFile(numeric, "123\nabc\n");
-    assertEquals((await box(["grep", "-n", "123", numeric])).out, sys("grep", ["-n", "123", numeric]), "grep -n <number>");
-    assertEquals((await box(["sort", "-n", numeric])).out, sys("sort", ["-n", numeric]), "sort -n <file>");
-    await Deno.remove(numeric);
+    // **`grep -n 123`, `sort -n` and the `seq` range ends are `appletCases()` now.** The seq pair is
+    // wac-mono#7 and #6 — the counter wrapping and printing for ever at i32 max, and the formatter
+    // answering with a bare "-" at i32 min — and both are pinned there against literal answers,
+    // because GNU's `seq` and this one agree and a literal is what says *which* answer.
 
-    // The ends of the range, where the counter used to wrap and print for ever, and where the
-    // formatter used to answer with a bare "-". GitHub wac-mono#7 and #6.
-    assertEquals((await box(["seq", "2147483647", "2147483647"])).out, "2147483647\n", "seq at i32 max");
-    assertEquals((await box(["seq", "--", "-2147483648", "-2147483648"])).out, "-2147483648\n", "seq at i32 min");
-    assertEquals((await box(["seq", "1", "5"])).out, sys("seq", ["1", "5"]), "seq still counts");
-    assertEquals((await box(["seq", "10", "-3", "1"])).out, sys("seq", ["10", "-3", "1"]), "seq counts down");
-
-    // A component, not a path: `/` has to become `%2F` or the output cannot be pasted into a URL.
-    // Checked against fixed answers rather than a system tool, since there is not a portable one.
-    // GitHub wac-mono#9.
-    const datum = await Deno.makeTempFile({ prefix: "wac-box-url-" });
-    for (const [given, want] of [
-      ["a/b", "a%2Fb"],
-      ["a b&c=d", "a%20b%26c%3Dd"],
-      ["%20", "%2520"],
-      ["plain-text_1.2~", "plain-text_1.2~"],
-    ]) {
-      await Deno.writeTextFile(datum, given);
-      assertEquals((await box(["urlencode", datum])).out.trim(), want, `urlencode ${JSON.stringify(given)}`);
-    }
-    await Deno.remove(datum);
-
-    // A missing final newline is a difference. `splitLines` drops the terminator, so files that
-    // differ only there produced identical line lists and `diff` exited 0 — the worst answer a diff
-    // can give, because the caller's next step is to trust it. GitHub wac-mono#22.
-    const withNl = await Deno.makeTempFile({ prefix: "wac-box-nl1-" });
-    const noNl = await Deno.makeTempFile({ prefix: "wac-box-nl2-" });
-    await Deno.writeTextFile(withNl, "x\ny\n");
-    await Deno.writeTextFile(noNl, "x\ny");
-    const near = (await box(["diff", withNl, noNl]));
-    assertEquals(near.code, 1, "files differing only in a final newline are different");
-    assertEquals(near.out.includes("No newline at end of file"), true, near.out);
-    // The real one agrees about the status, which is the part a script reads.
-    const sysDiff = new Deno.Command("diff", { args: [withNl, noNl], stdout: "null", stderr: "null" })
-      .outputSync();
-    assertEquals(sysDiff.code, 1, "and so does GNU diff");
-    assertEquals((await box(["diff", withNl, withNl])).code, 0, "identical files are still identical");
-    await Deno.remove(withNl);
-    await Deno.remove(noNl);
+    // **`urlencode` and the missing-final-newline case have their own homes now.** `urlencode` is
+    // `applets_test.wac`: its expectations are written down rather than captured, because there is no
+    // portable system tool to ask — `jq -Rr @uri` and Python disagree about `~`. The newline case is
+    // `diff_test.wac`, beside the rest of `diff`, since what it asserts is the marker GNU prints —
+    // `\ No newline at end of file` — rather than a hunk to compare. GitHub wac-mono#9 and #22.
 
     // `-f` ignores what is already gone, not everything that fails. `remove` answered `bool`, so
     // "no such file" and "permission denied" arrived identically and `-f` had to swallow both: it

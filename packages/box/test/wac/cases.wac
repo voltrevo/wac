@@ -382,6 +382,12 @@ export string[] appletCases() {
     // A numeric option that was *asked for* against one never given: `Args.num` said zero for both,
     // so `head -0` printed the default ten. GitHub wac-mono#8.
     "head -0 prose.txt", "head -n 0 prose.txt", "tail -0 prose.txt", "tail -n 0 prose.txt",
+    // The shared flag parser, over a file rather than a pipeline.
+    "sort prose.txt", "sort -r prose.txt", "sort -u prose.txt", "tac prose.txt",
+    // Numeric sorting, where a string comparison and a numeric one disagree on every line.
+    "sort -n nums.txt", "sort -n -r nums.txt", "sort -n -u nums.txt",
+    // And the numeric operand that `-n` used to swallow.
+    "grep -n 123 numeric.txt", "sort -n numeric.txt",
     // base32 both ways, so the pair is a round trip rather than two independent spellings.
     "base32 m2.txt", "base32 m2.txt | base32 -d",
     // Listing and walking. `ls` of a name that is a file rather than a directory is the case that
@@ -426,6 +432,15 @@ export Fixture[] appletFixtures() {
     Fixture("fields.txt", fields.toBytes(), false),
     Fixture("prose.txt", prose.toBytes(), false),
     Fixture("m1.txt", m1.toBytes(), false),
-    Fixture("m2.txt", m2.toBytes(), false)
+    Fixture("m2.txt", m2.toBytes(), false),
+    // **Numbers, because a words fixture cannot catch a missing `-n`**: every line sorts as zero, so
+    // ignoring the flag and honouring it agree. Ignoring it is exactly what `sort` did until
+    // `seq 1 20 | sort -n` answered 1, 10, 11. The leading zero and the negative are the two that a
+    // string comparison puts in the wrong place.
+    Fixture("nums.txt", "10\n9\n100\n-5\n9\n0\n1000\n07\n".toBytes(), false),
+    // A numeric *operand*, which is a different question: `-n` is a value for `head` and `tail` and a
+    // boolean everywhere else, and when it was a value everywhere `grep -n 123` searched for its own
+    // filename and stopped numbering. GitHub wac-mono#5.
+    Fixture("numeric.txt", "123\nabc\n".toBytes(), false)
   );
 }

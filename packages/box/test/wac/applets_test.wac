@@ -190,3 +190,38 @@ string sortedJoin(string[]? entries) {
   for (i32 i = 0; i < names.len(); i++) { out = out + (i == 0 ? "" : " ") + names[i]; }
   return out;
 }
+
+/**
+ * `urlencode` encodes a **component**, not a path — GitHub wac-mono#9.
+ *
+ * Against fixed answers rather than a system tool, because there is not a portable one: `jq -Rr
+ * @uri` and `python -c` disagree about `~` and neither is installed everywhere. So this is one of the
+ * few applets whose expectation is written down rather than captured, and each row says which rule it
+ * is about.
+ */
+export string test_urlencode_escapes_a_component(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  // A slash is data here, not structure — the whole point of the applet.
+  t.eqStr(one(core, cli, dir, "a/b"), "a%2Fb\n", "a slash becomes %2F");
+  t.eqStr(one(core, cli, dir, "a b&c=d"), "a%20b%26c%3Dd\n", "space, ampersand and equals");
+  // Encoding is not idempotent: an input that already looks encoded is encoded again, or a caller
+  // cannot round-trip a literal percent.
+  t.eqStr(one(core, cli, dir, "%20"), "%2520\n", "a literal percent is escaped, not preserved");
+  // RFC 3986's unreserved set, which must survive untouched — including the tilde, which is where
+  // implementations differ.
+  t.eqStr(one(core, cli, dir, "plain-text_1.2~"), "plain-text_1.2~\n", "the unreserved set is left alone");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** `urlencode` over one datum, written to a file the applet then reads. Its trailing newline
+ *  is kept rather than trimmed — wac's strings have no `trim`, and the newline is part of what the
+ *  applet writes, so asserting it is asserting more rather than less. */
+string one(Core core, Cli cli, string dir, string given) {
+  cli.writeFile(dir + "/datum", given.toBytes()).wait();
+  return runCase(core, cli, dir, "urlencode datum").out;
+}

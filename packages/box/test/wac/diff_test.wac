@@ -136,6 +136,37 @@ export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli c
   return t.report();
 }
 
+/**
+ * A missing final newline is a difference — GitHub wac-mono#22.
+ *
+ * `splitLines` drops the terminator, so two files differing only there produced identical line lists
+ * and `diff` exited **0** — the worst answer a diff can give, because the caller's next step is to
+ * trust it. Asked here rather than in the sweep above because the marker GNU prints for it,
+ * `\ No newline at end of file`, is our own sentence to match rather than a hunk to compare.
+ */
+export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  cli.writeFile(dir + "/withnl", "x\ny\n".toBytes()).wait();
+  cli.writeFile(dir + "/nonl", "x\ny".toBytes()).wait();
+
+  Ran near = runCase(core, cli, dir, "diff withnl nonl");
+  t.eqI32(near.status, 1, "files differing only in a final newline are different");
+  t.isTrue(near.out.indexOf("No newline at end of file") >= 0, near.out);
+
+  // GNU agrees about the status, which is the part a script reads.
+  Exec real = cli.exec("diff", string[](dir + "/withnl", dir + "/nonl"), u8[0]()).wait();
+  t.isTrue(real.ran(), "the real diff ran");
+  t.eqI32(real.status, 1, "and so does GNU diff");
+
+  t.eqI32(runCase(core, cli, dir, "diff withnl withnl").status, 0, "identical files are still identical");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
 /** `seq(30)` with lines 5 and 25 changed — far enough apart to stay two hunks. */
 string twoDistant() {
   string out = "";
