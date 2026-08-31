@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 100
+count: 117
 S 5
 seq 5
 X 0
@@ -1060,6 +1060,22 @@ plain
 
 E 0
 
+S 13
+basename a/b/
+X 0
+O 2
+b
+
+E 0
+
+S 12
+basename a/b
+X 0
+O 2
+b
+
+E 0
+
 S 10
 basename /
 X 0
@@ -1068,19 +1084,67 @@ O 2
 
 E 0
 
-S 18
-dirname /a/b/c.txt
+S 11
+basename //
 X 0
-O 5
-/a/b
+O 2
+/
 
 E 0
 
-S 13
-dirname plain
+S 12
+basename a//
 X 0
 O 2
-.
+a
+
+E 0
+
+S 10
+basename a
+X 0
+O 2
+a
+
+E 0
+
+S 11
+basename /a
+X 0
+O 2
+a
+
+E 0
+
+S 15
+basename a//b//
+X 0
+O 2
+b
+
+E 0
+
+S 18
+basename /usr/lib/
+X 0
+O 4
+lib
+
+E 0
+
+S 12
+dirname a/b/
+X 0
+O 2
+a
+
+E 0
+
+S 11
+dirname a/b
+X 0
+O 2
+a
 
 E 0
 
@@ -1092,11 +1156,51 @@ O 2
 
 E 0
 
+S 10
+dirname //
+X 0
+O 2
+/
+
+E 0
+
 S 11
-dirname a/b
+dirname a//
+X 0
+O 2
+.
+
+E 0
+
+S 9
+dirname a
+X 0
+O 2
+.
+
+E 0
+
+S 10
+dirname /a
+X 0
+O 2
+/
+
+E 0
+
+S 14
+dirname a//b//
 X 0
 O 2
 a
+
+E 0
+
+S 17
+dirname /usr/lib/
+X 0
+O 5
+/usr
 
 E 0
 
@@ -1145,6 +1249,34 @@ false; echo st=$?
 X 0
 O 5
 st=1
+
+E 0
+
+S 17
+head -0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 19
+head -n 0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 17
+tail -0 prose.txt
+X 0
+O 0
+
+E 0
+
+S 19
+tail -n 0 prose.txt
+X 0
+O 0
 
 E 0
 

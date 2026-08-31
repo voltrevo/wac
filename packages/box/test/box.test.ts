@@ -104,26 +104,11 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
       return new TextDecoder().decode(r.stdout);
     };
 
-    // Byte-for-byte against the real thing, where the real thing exists here.
-    for (const [applet, cmd] of [["cat", "cat"], ["rev", "rev"], ["nl", "nl"], ["base64", "base64"]]) {
-      assertEquals((await box([applet, fixture])).out, sys(cmd, [fixture]), `${applet} differs`);
-    }
-    assertEquals(
-      (await box(["sha256sum", fixture])).out.split(" ")[0],
-      sys("sha256sum", [fixture]).split(" ")[0],
-      "sha256sum differs",
-    );
-
-    // Byte for byte now: `wc` pads its columns exactly as the real one does — the width is the digits in
-    // the total byte count, or seven for standard input unless a single column was asked for. The old
-    // comparison took the first three fields "because box prints its columns without padding", and a
-    // loosened comparison is how the missing filename beside it went unnoticed.
-    assertEquals(
-      (await box(["wc", fixture])).out,
-      sys("wc", [fixture]),
-      "wc counts differ",
-    );
-
+    // **`cat`, `rev`, `nl`, `base64`, `sha256sum` and `wc` moved to `appletCases()`.** Each is
+    // byte-for-byte against the real tool there, over `m1.txt`/`m2.txt` rather than this fixture, and
+    // over two files as well as one — which is the stronger question, since wac-mono 0096 was ten
+    // applets reading only the first of several. `wc`'s column padding travels with it: the vector
+    // holds the real tool's whole line, filename included, so a loosened comparison cannot creep back.
     // Flags, which every applet gets from one shared parser.
     for (const [args, cmd] of [
       [["sort"], ["sort"]], [["sort", "-r"], ["sort", "-r"]], [["sort", "-u"], ["sort", "-u"]],
@@ -149,25 +134,11 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     }
     await Deno.remove(numbers);
 
-    // Paths, against GNU's own answers. Every case here is a trailing slash, because that is the
-    // whole of both applets and `basename a/b/` used to answer with what follows the final slash:
-    // nothing. GitHub wac-mono#10.
-    for (const path of ["a/b/", "a/b", "/", "//", "a//", "a", "/a", "a//b//", "/usr/lib/"]) {
-      for (const applet of ["basename", "dirname"]) {
-        assertEquals(
-          (await box([applet, path])).out,
-          sys(applet, [path]),
-          `${applet} ${JSON.stringify(path)}`,
-        );
-      }
-    }
-
-    // A numeric option that was asked for, versus one that was never given. `Args.num` used to say
-    // zero for both, so `head -0` printed the default ten. GitHub wac-mono#8.
-    for (const args of [["head", "-0"], ["head", "-n", "0"], ["tail", "-0"], ["tail", "-n", "0"]]) {
-      assertEquals((await box([...args, fixture])).out, "", `${args.join(" ")} prints nothing`);
-      assertEquals(sys(args[0], [...args.slice(1), fixture]), "", `and so does the real one`);
-    }
+    // **Both moved to `appletCases()`.** The eighteen trailing-slash paths through `basename` and
+    // `dirname` — wac-mono#10, where `basename a/b/` answered with what follows the final slash, which
+    // is nothing — and the four `head`/`tail` zeroes from wac-mono#8, where `Args.num` said zero for
+    // an option asked for and one never given alike, so `head -0` printed the default ten. Both are
+    // byte-for-byte against GNU there, captured once instead of spawning the real tool per case.
 
     // `-n` is a value for `head` and `tail` and a boolean everywhere else. It used to be a value
     // everywhere, so a numeric operand vanished into it: `grep -n 123` searched for its filename

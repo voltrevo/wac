@@ -367,14 +367,21 @@ export string[] appletCases() {
     // Path arithmetic, which is all string work and has no fixture at all. `basename` with a suffix
     // is the form that has a second operand, and `dirname` on a bare name is the one that answers `.`
     // rather than "".
-    "basename /a/b/c.txt", "basename /a/b/c.txt .txt", "basename plain", "basename /",
-    "dirname /a/b/c.txt", "dirname plain", "dirname /", "dirname a/b",
+    "basename /a/b/c.txt", "basename /a/b/c.txt .txt", "basename plain",
+    // **Every one of these is a trailing slash**, because that is the whole of both applets:
+    // `basename a/b/` used to answer with what follows the final slash, which is nothing.
+    // GitHub wac-mono#10.
+    "basename a/b/", "basename a/b", "basename /", "basename //", "basename a//", "basename a", "basename /a", "basename a//b//", "basename /usr/lib/",
+    "dirname a/b/", "dirname a/b", "dirname /", "dirname //", "dirname a//", "dirname a", "dirname /a", "dirname a//b//", "dirname /usr/lib/",
     // `echo` is deliberately not a getopt program — `echo -x` prints `-x` — so these say that the
     // shared flag parser is *not* applied to it, which is a claim about `flagsChecked` as much as
     // about `echo`.
     "echo hello", "echo -n hi; echo .", "echo -x", "echo a  b",
     // Status, and nothing else. `true` and `false` exist to be the two ends of `$?`.
     "true; echo st=$?", "false; echo st=$?",
+    // A numeric option that was *asked for* against one never given: `Args.num` said zero for both,
+    // so `head -0` printed the default ten. GitHub wac-mono#8.
+    "head -0 prose.txt", "head -n 0 prose.txt", "tail -0 prose.txt", "tail -n 0 prose.txt",
     // base32 both ways, so the pair is a round trip rather than two independent spellings.
     "base32 m2.txt", "base32 m2.txt | base32 -d",
     // Listing and walking. `ls` of a name that is a file rather than a directory is the case that
