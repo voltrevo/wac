@@ -416,3 +416,29 @@ agree, truncation is confirmed and the five legs above genuinely do contradict.
 Offered as an **untested avenue**, which is what the two retractions above earn. Unlike those, it is
 consistent with every verified constraint rather than needing one of them to be wrong — and it costs
 one run of the fuzz to settle either way.
+
+### And 131,625 is a well-formed request size, which is what makes this worth a run
+
+The fuzzer picks
+
+    const big  = pick(8) === 0;
+    const size = big ? BUF_BYTES + pick(BUF_BYTES) : pick(2000);
+
+so a *big* request asks for `131,072 + pick(131,072)` — anywhere in [131,072, 262,144).
+
+    131,625 = 131,072 + 553      a size this generator could have produced
+    179,994 = 131,072 + 48,922   the size it did produce for nonce 203
+
+So the anomalous length is not arbitrary damage: it is **exactly the shape of another request's
+size**, drawn from the same distribution, and the "553" that has looked like a chunk remainder
+throughout this issue is just as well read as one `pick`. Cross-request contamination of that field
+would look precisely like this; a torn store or a stray write would not have to.
+
+That is a coincidence rather than a proof — a truncation at 131,625 is also arithmetically
+`BUF_BYTES + 553` — and the two readings are still distinguished by the three-line diagnostic above,
+which is why it is worth the one run it costs.
+
+**What it does change** is where to look if the diagnostic says corruption: at `partial[slot]`, the
+request-side analogue of `pending[slot]`, and at whether a request's pieces can be joined with
+another request's. That path has had no attention in this issue, and every constraint verified above
+is about the response.
