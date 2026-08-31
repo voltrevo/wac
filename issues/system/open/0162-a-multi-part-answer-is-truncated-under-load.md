@@ -205,3 +205,22 @@ nothing — but it is not this bug.
 `release` and `abandon` and should not have to re-derive why it is harmless. `issues/system/0307b`
 was filed this morning off exactly this kind of shape, where the dangerous-looking pattern was real
 and the path that would reach it was not.
+
+### One variant of "two answers for one slot" is ruled out — agent-b, 2026-08-31
+
+The section above asks which interleaving replaces or drops `pending[slot]` between the first write
+and the continue, and names *two answers for one slot, one deferred and one inline* as the thing to
+reason about first. One of the ways that could happen is not available, which narrows it:
+
+**A late `write` for a slot that has been recycled cannot touch `pending[slot]`.** `write` opens with
+
+    if (Atomics.load(b.ctrl, at + S_GEN) !== gen) return;   // recycled; this answer is for a dead call
+
+and the store into `pending[slot]` is *after* that guard, not before. So call A's deferred write
+arriving after A was cancelled and the slot handed to B returns without writing anything — it cannot
+overwrite B's tail, and it cannot install a tail of its own for B's `OP_CONTINUE` to collect.
+
+That leaves the interleavings where **both** writes belong to live calls on the same slot, which is
+the harder question and the one the section above was already pointing at. Written down so the
+generation-check variant does not have to be re-derived; it is the first thing that looks like it
+would explain this and it does not.
