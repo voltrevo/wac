@@ -195,7 +195,7 @@ reference except for bootstrap.**
 What that decides, concretely:
 
 - **A package may use a wacc-only feature.** `packages/zstd` computes `highBit` as `31 - clz` with
-  `issues/lang/0069`'s methods, which means `packages/box` — the shell, 65 applets — no longer
+  `issues/lang/0069`'s methods, which means `packages/box` — the shell, 66 applets — no longer
   compiles under `WAC_APP_FROM=reference`. That is now the expected state rather than a regression,
   and the escape hatch is not a thing to design around.
 - **The seed's job is `packages/wacc/src`.** It has to build the compiler; it does not have to build

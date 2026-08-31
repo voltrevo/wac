@@ -140,6 +140,7 @@ enum Cap {
     Remove,
     Rename,
     SetExecutable,
+    Chmod,
     /// `Cli.exec` — a host program, run to completion.
     Exec,
     OpenInput,
@@ -1361,6 +1362,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "setExecutable") => Cap::SetExecutable,
+        ("Cli", "chmod") => Cap::Chmod,
         ("Cli", "execWithIn") => Cap::Exec,
         // A **module** rather than a program: its exports called, in a store of its own that shares
         // this one's authority. `issues/system/0240c`.
@@ -2346,6 +2348,22 @@ fn dispatch(
                 table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit, cwd));
             });
             return pending_for(caller, Kind::Exec, id, results);
+        }
+        Cap::Chmod => {
+            let path = read_string(caller, &params[1])?;
+            let mode = match arg(2) { Val::I32(n) => n as u32 & 0o7777, _ => 0 };
+            if !caller.data().grants.write {
+                return settle_now(caller, Kind::Change, denied_write_change(), results);
+            }
+            let p = resolve(caller, &path);
+            // The whole mode, written as given — unlike `setExecutable` above, which reads the mode and
+            // changes one bit because that is all it promises. `issues/system/0296c`.
+            use std::os::unix::fs::PermissionsExt;
+            let outcome = match std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)) {
+                Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+            };
+            return settle_now(caller, Kind::Change, outcome, results);
         }
         Cap::SetExecutable => {
             let path = read_string(caller, &params[1])?;

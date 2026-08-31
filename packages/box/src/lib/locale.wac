@@ -1,0 +1,60 @@
+// Which locale the caller asked for — `issues/system/0297c`.
+//
+// **The applets here had silently picked two different ones.** `ls`, `tr` and the argument parser are
+// written for the C locale and say so; `wc` split words by Unicode scalar unconditionally, which is the
+// UTF-8 answer in every environment. So `LC_ALL=C box wc -w` disagreed with `LC_ALL=C wc -w` on any
+// input with a byte over 0x7F, and `LC_ALL=C` is what this repository compares in.
+//
+// Nothing here tries to *be* a locale system. The only question these tools ask is whether characters
+// are bytes or scalars, and that is what this answers.
+//
+// **POSIX precedence**: `LC_ALL` overrides everything; failing that the category's own variable —
+// `LC_CTYPE` for character classification — and failing that `LANG`. A variable set to the empty string
+// does not count as set, which is why each is checked for length as well as presence.
+//
+// **Unset means C**, which is POSIX's rule and GNU's behaviour: a program started with a clean
+// environment counts bytes. That is also what `tools/wac/appletvectors.wac` asks for when it captures
+// through `env -i … LC_ALL=C`, so the captured expectations and an unset environment agree.
+
+import { Cli } from "std/platform.wac";
+
+/** The first of `LC_ALL`, `LC_CTYPE`, `LANG` that is set and non-empty, or "". */
+string ctypeSetting(Cli cli) {
+  string[] names = string[]("LC_ALL", "LC_CTYPE", "LANG");
+  for (i32 i = 0; i < names.len(); i++) {
+    u8[]? v = cli.env(names[i]).wait();
+    if (v is null) { continue; }
+    if (v!.len() == 0) { continue; }
+    return string.fromBytes(v!);
+  }
+  return "";
+}
+
+/**
+ * Whether characters are Unicode scalars rather than bytes.
+ *
+ * Decided by the charset after the `.`, because that is the part that says how the bytes are read:
+ * `C.UTF-8`, `en_GB.UTF-8` and `C.utf8` are all UTF-8 while sorting and formatting differently, and
+ * only the charset matters to the callers here. Anything without a UTF-8 charset — `C`, `POSIX`,
+ * `en_GB`, or nothing at all — is bytes.
+ */
+export bool utf8Locale(Cli cli) {
+  string s = ctypeSetting(cli);
+  i32 dot = s.indexOf(".");
+  if (dot < 0) { return false; }
+  string charset = s.slice(dot + 1, s.len());
+  // Case-insensitively `utf8` or `utf-8` — the three spellings on this machine differ only in the
+  // hyphen and the case. Compared against both spellings a character at a time rather than normalised
+  // into a buffer, so there is nothing to allocate and nothing to get wrong about widths.
+  u8[] b = charset.toBytes();
+  u8[] lo = "utf8".toBytes();
+  u8[] up = "UTF8".toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '-') { continue; }
+    if (n >= 4) { return false; }
+    if (b[i] != lo[n] && b[i] != up[n]) { return false; }
+    n = n + 1;
+  }
+  return n == 4;
+}

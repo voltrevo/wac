@@ -871,18 +871,15 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      // **Not implemented**, which is now a category of its own rather than the nearest one:
-      // `FAULT_DENIED` reached the user as "cannot access 'd': Permission denied", blaming the file
-      // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
-      // message below is what a caller prints. wac-mono 0117.
-      // **Still refused, deliberately, even though the executable bit is now settable.** `Cli` carries
-      // `setExecutable` and nothing wider, so applying `mode` here would set one bit of it and report
-      // success — and `box`'s `chmod 600 secret` would tell a user the file is private when it is not.
-      // A partial mode reported as a whole one is worse than an error, which is what this comment said
-      // before the capability existed and is still the reason.
+      // **Implemented since `Cli` gained the whole mode** — `issues/system/0296c`. This refused for as
+      // long as the capability was `setExecutable` and nothing wider, and the reason was not caution:
+      // applying a mode through one bit would have set a third of it and answered success, so
+      // `box chmod 600 secret` would have told a user the file is private when it is not. A partial
+      // mode reported as a whole one is worse than an error.
       //
-      // `setExecutable` below is the call that says exactly what it does; the git checkout uses it.
-      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
+      // `setExecutable` below is still the narrower call and still what the git checkout uses: it
+      // promises one bit, so it can keep promising it on a backing with no other bits to set.
+      case Host(cli): { return cli.chmod(path, mode).wait(); }
       // Asked, and therefore implemented wherever the parent's own mount implements it — a child
       // that `chmod`s a file in an image changes the same inode its parent would have changed.
       case Remote(chan): { return remoteChmod(chan, path, mode); }

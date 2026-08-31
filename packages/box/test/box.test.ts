@@ -402,19 +402,12 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     );
     await Deno.remove(deep, { recursive: true });
 
-    // An unreadable directory is not an empty one. `find` printed a partial listing and exited 0,
-    // and `du` undercounted the total and exited 0 — a wrong number that looks like an answer.
-    // GitHub wac-mono#20.
-    const unreadable = await Deno.makeTempDir({ prefix: "wac-box-unread-" });
-    await Deno.mkdir(`${unreadable}/shut`);
-    await Deno.writeTextFile(`${unreadable}/shut/inside`, "x");
-    await Deno.chmod(`${unreadable}/shut`, 0o000);
-    const found = (await box(["find", unreadable]));
-    const counted = (await box(["du", unreadable]));
-    await Deno.chmod(`${unreadable}/shut`, 0o755);
-    await Deno.remove(unreadable, { recursive: true });
-    assertEquals(found.code, 1, "find over an unreadable subtree fails");
-    assertEquals(counted.code, 1, "and so does du");
+    // **Moved to `packages/box/test/wac/unreadable_test.wac`.** `find` and `du` over a subtree they
+    // cannot enter — GitHub wac-mono#20, where both printed a partial answer and exited 0 — is a wac
+    // test now. It was here only because the *fixture* needed `Deno.chmod`: making a directory
+    // unreadable is a mode, and `Cli` carried `setExecutable`, which is one bit. `issues/system/0296c`
+    // widened it, so the test went where the rest of box's are, and gained a root check the version
+    // here depended on silently.
 
     // A read that fails is not an end of input. `readChunk` answers with bytes and cannot say
     // "broken", so every filter treated a half-read as a whole one and exited 0 — the failure mode
@@ -593,107 +586,33 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
   }
 });
 
-Deno.test("box works as a filter, and its applets need only what they use", async () => {
-  const input = new TextEncoder().encode("one two\nthree\n");
-  // No grants at all: reading standard input is not a capability, so a pipeline works
-  // even where the filesystem was withheld.
-  const piped = await runFilter(BOX, ["wc"], input);
-  assertEquals(piped.code, 0, piped.err);
-  // Against the real `wc` rather than a literal: the columns are padded now, and a literal is how the
-  // padding came to be missing in the first place — somebody wrote down what this printed.
-  const realWc = new Deno.Command("wc", { stdin: "piped", stdout: "piped", stderr: "null" }).spawn();
-  const w = realWc.stdin.getWriter();
-  await w.write(input);
-  await w.close();
-  const { stdout: realOut } = await realWc.output();
-  assertEquals(new TextDecoder().decode(piped.out), new TextDecoder().decode(realOut));
-
-  const hashed = await runFilter(BOX, ["sha256sum"], input);
-  assertEquals(new TextDecoder().decode(hashed.out).trim().endsWith("  -"), true, "stdin is '-'");
-
-  // But a file still needs the grant, and says so — in `faultWords`' phrase for `FAULT_NOT_GRANTED`,
-  // which is what an applet prints when the category has words. "Permission denied" would be wrong here:
-  // nothing denied anything, the program was never handed a filesystem.
+Deno.test("a file still needs the grant, and says so", async () => {
+  // **What is left of "box works as a filter".** The filter half — `wc` and `sha256sum` over standard
+  // input, against the real tools — is `appletCases()` now, replayed in process by
+  // `packages/box/test/wac/applets_test.wac` against expectations captured once. Reading standard input
+  // is not a capability, so none of it needed a built program.
+  //
+  // This half does. The claim is about an application handed **no filesystem**, and in process the frame
+  // inherits the suite's own capabilities — so an in-process version would asserted nothing. It is one of
+  // the things `issues/system/0193` lists as staying: the grants a *built* applet asks for.
+  //
+  // "Not granted to this application" is `faultWords`' phrase for `FAULT_NOT_GRANTED`. "Permission
+  // denied" would be wrong: nothing denied anything, the program was never handed a filesystem.
   const denied = await runFilter(BOX, ["cat", "README.md"], new Uint8Array());
   assertEquals(denied.code, 1);
   assertEquals(denied.err.includes("Not granted to this application"), true, denied.err);
 });
 
-Deno.test("cp streams, and leaves nothing behind either way", async () => {
-  // `cp` read the whole file and wrote the whole file, so copying anything larger than
-  // memory was impossible and copying anything over a megabyte failed outright. It now
-  // pumps chunks into a temporary name and renames, which needs `openOutput` — without a
-  // streaming *sink* the read half alone would not have helped.
-  const dir = await Deno.makeTempDir({ prefix: "wac-cp-d-" });
-  try {
-    // The five megabytes below are the test; the process around them was not. A worker run crosses the
-    // same 1MB bridge buffer in the same chunks — that is what `appRunner` is, the launcher half of a
-    // built program — so the streaming property is unchanged and three Deno startups are not paid.
-    const runner = await appRunner(BOX, { read: true, write: true });
-    const cp = async (src: string, dst: string) => await runner.run(["cp", src, dst]);
+// **Moved to `packages/box/test/wac/writepath_test.wac`.** `cp` crossing chunk boundaries, copying
+// over an existing file, and leaving no temporary beside a failed target — all assertions about our
+// own behaviour, checkable with `cli.readFile` and `cli.readDir` in this process. The fixture is
+// 500,003 bytes there rather than 5,000,003: the property is that the copy crosses boundaries, and
+// seven of them shows it as well as seventy.
 
-    // Several times the 64K chunk and the 1MB bridge buffer, and not a multiple of either.
-    const size = 5_000_003;
-    const data = new Uint8Array(size);
-    for (let i = 0; i < size; i++) data[i] = (i * 31 + (i >> 13)) & 0xFF;
-    const src = `${dir}/src`;
-    await Deno.writeFile(src, data);
 
-    const r = await cp(src, `${dir}/dst`);
-    assertEquals(r.code, 0, r.err);
-    assertSameBytes(await Deno.readFile(`${dir}/dst`), data, "5MB copy");
+// **Moved to `packages/box/test/wac/writepath_test.wac`.** `tee`'s two destinations are a pipeline
+// and a `readFile`, neither of which needs a process.
 
-    // Over an existing file, and the rename must not leave the old contents.
-    await Deno.writeTextFile(`${dir}/dst`, "stale");
-    assertEquals((await cp(src, `${dir}/dst`)).code, 0);
-    assertSameBytes(await Deno.readFile(`${dir}/dst`), data, "copy over an existing file");
-
-    // A failure must not leave a temporary file lying next to the target.
-    assertEquals((await cp(`${dir}/absent`, `${dir}/never`)).code, 1, "a missing source fails");
-    const left: string[] = [];
-    for await (const e of Deno.readDir(dir)) left.push(e.name);
-    assertEquals(left.sort().join(","), "dst,src", `temporary files survived: ${left}`);
-
-    // And `write` goes back to standard output afterwards, which is what closes the file.
-    const out = await runner.run(["cat", src]);
-    assertSameBytes(out.bytes, data, "cat still writes to stdout after a cp");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("box's write-path applets: cp and tee", async () => {
-  // The first applets in `box` that write. `cp` needs no capability the world did not
-  // already have — it is `readFile` and `writeFile` — and `tee` is the first with two
-  // destinations at once.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-w-" });
-  const dst = await Deno.makeTempFile({ prefix: "wac-box-dst-" });
-  try {
-    await buildApp(BOX, built, { read: true, write: true });
-    const src = "packages/box/src/box.wac";
-
-    const cp = new Deno.Command(built, { args: ["cp", src, dst], stderr: "piped" }).outputSync();
-    assertEquals(cp.code, 0, new TextDecoder().decode(cp.stderr));
-    assertEquals(await Deno.readTextFile(dst), await Deno.readTextFile(src), "cp copied it");
-
-    const child = new Deno.Command(built, {
-      args: ["tee", dst],
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    const w = child.stdin.getWriter();
-    await w.write(new TextEncoder().encode("through\n"));
-    await w.close();
-    const r = await child.output();
-    assertEquals(r.code, 0, new TextDecoder().decode(r.stderr));
-    assertEquals(new TextDecoder().decode(r.stdout), "through\n", "tee wrote to stdout");
-    assertEquals(await Deno.readTextFile(dst), "through\n", "and to the file");
-  } finally {
-    await Deno.remove(built);
-    await Deno.remove(dst);
-  }
-});
 
 
 Deno.test("wc -w splits words where wc(1) splits them, including the code points that are not spaces", async () => {
@@ -708,7 +627,12 @@ Deno.test("wc -w splits words where wc(1) splits them, including the code points
   // this pass without the fix, which is exactly how the gap survived.
   const dir = await Deno.makeTempDir({ prefix: "wac-box-words-" });
   try {
-    const runner = await appRunner(BOX, { read: true });
+    // **`env` is granted, and that is part of the claim now.** `wc` reads `LC_CTYPE`/`LC_ALL` since
+    // `issues/system/0297c`, so a box built without the environment falls back to the C locale and
+    // counts bytes — correct POSIX behaviour, and not what the real `wc` beside it is doing, which has
+    // the ambient `C.UTF-8`. Withholding it here compares two different questions and the answers
+    // differ on the very first non-ASCII case.
+    const runner = await appRunner(BOX, { read: true, env: true });
     const wcOut = (args: string[]) => {
       const r = new Deno.Command("wc", { args, stdout: "piped", stderr: "null" }).outputSync();
       return new TextDecoder().decode(r.stdout);
@@ -787,249 +711,23 @@ Deno.test("wc -w splits words where wc(1) splits them, including the code points
   }
 });
 
-Deno.test("the applets that read several files read all of them", async () => {
-  // Every other test here passes **one** file, which is how `box cat a b` came to print `a` and exit 0
-  // without mentioning `b` — for ten applets at once (wac-mono 0096). One operand is the shape a test
-  // author reaches for and the shape a person never types.
+Deno.test("fsdump reads an image, names its operands, and refuses what is not one", async () => {
+  // **What is left of "the applets that read several files read all of them".** The fifteen applets and
+  // their one-file counterparts are `appletCases()` now, captured against the real tools once and
+  // replayed in process — the property they hold is wac-mono 0096, `box cat a b` printing `a` and
+  // exiting 0 without mentioning `b`, for ten applets at once.
+  //
+  // `fsdump` could not go with them: it reads a **filesystem image**, a format of ours, so there is no
+  // real tool to capture an answer from. It has no external oracle at all — the oracle is the shape —
+  // which by `issues/system/0193` makes it a candidate for moving in process rather than for a vector.
+  // It stays here until something reads a repo-relative fixture from inside a frame.
+
   const dir = await Deno.makeTempDir({ prefix: "wac-box-multi-" });
   try {
     const a1 = `${dir}/a.txt`, a2 = `${dir}/b.txt`;
     await Deno.writeTextFile(a1, "alpha\nbeta\ngamma\n");
     await Deno.writeTextFile(a2, "delta\nepsilon\n");
     const runner = await appRunner(BOX, { read: true });
-    const sys = (cmd: string, args: string[]) => {
-      const r = new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).outputSync();
-      return new TextDecoder().decode(r.stdout);
-    };
-
-    for (const [applet, cmd, flags] of [
-      ["cat", "cat", []],
-      ["nl", "nl", []],
-      ["rev", "rev", []],
-      ["fold", "fold", ["-w4"]],
-      // `-f` with a delimiter, because box's `cut` is field-based only — `-c` prints a usage and
-      // exits 2, which is its own gap and not this test's subject.
-      ["cut", "cut", ["-f1", "-d", " "]],
-      ["sort", "sort", []],
-      // `tac` reverses **each file**, in the order named — not the concatenation. The two differ only
-      // when a file's lines are not a palindrome, which the fixture above is, so these lines are not.
-      ["tac", "tac", []],
-      ["strings", "strings", []],
-      ["sha256sum", "sha256sum", []],
-      ["sha512sum", "sha512sum", []],
-      // `grep` puts the filename in front of every line once there is more than one file — that prefix is
-      // what makes `grep pattern *.c` usable, and `-c` counts per file rather than in total.
-      ["grep", "grep", ["alpha"]],
-      ["grep", "grep", ["-n", "a"]],
-      ["grep", "grep", ["-c", "a"]],
-      // `head` and `tail` put a `==> name <==` banner over each file and a blank line between them.
-      ["head", "head", ["-2"]],
-      ["tail", "tail", ["-n2"]],
-    ] as [string, string, string[]][]) {
-      const got = await runner.run([applet, ...flags, a1, a2]);
-      assertEquals(got.out, sys(cmd, [...flags, a1, a2]), `${applet} over two files`);
-      // And one file still behaves, which is what a conversion breaks if it breaks anything.
-      assertEquals((await runner.run([applet, ...flags, a1])).out, sys(cmd, [...flags, a1]),
-        `${applet} over one file`);
-    }
-
-    // A file that cannot be opened ends the run **and the exit code says so**. `Line.ok` false means "no
-    // more lines" and cannot distinguish "that file would not open", so the first version of this printed
-    // the first file and exited 0 with the error on stderr — the bug the whole issue is about, one level
-    // up, in the fix for it.
-    // And the ones the real tools give a *single* operand must not have grown a second one: `base64`,
-    // `base32`, `shuf` and `tr` all answer "extra operand" in GNU, so multi-file support for them would be
-    // an incompatibility invented here. I converted all four before checking, and the comparison is what
-    // said so — see 0096.
-    for (const [applet, cmd] of [["base64", "base64"], ["base32", "base32"], ["shuf", "shuf"]]) {
-      const got = await runner.run([applet, a1, a2]);
-      const real = new Deno.Command(cmd, { args: [a1, a2], stdout: "null", stderr: "null" }).outputSync();
-      assertEquals(got.code !== 0, real.code !== 0, `${applet} should refuse two operands as ${cmd} does`);
-    }
-
-    // `wc` is its own shape: a line per file, a `total` when there is more than one, and the filename on
-    // every line. It used to print the first file's counts and nothing else — and with `-l`, `-w` or `-c`
-    // it dropped the filename too, on a comment claiming that is what the real one does. It is not: the
-    // label goes with the file, and only reading standard input drops it.
-    for (const flags of [[], ["-l"], ["-w"], ["-c"], ["-lw"]]) {
-      for (const files of [[a1], [a1, a2]]) {
-        const got = await runner.run(["wc", ...flags, ...files]);
-        const real = new Deno.Command("wc", { args: [...flags, ...files], stdout: "piped", stderr: "null" })
-          .outputSync();
-        // No normalising: the padding is part of the answer, and every loosened comparison here has
-        // eventually hidden something.
-        assertEquals(got.out, new TextDecoder().decode(real.stdout),
-          `wc ${flags.join(" ")} over ${files.length} file(s)`);
-      }
-    }
-
-    // `crc32` has no counterpart on this machine — `cksum` is a different checksum — so the oracle is the
-    // shape rather than a second implementation: two files must give exactly what the two single-file
-    // runs give. That catches the bug this issue is about without inventing an expected digest.
-    const both = await runner.run(["crc32", a1, a2]);
-    const one = await runner.run(["crc32", a1]);
-    const two = await runner.run(["crc32", a2]);
-    assertEquals(both.out, one.out + two.out, "crc32 over two files");
-
-    const missing = await runner.run(["nl", a1, `${dir}/nope.txt`]);
-    assertEquals(missing.code, 1, `a missing operand should fail, got ${missing.code}`);
-    assertEquals(missing.err.includes("nope.txt"), true, missing.err);
-
-    // **A numeric option whose value is not a number**, and the signed forms, against the real tools.
-    //
-    // Every one of these used to be swallowed: `args.wac` consumed a value it could not read as digits
-    // and left `hasNum` false, so `head -n x` printed the *default* ten lines and exited 0 — a mistake
-    // in the command coming back as an answer. And the sign was dropped, so `tail -n +2` gave the last
-    // two lines rather than everything from the second: a different answer, not a missing one.
-    const lc = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };
-    /** A real tool, with optional standard input, so `-` and the flag-only forms can be compared. */
-    const sysBoth = async (cmd: string, args: string[], stdin = "") => {
-      const child = new Deno.Command(cmd, {
-        args,
-        stdin: "piped",
-        stdout: "piped",
-        stderr: "piped",
-        env: lc,
-        clearEnv: true,
-      }).spawn();
-      // A tool that exits without reading — `seq` with no operand, `cat -Q` — breaks the pipe, which is
-      // it behaving correctly rather than a failure to report.
-      const w = child.stdin.getWriter();
-      try {
-        await w.write(new TextEncoder().encode(stdin));
-        await w.close();
-      } catch {
-        try {
-          await w.close();
-        } catch {
-          // Already gone.
-        }
-      }
-      const r = await child.output();
-      const d = new TextDecoder();
-      return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
-    };
-    const counted = `${dir}/counted.txt`;
-    await Deno.writeTextFile(counted, "1\n2\n3\n4\n5\n");
-    for (
-      const argv of [
-        ["head", "-n", "x"], ["tail", "-n", "x"], ["head", "-nx"],
-        ["fold", "-w", "x"], ["split", "-l", "x"], ["shuf", "-n", "x"], ["strings", "-n", "x"],
-        ["head", "-n", "-2"], ["head", "-n", "+2"], ["head", "-n", "-9"], ["head", "-n", "-0"],
-        ["tail", "-n", "+2"], ["tail", "-n", "-2"], ["tail", "-n", "+9"], ["tail", "-n", "+0"],
-        ["head", "-n2"], ["tail", "-n2"], ["head", "-n", "2"], ["tail", "-n", "2"],
-        // `-c` counts bytes. It was a boolean flag, so its value became an operand — `head -c 3 f` said
-        // "head: 3: No such file or directory", blaming the caller for a real GNU spelling — and
-        // `head -c3 f` printed the whole file. The noun in the refusal follows the flag: GNU says
-        // "bytes" for `-c` and "lines" for `-n`, from the same tool.
-        ["head", "-c", "3"], ["head", "-c3"], ["head", "-c", "-3"], ["head", "-c", "+3"],
-        ["tail", "-c", "3"], ["tail", "-c", "+3"], ["tail", "-c", "-3"],
-        ["head", "-c", "0"], ["head", "-c", "99"], ["head", "-c", "x"], ["tail", "-c", "x"],
-      ]
-    ) {
-      const args = [...argv, counted];
-      const real = await sysBoth(argv[0], args.slice(1));
-      const got = await runner.run(args);
-      assertEquals(got.out, real.out, `box ${args.join(" ")}: output`);
-      assertEquals(got.code, real.code, `box ${args.join(" ")}: status`);
-      // The wording too, where the real tool said anything: these are our messages claiming to be its.
-      //
-      // Its own name first: a tool found on `PATH` is exec'd with the resolved path as argv[0] and puts
-      // that in its diagnostics, so GNU says `/usr/bin/head:` where a program invoked as `head` says
-      // `head:`. That prefix is the harness's doing rather than a difference in the message.
-      const named = real.err.replace(new RegExp(`^\\S*/${argv[0]}: `, "gm"), `${argv[0]}: `);
-      if (real.err !== "") assertEquals(got.err, named, `box ${args.join(" ")}: message`);
-    }
-    // No cleanup needed: the only `split` here is one that refuses, so it writes nothing.
-
-    // **What `packages/sh`'s corpus found**, measured by `wac task corpus:through` (wac-mono 0103).
-    // Each of these was a flag accepted and ignored, or an operand read as a filename that never is —
-    // the shape where the caller asks for something, gets no error, and reads output that is wrong in
-    // exactly the way they asked it not to be.
-    const dashFile = `${dir}/dash.txt`;
-    await Deno.writeTextFile(dashFile, "a\n\n\n\nb\tc\n");
-    for (
-      const argv of [
-        // `cat`'s nine flags did nothing at all, and `-Q` — not a flag GNU has — was accepted.
-        ["cat", "-n"], ["cat", "-b"], ["cat", "-s"], ["cat", "-ns"], ["cat", "-bs"],
-        ["cat", "-E"], ["cat", "-T"], ["cat", "-A"], ["cat", "-e"], ["cat", "-t"], ["cat", "-v"],
-        ["cat", "-Q"], ["cat", "-u"],
-        // A lone `-` is standard input everywhere in coreutils, and was read as a filename.
-        ["cat", "-"], ["sort", "-"], ["uniq", "-"], ["wc", "-"], ["wc", "-c", "-"], ["nl", "-"],
-        ["tac", "-"], ["head", "-1", "-"], ["tail", "-1", "-"],
-        // …and is *not* standard input in util-linux's `rev`, which says so in its own words.
-        ["rev", "-"],
-        // `seq`'s refusals: a usage error exits 1 in GNU, and a word is not a number.
-        ["seq"], ["seq", "abc"], ["seq", "1", "2", "3", "4"], ["seq", "1", "2", "x"],
-        ["seq", "3"], ["seq", "2", "5"], ["seq", "1", "2", "9"], ["seq", "5", "1"],
-        // `grep -q` printed every matching line, which is the opposite of what it asks for.
-        ["grep", "-q", "a", dashFile], ["grep", "-q", "zzz", dashFile],
-        ["grep", "-qc", "a", dashFile],
-        // **`grep` is *basic***: `|`, `+`, `?`, `{` and the parentheses are literals and the backslashed
-        // forms are the operators. This compiled extended, so every one of these meant something else —
-        // silently, in the tool most likely to be handed a pattern. wac-mono 0104.
-        ["grep", "-c", "a|b", dashFile], ["grep", "-c", "a\\|b", dashFile],
-        ["grep", "-c", "a+", dashFile], ["grep", "-c", "a\\+", dashFile],
-        ["grep", "-c", "a?", dashFile], ["grep", "-c", "a\\?", dashFile],
-        ["grep", "-c", "a{2}", dashFile], ["grep", "-c", "a\\{2\\}", dashFile],
-        ["grep", "-c", "(a)", dashFile], ["grep", "-c", "\\(a\\)", dashFile],
-        ["grep", "-c", "*a", dashFile], ["grep", "-c", "a*", dashFile],
-        // …and `-E` is extended.
-        ["grep", "-Ec", "a|b", dashFile], ["grep", "-Ec", "a+", dashFile],
-        ["grep", "-Ec", "(a)", dashFile], ["grep", "-Ec", "a{2}", dashFile],
-        // **`tr` took its sets literally and had no flags** — wac-mono 0098, found by typing into the
-        // browser terminal. `tr '\n' ' '` looked for a backslash and an `n` and copied its input
-        // through, which looks like working software until you check the bytes.
-        ["tr", "-d", "12"], ["tr", "-d", "\\n"], ["tr", "-s", " "], ["tr", "-s", "ab", "x"],
-        ["tr", "-ds", "a", "b"], ["tr", "-c", "a-z", "."], ["tr", "-c", "a-z", "xy"],
-        ["tr", "-cd", "a-z"], ["tr", "-cs", "a-z", "xy"], ["tr", "-t", "abc", "xy"],
-        ["tr", "-ts", "abc", "x"], ["tr", "a\\142c", "xyz"], ["tr", "\\t", "_"], ["tr", "\\101", "x"],
-        ["tr", "[:digit:]", "x"], ["tr", "[:upper:]", "[:lower:]"], ["tr", "[:alnum:]", "x"],
-        ["tr", "[:blank:]", "_"], ["tr", "[:punct:]", "_"], ["tr", "[:xdigit:]", "_"],
-        ["tr", "-s", "[:space:]", " "], ["tr", "[a*3]", "x"], ["tr", "abc", "[x*]"],
-        ["tr", "abc", "[x*0]y"], ["tr", "[a*2]c", "xyz"], ["tr", "a[x*", "y"], ["tr", "[=a=]", "x"],
-        // **Flags accepted and ignored**, found by asking every applet whether each flag the real tool
-        // documents actually does anything (wac-mono 0105). `base64 -d` re-encoded, `uniq -d` and `-u`
-        // filtered nothing, and `echo -n` printed the newline it exists to suppress.
-        ["uniq", "-d"], ["uniq", "-u"], ["uniq", "-c"], ["uniq", "-du"],
-        ["echo", "-n", "hi"], ["echo", "hi"], ["echo", "-n"], ["echo", "-n", "-n", "x"],
-        ["echo", "x", "-n"], ["echo", "-ne", "x"],
-        ["echo", "-e", "a\tb"], ["echo", "-e", "a\\b"], ["echo", "-e", "a\\x41b"],
-        ["echo", "-e", "ab\\cd"], ["echo", "-E", "a\\tb"],
-        // …and its refusals, which are their own set of sentences.
-        ["tr"], ["tr", "-d"], ["tr", "-d", "a", "b"], ["tr", "-q", "a", "b"], ["tr", "a", "b", "c"],
-        ["tr", "z-a", "x"], ["tr", "[:foo:]", "x"], ["tr", "[=ab=]", "x"], ["tr", "[a*]", "x"],
-        ["tr", "a[b*c]d", "x"], ["tr", "", ""],
-      ]
-    ) {
-      // `-` and the flag-only forms read standard input, so every case gets the same bytes on it.
-      const stdin = "a\n\n\n\nb\tc\n";
-      // `cat` with only a flag needs a file to read; everything else here reads standard input.
-      const args = argv[0] === "cat" && argv.length === 2 ? [...argv, dashFile] : argv;
-      const real = await sysBoth(args[0], args.slice(1), stdin);
-      const got = await runner.run(args, { stdin });
-      assertEquals(got.out, real.out, `box ${args.join(" ")}: output`);
-      assertEquals(got.code, real.code, `box ${args.join(" ")}: status`);
-      if (real.err !== "") {
-        // A tool found on `PATH` is exec'd with the resolved path as argv[0] and puts *that* wherever it
-        // names itself — at the start of a diagnostic and inside `Try '/usr/bin/cat --help'`. Both are
-        // the harness's doing rather than a difference in the message.
-        const named = real.err.replaceAll(new RegExp(`/\\S*/${args[0]}\\b`, "g"), args[0]);
-        assertEquals(got.err, named, `box ${args.join(" ")}: message`);
-      }
-    }
-
-    // `-d` needs input that *is* base64, which the loop above feeds none of — GNU emits whatever it
-    // decoded before erroring, and comparing partial output would be testing that rather than `-d`.
-    // A round trip, with the real tool as the oracle in both directions, is what the flag is for.
-    for (const [enc, real] of [["base64", "/usr/bin/base64"], ["base32", "/usr/bin/base32"]]) {
-      const plain = "hello world\n";
-      const encoded = (await runner.run([enc], { stdin: plain })).out;
-      assertEquals(encoded, (await sysBoth(real, [], plain)).out, `${enc} encode`);
-      assertEquals((await runner.run([enc, "-d"], { stdin: encoded })).out, plain, `${enc} -d`);
-      assertEquals((await sysBoth(real, ["-d"], encoded)).out, plain, `${enc} -d oracle`);
-    }
-
     // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here
     // either, and the oracle is again the shape. `packages/fs/test/wac/image_test.wac` is where the format is
     // checked; what matters at this end is that the applet is wired up, names its operands, and *fails*
@@ -1980,75 +1678,6 @@ Deno.test("tar writes an archive GNU tar can read", async () => {
   }
 });
 
-Deno.test("diff agrees with the real one, unified output and exit status", async () => {
-  // The one applet here that is an algorithm rather than plumbing, so it gets the widest
-  // differential test: every shape below is compared byte for byte against `diff -u`.
-  // That is what caught the hunk header for an empty side — a zero-length side starts at
-  // line 0, not 1, which is the sort of convention no amount of reasoning produces.
-  const built = await Deno.makeTempFile({ prefix: "wac-diff-" });
-  const dir = await Deno.makeTempDir({ prefix: "wac-diff-d-" });
-  try {
-    await buildApp(BOX, built, { read: true });
-    const seq = (n: number) => Array.from({ length: n }, (_, i) => `${i + 1}`).join("\n") + "\n";
-
-    const cases: Array<{ what: string; a: string; b: string }> = [
-      { what: "one change", a: seq(8), b: seq(8).replace("\n3\n", "\nX\n") },
-      { what: "two distant hunks", a: seq(30), b: seq(30).replace("\n5\n", "\nfive\n").replace("\n25\n", "\ntwentyfive\n") },
-      // Closer than twice the context, so they must merge into one hunk rather than two.
-      { what: "two close changes merge", a: seq(30), b: seq(30).replace("\n5\n", "\nfive\n").replace("\n7\n", "\nseven\n") },
-      { what: "a deletion", a: seq(30), b: seq(30).replace("\n13\n", "\n") },
-      { what: "an insertion", a: seq(30), b: seq(30).replace("\n13\n", "\ninserted\n13\n") },
-      { what: "change on the first line", a: seq(30), b: `one\n${seq(30).slice(2)}` },
-      { what: "change on the last line", a: seq(30), b: seq(30).replace(/30\n$/, "thirty\n") },
-      { what: "truncated", a: seq(30), b: seq(5) },
-      { what: "appended", a: seq(30), b: seq(40) },
-      { what: "fully reversed", a: seq(20), b: seq(20).trim().split("\n").reverse().join("\n") + "\n" },
-      // The three empty cases: the hunk header's line numbers are the whole point.
-      { what: "new file is empty", a: seq(30), b: "" },
-      { what: "old file is empty", a: "", b: seq(30) },
-      { what: "both empty", a: "", b: "" },
-      { what: "identical", a: seq(30), b: seq(30) },
-    ];
-
-    for (const c of cases) {
-      await Deno.writeTextFile(`${dir}/a`, c.a);
-      await Deno.writeTextFile(`${dir}/b`, c.b);
-      const mine = new Deno.Command(built, {
-        args: ["diff", "a", "b"], cwd: dir, stdout: "piped", stderr: "piped",
-      }).outputSync();
-      const real = new Deno.Command("diff", {
-        args: ["-u", "a", "b"], cwd: dir, stdout: "piped", stderr: "null",
-      }).outputSync();
-
-      // The `---`/`+++` header carries timestamps in the real one, so compare from the
-      // first hunk. Everything after it, including every hunk header, must match.
-      const body = (s: string) => s.split("\n").filter((l) => !l.startsWith("---") && !l.startsWith("+++")).join("\n");
-      assertEquals(
-        body(new TextDecoder().decode(mine.stdout)),
-        body(new TextDecoder().decode(real.stdout)),
-        c.what,
-      );
-      // 0 the same, 1 different, 2 trouble — as the real one does.
-      assertEquals(mine.code, real.code, `${c.what}: exit status`);
-    }
-
-    // A pair too large is refused rather than attempted: the table is quadratic in memory
-    // as well as time, and dying on a big file would be worse than saying so.
-    await Deno.writeTextFile(`${dir}/big`, seq(5000));
-    const refused = new Deno.Command(built, {
-      args: ["diff", "big", "a"], cwd: dir, stdout: "piped", stderr: "piped",
-    }).outputSync();
-    assertEquals(refused.code, 2, "an oversized diff is trouble, not a wrong answer");
-    assertEquals(
-      new TextDecoder().decode(refused.stderr).includes("quadratic"),
-      true,
-      "and it says why",
-    );
-  } finally {
-    await Deno.remove(built);
-    await Deno.remove(dir, { recursive: true });
-  }
-});
 
 Deno.test("gets: TLS 1.3 in wac, against a real TLS server", async () => {
   // `packages/tls` needed no changes for this. `tlsClientInit`/`tlsClientFeed` are a state

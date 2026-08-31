@@ -2,7 +2,7 @@ wac-applet-vectors 1
 bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
-count: 39
+count: 74
 S 5
 seq 5
 X 0
@@ -673,6 +673,366 @@ printf 'a,b,c\nd,e,f\n' | grep -c a
 X 0
 O 2
 1
+
+E 0
+
+S 30
+printf 'one two\nthree\n' | wc
+X 0
+O 24
+      2       3      14
+
+E 0
+
+S 33
+printf 'one two\nthree\n' | wc -l
+X 0
+O 2
+2
+
+E 0
+
+S 37
+printf 'one two\nthree\n' | sha256sum
+X 0
+O 68
+6481b98de00b3b8c0eccd56b3877aa72d7cbb9c2b97142fa35f7177f9456926d  -
+
+E 0
+
+S 17
+cat m1.txt m2.txt
+X 0
+O 31
+alpha
+beta
+gamma
+delta
+epsilon
+
+E 0
+
+S 10
+cat m1.txt
+X 0
+O 17
+alpha
+beta
+gamma
+
+E 0
+
+S 16
+nl m1.txt m2.txt
+X 0
+O 66
+     1	alpha
+     2	beta
+     3	gamma
+     4	delta
+     5	epsilon
+
+E 0
+
+S 9
+nl m1.txt
+X 0
+O 38
+     1	alpha
+     2	beta
+     3	gamma
+
+E 0
+
+S 17
+rev m1.txt m2.txt
+X 0
+O 31
+ahpla
+ateb
+ammag
+atled
+nolispe
+
+E 0
+
+S 10
+rev m1.txt
+X 0
+O 17
+ahpla
+ateb
+ammag
+
+E 0
+
+S 22
+fold -w4 m1.txt m2.txt
+X 0
+O 35
+alph
+a
+beta
+gamm
+a
+delt
+a
+epsi
+lon
+
+E 0
+
+S 15
+fold -w4 m1.txt
+X 0
+O 19
+alph
+a
+beta
+gamm
+a
+
+E 0
+
+S 28
+cut -f1 -d ' ' m1.txt m2.txt
+X 0
+O 31
+alpha
+beta
+gamma
+delta
+epsilon
+
+E 0
+
+S 21
+cut -f1 -d ' ' m1.txt
+X 0
+O 17
+alpha
+beta
+gamma
+
+E 0
+
+S 18
+sort m1.txt m2.txt
+X 0
+O 31
+alpha
+beta
+delta
+epsilon
+gamma
+
+E 0
+
+S 11
+sort m1.txt
+X 0
+O 17
+alpha
+beta
+gamma
+
+E 0
+
+S 17
+tac m1.txt m2.txt
+X 0
+O 31
+gamma
+beta
+alpha
+epsilon
+delta
+
+E 0
+
+S 10
+tac m1.txt
+X 0
+O 17
+gamma
+beta
+alpha
+
+E 0
+
+S 21
+strings m1.txt m2.txt
+X 0
+O 31
+alpha
+beta
+gamma
+delta
+epsilon
+
+E 0
+
+S 14
+strings m1.txt
+X 0
+O 17
+alpha
+beta
+gamma
+
+E 0
+
+S 23
+sha256sum m1.txt m2.txt
+X 0
+O 146
+4fdbc441ea7b546100e086ac1e4fc5ae6749b7314311c99db05be450eca12996  m1.txt
+b9fa5c67a4da4f4a52149e207e8bacd775bda1b21082e277acfebef88d9e4eb6  m2.txt
+
+E 0
+
+S 16
+sha256sum m1.txt
+X 0
+O 73
+4fdbc441ea7b546100e086ac1e4fc5ae6749b7314311c99db05be450eca12996  m1.txt
+
+E 0
+
+S 23
+sha512sum m1.txt m2.txt
+X 0
+O 274
+3aa105de7358fb8a318495e8868486c6cb652f7242a45a3e5cb6b0f28096d7698f3ded963ad2dce69940672913282224301c60203aa24729fad52f5f51333155  m1.txt
+206073a5d9d033e7765024d1c19d9b0efc5c437779be90e27df7b6bbea59008528e4b7179e9e791c572d0bc41edfec95885a98ca0082291ae1bc79f8e8864902  m2.txt
+
+E 0
+
+S 16
+sha512sum m1.txt
+X 0
+O 137
+3aa105de7358fb8a318495e8868486c6cb652f7242a45a3e5cb6b0f28096d7698f3ded963ad2dce69940672913282224301c60203aa24729fad52f5f51333155  m1.txt
+
+E 0
+
+S 24
+grep alpha m1.txt m2.txt
+X 0
+O 13
+m1.txt:alpha
+
+E 0
+
+S 17
+grep alpha m1.txt
+X 0
+O 6
+alpha
+
+E 0
+
+S 23
+grep -n a m1.txt m2.txt
+X 0
+O 59
+m1.txt:1:alpha
+m1.txt:2:beta
+m1.txt:3:gamma
+m2.txt:1:delta
+
+E 0
+
+S 16
+grep -n a m1.txt
+X 0
+O 23
+1:alpha
+2:beta
+3:gamma
+
+E 0
+
+S 23
+grep -c a m1.txt m2.txt
+X 0
+O 18
+m1.txt:3
+m2.txt:1
+
+E 0
+
+S 16
+grep -c a m1.txt
+X 0
+O 2
+3
+
+E 0
+
+S 21
+head -2 m1.txt m2.txt
+X 0
+O 56
+==> m1.txt <==
+alpha
+beta
+
+==> m2.txt <==
+delta
+epsilon
+
+E 0
+
+S 14
+head -2 m1.txt
+X 0
+O 11
+alpha
+beta
+
+E 0
+
+S 22
+tail -n2 m1.txt m2.txt
+X 0
+O 56
+==> m1.txt <==
+beta
+gamma
+
+==> m2.txt <==
+delta
+epsilon
+
+E 0
+
+S 15
+tail -n2 m1.txt
+X 0
+O 11
+beta
+gamma
+
+E 0
+
+S 16
+wc m1.txt m2.txt
+X 0
+O 47
+ 3  3 17 m1.txt
+ 2  2 14 m2.txt
+ 5  5 31 total
+
+E 0
+
+S 19
+wc -l m1.txt m2.txt
+X 0
+O 29
+ 3 m1.txt
+ 2 m2.txt
+ 5 total
 
 E 0
 

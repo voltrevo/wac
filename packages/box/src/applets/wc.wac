@@ -22,7 +22,8 @@ import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
-import { isWordSeparator } from "../lib/words.wac";
+import { isWordSeparator, isWordSeparatorC } from "../lib/words.wac";
+import { utf8Locale } from "../lib/locale.wac";
 import { Scalar, decode, TRUNCATED } from "../../../unicode/src/utf8.wac";
 import { isPrintable } from "../../../unicode/src/printable.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -104,6 +105,11 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // word on, and `isPrintable` for whether the run is a word at all. An invalid sequence decodes to
     // `INVALID` with a size of 1 and is neither — which is GNU's answer too, and is what keeps
     // `a \377 b` at two words rather than three.
+    // **Bytes or scalars, as the locale says** — `issues/system/0297c`. This walked scalars in every
+    // environment, which is the UTF-8 answer; under `LC_ALL=C` the real `wc` counts bytes, so
+    // `a\xc2\xa0b` was two words here and one there. `utf8` is read once per run rather than per
+    // character: a locale cannot change while a program is counting.
+    bool utf8 = utf8Locale(cli);
     bool printable = false;
     // A sequence that runs off the end of a chunk, held until the next one arrives. The whole difficulty
     // of the streaming form, twice over: `inWord` already had to survive a boundary, and now a *character*
@@ -128,7 +134,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
         u8[] head = u8[pend.len() + take](fill: 0);
         for (i32 k = 0; k < pend.len(); k++) { head[k] = pend[k]; }
         for (i32 k = 0; k < take; k++) { head[pend.len() + k] = data[k]; }
-        Scalar sc = decode(head, 0);
+        Scalar sc = utf8 ? decode(head, 0) : Scalar(head[0], 1);
         if (sc.code == TRUNCATED()) {
           // A chunk of one or two continuation bytes, which is possible however large the reads are:
           // hold the lot and ask for more.
@@ -138,17 +144,17 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
         i = sc.size - pend.len();
         pend = u8[0](fill: 0);
         if (sc.code == '\n') { one.lines++; }
-        if (isWordSeparator(sc.code)) {
+        if (utf8 ? isWordSeparator(sc.code) : isWordSeparatorC(sc.code)) {
           if (inWord && printable) { one.words++; }
           inWord = false;
           printable = false;
         } else {
           inWord = true;
-          if (isPrintable(sc.code)) { printable = true; }
+          if (utf8 ? isPrintable(sc.code) : (sc.code >= 0x20 && sc.code < 0x7F)) { printable = true; }
         }
       }
       while (i < data.len()) {
-        Scalar sc = decode(data, i);
+        Scalar sc = utf8 ? decode(data, i) : Scalar(data[i], 1);
         if (sc.code == TRUNCATED()) {
           u8[] rest = u8[data.len() - i](fill: 0);
           for (i32 k = 0; k < rest.len(); k++) { rest[k] = data[i + k]; }
@@ -157,7 +163,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
         }
         i32 cp = sc.code;
         if (cp == '\n') { one.lines++; }
-        if (isWordSeparator(cp)) {
+        if (utf8 ? isWordSeparator(cp) : isWordSeparatorC(cp)) {
           // Counted at the *end* of a run rather than at its start, because whether it is a word is not
           // known until the run is over.
           if (inWord && printable) { one.words++; }
@@ -165,7 +171,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
           printable = false;
         } else {
           inWord = true;
-          if (isPrintable(cp)) { printable = true; }
+          if (utf8 ? isPrintable(cp) : (cp >= 0x20 && cp < 0x7F)) { printable = true; }
         }
         i = i + sc.size;
       }

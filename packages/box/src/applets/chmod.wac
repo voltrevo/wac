@@ -1,0 +1,85 @@
+// Modes set. `chmod 755 f` — octal only, and `chmod u+x f` is refused by name.
+//
+// The applet `Fs.chmod` was waiting for. Its host-mount branch refused for as long as `Cli` carried
+// `setExecutable` and nothing wider, and said why: a mode applied through one bit sets a third of it
+// and answers success, so `chmod 600 secret` would tell a user the file is private when it is not.
+// `Cli.chmod` closed that (`issues/system/0296c`) and this is the caller it was closed for.
+//
+// **Octal only, and the symbolic form is refused rather than approximated.** `u+x` is a
+// read-modify-write and nothing can read a mode back: `Stat` carries `isExecutable`, and `Fs.stat`'s
+// own comment says the recorded mode is one "an image mount has and a host mount cannot get at". A
+// `chmod u+x` that guessed the other bits would be exactly the partial-mode-reported-as-whole failure
+// `Fs.chmod` spent years refusing to be. Reading a mode is the other half of this and is not here.
+//
+// `--reference` and `-R` are GNU's and are not here either.
+
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+/** A parsed mode, or `ok = false` when the spelling is not one this understands. */
+struct Mode {
+  bool ok;
+  bool symbolic;   // recognised as `u+x`'s shape, which is refused rather than misapplied
+  i32 bits;
+}
+
+/**
+ * `755`, `0644` — three or four octal digits and nothing else.
+ *
+ * **The symbolic form is refused, and the reason is that nothing can read a mode back.** `u+x` is a
+ * read-modify-write, and `Stat` carries `isExecutable` rather than the mode: `Fs.stat`'s own comment
+ * says the recorded mode is one "an image mount has and a host mount cannot get at". So the relative
+ * forms cannot be computed for the files people actually chmod, and a `chmod u+x` that guessed at the
+ * other bits would be the partial-mode-reported-as-whole failure `Fs.chmod` refused to be for years.
+ * Reading a mode is the other half of `issues/system/0296c` and is not in it.
+ */
+Mode parseMode(string spec) {
+  u8[] b = spec.toBytes();
+  if (b.len() == 0) { return Mode(false, false, 0); }
+  if (b[0] < '0' || b[0] > '7') {
+    // `[ugoa]`, `+-=`: recognised well enough to say the right thing about it.
+    bool sym = b[0] == 'u' || b[0] == 'g' || b[0] == 'o' || b[0] == 'a'
+            || b[0] == '+' || b[0] == '-' || b[0] == '=';
+    return Mode(false, sym, 0);
+  }
+  if (b.len() > 4) { return Mode(false, false, 0); }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '7') { return Mode(false, false, 0); }
+    v = v * 8 + (b[i] - '0');
+  }
+  return Mode(true, false, v);
+}
+
+export i32 chmod(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+  // GNU: "chmod: missing operand after 'MODE'". The mode alone is not an invocation.
+  if (a.rest.len() < 2) {
+    core.warn(a.name + ": missing operand after '" + a.rest[0] + "'");
+    return 1;
+  }
+  Mode m = parseMode(a.rest[0]);
+  if (!m.ok) {
+    if (m.symbolic) {
+      // Named as unwritten rather than invalid: `u+x` is a real mode and this is our gap, and saying
+      // "invalid mode" about it would blame the caller for something they spelled correctly.
+      core.warn(a.name + ": symbolic modes are not implemented: '" + a.rest[0] + "'");
+      core.warn(a.name + ": a mode cannot be read back on this filesystem, so `+` and `-` have nothing to start from");
+    } else {
+      core.warn(a.name + ": invalid mode: '" + a.rest[0] + "'");
+    }
+    return 1;
+  }
+  i32 code = 0;
+  for (i32 i = 1; i < a.rest.len(); i++) {
+    Change c = fs.chmod(a.rest[i], m.bits);
+    if (c.ok()) { continue; }
+    core.warn(a.name + ": changing permissions of '" + a.rest[i] + "': " + reasonOf(c));
+    code = 1;
+  }
+  return code;
+}

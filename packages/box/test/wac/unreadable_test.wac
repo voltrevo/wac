@@ -1,0 +1,51 @@
+// An unreadable directory is not an empty one — `find` and `du` over a subtree they cannot enter.
+//
+// From `box.test.ts`, and it could not be written here until 2026-08-30. The assertion was never the
+// problem: it is two exit codes. The **fixture** was — making a directory unreadable needs a mode, and
+// `Cli` carried `setExecutable`, one bit. `issues/system/0296c` widened it, and this is the test that
+// asked for it.
+//
+// What it holds, from GitHub wac-mono#20: `find` printed a partial listing and exited 0, and `du`
+// undercounted the total and exited 0. A wrong number that looks like an answer is worse than a
+// failure, and both of these are answers a script goes on to use.
+
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture } from "./cases.wac";
+import { Ran, layFixtures, runCase } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-unreadable"; }
+
+export string test_find_and_du_fail_on_a_subtree_they_cannot_enter(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  t.isTrue(cli.mkdir(dir + "/shut", false).wait().ok(), "made the subdirectory");
+  t.isTrue(cli.writeFile(dir + "/shut/inside", "x".toBytes()).wait().ok(), "and something in it");
+
+  // **The line this test exists for.** Mode 0: no read, no execute, so the directory can be named and
+  // not entered. Nothing in wac could express this before `Cli.chmod`.
+  t.isTrue(cli.chmod(dir + "/shut", 0).wait().ok(), "made it unreadable");
+
+  // **A control, and it is not decoration.** Mode 0 denies nothing to root, so as root `find` would
+  // succeed and the two assertions below would fail for a reason that has nothing to do with box. The
+  // `box.test.ts` version depended on this silently; here it is asked.
+  Ran probe = runCase(core, cli, dir, "cat shut/inside");
+  t.eqI32(probe.status, 1, "the fixture is genuinely unreadable — running as root would make it 0");
+
+  Ran found = runCase(core, cli, dir, "find .");
+  Ran counted = runCase(core, cli, dir, "du .");
+
+  // **Restored before the assertions, not after.** A directory at mode 0 cannot be descended into, so
+  // `remove` cannot delete what is inside it — and an assertion that throws first would leave an
+  // undeletable directory behind on every failing run. The Deno version put its cleanup in the same
+  // place for the same reason.
+  cli.chmod(dir + "/shut", 493).wait();     // 0755
+  cli.remove(dir, true).wait();
+
+  t.eqI32(found.status, 1, "find over an unreadable subtree fails: " + found.err);
+  t.eqI32(counted.status, 1, "and so does du: " + counted.err);
+  return t.report();
+}

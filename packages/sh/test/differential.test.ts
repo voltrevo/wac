@@ -2,7 +2,7 @@
 // whoever held the file, if anyone did. wac-mono 0074.
 import { appRunner } from "../../../harness/appRun.ts";
 import { pool } from "../../../harness/inFlight.ts";
-import { buildApp } from "../../platform/build.ts";
+import { buildApp } from "../../../harness/buildApp.ts";
 import "../../../harness/spawnRetry.ts";
 import { CORPUS, usesDeleted } from "./corpus.ts";
 import { sameName } from "./shname.ts";

@@ -1,0 +1,106 @@
+// The applets that write — `cp` and `tee`, in this process.
+//
+// From `box.test.ts`. `cp` is the interesting one: it read the whole file and wrote the whole file,
+// so copying anything larger than memory was impossible and anything over a megabyte failed outright.
+// It pumps chunks into a temporary name and renames now, which needs `openOutput` — a streaming read
+// alone would not have helped.
+//
+// **What stays in `box.test.ts` is the grant**, and that file says why: "a test process holds grants
+// of its own, so it cannot ask". A frame hands its child the parent's capabilities, so an in-process
+// version of "none of this happens without the write grant" would assert nothing. That is the same
+// attenuation gap `issues/system/0296c` notes; it is not this file's to close.
+
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture } from "./cases.wac";
+import { Ran, layFixtures, runCase } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-writepath"; }
+
+/**
+ * Several times the 64K chunk and not a multiple of it, so boundaries land inside the data.
+ *
+ * The Deno version used 5,000,003 bytes. This is the same idea an order of magnitude down: the
+ * property is that the copy crosses chunk boundaries correctly, and 500,003 crosses seven of them.
+ * The larger number bought nothing the smaller one does not, and it is a megabyte of wasm heap in a
+ * test that now runs beside twenty others in one process.
+ */
+u8[] pattern(i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + (i / 8192)) & 255; }
+  return out;
+}
+
+/** Whether two byte arrays are the same, and where they first differ if not. */
+i32 firstDifference(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return 0 - 2; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return i; }
+  }
+  return 0 - 1;
+}
+
+export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  u8[] data = pattern(500003);
+  t.isTrue(cli.writeFile(dir + "/src", data).wait().ok(), "wrote the source");
+
+  Ran r = runCase(core, cli, dir, "cp src dst");
+  t.eqI32(r.status, 0, "cp succeeded: " + r.err);
+
+  FileResult got = cli.readFile(dir + "/dst").wait();
+  t.isTrue(got.ok, "the copy is readable");
+  t.eqI32(firstDifference(data, got.bytes), 0 - 1,
+          "the copy is byte-identical — -2 means the length differs");
+
+  // Over an existing file, and the rename must not leave the old contents behind.
+  cli.writeFile(dir + "/dst", "stale".toBytes()).wait();
+  t.eqI32(runCase(core, cli, dir, "cp src dst").status, 0, "cp over an existing file");
+  FileResult again = cli.readFile(dir + "/dst").wait();
+  t.eqI32(firstDifference(data, again.bytes), 0 - 1, "and it is the new contents, whole");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  cli.writeFile(dir + "/src", "small\n".toBytes()).wait();
+
+  t.eqI32(runCase(core, cli, dir, "cp absent never").status, 1, "a missing source fails");
+
+  // **The assertion the temporary-name strategy needs.** `cp` writes beside its target and renames,
+  // so a failure must leave nothing: a stray `never.tmp` would be a file a later run reads as real.
+  string[]? names = cli.readDir(dir).wait();
+  t.isTrue(!(names is null), "the directory is readable");
+  string joined = "";
+  for (i32 i = 0; i < names!.len(); i++) { joined = joined + " " + names![i]; }
+  t.eqStr(joined, " src", "only the source survives —" + joined);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+
+  // `tee` is the first applet with two destinations at once, so both are asked.
+  Ran r = runCase(core, cli, dir, "printf 'through\\n' | tee out");
+  t.eqI32(r.status, 0, "tee succeeded: " + r.err);
+  t.eqStr(r.out, "through\n", "tee wrote to standard output");
+
+  FileResult f = cli.readFile(dir + "/out").wait();
+  t.isTrue(f.ok, "and made the file");
+  t.eqStr(string.fromBytes(f.bytes), "through\n", "and wrote the same bytes to it");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

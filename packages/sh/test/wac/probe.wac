@@ -188,6 +188,10 @@ Pending<Change> fakeRename(string from, string to) {
 }
 // The mode capability this probe has to declare because `Cli` carries it. A file that is not there
 // faults, like `fakeRemove`, so a caller cannot tell the two stubs apart by accident.
+Pending<Change> fakeChmod(string path, i32 mode) {
+  return Pending.of(present(path) ? FAULT_NONE() : FAULT_NOT_FOUND(), resolveChange, alwaysSettled,
+                    ignoreDrop);
+}
 Pending<Change> fakeSetExecutable(string path, bool on) {
   return Pending.of(present(path) ? FAULT_NONE() : FAULT_NOT_FOUND(), resolveChange, alwaysSettled,
                     ignoreDrop);
@@ -373,7 +377,7 @@ string fakeValidated(u8[] module) { return "no engine in this world"; }
 
 Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
-                fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
+                fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeChmod, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
                 fakeSend, fakeCloseSocket, fakeCloseSend, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
                 fakeCwd, fakePushChild, fakePopChild, fakeExec, fakeLoad, fakeCall, fakeUnload,
