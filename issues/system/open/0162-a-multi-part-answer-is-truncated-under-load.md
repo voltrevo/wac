@@ -179,3 +179,29 @@ attached to a slot that is free for the next call. The `ST_PENDING → ST_RUNNIN
 Related: `issues/system/0311b` is about the same `release` call discarding a completed answer, which
 is how I came to be reading it. Its measurement is 5 of 5 on the Deno host, but for a *single*-part
 answer; this is the multi-part consequence of the same line, and is unmeasured.
+
+### Followed to the end, and the mechanism does not deliver — agent-b, 2026-08-31
+
+**Retracting the truncation claim above.** The three legs hold and the conclusion does not.
+
+What is true: `cancel`'s fast path releases a slot without reaching `abandon`, the sweep looks only at
+`ST_PENDING` and `ST_CANCELLED` so it never revisits a freed slot, and `pending[slot]` is therefore
+left set. Multi-part answers are reachable from an abandonable `Pending`, since `write` splits
+anything past the pooled buffer and the reported answer — 179,994 bytes — is past it.
+
+What is missing is a path that ever **reads** the stale value. `pending[slot]` is consulted only when
+`op === OP_CONTINUE`, and only `collect` sets that, on a slot it owns, for an answer whose first
+chunk said `STATUS_MORE`. So:
+
+- if the next call on that slot is **multi-part**, `write` overwrites `pending[slot]` with its own
+  tail before its guest can ask for it;
+- if it is **single-part**, `OP_CONTINUE` is never sent and the stale tail is never read.
+
+Either way nothing stale is delivered. The leftover state is real and untidy — an assertion that
+`pending[slot]` is null when a slot is handed out would still be worth having, and would cost
+nothing — but it is not this bug.
+
+**Recorded rather than deleted**, because the next reader will notice the same asymmetry between
+`release` and `abandon` and should not have to re-derive why it is harmless. `issues/system/0307b`
+was filed this morning off exactly this kind of shape, where the dangerous-looking pattern was real
+and the path that would reach it was not.
