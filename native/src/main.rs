@@ -1579,6 +1579,16 @@ fn dispatch(
             return settle_now(caller, Kind::Str, Outcome::Str(dir), results);
         }
         Cap::ReadStdin => {
+            // **What an abandoned read already took, first and in front of the rest.** This
+            // capability means "everything", so a retry after one was given up on has to see the
+            // bytes the first one drained — 1 run in 8 kept them before this. `issues/system/0310b`.
+            let waiting = caller
+                .data()
+                .pushback
+                .lock()
+                .unwrap()
+                .remove(&STDIN_HANDLE)
+                .unwrap_or_default();
             // Inside a frame that was handed bytes, this is those bytes and nothing blocks.
             if let Some(f) = caller.data_mut().frames.last_mut() {
                 if !f.inherit_input {
@@ -1602,20 +1612,28 @@ fn dispatch(
                 let stdin = streams.stdin.clone();
                 let id = caller.data().tickets.submit();
                 let table = caller.data().tickets.clone();
+                let back = caller.data().pushback.clone();
                 std::thread::spawn(move || {
-                    let mut all = Vec::new();
+                    // **Everything, and it stops early if nobody is waiting any more.** Reading to
+                    // EOF for a ticket that has been given up on used to lose the lot — 1 run in 8
+                    // kept it. `read_unless` declines to take a chunk once the ticket is dead, and
+                    // whatever was already gathered goes back at the front of the queue so the next
+                    // `readStdin` sees it. `issues/system/0310b`.
+                    let mut all = waiting;
                     loop {
-                        let chunk = stdin.read();
+                        let Some(chunk) = stdin.read_unless(|| !table.is_live(id)) else {
+                            stdin.unread(all);
+                            return;
+                        };
                         if chunk.is_empty() {
                             break;
                         }
                         all.extend_from_slice(&chunk);
                     }
-                    // **This one does consume, and is not fixed here.** `readAll` takes standard input to
-                    // EOF, so an abandoned one loses the lot — the same defect `issues/system/0307b`
-                    // describes, on a capability that is not keyed by handle the way `recv` is. Left
-                    // explicit rather than quietly discarded, and recorded in the issue.
-                    let _ = table.complete(id, Outcome::Bytes(all));
+                    // And the narrow order, where it is given up on between the last read and here.
+                    if let Some(Outcome::Bytes(unclaimed)) = table.complete(id, Outcome::Bytes(all)) {
+                        back.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(unclaimed);
+                    }
                 });
                 return pending_for(caller, Kind::Bytes, id, results);
             }
@@ -1624,15 +1642,20 @@ fn dispatch(
             // anything else it had in flight.
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
+            let back = caller.data().pushback.clone();
             std::thread::spawn(move || {
                 use std::io::Read;
-                let mut buf = Vec::new();
+                // The process's own input has no queue to decline from — the read has happened by
+                // the time anything can be asked — so this one hands back instead. Same as a socket.
+                let mut buf = waiting;
                 let _ = std::io::stdin().read_to_end(&mut buf);
                 // **This one does consume, and is not fixed here.** `readAll` takes standard input to
                 // EOF, so an abandoned one loses the lot — the same defect `issues/system/0307b`
                 // describes, on a capability that is not keyed by handle the way `recv` is. Left
                 // explicit rather than quietly discarded, and recorded in the issue.
-                let _ = table.complete(id, Outcome::Bytes(buf));
+                if let Some(Outcome::Bytes(unclaimed)) = table.complete(id, Outcome::Bytes(buf)) {
+                    back.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(unclaimed);
+                }
             });
             return pending_for(caller, Kind::Bytes, id, results);
         }
@@ -1916,7 +1939,11 @@ fn dispatch(
                     }
                     Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
-                // Nothing was consumed to make this, so there is nothing to hand back.
+                // **An abandoned `connect` orphans a live socket too**, which is the same defect
+                // one capability over — the connection is made and put in the table, and an answer
+                // nobody takes leaves it there with the peer none the wiser. Not fixed here: unlike
+                // an accept there is no later call that would want *this* connection, so handing it
+                // on is meaningless and closing it is the only sensible remedy. `issues/system/0310b`.
                 let _ = table.complete(id, outcome);
             });
             return pending_for(caller, Kind::Socket, id, results);
@@ -2038,7 +2065,20 @@ fn dispatch(
                     }
                     Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
-                // Nothing was consumed to make this, so there is nothing to hand back.
+                // **A connection is consumed to make this**, and the comment here said it was
+                // not — a mechanical edit's blanket sentence, wrong on the site it mattered most.
+                // The socket is in the table by now, so an answer nobody takes leaves a client
+                // connected to a handle that will never be handed out, and an entry never freed.
+                // 0 of 8 kept before this. `issues/system/0310b`.
+                //
+                // Parked under the *listener*, so the next `accept` on it gets the connection that
+                // was already made rather than waiting for another. Closing it would be defensible
+                // and is worse: the client is told nothing and has to guess.
+                // **Parking it here does not work, and was measured not to** — still 0 of 8.
+                // The retry's thread is already blocked inside `listener.accept()` by the time this
+                // runs, and nothing can hand it a connection that arrived on another thread; it
+                // waits for a *second* client that never comes. A fix has to complete the other
+                // ticket rather than leave a socket somewhere for it to find. `issues/system/0310b`.
                 let _ = table.complete(id, outcome);
             });
             return pending_for(caller, Kind::Socket, id, results);
