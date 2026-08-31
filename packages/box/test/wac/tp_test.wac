@@ -1,0 +1,10 @@
+import { Cli, Core } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { ready } from "../../../platform/src/frame.wac";
+
+export string test_probe(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = ready(7).wait();
+  t.eqI32(n, 7, "i32 is already instantiated inside frame.wac");
+  return t.report();
+}

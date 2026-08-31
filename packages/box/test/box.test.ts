@@ -111,10 +111,11 @@ async function exists(path: string): Promise<boolean> {
 // **What is left, and none of it is a wall.** Asked directly whether these are blockers or just work
 // nobody has done, the answer is the second, and saying "cannot move" was hiding that:
 //
-//   - **five tests that need *fewer* grants than they hold.** `childCli` passes the parent's
-//     capabilities straight through, so an in-process frame can have the test's authority or more and
-//     never less. Buildable — `Cli.of` takes the functions one at a time, so substituting a refusing
-//     `writeFile` is a few lines over three decisions. `issues/system/0302c` is the decisions.
+//   - **three tests that need *fewer* grants than they hold** — down from five, because the helper that
+//     `issues/system/0302c` asked for now exists. `childCliGranted` withholds `read`, `write` or `env`
+//     from a frame's child, each answering what a host answers an ungranted program. Two moved on the
+//     strength of it; what is left is `cp`'s whole tier and `bin/`, which is about what a *built*
+//     program declares rather than what a frame can withhold, so it may genuinely belong here.
 //   - **one test that needs a capability wac has not got.** `Cli` reads a symlink and cannot make one,
 //     so the `tar` fixture below cannot be built in wac. Also buildable, and additive:
 //     `issues/system/0300c`.
@@ -130,27 +131,9 @@ async function exists(path: string): Promise<boolean> {
 // answers false, which is the property `yes` actually depends on and the reason `write` returns a bool
 // at all. Both were written here as facts about the world; neither survived opening the file.
 
-Deno.test("rm -f without the write grant is a denial, not a silence", async () => {
-  // `-f` forgives a file that is already *gone*, not a filesystem it was never allowed to touch. The
-  // three cases that need a mode — a file that cannot be unlinked, one that was never there, and the
-  // same absence without `-f` — are `test/wac/unreadable_test.wac` now. This one stayed because it is
-  // about the grant: the program is built to read and not to write, and no in-process frame can be
-  // given less than this test process holds.
-  const built = await Deno.makeTempFile({ prefix: "wac-box-rmf-" });
-  const guarded = await Deno.makeTempDir({ prefix: "wac-box-rmf-d-" });
-  try {
-    await buildApp(BOX, built, { read: true });
-    const runner = await appRunner(BOX, { read: true });
-    assertEquals(
-      (await runner.run(["rm", "-f", `${guarded}/nothing-here`])).code,
-      1,
-      "no write grant is denial",
-    );
-  } finally {
-    await Deno.remove(built);
-    await Deno.remove(guarded, { recursive: true });
-  }
-});
+// **Moved to `packages/box/test/wac/grants_test.wac`.** It stayed here because an in-process frame
+// could not be given fewer grants than the test holds; `childCliGranted` in `frame.wac` now can, so it
+// went — with a control beside it, so the refusal is the grant talking and not `rm` being broken.
 
 Deno.test("tar refuses a symlink rather than following it", async () => {
   // GitHub wac-mono#25, where `tar` walked into a link to a directory, stored it under the link's name,
@@ -460,33 +443,10 @@ async function pipedThrough(binary: string, args: string[], input: string): Prom
   return new TextDecoder().decode(r.stdout);
 }
 
-Deno.test("a streaming applet with no grants still says why", async () => {
-  // **What is left of "streaming applets hold a chunk, not the input".** The comparisons went to
-  // `packages/box/test/wac/streaming_test.wac`: `wc` and `strings` against the real ones over a fixture
-  // spanning several chunks, a 200,000-byte run that must come back as *one* string rather than one per
-  // read, `tr` through standard input because it takes no file operand, `hex`'s framing as a length, and
-  // `crc32` against a CRC table written out there — the one case that is order-dependent over every
-  // byte, so a chunk handed over twice or not at all changes the answer.
-  //
-  // **This half cannot follow them, and the reason is the interesting one.** `runApplet` builds a frame
-  // whose `Cli` is `childCli(f, cli)`, and that passes the parent's grants straight through: an
-  // in-process frame can be given the same authority as the test or more, never less. A refusal test
-  // needs *fewer*, so it needs a real process with a real grant set — which is what `appRunner` with an
-  // empty world is. Every refusal assertion in this file is here for that one reason.
-  //
-  // The message shape is the claim, not just the status: a denied read must say why, which a
-  // bool-returning `openInput` could not.
-  const fixture = await Deno.makeTempFile({ prefix: "wac-stream-in-" });
-  try {
-    await Deno.writeTextFile(fixture, "alpha beta\n");
-    const ungranted = await appRunner(BOX, {});
-    const r = await ungranted.run(["cat", fixture]);
-    assertEquals(r.code, 1);
-    assertEquals(r.err.includes("Not granted to this application"), true, r.err);
-  } finally {
-    await Deno.remove(fixture);
-  }
-});
+// **Moved to `packages/box/test/wac/grants_test.wac`** as `test_a_denied_read_says_why`, for the same
+// reason: `childCliGranted` can withhold `read`, and a withheld capability answers exactly what a host
+// answers an ungranted program — `FAULT_NOT_GRANTED` and "Not granted to this application". The
+// message shape was always the claim here, not the status.
 
 // **Moved to `packages/box/test/wac/lines_test.wac`.** `head`, `tail`, `nl` and `uniq` against the real
 // ones over a multi-chunk fixture with blank lines, adjacent duplicates and non-ASCII in it, and over
