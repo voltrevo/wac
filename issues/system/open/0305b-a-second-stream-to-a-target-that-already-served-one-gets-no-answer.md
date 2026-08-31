@@ -91,3 +91,24 @@ that only lives in a comment is one nobody will ever run down.
 `dird.wac` moved to `async` on 2026-08-31, which makes it a candidate and makes this mine; the same
 change is why its accept loop no longer serves one client at a time. That is a reason to suspect it
 rather than evidence against it.
+
+### Two `relayd` hypotheses eliminated by reading
+
+The shape suggests a stale "armed" flag — a second stream getting a socket and no reader — and it is
+not that:
+
+- `streamArmed` is cleared when a read completes (`relayd.wac:912`) and again on teardown (:931),
+  so it is not left set from the first stream.
+- `hasStream` is set afresh on each BEGIN (:1613) along with `streamId`, and the refusal at :1581
+  fires only while a stream is still open — which is why the second one is *accepted* here rather
+  than refused.
+
+So the second stream is opened with the bookkeeping in the state it should be in, and the arming
+loop at :922 should give it a reader on the next pass. What is not yet established is whether the
+target socket it connects is the one the reader is armed on, and whether the 68 bytes counted "in"
+were actually written to it — `relayd` counts them on the way through, so the count does not prove
+the write.
+
+**The experiment that would settle it** needs a target that logs what it receives; `dird` does not.
+A trivial echo server started by the fixture, hit twice on one circuit, separates "the request never
+arrived" from "the response was dropped on the way back".
