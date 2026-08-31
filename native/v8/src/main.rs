@@ -1262,9 +1262,27 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         let tc = std::pin::pin!(v8::TryCatch::new(scope));
         let mut tc = tc.init();
         let out = main_fn.call(&mut tc, exports.into(), &args);
+        // **Read the exception before `reset()` discards it.** An engine trap — a bounds check, a
+        // null dereference, a stack overflow — writes no `$trap$message`, so the branch below has
+        // nothing of the program's to report. But V8 has a reason, and until 2026-08-31 this line
+        // threw it away one statement before the code that needed it, leaving a bare
+        // `wac: <entry> trapped` as the whole diagnostic. `issues/system/0306b` spent ten
+        // eliminated hypotheses on a trap whose cause the host had in hand and dropped.
+        let why = if out.is_none() {
+            let got = tc.exception().map(|e| e.to_rust_string_lossy(&mut tc)).unwrap_or_default();
+            // **Except `unreachable`, which is not a reason.** That is the instruction a wac `trap`
+            // compiles to, so V8 reporting it restates the word "trapped" and adds nothing — and
+            // `trapmessage_test.wac` is right to insist that a trap with nothing to say must not
+            // invent a message. Every other exception here names something the bare word does not:
+            // a host capability's `Error`, a null dereference, an index out of bounds.
+            if got.ends_with("unreachable") { String::new() } else { got }
+        } else {
+            String::new()
+        };
         tc.reset();
-        out
+        (out, why)
     };
+    let (called, why) = called;
     let r = match called {
         Some(v) => v,
         None => {
@@ -1289,10 +1307,14 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 tc.reset();
                 got
             };
-            if said.is_empty() {
-                eprintln!("wac: {} trapped", m.entry);
-            } else {
+            // The program's own message when it trapped deliberately, and the engine's when it
+            // did not. Both, if somehow both exist — they answer different questions.
+            if !said.is_empty() {
                 eprintln!("wac: {} trapped: {said}", m.entry);
+            } else if !why.is_empty() {
+                eprintln!("wac: {} trapped: {why}", m.entry);
+            } else {
+                eprintln!("wac: {} trapped", m.entry);
             }
             return 1;
         }
@@ -2787,7 +2809,23 @@ fn dispatch(
                         None => throw(scope, "this program has no Pending<Read> to answer recv with"),
                     };
                 }
-                return throw(scope, "recv on something that is not a connected socket or a child");
+                // **A handle that is gone is an answer too, for the same reason the parent is.**
+                // A reader parked in `recv` while another task closes that socket is an ordinary
+                // race — `packages/tor/src/socks.wac` does it every time a client goes away — and
+                // this line turned it into a dead program with no message anyone could read. The
+                // other hosts have always answered: `native/src/main.rs` settles `Read.Failed`
+                // here and says why it is `Failed` rather than `End` — the peer did not finish,
+                // there was never one. `issues/system/0306b`, and the same shape as `0148` one
+                // branch up.
+                let why = if HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net)) {
+                    "no such handle".to_string()
+                } else {
+                    "network access not granted to this application".to_string()
+                };
+                return match ticket_for(scope, "Read", Answer::Read(ReadAnswer::Failed(why))) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Read> to answer recv with"),
+                };
             };
             if let Source::Queue(q) = source {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };

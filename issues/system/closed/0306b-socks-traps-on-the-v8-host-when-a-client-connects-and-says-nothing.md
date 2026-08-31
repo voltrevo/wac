@@ -1,7 +1,8 @@
 # 0306 — `socks` traps on the native v8 host when a client connects and says nothing
 
-- **Status:** open
-- **Claimed by:** (nobody)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Fixed in:** `native/v8/src/main.rs`, 2026-08-31
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -195,3 +196,58 @@ not be asked.
 not the client count, not the number of concurrent machines, not module size, not stack depth, not
 handle reuse. The difference between the two Rust hosts in how a suspended continuation is delivered
 is the next place to look, and it is host code rather than `socks`.
+
+## Solved, and it was never in the async machinery — agent-b, 2026-08-31
+
+**Two defects of our own, one hiding the other.**
+
+### The host had the reason and threw it away
+
+`run_main` calls the program inside a `TryCatch`, and the next statement was `tc.reset()` — which
+clears the caught exception *before* the `None` branch that reports the trap. So the branch fell back
+to `$trap$message`, which an engine-level trap never sets, and printed a bare `wac: <entry> trapped`.
+
+Reading `tc.exception()` before the reset, one line earlier, prints:
+
+    wac: packages/tor/src/socks.wac trapped: Error: recv on something that is not a connected
+    socket or a child
+
+That is the whole hunt. Ten hypotheses — the pump shape, the client count, a third pump, module
+size, stack depth, handle reuse, the `0304b` interaction — against a cause the host held in a local
+and dropped one statement early.
+
+**The inference that cost the most was treating "no `$trap$message`" as evidence about the fault.**
+It reads as *engine-level trap, therefore the generated state machine*, which is what sent me into
+`asynclower` and kept me there. It was only ever evidence about the **reporter**: the program did not
+set a message, which says nothing about whether anyone knew.
+
+### `recv` on a closed handle threw instead of answering
+
+A pump parks in `recv`. Another pump's continuation closes that client's socket. The first wakes and
+calls `recv` on a handle the host has already removed from its table — and this host threw, killing
+the program.
+
+**Every other host answers.** `native/src/main.rs` settles `Read.Failed` and says why it is `Failed`
+rather than `End`: *"which would tell a reader the peer had finished rather than that there was never
+one."* Deno answers too. That is exactly the host-specificity established above — v8 was the only one
+that died.
+
+And the rule was already written down **one branch up**, for `PARENT_FS_HANDLE`: *"An absent parent
+is an answer, not a fault."* `issues/system/0148` fixed that for one reserved handle and left the
+general case throwing. A closing socket under a parked reader is an ordinary race, not a program
+error, and `platform.wac` has a shape for it.
+
+| | trapped |
+|---|---|
+| before | 5 of 5 |
+| after | **0 of 5**, and the case passes — the proxy serves after the cap |
+
+### The regression test is now committed
+
+The probe was held out of the tree while this was open, because it made the shared suite red for a
+bug that was written down here. It is green now, so it goes in:
+`packages/tor/test/wac/socksnet_test.wac` fills to `MAX_CLIENTS` with connections that say nothing,
+opens one more, closes them all, and then makes a real request — asserting the proxy still serves.
+
+Nothing in `socks.wac` was wrong. The `Client.id` fix made along the way is a real defect —
+handles *are* reused the instant they are closed — and stands on its own.
