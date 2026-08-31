@@ -149,3 +149,19 @@ the lambda when walking a lambda body, so lambda parameters get cells like funct
 or implement the decline the dead field documents, which turns an invalid module into a refusal and
 is much the smaller change. The second is strictly better than today's behaviour even if the first
 is the eventual answer.
+
+### Removing the dead field is not free, which is worth knowing before someone tries
+
+`Env.lambdaCapturesParam` is dead and `CLAUDE.md` says to delete what nothing needs, so I tried.
+`Env.create()` builds the struct from a **positional** argument list a few hundred entries long, so
+dropping a field means deleting exactly the right argument from it — and a miscount does not fail,
+it shifts every field after that point. That is a silent, central corruption traded against a
+cosmetic tidy, so it is left in place.
+
+The comment above it is worth reading with suspicion regardless: it describes a decline that was
+never wired up, so it documents a safeguard the compiler does not have.
+
+There is also an **orphaned doc comment** immediately below the field — "Captured **parameters**,
+keyed by the position of the function that declares them" — with no declaration after it; the
+`paramCell*` fields it describes are declared about fifty lines further down with almost no comment
+of their own. Moving it there is safe on its own, and is the half of this cleanup that costs nothing.
