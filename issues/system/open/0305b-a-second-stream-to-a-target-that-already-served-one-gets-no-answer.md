@@ -112,3 +112,31 @@ the write.
 **The experiment that would settle it** needs a target that logs what it receives; `dird` does not.
 A trivial echo server started by the fixture, hit twice on one circuit, separates "the request never
 arrived" from "the response was dropped on the way back".
+
+## Correction: it is an interaction, and "the circuit, not the target" was wrong
+
+The experiment named above was built — the case becomes its own target, listening on a port, sending
+a CONNECT that names it, and calling `accept` afterwards so nothing has to be in two places at once.
+It refuted the conclusion it was built to confirm:
+
+| target | circuit | result |
+|---|---|---|
+| `dird` | fresh | answers |
+| the case's own listener | **reused** | answers — 20 bytes on both rounds |
+| `dird` | **reused** | **no answer** |
+
+A second stream on a reused circuit is fine, then, as long as the target is not `dird`; and `dird` is
+fine as long as the circuit is fresh. Neither variable explains it alone, so the earlier note above —
+"the target is fine, the exit is fine, what fails is a second sequential stream on one circuit" — is
+wrong and is left standing only because the reasoning that produced it is worth seeing.
+
+**Also not fixed by the `socks` rewrite.** The original failure was first seen against the
+synchronous proxy, and the natural hope was that three pumps had fixed it. Re-running the exact
+scenario against the `async` proxy fails identically, so the multiplexer was never the cause.
+
+What is different about `dird` and not about a bare listener is the next question. It answers with
+2,561 bytes where the listener answers with 20, and it closes the connection itself as HTTP/1.0
+requires; a bare listener in this case is written to answer small and close. Either the size or the
+close is what the second stream cannot survive, and both are testable by making the case's own
+listener behave like `dird` — answer large, or close first — which is a smaller step than it sounds
+now that the case can be its own target.
