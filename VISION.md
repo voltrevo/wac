@@ -66,8 +66,8 @@ export enum Shape {
 
   f64 area(const this) {
     match (this) {
-      case Circle(r): return 3.14159 * r * r;
-      case Square(side): return side * side;
+      case Circle(r):    { return 3.14159 * r * r; }
+      case Square(side): { return side * side; }
     }
   }
 }
