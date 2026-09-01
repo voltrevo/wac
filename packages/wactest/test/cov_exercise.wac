@@ -40,6 +40,9 @@ import {
   test_dropping_the_mask_changes_the_generator as rng__dropping_the_mask_changes_the_generator,
   test_a_draw_from_an_empty_range_answers_zero as rng__a_draw_from_an_empty_range_answers_zero,
   test_a_free_function_can_extend_the_shared_rng as rng__a_free_function_can_extend_the_shared_rng,
+  test_intTop_is_a_different_draw_from_upto as rng__intTop_is_a_different_draw_from_upto,
+  test_intTop_refuses_a_non_positive_bound_without_spending_a_draw
+    as rng__intTop_refuses_a_non_positive_bound_without_spending_a_draw,
 } from "./wac/rng_test.wac";
 import {
   test_discovery_finds_every_test_export_and_runs_it as runn__discovery_finds_every_test_export_and_runs_it,
@@ -145,6 +148,14 @@ export i32 main(Core core, Cli cli) {
   }
   if (rng__a_draw_from_an_empty_range_answers_zero().len() > 0) {
     core.warn("error: FAILED rng_test test_a_draw_from_an_empty_range_answers_zero");
+    bad = bad + 1;
+  }
+  if (rng__intTop_is_a_different_draw_from_upto().len() > 0) {
+    core.warn("error: FAILED rng_test test_intTop_is_a_different_draw_from_upto");
+    bad = bad + 1;
+  }
+  if (rng__intTop_refuses_a_non_positive_bound_without_spending_a_draw().len() > 0) {
+    core.warn("error: FAILED rng_test test_intTop_refuses_a_non_positive_bound_without_spending_a_draw");
     bad = bad + 1;
   }
   if (rng__a_free_function_can_extend_the_shared_rng().len() > 0) {

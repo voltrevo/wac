@@ -68,6 +68,61 @@ impl Stream {
         true
     }
 
+    /// Like `read`, but does not **take** the bytes if nobody is waiting for them any more.
+    ///
+    /// `None` means "abandoned, and they are still in the queue". The liveness question is asked
+    /// under the same lock as the drain, which is the whole point: `unread` alone is not enough,
+    /// because between taking the bytes and putting them back another reader parked on this queue
+    /// can see it empty, and — if the writer finished in that window — answer `End` to the guest.
+    /// Nothing put back afterwards can unsay an `End`. That race lost the payload about one run in
+    /// three. `issues/system/0307b`.
+    ///
+    /// Notifies on the way out, because the reader that should have them may be parked right here.
+    pub fn read_unless<F: Fn() -> bool>(&self, abandoned: F) -> Option<Vec<u8>> {
+        let mut inner = self.inner.lock().unwrap();
+        loop {
+            if !inner.bytes.is_empty() {
+                if abandoned() {
+                    drop(inner);
+                    self.ready.notify_all();
+                    return None;
+                }
+                let taken: Vec<u8> = inner.bytes.drain(..).collect();
+                drop(inner);
+                self.ready.notify_all();
+                return Some(taken);
+            }
+            if inner.done {
+                return Some(Vec::new());
+            }
+            inner = self.ready.wait(inner).unwrap();
+        }
+    }
+
+    /// Put bytes back at the **front**, for a reader whose caller stopped waiting.
+    ///
+    /// `read` blocks and then drains, so a reader that is abandoned still takes the bytes out on its
+    /// way to a ticket nobody holds. They belong back in the queue, and at the front, because a
+    /// stream's order is the whole of its meaning.
+    ///
+    /// **Into the queue rather than into a side table**, which is the part that took a second try:
+    /// another reader may already be parked on this same condvar — a bounded read that timed out and
+    /// was retried leaves exactly that — and a side table is somewhere it will never look. Putting
+    /// them here and notifying wakes it. `issues/system/0307b`.
+    ///
+    /// Past `done` on purpose: the writer having finished does not unsay bytes it already wrote.
+    pub fn unread(&self, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        let mut inner = self.inner.lock().unwrap();
+        for b in bytes.into_iter().rev() {
+            inner.bytes.push_front(b);
+        }
+        drop(inner);
+        self.ready.notify_all();
+    }
+
     /// No more will be written. Readers still drain what is there first.
     pub fn finish(&self) {
         self.inner.lock().unwrap().done = true;

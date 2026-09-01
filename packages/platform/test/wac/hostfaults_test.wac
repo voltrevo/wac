@@ -269,3 +269,38 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * **Both hosts must hand the seed the same ceiling**, which is `issues/system/0257c`'s ruling: a host
+ * may implement *running a module* and must not implement the *command surface*. `--allow-run` is
+ * read by the wac-side command; what a host decides is the ceiling the program then narrows.
+ *
+ * The v8 host has set all five since `0264c`. The wasmtime host set none — it passed the seed's own
+ * manifest through — so `run` was never granted and `Cli.exec` was **refused for every program** on
+ * that host while working on the other. `issues/system/0313b`, and it hid a measurement first: a
+ * probe read 0 of 3 on both arms there, control included, which looks like a broken instrument.
+ *
+ * A source scan, for the same reason the two above are: these are Rust sources that no wac program
+ * can import, and a scan that finds *nothing* where a match is required fails rather than passes.
+ * Counting the five names rather than matching a block, so reformatting cannot quietly satisfy it.
+ */
+export string test_the_two_rust_hosts_hand_the_seed_the_same_grants(Core core, Cli cli) {
+  T t = T.create();
+  string v8 = read(core, cli, V8_HOST);
+  string wasmtime = read(core, cli, WASMTIME_HOST);
+
+  string[] names = string[]("read", "write", "env", "net", "run");
+  for (i32 i = 0; i < names.len(); i++) {
+    string grant = names[i];
+    bool inV8 = v8.indexOf("grants." + grant + " = true") >= 0
+             || v8.indexOf(grant + ": true") >= 0;
+    bool inNative = wasmtime.indexOf("grants." + grant + " = true") >= 0
+                 || wasmtime.indexOf(grant + ": true") >= 0;
+    t.isTrue(inV8 == inNative,
+             "the hosts disagree about granting `" + grant + "` to the seed: v8 "
+               + (inV8 ? "does" : "does not") + ", wasmtime "
+               + (inNative ? "does" : "does not")
+               + " — issues/system/0313b is what that costs");
+  }
+  return t.report();
+}

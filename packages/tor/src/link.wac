@@ -103,8 +103,16 @@ const i32 READ_TIMEOUT_MS = 30000;
 export Link connectRelay(Core core, Cli cli, string host, i32 port) {
   Pending<Socket> dial = cli.connect(host, port);
   if (core.waitAny(i32[](dial.id), CONNECT_TIMEOUT_MS) < 0) {
-    // Nothing to close — there is no handle yet — so cancelling the dial is all there is.
-    // The host may still be inside the connect; what this guarantees is that we stop waiting.
+    // **This used to say there was nothing to close, and that was the assumption that hid a
+    // leak.** If the connection completes just as the deadline passes, the answer *is* in hand:
+    // the socket exists, it is in the host's table, and the relay at the other end is holding an
+    // open line. Cancelling used to discard that answer and the line stayed up with nothing able
+    // to reach it — a leaked handle per slow dial, and the comment here said it could not happen,
+    // which is why nobody looked.
+    //
+    // `Pending.cancel` closes it now: a dialled socket is the one thing in this family that
+    // nothing else can want, so the host closes it and the peer finds out.
+    // `issues/system/0310b`.
     dial.cancel();
     core.warn("tor: " + host + " did not answer within " + itoa(CONNECT_TIMEOUT_MS) + "ms");
     return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0](), false);

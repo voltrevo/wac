@@ -131,21 +131,43 @@ impl Tickets {
     }
 
     /// Record an outcome and wake anything waiting. Called from whichever thread did the work.
-    pub fn complete(&self, id: i32, outcome: Outcome) {
+    /// **Answers `Some(outcome)` when nobody took it** — the ticket was cancelled, or completed
+    /// twice.
+    ///
+    /// This used to return `()` and drop the value, on the reasoning that *"either way nothing is
+    /// waiting for it"*. That is the sentence `issues/system/0207` disproved on the other host and
+    /// `0307b` disproved here: dropping is right for a **computation**, which can be run again, and
+    /// wrong for anything *consumed* to produce it. `Stream::read` blocks and then drains, so an
+    /// abandoned reader takes the bytes out of the queue on its way to this line — and the peer will
+    /// not send them twice.
+    ///
+    /// `#[must_use]` because the whole defect was a caller not having to say. Sites with nothing to
+    /// hand back write `let _ =`, which is a decision rather than a default.
+    #[must_use = "an answer nobody took is data; see issues/system/0307b"]
+    pub fn complete(&self, id: i32, outcome: Outcome) -> Option<Outcome> {
         let mut inner = self.inner.lock().unwrap();
         if inner.live.remove(&id).is_none() {
-            // Cancelled, or completed twice. Dropping the value is right for the first and the only
-            // safe answer for the second; either way nothing is waiting for it.
-            return;
+            return Some(outcome);
         }
         inner.done.insert(id, outcome);
         drop(inner);
         self.settled.notify_all();
+        None
     }
 
     /// Whether `id` has an outcome waiting to be collected.
     pub fn is_done(&self, id: i32) -> bool {
         self.inner.lock().unwrap().done.contains_key(&id)
+    }
+
+    /// Whether anyone is still waiting for `id`.
+    ///
+    /// Asked by a reader *before* it takes bytes off a queue. Taking them and finding out afterwards
+    /// is too late: the bytes are out, and another reader parked on the same queue can see it empty
+    /// — and, if the writer has finished in the meantime, conclude the stream ended. Putting them
+    /// back cannot unsay that. `issues/system/0307b`.
+    pub fn is_live(&self, id: i32) -> bool {
+        self.inner.lock().unwrap().live.contains_key(&id)
     }
 
     /// Collect the outcome, **blocking until there is one**. A ticket has one exactly once.
@@ -177,10 +199,13 @@ impl Tickets {
     /// A cancelled ticket that is still running is *forgotten*, not stopped — `complete` finds no
     /// live row and drops the value. That is what cancelling means here and what `patience.wac` says
     /// it means: "discard the answer", not "stop trying".
-    pub fn discard(&self, id: i32) {
+    /// **Answers what was already in hand**, for the same reason `complete` does: the work may have
+    /// finished between the caller giving up and this call, and those bytes came off a stream once.
+    #[must_use = "an answer nobody took is data; see issues/system/0307b"]
+    pub fn discard(&self, id: i32) -> Option<Outcome> {
         let mut inner = self.inner.lock().unwrap();
         inner.live.remove(&id);
-        inner.done.remove(&id);
+        inner.done.remove(&id)
     }
 
     /// Park until one of `ids` has settled, and answer **its index in the list**.

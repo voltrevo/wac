@@ -1,0 +1,455 @@
+/**
+ * Bytes taken by a reader nobody was waiting for, on both Rust hosts.
+ *
+ * `issues/system/0307b`. `recv` submits a ticket and hands the reading to a thread. That thread
+ * calls `Stream::read`, which **blocks and then drains** — so a caller who gives up does not stop
+ * it: the bytes still arrive, are still taken out of the queue, and were then handed to a ticket
+ * nobody held and dropped. The next `recv` began after a hole and nothing anywhere said so.
+ *
+ * A bounded read that expires and is retried is exactly the shape that loses data, and it is the
+ * shape `std/platform.wac`'s deadline idiom invites. `packages/tor` reads this way in three places.
+ *
+ * ## Why the fix declines to *take* the bytes, which took two wrong answers to reach
+ *
+ * The first version parked them in a map keyed by handle. Two readers are parked on the same queue
+ * — the abandoned one and the retry — and when the abandoned one won the race it filed the bytes
+ * somewhere the other was never going to look.
+ *
+ * The second put them back in the queue and notified, which is right and is not enough. Between
+ * taking the bytes and returning them there is a window: the writer can finish in it, and the other
+ * reader then sees the queue empty *and* done and answers `End` to the guest. Nothing put back
+ * afterwards unsays an `End`. That lost the payload about one run in three, and two separate
+ * all-green samples said it was fixed before a third disagreed.
+ *
+ * So `Stream::read_unless` asks whether the ticket is still live **under the same lock as the
+ * drain** and leaves the bytes alone if not. `unread` stays as the backstop for the narrower race
+ * where the caller gives up between that check and `complete`.
+ *
+ * A socket has no queue to decline from — its bytes are already off the kernel by the time anything
+ * can be asked — so that path keeps a per-handle table, cleared when the handle closes, because a
+ * handle is reused the instant it is free (`issues/system/0306b`).
+ *
+ * ## The shape of the case
+ *
+ * One program, run twice. `spawnSelf` gives a child whose handle goes to `recv` and `waitAny`
+ * exactly as a socket's does, so the parent and the child are the same module told apart by their
+ * first argument. The child waits and then writes; the parent lets a short bounded wait expire
+ * against an **empty** queue, abandons the ticket, and reads again.
+ *
+ * **The control arm is what makes this a test rather than a coincidence.** It skips the abandoned
+ * read and nothing else. Without it, "the second read saw nothing" has a dull explanation — a child
+ * that never wrote, a handle with nothing attached — and the program prints the same line either
+ * way. It is the arm that would catch this case rotting into one that cannot fail.
+ */
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+/**
+ * The child sleeps well past the parent's deadline, so the parent is certainly parked on an empty
+ * queue when it gives up — the case only exists when the reader has nothing yet and waits.
+ */
+const string PROGRAM =
+  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Read } from \"core\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "  if (mode == \"child\") {\n" +
+  "    core.delay(400).wait();\n" +
+  "    cli.write(\"PAYLOAD\".toBytes());\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "  Child kid = cli.spawnSelf(u8[][](\"child\".toBytes()), GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
+  "  if (mode != \"control\") {\n" +
+  "    Pending<Read> first = cli.recv(kid.handle);\n" +
+  "    if (mode == \"late\") { core.delay(600).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
+  "    first.cancel();\n" +
+  "    core.cancel(first.id);\n" +
+  "  }\n" +
+  "  string got = \"\";\n" +
+  "  bool reading = true;\n" +
+  "  while (reading) {\n" +
+  "    match (cli.recv(kid.handle).wait()) {\n" +
+  "      case Data(b): { got = got + string.fromBytes(b); }\n" +
+  "      case End: { reading = false; }\n" +
+  "      case Failed(e): { reading = false; core.log(\"failed: \" + e); }\n" +
+  "    }\n" +
+  "  }\n" +
+  "  core.log(got == \"PAYLOAD\" ? \"VERDICT kept\" : \"VERDICT lost \\\"\" + got + \"\\\"\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/** An abandoned `readStdin` used to take the whole of standard input with it — `0310b`. */
+const string STDIN_PROGRAM =
+  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "  if (mode == \"child\" || mode == \"childcontrol\" || mode == \"childlate\") {\n" +
+  "    if (mode == \"child\" || mode == \"childlate\") {\n" +
+  "      Pending<u8[]> first = cli.readStdin();\n" +
+  "      if (mode == \"childlate\") { core.delay(900).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
+  "      first.cancel();\n" +
+  "      core.cancel(first.id);\n" +
+  "    }\n" +
+  "    u8[] got = cli.readStdin().wait();\n" +
+  "    cli.write((\"SAW:\" + string.fromBytes(got)).toBytes());\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "\n" +
+  "  string kidArg = mode == \"control\" ? \"childcontrol\" : (mode == \"late\" ? \"childlate\" : \"child\");\n" +
+  "  Child kid = cli.spawnSelf(u8[][](kidArg.toBytes()), GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
+  "  core.delay(300).wait();\n" +
+  "  cli.send(kid.handle, \"PAYLOAD\".toBytes()).wait();\n" +
+  "  // **closeFeed, not closeSend.** The first version used the socket half-close, which does not end\n" +
+  "  // a child's input queue, so the child sat in readStdin waiting for an EOF that never came and the\n" +
+  "  // parent sat in recv waiting for output that never came. closeFeed is the capability for ending\n" +
+  "  // exactly that, and the host says so beside CloseSocket.\n" +
+  "  cli.closeFeed(kid.handle);\n" +
+  "\n" +
+  "  string got = \"\";\n" +
+  "  bool reading = true;\n" +
+  "  while (reading) {\n" +
+  "    match (cli.recv(kid.handle).wait()) {\n" +
+  "      case Data(b): { got = got + string.fromBytes(b); }\n" +
+  "      case End: { reading = false; }\n" +
+  "      case Failed(e): { reading = false; }\n" +
+  "    }\n" +
+  "  }\n" +
+  "  core.log(got == \"SAW:PAYLOAD\" ? \"VERDICT kept\" : \"VERDICT lost \\\"\" + got + \"\\\"\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/** An abandoned `accept` used to orphan the connection it had taken — `0310b`. */
+const string ACCEPT_PROGRAM =
+  "import { Core, Cli, Child, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { itoa } from \"../../packages/fmt/src/itoa.wac\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "\n" +
+  "  if (mode == \"child\") {\n" +
+  "    // The port arrives as the second argument.\n" +
+  "    i32 port = 0;\n" +
+  "    u8[] p = cli.arg(1).wait();\n" +
+  "    for (i32 i = 0; i < p.len(); i++) { port = port * 10 + (p[i] - 48); }\n" +
+  "    core.delay(300).wait();\n" +
+  "    Socket s = cli.connect(\"127.0.0.1\", port).wait();\n" +
+  "    if (s.handle < 0) { return 1; }\n" +
+  "    cli.send(s.handle, \"HELLO\".toBytes()).wait();\n" +
+  "    core.delay(2000).wait();\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "\n" +
+  "  Socket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
+  "  if (listener.handle < 0) { core.log(\"no listener: \" + listener.error); return 1; }\n" +
+  "\n" +
+  "  string port = itoa(listener.port);\n" +
+  "  Child kid = cli.spawnSelf(u8[][](\"child\".toBytes(), port.toBytes()),\n" +
+  "                            GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
+  "\n" +
+  "  if (mode != \"control\") {\n" +
+  "    // Parked on an empty backlog, then given up on — the client dials at 300ms.\n" +
+  "    Pending<Socket> first = cli.accept(listener.handle);\n" +
+  "    if (mode == \"late\") { core.delay(900).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
+  "    first.cancel();\n" +
+  "    core.cancel(first.id);\n" +
+  "  }\n" +
+  "\n" +
+  "  // The connection should still be there to accept.\n" +
+  "  Pending<Socket> second = cli.accept(listener.handle);\n" +
+  "  if (core.waitAny(i32[](second.id), 3000) < 0) {\n" +
+  "    core.log(\"VERDICT lost — the second accept never saw the client\");\n" +
+  "    return 1;\n" +
+  "  }\n" +
+  "  Socket got = second.wait();\n" +
+  "  core.log(got.handle >= 0 ? \"VERDICT kept\" : \"VERDICT lost — \" + got.error);\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/**
+ * An abandoned `connect` used to leak the line it had dialled — `0310b`.
+ *
+ * The third remedy in this family, and the reason the family needed three. The others take
+ * something a *later* call wants, so the answer is to hand it on or put it back. Nothing else
+ * wants this connection, so the answer is to close it and let the peer find out. Handing it on
+ * would be meaningless and leaving it is a handle that never returns and a peer holding a line
+ * to nobody — which this sees as a read that never ends.
+ */
+const string CONNECT_PROGRAM =
+  "import { Core, Cli, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Read } from \"core\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "\n" +
+  "  Socket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
+  "  if (listener.handle < 0) { core.log(\"no listener: \" + listener.error); return 1; }\n" +
+  "\n" +
+  "  Pending<Socket> dialling = cli.connect(\"127.0.0.1\", listener.port);\n" +
+  "  if (mode == \"control\") {\n" +
+  "    // Collected rather than abandoned, and closed properly — the peer must see the end either way.\n" +
+  "    Socket mine = dialling.wait();\n" +
+  "    if (mine.handle >= 0) { cli.closeSocket(mine.handle); }\n" +
+  "  } else {\n" +
+  "    // Long enough that the connection is certainly made and the answer is in hand.\n" +
+  "    core.delay(400).wait();\n" +
+  "    dialling.cancel();\n" +
+  "    core.cancel(dialling.id);\n" +
+  "  }\n" +
+  "\n" +
+  "  Socket served = cli.accept(listener.handle).wait();\n" +
+  "  if (served.handle < 0) { core.log(\"VERDICT lost — nothing arrived: \" + served.error); return 1; }\n" +
+  "\n" +
+  "  Pending<Read> r = cli.recv(served.handle);\n" +
+  "  if (core.waitAny(i32[](r.id), 1500) < 0) {\n" +
+  "    core.log(\"VERDICT leaked — the peer is still holding the connection open\");\n" +
+  "    return 1;\n" +
+  "  }\n" +
+  "  match (r.wait()) {\n" +
+  "    case End: { core.log(\"VERDICT kept — the abandoned connection was closed\"); }\n" +
+  "    case Data(b): { core.log(\"VERDICT odd — data on a connection nobody wrote to\"); }\n" +
+  "    case Failed(e): { core.log(\"VERDICT kept — the peer went away: \" + e); }\n" +
+  "  }\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/**
+ * `readStdin` on the program's **own** input rather than a parent's feed — `0310b`.
+ *
+ * The cases above go through `spawnSelf`, which hands a child a queue. This one goes through
+ * `cli.exec`, which gives a program real bytes on its own standard input: a different branch
+ * with no queue to decline from, and the one that was fixed by reading because nothing here
+ * reached it. Only the *late* ordering is reachable — `exec` supplies all of standard input up
+ * front, so the first read has certainly landed by the time the caller gives up — and that is
+ * exactly the ordering the branch got wrong.
+ *
+ * It could not be measured on the wasmtime host at all until `issues/system/0313b` was fixed:
+ * `Cli.exec` was refused there for every program, so this probe read 0 of 3 on *both* arms and
+ * looked like a broken instrument. A bug that hides evidence about other bugs.
+ */
+const string OWNSTDIN_PROGRAM =
+  "import { Core, Cli, Pending, Exec } from \"std/platform.wac\";\n" +
+  "\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+  "\n" +
+  "  if (mode == \"eater\" || mode == \"eatercontrol\") {\n" +
+  "    if (mode == \"eater\") {\n" +
+  "      // The bytes are already here — `exec` gave them to us — so this is the give-up-after case.\n" +
+  "      Pending<u8[]> first = cli.readStdin();\n" +
+  "      core.delay(250).wait();\n" +
+  "      first.cancel();\n" +
+  "      core.cancel(first.id);\n" +
+  "    }\n" +
+  "    u8[] got = cli.readStdin().wait();\n" +
+  "    cli.write((\"SAW:\" + string.fromBytes(got)).toBytes());\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "\n" +
+  "  if (n < 2) { core.log(\"VERDICT lost — no binary given\"); return 1; }\n" +
+  "  string binary = string.fromBytes(cli.arg(1).wait());\n" +
+  "  // **Where this program lives is passed in, not assumed.** The first version computed it, which\n" +
+  "  // was true only while the file sat where the standalone probe put it — embedded in a case that\n" +
+  "  // writes it somewhere else, the child could never find itself and every arm failed alike.\n" +
+  "  if (n < 3) { core.log(\"VERDICT lost — no path given\"); return 1; }\n" +
+  "  string self = string.fromBytes(cli.arg(2).wait());\n" +
+  "  string kid = mode == \"control\" ? \"eatercontrol\" : \"eater\";\n" +
+  "  Exec r = cli.exec(binary,\n" +
+  "                    string[](\"run\", \"--allow-read\", \"--allow-write\", \"--allow-run\",\n" +
+  "                             \"--allow-env\", \"--allow-net\", self, kid),\n" +
+  "                    \"PAYLOAD\".toBytes()).wait();\n" +
+  "  if (!r.ran()) { core.log(\"VERDICT lost — the binary did not run: \" + r.error); return 1; }\n" +
+  "  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);\n" +
+  "  core.log(said.indexOf(\"SAW:PAYLOAD\") >= 0\n" +
+  "             ? \"VERDICT kept\" : \"VERDICT lost — the child saw \\\"\" + said + \"\\\"\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/** Write the program once and run it under `wac`, both streams together. */
+string ran(Cli cli, string binary, string path, string mode) {
+  string[] argv = mode == ""
+    ? string[]("run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               path)
+    : string[]("run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               path, mode);
+  Exec r = cli.exec(binary, argv, u8[0]()).wait();
+  if (!r.ran()) { return "the binary did not run — " + r.error; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+string writtenAs(Cli cli, string name, string program) {
+  string dir = cli.cwd().wait() + "/.cache/lostbytes";
+  cli.mkdir(dir, true).wait();
+  string path = dir + "/" + name + ".wac";
+  Change wrote = cli.writeFile(path, program.toBytes()).wait();
+  if (wrote.fault != 0) { return ""; }
+  return path;
+}
+
+string written(Cli cli) { return writtenAs(cli, "probe", PROGRAM); }
+
+/**
+ * How many times the abandoned arm runs, and the number is not a guess.
+ *
+ * **A single run is not enough, and this was measured rather than assumed.** With the fix backed
+ * out of a host, one run of this case passed **3 times in 10** — the loss depends on which of two
+ * parked readers wins a race, so a one-shot check would wave a broken host through almost a third
+ * of the time. That is not a guard, it is a coin.
+ *
+ * The defect shows about 7 runs in 10, so requiring *every* one of five to keep the payload misses
+ * it with probability 0.3^5, near enough one in three hundred. Raise this if the case is ever seen
+ * flapping; do not lower it without re-measuring the rate it is derived from.
+ */
+const i32 TRIES = 5;
+
+void check(T t, Cli cli, string binary, string path, string host) {
+  // The canary first: if the control arm cannot see the payload, the abandoned arm proves nothing.
+  string control = ran(cli, binary, path, "control");
+  t.isTrue(contains(control, "VERDICT kept"),
+           host + ": the control arm did not see the payload, so this case cannot fail — " + control);
+
+  // **Every one of them, and the first failure is the one reported.** Reporting the last would hide
+  // a run that lost the payload behind a later one that happened not to.
+  string lost = "";
+  for (i32 i = 0; i < TRIES; i++) {
+    string abandoned = ran(cli, binary, path, "");
+    if (!contains(abandoned, "VERDICT kept") && lost == "") { lost = abandoned; }
+  }
+  t.eqStr(lost, "", host + ": a reader was abandoned and its bytes went with it");
+
+  // **And the other order, which is `issues/system/0308b`.** Above, the caller gives up long before
+  // the bytes arrive, so the reader declines to take them. Here it gives up *after* they have landed
+  // and been filed under a still-live ticket, so `drop` is holding an answer that came off a stream
+  // once — and discarded it, 0 of 10 on both hosts, until it learned which handle to give it back
+  // to. One run is enough for this one: it was deterministic, not a race.
+  string late = ran(cli, binary, path, "late");
+  t.isTrue(contains(late, "VERDICT kept"),
+           host + ": the answer was dropped with the ticket that had already collected it — " + late);
+}
+
+/**
+ * The other two capabilities that consume something irreplaceable — `issues/system/0310b`.
+ *
+ * **Both hosts, in one case, on purpose.** `recv`'s fixes went to both hosts the first time because
+ * this file already ran both binaries and a one-host fix failed it immediately. `readStdin` and
+ * `accept` had no such case, nothing asked the question, and both were fixed on one host and closed
+ * as done — the third time in a day that a fix landed on one host and the other was not checked.
+ * These are here so the question is asked by something other than my memory.
+ *
+ * `readStdin` was 1 of 8 kept on the wasmtime host and 5 of 6 on the v8 one — a rate, so this runs
+ * its arm `TRIES` times like the read case above. `accept` was 0 of 8 on both, deterministic, so
+ * once is enough for it.
+ */
+void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath, string host) {
+  t.isTrue(contains(ran(cli, binary, stdinPath, "control"), "VERDICT kept"),
+           host + ": the readStdin control saw nothing, so its case cannot fail");
+  string lostIn = "";
+  for (i32 i = 0; i < TRIES; i++) {
+    string got = ran(cli, binary, stdinPath, "");
+    if (!contains(got, "VERDICT kept") && lostIn == "") { lostIn = got; }
+  }
+  t.eqStr(lostIn, "", host + ": an abandoned readStdin took the whole of standard input with it");
+
+  t.isTrue(contains(ran(cli, binary, acceptPath, "control"), "VERDICT kept"),
+           host + ": the accept control saw nothing, so its case cannot fail");
+  string acc = ran(cli, binary, acceptPath, "");
+  t.isTrue(contains(acc, "VERDICT kept"),
+           host + ": an abandoned accept orphaned the connection it had taken — " + acc);
+
+  // ── The *other* ordering for both, which is the half I first shipped without ──
+  //
+  // Each of these can be given up on **before** the answer arrives or **after** it is in hand, and
+  // the two need different remedies. Declining to take it fixes the first and does nothing for the
+  // second; handing it on fixes the second and cannot reach the first, where the retry is already
+  // blocked inside the call. `readStdin` and `accept` were each fixed on one ordering, measured
+  // 8 of 8, and reported done — and each still lost everything on the other, 0 of 6.
+  string lateIn = ran(cli, binary, stdinPath, "late");
+  t.isTrue(contains(lateIn, "VERDICT kept"),
+           host + ": a readStdin given up on after its answer landed lost it — " + lateIn);
+  string lateAcc = ran(cli, binary, acceptPath, "late");
+  t.isTrue(contains(lateAcc, "VERDICT kept"),
+           host + ": an accept given up on after the connection arrived lost it — " + lateAcc);
+}
+
+/** `readStdin` on the process's own input, which needs the binary to exec itself. */
+void checkOwnStdin(T t, Cli cli, string binary, string path, string host) {
+  Exec c = cli.exec(binary, string[]("run", "--allow-read", "--allow-write", "--allow-run",
+                                     "--allow-env", "--allow-net", path, "control", binary, path),
+                    u8[0]()).wait();
+  t.isTrue(contains(string.fromBytes(c.stdout) + string.fromBytes(c.stderr), "VERDICT kept"),
+           host + ": the own-stdin control saw nothing, so its case cannot fail");
+  Exec a = cli.exec(binary, string[]("run", "--allow-read", "--allow-write", "--allow-run",
+                                     "--allow-env", "--allow-net", path, "abandon", binary, path),
+                    u8[0]()).wait();
+  t.isTrue(contains(string.fromBytes(a.stdout) + string.fromBytes(a.stderr), "VERDICT kept"),
+           host + ": an abandoned readStdin on the program's own input took it with it");
+}
+
+/** `connect`, whose remedy is to close rather than to hand on — see `CONNECT_PROGRAM`. */
+void checkDialled(T t, Cli cli, string binary, string path, string host) {
+  t.isTrue(contains(ran(cli, binary, path, "control"), "VERDICT kept"),
+           host + ": the connect control did not see the close, so its case cannot fail");
+  string got = ran(cli, binary, path, "");
+  t.isTrue(contains(got, "VERDICT kept"),
+           host + ": an abandoned connect left the peer holding the line — " + got);
+}
+
+export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core, Cli cli) {
+  T t = T.create();
+  string path = written(cli);
+  t.isTrue(path != "", "could not write the probe");
+  if (path == "") { return t.report(); }
+
+  check(t, cli, binaryPath(cli), path, "v8");
+
+  // **Both hosts, because this was in both** — the v8 host had the machinery to hand an unclaimed
+  // answer back and spent it on datagrams only, and the wasmtime host had no way to ask. A fix for
+  // one host is not a fix.
+  string why = nativeHostWhyNot(cli);
+  if (why == "") {
+    check(t, cli, nativeBinaryPath(core, cli, "lostbytes"), path, "wasmtime");
+  } else {
+    core.log("skipping the wasmtime arm: " + why);
+  }
+
+  // **And the other two capabilities that take something they cannot recreate.** Both hosts again,
+  // which is the point: these were fixed on one host and closed as done, and nothing but this case
+  // would have asked. `issues/system/0310b`.
+  string stdinPath = writtenAs(cli, "stdin", STDIN_PROGRAM);
+  string acceptPath = writtenAs(cli, "accept", ACCEPT_PROGRAM);
+  t.isTrue(stdinPath != "" && acceptPath != "", "could not write the other two probes");
+  if (stdinPath != "" && acceptPath != "") {
+    string dialPath = writtenAs(cli, "connect", CONNECT_PROGRAM);
+    checkTaken(t, cli, binaryPath(cli), stdinPath, acceptPath, "v8");
+    checkDialled(t, cli, binaryPath(cli), dialPath, "v8");
+    if (why == "") {
+      string nat = nativeBinaryPath(core, cli, "lostbytes");
+      checkTaken(t, cli, nat, stdinPath, acceptPath, "wasmtime");
+      checkDialled(t, cli, nat, dialPath, "wasmtime");
+    }
+    string ownPath = writtenAs(cli, "ownstdin", OWNSTDIN_PROGRAM);
+    checkOwnStdin(t, cli, binaryPath(cli), ownPath, "v8");
+    if (why == "") {
+      checkOwnStdin(t, cli, nativeBinaryPath(core, cli, "lostbytes"), ownPath, "wasmtime");
+    }
+    cli.remove(ownPath, false).wait();
+    cli.remove(dialPath, false).wait();
+    cli.remove(stdinPath, false).wait();
+    cli.remove(acceptPath, false).wait();
+  }
+
+  cli.remove(path, false).wait();
+  return t.report();
+}

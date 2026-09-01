@@ -80,7 +80,7 @@ import { contains, startsWith, endsWith, joined, has, splitLines }
   from "../packages/wactest/src/strings.wac";
 import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, markRun,
          envOf } from "./wac/suitegate.wac";
-import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles, mergedTimes }
+import { guardCodeCache, freeCaches, sweepStaleTemp, reapStaleDaemons, dropUnreachableTranspiles, mergedTimes }
   from "./wac/suitehouse.wac";
 
 /** The roots the lane walks — `harness/testLane.ts`'s `LANE_ROOTS`, and one list for its reason. */
@@ -1497,6 +1497,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (sub == "sweep") {
     sweepStaleTemp(core, cli);
+    // And the processes those temp entries belonged to. `0136`'s sweeps are rules about names in
+    // `/tmp` and cannot see a server a test left running — which costs memory rather than disk, and
+    // memory is what the gate refuses on.
+    reapStaleDaemons(core, cli);
     dropUnreachableTranspiles(core, cli);
     return 0;
   }
@@ -1540,6 +1544,11 @@ export i32 main(Core core, Cli cli) {
 
   guardCodeCache(core, cli);
   sweepStaleTemp(core, cli);
+  // The processes those temp entries belonged to, which no sweep over `/tmp` can see — `0136`.
+  // Here as well as in the `sweep` subcommand: this is the path every suite takes, and putting it
+  // only beside the manual one meant it never ran unless somebody typed it. Two call sites of
+  // `sweepStaleTemp` and I matched the first.
+  reapStaleDaemons(core, cli);
   dropUnreachableTranspiles(core, cli);
 
   // **The cooldown starts here, not where the lock was taken** — `issues/system/0283b`. Everything

@@ -29,7 +29,7 @@ function profileOf(lines: Record<string, string[]>, alsoKnown: string[] = []): P
   const known = new Set([...map.keys(), ...alsoKnown]);
   const home = new Map<string, string>();
   for (const tests of map.values()) for (const t of tests) home.set(t, "packages/demo/test/a.test.ts");
-  return { lines: map, known, home, testFiles: [], cost: new Map() };
+  return { lines: map, known, home, testFiles: [], cost: new Map(), native: new Set() };
 }
 
 const shape = (p: Plan): string => p.kind === "narrow" ? `narrow:${p.tests.join(",")}` : p.kind;

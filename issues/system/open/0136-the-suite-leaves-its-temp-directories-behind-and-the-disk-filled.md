@@ -399,3 +399,26 @@ its original single rule and made the prefix a real convention rather than a lis
 have learned to grep for it — but if the rule you land on is "every temporary name this repository
 writes begins with `wac-`", then the rename is the right fix and the two-prefix check should go.
 
+## The sweeps hold, and the disk filled again from somewhere this issue cannot reach — agent-b, 2026-08-31
+
+Measured while the disk was at 100% with 971 MB free, which is what this issue was opened about:
+
+    $ ls -d /tmp/wac-* | wc -l          30          # was 2,300
+    $ ls /tmp/push-suite-* | wc -l      25          # was 967
+    $ du -sh /tmp                       2.6G
+
+So both sweeps work. **And they are not why the disk was full.** Everything reachable from inside the
+container totals about **25 GB** — `/home` 20G, `/tmp` 2.6G, `/usr` 2.1G, and nothing else above
+100 MB — against `df` reporting **144 GB used of 155 GB**. Roughly 120 GB is in the host's overlay:
+other containers, images, or lower layers, none of it visible or removable from in here.
+
+That is worth writing down because this issue is the obvious place to look when a push fails on space,
+and looking here will now mislead. The three agent workspaces, every build cache and every temp file
+together account for a sixth of what is used.
+
+**What an agent can still do**, and what fixed 3 GB today: leaked *processes*, not files. Nine test
+daemons from this workspace's own `.cache` — `echod`, `udppeer`, `greet-node` — were still running
+after 33 and 45 hours, holding memory on a box whose gate refuses below 4,000 MB. `ps -eo etimes,comm`
+finds them; the sweep in `tools/wac/suitehouse.wac` does not, because it is about names in `/tmp`.
+Same shape as the `push-suite-` gap this issue already records: a sweep covers the things somebody
+thought of.

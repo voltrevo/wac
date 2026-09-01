@@ -1,0 +1,1114 @@
+// A program generator for wac, with a by-construction oracle.
+//
+//   wac run --allow-read tools/wac/langfuzz.wac [--count N] [--seed S] [--verbose]
+//
+// Every sweep before this one enumerated a feature at a time — arithmetic, casts, strings — and the
+// bugs that survived those lived at an *intersection*: casts crossed with unsigned and width,
+// `continue` crossed with the one loop whose test is at the bottom. Intersections are what a
+// generator reaches and a hand-written matrix does not.
+//
+// **The oracle is the generated tree, not a second interpreter.** Each expression node carries an
+// `evalIn` alongside its source text, so the expected answer comes from the same structure that
+// produced the program. A separate evaluator of *wac source* would be a second parser to get wrong,
+// and the sweep this replaces had an oracle that was wrong more often than the compiler was.
+//
+// ## This was a TypeScript tool
+//
+// Ported from tools/fuzz.ts for `issues/system/0161` step 6, which deleted it. The generator is the
+// same one and the *draw* is the same one: `Rng.intTop` is `floor(next() * n)` computed in 64-bit integers, which is
+// what the TypeScript computed in doubles, and not `Rng.upto`'s modulo — `packages/wactest/src/rng.wac`
+// measures those two families disagreeing on 37% of draws.
+//
+// **Whether a seed names the same program here is not verified, and this file does not claim it.**
+// Matching the draw is necessary and nowhere near sufficient: the *sequence* has to match too — the
+// same number of draws, at the same moduli, in the same order — and that is a property of every line
+// of the generator rather than of `Rng`. It has already been wrong once. `Rng.bool()` in the
+// TypeScript is `next() < 0.5`, true on the **low** half, and I first wrote it as `intTop(2) == 1` at
+// four sites; every boolean decision came out the other way and nothing failed, because a fuzzer
+// generating different programs is still a fuzzer. See `coin` below.
+//
+// What would earn the claim is a differential: have both tools print the program for a seed and
+// compare the text. Until someone runs it, treat a seed as naming a program *in this tool* — which is
+// all a regression test needs, and less than `issues/lang/0281b`'s seed would need to be replayed.
+//
+// ## The TypeScript is gone, and what held it alive
+//
+// The repository's rule is that a second copy is a copy that drifts, so tools/fuzz.ts went once this
+// worked. One thing held it: `tools/fuzzBoundary.ts` imported its `Rng`, and deleting under that
+// import would have broken a tool with nothing to do with this one.
+//
+// **That tool does not follow this one to wac, and should not.** Its subject is the JavaScript
+// boundary — it sends values out through the bindgen wrappers and back through a dynamic import — so
+// it belongs on the Deno side by the rule that keeps `packages/platform`'s TypeScript there. It has
+// its own twelve-line `Rng` now, which is the cheaper half of that trade.
+//
+// The order matters and is worth stating, because the obvious one is wrong: the import had to be cut
+// before the delete, and "port the other tool too" was the wrong plan for a tool whose subject is the
+// host.
+//
+// ## What the oracle can and cannot see, which the port changes
+//
+// The TypeScript computed expected values with `BigInt`: arbitrary precision, and no relation to the
+// compiler under test. This computes them with wac, compiled by the same `wacc` that compiles the
+// generated program — so `i64 + i64` here is the same `i64.add` there, and a fuzzer whose oracle
+// shares the subject's arithmetic cannot find a bug in it. It would report green.
+//
+// That sharing is not removable without arbitrary-precision arithmetic, and it is not where the
+// findings have been. What **is** recovered is the part that has produced every one of them:
+// `wrapTo`, the `as@` truncation and the `as~` clamp are written out below as explicit masks and
+// comparisons rather than by using the construct under test. So this keeps its power over narrowing
+// and composition, and gives up "does i64.add work", which is one instruction.
+//
+// Read `wrapTo` with that in mind: `(v << 32) >> 32` is a sign extension spelled out on purpose, and
+// replacing it with `as@ i32` would quietly make the oracle agree with whatever the compiler does.
+// ## How much of each type the oracle actually observes
+//
+// Measured 2026-09-01, by breaking one thing in the oracle and counting disagreements over 200
+// programs from seed 1. A canary that does not fire means the sweep cannot see that path at all,
+// whatever the generated source contains.
+//
+//     i32   narrowing removed from `wrapTo`      66 / 200
+//     bool  every comparison inverted            30 / 200
+//     u32   literal read as signed               33 / 200
+//     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
+//     loop  oracle ignores `break`                8 / 200
+//
+// **Two of those rows were bought, not found.** `u32` read 0 of 1500 until the answer was routed
+// through a u32 comparison and a wide u32 local was seeded in every program; `i64` read 12 until a
+// wide i64 was seeded too and the answer took its **high half** — `(v >> 32) as@ i32`, which is the
+// one part of an i64 that a narrowing cast throws away and nothing else in a generated program sees.
+//
+// `issues/lang/0306b` was an i64 literal losing exactly that half, and this generator needed three
+// corpus-sized runs to surface it. Nothing about a type's presence in the generated source predicts
+// its row here, which is the whole reason the rows exist.
+//
+// **The loop row is the thin one now**, and it is a *behaviour* rather than a type: an oracle that
+// forgot `break` entirely would still agree with the compiler on 96% of programs. The TypeScript
+// this ports found a `do`/`while` bug where `continue` skipped the condition, so this is a path with
+// a bug already to its name and eight programs in two hundred watching it. Loops are generated far
+// more often than that number suggests — what is rare is a loop whose *trip count* reaches the
+// answer, since the body only ever assigns to one accumulator.
+//
+// ## What it does not reach yet
+//
+// Carried over from the TypeScript, whose ordering was judged by where this compiler's bugs have
+// actually lived — and which I dropped when porting the generator, which is the more useful half of
+// what that file knew:
+//
+//   1. generics — instantiating one generated template at several argument types, which is the
+//      seam that produced the most bugs of any in the month it was written;
+//   2. several files, so the "a name is unique only within its file" family is in range;
+//   3. structs, enums and `match`, including a narrowed subject;
+//   4. arrays, with in-bounds indices;
+//   5. u32/u64/f64, whose semantics are already verified pointwise but not in combination.
+//
+// Each adds oracle surface, and the oracle is the thing to keep honest: **every failure it reports
+// should be minimised and read before it is believed.** Of the first 36 disagreements the
+// hand-written cast sweep produced, 31 were the oracle's fault rather than the compiler's.
+//
+// The list is also how to read a clean run. 1,800 programs came back with no disagreements on
+// 2026-09-01, right after `issues/lang/0306b` was fixed at both faces — which says this generator has
+// run out of reach, not that the compiler is right. Widening it is the work; a green sweep is the
+// signal to do so.
+//
+import { CallResult, Cli, Core, LoadedModule } from "std/platform.wac";
+import { Map } from "core/map.wac";
+import { Option } from "core/option.wac";
+import { Vec } from "core/vec.wac";
+import { hashString, stringEq } from "core/hash.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { Rng } from "../../packages/wactest/src/rng.wac";
+import { Built, buildLinked } from "../../packages/wacc/src/emit.wac";
+import { describeSeparator, diagnoseGraphIn, manifestWire, wireHasErrors } from "../../packages/wacc/src/api.wac";
+import { withManifestSection } from "../../packages/wacc/src/manifest.wac";
+import { renderDiagnostics } from "../../packages/wacc/src/render.wac";
+import { Res } from "../../packages/wacc/src/path.wac";
+
+/** The three types a generated program uses. `bool` is carried as 0/1 in an `i64`. */
+export i32 TY_I32() { return 0; }
+export i32 TY_I64() { return 1; }
+export i32 TY_BOOL() { return 2; }
+/**
+ * `u32`, and the oracle gets it almost free.
+ *
+ * A u32 value fits exactly in an `i64`, so holding it in `[0, 2^32)` makes ordinary signed i64
+ * division, comparison and `>>` compute *unsigned* answers by construction. That is a stronger
+ * independence than this file has for i64, where the oracle shares the subject's operator: here the
+ * compiler emits `i32.div_u` and the oracle divides with `i64.div_s` on a masked value, and they
+ * agree only if both are right.
+ *
+ * `spec/tour.wac`: signed and unsigned differ only on `/ % < <= > >=` and `>>`; add, sub, mul, the
+ * bitwise ops, `<<`, `==` and `!=` are bit-identical. Unary `-` is not defined on unsigned and
+ * `>>>` is refused as redundant — this generator emits neither, so nothing needs excluding.
+ *
+ * **Observable now, and it took four attempts to make it so — each of which looked done.** The
+ * canary for this path is breaking `wideU32Literal` to read its value as signed; it fires on
+ * **33 of 200** programs. Before the last change it fired on **0 of 1500**, while `u32` appeared in
+ * the source of 160 programs in 200.
+ *
+ * What each attempt got wrong is worth keeping, because every one of them passed a clean sweep:
+ *
+ *   1. u32 literals anywhere. Wrong: wac types a literal from its context, and a comparison of two
+ *      literals supplies none, so the compiler read `3000000000` as an i64 by width while the oracle
+ *      wrapped it. That is a generator bug reported as a compiler one — seed 41.
+ *   2. Narrow the pool to under 2^31. Correct, and it made the type useless: below the sign bit a
+ *      u32 and an i32 answer alike.
+ *   3. Wide literals inside u32 *slots*, plus a route to the answer through `as@ i32`. Still zero:
+ *      reinterpreting keeps the bits, so a value read with the wrong signedness arrives identical.
+ *      Only `/ % < <= > >=` and `>>` can show it.
+ *   4. Route through `> 2147483647` instead, and **seed a wide u32 local at the top of every
+ *      program** — because a declaration drawn inside a block is popped before the answer is built,
+ *      and top-level ones were about 1.5% of programs. Measured, not guessed: the route appeared in
+ *      1 program in 200 before this.
+ *
+ * The pattern each time was that `u32` was present in the *source* and invisible to the *oracle*, and
+ * only a canary could tell those apart. A clean sweep said nothing at every stage.
+ */
+export i32 TY_U32() { return 3; }
+
+/**
+ * Narrow to the width of `ty`, **spelled out rather than cast**.
+ *
+ * `(v << 32) >> 32` is a sign extension: wac's `>>` on a signed type is arithmetic, so the low 32
+ * bits come back with bit 31 smeared upward. Written this way because the alternative is `v as@ i32`
+ * — the very construct a generated program uses and this oracle is here to check. An oracle that
+ * narrows by asking the compiler to narrow agrees with the compiler by construction.
+ */
+export i64 wrapTo(i64 v, i32 ty) {
+  if (ty == TY_I64()) { return v; }
+  // **u32 masks where i32 sign-extends**, which is the whole of the difference and is written out
+  // rather than cast for the reason above.
+  if (ty == TY_U32()) { return v & 4294967295; }
+  return (v << 32) >> 32;
+}
+
+/**
+ * The values the generated program's locals hold, as the oracle evaluates it.
+ *
+ * **A struct around a map, rather than the map itself, and that is not a style choice.** A lambda
+ * whose parameter type carries type arguments does not survive the wapy round trip: the parameter
+ * loses its name, the type loses its arguments, and the *body* is replaced by null — so the
+ * rendering is a different program. `issues/lang/0307b`, found by this file failing
+ * `packages/wacc/test/wac/wapyroundtrip_test.wac` on its first gate run.
+ *
+ * A lambda parameter of a plain named type round-trips identically, which is the control in that
+ * issue and the reason this wrapper is enough. wac has no type aliases, so a one-field struct is how
+ * a name is given to a type here.
+ */
+export struct Env {
+  Map<string, i64> at;
+
+  Env create() { return Env(Map.create(hashString, stringEq)); }
+  i64 get(const this, string k) { return this.at.get(k).orElse(0); }
+  void set(this, string k, i64 v) { this.at.set(k, v); }
+  void remove(this, string k) { this.at.remove(k); }
+}
+
+/** The generated file's name in the virtual graph. It has no imports, so nothing resolves against it. */
+string entryName() { return "m.wac"; }
+
+/**
+ * Compile one generated program and call its `main`.
+ *
+ * Returns the value `main` answered. `why` is filled instead when something went wrong, and the two
+ * are distinguished by `ok` rather than by a sentinel value — every i32 is a legitimate answer here,
+ * so there is no number left over to mean "did not run".
+ */
+export struct Ran {
+  bool ok;
+  i32 value;
+  string why;
+}
+
+export Ran runProgram(Cli cli, string src) {
+  string[] paths = string[](entryName());
+  string[] texts = string[](src);
+  Res res = Res.empty();
+
+  // **Diagnosed before it is emitted.** wacc's emitter is asked separately from its checker, and a
+  // program that does not check emits an empty module rather than complaining — which would surface
+  // as "no such export `main`", three steps from the mistake.
+  string wire = diagnoseGraphIn(paths, texts, res, entryName());
+  if (wireHasErrors(wire)) {
+    return Ran(false, 0, "does not compile: " + renderDiagnostics(wire, paths, texts));
+  }
+
+  // **A module `load` will take carries a manifest, and `buildLinked` does not add one.** The first
+  // run of the spine below said `this module carries no wac.manifest section` — the emitter's job
+  // ends at the bytes, and `wac build` is what wraps them. `Built.described` folds the three answers
+  // the manifest needs behind `describeSeparator()`: what the emitter declined, the export
+  // signatures, and the bind types.
+  Built built = buildLinked(paths, texts, res, entryName());
+  string sep = describeSeparator();
+  i32 first = built.described.indexOf(sep);
+  if (first < 0) { return Ran(false, 0, "the build described nothing, so no manifest can be built"); }
+  string rest = built.described.slice(first + sep.len(), built.described.len());
+  i32 second = rest.indexOf(sep);
+  if (second < 0) { return Ran(false, 0, "the build's description carried one separator, not two"); }
+  string sigs = rest.slice(0, second);
+  string types = rest.slice(second + sep.len(), rest.len());
+
+  // No grants: the generated program is arithmetic and cannot ask for anything, which is also the
+  // reason a sweep of thousands of them is safe to run in this process.
+  u8[] wasm = withManifestSection(
+    built.wasm, manifestWire(built.wasm, types, sigs, entryName(), "m.wasm", 0));
+  LoadedModule m = cli.load(wasm, 0);
+  if (m.unavailable()) { return Ran(false, 0, "this host has no `load`, so nothing was checked"); }
+  if (m.handle < 0) { return Ran(false, 0, "the module did not load: " + m.error); }
+
+  // The third argument feeds an `i32 f(i32)` and is ignored by every other shape in the closed set;
+  // `main` takes nothing, so it goes unread.
+  CallResult r = cli.call(m.handle, "main", 0);
+  cli.unload(m.handle);
+  if (r.status == 1) { return Ran(false, 0, "trapped: " + (r.text == "" ? "no message" : r.text)); }
+  if (r.status == 2) { return Ran(false, 0, "the module exports no `main`"); }
+  if (r.status == 3) { return Ran(false, 0, "`main` has a signature the boundary cannot call"); }
+  return Ran(true, r.value, "");
+}
+
+
+// ── The evaluators the nodes' lambdas call ───────────────────────────────────────────────────────
+//
+// **Every `evalIn` below is a single call and contains no branching**, which is not a style
+// preference: neither a ternary nor an `if` survives inside a lambda through the wapy round trip.
+// The ternary case is `issues/lang/0297c`; the statement case is recorded in `issues/lang/0307b`,
+// where a lambda body of `if (c) { return x; } return y;` comes back as a bare expression followed
+// by a block, with the `if` and both `return`s gone.
+//
+// Keeping the branch in a named function sidesteps both and reads better anyway — the node builders
+// stay a line each, and the arithmetic is somewhere it can be pointed at.
+
+i64 evalAndOr(bool isAnd, Expr a, Expr b, Env e) {
+  if (isAnd) { return (a.evalIn(e) != 0) && (b.evalIn(e) != 0) ? 1 : 0; }
+  return (a.evalIn(e) != 0) || (b.evalIn(e) != 0) ? 1 : 0;
+}
+
+i64 evalDivMod(bool isDiv, Expr a, i64 d, i32 ty, Env e) {
+  if (isDiv) { return wrapTo(a.evalIn(e) / d, ty); }
+  return wrapTo(a.evalIn(e) % d, ty);
+}
+
+i64 evalShift(bool isLeft, Expr a, i64 sh, i32 ty, Env e) {
+  if (isLeft) { return wrapTo(a.evalIn(e) << sh, ty); }
+  return wrapTo(a.evalIn(e) >> sh, ty);
+}
+
+/** A generated helper function: what it is called, what it takes, and its body's oracle. */
+export struct Helper {
+  string name;
+  i32 ret;
+  Vec<i32> params;
+  Vec<string> paramNames;
+  Expr body;
+}
+
+/**
+ * A call to a generated helper.
+ *
+ * The callee's body is evaluated in an environment of **just its parameters**, which is exactly what
+ * wac gives it: there are no closures at function scope, so a helper cannot see the caller's locals.
+ * An oracle that evaluated the body in the caller's environment would agree with a compiler that
+ * wrongly let the body see them.
+ */
+i64 evalCall(Helper h, Vec<Expr> args, Env e) {
+  Env callEnv = Env.create();
+  for (i32 k = 0; k < h.paramNames.len(); k++) {
+    callEnv.set(h.paramNames.get(k), args.get(k).evalIn(e));
+  }
+  return h.body.evalIn(callEnv);
+}
+
+/**
+ * Whether a u32 local's value has its top bit set — the answer's u32 route.
+ *
+ * A named function rather than a ternary in the lambda, for the reason the other `eval*` helpers
+ * here give: neither a ternary nor a statement survives inside a lambda through the wapy round trip
+ * (`issues/lang/0297c`, `issues/lang/0307b`). I wrote one back in anyway and the gate caught it,
+ * which is what that test is for.
+ */
+/**
+ * The high 32 bits of an i64 local, as an i32 — the answer's i64 route.
+ *
+ * `(v >> 32) as@ i32` is the cheapest thing that *cannot* be answered from the low half, which is
+ * the half everything else in a generated program already sees. The audit above measured i64 at
+ * 12/200 without this: an i64 only reached the answer through a narrowing cast deep in an
+ * expression, and a wrong high half survives that untouched exactly when it is truncated away.
+ */
+i64 evalHighHalf(Env e, string name) {
+  return wrapTo(e.get(name) >> 32, TY_I32());
+}
+
+i64 evalTopBit(Env e, string name) {
+  if (e.get(name) > 2147483647) { return 1; }
+  return 0;
+}
+
+i64 evalTernary(Expr c, Expr t, Expr f, Env e) {
+  if (c.evalIn(e) != 0) { return t.evalIn(e); }
+  return f.evalIn(e);
+}
+
+/**
+ * `as@` keeps the low bits; `as~` clamps.
+ *
+ * The bounds are written out rather than derived, because deriving them would go through the
+ * arithmetic the cast is being checked against — the same rule `wrapTo` follows.
+ */
+i64 evalCast(bool truncates, Expr a, Env e) {
+  if (truncates) { return wrapTo(a.evalIn(e), TY_I32()); }
+  i64 v = a.evalIn(e);
+  if (v < (0 - 2147483648)) { return 0 - 2147483648; }
+  if (v > 2147483647) { return 2147483647; }
+  return v;
+}
+
+// ── The generator ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A generated expression: its source, its type, and how to compute it again.
+ *
+ * `evalIn` re-evaluates against an environment rather than holding a value fixed at generation time,
+ * because a loop body has to be evaluated once per iteration with different locals.
+ *
+ * **The lambda escapes the function that built it**, which wac allows: `[§wacc-lambda-capture]` says
+ * captures are shared with the enclosing frame rather than copied, and a method may hand back a
+ * funcref that still writes to the object its caller holds. What that costs is care in loops — a
+ * local reused across iterations would be *shared* by every lambda made from it, so anything a
+ * lambda captures is either a fresh local in its own frame or an array element.
+ */
+export struct Expr {
+  string src;
+  i32 ty;
+  fn[i64(Env)] evalIn;
+}
+
+/** A local in scope: its name, its type, and the block depth it was declared at. */
+struct Local {
+  string name;
+  i32 ty;
+  i32 depth;
+}
+
+export struct Gen {
+  Rng rng;
+  i32 n;
+  i32 depth;
+  Vec<Local> locals;
+  Vec<string> lines;
+  Vec<string> helpers;
+  Vec<Helper> sigs;
+  Env env;
+  string indent;
+
+  Gen create(i32 seed) {
+    return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
+               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ");
+  }
+
+  /**
+   * One coin, spelled the way the TypeScript spells it.
+   *
+   * `Rng.bool()` there is `next() < 0.5` — **true on the low half**, which is `intTop(2) == 0` and
+   * not `== 1`. I wrote it inverted at all four sites and it cost nothing to run and everything to
+   * claim: every boolean decision came out the other way, so a seed named a different program while
+   * the header said seeds transfer. Nothing fails when this is wrong, which is why it is one function
+   * with the rule written on it.
+   */
+  bool coin(this) { return this.rng.intTop(2) == 0; }
+
+  string fresh(this, string prefix) {
+    string name = prefix + itoa(this.n);
+    this.n = this.n + 1;
+    return name;
+  }
+
+  void emit(this, string line) { this.lines.push(this.indent + line); }
+
+  /** Every local of this type that is still in scope. */
+  Vec<Local> inScope(this, i32 ty) {
+    Vec<Local> out = Vec<Local>.create();
+    for (i32 i = 0; i < this.locals.len(); i++) {
+      if (this.locals.get(i).ty == ty) { out.push(this.locals.get(i)); }
+    }
+    return out;
+  }
+
+  // ── Expressions ────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * A literal that types as `ty` wherever it appears.
+   *
+   * wac types an integer literal from its context, which is right for the language and wrong for a
+   * generator: `0 as~ i32` in a cast is an i32-to-i32 cast and a compile error, because nothing told
+   * the `0` it was an i64. So every i64 literal here is chosen outside i32's range, and both
+   * minimums are written by subtraction — `-2147483648` is a unary minus over a magnitude that needs
+   * 64 bits, so with no expected type it is an i64 and the arithmetic around it is too.
+   */
+  string intLiteral(this, i64 v, i32 ty) {
+    if (ty == TY_I32()) {
+      return v == (0 - 2147483648) ? "(-2147483647 - 1)" : itoa64(v);
+    }
+    if (v == (0 - 9223372036854775807) - 1) { return "(-9223372036854775807 - 1)"; }
+    return itoa64(v);
+  }
+
+  /**
+   * A u32 literal that may exceed 2^31, for use **only where a u32 slot surrounds it**.
+   *
+   * `u32 v = 3000000000;` types the literal from its slot, so this is exact there and in an
+   * assignment to a u32 local. It is *not* safe in a comparison of two literals, where nothing
+   * supplies a slot and wac reads the value by its own width as an i64 — which is how seed 41
+   * disagreed before the pool was narrowed.
+   */
+  Expr wideU32Literal(this) {
+    i64[] pool = i64[](2147483648, 3000000000, 4294967295, 4294967294, 2147483649);
+    i64 v = pool[this.rng.intTop(pool.len())];
+    return Expr(itoa64(v), TY_U32(), (Env e) => v);
+  }
+
+  Expr literal(this, i32 ty) {
+    if (ty == TY_BOOL()) {
+      i64 b = this.coin() ? 1 : 0;
+      return Expr(b == 1 ? "true" : "false", ty, (Env e) => b);
+    }
+    if (ty == TY_U32()) {
+      // **All below 2^31, and that is not timidity — it is the same rule the i64 pool follows.**
+      // wac types an integer literal from its *context*, so a bare `3000000000` in a comparison of
+      // two literals has no u32 slot to take and is an i64 by its own width. The generator meant it
+      // as a u32 and the compiler read it as an i64; the oracle wrapped to 32 bits and the compiler
+      // did not, and `(3000000000 + 2147483647)` disagreed at seed 41 — my fault, not the
+      // compiler's, which is the failure mode the header warns about.
+      //
+      // The sign boundary is still reached, and more honestly: a `u32` *local* carries its type, so
+      // `2147483647 + 2147483647` in a u32 slot wraps to 4294967294 and every use of that variable
+      // is unambiguously unsigned. Values above 2^31 arrive by arithmetic rather than by a literal
+      // nobody typed.
+      i64[] upool = i64[](0, 1, 7, 255, 65536, 2147483646, 2147483647, 1073741824);
+      i64 uv = upool[this.rng.intTop(upool.len())];
+      return Expr(itoa64(uv), ty, (Env e) => uv);
+    }
+    i64[] pool = ty == TY_I32()
+      ? i64[](0, 1, 2, 0 - 1, 7, 255, 65536, 2147483647, 0 - 2147483647, 12345)
+      : i64[](4294967296, 0 - 4294967296, 2147483648, 0 - 2147483649, 1000000000000,
+              9223372036854775807, (0 - 9223372036854775807) - 1);
+    i64 v = pool[this.rng.intTop(pool.len())];
+    return Expr(this.intLiteral(v, ty), ty, (Env e) => v);
+  }
+
+  Expr? variable(this, i32 ty) {
+    Vec<Local> cands = this.inScope(ty);
+    if (cands.len() == 0) { return null; }
+    string name = cands.get(this.rng.intTop(cands.len())).name;
+    return Expr(name, ty, (Env e) => e.get(name));
+  }
+
+  Expr? binary(this, i32 ty, i32 depth) {
+    if (ty == TY_BOOL()) {
+      if (this.coin()) {
+        // A comparison of integers. Both operands are the same width, which is what wac requires.
+        // u32 among them: `<` on two u32s is `i32.lt_u`, and the oracle compares two masked i64s,
+        // so a signed instruction where an unsigned one belongs shows up as a disagreement.
+        i32 it = this.coin() ? (this.coin() ? TY_I32() : TY_U32()) : TY_I64();
+        // **A u32 comparison needs a u32 variable on one side.** Two u32 *literals* have no slot
+        // between them, so wac types them by width and the oracle would be comparing something the
+        // program never had. Falling back to i32 keeps the draw count identical either way.
+        if (it == TY_U32() && this.inScope(TY_U32()).len() == 0) { it = TY_I32(); }
+        i32 op = this.rng.intTop(6);
+        Expr a = this.expr(it, depth - 1);
+        Expr b = this.expr(it, depth - 1);
+        return Expr("(" + a.src + " " + cmpOpText(op) + " " + b.src + ")", ty,
+                    (Env e) => applyCmp(op, a.evalIn(e), b.evalIn(e)));
+      }
+      bool isAnd = this.coin();
+      Expr a = this.expr(TY_BOOL(), depth - 1);
+      Expr b = this.expr(TY_BOOL(), depth - 1);
+      // **Both arms are evaluated here and only one may be there.** `&&` and `||` short-circuit in
+      // wac, so an oracle that always evaluates the right operand would disagree the moment that
+      // operand had an effect. Nothing a generated expression does has one — there are no calls with
+      // side effects and no assignment inside an expression — so the values agree either way.
+      return Expr("(" + a.src + (isAnd ? " && " : " || ") + b.src + ")", ty,
+                  (Env e) => evalAndOr(isAnd, a, b, e));
+    }
+
+    i32 which = this.rng.intTop(10);
+    Expr a = this.expr(ty, depth - 1);
+    // A zero divisor traps, and so does INT_MIN / -1. Both are real wac behaviour and neither is what
+    // this is looking for, so a divisor is a literal known to be safe.
+    if (which == 8 || which == 9) {
+      bool isDiv = which == 8;
+      i64[] safe = i64[](1, 2, 3, 7, 10, 255);
+      i64 d = safe[this.rng.intTop(safe.len())];
+      return Expr("(" + a.src + (isDiv ? " / " : " % ") + itoa64(d) + ")", ty,
+                  (Env e) => evalDivMod(isDiv, a, d, ty, e));
+    }
+    if (which == 6 || which == 7) {
+      bool isLeft = which == 6;
+      // Below the width, so wasm's masking of the shift count never comes into it — that is a
+      // separate question from the one this generator asks, and mixing them makes a finding unclear.
+      i32 bits = ty == TY_I64() ? 64 : 32;
+      i64 sh = this.rng.intTop(bits) as i64;
+      return Expr("(" + a.src + (isLeft ? " << " : " >> ") + itoa64(sh) + ")", ty,
+                  (Env e) => evalShift(isLeft, a, sh, ty, e));
+    }
+    i32 op = which;
+    Expr b = this.expr(ty, depth - 1);
+    return Expr("(" + a.src + " " + binOpText(op) + " " + b.src + ")", ty,
+                (Env e) => wrapTo(applyBin(op, a.evalIn(e), b.evalIn(e)), ty));
+  }
+
+  Expr ternary(this, i32 ty, i32 depth) {
+    Expr c = this.expr(TY_BOOL(), depth - 1);
+    Expr t = this.expr(ty, depth - 1);
+    Expr f = this.expr(ty, depth - 1);
+    return Expr("(" + c.src + " ? " + t.src + " : " + f.src + ")", ty,
+                (Env e) => evalTernary(c, t, f, e));
+  }
+
+  Expr expr(this, i32 ty, i32 depth) {
+    if (depth <= 0) {
+      Expr? v = this.variable(ty);
+      return v is null ? this.literal(ty) : v!;
+    }
+    // Seven arms, the same seven the TypeScript draws from and in its order. An arm that answers
+    // null is retried rather than substituted, because substituting would change what the *next*
+    // draw means, and the sequence is what a seed names.
+    for (i32 attempt = 0; attempt < 6; attempt++) {
+      i32 choice = this.rng.intTop(7);
+      if (choice == 0) { return this.literal(ty); }
+      if (choice == 1) {
+        Expr? v = this.variable(ty);
+        if (!(v is null)) { return v!; }
+      } else if (choice <= 3) {
+        Expr? b = this.binary(ty, depth);
+        if (!(b is null)) { return b!; }
+      } else if (choice == 4) {
+        return this.ternary(ty, depth);
+      } else if (choice == 5) {
+        Expr? c = this.cast(ty, depth);
+        if (!(c is null)) { return c!; }
+      } else {
+        Expr? h = this.callHelper(ty, depth);
+        if (!(h is null)) { return h!; }
+      }
+    }
+    return this.literal(ty);
+  }
+
+  /**
+   * A cast, which is the construct this generator exists for more than any other.
+   *
+   * `issues/lang/0281b` was `as~` to i32 wrapping where it should clamp, and it survived every
+   * feature-at-a-time sweep because it needs a cast crossed with a width and a value near the edge.
+   *
+   * Both directions take a *variable* rather than any expression, for a reason that is about wac
+   * rather than about generators: a literal operand is typed by the context the cast sits in, so
+   * `(0 as i64)` inside an i64 expression is an i64-to-i64 cast and a compile error. The same reason
+   * every i64 literal above is chosen outside i32's range.
+   */
+  Expr? cast(this, i32 ty, i32 depth) {
+    if (ty == TY_I64()) {
+      Expr? a = this.variable(TY_I32());
+      if (a is null) { return null; }
+      Expr src = a!;
+      return Expr("(" + src.src + " as i64)", ty, (Env e) => src.evalIn(e));
+    }
+    if (ty == TY_U32()) {
+      // i32 -> u32 reinterprets: the bits are the same and only the reading changes, so the oracle
+      // masks. Without this arm a u32 local can be built and never observed, and a type the sweep
+      // cannot see is a type it does not test.
+      Expr? iv = this.variable(TY_I32());
+      if (iv is null) { return null; }
+      Expr a32 = iv!;
+      return Expr("(" + a32.src + " as@ u32)", ty,
+                  (Env e) => wrapTo(a32.evalIn(e), TY_U32()));
+    }
+    if (ty == TY_I32()) {
+      // A u32 in an i32 slot, half the time — the same bits read as signed, which is where a value
+      // above 2^31 becomes negative and the answer can differ.
+      Expr? uv = this.variable(TY_U32());
+      if (!(uv is null) && this.coin()) {
+        Expr au = uv!;
+        return Expr("(" + au.src + " as@ i32)", ty,
+                    (Env e) => wrapTo(au.evalIn(e), TY_I32()));
+      }
+      Expr? v = this.variable(TY_I64());
+      Expr a = v is null ? this.expr(TY_I64(), depth - 1) : v!;
+      bool truncates = this.coin();
+      return Expr("(" + a.src + (truncates ? " as@ i32" : " as~ i32") + ")", ty,
+                  (Env e) => evalCast(truncates, a, e));
+    }
+    return null;
+  }
+
+  /**
+   * A helper function generated alongside `main`, so a call has somewhere to go.
+   *
+   * **The body is generated against its parameters alone**, which is what wac gives it — there are no
+   * closures at function scope. Generating it against the caller's scope would produce a program that
+   * does not compile, and the sweep would report a compile failure that is the generator's fault
+   * rather than the compiler's.
+   */
+  void makeHelper(this) {
+    string name = this.fresh("h");
+    i32 ret = this.rng.intTop(4);
+    i32 nparams = this.rng.intTop(3);
+    Vec<i32> params = Vec<i32>.create();
+    Vec<string> paramNames = Vec<string>.create();
+    for (i32 k = 0; k < nparams; k++) {
+      params.push(this.rng.intTop(4));
+      paramNames.push("p" + itoa(k));
+    }
+
+    // Swap the scope out for the parameters, generate, and swap it back. A parameter's value at
+    // generation time is 0; the call site supplies the real one.
+    Vec<Local> savedLocals = this.locals;
+    Env savedEnv = this.env;
+    this.locals = Vec<Local>.create();
+    this.env = Env.create();
+    for (i32 k = 0; k < nparams; k++) {
+      this.locals.push(Local(paramNames.get(k), params.get(k), 0));
+      this.env.set(paramNames.get(k), 0);
+    }
+    Expr body = this.expr(ret, 3);
+    this.locals = savedLocals;
+    this.env = savedEnv;
+
+    string sig = "";
+    for (i32 k = 0; k < nparams; k++) {
+      sig = sig + (k == 0 ? "" : ", ") + typeText(params.get(k)) + " " + paramNames.get(k);
+    }
+    this.helpers.push(typeText(ret) + " " + name + "(" + sig + ") { return " + body.src + "; }");
+    this.sigs.push(Helper(name, ret, params, paramNames, body));
+  }
+
+  Expr? callHelper(this, i32 ty, i32 depth) {
+    Vec<Helper> usable = Vec<Helper>.create();
+    for (i32 i = 0; i < this.sigs.len(); i++) {
+      if (this.sigs.get(i).ret == ty) { usable.push(this.sigs.get(i)); }
+    }
+    if (usable.len() == 0) { return null; }
+    Helper h = usable.get(this.rng.intTop(usable.len()));
+
+    // The arguments go in a `Vec` and the lambda captures **the Vec**, not a local reused per
+    // iteration: captures are by reference, so a shared local would give every argument the last
+    // expression built.
+    Vec<Expr> args = Vec<Expr>.create();
+    string text = "";
+    for (i32 k = 0; k < h.params.len(); k++) {
+      Expr a = this.expr(h.params.get(k), depth - 1);
+      args.push(a);
+      text = text + (k == 0 ? "" : ", ") + a.src;
+    }
+    return Expr(h.name + "(" + text + ")", ty, (Env e) => evalCall(h, args, e));
+  }
+
+  /**
+   * A branch that is *not* taken: generated into a sandbox so it compiles and typechecks but cannot
+   * affect the answer.
+   *
+   * A compiler is as likely to mis-emit the unexecuted arm as the executed one, and an arm that is
+   * never entered is where a wrong emission goes unnoticed — so the generator fills it with real code
+   * and the oracle ignores it. Nothing declared inside can be read afterwards, because `block` pops
+   * it.
+   */
+  void deadBranch(this) {
+    this.block(() => { this.deadDeclaration(); });
+  }
+
+  void deadDeclaration(this) {
+    i32 t = this.rng.intTop(4);
+    this.declare(t, this.expr(t, 2));
+  }
+
+  /**
+   * A counted loop, in each of the three forms.
+   *
+   * The trip count is fixed and the body is a straight-line run of assignments to an *existing*
+   * local, so the oracle can run the same run the same number of times. `continue` and `break` fire
+   * on an iteration chosen up front — the shape that found the do-while bug, where `continue` skipped
+   * the condition.
+   *
+   * **The counter's values differ between the forms**, which is why all three are here: `for` sees
+   * 0..trips-1 in the body, while `while` and `do` increment first and see 1..trips. An oracle using
+   * one sequence for all three would agree with a compiler that made the same mistake.
+   */
+  void loop(this, i32 form) {
+    i32 trips = 1 + this.rng.intTop(4);
+    Vec<Local> existing = this.inScope(TY_I32());
+    Local acc = existing.len() == 0
+      ? this.declare(TY_I32(), this.literal(TY_I32()))
+      : existing.get(0);
+    string i = this.fresh("i");
+    Expr step = this.expr(TY_I32(), 1);
+    bool useContinue = this.coin();
+    i32 contAt = this.rng.intTop(trips);
+    bool useBreak = !useContinue && this.coin();
+    i32 breakAt = 1 + this.rng.intTop(trips);   // never the first, so the body runs at least once
+
+    string ind = this.indent + "  ";
+    if (form == 1) {
+      this.emit("for (i32 " + i + " = 0; " + i + " < " + itoa(trips) + "; " + i + "++) {");
+    } else if (form == 0) {
+      this.emit("i32 " + i + " = 0;");
+      this.emit("while (" + i + " < " + itoa(trips) + ") {");
+      // `continue` in a while re-tests the condition, so the counter must advance before it.
+      this.lines.push(ind + i + " = " + i + " + 1;");
+    } else {
+      this.emit("i32 " + i + " = 0;");
+      this.emit("do {");
+      this.lines.push(ind + i + " = " + i + " + 1;");
+    }
+    if (useContinue) { this.lines.push(ind + "if (" + i + " == " + itoa(contAt) + ") { continue; }"); }
+    if (useBreak) { this.lines.push(ind + "if (" + i + " == " + itoa(breakAt) + ") { break; }"); }
+    this.lines.push(ind + acc.name + " = " + acc.name + " + " + step.src + ";");
+    if (form == 2) {
+      this.emit("} while (" + i + " < " + itoa(trips) + ");");
+    } else {
+      this.emit("}");
+    }
+
+    // The oracle: the same decisions, in the same order, over the counter values this form sees.
+    for (i32 k = 0; k < trips; k++) {
+      i32 iv = form == 1 ? k : k + 1;
+      if (useContinue && iv == contAt) { continue; }
+      if (useBreak && iv == breakAt) { break; }
+      this.env.set(acc.name, wrapTo(this.env.get(acc.name) + step.evalIn(this.env), TY_I32()));
+    }
+  }
+
+  // ── Statements ─────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Run `body` in a nested scope: locals declared inside go out of scope at the end, and values they
+   * assigned to *outer* locals stay.
+   *
+   * The locals are a flat `Vec` with the block depth on each, so entering is `depth + 1` and leaving
+   * is popping back to the mark — the inner names are exactly the ones pushed after it. That avoids
+   * needing to iterate the environment, which `Map` does not offer.
+   */
+  void block(this, fn[void()] body) {
+    i32 mark = this.locals.len();
+    string savedIndent = this.indent;
+    this.depth = this.depth + 1;
+    this.indent = this.indent + "  ";
+    body();
+    this.indent = savedIndent;
+    this.depth = this.depth - 1;
+    while (this.locals.len() > mark) {
+      Option<Local> gone = this.locals.pop();
+      if (gone.isSome()) { this.env.remove(gone.unwrap().name); }
+    }
+  }
+
+  Local declare(this, i32 ty, Expr init) {
+    string name = this.fresh("v");
+    this.emit(typeText(ty) + " " + name + " = " + init.src + ";");
+    this.locals.push(Local(name, ty, this.depth));
+    this.env.set(name, init.evalIn(this.env));
+    return Local(name, ty, this.depth);
+  }
+
+  void statement(this, i32 depth) {
+    i32 kind = this.rng.intTop(depth <= 0 ? 3 : 8);
+    if (kind == 0) {
+      i32 ty = this.rng.intTop(4);
+      // **A u32 declaration is a slot**, so a literal above 2^31 is unambiguous here and nowhere
+      // else in this generator. This is what puts values past the sign boundary into circulation:
+      // every later use goes through the variable, which carries its type.
+      if (ty == TY_U32() && this.coin()) {
+        this.declare(ty, this.wideU32Literal());
+        return;
+      }
+      this.declare(ty, this.expr(ty, 2));
+      return;
+    }
+    if (kind == 1) {
+      i32 ty = this.rng.intTop(4);
+      Vec<Local> cands = this.inScope(ty);
+      if (cands.len() == 0) { this.declare(ty, this.expr(ty, 2)); return; }
+      Local l = cands.get(this.rng.intTop(cands.len()));
+      Expr e = this.expr(ty, 2);
+      this.emit(l.name + " = " + e.src + ";");
+      this.env.set(l.name, e.evalIn(this.env));
+      return;
+    }
+    if (kind == 2) {
+      Vec<Local> cands = this.inScope(TY_I32());
+      Vec<Local> more = this.inScope(TY_I64());
+      for (i32 i = 0; i < more.len(); i++) { cands.push(more.get(i)); }
+      Vec<Local> uns = this.inScope(TY_U32());
+      for (i32 i = 0; i < uns.len(); i++) { cands.push(uns.get(i)); }
+      if (cands.len() == 0) { this.declare(TY_I32(), this.expr(TY_I32(), 1)); return; }
+      Local l = cands.get(this.rng.intTop(cands.len()));
+      i32 op = this.rng.intTop(3);
+      Expr e = this.expr(l.ty, 1);
+      this.emit(l.name + " " + binOpText(op) + "= " + e.src + ";");
+      this.env.set(l.name, wrapTo(applyBin(op, this.env.get(l.name), e.evalIn(this.env)), l.ty));
+      return;
+    }
+    if (kind == 3) {
+      // **The taken arm is decided at generation time**, so the untaken one can be filled with code
+      // that must compile and cannot be read. Deciding it here rather than at evaluation is what
+      // keeps the oracle a straight line through the program.
+      Expr c = this.expr(TY_BOOL(), 2);
+      bool taken = c.evalIn(this.env) != 0;
+      this.emit("if (" + c.src + ") {");
+      this.arm(taken, depth);
+      this.emit("} else {");
+      this.arm(!taken, depth);
+      this.emit("}");
+      return;
+    }
+    if (kind < 7) { this.loop(kind - 4); return; }
+    this.emit("{");
+    this.nested(depth);
+    this.emit("}");
+  }
+
+  /** One arm of an `if`: the real thing when it runs, a sandbox when it does not. */
+  void arm(this, bool live, i32 depth) {
+    if (live) { this.nested(depth); return; }
+    this.deadBranch();
+  }
+
+  void nested(this, i32 depth) {
+    this.block(() => { this.statements(depth - 1); });
+  }
+
+  void statements(this, i32 depth) {
+    i32 n = 1 + this.rng.intTop(3);
+    for (i32 k = 0; k < n; k++) { this.statement(depth); }
+  }
+
+  /** Build one program: its source, and the value `main()` must return. */
+  Program program(this) {
+    for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
+    // **One u32 local, at the top, always.** Without it the answer's u32 route fired in 1 program
+    // in 200 — measured — because a u32 declaration drawn inside a block goes out of scope before
+    // the answer is built, and top-level ones are about 1.5% of programs. 160 programs in 200
+    // declared a u32 and almost none could be seen.
+    //
+    // Seeded wide, since under 2^31 a u32 and an i32 answer alike and the type tests nothing.
+    this.declare(TY_U32(), this.wideU32Literal());
+    // **And a wide i64, for the same reason.** The audit in the header puts i64 at 12 programs in
+    // 200 — the thinnest of the three, and the one `issues/lang/0306b` lived in. A value whose high
+    // half differs from its low one is what makes the half observable at all.
+    i64[] widei64 = i64[](4294967296, 1099511627776, 9223372036854775807,
+                          (0 - 9223372036854775807) - 1, 0 - 4294967297);
+    i64 iv = widei64[this.rng.intTop(widei64.len())];
+    this.declare(TY_I64(), Expr(this.intLiteral(iv, TY_I64()), TY_I64(), (Env e) => iv));
+    this.statements(3);
+    // **The answer takes a u32 route a quarter of the time**, when one is in scope.
+    //
+    // Without this a u32 value only reaches `main` through the `as@ i32` arm of `cast`, one of seven
+    // expression arms — measured at about one program in 190, by two independent canaries. A type the
+    // oracle almost never observes is a type the sweep does not test, however often it appears in the
+    // source, and it appeared in 158 programs out of 200.
+    //
+    // Drawn *before* the expression either way, so the sequence a seed names does not depend on
+    // whether a u32 local happened to exist.
+    bool viaHigh = this.rng.intTop(4) == 0;
+    bool viaU32 = this.rng.intTop(4) == 0;
+    Vec<Local> unsigned = this.inScope(TY_U32());
+    Expr result = this.expr(TY_I32(), 3);
+    Vec<Local> wides = this.inScope(TY_I64());
+    if (viaHigh && wides.len() > 0) {
+      string hn = wides.get(this.rng.intTop(wides.len())).name;
+      Expr base0 = result;
+      Expr high = Expr("((" + hn + " >> 32) as@ i32)", TY_I32(), (Env e) => evalHighHalf(e, hn));
+      result = Expr("(" + base0.src + " ^ " + high.src + ")", TY_I32(),
+                    (Env e) => wrapTo(applyBin(OP_XOR(), base0.evalIn(e), high.evalIn(e)),
+                                      TY_I32()));
+    }
+    if (viaU32 && unsigned.len() > 0) {
+      // **Prefer one that actually holds a value past the sign boundary.** Any u32 local satisfies
+      // the type, and most hold something under 2^31 where `> 2147483647` is false whichever way it
+      // is read — so picking at random observes nothing, which is what kept the canary silent over
+      // 1500 programs. The generator already consults the oracle's values to choose taken branches,
+      // so this is the same arrangement rather than a new one.
+      Vec<Local> wide = Vec<Local>.create();
+      for (i32 i = 0; i < unsigned.len(); i++) {
+        if (this.env.get(unsigned.get(i).name) > 2147483647) { wide.push(unsigned.get(i)); }
+      }
+      Local u = wide.len() > 0
+        ? wide.get(this.rng.intTop(wide.len()))
+        : unsigned.get(this.rng.intTop(unsigned.len()));
+      string un = u.name;
+      // **A comparison, not `as@ i32`.** Reinterpreting a u32 as an i32 keeps the bits, so a value
+      // read with the wrong signedness reaches `main` looking identical — which is why the canary
+      // for this path stayed silent over 1500 programs while u32 appeared in most of them. Only the
+      // operations `spec/tour.wac` lists as differing — `/ % < <= > >=` and `>>` — can show it, and
+      // `> 2147483647` is the cheapest: true for exactly the values whose top bit is set.
+      Expr asI32 = Expr("((" + un + " > 2147483647) ? 1 : 0)", TY_I32(),
+                        (Env e) => evalTopBit(e, un));
+      // **`base`, not `result`.** Captures are by reference, so a lambda that reads `result` while
+      // `result` is being reassigned to that very lambda calls itself — `RangeError: Maximum call
+      // stack size exceeded`, which is what the header's warning about reused locals means in
+      // practice. A fresh local holds the old value.
+      Expr base = result;
+      result = Expr("(" + base.src + " + " + asI32.src + ")", TY_I32(),
+                    (Env e) => wrapTo(applyBin(OP_ADD(), base.evalIn(e), asI32.evalIn(e)),
+                                      TY_I32()));
+    }
+    i64 want = wrapTo(result.evalIn(this.env), TY_I32());
+    string src = "";
+    for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
+    src = src + "export i32 main() {\n";
+    for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
+    return Program(src + "  return " + result.src + ";\n}\n", want);
+  }
+}
+
+/** How a type is spelled in the generated source. */
+string typeText(i32 ty) {
+  if (ty == TY_I32()) { return "i32"; }
+  if (ty == TY_I64()) { return "i64"; }
+  if (ty == TY_U32()) { return "u32"; }
+  return "bool";
+}
+
+/** One generated program and the answer its `main` owes. */
+export struct Program {
+  string src;
+  i64 want;
+}
+
+// ── The operators, as codes rather than strings ──────────────────────────────────────────────────
+//
+// The lambda in each node closes over an `i32` code and calls one of these, instead of closing over
+// the operator's spelling and comparing strings on every evaluation. A generated loop re-evaluates
+// its body once per trip, so this runs far more often than it is built.
+
+i32 OP_ADD() { return 0; }  i32 OP_SUB() { return 1; }  i32 OP_MUL() { return 2; }
+i32 OP_AND() { return 3; }  i32 OP_OR()  { return 4; }  i32 OP_XOR() { return 5; }
+
+string binOpText(i32 op) {
+  if (op == OP_ADD()) { return "+"; }
+  if (op == OP_SUB()) { return "-"; }
+  if (op == OP_MUL()) { return "*"; }
+  if (op == OP_AND()) { return "&"; }
+  if (op == OP_OR())  { return "|"; }
+  return "^";
+}
+
+/**
+ * The arithmetic the oracle does.
+ *
+ * **This shares wac's operators with the program under test**, and the file header says why that is
+ * accepted: removing the sharing needs arbitrary precision, and no finding this tool has ever made
+ * was a broken `i64.add`. The narrowing around it is what is written out by hand — see `wrapTo`.
+ */
+i64 applyBin(i32 op, i64 x, i64 y) {
+  if (op == OP_ADD()) { return x + y; }
+  if (op == OP_SUB()) { return x - y; }
+  if (op == OP_MUL()) { return x * y; }
+  if (op == OP_AND()) { return x & y; }
+  if (op == OP_OR())  { return x | y; }
+  return x ^ y;
+}
+
+i32 CMP_EQ() { return 0; }  i32 CMP_NE() { return 1; }  i32 CMP_LT() { return 2; }
+i32 CMP_LE() { return 3; }  i32 CMP_GT() { return 4; }  i32 CMP_GE() { return 5; }
+
+string cmpOpText(i32 op) {
+  if (op == CMP_EQ()) { return "=="; }
+  if (op == CMP_NE()) { return "!="; }
+  if (op == CMP_LT()) { return "<"; }
+  if (op == CMP_LE()) { return "<="; }
+  if (op == CMP_GT()) { return ">"; }
+  return ">=";
+}
+
+i64 applyCmp(i32 op, i64 x, i64 y) {
+  bool r = op == CMP_EQ() ? x == y
+         : op == CMP_NE() ? x != y
+         : op == CMP_LT() ? x < y
+         : op == CMP_LE() ? x <= y
+         : op == CMP_GT() ? x > y
+         : x >= y;
+  return r ? 1 : 0;
+}
+
+// ── The sweep ────────────────────────────────────────────────────────────────────────────────────
+
+/** What one generated program did. `why` is empty when it agreed with its oracle. */
+export struct Outcome {
+  i32 seed;
+  string src;
+  i64 want;
+  string why;
+}
+
+/** Generate and check `count` programs from `seed`, and return only the ones that disagreed. */
+export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
+  Vec<Outcome> bad = Vec<Outcome>.create();
+  for (i32 k = 0; k < count; k++) {
+    i32 s = seed + k;
+    Program p = Gen.create(s).program();
+    Ran r = runProgram(cli, p.src);
+    if (!r.ok) {
+      bad.push(Outcome(s, p.src, p.want, r.why));
+    } else if ((r.value as i64) != p.want) {
+      bad.push(Outcome(s, p.src, p.want,
+                       "answered " + itoa(r.value) + ", wanted " + itoa64(p.want)));
+    }
+  }
+  return bad;
+}
+
+// ── The command line ─────────────────────────────────────────────────────────────────────────────
+
+string flagValue(Cli cli, string name, string fallback) {
+  i32 n = cli.argCount().wait();
+  for (i32 i = 0; i + 1 < n; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == name) { return string.fromBytes(cli.arg(i + 1).wait()); }
+  }
+  return fallback;
+}
+
+bool hasFlag(Cli cli, string name) {
+  i32 n = cli.argCount().wait();
+  for (i32 i = 0; i < n; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == name) { return true; }
+  }
+  return false;
+}
+
+i32 numberOr(string s, i32 fallback) {
+  if (s.len() == 0) { return fallback; }
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    i32 c = s.toBytes()[i];
+    if (c < '0' || c > '9') { return fallback; }
+    v = v * 10 + (c - '0');
+  }
+  return v;
+}
+
+/**
+ * Sweep, and say what disagreed.
+ *
+ * **The whole program is printed for a failure and nothing is printed for a pass**, because the
+ * program *is* the report: a seed reproduces it, but only if the generator has not changed since,
+ * and the generator changes. The text does not go stale.
+ */
+export i32 main(Core core, Cli cli) {
+  i32 count = numberOr(flagValue(cli, "--count", ""), 200);
+  i32 seed = numberOr(flagValue(cli, "--seed", ""), 1);
+  bool verbose = hasFlag(cli, "--verbose");
+
+  Vec<Outcome> bad = sweep(cli, count, seed);
+  if (verbose) {
+    core.log("swept " + itoa(count) + " program(s) from seed " + itoa(seed));
+  }
+  if (bad.len() == 0) {
+    core.log("no disagreements in " + itoa(count) + " program(s) from seed " + itoa(seed));
+    return 0;
+  }
+  for (i32 i = 0; i < bad.len(); i++) {
+    Outcome o = bad.get(i);
+    core.warn("seed " + itoa(o.seed) + ": " + o.why + "\n" + o.src);
+  }
+  core.warn(itoa(bad.len()) + " of " + itoa(count) + " disagreed");
+  return 1;
+}

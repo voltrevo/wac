@@ -318,6 +318,60 @@ struct AsChild {
     inherits: bool,
 }
 
+/// Read for a ticket and answer it, taking nothing if the ticket has been abandoned.
+///
+/// Two guards, and both are needed. `read_unless` declines to take the bytes at all when nobody is
+/// waiting, which is what closes the window another reader could see as an ended stream. The
+/// `unread` after `complete` is the backstop for the narrower race where the caller gives up
+/// *between* the two. `issues/system/0307b`.
+fn deliver(
+    stream: &streams::Stream,
+    table: &Tickets,
+    id: i32,
+    reading: &std::sync::Mutex<HashMap<i32, i32>>,
+) {
+    let Some(bytes) = stream.read_unless(|| !table.is_live(id)) else {
+        reading.lock().unwrap().remove(&id);
+        return;
+    };
+    match table.complete(id, Outcome::Bytes(bytes)) {
+        // Nobody was waiting, and `unread_bytes` has already put them back — so there is nothing for
+        // a later `drop` to hand over and the note can go.
+        unclaimed @ Some(_) => {
+            unread_bytes(stream, unclaimed);
+            reading.lock().unwrap().remove(&id);
+        }
+        // **Filed under a live ticket, so the note stays.** This is exactly the state `drop` has to
+        // clean up after: the answer is sitting in `done` and the caller may still give up on it.
+        // Forgetting the handle here is what made the first version of this fix do nothing at all —
+        // `drop` found the answer and had nowhere to put it. `issues/system/0308b`.
+        None => {}
+    }
+}
+
+/// Put stream bytes nobody claimed back into the stream they came from.
+///
+/// Preferred to the handle-keyed map below wherever there *is* a queue, because another reader may
+/// already be parked on it — a bounded read that timed out and was retried is exactly that — and it
+/// would never look in a side table. `issues/system/0307b`.
+fn unread_bytes(stream: &streams::Stream, unclaimed: Option<Outcome>) {
+    if let Some(Outcome::Bytes(bytes)) = unclaimed {
+        stream.unread(bytes);
+    }
+}
+
+/// Put back what a reader took for a ticket nobody claimed, for the next `recv` on that handle.
+///
+/// Only bytes, and only a non-empty run of them. An error describes a call that no longer exists,
+/// and an empty read is the stream ending — neither is a thing the next reader is missing.
+fn park_unclaimed(back: &std::sync::Mutex<HashMap<i32, Vec<u8>>>, handle: i32, unclaimed: Option<Outcome>) {
+    if let Some(Outcome::Bytes(bytes)) = unclaimed {
+        if !bytes.is_empty() {
+            back.lock().unwrap().entry(handle).or_default().extend(bytes);
+        }
+    }
+}
+
 struct Host {
     /// `caps[signature][slot]`, matching the module's per-signature funcref tables.
     caps: Vec<Vec<Cap>>,
@@ -339,6 +393,39 @@ struct Host {
     output_error: String,
     /// Children this program spawned, and the handles that name their streams.
     handles: Arc<std::sync::Mutex<Handles>>,
+    /// Which handle a read ticket is reading, so a *dropped* one knows where to put its answer.
+    ///
+    /// A ticket id does not say what it was reading, and `drop` is given nothing else — so an answer
+    /// that arrived before the caller gave up had nowhere to go and was binned. The v8 host has kept
+    /// this map for `receiveFrom` since `issues/system/0207`; this is the same thing for reads.
+    /// `issues/system/0308b`.
+    reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
+    /// A connection a *dropped* accept had already taken, waiting for the next accept on that
+    /// listener.
+    ///
+    /// **The two orderings need different remedies, which is why both exist.** A thread that finds
+    /// its ticket gone hands the connection to a *live* ticket, because the retry is already blocked
+    /// inside `accept()` and cannot be given anything left lying about. A `drop` that finds the
+    /// answer in hand has the opposite problem: the retry has not been issued yet, so there is no
+    /// live ticket to hand to and the connection has to wait here for one. Parking alone measured
+    /// 0 of 8 on the first ordering; handing on alone measured 0 of 6 on the second.
+    /// `issues/system/0310b`.
+    parked_accepts: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<Outcome>>>>,
+    /// Live `accept` tickets per listener, oldest first.
+    ///
+    /// A connection cannot be handed to a thread already blocked in `listener.accept()` — it is
+    /// waiting in the kernel for a *different* one — so leaving the socket somewhere for it to find
+    /// does nothing, which was measured. What works is giving it to a ticket that is still live:
+    /// the answer goes to whoever is waiting, whichever thread happened to take the connection.
+    /// `issues/system/0310b`.
+    accepting: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<i32>>>>,
+    /// Bytes a reader took for a ticket nobody claimed, waiting for the next `recv` on that handle.
+    ///
+    /// `Stream::read` blocks and then *drains*, and a socket read takes bytes off the socket. So a
+    /// reader whose caller gave up still removes them, and until `issues/system/0307b` it then
+    /// dropped them: the next `recv` began after a hole and nothing said so. This is where they
+    /// wait instead — the same idea as the v8 host's parked datagrams, one resource wider.
+    pushback: Arc<std::sync::Mutex<HashMap<i32, Vec<u8>>>>,
     /// Where this program's relative paths resolve from, when its parent said. Empty means the
     /// process's own directory.
     ///
@@ -372,6 +459,10 @@ impl Host {
             output: None,
             output_error: String::new(),
             handles: Arc::new(std::sync::Mutex::new(Handles::default())),
+            reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            parked_accepts: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             as_child: None,
             cwd: Vec::new(),
             world: None,
@@ -589,7 +680,25 @@ fn manifest_of(wasm: &[u8], what: &str) -> Result<Arc<Manifest>, wasmtime::Error
 /// no second form of it that could drift.
 fn run_seed(args: &[String]) -> Result<i32, wasmtime::Error> {
     let wasm = SEED.expect("a seed");
-    let m = manifest_of(wasm, "the built-in compiler")?;
+    let mut m = manifest_of(wasm, "the built-in compiler")?;
+    // **The seed holds everything and the program narrows it**, which is `issues/system/0257c`'s
+    // ruling — a host may implement *running a module* and must not implement the *command
+    // surface*. `--allow-run` is read by the wac-side command, not here; what this hands over is the
+    // ceiling, and `load_module` intersects it with whatever the program then asks for.
+    //
+    // **Without this the seed got only what its own manifest declared**, so `run` was never granted
+    // and `Cli.exec` was refused for every program on this host while working on the other — the
+    // same four-line program answering `EXEC ok` under v8 and `Not granted to this application`
+    // here. `issues/system/0313b`. The v8 host has had this block since `0264c`; this one did not,
+    // which is the drift two parallel `run_seed`s invite.
+    //
+    // `manifest_of` answers an `Arc` and this one is a line old, so it is still the only reference
+    // and `get_mut` succeeds. Written to fail loudly rather than silently keep the old ceiling if
+    // that ever stops being true.
+    let raised = Arc::get_mut(&mut m).ok_or_else(|| {
+        wasmtime::Error::msg("the seed's manifest was shared before its grants were set")
+    })?;
+    raised.grants = manifest::Grants { read: true, write: true, env: true, net: true, run: true };
     let program_args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
     run(m, wasm, program_args)
 }
@@ -1466,7 +1575,8 @@ fn dispatch(
             let origin = caller.data().started;
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(ms));
-                table.complete(id, Outcome::I64(origin.elapsed().as_nanos() as i64));
+                // Nothing was consumed to make this, so there is nothing to hand back.
+                let _ = table.complete(id, Outcome::I64(origin.elapsed().as_nanos() as i64));
             });
             return pending_for(caller, Kind::I64, id, results);
         }
@@ -1508,6 +1618,16 @@ fn dispatch(
             return settle_now(caller, Kind::Str, Outcome::Str(dir), results);
         }
         Cap::ReadStdin => {
+            // **What an abandoned read already took, first and in front of the rest.** This
+            // capability means "everything", so a retry after one was given up on has to see the
+            // bytes the first one drained — 1 run in 8 kept them before this. `issues/system/0310b`.
+            let waiting = caller
+                .data()
+                .pushback
+                .lock()
+                .unwrap()
+                .remove(&STDIN_HANDLE)
+                .unwrap_or_default();
             // Inside a frame that was handed bytes, this is those bytes and nothing blocks.
             if let Some(f) = caller.data_mut().frames.last_mut() {
                 if !f.inherit_input {
@@ -1531,16 +1651,34 @@ fn dispatch(
                 let stdin = streams.stdin.clone();
                 let id = caller.data().tickets.submit();
                 let table = caller.data().tickets.clone();
+                let back = caller.data().pushback.clone();
+                // **Registered under standard input's handle**, so a `drop` that finds the
+                // answer already in hand knows where to put it — `Cap::Discard` hands it to
+                // `pushback`, which the next `readStdin` drains before reading more. Without this
+                // the early ordering was fixed and the late one still lost the lot, 0 of 6.
+                // `issues/system/0310b`.
+                caller.data().reading.lock().unwrap().insert(id, STDIN_HANDLE);
                 std::thread::spawn(move || {
-                    let mut all = Vec::new();
+                    // **Everything, and it stops early if nobody is waiting any more.** Reading to
+                    // EOF for a ticket that has been given up on used to lose the lot — 1 run in 8
+                    // kept it. `read_unless` declines to take a chunk once the ticket is dead, and
+                    // whatever was already gathered goes back at the front of the queue so the next
+                    // `readStdin` sees it. `issues/system/0310b`.
+                    let mut all = waiting;
                     loop {
-                        let chunk = stdin.read();
+                        let Some(chunk) = stdin.read_unless(|| !table.is_live(id)) else {
+                            stdin.unread(all);
+                            return;
+                        };
                         if chunk.is_empty() {
                             break;
                         }
                         all.extend_from_slice(&chunk);
                     }
-                    table.complete(id, Outcome::Bytes(all));
+                    // And the narrow order, where it is given up on between the last read and here.
+                    if let Some(Outcome::Bytes(unclaimed)) = table.complete(id, Outcome::Bytes(all)) {
+                        back.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(unclaimed);
+                    }
                 });
                 return pending_for(caller, Kind::Bytes, id, results);
             }
@@ -1549,11 +1687,22 @@ fn dispatch(
             // anything else it had in flight.
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
+            let back = caller.data().pushback.clone();
+            // Same, for the process's own input.
+            caller.data().reading.lock().unwrap().insert(id, STDIN_HANDLE);
             std::thread::spawn(move || {
                 use std::io::Read;
-                let mut buf = Vec::new();
+                // The process's own input has no queue to decline from — the read has happened by
+                // the time anything can be asked — so this one hands back instead. Same as a socket.
+                let mut buf = waiting;
                 let _ = std::io::stdin().read_to_end(&mut buf);
-                table.complete(id, Outcome::Bytes(buf));
+                // **This one does consume, and is not fixed here.** `readAll` takes standard input to
+                // EOF, so an abandoned one loses the lot — the same defect `issues/system/0307b`
+                // describes, on a capability that is not keyed by handle the way `recv` is. Left
+                // explicit rather than quietly discarded, and recorded in the issue.
+                if let Some(Outcome::Bytes(unclaimed)) = table.complete(id, Outcome::Bytes(buf)) {
+                    back.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(unclaimed);
+                }
             });
             return pending_for(caller, Kind::Bytes, id, results);
         }
@@ -1837,7 +1986,12 @@ fn dispatch(
                     }
                     Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
-                table.complete(id, outcome);
+                // **An abandoned `connect` orphans a live socket too**, which is the same defect
+                // one capability over — the connection is made and put in the table, and an answer
+                // nobody takes leaves it there with the peer none the wiser. Not fixed here: unlike
+                // an accept there is no later call that would want *this* connection, so handing it
+                // on is meaningless and closing it is the only sensible remedy. `issues/system/0310b`.
+                let _ = table.complete(id, outcome);
             });
             return pending_for(caller, Kind::Socket, id, results);
         }
@@ -1931,6 +2085,14 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
+            // A connection a dropped accept already took is answered before waiting for another.
+            let already = caller.data().parked_accepts.lock().unwrap()
+                .get_mut(&h).and_then(|q| q.pop_front());
+            if let Some(outcome) = already {
+                return settle_now(caller, Kind::Socket, outcome, results);
+            }
+            let listen_handle = h;
+            let waiting = caller.data().accepting.clone();
             let Some(Sock::Listening(listener)) = socket_at(caller, h) else {
                 if !caller.data().grants.net {
                     return settle_now(caller, Kind::Socket, denied_net(), results);
@@ -1943,6 +2105,13 @@ fn dispatch(
                 );
             };
             let id = caller.data().tickets.submit();
+            // Registered so a connection taken for a ticket nobody wants can be handed to this one
+            // wherever it is waiting. `issues/system/0310b`.
+            caller.data().accepting.lock().unwrap().entry(h).or_default().push_back(id);
+            // And which listener it belongs to, so a `drop` holding an accepted connection knows
+            // whose queue to pass it on to. `issues/system/0310b` — without this the late ordering
+            // lost the connection, 0 of 6, while the early one was fixed.
+            caller.data().reading.lock().unwrap().insert(id, h);
             let table = caller.data().tickets.clone();
             let table_handles = caller.data().handles.clone();
             std::thread::spawn(move || {
@@ -1958,7 +2127,42 @@ fn dispatch(
                     }
                     Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
-                table.complete(id, outcome);
+                // **A connection is consumed to make this**, and the comment here said it was
+                // not — a mechanical edit's blanket sentence, wrong on the site it mattered most.
+                // The socket is in the table by now, so an answer nobody takes leaves a client
+                // connected to a handle that will never be handed out, and an entry never freed.
+                // 0 of 8 kept before this. `issues/system/0310b`.
+                //
+                // Parked under the *listener*, so the next `accept` on it gets the connection that
+                // was already made rather than waiting for another. Closing it would be defensible
+                // and is worse: the client is told nothing and has to guess.
+                // **A connection is consumed to make this**, whatever the comment here used to
+                // say. The socket is in the table by now, so an answer nobody takes leaves a client
+                // attached to a handle that will never be handed out. 0 of 8 kept before this.
+                //
+                // **Given to a ticket that is still live, not left somewhere to be found.** Parking
+                // it under the listener was tried and measured at 0 of 8 unchanged: the retry is
+                // already blocked in `accept()` waiting for a *different* connection and cannot be
+                // handed this one. Completing its ticket reaches it wherever it is waiting.
+                // `issues/system/0310b`.
+                waiting.lock().unwrap().get_mut(&listen_handle).map(|q| q.retain(|&t| t != id));
+                let mut answer = table.complete(id, outcome);
+                while let Some(unclaimed) = answer.take() {
+                    let next = waiting
+                        .lock()
+                        .unwrap()
+                        .get_mut(&listen_handle)
+                        .and_then(|q| q.pop_front());
+                    match next {
+                        // Whoever is waiting gets it. If that one has also gone, round again —
+                        // each turn consumes a ticket, so this cannot spin.
+                        Some(other) => answer = table.complete(other, unclaimed),
+                        // Nobody at all. The connection is orphaned and that is still the open half
+                        // of `0310b`: it is in the table, and closing it would tell the client
+                        // nothing. Left rather than pretended about.
+                        None => break,
+                    }
+                }
             });
             return pending_for(caller, Kind::Socket, id, results);
         }
@@ -1967,16 +2171,30 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
+            // **What an abandoned reader already took, before asking the source for more.** Order is
+            // the whole of a stream's meaning, so these come first and whole; a second `recv` then
+            // continues where the abandoned one would have. `issues/system/0307b`.
+            let waiting = caller.data().pushback.lock().unwrap().remove(&h);
+            if let Some(bytes) = waiting {
+                if !bytes.is_empty() {
+                    results[0] = make_read_data(caller, &bytes)?;
+                    return Ok(());
+                }
+            }
             // On a thread either way: a child or a peer that has not written yet must not stop this
             // program from reading another, which is exactly what a pipeline and a relay both do.
             let id = caller.data().tickets.submit();
+            // **Which handle this ticket is reading**, so a `drop` that finds an answer already in
+            // hand knows where to put it back. `issues/system/0308b`.
+            caller.data().reading.lock().unwrap().insert(id, h);
             let table = caller.data().tickets.clone();
             // Which of the child's two streams is decided *before* anything starts: the first
             // version started a reader on standard output and then started a second on the error
             // stream when it noticed the handle was the wrong one, leaving a thread parked on a
             // stream nobody would collect.
             if let Some(stream) = child_stream(caller, h) {
-                std::thread::spawn(move || table.complete(id, Outcome::Bytes(stream.read())));
+                let noted = caller.data().reading.clone();
+                std::thread::spawn(move || deliver(&stream, &table, id, &noted));
                 return pending_for(caller, Kind::Read, id, results);
             }
             // **The child's own end of its filesystem channel**: what its parent answered. Reserved,
@@ -1986,7 +2204,8 @@ fn dispatch(
             if h == PARENT_FS_HANDLE {
                 if let Some(streams) = caller.data().as_child.as_ref() {
                     let answers = streams.fsrep.clone();
-                    std::thread::spawn(move || table.complete(id, Outcome::Bytes(answers.read())));
+                    let noted = caller.data().reading.clone();
+                    std::thread::spawn(move || deliver(&answers, &table, id, &noted));
                     return pending_for(caller, Kind::Read, id, results);
                 }
             }
@@ -1999,7 +2218,8 @@ fn dispatch(
             if h == STDIN_HANDLE {
                 if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
                     let fed = streams.stdin.clone();
-                    std::thread::spawn(move || table.complete(id, Outcome::Bytes(fed.read())));
+                    let noted = caller.data().reading.clone();
+                    std::thread::spawn(move || deliver(&fed, &table, id, &noted));
                     return pending_for(caller, Kind::Read, id, results);
                 }
                 let mut buf = [0u8; 65536];
@@ -2010,7 +2230,15 @@ fn dispatch(
                         None => std::io::stdin().read(&mut buf),
                     }
                 };
-                caller.data().tickets.discard(id);
+                // Nothing was consumed to make this, so there is nothing to hand back.
+                // Forget which handle this was reading: it is finished with, and the note is
+                // only for a `drop` that finds an answer in hand. Without this, every `recv` that
+                // ends synchronously — standard input, a handle that is not there — leaves an entry
+                // behind, and the map grows for as long as the program reads. `issues/system/0308b`.
+                // Same note, same reason: this path answers `Read.Failed` and is done with the
+            // ticket, so nothing should be left pointing at a handle. `issues/system/0308b`.
+            let _ = caller.data().tickets.discard(id);
+            caller.data().reading.lock().unwrap().remove(&id);
                 results[0] = match n {
                     Ok(0) => make_read_end(caller)?,
                     Ok(n) => make_read_data(caller, &buf[..n])?,
@@ -2019,6 +2247,7 @@ fn dispatch(
                 return Ok(());
             }
             if let Some(Sock::Open(s)) = socket_at(caller, h) {
+                let back = caller.data().pushback.clone();
                 std::thread::spawn(move || {
                     use std::io::Read;
                     let mut buf = [0u8; 65536];
@@ -2026,11 +2255,12 @@ fn dispatch(
                         Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
                         Err(e) => Outcome::Str(e.to_string().into_bytes()),
                     };
-                    table.complete(id, outcome);
+                    park_unclaimed(&back, h, table.complete(id, outcome));
                 });
                 return pending_for(caller, Kind::Read, id, results);
             }
-            caller.data().tickets.discard(id);
+            // Nothing was consumed to make this, so there is nothing to hand back.
+            let _ = caller.data().tickets.discard(id);
             // Neither, so there is nothing at the other end. `Read.Failed` rather than `Read.End`,
             // which would tell a reader the peer had finished rather than that there was never one.
             let why: &[u8] = if caller.data().grants.net {
@@ -2110,6 +2340,11 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
+            // **Parked bytes die with the handle.** A handle is reused the instant it closes — that
+            // is `issues/system/0306b`'s other finding — so anything `0307b` put aside for this one
+            // would otherwise be served to whoever gets the number next, as if their peer had sent
+            // it. The v8 host says the same beside its parked datagrams.
+            caller.data().pushback.lock().unwrap().remove(&h);
             if let Some(c) = child_of(caller, h) {
                 c.stop.store(true, Ordering::Relaxed);
                 c.stdin.finish();
@@ -2152,7 +2387,8 @@ fn dispatch(
                     Ok(bytes) => Outcome::FileResult(true, bytes, String::new(), FAULT_NONE),
                     Err(e) => Outcome::FileResult(false, Vec::new(), e.to_string(), fault_of(&e)),
                 };
-                table.complete(id, outcome);
+                // Nothing was consumed to make this, so there is nothing to hand back.
+                let _ = table.complete(id, outcome);
             });
             return pending_for(caller, Kind::FileResult, id, results);
         }
@@ -2170,7 +2406,8 @@ fn dispatch(
                     Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
                     Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
                 };
-                table.complete(id, outcome);
+                // Nothing was consumed to make this, so there is nothing to hand back.
+                let _ = table.complete(id, outcome);
             });
             return pending_for(caller, Kind::Change, id, results);
         }
@@ -2345,7 +2582,8 @@ fn dispatch(
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             std::thread::spawn(move || {
-                table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit, cwd));
+                // Nothing was consumed to make this, so there is nothing to hand back.
+                let _ = table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit, cwd));
             });
             return pending_for(caller, Kind::Exec, id, results);
         }
@@ -2473,6 +2711,10 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
+            // Collected, so nothing can be given up on any more and the handle note goes. Kept
+            // until here rather than dropped at completion, because the window between the two is
+            // the whole of `issues/system/0308b`.
+            caller.data().reading.lock().unwrap().remove(&id);
             let outcome = caller.data().tickets.take(id).ok_or_else(|| {
                 // A ticket resolves once. Asking twice, or asking for one that was cancelled, is a
                 // program error rather than a value this can invent.
@@ -2542,7 +2784,67 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
-            caller.data().tickets.discard(id);
+            // **What the ticket already held goes back where it came from.** `drop` is what a
+            // guest's `Pending.cancel` reaches, and an answer that landed between the caller giving
+            // up and this call has come off a stream once — discarding it lost the bytes every time,
+            // 0 of 10 on both hosts. `issues/system/0308b`.
+            //
+            // Which handle it was reading is the thing an id does not say, and `reading` is why this
+            // can ask. Into the **queue** for a child's stream, because another reader may be parked
+            // on it and a side table is somewhere it would never look; into the per-handle table for
+            // a socket, which has no queue to go back to. That is `0307b`'s rule, unchanged.
+            let held = caller.data().tickets.discard(id);
+            let whose = caller.data().reading.lock().unwrap().remove(&id);
+            // **An accepted connection is handed on, not put down.** There is nowhere to put a
+            // socket back — it is already in the table with a client attached — so it goes to the
+            // next accept still waiting on that listener, exactly as the accept thread does when it
+            // finds its own ticket gone. `issues/system/0310b`.
+            if let (Some(Outcome::Socket(slot, _, _, _, _)), Some(listener)) = (&held, whose) {
+                if *slot >= 0 {
+                    let next = caller.data().accepting.lock().unwrap()
+                        .get_mut(&listener).and_then(|q| q.pop_front());
+                    match (next, held.clone()) {
+                        (Some(other), Some(answer)) => {
+                            let _ = caller.data().tickets.complete(other, answer);
+                            return Ok(());
+                        }
+                        // Nobody waiting yet — the retry comes *after* the give-up in this
+                        // ordering, so it waits here for it rather than being dropped.
+                        (None, Some(answer)) => {
+                            caller.data().parked_accepts.lock().unwrap()
+                                .entry(listener).or_default().push_back(answer);
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // **An abandoned `connect` is closed, not handed on.** The other capabilities here take
+            // something a *later* call wants — bytes, a connection off the backlog — so the answer
+            // is to pass it along. Nothing else wants this one: it is a line this program dialled
+            // and then stopped caring about. Left alone the handle never leaves the table and the
+            // peer holds an open connection to nobody, which the probe sees as a read that never
+            // ends. Told rather than left guessing. `issues/system/0310b`.
+            //
+            // An accept is distinguished by having a listener noted against it, and was handled
+            // above; a socket answer with no note is a dial.
+            if let (Some(Outcome::Socket(slot, _, _, _, _)), None) = (&held, whose) {
+                if *slot >= 0 {
+                    if let Some(Sock::Open(s)) = socket_at(caller, *slot) {
+                        let _ = s.shutdown(std::net::Shutdown::Both);
+                    }
+                    caller.data().handles.lock().unwrap().close(*slot);
+                }
+            }
+            if let (Some(Outcome::Bytes(bytes)), Some(h)) = (held, whose) {
+                if !bytes.is_empty() {
+                    if let Some(q) = child_stream(caller, h) {
+                        q.unread(bytes);
+                    } else {
+                        caller.data().pushback.lock().unwrap().entry(h).or_default().extend(bytes);
+                    }
+                }
+            }
         }
         // The whole of D6 in one arm: a runtime that answered zero here would make every program
         // that used the capability wrong in a way nothing could see.
@@ -2567,7 +2869,8 @@ fn settle_now(
     results: &mut [Val],
 ) -> Result<(), wasmtime::Error> {
     let id = caller.data().tickets.submit();
-    caller.data().tickets.complete(id, outcome);
+    // Submitted a line ago and nobody has had the chance to give it up, so this never comes back.
+    let _ = caller.data().tickets.complete(id, outcome);
     pending_for(caller, kind, id, results)
 }
 

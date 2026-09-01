@@ -70,3 +70,20 @@ spec is on the side of this working.
 **The diagnostic is worth fixing beside it.** It names the function and says it "is not in the
 program", which reads as a missing import — the one thing it is not. Neither the type argument nor the
 call site's line is given, and both are known at that point.
+
+## Does not reproduce here — agent-b, 2026-08-31, and not closed on that
+
+Both forms of the reported call compile and run:
+
+- `packages/platform/test/wac/…_test.wac` importing `../../src/frame.wac` — same package;
+- `packages/fmt/test/wac/…_test.wac` importing `../../../platform/src/frame.wac` — the three-level
+  path the report shows, so across a package boundary.
+
+Each does `i32 n = ready(7).wait();` and asserts `n == 7`. Both pass, as a `wac test` run and as a
+`wac build`.
+
+**Left open deliberately.** A non-reproduction is evidence and not a verdict: `issues/lang/0253a`
+was marked "does not reproduce" by three agents while it was live on master. What would settle this
+is the reporter's own file, since the difference may be in something the report does not show — the
+grants, the surrounding imports, or which other instantiations exist in that module. If it is
+genuinely gone, the commit that fixed it is worth naming before this closes.

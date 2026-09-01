@@ -1,7 +1,7 @@
 # 0161 — moving the suite off Deno: the order, and what blocks each step
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b — step 2, the classification half (2026-08-31)
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
 - **Kind:** missing feature
@@ -912,6 +912,89 @@ the selection half is ready and the *running* half is not.
 **4. The oracle question**, which is a decision rather than work — see below.
 
 **5. Tier 2, package by package.** **6. `tools/`.**
+
+### `tools/`, classified by subject — agent-b, 2026-09-01
+
+Step 6 is `tools/`, and the file count overstates it. The rule this issue already uses for
+`packages/` applies here too: **a tool whose subject is the host stays on the Deno side.** Four of
+these are that, and one is now gone.
+
+| tool | lines | verdict |
+|---|---|---|
+| `fuzz.ts` | 538 | **ported and deleted** — `tools/wac/langfuzz.wac` |
+| `fuzzBoundary.ts` | 416 | **stays.** Its subject is the JavaScript boundary: it sends values out through the bindgen wrappers and back through a dynamic import. It kept its own `Rng` when `fuzz.ts` went. |
+| `wasmopt.ts` | 81 | **stays.** `npm:binaryen` and `WebAssembly.Instance` — the question it answers is what a JS library does to our output. |
+| `syncBootstrap.ts` | 115 | **stays.** Imports `bootstrap/js/*.js` and drives the JavaScript ladder to produce the site's browser asset. |
+| `_spawncmp.ts` | — | **stays.** Imports `packages/platform/host/children.ts`; the subject is the JS host's child spawning. |
+| `checkTypes.ts` | — | **stays while any TypeScript does.** It type-checks every `.ts` in the repository, so it is the last thing to go rather than a candidate. |
+| `bench.ts` | 232 | **portable, but the port drops a section.** It benchmarks `packages/gzip` against python's zlib, which `Cli.exec` can still drive — but its *first* reported number is the bindgen boundary, "one exported wasm call per element in each direction", and that cost exists only because the tool runs through Deno. In wac there is no boundary to measure, so the codec numbers get better and stop being comparable to the recorded ones. Moving it is a decision about what the benchmark is for, not a translation. |
+| `benchCompile.ts` | 226 | **portable, and the cleanest next one.** Compile time by phase; the subject is our own compiler and it reaches it through `waccApi` — a wasm instance driven from Deno. wac calls those same phases directly, which is the bridge `wapyroundtrip_test.wac` dropped when it moved. The one thing to check first is `--mem`, which measures peak memory per phase in a process each. |
+| `suiteGuard.ts` | — | **portable, but last.** It is the marker *every tool that spawns `deno test`* sets and checks, so it serves the tools above rather than being one. |
+| `suiteGate.ts` | — | **portable, but coupled.** A heavy runner announcing itself to the gate; `tools/push.sh` depends on the arrangement. |
+| `mutate.ts` + `tools/mutate/*.ts` | 1,562 + | **portable in principle, and the large one.** It keeps a Deno lane either way, because it must run the `.test.ts` that legitimately remain — so porting it moves the driver, not the dependency. |
+
+So the honest shape of what is left: **one clean port** (`benchCompile`), **one that changes what it
+measures** (`bench`), **one large one** (`mutate`), and a tail that either stays permanently or goes
+only once the tools it serves have.
+
+**`benchCompile` is scoped, and blocked on one placement decision.** Every phase it measures is an
+export of `packages/wacc/src/api.wac` — `diagnoseGraphIn`, `buildFilesIn`, `blockedFiles`,
+`exportSigsFiles`, `bindTypesFiles`, `emitFiles` — which wac calls directly. `performance.now` maps to
+`core.monotonicNanos`, and `--mem` reads `/proc/self/status`, which `cli.readFile` can do.
+
+What it also needs is the import-graph walk that `wacFiles` does for it, and wac's is
+`gather(Fs, Cli, string) -> Sources` at `packages/wac/src/wac.wac:633` — **private to the command's
+own app module**. Importing it from there would pull the whole `wac` command into a benchmark's
+dependency graph.
+
+**Sized, so the decision is not made in the dark.** `gather` is `wac.wac:633-807` — **174 lines** —
+and it calls eleven helpers local to that file. Of those eleven, exactly **one** (`projectRootAbs`)
+is used anywhere else in it; the other ten move with it and leave nothing behind. So moving it is a
+bounded ~200 lines plus the `Sources` struct, with a single shared helper to decide about, rather
+than an open-ended untangling of a 2,779-line module. I had assumed the coupling was the risk; it is
+one helper.
+
+So either export it and accept that, or move `gather` and `Sources` into a module
+both can import. The second is the "factor before the second caller" answer and is a small refactor
+of the command's internals, which is why it is written down rather than done in passing.
+
+The `bench` row is a correction made an hour after this table was written: I classified it from its
+header line and its clock, and only reading the body showed that a section of it is *about* the
+boundary it would stop having.
+
+Recorded because the count in this issue's header reads as though `tools/` were 22,927 lines of work,
+and most of what remains is either host-side by rule or blocked behind something else.
+
+### Step 3 is done, and not as a step — agent-b, 2026-08-31
+
+**There are no wrappers left to delete.** `find . -name '*_wac.test.ts'` answers zero, anywhere in
+the repo, so anyone reading the order above and going looking for 37 files finds none. That is worth
+saying out loud because the list reads as a queue and its head is empty.
+
+They went **one at a time, as a side effect of the work that made them deletable** rather than as the
+sweep this step describes: 110 deletions matching that name between 2026-08-04 and 2026-08-18, the
+last in `9ebc8a95` ("wacc: three small differentials move to wac, none of them needing an oracle").
+The pattern in those commit subjects is *"stops needing callbacks"* / *"needing an oracle"* — a
+wrapper stopped being load-bearing and then went, which is a better order than deleting it and
+finding out.
+
+What is checkable today:
+
+- **60 `.test.ts` under `packages/`**, and every one falls under a *keep* determination in the table
+  at the top: `platform` 31, `box`+`sh` 20 (another agent's), `wacc` 3, `ts` 2, and one each for
+  `webrtc`, `raster`, `stream`. `tools/wac/testtsclassified_test.wac` is the guard that a new package
+  cannot appear without a row.
+- **41 `.test.ts` outside `packages/`** — `tools/`, `harness/`, `site/`. That is step 6 and it is
+  where the remaining bulk is.
+
+**The verification half of step 3 is not evidenced.** The step says "verifying mutation scores
+unchanged either side", and I can find no record that this was done for the wrappers that went. It
+may not be worth reconstructing now — the deletions were incremental and each was made safe by the
+callback removal that preceded it, which is a different and arguably stronger argument than a score
+comparison. But it should not be recorded as done, so it is not.
+
+**So the live work here is step 4, which is the operator's decision, and step 6.** Steps 1-3 are
+complete and step 5's tier-2 split is not re-checked here.
 
 ## The two paths agree, measured over every wrapper
 
@@ -2138,3 +2221,262 @@ claims have nothing to do with the reference and would have to survive any port 
 Neither needs the reference. If this file is deleted rather than ported, those two claims want a home
 first — and a port that keeps only them is exactly the "removes the reference, so it cannot entrench
 what it deletes" shape this issue already identifies as safe either way.
+
+## A `.test.ts` was *added* to `platform` on 2026-08-31, which is the wrong direction
+
+Worth saying rather than letting the count move unexplained. `packages/platform/test/lostbytes_js.test.ts`
+is new, and this issue exists to remove files like it.
+
+It fits the row's own determination — *"the subject is TypeScript in every one"* — because the subject
+is the JavaScript **host**: `call.ts`'s bridge, which a wac test cannot reach, since a wac test runs
+under a `wac` binary and that is the other host. The wac-side case for the same defect already exists
+(`packages/platform/test/wac/lostbytes_test.wac`) and covers both Rust binaries; this covers the third
+host and no more.
+
+The thing it guards is `design/system/0001` D9: a wac program must not depend on its host. Four hosts
+disagreed about whether an abandoned read loses data, and three separate issues this month were one
+host being different from the others (`0207`, `0306b`, `0310b`). A case that runs on every host is
+the only form of that guarantee worth having, and one of the four could not be reached from wac.
+
+If the JavaScript hosts ever become reachable from a wac test, this file is the first thing to
+delete.
+
+## Step 2: the classification was per package where the run is per directory — agent-b, 2026-08-31
+
+**Less of the running half was left than this said.** `testCommand` already spawns the binary when
+`isWacRun(dirs)`, `native.ts` maps the exit codes and `native.test.ts` pins every mapping. What was
+left is narrower, and it is not the mixed-set problem either.
+
+`isWacRun` asked whether every directory's **package** holds a `.test.ts`. The runner is handed
+directories:
+
+| directory | wac entries | `.test.ts` in the package |
+|---|---:|---:|
+| `packages/wacc/test/wac` | 90 | 3 |
+| `packages/platform/test/wac` | 44 | 31 |
+| `packages/box/test/wac` | 34 | 17 |
+| `packages/webrtc/test/wac` | 12 | 1 |
+| `packages/sh/test/wac` | 5 | 3 |
+| `packages/ts/test/wac` | 5 | 2 |
+| `packages/raster/test/wac` | 2 | 1 |
+
+**192 wac test files in 7 directories, none of which contains a single `.test.ts`.** `wacc`'s three
+sit in `packages/wacc/test`, one level above the ninety they disqualify. The same test gates
+`wacEntriesIn` when the profile is built, so those files were invisible to *selection* as well —
+mutants reaching them fell back to running the whole package, which `0183` records as the expensive
+case.
+
+So the change is to ask `testFilesIn` about the directory rather than the package. `hostless` stays
+as it is, because `isBlindScope` means the package and is right to.
+
+**And the directory question alone is not enough to *run* natively.** A directory with no `.test.ts`
+can still hold a wac test that wants a host oracle: the binary skips it, the rest pass, the run exits
+0, and the mutant is scored **survived** by a suite that never ran the test that would have killed
+it. `wacShare` already refuses a profile whose `skipped` is non-empty — that refusal was computed and
+thrown away, so `Profile` now carries `native`, the files that profiled with nothing skipped, and a
+directory may be run natively only when every wac entry in it is there. Both halves of the rule are
+in `native.ts` as a pure predicate with four cases in `native.test.ts`, rather than needing a sweep
+to look at.
+
+An old cached profile has no `native` field and reads as the empty set, so it declines to run
+anything natively — slow, and unable to be wrong.
+
+**And the mixed set, which this section said was the rest of step 2, is done too.** A scope holding
+both kinds is now two runs under one deadline — one each would let a mixed scope quietly take twice
+the baseline it is measured against — and `mergeRuns` in `native.ts` combines them. The order of its
+rules is the content: a kill in either half is a kill, since the catch happened whatever the other
+half did; an **abort beats a survival**, because the half that could not run might have been the one
+that would have killed it; and `no-tests-here` is an absence that defers. The second rule is the one
+that matters, and the wrong answer there is the one that flatters the suite.
+
+Both halves are mapped to the same verdict type before merging — a Deno run's non-zero has always
+meant killed here — so there is one rule rather than two paths that agree by construction.
+
+**So step 2 is complete and step 3 is unblocked**, with the caveat below.
+
+**Not verified by a sweep.** `--explain-selection --package gzip` is 26m45s and there is no cheaper
+scope, so the claim here is the predicate's unit tests and the measured table above, not a native
+share against a control. Whoever runs the sweep should expect the realised share to be *below* 192
+files: the profile evidence is the second gate, and some of these directories will hold oracle tests.
+
+## `--explain-selection` has been dead since the day after it produced these numbers — agent-b, 2026-08-31
+
+Every figure in "What step 2 costs to verify" came from `--explain-selection` on 2026-08-16. **The
+flag has not run since 2026-08-17**, when two commits that day — `b4a92b50` and `ecb7c732` — put
+`const hostless` below the `if (explain)` block. That block runs at module level and calls
+`testDirs`, which reads `hostless`, so the mode dies immediately with
+
+    ReferenceError: Cannot access 'hostless' before initialization
+
+Nothing in the suite runs it, so a fortnight passed. Fixed by lifting three empty `Set`s above the
+block, with the reason written where the next person will hit it.
+
+### Ran, and the result is a finding rather than a timing
+
+    profiling 60 test file(s) across 40 scope(s)…
+    profile: 133 test(s) across 60 file(s), 18453 covered line(s)
+    selection: 1 narrowed, 20 widened, 19 unhit, of 40 mutant(s)
+
+against this issue's own `20 narrowed, 20 widened, 0 unhit, of 40` from 380 files. Narrowing has
+collapsed and nineteen mutants now report *none reached by any test*.
+
+**That is the explain path being blind to wac tests, not the tool getting worse.** It gathers its
+files with `testFilesIn` alone:
+
+    const files = await testFilesIn(scope.map((d) => `${root}/${d}`));
+
+while the real profiling path adds `wacEntriesIn` for hostless directories. So it sees the 60
+remaining `.test.ts` files and none of the 474 `*_test.wac` ones — and `gzip`'s inflate tests are
+wac, which is why their lines look unreachable. It is exactly what this issue warns of, *"a mutant
+scored against a suite that no longer contains its test — silently, and as a better score"*,
+happening inside the diagnostic built to catch it.
+
+**The real run is not affected**: step 2 gave that path `hostlessDirs` and `wacEntriesIn`, so it
+gathers both. Only the explain mode is short, and the fix is to mirror those two lines.
+
+### So the 26m45s is not refuted, it is not comparable
+
+This profiled 60 files where a real run profiles those plus the wac entries. The number that has been
+quoted all fortnight — including by me, all day, as a reason to ask before running anything — is from
+a tree with 380 profileable `.test.ts` files, and there are now 60. It should be re-derived once the
+explain path gathers what the real one does, and not before.
+## The native share is 82% and it barely helps — agent-b, 2026-08-31
+
+Re-measured with `--explain-selection` working and gathering both kinds of test file:
+
+    profiling 340 test file(s) across 40 scope(s)…
+      profile: 280 file(s) taken from `wac test --coverage`
+
+So step 2 delivers what it promised — **280 of 340 files profiled natively**, where the package-level
+rule would have taken far fewer. And the run is still about half an hour.
+
+**The 53-second figure does not transfer, and this is the thing to correct in the section above.**
+That measurement is `wac test --coverage packages/` — *one* invocation over a directory, 83 files at
+0.64s apiece. `buildProfile` invokes the binary **once per file**, so it pays the compile 280 times.
+Observed here: roughly 5s a file natively, eight times the rate the directory figure suggests.
+
+That is why "sourcing wac profiles natively is not a rounding error on a 26-minute pass" has not
+turned into a shorter pass. The cost is per *invocation*, not per file of work, and the native path
+changed which binary pays it rather than how often.
+
+**What would actually make this cheap**, and neither is done: profile a whole directory in one
+`wac test --coverage` call and split the JSON by entry afterwards — which is what the 53-second
+measurement did — or keep a warm compiler across invocations. The first is the shape the tool already
+assumes for the Deno side, one spawn per file, and is the reason the whole pass is slow rather than
+the native/Deno split being the reason.
+
+**And a smaller correction.** The six-minute pass reported earlier today was profiling 60 files
+because the explain path could not see wac tests; it was cheap because it was blind, not because
+anything improved. The honest figure for a working `--explain-selection` on `--package gzip` is what
+is above.
+
+**The numbers, both runs side by side.**
+
+|  | 2026-08-16 | 2026-08-31 |
+|---|---|---|
+| files profiled | 380 | 340 |
+| taken natively | 83 | **280** |
+| selection | 20 narrowed, 20 widened, 0 unhit | **identical** |
+| wall clock | 26m45s | ~28m |
+
+The selection matching exactly is the useful half: it says the profile sees what it saw a fortnight
+ago, so the 19 `unhit` reported before this fix were entirely the blind gatherer and not a real
+coverage hole. Two thousand one hundred and eight tests across 36,242 lines.
+
+### Batching the profiler was tried and is worse — agent-b, 2026-08-31
+
+The obvious reading of "5s per file per invocation against 83 files in 53s" is that the invocation is
+the cost, so profile several entries at once. It was implemented — `wacShareDir`, one call per test
+directory, per-entry `skipped` refusal unchanged, per-file `wacShare` kept as the fallback — and
+measured against the same `--package gzip` baseline.
+
+**It is slower.** The unbatched native phase finishes at about 23 minutes; the batched one was still
+running at 27 and was killed. Two attempts, and the first found the reason a directory argument is
+wrong before the timing did: `wac test --coverage <dir>` runs *everything* under it, and
+`packages/wacc/test/wac` holds `corpusemit_test.wac` at "at least 1204s", so a batch meant to save
+minutes spends twenty on a file the per-file loop never profiled. Naming the entries instead keeps
+the set identical — and is still slower.
+
+**Why**, and this is the part worth keeping: `wac test a.wac b.wac …` **aggregates**. It writes a
+`.cache/wac-aggregate-*.wac` and compiles the entries into one module — which is how passing two
+packages at once produces *"more files to visit than the linker's queue holds (at most 1024)"*. So a
+multi-entry invocation is not several compiles sharing a process; it is one larger compile, and there
+is nothing to save.
+
+The change is reverted. What it establishes:
+
+- **the native/Deno split is not the lever** — 280 of 340 files native changed the wall clock by
+  nothing;
+- **the invocation count is not the lever either**;
+- **the profile costs what it costs because it compiles 340 test files**, and the only things that
+  touch that are a warm compiler across invocations, or profiling fewer files.
+
+The 53-second directory figure remains unexplained by anything reachable from here, and is the one
+measurement in this issue that should be repeated before being reasoned from again.
+
+### The 53 seconds was warm and every profile run is cold — agent-b, 2026-08-31
+
+This is the answer to why none of the levers moved, and it is one line of `stageProject`:
+
+    const notSource = new Set([".git", "node_modules", ".cache"]);
+
+**A profiling run compiles every test file cold.** The staged copy is a fresh tree with no `.cache`,
+so the build cache that `issues/system/0204` gave `wac test` is empty on every run — and this issue's
+own note measures the difference: *"`packages/box/test/wac` was 18s cold and 7s warm where a hit is
+about one second"*. One second against the ~5s a file observed tonight is the whole of the gap
+between the 53-second directory figure and everything measured since.
+
+**The keys would match.** `buildCachePath` keys on what the caller named plus the source texts, not
+on an absolute path — *"a directory with the same sources answers the same key"* — and `buildProfile`
+runs with `cwd` set to the staged root and passes the same relative entries. So the staged run asks
+for exactly the keys the real tree holds and finds an empty cache to ask.
+
+**And excluding `.cache` is right**, which is why this is not a bug: it was 815 MB here, and copying
+it would cost more than the compiles it saves. The fix is to let the staged run *reach* the real
+cache rather than to copy it.
+
+**Checked, since the change depends on it.** A profile run compiles *mutated* sources, so it must not
+leave entries a later real build would hit. `buildCachePath` hashes the sources themselves —
+
+    h.eat(texts[i]);
+
+— so a mutant hashes differently and keys to its own entry. It can miss; it cannot be mistaken for
+the clean source. That is also why the aggregate's filename is deliberately kept out of the key: the
+name carries the clock and would miss every time, and the text goes in instead.
+
+**So the ordering of levers in this issue is wrong.** Native profiling, the invocation count and the
+Deno/wac split are all second-order; the pass is 340 cold compiles, and the cache is sitting next to
+it excluded by name.
+
+### If the staged run reaches the real cache, only the *profile* may
+
+The cache is bounded, not unbounded: `sweepBuildCache` keeps a fixed number of artefacts and
+`$WAC_BUILD_CACHE_KEEP` overrides the count. So the hazard of sharing it is not bloat, it is
+**eviction** — a mutation pass compiles a mutated tree once per mutant, and those compiles would push
+out the entries a developer's own builds rely on. The cache would end up holding nothing but mutants
+and the machine would get slower at everything else.
+
+The two phases are not alike, which is what makes this workable:
+
+- **`buildProfile` runs once, on the staged copy, before any mutant is applied.** Its compiles are of
+  the *clean* sources, so its artefacts are exactly the ones a real build wants. Sharing here is a
+  gain both ways.
+- **The mutant runs compile mutated sources.** Their artefacts are worth nothing to anyone else and
+  there are as many as there are mutants. These must stay in the staged tree.
+
+So the change is narrower than "let the staged run see `.cache`": it is *the profiling pass* that
+should, and the mutant runs that should not. Anyone doing it should check where the boundary falls in
+`stageProject`'s callers rather than in `stageProject` itself, since the same staged root serves both.
+
+**Checked, because the whole proposal rests on it.** `buildProfile` is called at two places and
+`applyEdits` — the only thing that mutates a source — at two others, and they do not interleave: the
+profile compiles clean sources in both paths. **And the equivalence check is not a second site, which I said it was and it is not.** It compiles
+every mutant, so by count it is the larger number — but through `api.emitFiles(...)`, in process,
+with no subprocess and no `wac build`. It never reaches the build cache, which is also why this issue
+already measures it at *"66 ms each, about 3 seconds for 40"*. It applies no eviction pressure at
+all.
+
+So there is **one** site to isolate: the run loop, which spawns `wac test` against mutated sources
+and compiles a test aggregate each time. Corrected because the earlier wording pointed at a path that
+cannot affect the cache, which would have someone isolating the harmless one while the real one
+stayed shared.

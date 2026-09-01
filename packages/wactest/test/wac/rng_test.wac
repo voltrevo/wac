@@ -197,3 +197,51 @@ export string test_a_free_function_can_extend_the_shared_rng() {
   }
   return t.report();
 }
+
+/**
+ * `intTop` is the other family, and lands elsewhere than `upto` from the same state.
+ *
+ * The header of `rng.wac` measures the two disagreeing on 37% of draws, so a caller picking the wrong
+ * one gets a different corpus from the same seed and nothing says so. That is a claim about the two
+ * being genuinely different, and a test that only checked the range would pass on one implementation
+ * of both.
+ */
+export string test_intTop_is_a_different_draw_from_upto() {
+  T t = T.create();
+  Rng a = Rng(0xC6E5747A);
+  Rng b = Rng(0xC6E5747A);
+  i32 differed = 0;
+  for (i32 i = 0; i < 200; i++) {
+    if (a.intTop(10) != b.upto(10)) { differed = differed + 1; }
+  }
+  t.isTrue(differed > 0,
+           "intTop and upto agreed on all 200 draws — one of them is not the family it claims");
+
+  // In range, which is the property every caller depends on.
+  Rng r = Rng(99);
+  for (i32 i = 0; i < 200; i++) {
+    i32 v = r.intTop(7);
+    t.isTrue(v >= 0 && v < 7, "intTop(7) drew " + itoa(v) + ", outside its own range");
+  }
+  return t.report();
+}
+
+/**
+ * The guard, at both ends — and the reason it is `0` rather than a trap.
+ *
+ * `upto` answers 0 for a non-positive `n` and this matches it, so a caller can move between the two
+ * without a second rule to remember. The state must be untouched by a refused draw for the same
+ * reason `upto`'s test says so: a guard that consumed a draw would make the next one depend on how
+ * many times somebody asked for nothing.
+ */
+export string test_intTop_refuses_a_non_positive_bound_without_spending_a_draw() {
+  T t = T.create();
+  Rng r = Rng(777);
+  t.eqI32(r.intTop(0), 0, "intTop(0)");
+  t.eqI32(r.intTop(-5), 0, "intTop(-5)");
+  Rng a = Rng(4321);
+  Rng b = Rng(4321);
+  a.intTop(0);
+  t.eqI32(a.intTop(100), b.intTop(100), "a refused draw advanced the state");
+  return t.report();
+}

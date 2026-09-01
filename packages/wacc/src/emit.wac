@@ -7925,7 +7925,24 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // an `f32` multiply: an earlier attempt at this rule in `operandType` applied it to both and
       // broke twelve corpus files. `issues/lang/0117`.
       if (isComparisonOp(k) && (ot == "" || ot == "bool")) {
-        ot = isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "i32";
+        // **And `i32` is only right while the literals fit one.** `(-9223372036854775807 - 1) < 0`
+        // compared two constants truncated to 32 bits and answered false; both sides land on
+        // `0x00000000`, so `>= 4294967296` held as well. `issues/lang/0306b`.
+        //
+        // The width goes here rather than in `operandType` for the reason the paragraph above gives
+        // about floats, and it is the same reason: this is the one place that knows the slot has no
+        // opinion. Putting it in `operandType` reaches *arithmetic* too, where the slot does have
+        // one — `low == (0 - 2147483648)` with an i32 `low` emits the right-hand side at i32, and a
+        // widening there produced `i64.sub` under a promise of i32 and an invalid module. Measured:
+        // it broke `spec/cases/0294` while the fuzzer called it perfect over 600 programs.
+        if (isFloatLiteral(left) || isFloatLiteral(right)) {
+          ot = "f64";
+        } else if (integerLiteralsFitI32(src, lexed, left)
+                   && integerLiteralsFitI32(src, lexed, right)) {
+          ot = "i32";
+        } else {
+          ot = "i64";
+        }
       }
       emitExprAt(fb, src, lexed, env, left, ot);
       // **A shift's amount is not the shift's type.** wac lets `wide >> narrow`, and wasm's
@@ -9608,7 +9625,21 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
       findLambdasLv(env, src, lexed, target, ret);
       string tw = "";
       match (target.kind) {
-        case LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
+case LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
+        // **A field target types the lambda too.** `h.f = (i32 x) => …` left `tw` empty, so the
+        // walk had no expected type for the lambda and declined the whole module — *a lambda … in
+        // a position the walk does not type yet*. The same lambda as a constructor argument was
+        // fine, which is what says the shape is supported and only this position was missed.
+        // `issues/lang/0303c`.
+        case LField(base, fieldTok): {
+          match (base.kind) {
+            case LIdent(btok): {
+              string ot = env.walkTypeOf(tokenTextOf(src, lexed, btok));
+              if (ot != "") { tw = env.fieldType(ot, tokenTextOf(src, lexed, fieldTok)); }
+            }
+            else: { }
+          }
+        }
         else: { }
       }
       findLambdasExpr(env, src, lexed, rhs, tw);
@@ -11544,6 +11575,32 @@ bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
     case Binary(op, left, right): {
       return integerLiteralsFitI32(src, lexed, left) && integerLiteralsFitI32(src, lexed, right);
     }
+    // **A ternary passes its arms' values out untouched, so their literals are this expression's.**
+    // Missing here is what `issues/lang/0306b` was: `(((true ? 2147483648 : 2147483648) / 3) as~ i32)`
+    // answered -715827882, because the ternary fell to `else` below, this walk said the literals fit
+    // an i32, the cast arm therefore left `want2` at the target, and `2147483648` emitted as
+    // `i32.const -2147483648` before the clamp ever ran. `issues/lang/0281b` fixed the bare literal;
+    // a literal one shape deeper defeated the same guard.
+    //
+    // **The condition is not asked**, and that is the point of naming the arms rather than walking
+    // the node: a condition's value does not leave the ternary, so a wide literal inside it says
+    // nothing about the type this expression needs.
+    case Ternary(cond, then, els): {
+      return integerLiteralsFitI32(src, lexed, then) && integerLiteralsFitI32(src, lexed, els);
+    }
+    // A match expression is the same shape with more arms — the subject is its condition.
+    case MatchExpr(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        Expr? v = arms[i].value;
+        if (!(v is null) && !integerLiteralsFitI32(src, lexed, v!)) { return false; }
+      }
+      return true;
+    }
+    // **`true` is the unsafe default and stays deliberately.** Every remaining shape either gives the
+    // literal a type of its own — a `Cast` narrows it, a `Call` takes the parameter's — or does not
+    // carry one out at all. What made this a bug was that the two shapes above are neither, and the
+    // `else` arm cannot tell the difference: it answers "they fit" for anything nobody has looked at.
+    // A shape added to the language that passes a value through untouched belongs above this line.
     else: { return true; }
   }
 }

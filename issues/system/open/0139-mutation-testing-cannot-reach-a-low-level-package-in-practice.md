@@ -197,3 +197,70 @@ just as well without interning. Three profiles are kept; older ones can never hi
 
 So the remaining work here is unchanged and is now the whole of it: the per-scope baseline, 4m53s for
 gzip's scope, either reused across runs or made parallel (1.8x, measured above).
+
+## The baseline is cold too, and that may be the whole of it — agent-b, 2026-08-31
+
+The remaining work here is *"the per-scope baseline, 4m53s for gzip's scope, either reused across
+runs or made parallel"*. Both of those treat the cost as inherent. It may not be.
+
+A baseline runs a scope's tests **in the staged copy**, and `stageProject` excludes `.cache`:
+
+    const notSource = new Set([".git", "node_modules", ".cache"]);
+
+So a baseline compiles every test file it runs from cold, exactly as the profile does — and
+`issues/system/0161` measures what that costs there: about 5s a file against roughly one second for a
+cache hit, with that issue's own note recording `packages/box/test/wac` as *18s cold and 7s warm*.
+
+### Retracted the same day, before anyone acted on it — agent-b, 2026-08-31
+
+**The reasoning above is wrong, twice over.** It is left standing because the mistake is the useful
+part: it reads as a tidy mechanism and was never traced.
+
+The repo's `.cache` is where *tests* keep scratch files, and says nothing about whether a build is
+cold. `buildCachePath` (`packages/wac/src/wac.wac:457`) roots the build cache at `wacHomeOf(cli)` —
+`$WAC_HOME`, **outside the checkout** — so the staged copy shares it.
+
+Reading the key predicts the opposite of what I wrote. It eats `WAC_COMPILER_ID`, the command, the
+`target`, the grants and the source `texts`; `testCommand` passes the scope **relative** with `cwd`
+set to the staged root, a baseline runs unmutated sources, and the V8 host sets `WAC_COMPILER_ID`
+itself when it is unset (`native/v8/src/main.rs:794`), so the tool's environment cannot withhold it.
+Every component is identical to a run in the real checkout: **a staged baseline should hit.**
+
+And the profiling half cannot be fixed by staging at all. `wac.wac:1879` reads `WAC_PROFILE` before
+the key is built at 1882 and sets `cachePath = ""` — because a hit would serve the *plain* module to
+a run whose whole purpose is the counters, and the profile would come back empty, which reads as
+"this entry has no tests" rather than as an error. `--coverage` and `--trace` are refused on the same
+line. That bypass is load-bearing and is not a staging artefact.
+
+So the two proposals at the top of this section are **not** undermined; there may be no cold-cache
+story here at all. What survives is the *per-invocation* cost on `issues/system/0161`: `buildProfile`
+spawns the binary once per file and pays a compile each time, ~5s a file against the 0.64s/file one
+directory-wide `wac test --coverage` achieves. That is about spawns rather than staging, and its
+remedy — profile a directory in one call and split the JSON by entry — is untouched by any of this.
+
+### An accidental cold measurement — agent-b, 2026-09-01
+
+The disk hit 100% and `wac test` could not write its scratch, so this workspace's `.cache` (846 MB)
+was deleted. The next gate is therefore a cold run against two warm ones from the same night, on the
+same tree give or take a few commits:
+
+    gate  suite   ratchets  total   .cache
+    240   338s    137s      578s    warm
+    241   402s    137s      578s    warm
+    242   558s    179s      776s    **deleted**
+
+So the directory is worth roughly **200 seconds of gate**, and the load average was *lower* on the
+cold run (1.43 against 3.07), which if anything understates it.
+
+**What this does and does not say.** It does not resurrect the mechanism retracted above: the build
+cache is still under `$WAC_HOME` and a staged copy still shares it. `.cache` holds generated
+*fixtures* — tor keys, corpora, the shells' scratch — as well as build products, and regenerating
+those is a plausible whole explanation on its own. What the number establishes is only that the
+directory is not free, which the retraction left open in both directions.
+
+Anyone wanting the mechanism should split it: time a suite with `.cache` present but the build cache
+in `$WAC_HOME` cleared, against the reverse. One observation each, and cheap.
+
+**The check is unchanged and still worth running:** time one scope's baseline staged against the same
+scope in the checkout. Predicted close, because both should hit. If the staged one is far slower, the
+key is missing something this reading says it has, and *that* is the finding.

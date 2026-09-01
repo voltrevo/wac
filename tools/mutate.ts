@@ -96,7 +96,8 @@ import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type E
   from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
-import { classify, WAC_BIN } from "./mutate/native.ts";
+import { classify, isWacRun as runsNatively, mergeRuns, WAC_BIN,
+  type NativeVerdict } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("wac task mutate");
@@ -563,6 +564,16 @@ console.log(
 //
 // Read-only by construction: it never mutates a file and never spawns a test other than the
 // profiling pass, so it cannot produce a score and does not pretend to. `issues/system/0161`.
+// **Declared here rather than beside their prose below**, because `--explain-selection` runs at
+// module level and calls `testDirs`, which reads `hostless`. With the declarations further down that
+// is a temporal dead zone and the mode dies with `Cannot access 'hostless' before initialization` —
+// which it has done since 2026-08-17, so the flag that exists to measure this tool has not run since
+// the day after the measurement `issues/system/0161` still quotes. Empty sets, so lifting them costs
+// nothing and the comments explaining each stay where they are read.
+const hostless = new Set<string>();
+const hostlessDirs = new Set<string>();
+const nativeRunnableDirs = new Set<string>();
+
 if (explain) {
   // **Staged, like every other measurement here.** This mode mutates nothing, which makes it
   // tempting to profile the working tree directly — and that is exactly the mistake the staging
@@ -573,7 +584,19 @@ if (explain) {
   await stageProject(root);
   console.log(`  measuring ${stagedFrom()}`);
   const scope = [...new Set(toRun.flatMap((t) => testDirs(t.mutant)))].sort();
-  const files = await testFilesIn(scope.map((d) => `${root}/${d}`));
+  // **The same two gatherers the real profiling pass uses**, which this mode did not have.
+  // `testFilesIn` finds `.test.ts` and nothing else, so with the suite's tests now mostly wac it saw
+  // 60 files where a real run sees those plus 474 `*_test.wac` — and every line covered only by a
+  // wac test read as unreachable. Measured on 2026-08-31: `1 narrowed, 20 widened, 19 unhit` against
+  // `20 narrowed, 20 widened, 0 unhit` when the tests were TypeScript. A selection report that
+  // cannot see half the suite is the failure this tool exists to detect, in the tool.
+  for (const d of scope) {
+    if ((await testFilesIn([`${root}/${d}`])).length === 0) hostlessDirs.add(d);
+  }
+  const files = [
+    ...await testFilesIn(scope.map((d) => `${root}/${d}`)),
+    ...await wacEntriesIn(scope.filter((d) => hostlessDirs.has(d)).map((d) => `${root}/${d}`)),
+  ];
   const rel = files.map((f) => f.slice(root.length + 1));
   console.log(`profiling ${rel.length} test file(s) across ${scope.length} scope(s)…`);
   const p = await buildProfile(root, rel, (m) => console.log(m), { noCache: noProfileCache });
@@ -783,9 +806,8 @@ function testDirs(m: Mutant): string[] {
  * skip a test, it fails the run.
  */
 /** Whether these targets are run by the binary rather than by Deno — see `testCommand`. */
-function isWacRun(dirs: string[]): boolean {
-  return dirs.length > 0 && dirs.every((d) => hostless.has(d.split("/")[1] ?? ""));
-}
+/** The two sets this tool fills; the rule itself is in `native.ts`, where it can be tested. */
+const isWacRun = (dirs: string[]): boolean => runsNatively(dirs, hostless, nativeRunnableDirs);
 
 function testCommand(work: string, dirs: string[], filter?: string): Deno.Command {
   // **The binary, for a scope whose tests are wac files.** `wac test` takes directories and finds the
@@ -993,7 +1015,29 @@ let unmeasurable: typeof toRun = [];
  * them is scoped to its *own* package and run with `wac test`, rather than measured against dependents
  * that never touch it. `issues/system/0183`.
  */
-const hostless = new Set<string>();
+// (declared above the `--explain-selection` block; see the note there)
+/**
+ * Test *directories* holding no `.test.ts`, which is not the same question as the package.
+ *
+ * `hostless` asks whether a **package** has any TypeScript test, and disqualifies the whole of it.
+ * `packages/wacc/test/wac` holds ninety wac test files and no TypeScript; the three `.test.ts` that
+ * disqualify it are one directory up, in `packages/wacc/test`. So the largest wac corpus in the
+ * repository is profiled and run through Deno on the strength of files the runner is never handed.
+ *
+ * Kept beside `hostless` rather than replacing it: `isBlindScope` means the package and is right to.
+ */
+// (declared above the `--explain-selection` block; see the note there)
+/**
+ * Directories that may be *run* by the binary — `hostlessDirs`, and every wac entry in them profiled
+ * natively with nothing skipped.
+ *
+ * The second half is the one that matters and is easy to leave out. A directory with no `.test.ts`
+ * can still hold a wac test that wants a host oracle; the binary skips it, the rest pass, the run
+ * exits 0, and the mutant is scored **survived** by a suite that never ran the test which would have
+ * killed it. `wacShare` already refuses a profile whose `skipped` is non-empty, so membership in
+ * `profile.native` is exactly the evidence needed, and it was being computed and thrown away.
+ */
+// (declared above the `--explain-selection` block; see the note there)
 /** Mutants measured through `wac test` rather than `deno test`, for the report. */
 let viaWac: typeof toRun = [];
 let profile: Profile | null = null;
@@ -1124,14 +1168,35 @@ try {
     // nothing to a Deno-only walk, so its mutants had no coverage data and every one of them fell back
     // to running the whole package — 38 s a mutant for `gzip`, of which 36 is two differential entries
     // almost no mutant needs. `issues/system/0183`.
+    // **Which directories hold no TypeScript test**, asked of the directory the runner is handed
+    // rather than of its package — see `hostlessDirs`. The same `testFilesIn` with a narrower
+    // argument, so this adds a walk per scope directory and no new notion of what a test is.
+    for (const d of scope) {
+      if ((await testFilesIn([`${workDirs[0]}/${d}`])).length === 0) hostlessDirs.add(d);
+    }
     const files = [
       ...await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`)),
-      ...await wacEntriesIn(
-        scope.filter((d) => hostless.has(d.split("/")[1] ?? "")).map((d) => `${workDirs[0]}/${d}`),
-      ),
+      ...await wacEntriesIn(scope.filter((d) => hostlessDirs.has(d)).map((d) => `${workDirs[0]}/${d}`)),
     ];
     const rel = files.map((f) => f.slice(workDirs[0].length + 1));
     profile = await buildProfile(workDirs[0], rel, (m) => console.log(m), { noCache: noProfileCache });
+    // **Now the profile can say which of those may also be *run* natively.** A directory qualifies
+    // when it has wac entries and every one of them was profiled with nothing skipped; anything
+    // else stays on the Deno path, which is slower and cannot produce a false survival.
+    for (const d of scope) {
+      if (!hostlessDirs.has(d)) continue;
+      const entries = (await wacEntriesIn([`${workDirs[0]}/${d}`]))
+        .map((f) => f.slice(workDirs[0].length + 1));
+      if (entries.length > 0 && entries.every((f) => profile!.native.has(f))) {
+        nativeRunnableDirs.add(d);
+      }
+    }
+    const gained = [...nativeRunnableDirs].filter((d) => !hostless.has(d.split("/")[1] ?? ""));
+    if (gained.length > 0) {
+      console.log(`  native: ${gained.length} director(ies) run by the binary that the package ` +
+                  `test would have sent to Deno — ${gained.slice(0, 3).join(", ")}` +
+                  `${gained.length > 3 ? ", …" : ""}`);
+    }
     console.log(
       `  profile: ${profile.home.size} test(s) across ${rel.length} file(s), ` +
       `${profile.known.size} covered line(s)`);
@@ -1258,25 +1323,45 @@ try {
         for (const f of touched) await Deno.writeTextFile(`${work}/${f}`, sources.get(f)!);
         continue;
       }
-      const cmd = testCommand(work, runDirs, filter);
-      const child = cmd.spawn();
+      // **A mixed scope is two runs, not one.** `testCommand` returns a single command, so a set
+      // holding both a directory the binary runs and one Deno runs used to go to Deno entire. That
+      // is correct only while the wrappers exist: after `issues/system/0161` step 3 deletes them the
+      // wac half cannot run under Deno at all, so it silently does not run and the mutant reads as
+      // survived. Split here, merge below.
+      const wacHalf = runDirs.filter((d) => isWacRun([d]));
+      const denoHalf = runDirs.filter((d) => !isWacRun([d]));
+      const halves = wacHalf.length > 0 && denoHalf.length > 0 ? [wacHalf, denoHalf] : [runDirs];
       let timedOut = false;
       // The full scope's baseline, not the narrowed run's: a narrowed run is a subset and therefore
       // faster, so this errs towards a longer deadline, which is the safe direction for a scoring
       // rule that counts a timeout as a kill.
+      //
+      // **One deadline across both halves rather than one each**, so a mixed scope cannot quietly
+      // take twice as long as the baseline it is measured against.
       const deadline = deadlineFor(baselineMs.get(dirs.join(" ")) ?? 0);
-      const timer = setTimeout(() => {
-        timedOut = true;
-        try { child.kill("SIGKILL"); } catch { /* already gone */ }
-      }, deadline);
-      const { code, stdout, stderr } = await child.output();
-      clearTimeout(timer);
-
-      const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+      const startedAt = Date.now();
+      let output = "";
+      const verdicts: NativeVerdict[] = [];
+      for (const half of halves) {
+        const cmd = testCommand(work, half, filter);
+        const child = cmd.spawn();
+        const timer = setTimeout(() => {
+          timedOut = true;
+          try { child.kill("SIGKILL"); } catch { /* already gone */ }
+        }, Math.max(1, deadline - (Date.now() - startedAt)));
+        const { code, stdout, stderr } = await child.output();
+        clearTimeout(timer);
+        output += new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+        if (timedOut) break;
+        // A `wac test` run says which kind; a Deno run says only non-zero, which has always meant
+        // killed here. Both become the same type so one rule merges them.
+        verdicts.push(isWacRun(half)
+          ? classify(code)
+          : code !== 0 ? { kind: "killed" } : { kind: "survived" });
+      }
       // A timeout counts as killed: an infinite loop is a detected defect, not a silent one.
-      // Otherwise a Deno run says so with any non-zero, and a `wac test` run says which kind.
-      const verdict = isWacRun(runDirs) && !timedOut ? classify(code) : null;
-      const killed = timedOut || (verdict === null ? code !== 0 : verdict.kind === "killed");
+      const verdict = timedOut ? null : mergeRuns(verdicts);
+      const killed = timedOut || (verdict !== null && verdict.kind === "killed");
       const noVerdict = verdict === null || verdict.kind === "killed" || verdict.kind === "survived"
         ? undefined
         : verdict.kind === "no-tests-here"

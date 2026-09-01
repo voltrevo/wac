@@ -258,3 +258,92 @@ export string mergedTimes(string existing, string[] fresh) {
   }
   return out;
 }
+
+/**
+ * Test daemons this workspace left running, which no sweep over `/tmp` can see.
+ *
+ * `issues/system/0136` is about files and its sweeps work — 30 `wac-` entries where it once counted
+ * 2,300. What it cannot reach is a *process*: on 2026-08-31 nine servers from this workspace's own
+ * `.cache` were still up after 33 and 45 hours — `echod`, `udppeer`, a `greet-node` — because the
+ * tests that started them died before `stop()` ran. Killing them freed 3 GB on a box whose gate
+ * refuses to run below 4,000 MB, so this is memory rather than disk, and memory is the one that
+ * stops everybody's pushes.
+ *
+ * ## The two conditions, and why the first is the safety property
+ *
+ * **Its command line mentions this workspace's own `.cache`.** Three agents share the machine and
+ * their workspace paths differ, so `agent-b`'s sweep cannot reach `agent-a`'s processes even in
+ * principle. That is what makes a kill safe to do unattended, and it is not a refinement of the age
+ * test — it is load-bearing. `ps` says PID 1 is fourteen days old; an age rule alone would reap
+ * `init`.
+ *
+ * **And it is older than `STALE_MS`** — two hours, six times the longest declared test (1204s, in
+ * `packages/wacc/test/wac/corpusemit_test.wac`). `sweepStaleTemp` uses a day for files and this is
+ * deliberately shorter: a leaked file costs disk, which is plentiful, and a leaked server costs
+ * memory continuously, which is what the gate refuses on.
+ *
+ * Reports only when it acted, like the sweeps above.
+ */
+const i64 STALE_MS = 7200000 as i64;
+
+export void reapStaleDaemons(Core core, Cli cli) {
+  reapMatching(core, cli, cli.cwd().wait() + "/.cache/", STALE_MS);
+}
+
+/**
+ * The rule with both of its conditions named, so a test can exercise them without becoming a hazard.
+ *
+ * **The first version let a test pass a bound and nothing else**, and a bound of zero — the only way
+ * to show the rule fires at all — then matched every process under this workspace's `.cache`. Run in
+ * a suite lane that is one of four, it killed another lane's build, which reported
+ * `greet.wac for node did not build:` with nothing after the colon, because a killed process leaves
+ * no error text. The case passed alone and broke the suite: exactly the shape a two-hour bound was
+ * supposed to make impossible, reintroduced by the test for it.
+ *
+ * So `needle` is a parameter too. A caller proving the bound fires narrows to its own probe; the
+ * housekeeping call passes the whole of `.cache`, which is what it means.
+ */
+export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
+  string mine = needle;
+  Exec listed = cli.execWith("/bin/ps", string[]("-eo", "pid,etimes,args", "--no-headers"),
+                             u8[0](), string[0](fill: ""), false, false).wait();
+  if (!listed.ran()) { return; }
+
+  string[] lines = splitLines(string.fromBytes(listed.stdout));
+  i32 reaped = 0;
+  string first = "";
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = lines[i];
+    if (line.indexOf(mine) < 0) { continue; }
+    // Scanned as bytes: a `string` is not indexable, which `packages/fmt/src/itoa.wac` also does.
+    u8[] b = line.toBytes();
+    // `pid etimes args`, so the first two fields are what this needs and the rest is the command.
+    i32 at = 0;
+    while (at < b.len() && b[at] == 32) { at = at + 1; }
+    i32 pidFrom = at;
+    while (at < b.len() && b[at] != 32) { at = at + 1; }
+    // Offsets come from the byte scan; `slice` is a string method and `ps` output is ASCII.
+    string pid = line.slice(pidFrom, at);
+    while (at < b.len() && b[at] == 32) { at = at + 1; }
+    i32 ageFrom = at;
+    while (at < b.len() && b[at] != 32) { at = at + 1; }
+    i64 seconds = 0 as i64;
+    for (i32 d = ageFrom; d < at; d++) {
+      if (b[d] < 48 || b[d] > 57) { seconds = 0 as i64; break; }
+      seconds = seconds * (10 as i64) + ((b[d] - 48) as i64);
+    }
+    if (seconds * (1000 as i64) < staleMs) { continue; }
+    cli.execWith("/bin/kill", string[]("-9", pid), u8[0](), string[0](fill: ""), false, false).wait();
+    if (first == "") { first = pid; }
+    reaped = reaped + 1;
+  }
+  if (reaped > 0) {
+    // **Says what it matched**, because the housekeeping call and a test exercising the rule print
+    // the same line otherwise, and one of them reaping something is ordinary while the other is
+    // news. Reading `reaped 2` in a gate log without that, I took a test's kill for a leak found —
+    // it was the test with an unscoped bound taking its own probe *and* another lane's build.
+    core.log("reaped " + itoa(reaped) + (reaped == 1 ? " stale daemon" : " stale daemons") +
+             " matching " + needle + ", first pid " + first +
+             " — a test that died before stop() (0136)");
+  }
+}

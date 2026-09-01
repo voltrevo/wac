@@ -44,7 +44,7 @@ emitted instruction is right; something ahead of it folds the constant with `as@
 The literal itself is not the problem — `export i64 plainLit() { return 4294967296; }` returns
 `4294967296`.
 
-**Found by `tools/fuzz.ts` after it was repointed from the reference to wacc**, which is how it had
+**Found by tools/fuzz.ts (deleted 2026-08-31; now `tools/wac/langfuzz.wac`) after it was repointed from the reference to wacc**, which is how it had
 gone unnoticed: the fuzzer's oracle is the generated tree, and it was checking the TypeScript
 reference, which gets these right. Seeds 13 and 31 of `--count 40 --seed 1` both fail on this and
 both agree with the reference. Two of forty programs, so the generator reaches it easily once it is

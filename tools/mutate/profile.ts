@@ -71,6 +71,21 @@ export type Profile = {
    * spawn a real OpenSSH client.
    */
   cost: Map<string, number>;
+  /**
+   * The test files `wac test --coverage` profiled with **nothing skipped**.
+   *
+   * `wacShare` returns null when the JSON lists anything in `skipped`, so membership here is a
+   * statement that every test in the file actually ran under the binary. That is the evidence the
+   * *running* half needs and could not previously see: a directory with no `.test.ts` in it may
+   * still hold a wac test that wants a host oracle, and running such a scope natively skips that
+   * test, passes, and scores the mutant as **survived** — a false survival, which is the one
+   * direction `issues/system/0161` says must never be guessed at.
+   *
+   * Absent from a cached profile written before this field existed, and the reader turns that into
+   * an empty set rather than a missing one: an old cache then declines to run anything natively,
+   * which is slow and cannot be wrong.
+   */
+  native: Set<string>;
 };
 
 type Raw = { entry: string; all: string[]; tests: Record<string, string[]> };
@@ -190,6 +205,7 @@ export type StoredProfile = {
   home: [number, string][];
   testFiles: string[];
   cost: [string, number][];
+  native?: string[];
 };
 
 /** How many profiles to keep. Each is tens of megabytes and only the current tree's can hit. */
@@ -207,6 +223,7 @@ export async function readCached(key: string): Promise<Profile | null> {
       home: new Map(raw.home.map(([i, f]) => [n[i], f])),
       testFiles: raw.testFiles,
       cost: new Map(raw.cost),
+      native: new Set(raw.native ?? []),
     };
   } catch {
     return null;
@@ -253,6 +270,7 @@ export async function writeCached(key: string, p: Profile): Promise<void> {
     known: [...p.known],
     testFiles: p.testFiles,
     cost: [...p.cost],
+    native: [...p.native],
   };
   try {
     await Deno.mkdir(CACHE_DIR, { recursive: true });
@@ -526,7 +544,7 @@ export async function buildProfile(
         }
       }
     }
-    const built = { lines, known, home, testFiles, cost };
+    const built = { lines, known, home, testFiles, cost, native: new Set(native.keys()) };
     if (key !== null) await writeCached(key, built);
     return built;
   } finally {

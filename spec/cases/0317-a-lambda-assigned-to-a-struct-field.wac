@@ -1,0 +1,31 @@
+// expect: answers f = 3
+// why: the walk types a lambda on the right of a field assignment, not only an identifier one
+//
+/**
+ * A lambda assigned to a **struct field**.
+ *
+ * `issues/lang/0303c`. The emitter declined the whole module — *a lambda (this module has 90, 1 in
+ * a position the walk does not type yet)* — because `findLambdasStmt`'s `Assign` case computed the
+ * target's type for `case LIdent` and sent every other target to an empty `else`. With no expected
+ * type the lambda was never typed, and one untyped lambda declines the module rather than the
+ * statement.
+ *
+ * **The same lambda as a constructor argument always worked**, which is what says the shape was
+ * supported and only this position was missed. Both are in this case for that reason: if a change
+ * ever types one and not the other, the difference is the bug.
+ *
+ * Why it matters beyond a struct: `Cli` is a struct of function fields, and replacing one is how a
+ * caller hands a child a narrower capability than it holds itself. That is the shape
+ * `design/system/0001` asks for and it did not compile.
+ */
+struct Holder {
+  fn[i32(i32)] f;
+}
+
+export i32 f() {
+  Holder h = Holder((i32 x) => x + 1);
+  if (h.f(1) != 2) { return 0 - 1; }
+
+  h.f = (i32 x) => x + 2;
+  return h.f(1);
+}

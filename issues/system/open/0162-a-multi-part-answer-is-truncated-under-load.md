@@ -138,3 +138,307 @@ Because the evidence exists now and will not next time. It took a message that n
 rather than what it wanted, and that message is one run old — the same failure has been seen at least
 twice before (0155, and the run 0155 itself reports) with nothing to distinguish the two hypotheses.
 A third sighting with no diagnosis would be a third hour spent on the fork.
+
+## A mechanism for the cancel-heavy prefix, from reading — agent-b, 2026-08-31
+
+This issue notes *"96 cancelled and 105 spent by then"* and calls a cancel-heavy prefix the shape the
+ring's hardest interleavings live in. Here is a way that prefix could truncate an answer, offered as
+a **hypothesis from reading** rather than a measurement — nothing below has been reproduced.
+
+`cancel` in `host/call.ts` has a fast path for a slot whose answer has already arrived:
+
+    if (Atomics.load(b.ctrl, at + S_STATUS) === ST_READY) { release(b, t.slot); return; }
+
+`release` frees the response buffer, bumps the generation and stores `ST_FREE` — so the slot is
+**immediately reusable**. What it cannot do is clear `pending[slot]`, `partial[slot]` or
+`finalStatus[slot]`, because those live in `host/respond.ts` on the other side of the bridge and
+`call.ts` cannot reach them. Only `abandon` clears them, and this path never reaches `abandon`.
+
+So cancelling a **multi-part** answer between its first chunk and its `OP_CONTINUE` leaves a tail
+attached to a slot that is free for the next call. The `ST_PENDING → ST_RUNNING` exchange in the
+`OP_CONTINUE` handler guards a cancel landing *between the sweep and there*; it does not notice that
+`pending[slot]` belongs to a call that no longer exists.
+
+**What would confirm or kill it**, cheaper than reproducing the fuzz failure:
+
+- ~~Whether `abandon` is reached for a slot cancelled at `ST_READY`.~~ **Checked: it is not.** The
+  sweep is `if (st === ST_PENDING) take(s); else if (st === ST_CANCELLED) abandon(s);` and nothing
+  looks at `ST_FREE`. A slot the fast path released straight to free is never visited again, so its
+  `pending[slot]` is never cleared. That does not make the hypothesis true — it removes the cheapest
+  way it could have been false.
+- ~~Whether a multi-part answer can be cancelled mid-sequence.~~ **Checked, and it refines the
+  hypothesis rather than killing it.** `collect` is a synchronous loop — `awaitReady` blocks and the
+  slot is held across every chunk — so the *collecting* caller can never cancel between them. The
+  window is a different one: a `Pending` the guest **abandons without ever collecting**, whose first
+  chunk the host has already written with `STATUS_MORE`. `S_STATUS` is then `ST_READY`, `cancel`
+  takes the fast path, and the tail is left behind. That is precisely `issues/system/0311b`'s path,
+  which is measured at 5 of 5 on the Deno host for a single-part answer.
+- `pending[slot] !== null` at the moment a slot is handed out would be a cheap assertion, and it
+  fails *loudly* where this fails as 48,369 missing bytes.
+
+Related: `issues/system/0311b` is about the same `release` call discarding a completed answer, which
+is how I came to be reading it. Its measurement is 5 of 5 on the Deno host, but for a *single*-part
+answer; this is the multi-part consequence of the same line, and is unmeasured.
+
+### Followed to the end, and the mechanism does not deliver — agent-b, 2026-08-31
+
+**Retracting the truncation claim above.** The three legs hold and the conclusion does not.
+
+What is true: `cancel`'s fast path releases a slot without reaching `abandon`, the sweep looks only at
+`ST_PENDING` and `ST_CANCELLED` so it never revisits a freed slot, and `pending[slot]` is therefore
+left set. Multi-part answers are reachable from an abandonable `Pending`, since `write` splits
+anything past the pooled buffer and the reported answer — 179,994 bytes — is past it.
+
+What is missing is a path that ever **reads** the stale value. `pending[slot]` is consulted only when
+`op === OP_CONTINUE`, and only `collect` sets that, on a slot it owns, for an answer whose first
+chunk said `STATUS_MORE`. So:
+
+- if the next call on that slot is **multi-part**, `write` overwrites `pending[slot]` with its own
+  tail before its guest can ask for it;
+- if it is **single-part**, `OP_CONTINUE` is never sent and the stale tail is never read.
+
+Either way nothing stale is delivered. The leftover state is real and untidy — an assertion that
+`pending[slot]` is null when a slot is handed out would still be worth having, and would cost
+nothing — but it is not this bug.
+
+**Recorded rather than deleted**, because the next reader will notice the same asymmetry between
+`release` and `abandon` and should not have to re-derive why it is harmless. `issues/system/0307b`
+was filed this morning off exactly this kind of shape, where the dangerous-looking pattern was real
+and the path that would reach it was not.
+
+### One variant of "two answers for one slot" is ruled out — agent-b, 2026-08-31
+
+The section above asks which interleaving replaces or drops `pending[slot]` between the first write
+and the continue, and names *two answers for one slot, one deferred and one inline* as the thing to
+reason about first. One of the ways that could happen is not available, which narrows it:
+
+**A late `write` for a slot that has been recycled cannot touch `pending[slot]`.** `write` opens with
+
+    if (Atomics.load(b.ctrl, at + S_GEN) !== gen) return;   // recycled; this answer is for a dead call
+
+and the store into `pending[slot]` is *after* that guard, not before. So call A's deferred write
+arriving after A was cancelled and the slot handed to B returns without writing anything — it cannot
+overwrite B's tail, and it cannot install a tail of its own for B's `OP_CONTINUE` to collect.
+
+That leaves the interleavings where **both** writes belong to live calls on the same slot, which is
+the harder question and the one the section above was already pointing at. Written down so the
+generation-check variant does not have to be re-derived; it is the first thing that looks like it
+would explain this and it does not.
+
+### And the intra-`write` ordering is sound, so deferral alone does not open a window
+
+The section above notes that `write` runs through the scheduler while the `OP_CONTINUE` that reads
+`pending[slot]` is handled inline, and asks about the interleaving. Within a single `write` there is
+no window, because the stores are in the right order:
+
+    Atomics.store(S_RES_LEN, fits);
+    Atomics.store(S_RES_STATUS, tail.length > 0 ? STATUS_MORE : status);
+    pending[slot] = tail; finalStatus[slot] = status;      // before publication
+    …
+    Atomics.compareExchange(S_STATUS, ST_RUNNING, ST_READY)   // the release barrier
+
+A guest blocks in `awaitReady` until that exchange, so it cannot ask for a tail that has not been
+recorded. Deferring the whole of `write` moves all of it together, which the guest cannot observe.
+The losing-exchange path also sets `pending[slot] = null` rather than leaving it, so a write that
+loses the slot cleans up after itself.
+
+**What the arithmetic still wants explaining.** After a 131,072-byte first piece the tail owed is
+48,922, and any `reply` of that tail would deliver either all of it (a pooled buffer is big enough)
+or 4,096 of it with `STATUS_MORE` (if the pool were empty and it fell to the inline area). Neither is
+553. So the second write's *body* really was 553 bytes — `pending[slot]` held something that was not
+this call's tail — and the two eliminations above say it was not a late write for a recycled slot and
+not a torn store within one write. That is worth knowing before the next attempt.
+
+### 553 cannot be a piece of this call's tail, whatever the interleaving
+
+`fits = Math.min(body.length, room.length)` and `room` is either a pooled buffer (131,072) or the
+slot's inline area (4,096). So **every** split of the 48,922-byte tail owed after the first piece
+delivers 48,922 or 4,096. There is no interleaving, no pool pressure and no scheduler ordering that
+makes it 553: the number is not reachable from this call's data by that code.
+
+    got  131,625 = 131,072 + 553
+    owed after the first piece = 48,922
+    a reply of 48,922 delivers 48,922 (pooled) or 4,096 (inline, with STATUS_MORE)
+
+That removes a whole family of guesses — anything of the form "the tail was chunked differently under
+load" — and leaves two readings:
+
+1. **The body really was 553 bytes**, so `pending[slot]` held something that was not this call's
+   tail. Then the question is which call produces a 553-byte answer and how it reached this slot;
+   the three notes above rule out a late write for a recycled slot, a torn store inside one `write`,
+   and a stale tail surviving a cancel.
+2. **The body was right and `S_RES_LEN` was not** — the reader took 553 bytes of a correct buffer.
+   That points at `readRes` and the length store rather than at `pending` at all, and nothing above
+   has looked there.
+
+The second reading has had no attention in this issue and is the cheaper one to falsify: it needs
+only the length store and its reader, both of which are a few lines, rather than an interleaving.
+
+### Three legs that cannot all be true — agent-b, 2026-08-31
+
+Following the arithmetic to its end produces a contradiction rather than a mechanism, and the
+contradiction is worth more than another candidate:
+
+1. **553 cannot be this call's data.** `fits = min(body.length, room.length)`, `room` is a pooled
+   buffer (131,072) or the inline area, and every slot's inline area is exactly `INLINE_BYTES` —
+   `new Uint8Array(sab, INLINE_OFFSET + i * INLINE_BYTES, INLINE_BYTES)`, uniform. So a reply of the
+   48,922 owed delivers 48,922 or 4,096. Never 553.
+2. **Therefore `S_RES_LEN` was written by something other than this call's reply**, since `write` is
+   the only thing that stores it and it stores `fits`.
+3. **But the slot cannot be recycled while its owner is inside `collect`.** Only two places store
+   `ST_FREE`: `release`, which the guest calls at the end of its own loop, and `abandon`, which the
+   sweep reaches only for `ST_CANCELLED`. A guest blocked in `awaitReady` cannot cancel its own
+   ticket, so nothing takes the slot from under it.
+
+Two of those are right and one is wrong. I could not tell which, and say so rather than pick — the
+tempting third story here is that the plain `Atomics.store(S_STATUS, ST_PENDING)` this issue already
+flags lets a recycled slot be stomped, and leg 3 says the recycling it needs cannot happen.
+
+**The first of those is checked, and it sharpens the question rather than answering it.**
+`awaitReady` is
+
+    for (;;) {
+      const seen = Atomics.load(b.ctrl, DONE_SEQ);
+      if (Atomics.load(b.ctrl, at + S_STATUS) === ST_READY) return;
+      parkForHost(b, seen);
+    }
+
+— `ST_READY` and nothing else. The generation is read once, before the loop in `collect`, and never
+again. So the collect loop is **entirely unguarded against recycling between chunks**: if any path
+frees a slot whose owner is mid-collect, that owner returns from `awaitReady` on somebody else's
+answer and reads it with somebody else's `S_RES_LEN`, which is precisely the symptom — a body that
+cannot be a piece of its own tail.
+
+That does not resolve the contradiction; leg 3 still says nothing can free the slot. But it reduces
+the whole question to one line of enquiry: **find any path that stores `ST_FREE`, or bumps the
+generation, for a slot whose owner is inside `collect`.** If one exists the mechanism follows
+immediately and needs no further theory; if none does, leg 1 or leg 2 is wrong and the arithmetic
+needs re-reading.
+
+Still worth looking at, and not yet looked at: whether any capability answers on a slot it does not
+own, and whether `S_RES_LEN` is stored outside `write` in the browser and node hosts, which were not
+read for this.
+
+Recorded because a contradiction narrows the search where a fourth mechanism would widen it. Two
+mechanisms have already been proposed in this issue and retracted, one of them mine today.
+
+## RETRACTED — the bridge is *not* exonerated; the producer cannot be short — agent-b, 2026-08-31
+
+The three legs above all hold. `S_RES_LEN` is stored in exactly one place — `respond.ts`'s `write`,
+as `fits` — and read in exactly one, `readRes`. Response buffers are uniformly `BUF_BYTES` and inline
+areas uniformly `INLINE_BYTES`. The generation is bumped in exactly two places, `release` and
+`cancel`, both guest-side, neither reachable for a ticket whose owner is parked in `awaitReady`.
+
+So the wrong assumption is the one underneath all of them, and it is mine and this issue's: **that
+the host had 179,994 bytes to send.** Work it backwards instead. If the body handed to `write` was
+already **131,625** bytes:
+
+    piece 1: min(131625, 131072) = 131072, tail 553   -> STATUS_MORE
+    piece 2: 553,                          tail 0     -> the final status, not STATUS_MORE
+    delivered: 131,625
+
+That is every reported detail, including this issue's own observation that the second piece carried a
+status which was not `STATUS_MORE` — a fact that needed explaining and now explains itself. The
+chunking is not merely consistent with a short body, it is *determined* by it: 553 is the unique
+remainder of 131,625 against a 131,072-byte buffer.
+
+**So the ring did not lose anything. The answer was short before it arrived**, and the search belongs
+in whatever produced it rather than in `respond.ts`, `call.ts` or the scheduler. That is also why
+`0155` and this issue have both failed to reproduce by hammering the bridge: the load-dependence is
+in the producer.
+
+**What this does not say.** It does not name the producer, and `fuzz.test.ts` should be read for what
+answers a 179,994-byte request — the request is the fuzzer's, so the size is known and the capability
+is identifiable. Nor does it explain *why* the producer stopped at 131,625, which is suspiciously
+close to `BUF_BYTES` and may be a second buffer boundary somewhere upstream. Both are cheaper
+questions than the interleaving this issue has been asking for a fortnight.
+
+### Retracting the exoneration above, within the hour
+
+The producer is provably correct, and I did not check it before concluding. `fuzz.test.ts`'s one
+capability is
+
+    const out = new Uint8Array(Math.max(4, size));
+    new DataView(out.buffer).setInt32(0, nonce, true);
+    for (let i = 4; i < out.length; i++) out[i] = (nonce + i) & 0xff;
+    return out;
+
+`size` is read from the request *before* the `await`, and the request is a copied slice rather than a
+view on a recycled buffer. So the handler returns exactly `size` bytes and cannot hand `write` a short
+body.
+
+The arithmetic in that section is still true — a body of 131,625 would produce exactly the reported
+pieces, and 553 is its unique remainder. What does not follow is the conclusion, because the
+antecedent is false. **"If X then exactly this" is not "therefore X"** when X is independently
+impossible, and I wrote it up as a resolution without testing X.
+
+**So the contradiction stands, unresolved**, and all four of its legs now hold: 553 is not reachable
+from this call's tail, `S_RES_LEN` has exactly one writer and one reader, the buffers are uniform,
+the generation moves in only two guest-side places unreachable mid-`collect` — and the producer is
+exact. One of those is still wrong and I have not found which.
+
+Two mechanisms and one exoneration have now been proposed here and withdrawn, two of them mine today.
+The pattern in all three is the same: a chain that holds at every link except the one nobody checked
+because it was the assumption the chain started from.
+
+## The nonce check cannot tell truncation from a corrupted `size` field — agent-b, 2026-08-31
+
+This issue opens by saying the report *"says which, and it says truncated: the first four bytes are
+this call's own nonce"*. That inference does not hold, and it has been steering the search.
+
+The one capability reads four things out of the request and validates two of them:
+
+    const nonce    = v.getInt32(0, true);    // echoed back, so the guest matches on it
+    const delay    = v.getInt32(4, true);
+    const size     = v.getInt32(8, true);    // decides the answer's length — never validated
+    const declared = v.getInt32(12, true);   // checked against p.length
+    …
+    for (let i = 16; i < p.length; i++) …    // every payload byte checked against the nonce
+
+So the **payload** is fully verified and the **length** is verified, while `size` — the one field
+that decides how many bytes come back — is read and trusted. A four-byte change there passes every
+check in the handler.
+
+Trace it: the guest asks 179,994 with nonce 203; `size` arrives as 131,625; the handler faithfully
+builds 131,625 bytes beginning with nonce 203; the guest reports *"answer for 203 is 131625 bytes,
+wanted 179994"*, checks the first four bytes, finds its own nonce, and concludes **truncated**. That
+is the reported message exactly, with a correct bridge and a correct producer.
+
+**So the nonce rules out crossing and not corruption**, and `0155` closed on the observation that
+those two want opposite fixes. This report was taken to have settled which; it settled less than
+that.
+
+**The three-line diagnostic**: have the handler echo the `size` it read — there is room at offset 4
+of the answer — and have the guest compare it with what it asked for. If they differ the fault is in
+the request path and nothing in `respond.ts`, `call.ts` or the scheduler needs looking at; if they
+agree, truncation is confirmed and the five legs above genuinely do contradict.
+
+Offered as an **untested avenue**, which is what the two retractions above earn. Unlike those, it is
+consistent with every verified constraint rather than needing one of them to be wrong — and it costs
+one run of the fuzz to settle either way.
+
+### And 131,625 is a well-formed request size, which is what makes this worth a run
+
+The fuzzer picks
+
+    const big  = pick(8) === 0;
+    const size = big ? BUF_BYTES + pick(BUF_BYTES) : pick(2000);
+
+so a *big* request asks for `131,072 + pick(131,072)` — anywhere in [131,072, 262,144).
+
+    131,625 = 131,072 + 553      a size this generator could have produced
+    179,994 = 131,072 + 48,922   the size it did produce for nonce 203
+
+So the anomalous length is not arbitrary damage: it is **exactly the shape of another request's
+size**, drawn from the same distribution, and the "553" that has looked like a chunk remainder
+throughout this issue is just as well read as one `pick`. Cross-request contamination of that field
+would look precisely like this; a torn store or a stray write would not have to.
+
+That is a coincidence rather than a proof — a truncation at 131,625 is also arithmetically
+`BUF_BYTES + 553` — and the two readings are still distinguished by the three-line diagnostic above,
+which is why it is worth the one run it costs.
+
+**What it does change** is where to look if the diagnostic says corruption: at `partial[slot]`, the
+request-side analogue of `pending[slot]`, and at whether a request's pieces can be joined with
+another request's. That path has had no attention in this issue, and every constraint verified above
+is about the response.
