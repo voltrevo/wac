@@ -2785,3 +2785,39 @@ merely skip equivalence pruning, so they are counted *in*, not out. The 42 is no
 
 Worth knowing before `mutate.ts` is ported or deleted — a port that carried this across would carry a
 diagnostic about a compiler nobody can run and a branch nothing reaches.
+
+### And the sweep runs in three minutes, so step 2's verification is affordable now
+
+Run on the scope the section above found, immediately after a gate so the machine was otherwise idle:
+
+    deno run -A --unstable-net tools/mutate.ts --package bytes
+    start 15:07:50 … end 15:10:54          # 3m04s, exit 0
+
+    3 mutant(s) generated; compiling for equivalence…
+      3 to run, 0 provably equivalent, 0 duplicate, 0 did not compile
+    baseline: 2/2 test scope(s) pass unmutated
+    profile: 167 test(s) across 18 file(s), 1396 covered line(s)
+    3 mutant(s) measured through `wac test`: bytes, gzip
+    selection: 3/3 mutant(s) ran only the tests that reach them, 0 fell back to the full scope
+    3/3 mutants killed — no surviving correctness mutants
+
+**Against the >15 minutes this issue records for `gzip` with nothing run, that is the whole
+difficulty gone.** The profile came from `wac test --coverage` and the mutants were measured through
+`wac test`, so this is the native path end to end rather than a Deno run that happened to be small.
+
+**And the line that matters is the selection one.** *"What step 2 costs to verify"* says the failure
+mode is under-selection and that it "cannot be checked by reasoning" because it shows up as a
+*better* score. `3/3 ran only the tests that reach them, 0 fell back to the full scope` is that
+property, measured: the narrow plan was used, and no mutant was quietly scored against a scope that
+had lost its test. One of the three was killed by timeout rather than by a failing assertion, which
+is the runner's own convention and is visible in the output as `TO`.
+
+**What this does not establish**, because the scope cannot: `mergeRuns` is for a **mixed** scope —
+some directories run by the binary and some by Deno — and `bytes` and `gzip` have only wac tests, so
+`isWacRun` was true for every scope here and the merge never ran. That path is still unverified, and
+a mixed scope is the one that needs finding to finish the job.
+
+So the position is: step 2's code exists (`tools/mutate/native.ts`, wired through `classify` and
+`mergeRuns`), the pure-wac half of it is now verified on a three-minute loop, and what remains is a
+mixed scope to exercise the other half. That is a much smaller thing than "a change to a
+thousand-line tool that takes a quarter of an hour to check".
