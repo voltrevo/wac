@@ -1,0 +1,124 @@
+// Locating a curated mutation in the source — `locate` from `tools/mutate.ts`.
+//
+// A curated mutation is written by hand as *find this text, put that in its place*, so it has to be
+// turned into a byte span before anything can apply it. Every branch below is a **refusal**, and that
+// is the whole design: a curated mutation that cannot be placed exactly is not applied approximately.
+//
+// **The rule that costs the most to get wrong.** `find` must occur exactly once in `file` unless
+// `nth` says which occurrence is meant. That is not pedantry — `String.replace` takes the first
+// match, so an ambiguous pattern silently mutates a line other than the one the mutation is named
+// for, and the result looks like a real kill for the wrong reason. `crc32/final-inversion` was doing
+// exactly that: `return crc ^ 0xFFFFFFFF;` appears in both `crc32` and `crc32Bitwise`, and only the
+// first was ever mutated.
+//
+// `issues/system/0161` step 6.
+
+import { Edit, Mutant } from "./mutateoperators.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * One hand-written edit: find this text in this file, put that in its place.
+ *
+ * `nth` is 1-based and `0` means "not given", which is the reference's `undefined`. A curated entry
+ * may carry several of these; they are located independently and applied together.
+ */
+export struct Curated {
+  string file;
+  string find;
+  string replace;
+  /** 1-based, and required when `find` is not unique. `0` is "not given". */
+  i32 nth;
+}
+
+/** A located mutation, or why it could not be located. `problem` is `""` when it was. */
+export struct Located {
+  string problem;
+  Mutant mutant;
+}
+
+Mutant nothing() {
+  return Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", "")));
+}
+
+/** Every offset at which `needle` occurs in `haystack`, overlapping matches included. */
+i32[] occurrencesOf(string haystack, string needle) {
+  if (needle == "") { return i32[0](fill: 0); }
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    i32[] out = pass == 1 ? i32[n](fill: 0) : i32[0](fill: 0);
+    i32 at = 0;
+    for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+      if (haystack.slice(i, i + needle.len()) != needle) { continue; }
+      if (pass == 1) { out[at] = i; }
+      at = at + 1;
+    }
+    if (pass == 1) { return out; }
+    n = at;
+  }
+  return i32[0](fill: 0);
+}
+
+i32 indexOfIn(string[] xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) {
+    if (xs[i] == want) { return i; }
+  }
+  return -1;
+}
+
+/** `"…"` with the quotes the reference's `JSON.stringify` puts round a pattern in its message. */
+string quoted(string s) {
+  string out = "\"";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c == "\"") { out = out + "\\\""; }
+    else if (c == "\\") { out = out + "\\\\"; }
+    else if (c == "\n") { out = out + "\\n"; }
+    else { out = out + c; }
+  }
+  return out + "\"";
+}
+
+/**
+ * `edits` located against `sources`, or the first reason they could not be.
+ *
+ * `paths` and `texts` are the loaded sources, in step. `fallbackNth` is the entry's own `nth`, which
+ * an edit without one inherits — the reference spells that `r.nth ?? c.nth`.
+ *
+ * The four refusals, each of which was a real entry at some point:
+ *
+ * - **no such file** — the mutation names a source that was never loaded.
+ * - **pattern not found** — the code moved and the mutation did not.
+ * - **ambiguous** — more than one occurrence and no `nth`. This is the one that fails *silently* if
+ *   allowed through, so it is refused rather than defaulted to the first.
+ * - **`nth` past the end** — the pattern was found, but fewer times than the entry claims.
+ */
+export Located locate(string name, Curated[] edits, i32 fallbackNth,
+                      string[] paths, string[] texts) {
+  Edit[] out = Edit[edits.len()](fill: Edit("", 0, 0, "", ""));
+  for (i32 e = 0; e < edits.len(); e++) {
+    Curated c = edits[e];
+    i32 f = indexOfIn(paths, c.file);
+    if (f < 0) { return Located(name + ": no such file: " + c.file, nothing()); }
+
+    i32[] hits = occurrencesOf(texts[f], c.find);
+    if (hits.len() == 0) {
+      return Located(name + ": pattern not found in " + c.file + ": " + quoted(c.find), nothing());
+    }
+
+    i32 nth = c.nth != 0 ? c.nth : fallbackNth;
+    if (hits.len() > 1 && nth == 0) {
+      return Located(name + ": pattern occurs " + itoa(hits.len()) + " times in " + c.file
+                     + " and no `nth` says which — " + quoted(c.find), nothing());
+    }
+
+    i32 which = (nth == 0 ? 1 : nth) - 1;
+    if (which < 0 || which >= hits.len()) {
+      return Located(name + ": nth: " + itoa(nth) + " but only " + itoa(hits.len())
+                     + " occurrence(s) in " + c.file, nothing());
+    }
+
+    i32 at = hits[which];
+    out[e] = Edit(c.file, at, at + c.find.len(), c.replace, c.find);
+  }
+  return Located("", Mutant(name, "curated", out));
+}

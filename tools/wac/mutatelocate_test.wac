@@ -1,0 +1,137 @@
+// Placing a curated mutation, and the four ways it refuses to.
+//
+// Every branch of `locate` is a refusal, and the reason is that the alternative is *silent*: a
+// curated mutation that cannot be placed exactly must not be applied approximately, because the
+// result is a mutant that looks like a real kill for the wrong reason.
+// `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Curated, Located, locate } from "./mutatelocate.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * The `crc32` source, reduced to the shape that made the rule necessary.
+ *
+ * `return crc ^ 0xFFFFFFFF;` appears in both functions. That is the whole case.
+ */
+string crcSource() {
+  return "i32 crc32(u8[] b) {\n"
+       + "  i32 crc = 0;\n"
+       + "  return crc ^ 0xFFFFFFFF;\n"
+       + "}\n"
+       + "\n"
+       + "i32 crc32Bitwise(u8[] b) {\n"
+       + "  i32 crc = 1;\n"
+       + "  return crc ^ 0xFFFFFFFF;\n"
+       + "}\n";
+}
+
+string[] paths() { return string[]("crc.wac"); }
+string[] texts() { return string[](crcSource()); }
+
+Curated[] one(string file, string find, string replace, i32 nth) {
+  return Curated[](Curated(file, find, replace, nth));
+}
+
+/**
+ * **An ambiguous pattern is refused rather than defaulted to the first match.**
+ *
+ * `crc32/final-inversion` was mutating `crc32` when it was named for whichever of the two the author
+ * meant, because the reference's `String.replace` takes the first. Refusing costs one message;
+ * guessing costs a wrong verdict that reads as a real one.
+ */
+export string test_a_pattern_that_occurs_twice_is_refused_without_an_nth() {
+  T t = T.create();
+  Located got = locate("crc32/final-inversion",
+                       one("crc.wac", "return crc ^ 0xFFFFFFFF;", "return crc;", 0),
+                       0, paths(), texts());
+  t.isTrue(got.problem != "", "it refuses rather than picking the first");
+  t.isTrue(got.problem.indexOf("occurs 2 times") >= 0,
+           "and says how many there were: " + got.problem);
+  t.isTrue(got.problem.indexOf("nth") >= 0, "and what would resolve it: " + got.problem);
+  return t.report();
+}
+
+/** With `nth`, the same pattern places at the occurrence the entry names — 1-based. */
+export string test_an_nth_selects_which_occurrence() {
+  T t = T.create();
+  Located first = locate("m", one("crc.wac", "return crc ^ 0xFFFFFFFF;", "return crc;", 1),
+                         0, paths(), texts());
+  t.eqStr(first.problem, "", "the first occurrence places");
+  Located second = locate("m", one("crc.wac", "return crc ^ 0xFFFFFFFF;", "return crc;", 2),
+                          0, paths(), texts());
+  t.eqStr(second.problem, "", "and so does the second");
+  t.isTrue(second.mutant.edits[0].start > first.mutant.edits[0].start,
+           "and they are different places, second after first — "
+             + itoa(first.mutant.edits[0].start) + " then " + itoa(second.mutant.edits[0].start));
+
+  // The span is exactly the text it matched, so applying it replaces that and nothing else.
+  t.eqI32(first.mutant.edits[0].end - first.mutant.edits[0].start,
+          "return crc ^ 0xFFFFFFFF;".len(),
+          "the span is the length of the pattern");
+  t.eqStr(first.mutant.edits[0].was, "return crc ^ 0xFFFFFFFF;", "and `was` is what it replaced");
+  t.eqStr(first.mutant.origin, "curated", "a located curated mutation is marked as one");
+  return t.report();
+}
+
+/** A unique pattern needs no `nth`, which is the ordinary case. */
+export string test_a_unique_pattern_needs_no_nth() {
+  T t = T.create();
+  Located got = locate("m", one("crc.wac", "i32 crc = 1;", "i32 crc = 2;", 0),
+                       0, paths(), texts());
+  t.eqStr(got.problem, "", "one occurrence places without an nth");
+  t.eqStr(got.mutant.edits[0].replacement, "i32 crc = 2;", "with the replacement it was given");
+  return t.report();
+}
+
+export string test_the_other_three_refusals() {
+  T t = T.create();
+
+  Located missingFile = locate("m", one("gone.wac", "x", "y", 0), 0, paths(), texts());
+  t.isTrue(missingFile.problem.indexOf("no such file") >= 0,
+           "a source that was never loaded: " + missingFile.problem);
+
+  Located missingPattern = locate("m", one("crc.wac", "not in there at all", "y", 0),
+                                  0, paths(), texts());
+  t.isTrue(missingPattern.problem.indexOf("pattern not found") >= 0,
+           "a pattern the code no longer has: " + missingPattern.problem);
+
+  Located tooFar = locate("m", one("crc.wac", "i32 crc = 1;", "y", 4), 0, paths(), texts());
+  t.isTrue(tooFar.problem.indexOf("only 1 occurrence") >= 0,
+           "an nth past the end says how many there were: " + tooFar.problem);
+  return t.report();
+}
+
+/**
+ * An edit without its own `nth` inherits the entry's — the reference's `r.nth ?? c.nth`.
+ *
+ * Worth a case because the fallback is the difference between an entry with several edits working
+ * and being refused as ambiguous for a reason its author cannot see.
+ */
+export string test_an_edit_inherits_the_entrys_nth() {
+  T t = T.create();
+  Located got = locate("m", one("crc.wac", "return crc ^ 0xFFFFFFFF;", "return crc;", 0),
+                       2, paths(), texts());
+  t.eqStr(got.problem, "", "the entry's nth resolves an edit that has none");
+  Located direct = locate("m", one("crc.wac", "return crc ^ 0xFFFFFFFF;", "return crc;", 2),
+                          0, paths(), texts());
+  t.eqI32(got.mutant.edits[0].start, direct.mutant.edits[0].start,
+          "and picks the same occurrence the edit's own nth would have");
+  return t.report();
+}
+
+/** Several edits in one entry are located together, and one bad one refuses the whole. */
+export string test_several_edits_are_located_together() {
+  T t = T.create();
+  Curated[] both = Curated[](Curated("crc.wac", "i32 crc = 0;", "i32 crc = 9;", 0),
+                             Curated("crc.wac", "i32 crc = 1;", "i32 crc = 8;", 0));
+  Located got = locate("m", both, 0, paths(), texts());
+  t.eqStr(got.problem, "", "two unique patterns both place");
+  t.eqI32(got.mutant.edits.len(), 2, "and the mutant carries both edits");
+
+  Curated[] mixed = Curated[](Curated("crc.wac", "i32 crc = 0;", "i32 crc = 9;", 0),
+                              Curated("crc.wac", "nowhere", "x", 0));
+  t.isTrue(locate("m", mixed, 0, paths(), texts()).problem != "",
+           "and one edit that cannot be placed refuses the entry rather than applying the rest");
+  return t.report();
+}
