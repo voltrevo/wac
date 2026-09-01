@@ -2814,8 +2814,18 @@ is the runner's own convention and is visible in the output as `TO`.
 
 **What this does not establish**, because the scope cannot: `mergeRuns` is for a **mixed** scope —
 some directories run by the binary and some by Deno — and `bytes` and `gzip` have only wac tests, so
-`isWacRun` was true for every scope here and the merge never ran. That path is still unverified, and
-a mixed scope is the one that needs finding to finish the job.
+`isWacRun` was true for every scope here and the merge never ran.
+
+*I wrote "that path is still unverified" and it is not.* `tools/mutate/native.test.ts` has a section
+headed *"`mergeRuns`, for the mixed scopes step 3 creates"* and covers the decision table: a kill in
+either half is a kill, an abort beside a survival is an abort rather than a survival,
+`no-tests-here` defers to the half that ran, both halves surviving is the only way to survive, and
+an empty list is not a verdict. **14 passed, 0 failed** just now. The merge *rule* is settled.
+
+What is unverified is narrower and worth stating exactly: that a real mixed scope causes two
+commands to be issued and their verdicts combined — the wiring rather than the rule. Nothing in the
+default 42-mutant sweep produces one, because those mutants live only in `bytes` and `gzip`, so
+exercising it needs a scope that does not currently arise.
 
 So the position is: step 2's code exists (`tools/mutate/native.ts`, wired through `classify` and
 `mergeRuns`), the pure-wac half of it is now verified on a three-minute loop, and what remains is a
