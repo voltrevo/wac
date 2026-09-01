@@ -657,6 +657,11 @@ void printDecl(Pr w, Decl d) {
     case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       w.open("func", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
+      // Printed because the round trip compares these trees, and a property neither side records is
+      // one the comparison cannot fail on: `issues/lang/0299c` rendered an `async` function without
+      // its `async` for as long as async functions have existed, and this test was green over them
+      // the whole time. Spelled `sync` rather than omitted so the two arms differ in the same place.
+      w.sp(); w.s(isAsync ? "async" : "sync");
       w.sp(); w.tok(nameTok);
       printTypeParams(w, typeParams);
       w.sp(); printTy(w, returnType);

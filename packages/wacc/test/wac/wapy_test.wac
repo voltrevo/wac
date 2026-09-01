@@ -325,6 +325,38 @@ export string test_a_lexical_fault_is_the_lexers_on_either_surface(Core core) {
 }
 
 /**
+ * `async def` carries the `async` across, and `async` alone is not a declaration.
+ *
+ * `[§wac-wapy-asyncdef-9mk2xrt]` — wapy spells wac's `async i32 f(…)` as `async def f(…) -> i32:`,
+ * a prefix keyword rather than a decorator, because a decorator in Python is a value applied to a
+ * function and `async` is not one.
+ *
+ * **`same` is the assertion that matters, and it only became able to fail today.**
+ * `issues/lang/0299c` was the rendering *dropping* the word, and it survived because the round trip
+ * compared trees printed by `print.wac`, which did not record `isAsync` either — so both sides lost
+ * it and agreed. `print.wac` prints `async`/`sync` now, so a wapy program that lost its `async` no
+ * longer matches the wac program that has one. Asserting only that `async def` parses would rebuild
+ * the same hole one level down: it would prove the spelling is accepted, not that it is kept.
+ *
+ * The bare `async` is the guard on the dispatch: `async` is a keyword token rather than an
+ * identifier, so a segment starting with it must not be read as a function merely because the
+ * branch was reached.
+ */
+export string test_async_def_keeps_its_async(Core core) {
+  T t = T.create();
+  same(t, "an async function",
+       "async def twice(n: i32) -> i32:\n    return n + n\n",
+       "async i32 twice(i32 n) { return n + n; }");
+  same(t, "and a plain one is still not async",
+       "def once(n: i32) -> i32:\n    return n\n",
+       "i32 once(i32 n) { return n; }");
+
+  Read lone = readWapy("async\n");
+  t.isTrue(lone.errors > 0, "`async` on its own is not a declaration");
+  return t.report();
+}
+
+/**
  * A dedent that lands between two levels is refused.
  *
  * `[§wac-wapy-dedent-3nq8vrk]` — `a` sits at column 5 and the top level at 1, so `b` at 3 lands on

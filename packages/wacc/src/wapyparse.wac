@@ -55,7 +55,7 @@ import {
 } from "./ast.wac";
 import { Lexed, lex, tokenStride } from "./lex.wac";
 import {
-  kAssign, kAt, kCase, kColon, kComma, kConst, kDo, kElse, kEnum, kEof, kFor, kGt, kIdent, kIf,
+  kAssign, kAsync, kAt, kCase, kColon, kComma, kConst, kDo, kElse, kEnum, kEof, kFor, kGt, kIdent, kIf,
   kAndEq, kCaretEq, kImport, kInc, kLbrack, kLparen, kMinusEq, kOrEq, kPercentEq, kLt, kMatch, kMinus, kNull, kOr, kPlusEq, kRbrack, kRparen, kReturn, kSemi,
   kShlEq, kShrEq, kShrUEq, kSlashEq, kStarEq, kString, kSwitch, kThis, kTrap, kWhile,
 } from "./kinds.wac";
@@ -845,14 +845,22 @@ i32 typeParamOpen(W w, i32 nameTok, i32 e) {
 }
 
 /** `def NAME[T](params) -> RET:` at file scope. */
-Decl funcAt(W w, i32 i, i32 hi, bool exported) {
+/**
+ * `[async] def NAME(…) -> RET:` at the top level.
+ *
+ * `isAsync` shifts the name one token right, because `async` is a prefix keyword rather than a
+ * decorator — `[§wac-wapy-asyncdef-9mk2xrt]`. The caller has already checked that the word after
+ * `async` is `def`; a bare `async` on its own is not a declaration and falls through to
+ * `werrBadDecl`.
+ */
+Decl funcAt(W w, i32 i, i32 hi, bool exported, bool isAsync) {
   i32 f = w.segs[i].first;
   i32 e = segEnd(w, i);
   i32 ln = w.segs[i].line;
   i32 cl = w.segs[i].indent;
   i32 c = headColon(w, i);
   i32 to = c < 0 ? e : c;
-  i32 nameTok = f + 1;
+  i32 nameTok = f + (isAsync ? 2 : 1);
   if (nameTok >= to || kindOf(w, nameTok) != kIdent()) {
     err(w, werrBadDecl(), ln, cl);
     return Decl(DeclKind.Func(f, tyPrim(w.i32Tok, ln, cl), Param[0](fill: Param(f, tyPrim(w.i32Tok, ln, cl), false)), noStmts(), exported, i32[0](fill: 0), false), ln, cl);
@@ -878,7 +886,7 @@ Decl funcAt(W w, i32 i, i32 hi, bool exported) {
   Ty ret = tyPrim(w.i32Tok, ln, cl);
   if (arrow < 0) { err(w, werrBadDecl(), ln, colOf(w, close)); }
   else { ret = typeIn(w, arrow + 2, to); }
-  return Decl(DeclKind.Func(nameTok, ret, ps, blockOf(w, i, hi), exported, tps, false), ln, cl);
+  return Decl(DeclKind.Func(nameTok, ret, ps, blockOf(w, i, hi), exported, tps, isAsync), ln, cl);
 }
 
 Param[] noParams(W w) { return Param[0](fill: Param(0, tyPrim(w.i32Tok, 1, 1), false)); }
@@ -1126,7 +1134,14 @@ Decl[] topLevel(W w) {
     }
     string word = kindOf(w, f) == kIdent() ? textOf(w, f) : "";
     if (word == "from") { out.push(importAt(w, i)); i = i + 1; exported = false; isConst = false; continue; }
-    if (word == "def")  { out.push(funcAt(w, i, n, exported)); i = blockEnd(w, i); exported = false; isConst = false; continue; }
+    if (word == "def")  { out.push(funcAt(w, i, n, exported, false)); i = blockEnd(w, i); exported = false; isConst = false; continue; }
+    // `async def`, checked as a pair: `async` alone is not a declaration, so it must not swallow the
+    // segment and report a function. `[§wac-wapy-asyncdef-9mk2xrt]`.
+    // `async` is a **keyword** token, not an identifier — `wapy` reserves every wac keyword
+    // (`[§wac-wapy-words-p2vm9kx]`), so `word` above is empty for it and this cannot match on text.
+    if (kindOf(w, f) == kAsync() && f + 1 < e && kindOf(w, f + 1) == kIdent() && textOf(w, f + 1) == "def") {
+      out.push(funcAt(w, i, n, exported, true)); i = blockEnd(w, i); exported = false; isConst = false; continue;
+    }
     if (word == "class"){ out.push(classAt(w, i, n, exported, isConst)); i = blockEnd(w, i); exported = false; isConst = false; continue; }
     if (kindOf(w, f) == kConst()) { out.push(constAt(w, i, exported)); i = i + 1; exported = false; isConst = false; continue; }
 

@@ -1,7 +1,9 @@
 # 0299 — an `async` function loses its `async` in the wapy rendering, and the round trip cannot see it
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed:** 2026-09-01 by agent-b
+- **Fixed in:** the commit closing this
+- **Claimed by:** agent-b (2026-09-01) — both halves together, as the issue requires
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -125,3 +127,44 @@ What that costs, measured rather than guessed:
 that wapy *has* an async surface and what it looks like. `async def` is the obvious spelling and
 that is exactly what makes it easy to add without anyone deciding it. Everything above is mechanical
 once that is settled.
+
+
+## Closed 2026-09-01 — both halves, and a canary that failed to fail
+
+All four pieces, since the issue is explicit that 1 without 2 is a red suite and 2 without 1 is
+unverifiable:
+
+- **`spec/spec/wapy.md`** — `func_decl = [ "async" ] , "def" , …` in the EBNF, a row in the
+  correspondence table, and `[§wac-wapy-asyncdef-9mk2xrt]`, which says it is a prefix keyword and
+  not `@async` for the reason this issue's own last section gives about `@export`: a decorator in
+  Python is a value applied to a function, and `async` is not a value.
+- **`wapyprint.wac`** emits it; **`wapyparse.wac`** reads it (`funcAt` takes the flag and the name is
+  one token further right); **`print.wac`** prints `async`/`sync` so the comparison can see it.
+- **`packages/wacc/test/wac/wapy_test.wac`** gains `test_async_def_keeps_its_async`, which uses the
+  file's existing `same()` helper: a wapy program and a wac program must be one tree.
+
+**The parser fix was not the one I wrote first.** The dispatch matched `textOf(w, f) == "async"`,
+and `word` above it is only set when the token is an identifier — `async` is a **keyword** token,
+because `[§wac-wapy-words-p2vm9kx]` reserves every wac keyword. So the branch never fired and the
+segment fell through to `werrBadDecl`. It matches on `kindOf(w, f) == kAsync()` now.
+
+**And the canary is worth recording, because it failed to fail.** This issue is about a test that
+could not disagree, so I disabled `wapyprint`'s `async` emission expecting the new test to go red.
+It stayed green — `same()` parses a wapy string written by hand and never calls the renderer, so it
+asserts the *parser* and `print.wac`, not the printer. Aimed at the half it does assert — `funcAt`
+forced to drop the flag — it fails, and the renderer is covered by `wapyroundtrip_test`, which went
+from 0 failures to 12 the moment `print.wac` could see the property and back to 0 once the parser
+could read the spelling.
+
+    baseline                     0 of 1379 differ
+    + print.wac                 12          — the async files, correctly red
+    + wapyprint.wac             12          — printer emits it, parser cannot read it
+    + wapyparse.wac              0          — closed
+
+A 387-failure run in the middle of that did not reproduce on a clean rebuild and was a stale build,
+not a regression; the bisect above was run afterwards, each step from a fresh `./bootstrap.sh`.
+
+**Not done here:** the `@export`/`@const`/`@override` change the last section proposes. It is the
+same production and would come "along for nothing", but it is a second spelling change to
+`spec/spec/wapy.md` with its own round-trip surface, and bundling it would make one of the two
+impossible to bisect if the suite went red. Left as filed.

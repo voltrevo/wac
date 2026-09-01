@@ -20,6 +20,7 @@ wapy from wac and the round-trip test runs in that direction.
 | wac | wapy |
 | --- | --- |
 | `i32 f(i32 x) { … }` | `def f(x: i32) -> i32:` |
+| `async i32 f(i32 x) { … }` | `async def f(x: i32) -> i32:` |
 | `export` | `@export` |
 | `struct P { … }` | `class P:` |
 | `const struct P { … }` | `@const` above `class P:` |
@@ -143,7 +144,7 @@ import_item    = IDENT , [ "as" , IDENT ] ;
 
 const_decl     = "const" , IDENT , ":" , type , "=" , expr , NEWLINE ;
 
-func_decl      = "def" , IDENT , [ "[" , type_params , "]" ] ,
+func_decl      = [ "async" ] , "def" , IDENT , [ "[" , type_params , "]" ] ,
                  "(" , [ param_list ] , ")" , "->" , type , ":" , block ;
 param_list     = param , { "," , param } ;
 param          = [ "const" ] , IDENT , ":" , type ;
@@ -164,6 +165,19 @@ on a column some enclosing block already sits at.** One that lands between two l
 with *this dedent lands on no enclosing block*. The check is the parser's rather than the lexer's,
 because there are no INDENT or DEDENT tokens to hang it on — a block is the run of following lines
 indented further, so the stack that notices this exists only once the lines do.
+
+`[§wac-wapy-asyncdef-9mk2xrt]` **An `async` function is `async def`, and the word comes before
+`def` rather than above it as a decorator.** wac's `async i32 f(…)` is wapy's
+`async def f(…) -> i32:`, which is Python's spelling and is the reason to prefer it: a reader who
+knows one knows the other. It is *not* `@async`, because a decorator in Python is a value applied to
+a function and `async` is not a value — the notation would borrow a rule it then breaks.
+
+The return type is the one the source wrote. wac's `async i32 f(…)` answers `Pending<i32>` to a
+caller, and the wapy rendering says `-> i32` for the same reason the wac source says `i32`: `async`
+is what makes the difference, so a rendering that dropped it would describe a function every caller
+disagrees with. That is what `issues/lang/0299c` was, and it survived because the round trip
+compared two printers that both left the word out — an oracle cannot fail on a property neither side
+records.
 
 ### Statements
 

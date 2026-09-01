@@ -841,12 +841,11 @@ void wapyPrintDecl(Wp w, Decl d) {
 
     case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       if (exported) { w.s("@export"); w.nl(); }
-      // **`isAsync` is dropped here and that is a known hole** — `issues/lang/0299c`. The rendering
-      // answers `T` where the source answered `Pending<T>`, so every caller disagrees with it. Not
-      // fixed here because `def` is wapy's own declaration syntax rather than wac's: the reader
-      // dispatches on the bare word, so emitting `async def` needs `wapyparse` to learn it and
-      // `spec/spec/wapy.md` to say how wapy spells it. The lambda below *is* fixed, because there
-      // expressions are wac's unchanged and the wac parser already reads `async`.
+      // `async` is a prefix keyword and not a decorator — `[§wac-wapy-asyncdef-9mk2xrt]`, and
+      // `issues/lang/0299c` for why dropping it was worse than it looked: the rendering answered
+      // `T` where the source answered `Pending<T>`, and both printers left the word out so the
+      // round trip could not disagree.
+      if (isAsync) { w.s("async "); }
       w.s("def ");
       w.tok(nameTok);
       wapyPrintTypeParams(w, typeParams);
