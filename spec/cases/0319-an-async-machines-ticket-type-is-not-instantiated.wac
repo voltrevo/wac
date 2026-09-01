@@ -18,17 +18,44 @@
  *     async, no suspension, but `Pending<i32> p = step(20);`      builds
  *     ditto, but only as an unused function's parameter type      builds
  *
- * The third and fourth are the ones that name it: adding a declaration nobody needs — even a
- * parameter of a function nothing calls — makes the program compile, and neither changes anything
- * about `step`. So a *declared* `Pending<T>` anywhere registers the instance. The lowered `step`
- * has `Pending<i32>` as its own declared return type and that one does not, which is the narrowest
- * statement this case can make: whatever collects instantiations is not seeing the type the
- * lowering wrote. So the subject is not suspension and never was — a suspending
- * function works only because awaiting a ticket means the source already spells `Pending<T>`
- * somewhere, which registers the instance the machine then reuses. A function with nothing to
- * suspend at is simply the ordinary way to have no other mention.
+ * The third and fourth show that a *declared* `Pending<T>` anywhere makes the program build, even a
+ * parameter of a function nothing calls. What that does **not** mean is that the instantiation is
+ * missing, which is what an earlier draft of this case said. Asking the compiler settles it: a debug
+ * string smuggled out through the decline message reports
  *
- * **The route to it was three wrong statements**, each committed: "`await` on a call to another
+ *     a call to Pending [DEBUG instances: Pending<i32> | building: | want=]
+ *
+ * so the instance **is** registered, and what fails is resolving the machine's construction to it —
+ * `genericCallInstance` answers the empty string for that call's arguments, so the lookup falls back
+ * to the bare name `Pending`, finds no function, and declines. The gap is in naming the instance
+ * from a synthesised `Construct`, not in creating the instance.
+ *
+ * **And the same construction written by hand compiles.** This builds:
+ *
+ *     return Pending<i32>(0, r, s, d, null, true);
+ *
+ * which is the shape the machine emits. So the form is supported and the arguments are fine; what
+ * differs is *where the type arguments are*. `genericCallInstance` takes `(env, src, lexed, tok,
+ * args)` and reads the token stream, and in source `<i32>` is written there. The lowering's
+ * construct carries its type arguments only in the `Ty` it built with `lowPendingTy`, so there is
+ * nothing wrong with the arguments. Asked once more, the emitter says exactly where it parts company:
+ *
+ *     a call to Pending [DEBUG n=Pending<i32> isStruct=no]
+ *
+ * So the name resolves **correctly** — `typeOfTyName` answers `Pending<i32>`, not a bare `Pending`
+ * — and the instance is registered, and `isStructName` still says no. The construct then falls out
+ * of the struct arm into the call arm, which looks for a *function* of that name and declines.
+ *
+ * The predicate is the gap, and the two sides are different tables: `isStructName` walks
+ * `structNames`, while `instantiate` writes `instName`. So "registered" and "known to be a struct"
+ * are separate states here, and the machine's ticket reaches only the first.
+ *
+ * **`declineFor` is the instrument.** `trap` is refused by the ladder's fifth rung, which is where
+ * the obvious probe would have gone; an existing diagnostic carries a value out instead, and takes
+ * whatever string a person wants to build. `itoa` is not imported into `emit.wac`, so a count has to
+ * be spelled some other way — that cost one bootstrap to learn.
+ *
+ * **The route to it was four wrong statements**, each committed: "`await` on a call to another
  * `async` function is declined" — but `0306` awaits a call and works; "the callee's return type must
  * spell the ticket" — closer, still a description of the experiments rather than the rule; and a
  * mechanism claiming `planBody` returns `!ok` and the declaration is skipped, which I wrote as
