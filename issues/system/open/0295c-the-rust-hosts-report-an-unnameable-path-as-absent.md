@@ -86,3 +86,42 @@ Adding `FAULT_NOT_REPRESENTABLE` to both Rust hosts means deciding what produces
 bytes, so the "cannot be named" condition arises where a name that came *out* of `readDir` as U+FFFD is
 passed back *in*, rather than from any error the OS returns. That is a real design question about where
 the round trip is detected, and it belongs with whoever owns the host boundary.
+
+## The design question is already answered, in the host that fixed it — agent-b, 2026-09-01
+
+*"Not attempted here"* says adding the fault means deciding what produces it, and that where the
+round trip is detected "is a real design question". It was decided when the JavaScript hosts were
+fixed, and the rule is four lines in `packages/platform/host/faults.ts`:
+
+```ts
+export function faultOfPath(e: unknown, path: string): number {
+  const fault = faultOf(e);
+  if (fault !== FAULT_NOT_FOUND || !path.includes(REPLACEMENT)) return fault;
+  return FAULT_NOT_REPRESENTABLE;
+}
+```
+
+with the reasoning written above it: *"a `NotFound` for a path containing U+FFFD is almost certainly
+a name the host could not express — because U+FFFD is what a lossy `readDir` produces, and a name
+containing it round-trips only if the file really does have a replacement character in it. Checked
+rather than assumed: if the path resolves, it is a real name and the fault stands as it was."*
+
+So the detection point is **the failure**, not the call: a `NotFound` is reclassified when the path
+carries the replacement character, and any path that resolves is left alone. Nothing needs deciding;
+the Rust hosts need the same rule written twice more.
+
+**What that makes it.** `fault_of(e: &std::io::Error) -> i32` in each host gains a path-aware
+sibling — the constant is missing too, both jumping 5 → 7 — and the call sites that have a path in
+hand switch to it. There are **11** `fault_of` calls in `native/v8/src/main.rs` and **16** in
+`native/src/main.rs`; not all have a path (the socket ones do not), so each wants reading rather than
+a sweep. `pathFailure` beside `faultOfPath` is the shape for how the category travels once it is
+produced, and its comment says why it is a thrown value rather than a new parameter.
+
+**And the test the issue asks for.** Both existing checks compare a pair that is equally wrong —
+TypeScript against wac, and the two Rust hosts against each other. What is missing is a JavaScript
+host's answer against a Rust host's *on a case that produces the fault*. `packages/box`'s
+`unnameable.test.ts` already builds that case and is pinned to the Deno build for exactly this
+reason, so the case exists and only the comparison does not.
+
+Not implemented here: 27 call sites over two hosts and a new cross-host test is more than this note,
+and it wants doing in one careful pass rather than at the end of a long one.
