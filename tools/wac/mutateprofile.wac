@@ -1,0 +1,54 @@
+// The coverage profile's cache — the storage half of `tools/mutate/profile.ts`.
+//
+// `tools/wac/mutateplan.wac` is what *reads* a profile and decides what to run; this is where one is
+// kept between runs. `issues/system/0161` step 6.
+
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+export string CACHE_DIR() { return ".cache/mutate-profile"; }
+
+/**
+ * How many profiles to keep.
+ *
+ * **Only the current tree's key can ever hit**, so every older file is dead the moment a byte
+ * changes. Keeping a few rather than one costs disk and buys the case that actually happens while
+ * working: edit, look, undo, look again.
+ */
+export i32 KEEP() { return 3; }
+
+/**
+ * The cached profiles to remove: everything but the `keep` newest.
+ *
+ * Pure, and taking the times rather than reading them, so the rule can be tested without a
+ * filesystem — the rest of `tools/mutate` is shaped this way for the same reason.
+ *
+ * **Newest first by modification time**, and a tie keeps both in whatever order they arrived: two
+ * profiles written in the same millisecond are equally current, and preferring one by name would be
+ * inventing a reason.
+ */
+export string[] toEvict(string[] paths, i64[] modified, i32 keep) {
+  if (paths.len() <= keep) { return string[0](fill: ""); }
+
+  // Order the indices newest first. Insertion sort: this is a directory of at most a few files.
+  i32[] order = i32[paths.len()](fill: 0);
+  for (i32 i = 0; i < paths.len(); i++) { order[i] = i; }
+  for (i32 i = 1; i < order.len(); i++) {
+    i32 k = order[i];
+    i32 j = i - 1;
+    while (j >= 0 && modified[order[j]] < modified[k]) { order[j + 1] = order[j]; j = j - 1; }
+    order[j + 1] = k;
+  }
+
+  i32 n = paths.len() - keep;
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = paths[order[keep + i]]; }
+  return out;
+}
+
+/** `<dir>/<key>.json` — one file per tree state, which is what makes the eviction rule true. */
+export string cachePath(string dir, string key) { return dir + "/" + key + ".json"; }
+
+/** Whether a cache directory entry is a profile rather than something else that landed there. */
+export bool isProfileFile(string name) {
+  return name.len() > 5 && name.slice(name.len() - 5, name.len()) == ".json";
+}

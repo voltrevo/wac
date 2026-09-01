@@ -1,0 +1,56 @@
+// Which cached profiles are dead, and which file in that directory is a profile at all.
+//
+// `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { KEEP, cachePath, isProfileFile, toEvict } from "./mutateprofile.wac";
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " ") + xs[i]; }
+  return out;
+}
+
+/**
+ * Everything but the newest `keep`.
+ *
+ * Only the current tree's key can ever hit, so every older file is dead the moment a byte changes.
+ * Keeping a few rather than one buys the case that actually happens while working: edit, look, undo,
+ * look again.
+ */
+export string test_the_oldest_profiles_are_the_ones_removed() {
+  T t = T.create();
+  string[] paths = string[]("a.json", "b.json", "c.json", "d.json", "e.json");
+  i64[] times = i64[](10 as i64, 50 as i64, 30 as i64, 20 as i64, 40 as i64);
+
+  // Newest first: b(50) e(40) c(30) d(20) a(10). Keeping three leaves d and a.
+  t.eqStr(joined(toEvict(paths, times, 3)), "d.json a.json",
+          "the two oldest go, and in oldest-last order");
+  t.eqStr(joined(toEvict(paths, times, 1)), "e.json c.json d.json a.json",
+          "keeping one leaves everything else");
+  t.eqI32(toEvict(paths, times, 5).len(), 0, "keeping as many as there are removes nothing");
+  t.eqI32(toEvict(paths, times, 9).len(), 0, "and so does keeping more than there are");
+  t.eqI32(toEvict(string[0](fill: ""), i64[0](fill: 0 as i64), 3).len(), 0,
+          "an empty directory has nothing to evict");
+  return t.report();
+}
+
+/** A tie is not a reason to prefer one: both are equally current. */
+export string test_profiles_written_together_are_equally_current() {
+  T t = T.create();
+  string[] paths = string[]("a.json", "b.json", "c.json");
+  i64[] same = i64[](7 as i64, 7 as i64, 7 as i64);
+  t.eqI32(toEvict(paths, same, 2).len(), 1, "one of three still goes when only two are kept");
+  return t.report();
+}
+
+export string test_what_counts_as_a_profile_file() {
+  T t = T.create();
+  t.isTrue(isProfileFile("abc123.json"), "a profile is a .json");
+  t.isTrue(!isProfileFile("notes.txt"), "something else that landed there is not");
+  t.isTrue(!isProfileFile(".json"), "and a bare extension names no key");
+  t.eqStr(cachePath(".cache/mutate-profile", "deadbeef"),
+          ".cache/mutate-profile/deadbeef.json", "one file per tree state");
+  t.eqI32(KEEP(), 3, "three of them");
+  return t.report();
+}
