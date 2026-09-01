@@ -1,10 +1,13 @@
 # 0306b — a comparison of two i64 constants is folded on their low 32 bits
 
-- **Status:** open — **the ternary face is fixed, the comparison face is not**
-- **Partly fixed in:** `packages/wacc/src/emit.wac` — `integerLiteralsFitI32` gained `Ternary` and
-  `MatchExpr` cases, so a wide literal one shape deep no longer defeats `0281b`'s guard. Measured
-  with `tools/wac/langfuzz.wac`: 10 disagreements in 200 seeds, then 3.
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/wacc/src/emit.wac`, two sites for two faces. `integerLiteralsFitI32` gained
+  `Ternary` and `MatchExpr` cases, so a wide literal one shape deep no longer defeats `0281b`'s
+  guard. The comparison face is fixed **in the `isComparisonOp` arm of the binary emitter**, beside
+  the float rule that was already there — not in `operandType`, which is where an attempt at it broke
+  `spec/cases/0294`. Measured with `tools/wac/langfuzz.wac`: 10 disagreements in 200 seeds, then 3,
+  then 0, with 500 fresh programs from seed 3000 also clean and 319 of 319 corpus cases met.
+- **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
 - **Kind:** bug
@@ -194,12 +197,25 @@ a fact, because a slot one level up may already have decided, and this function 
 float attempt broke twelve corpus files; this one broke one, and only because a single case happened
 to write the shape.
 
-**What is left for whoever takes this.** The answer has to be conditioned on the `want` the emitter
-holds at the operator — which is available, since the `Binary` arm sits inside `emitExprAt`. The
-distinction that makes it tractable: for an *arithmetic* binary the caller's `want` is the slot and
-should win, and for a *comparison* the caller's `want` is the result type (`bool`) and imposes nothing
-on the operands, so there the literals' width is free to decide. Passing `want` into `operandType`
-and answering `"i64"` only when nothing narrower has been imposed is the shape that fits both.
+**And the fix was already sited, twenty lines below.** The binary emitter has an arm reading
+
+```wac
+if (isComparisonOp(k) && (ot == "" || ot == "bool")) {
+  ot = isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "i32";
+}
+```
+
+with a comment saying *"here — and only here — the literals' own family is the last word, because
+nothing else in the expression has an opinion"*, and then, in as many words: *"an earlier attempt at
+this rule in `operandType` applied it to both and broke twelve corpus files."*
+
+That `"i32"` is the comparison face. It is right while the literals fit one, and the fix is to ask —
+`i64` when either does not, `i32` otherwise, floats unchanged. Scoped to comparisons, so arithmetic
+in an i32 slot is untouched, which is the whole difference from the reverted attempt.
+
+**I had read that comment.** I took it as a warning about floats rather than as a map to where the
+integer version belongs, and put my change in the function it names as the wrong one. The code
+documented its own fix and the fault was in the reading.
 
 **This face is what the three remaining seeds are.** `tools/wac/langfuzz_test.wac` excuses 21, 74 and
 188; seed 74's program carries `(-2147483649 <= 2147483648)` and `(-2147483649 > 1000000000000)`,

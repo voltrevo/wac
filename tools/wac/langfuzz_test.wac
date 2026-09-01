@@ -35,10 +35,10 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * fixed set means a disagreement stays reported until it is fixed. Searching is what the command line
  * is for — `--count` and `--seed` reach further than any suite should.
  *
- * **Three seeds are excused by number**, in `knownOpen` below, and they are the comparison face of
- * `issues/lang/0306b`. The ternary face of that issue is fixed, which took the list from ten to
- * three; the comparison face had a fix that cleared all three and broke `spec/cases/0294`, so it was
- * reverted and the issue records why.
+ * **Nothing is excused.** `knownOpen` held ten seeds, then three, and is now empty: both faces of
+ * `issues/lang/0306b` are fixed. The machinery stays because the next open bug will want it, and
+ * because an empty list is the honest way to say *no known failures* while keeping the ability to
+ * express one.
  *
  * The check is a *subset*, not an expected count, so a disagreement at any seed fails and fixing a
  * listed bug never turns this red for having got better. It deliberately does not assert the wrong
@@ -50,14 +50,8 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * rather than extend — a list that is not the list of actual failures reads as knowledge, which is
  * the mistake `wapyroundtrip_test.wac` records making.
  */
-/**
- * Seeds whose disagreement is a known-open issue — the comparison face of `issues/lang/0306b`.
- *
- * Seed 21 carries **both** faces: its answer changed under the ternary fix, from 727379968 to
- * -2147483648, without becoming right. A fix for the comparison face should be checked against it
- * rather than against 74 alone, since a reproduction holding one face is how half a bug gets closed.
- */
-i32[] knownOpen() { return i32[](21, 74, 188); }
+/** Seeds whose disagreement is a known-open issue. Empty since `issues/lang/0306b` was fixed. */
+i32[] knownOpen() { return i32[0](fill: 0); }
 
 bool has(i32[] xs, i32 v) {
   for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == v) { return true; } }

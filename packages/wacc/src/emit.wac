@@ -7925,7 +7925,24 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // an `f32` multiply: an earlier attempt at this rule in `operandType` applied it to both and
       // broke twelve corpus files. `issues/lang/0117`.
       if (isComparisonOp(k) && (ot == "" || ot == "bool")) {
-        ot = isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "i32";
+        // **And `i32` is only right while the literals fit one.** `(-9223372036854775807 - 1) < 0`
+        // compared two constants truncated to 32 bits and answered false; both sides land on
+        // `0x00000000`, so `>= 4294967296` held as well. `issues/lang/0306b`.
+        //
+        // The width goes here rather than in `operandType` for the reason the paragraph above gives
+        // about floats, and it is the same reason: this is the one place that knows the slot has no
+        // opinion. Putting it in `operandType` reaches *arithmetic* too, where the slot does have
+        // one — `low == (0 - 2147483648)` with an i32 `low` emits the right-hand side at i32, and a
+        // widening there produced `i64.sub` under a promise of i32 and an invalid module. Measured:
+        // it broke `spec/cases/0294` while the fuzzer called it perfect over 600 programs.
+        if (isFloatLiteral(left) || isFloatLiteral(right)) {
+          ot = "f64";
+        } else if (integerLiteralsFitI32(src, lexed, left)
+                   && integerLiteralsFitI32(src, lexed, right)) {
+          ot = "i32";
+        } else {
+          ot = "i64";
+        }
       }
       emitExprAt(fb, src, lexed, env, left, ot);
       // **A shift's amount is not the shift's type.** wac lets `wide >> narrow`, and wasm's
