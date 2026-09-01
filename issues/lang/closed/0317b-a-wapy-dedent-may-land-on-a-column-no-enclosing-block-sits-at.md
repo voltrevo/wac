@@ -147,3 +147,21 @@ after a header and an unheaded INDENT has no production. Turning that into a dia
 writing the rule down first, including what it says about the continuation exemption two sections
 up — *"Indentation inside a continuation is not significant"* — and that is authoring spec rather
 than holding the compiler to it.
+
+For 41 — *wapy spells this differently* — the same, and measured the same way. wapy accepts the wac
+spellings with no complaint:
+
+    return true      0 errors
+    return x && y    0 errors
+    return null      0 errors
+
+And `§wac-wapy-words-p2vm9kx` does not forbid them. It says wapy **reserves** every wac keyword,
+*"because the two surfaces share a vocabulary and a word that cannot be a name in one cannot be a
+name in the other"* — which is about what may be an identifier, and is consistent with `true`
+parsing as the literal it is in both. Whether writing `true` where wapy has `True` should be refused
+with the message somebody already wrote for it is a question the spec does not answer.
+
+**So the three unraised codes are three different situations, and only one of them was mine to
+settle.** 42 contradicted a sentence in the spec, so enforcing it was holding the compiler to what
+was already written. 44 and 41 would each need the rule written first, and the file that decides it
+is `spec/spec/wapy.md` rather than the compiler.
