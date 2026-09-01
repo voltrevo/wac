@@ -74,6 +74,7 @@
 //     file  the other file's value disagrees      69 / 200
 //     gen   generic `gsel` arms swapped          21 / 200
 //     arr   every array element off by one        10 / 200
+//     enum  match's A and C arms swapped           9 / 200
 //     loop  oracle ignores `continue`            32 / 200
 //     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
@@ -124,7 +125,14 @@
 //      the two files' `h0` were ever resolved across the boundary the answer would move, which is
 //      the family this item was about. Canary 69/200 — the highest here, because the imported value
 //      lands in a top-level local that expressions pick often;
-//   3. structs, enums and `match`, including a narrowed subject;
+//   3. enums and `match` — **done, 2026-09-01**, structs and a narrowed subject not yet.
+//      `enum En { A, B(i32 v), C }` with the variant chosen when `ev` is constructed, read by the
+//      expression form of `match` — comma-separated arms, a binding taking its type from the
+//      declaration. Confined to `main`, since a helper cannot see `ev`. Canary 9/200.
+//
+//      A payload-less variant is a *value* rather than a call — `En.A`, never `En.A()` — which is
+//      the thing `spec/tour.wac` warns about and a generator gets wrong the obvious way. Structs and
+//      narrowing (`is`) are the part of this item still open;
 //   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
 //      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
 //      value known at generation time and the environment never has to hold a reference. Canary
@@ -472,6 +480,10 @@ export struct Gen {
   i64[] arr;
   /** What the second file's `sideValue()` answers, chosen before `main` is written. */
   i64 sideK;
+  /** Which variant of the seeded enum was constructed: 0 = A, 1 = B(payload), 2 = C. */
+  i32 evVariant;
+  /** `B`'s payload, when that is the variant. */
+  i64 evPayload;
   /**
    * Whether a helper's body is being generated, in which case `arr` is not in scope.
    *
@@ -484,7 +496,7 @@ export struct Gen {
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
                Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "",
-               i64[0](fill: 0), 0, false);
+               i64[0](fill: 0), 0, 0, 0, false);
   }
 
   /**
@@ -669,6 +681,19 @@ export struct Gen {
         // nothing writes to `arr`, so the value is known here — which is what lets the oracle answer
         // without holding a reference. `.len()` goes in beside it because it is the other thing a
         // fixed array knows about itself.
+        // **A `match` on the seeded enum, at i32.** The arms are comma-separated values in the
+        // expression form, a binding takes its type from the declaration, and the variant was chosen
+        // when `ev` was constructed — so the answer is known here. Confined to `main` for the reason
+        // the array read is: a helper cannot see `ev`.
+        if (!this.inHelper && ty == TY_I32() && this.rng.intTop(5) == 0) {
+          i64 kA = 7 + (this.rng.intTop(90) as i64);
+          i64 kC = 500 + (this.rng.intTop(90) as i64);
+          i32 variant = this.evVariant;
+          i64 payload = this.evPayload;
+          i64 known = variant == 0 ? kA : (variant == 1 ? payload : kC);
+          return Expr("match (ev) { case A: " + itoa64(kA) + ", case B(v): v, case C: "
+                      + itoa64(kC) + " }", ty, (Env e) => known);
+        }
         if (!this.inHelper && ty == TY_I32() && this.arr.len() > 0 && this.rng.intTop(4) == 0) {
           i32 at = this.rng.intTop(this.arr.len());
           if (this.coin()) {
@@ -1041,6 +1066,14 @@ export struct Gen {
     //
     // Seeded wide, since under 2^31 a u32 and an i32 answer alike and the type tests nothing.
     this.emit("i32[] arr = mkArr();");
+    // **An enum value, with the variant chosen here so the oracle knows it.** A payload-less variant
+    // is a value rather than a call — `En.A`, never `En.A()` — which `spec/tour.wac` states and a
+    // generator gets wrong the obvious way.
+    this.evVariant = this.rng.intTop(3);
+    this.evPayload = 100000 + (this.rng.intTop(1000) as i64);
+    this.emit("En ev = " + (this.evVariant == 1
+                            ? "En.B(" + itoa64(this.evPayload) + ")"
+                            : (this.evVariant == 0 ? "En.A" : "En.C")) + ";");
     // **Declared, not merely emitted.** A line printed into the body that `locals` does not know
     // about is a line no expression can reference and the oracle never sees — which is how a
     // construct ends up in 200 programs and observed in none.
@@ -1119,7 +1152,8 @@ export struct Gen {
                                       TY_I32()));
     }
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
-    string src = "import { sideValue } from \"./s.wac\";\n";
+    string src = "import { sideValue } from \"./s.wac\";\n"
+               + "enum En { A, B(i32 v), C }\n";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
     src = src + "export i32 main() {\n";
     for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
