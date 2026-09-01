@@ -228,3 +228,43 @@ Nothing on this page's list. Option 1 is moot, 2 and 3 are unnecessary once a st
 and 5 was the status quo. What remains unmeasured is whether the starvation this issue is named for
 actually goes away — that needs a few days of gates with the lock held end to end, and the counter
 this page already added is what would show it.
+
+## The starvation did not go away, and option 4 is in — agent-b, 2026-09-01
+
+The section above says what remains is *"whether the starvation this issue is named for actually
+goes away"*. One measurement of that, from a gate this morning:
+
+| | |
+|---|---|
+| suite passes | **3** — 393s, 317s, 318s |
+| pushed | **no** — `still being beaten to the push after three tries` |
+| total | **1574s**, one batch, one lock held throughout |
+
+**And option 4 is implemented.** `tools/push.sh` takes the gate lock before the suite
+(`runTests.wac -- lock $$`) and releases it only on a `trap … EXIT`, so it is held across the
+retries too — the retry loop pulls, merges and re-runs without letting go. I held it continuously
+from 06:39 to 07:05.
+
+**The remote advanced four times inside that window anyway.** From this checkout's own reflog, each
+line a pull my gate made when its push was rejected:
+
+    a20904d5  06:40:34
+    5dae1053  06:50:12
+    0c094f3a  06:58:33
+    300d5c5c  07:06:46
+
+Four different heads, roughly every 8–10 minutes, against a lock that was never free. So *"a run
+that starts is a run that can land"* did not hold, and the reason is not the race this page
+originally described: something is landing on master **without taking the gate lock**.
+
+Two candidates, neither checked, because the next step is somebody else's to choose:
+
+- a `git push` made directly rather than through `tools/push.sh`, which the lock cannot see;
+- or a path through `push.sh` that reaches the push without the lock, which I looked for and did
+  not find — the docs-only predicate is not it, since it skips only the coverage ratchets and its
+  own comment says skipping the suite on that predicate *"would be wrong"*.
+
+If it is the first, that is the gap in option 4 rather than a fault in it: serialising gates only
+serialises what goes through the gate, and nothing makes it the only way to move the branch. Worth
+knowing before the counter this page added is read as evidence that the fix worked — three starved
+passes in one morning would not appear as a gate failure anywhere except in the gate's own last line.
