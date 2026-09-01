@@ -37,6 +37,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { roundTrip } from "./probe.wac";
 import { Ints, unhex, hex, writeDescriptor } from "./descriptor.wac";
+import { trimmed } from "../../../wactest/src/strings.wac";
 
 /**
  * Foundry's `cast`, wherever the operator put it.
@@ -88,14 +89,6 @@ u8[] castEncode(Core core, Cli cli, string cast, string[] types, string[] args) 
   }
   string said = trimmed(string.fromBytes(r.stdout));
   return unhex(said.len() >= 2 && said.slice(0, 2) == "0x" ? said.slice(2, said.len()) : said);
-}
-
-string trimmed(string s) {
-  i32 from = 0;
-  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
-  i32 to = s.len();
-  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
-  return s.slice(from, to);
 }
 
 bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }

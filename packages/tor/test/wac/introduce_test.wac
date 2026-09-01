@@ -31,6 +31,7 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { Introduce2, parseIntroduce2, rendezvous1Cell } from "../../src/hsservice.wac";
 import { linkSpecifiersValid } from "../../src/hsintro.wac";
 import { hsMac, serviceIntroduceKeys } from "../../src/hsntor.wac";
+import { strOf } from "../../../wactest/src/jsonfile.wac";
 
 JsonObject vectors(Cli cli) {
   FileResult r = cli.readFile("packages/tor/test/data/introduce_vectors.json").wait();
@@ -39,15 +40,6 @@ JsonObject vectors(Cli cli) {
   if (v is null) { trap; }
   match (v!) {
     case Object(members): { return members; }
-    else: { trap; }
-  }
-}
-
-string strOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
     else: { trap; }
   }
 }

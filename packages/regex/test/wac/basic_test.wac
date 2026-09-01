@@ -44,6 +44,7 @@ import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { search, slotCount } from "../../src/regex.wac";
 import { compileBasic, compileBasicIgnoreCase, toExtended } from "../../src/basic.wac";
 import { Rewritten, compileExtended, compileExtendedIgnoreCase } from "../../src/posix.wac";
+import { trimmed } from "../../../wactest/src/strings.wac";
 
 /** 1 matched, 0 did not, -1 the pattern was refused, -2 the step budget ran out. */
 const i32 MATCHED = 1;
@@ -425,14 +426,6 @@ export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
     }
   }
   return t.report();
-}
-
-string trimmed(string s) {
-  i32 from = 0;
-  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
-  i32 to = s.len();
-  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
-  return s.slice(from, to);
 }
 
 bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }

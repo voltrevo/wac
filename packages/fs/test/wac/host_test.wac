@@ -25,6 +25,7 @@ import { Core, Cli, Exec, Change, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
+import { trimmed } from "../../../wactest/src/strings.wac";
 
 const string OPS = "packages/fs/example/ops.wac";
 
@@ -75,14 +76,6 @@ string run(Core core, Cli cli, string stem, string[] args, string script) {
     trap;
   }
   return string.fromBytes(r.stdout);
-}
-
-string trimmed(string s) {
-  i32 from = 0;
-  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
-  i32 to = s.len();
-  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
-  return s.slice(from, to);
 }
 
 bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }

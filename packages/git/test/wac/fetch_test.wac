@@ -32,6 +32,7 @@ import { PackIndex } from "../../src/idx.wac";
 import { Kind, nameOf } from "../../src/object.wac";
 import { Parsed, parseCommit } from "../../src/commit.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
+import { joined } from "../../../wactest/src/strings.wac";
 
 struct Git {
   Cli cli;
@@ -86,12 +87,6 @@ string[] splitOn(string s, string sep) {
     count = count + 1;
     at = i + 1;
   }
-  return out;
-}
-
-string joined(string[] all, string sep) {
-  string out = "";
-  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
   return out;
 }
 

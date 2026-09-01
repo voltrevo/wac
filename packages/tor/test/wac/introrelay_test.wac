@@ -14,8 +14,7 @@ import {
   INTRO_ACK_BAD_FORMAT, INTRO_ACK_SUCCESS, INTRO_ACK_UNKNOWN_ID, IntroPoints, Introduced,
   establishIntro, forgetCircuit, forgetConnection, indexOfKey, introduce1, introduceAckBody,
 } from "../../src/introrelay.wac";
-
-
+import { objectOf } from "../../../wactest/src/jsonfile.wac";
 
 /** A service claims a circuit, and a client's cell finds it. */
 /**
@@ -57,13 +56,6 @@ JsonObject introCase(Cli cli) {
   if (cs is null) { trap; }
   match (cs!) {
     case Array(items): { return objectOf(items.get(0)); }
-    else: { trap; }
-  }
-}
-
-JsonObject objectOf(JsonValue v) {
-  match (v) {
-    case Object(members): { return members; }
     else: { trap; }
   }
 }

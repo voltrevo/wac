@@ -28,6 +28,7 @@ import { JsonValue, JsonObject, JsonMember } from "../../../json/src/value.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { FixedBig } from "../../../fmt/src/bigint.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
 /** `(` … `)` for a list, `<hex>` for a byte string. One rendering per tree, and no two trees alike. */
 string render(Item it) {
@@ -51,7 +52,6 @@ string hex(u8[] b) {
   }
   return string.fromBytes(out);
 }
-
 
 // ── the vendored fixtures ────────────────────────────────────────────────────
 
@@ -83,22 +83,6 @@ JsonObject fixtures(Core core, Cli cli, string name) {
 
 string stripHexPrefix(string h) {
   return h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h;
-}
-
-string strOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
-  }
-}
-
-JsonObject objectOf(JsonValue v) {
-  match (v) {
-    case Object(members): { return members; }
-    else: { trap; }
-  }
 }
 
 /** The minimal big-endian bytes of a non-negative decimal string — RLP's only way to spell a number. */
@@ -310,7 +294,6 @@ export string test_nesting_survives_a_round_trip() {
   if (back.ok) { t.eqStr(render(back.item), "(()(())(()(())))", "and to the same shape"); }
   return t.report();
 }
-
 
 string itoa(i32 v) {
   if (v == 0) { return "0"; }

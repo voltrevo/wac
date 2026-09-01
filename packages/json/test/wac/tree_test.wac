@@ -25,6 +25,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { ftoa } from "../../../fmt/src/ftoa.wac";
 import { parse, stringify } from "../../src/json.wac";
 import { JsonValue, JsonArray, JsonObject, JsonMember } from "../../src/value.wac";
+import { objectOf } from "../../../wactest/src/jsonfile.wac";
 
 const string ORACLE = "packages/json/test/oracle.ts";
 
@@ -92,13 +93,6 @@ string strOf(JsonValue v) {
 JsonArray arrayOf(JsonValue v) {
   match (v) {
     case Array(items): { return items; }
-    else: { trap; }
-  }
-}
-
-JsonObject objectOf(JsonValue v) {
-  match (v) {
-    case Object(members): { return members; }
     else: { trap; }
   }
 }

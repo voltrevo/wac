@@ -30,6 +30,7 @@ import { Object, readLoose } from "../../src/object.wac";
 import { Pack, Opened, Got, openPack, objectNamed } from "../../src/pack.wac";
 import { encode as hexOf, decoded } from "../../../codec/src/hex.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
+import { joined } from "../../../wactest/src/strings.wac";
 
 struct Git {
   Cli cli;
@@ -73,12 +74,6 @@ string[] splitOn(string s, string sep) {
     count = count + 1;
     at = i + 1;
   }
-  return out;
-}
-
-string joined(string[] all, string sep) {
-  string out = "";
-  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
   return out;
 }
 
