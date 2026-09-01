@@ -1,4 +1,4 @@
-# VISION
+# Examples
 
 What wac should read like, in programs. Each is marked **done** or **not yet**, and that marker is
 the only thing on this page that refers to an implementation.
@@ -6,22 +6,7 @@ the only thing on this page that refers to an implementation.
 An entry is an example, not an argument. A want that cannot be shown as a program somebody would
 want to write does not belong here.
 
-No test reads this page. Nothing here is a fixture, a list some guard checks, or a promise a
-suite holds anybody to — an entry can be rewritten, reordered or deleted without running anything,
-and a guard that made an edit here fail a build would be the wrong guard.
-
----
-
-## What wac is for
-
-Systems programming where **authority is a value**: a program does exactly what it was handed and
-nothing more, and that is a fact about its type rather than a sandbox around it.
-
-The same module runs in a browser, on Node, on Deno, on wasmtime and natively, without being
-rebuilt — so where a program runs stops being something the program knows.
-
-Enough language to write the stack in rather than a program on top of one: the compiler that
-compiles it, the shell that runs it, the cryptography that carries it.
+See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
@@ -103,9 +88,8 @@ T? find<T>(T[] xs, fn[bool(T)] p) {
 }
 ```
 
-Most of a program is this. It takes no capability, so it cannot reach the world, and the signature is
-the whole of that argument — nothing else had to be arranged. Absence is a type rather than a
-sentinel, a loop says what it walks rather than how it counts, and a predicate is a value.
+Takes no capability, so it cannot reach the world. Absence is a type, a loop says what it walks, and
+a predicate is a value.
 
 **Not yet.**
 
@@ -148,20 +132,16 @@ Node page(string who) {
 }
 ```
 
-A tree of `Node`, an ordinary type from `core` — markup is data a program builds and returns, not a
-template language beside it.
+Markup is a tree of `Node`, an ordinary type from `core`, that a program builds and returns.
 
-**Every tag is a name in scope.** `div` and `p` were handed over by an import, `greeting` is mine,
-and nothing distinguishes them: a tag is a function, its attributes are that function's named
-parameters and its children are a parameter. So attributes are typed wherever they appear, a tag that
-takes no children refuses them, and `<dvi>` is an unresolved name rather than an element nobody
-meant.
+Every tag is a name in scope. `div` and `p` came from an import and `greeting` is mine; a tag is a
+function, its attributes are that function's named parameters, and its children are a parameter.
 
 **Not yet.**
 
 ---
 
-## Tags a name cannot reach
+## Literal tags and verbatim names
 
 ```wac
 Node label(string id, string @for, Node[] kids) {   // `for` is a keyword; `@for` is the name
@@ -173,14 +153,11 @@ Node field(string who) {
 }
 ```
 
-A tag is a name only when it can be one. `"label"` is a literal, so a tag whose name is not an
-identifier — a hyphenated custom element, a namespaced one — is reachable too, and inside a literal
-element an attribute name is a string rather than an identifier.
+A tag written as a literal takes any name — a hyphenated custom element, a namespaced one — and
+inside one an attribute name is a string.
 
-Where the name really is a parameter, `@for` writes it: a verbatim identifier is any word taken as a
-name, so a keyword can be one and nothing is renamed. It costs a mark at the definition and nothing
-at any use — an attribute is matched by spelling, so the call site stays bare. Defining a tag is how
-the vocabulary grows, and `core`'s `label` is exactly this.
+`@for` is a verbatim identifier: any word taken as a name, so a keyword can be one. It marks the
+definition and nothing at the call site, which matches attributes by spelling.
 
 **Not yet.**
 
@@ -220,10 +197,8 @@ i32 totalLength(Vec<string> lines) {
 }
 ```
 
-The same head walks an array and a `Vec`, so they read as one language rather than two libraries, and
-an index that exists only to be a cursor never appears. The head keeps its parentheses and its type:
-every other head in the language has both, and a redundancy the eye can rest on is worth more than a
-character saved.
+The same head walks an array and a `Vec`, and an index that exists only to be a cursor never appears.
+The head keeps its parentheses and its type, as every other head in the language does.
 
 **Not yet.**
 
@@ -264,12 +239,96 @@ async Result<u8[], string> readAll(Socket sock) {
 }
 ```
 
-Three outcomes, all named, none forgettable: a read that ended and a read that broke are different
-answers and neither can be mistaken for the other. The failure is returned rather than reported, so
-the caller decides what it means — and a partial read cannot be handed back as if it were whole.
+Three outcomes, all named: a read that ended and a read that broke are different answers. The failure
+is returned rather than reported, so the caller decides what it means.
 
-The socket is the whole of what it was handed. Reading one is a method on it rather than something
-asked of the system on the socket's behalf, so a handle carries its own authority and this function
-can touch one connection and nothing else.
+Reading a socket is a method on the socket, so this function can touch one connection and nothing
+else.
+
+**Not yet.**
+
+---
+
+## Matching an enum
+
+```wac
+async void show(Sys sys) {
+  match (await sys.readFile("a.txt")) {
+    Ok(bytes):        { use(bytes); }
+    Err(is NotFound): { sys.log("no a.txt — using the default"); }
+    Err(_):           { sys.warn("cannot read a.txt"); }
+  }
+}
+```
+
+```wac
+async Result<Config, string> load(Sys sys) {
+  return match (await sys.readFile("config.json")) {
+    Ok(bytes):        parse(bytes),
+    Err(is NotFound): Result.Ok(Config.defaults()),
+    Err(e):           Result.Err(e.message()),
+  };
+}
+```
+
+Arms hold blocks or values, and a match holding values is an expression. `is` matches a variant
+inside a payload; a bare name there binds it.
+
+**Not yet.**
+
+---
+
+## An arm can leave
+
+```wac
+async i32 totalSize(Sys sys, string[] names) {
+  i32 total = 0;
+  for (string name in names) {
+    u8[] bytes = match (await sys.readFile(name)) {
+      Ok(b):  b,
+      Err(_): continue,
+    };
+    total += bytes.len();
+  }
+  return total;
+}
+```
+
+An arm that leaves gives no value, and is not asked to agree with the others.
+
+**Not yet.**
+
+---
+
+## An enum with a default
+
+```wac
+string advice(Fault f) {
+  return match (f) {
+    NotGranted: "start it with the grant it needs",
+    IsDir:      "that path is a directory",
+    default:    "",
+  };
+}
+```
+
+```wac
+f64 area(Shape s) {
+  return match (s) {
+    Circle(r):  3.14159 * r * r,
+    Square(sd): sd * sd,
+    default:    0.0,
+  };
+}
+```
+
+```
+error: this `default` is unreachable
+  --> shapes.wac:6:5
+   |
+ 6 |     default:    0.0,
+   |     ^
+   = help: every variant is already named — remove it
+```
 
 **Not yet.**
