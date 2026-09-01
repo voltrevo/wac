@@ -71,6 +71,7 @@
 //     bool  every comparison inverted            30 / 200
 //     u32   literal read as signed               33 / 200
 //     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
+//     file  the other file's value disagrees      69 / 200
 //     gen   generic `gsel` arms swapped          21 / 200
 //     arr   every array element off by one        10 / 200
 //     loop  oracle ignores `continue`            32 / 200
@@ -118,7 +119,11 @@
 //      a slot, which is the same rule the literal pools follow. It also exercises
 //      `§wacc-written-type-args`, and puts a `<` before a parenthesised list — the shape
 //      `issues/lang/0308b` was about;
-//   2. several files, so the "a name is unique only within its file" family is in range;
+//   2. several files — **done, 2026-09-01.** Every program is now two: `m.wac` imports `sideValue`
+//      from `s.wac`, and `s.wac` defines an `h0` of its own with a body no helper in `m.wac` has. If
+//      the two files' `h0` were ever resolved across the boundary the answer would move, which is
+//      the family this item was about. Canary 69/200 — the highest here, because the imported value
+//      lands in a top-level local that expressions pick often;
 //   3. structs, enums and `match`, including a narrowed subject;
 //   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
 //      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
@@ -250,8 +255,17 @@ export struct Ran {
 }
 
 export Ran runProgram(Cli cli, string src) {
-  string[] paths = string[](entryName());
-  string[] texts = string[](src);
+  return runGraph(cli, string[](entryName()), string[](src));
+}
+
+/**
+ * The same, for a graph of more than one file.
+ *
+ * `buildLinked` and `diagnoseGraphIn` both take parallel `paths` and `texts`, so a second file costs
+ * nothing but naming it — and it buys the family of bugs that only exists once a name can be defined
+ * twice in one program. `issues/system/0161`'s roadmap ranks that second.
+ */
+export Ran runGraph(Cli cli, string[] paths, string[] texts) {
   Res res = Res.empty();
 
   // **Diagnosed before it is emitted.** wacc's emitter is asked separately from its checker, and a
@@ -456,6 +470,8 @@ export struct Gen {
   string lastAcc;
   /** The elements of the seeded array, so an index can be answered without holding a reference. */
   i64[] arr;
+  /** What the second file's `sideValue()` answers, chosen before `main` is written. */
+  i64 sideK;
   /**
    * Whether a helper's body is being generated, in which case `arr` is not in scope.
    *
@@ -468,7 +484,7 @@ export struct Gen {
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
                Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "",
-               i64[0](fill: 0), false);
+               i64[0](fill: 0), 0, false);
   }
 
   /**
@@ -1025,6 +1041,12 @@ export struct Gen {
     //
     // Seeded wide, since under 2^31 a u32 and an i32 answer alike and the type tests nothing.
     this.emit("i32[] arr = mkArr();");
+    // **Declared, not merely emitted.** A line printed into the body that `locals` does not know
+    // about is a line no expression can reference and the oracle never sees — which is how a
+    // construct ends up in 200 programs and observed in none.
+    this.sideK = 1000003 + (this.rng.intTop(1000) as i64);
+    i64 sk = this.sideK;
+    this.declare(TY_I32(), Expr("sideValue()", TY_I32(), (Env e) => sk));
     this.declare(TY_U32(), this.wideU32Literal());
     // **And a wide i64, for the same reason.** The audit in the header puts i64 at 12 programs in
     // 200 — the thinnest of the three, and the one `issues/lang/0306b` lived in. A value whose high
@@ -1097,11 +1119,16 @@ export struct Gen {
                                       TY_I32()));
     }
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
-    string src = "";
+    string src = "import { sideValue } from \"./s.wac\";\n";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
     src = src + "export i32 main() {\n";
     for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
-    return Program(src + "  return " + result.src + ";\n}\n", want);
+    // **The second file reuses `h0`.** Its own `h0` returns a value nothing in `m.wac` returns, and
+    // its exported `sideValue` calls it — so if the two files' `h0` were ever confused, the answer
+    // moves. `m.wac` has an `h0` of its own for exactly that reason.
+    string side = "i32 h0() { return " + itoa64(this.sideK) + "; }\n"
+                + "export i32 sideValue() { return h0(); }\n";
+    return Program(src + "  return " + result.src + ";\n}\n", want, side);
   }
 }
 
@@ -1117,6 +1144,15 @@ string typeText(i32 ty) {
 export struct Program {
   string src;
   i64 want;
+  /**
+   * The second file's source, and the name it is imported under.
+   *
+   * It exists to make a *collision* possible: it defines `h0` too, with a different body, and its
+   * exported entry calls its own. If the compiler ever resolved that name across files the answer
+   * would change, which is the family `issues/system/0161`'s roadmap ranks second — "a name is
+   * unique only within its file".
+   */
+  string side;
 }
 
 // ── The operators, as codes rather than strings ──────────────────────────────────────────────────
@@ -1191,7 +1227,7 @@ export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
   for (i32 k = 0; k < count; k++) {
     i32 s = seed + k;
     Program p = Gen.create(s).program();
-    Ran r = runProgram(cli, p.src);
+    Ran r = runGraph(cli, string[](entryName(), "s.wac"), string[](p.src, p.side));
     if (!r.ok) {
       bad.push(Outcome(s, p.src, p.want, r.why));
     } else if ((r.value as i64) != p.want) {
