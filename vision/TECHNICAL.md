@@ -24,11 +24,21 @@ Node field(string who) {
 }
 ```
 
-A tag written as a literal takes any name — a hyphenated custom element, a namespaced one — and
-inside one an attribute name is a string.
+```wac
+Node icon() {
+  return <"my-widget" data-size="8" />;
+}
 
-`@for` is a verbatim identifier: any word taken as a name, so a keyword can be one. It marks the
-definition and nothing at the call site, which matches attributes by spelling.
+Node dot() {
+  return <"svg:circle" cx="1" cy="1" r="1" />;
+}
+```
+
+A quoted tag name may be any name. An attribute name is written as it is in HTML, and runs to `=`,
+whitespace, `/` or `>`.
+
+`@for` is a verbatim identifier: any word taken as a name, so a keyword can be one. The call site
+writes `for`, and the parameter it fills is `@for`.
 
 **Not yet.**
 
