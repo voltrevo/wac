@@ -2871,3 +2871,33 @@ because `announceHeavy`'s cleanup is an `unload` handler and SIGTERM does not ru
 starve anybody — `heavyOthers` in `tools/wac/suitegate.wac` tests `alive(pid)` and sweeps a note
 whose process is gone, *"A note whose process is gone is not a presence."* Worth knowing before
 anyone else kills one and goes looking for the damage.
+
+### The split is tested now, so what is left is only the two processes
+
+The section above says the merge rule is settled and the wiring is not, and that a mixed scope is
+expensive to arrange on any package. Half of that wiring did not need a scope at all.
+
+`mutate.ts` computed the halves inline:
+
+    const wacHalf  = runDirs.filter((d) =>  isWacRun([d]));
+    const denoHalf = runDirs.filter((d) => !isWacRun([d]));
+    const halves = wacHalf.length > 0 && denoHalf.length > 0 ? [wacHalf, denoHalf] : [runDirs];
+
+Three lines, pure given `isWacRun`, and the only thing deciding whether `mergeRuns` is ever handed
+two verdicts — while `mergeRuns` itself had a decision table under test. **The untested half was the
+one that decides whether the tested half is reached.**
+
+It is `splitHalves` in `tools/mutate/native.ts` now, which is where that module's header says the
+pure pieces go so they can be imported without running the tool. Five cases: a uniform wac scope is
+one run, a uniform Deno scope is one run, a mixed scope splits with the wac half first and order kept
+inside each half, the single-run path is handed the caller's own array rather than an equal one a
+filter built, and an empty scope stays one run. **19 passed, 0 failed**, from 14.
+
+Behaviour-preserving and checked as such rather than argued: `deno check` on both files, and
+`--package bytes` re-run after the change reports what it reported before — *"3/3 mutant(s) ran only
+the tests that reach them, 0 fell back to the full scope"*, 3/3 killed, measured through `wac test`.
+
+**So the remainder is one thing and it is small:** that a genuinely mixed scope spawns two child
+processes and pushes both verdicts. What to run is tested, how to combine it is tested, and what is
+left is the `for (const half of halves)` loop doing what a loop does. That is worth saying precisely,
+because "the wiring is unverified" sounded like a reason to keep step 2 open and this does not.
