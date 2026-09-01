@@ -1,6 +1,6 @@
 # 0316 — the wasmtime host runs no tests at all, and the freshness guard passes anyway
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-09-01
@@ -78,13 +78,15 @@ half, or it passes vacuously in the ones that compare and find nothing to compar
 dangerous one. `design/system/0001` D9 says this host exists to test the claim that a wac program does
 not depend on one, and a green suite that never asked it does not test that claim.
 
-## Still open
+## Done
 
-The fix and the guard are in. What is not done:
+The host runs tests again, and the two things that let this happen silently are guarded:
 
-- **`nativeHostWhyNot()` should have a reason to return for a stale seed**, which its docstring already
-  promises callers. Today it answers the binary question only, so the four files that consult it still
-  cannot tell a current host from one carrying an old compiler.
+- ~~**`nativeHostWhyNot()` should have a reason to return for a stale seed**~~ — done. The comparison
+  lives in `seedStale` in `packages/wactest/src/built.wac` and both callers ask it, rather than the
+  rule existing twice. It answers "not stale" to an unresolved import graph deliberately, because a
+  skip decision must not skip on a broken walk; `seedfresh_test.wac` keeps its own floor on the graph
+  size for the other direction, where a walk that found nothing must fail rather than pass.
 - ~~**Nothing asserts that `wac test` works on this host**~~ — done.
   `packages/platform/test/wac/hostrunstests_test.wac` runs the wasmtime binary on
   `worldarrives_test.wac` and requires a passing count back, naming *built without* so a future
@@ -110,3 +112,7 @@ passed 6 of 6 and the wasmtime arm failed 6 of 6, which looked like the new test
 failure turned up in three files I had not touched. The measurement 0295c needed was taken with
 `wac run` instead — which is why that issue could still be closed, and, in hindsight, was the first
 evidence of what this actually was.
+
+**Fixed in:** `native/src/main.rs`, `packages/platform/test/wac/hostrunstests_test.wac`,
+`packages/platform/test/wac/worldarrives_test.wac`, `packages/wactest/src/built.wac`,
+`tools/wac/seedfresh_test.wac`.
