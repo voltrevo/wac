@@ -48,7 +48,17 @@
  *
  * The predicate is the gap, and the two sides are different tables: `isStructName` walks
  * `structNames`, while `instantiate` writes `instName`. So "registered" and "known to be a struct"
- * are separate states here, and the machine's ticket reaches only the first.
+ * are separate states here, and the machine's ticket reaches only the first. Asked which struct names
+ * contain `Pending` at the point of failure, the emitter answers with **none at all**.
+ *
+ * **A lead, quoted rather than concluded.** The comment beside where `structNames` is written says
+ * the table "may not grow once `declTypes` is taken, and a struct named while emitting is the
+ * guard's whole reason for existing". A generic instantiates to a struct and the lowering runs
+ * late, so an instance the machine introduces may arrive after that table is closed. That fits
+ * every measurement here and is **not** verified — it is where the next instrumented build should
+ * look, not a further statement of the cause. Comparing against a program that names `Pending<i32>`
+ * in source needs one that passes the checker and still fails at emit, which is circular to
+ * construct; that is the wall this instrument reaches.
  *
  * **`declineFor` is the instrument.** `trap` is refused by the ladder's fifth rung, which is where
  * the obvious probe would have gone; an existing diagnostic carries a value out instead, and takes
