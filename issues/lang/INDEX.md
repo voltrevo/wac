@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0315a](open/0315a-a-const-reference-is-laundered-through-any-non-const-slot.md) | a reference reached through `const this` mutates at runtime once it passes through an argument, an array, a field or a type argument; the direct case is refused | bug | wrong answer |
 | [0308b](closed/0308b-a-less-than-before-a-parenthesis-parses-as-generic-type-arguments.md) | `(a < (a >> 1))` fails to parse — the `<` is read as opening generic type arguments and the inner `>` as closing them; `(a < (a + 1))` is fine, so it needs a `>` inside the parentheses | bug | compile error |
 | [0314a](open/0314a-an-inexhaustive-match-does-not-name-the-variant-it-is-missing.md) | an inexhaustive `match` says `does not cover every variant` where the spec states `does not cover 'Rect'` — the uncovered set is computed to decide the refusal, then dropped | diagnostic | message names nothing |
 | [0307b](open/0307b-a-lambda-parameter-typed-with-a-generic-does-not-survive-the-wapy-round-trip.md) | `(Map<string, i32> e) => 7` renders to wapy as a nameless parameter with no type arguments and a **null body**; separately, an `if` inside a lambda body comes back as a bare expression plus a block. The same type on a function parameter is fine | bug | wrong answer |
@@ -66,7 +67,7 @@ has been fixed and why.
 
 ## Closed
 
-248 issues, 210 closed.
+249 issues, 210 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
