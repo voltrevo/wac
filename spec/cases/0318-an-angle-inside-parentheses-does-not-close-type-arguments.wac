@@ -1,0 +1,16 @@
+// expect: answers f = 1
+// spec:  §wac-generic-lt-ambiguity-k8fm3wq
+// why: `<` before `(` scanned ahead for a closing `>` and took one that was *inside* the
+//      parentheses, so `a < (a >> 1)` was read as a generic call and refused with *expected a type*
+//      — a complaint about the parser's hypothesis, on a line naming no type at all
+// from: issues/lang/0308b
+export i32 f() {
+  i32 a = 5;
+  // The existing case for this rule has a literal after the `<`, which the whitelist rejects
+  // outright. A `(` is a legitimate type token — `fn[i32(i32)]` contains one — so the scan enters
+  // here and has to get the *close* right instead.
+  bool shifted = (a < (a >> 1));            // 5 < 2, false
+  bool nested  = (a < (a > 1 ? 9 : 0));     // 5 < 9, true
+  bool plain   = (a < (a + 1));             // 5 < 6, true — parsed correctly before this too
+  return (!shifted && nested && plain) ? 1 : 0;
+}

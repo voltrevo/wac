@@ -482,6 +482,12 @@ at a missing type that does not exist. Bounds checks are written this way consta
 parenthesised cast on the right-hand side is exactly what makes the collision likely:
 `if (n < (0 as i64) || p + n > (b.len() as i64))`.
 
+**An angle inside parentheses or brackets closes nothing.** The scan has to track grouping as well as
+type-ness, because `(` is a legitimate type token — `Box<fn[i32(i32)]>` contains one — so a `>` met
+between parentheses belongs to somebody's comparison rather than to this list. Without that,
+`a < (a >> 1)` took the `>>` for the close and was refused with the same *expected a type* the rule
+above exists to prevent, on a line naming no type at all. `issues/lang/0308b`.
+
 The alternatives were an explicit marker on generic calls, as Rust's `f::<T>(x)` does, and resolving
 the name before deciding, which needs the parser to know which names are generic. The first trades a
 common pleasant spelling for a rare unpleasant one; the second is more machinery for the same answer
