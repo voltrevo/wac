@@ -31,6 +31,7 @@ import { attr } from "./sdp_probe.wac";
 import { check as iceCheck, hostPref, priorityOf, reportedAddress, tidOf } from "./ice_probe.wac";
 import { checkIntegrity, kindOf } from "./stun_probe.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
 
 const string ORACLE = "packages/webrtc/test/sdp_oracle.py";
 const string SOURCE = "packages/webrtc/example/answer.wac";
@@ -45,8 +46,6 @@ string offerText() {
          "a=ice-ufrag:" + OFFER_UFRAG + "\r\na=ice-pwd:" + OFFER_PWD +
          "\r\na=setup:actpass\r\na=mid:0\r\n";
 }
-
-string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   T t = T.create();

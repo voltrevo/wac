@@ -31,15 +31,9 @@ import { blsModulusConstantsAgree, blsFpStatus, blsFpAdd, blsFpSub, blsFpMul, bl
          blsFpSquare, blsFpOneBytes, blsFpRoundTrip, blsFpMulByOneIsIdentity, blsFpIsZeroBytes,
          blsFpInvert, blsFpSqrt, blsFp2Op, blsFp2Norm, blsFp2OneIsIdempotent, blsFp6Op,
          blsFp12Op, blsFp12InverseIsInverse } from "./probe.wac";
+import { member, memberArray } from "../../../wactest/src/fixtures.wac";
 
 // ── Reading `vectors.json` ────────────────────────────────────────────────────
-
-JsonValue? member(JsonValue v, string key) {
-  match (v) {
-    case Object(members): { return members.getStr(key); }
-    else: { return null; }
-  }
-}
 
 string text(JsonValue v) {
   match (v) {
@@ -60,15 +54,6 @@ bool memberIsNull(JsonValue v, string key) {
   match (found!) {
     case Null: { return true; }
     else: { return false; }
-  }
-}
-
-JsonArray? memberArray(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return null; }
-  match (found!) {
-    case Array(items): { return items; }
-    else: { return null; }
   }
 }
 

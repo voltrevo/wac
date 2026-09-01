@@ -25,7 +25,7 @@ import { Core, Cli, Exec, Change, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
-import { trimmed } from "../../../wactest/src/strings.wac";
+import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
 const string OPS = "packages/fs/example/ops.wac";
 
@@ -77,8 +77,6 @@ string run(Core core, Cli cli, string stem, string[] args, string script) {
   }
   return string.fromBytes(r.stdout);
 }
-
-bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
 
 /** Non-empty lines, which is how both a script and a transcript are counted. */
 i32 lineCount(string s) {

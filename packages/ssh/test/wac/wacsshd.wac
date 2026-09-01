@@ -41,6 +41,7 @@ import { atoi, itoa } from "../../../fmt/src/itoa.wac";
 import { freshScratch } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
 
 /** Our server, running, with a host key and one authorized client key. */
 export struct Wacsshd {
@@ -53,9 +54,6 @@ export struct Wacsshd {
   /** Whatever the server wrote about itself — the startup line, and any complaint. */
   string said(const this, Cli cli) { return logOf(cli, this.daemon); }
 }
-
-/** The wac binary, which is both the compiler and the host that runs a built module. */
-string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 /**
  * `packages/ssh/src/sshd.wac`, built once and cached.

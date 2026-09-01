@@ -35,7 +35,7 @@ import { ALPHABET_STANDARD, encode as base64Encode } from "../../codec/src/base6
 import { itoa } from "../../fmt/src/itoa.wac";
 import { arrayField, boolOf, field, pad, quoted, raw } from "./capturejson.wac";
 import { agentDir } from "../../wactest/src/host.wac";
-import { objectOf, strOf } from "../../wactest/src/jsonfile.wac";
+import { numOf, objectOf, strOf } from "../../wactest/src/jsonfile.wac";
 
 /** What one `ask` answered — the six fields the probe reports about an upload. */
 struct Asked {
@@ -74,15 +74,6 @@ JsonObject generated(Core core, Cli cli) {
   }
   match (v!) {
     case Object(members): { return members; }
-    else: { trap; }
-  }
-}
-
-i32 numOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Number(value, raw): { return value as~ i32; }
     else: { trap; }
   }
 }

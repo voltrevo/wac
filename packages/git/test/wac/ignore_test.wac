@@ -22,6 +22,7 @@ import { Vec } from "core/vec.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Rule, parseIgnore, ignored } from "../../src/ignore.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
+import { has } from "../../../wactest/src/strings.wac";
 
 string workDir(Cli cli, string name) {
   string who = agentDir(cli);
@@ -154,11 +155,6 @@ string[] splitNul(u8[] b) {
   string[] trimmed = string[count](fill: "");
   for (i32 i = 0; i < count; i++) { trimmed[i] = out[i]; }
   return trimmed;
-}
-
-bool has(string[] all, string want) {
-  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
-  return false;
 }
 
 export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Core core, Cli cli) {

@@ -30,6 +30,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Vec } from "core/vec.wac";
 import { Proc, Procs } from "../../src/proc.wac";
 import { Fs } from "../../src/fs.wac";
+import { has } from "../../../wactest/src/strings.wac";
 
 Vec<string> words(string[] xs) {
   Vec<string> argv = Vec.create();
@@ -107,13 +108,6 @@ string[] keysOf(string status) {
   string[] exact = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
-}
-
-bool has(string[] all, string want) {
-  for (i32 i = 0; i < all.len(); i++) {
-    if (all[i] == want) { return true; }
-  }
-  return false;
 }
 
 // `/proc` never asks for randomness — `/dev/urandom` does — but `mountSynth` takes a plain

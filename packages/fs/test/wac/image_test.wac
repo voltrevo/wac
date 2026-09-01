@@ -40,7 +40,7 @@ import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../src/fs.wac";
 import { Written, Loaded, write, read, dump } from "../../src/image.wac";
 import { imageBadOps } from "./cov_probe.wac";
-import { trimmed } from "../../../wactest/src/strings.wac";
+import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
 const i64 NOW = 1754500000000;
 const string FIXTURE = "packages/fs/test/fixtures/image-v1.wacimg";
@@ -517,4 +517,3 @@ string[] splitLines(string s) {
   return exact;
 }
 
-bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }

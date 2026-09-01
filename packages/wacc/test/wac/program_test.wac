@@ -29,6 +29,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
 
 const string SOURCE = "packages/wac/src/wac.wac";
 const string GLUERUN = "packages/wacc/test/gluerun.ts";
@@ -39,8 +40,6 @@ string freshScratch(T t, Cli cli, string name) {
   t.isTrue(why == "", why);
   return dir;
 }
-
-string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 /**
  * The newest modification time among everything the built program is made of.

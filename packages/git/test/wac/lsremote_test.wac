@@ -43,6 +43,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
+import { has } from "../../../wactest/src/strings.wac";
 
 // Small enough to be polite, and it carries the shapes: heads, lightweight tags, an annotated tag
 // with a peeled entry, and four thousand `refs/pull/*` with deep names.
@@ -88,11 +89,6 @@ string joinedWith(string[] all, string sep) {
   string out = "";
   for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
   return out;
-}
-
-bool has(string[] all, string want) {
-  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
-  return false;
 }
 
 bool anyEndsWith(string[] all, string suffix) {

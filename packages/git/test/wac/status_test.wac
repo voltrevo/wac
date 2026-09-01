@@ -32,6 +32,7 @@ import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 import { withHome } from "../../../wactest/src/childenv.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
+import { has } from "../../../wactest/src/strings.wac";
 
 struct Git {
   Cli cli;
@@ -87,11 +88,6 @@ string joined(string[] all) {
   string out = "";
   for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + "\n" + all[i]; }
   return out;
-}
-
-bool has(string[] all, string want) {
-  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
-  return false;
 }
 
 bool anyContains(string[] all, string needle) {

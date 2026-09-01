@@ -17,6 +17,7 @@ import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsExpandMessage, blsHashToField, blsMapToCurve, blsMapLandsOnCurve, blsHashToG2,
          blsHashToG2InSubgroup } from "./probe.wac";
+import { member, memberArray } from "../../../wactest/src/fixtures.wac";
 
 /** One CFRG vector: the message, its two `u` values, and the points at each checkpoint. */
 struct Vector {
@@ -45,26 +46,10 @@ string memberText(JsonValue v, string key) {
   }
 }
 
-JsonValue? member(JsonValue v, string key) {
-  match (v) {
-    case Object(members): { return members.getStr(key); }
-    else: { return null; }
-  }
-}
-
 /** `memberText` of a member's member — `Q0.x` and the like. */
 string nested(JsonValue v, string outer, string inner) {
   JsonValue? o = member(v, outer);
   return o is null ? "" : memberText(o!, inner);
-}
-
-JsonArray? memberArray(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return null; }
-  match (found!) {
-    case Array(items): { return items; }
-    else: { return null; }
-  }
 }
 
 /** `n`th comma-separated part of a draft coefficient pair, `0x`-stripped and zero-padded to 96. */

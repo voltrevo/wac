@@ -37,26 +37,11 @@ import { blsAggregate, blsFastAggregateVerify, blsAggregateVerify, blsBatchVerif
          blsBatchScalar } from "./probe.wac";
 import { G1, g1FromBytes } from "../../src/g1.wac";
 import { G2, g2FromBytes } from "../../src/g2.wac";
+import { member, memberText } from "../../../wactest/src/fixtures.wac";
 
 /** `0x…` as bytes, which is how every field in these fixtures is written. */
 u8[] un(string h) {
   return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
-}
-
-JsonValue? member(JsonValue v, string key) {
-  match (v) {
-    case Object(members): { return members.getStr(key); }
-    else: { return null; }
-  }
-}
-
-string memberText(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return ""; }
-  match (found!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
-  }
 }
 
 bool memberBool(JsonValue v, string key) {

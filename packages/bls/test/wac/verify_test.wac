@@ -33,6 +33,7 @@ import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsVerify, blsG1Status, blsG2Status } from "./probe.wac";
+import { member } from "../../../wactest/src/fixtures.wac";
 
 /** `0x…` as bytes, which is how every field in these fixtures is written. */
 u8[] un(string h) {
@@ -50,13 +51,6 @@ string memberText(JsonValue v, string key) {
       }
     }
     else: { return ""; }
-  }
-}
-
-JsonValue? member(JsonValue v, string key) {
-  match (v) {
-    case Object(members): { return members.getStr(key); }
-    else: { return null; }
   }
 }
 
