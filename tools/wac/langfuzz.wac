@@ -61,6 +61,25 @@
 //
 // Read `wrapTo` with that in mind: `(v << 32) >> 32` is a sign extension spelled out on purpose, and
 // replacing it with `as@ i32` would quietly make the oracle agree with whatever the compiler does.
+// ## How much of each type the oracle actually observes
+//
+// Measured 2026-09-01, by breaking one thing in the oracle and counting disagreements over 200
+// programs from seed 1. A canary that does not fire means the sweep cannot see that path at all,
+// whatever the generated source contains.
+//
+//     i32   narrowing removed from `wrapTo`      66 / 200
+//     u32   literal read as signed               33 / 200
+//     i64   results truncated to 32 bits         12 / 200
+//
+// **i64 is the thin one, and that is where the bugs have been.** `issues/lang/0306b` was an i64
+// literal losing its top half, and this generator needed three corpus-sized runs to surface it. A
+// reader deciding what to widen next should weigh that against the list below: adding a type the
+// oracle observes 6% of the time buys less than making an existing one observable.
+//
+// The u32 row is 33 only because the answer is routed through a u32 comparison deliberately and a
+// wide u32 local is seeded in every program. Before that it was 0 of 1500. Nothing about a type's
+// presence in the source predicts its row here.
+//
 // ## What it does not reach yet
 //
 // Carried over from the TypeScript, whose ordering was judged by where this compiler's bugs have
