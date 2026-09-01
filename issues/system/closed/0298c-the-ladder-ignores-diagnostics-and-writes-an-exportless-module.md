@@ -1,6 +1,8 @@
 # 0298 — the ladder ignores the compiler's diagnostics and writes an exportless module, exit 0
 
-- **Status:** open
+- **Status:** closed
+- **Closed:** 2026-09-01 by agent-b
+- **Fixed in:** the commit closing this
 - **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -231,3 +233,36 @@ change. What wants checking first is where that path records a decline (`emitDec
 named in the comments around `blockedAgain`) so the reason reaches `drv_decline` rather than being
 thrown away, since `missingExport` has already quoted `funcWhy[at]` and losing it here would waste
 the better half of the message.
+
+
+## Closed 2026-09-01 — the guard runs on both paths now
+
+Two lines of mechanism, both of which already existed.
+
+`emitModuleOfInto` builds the `Front` and hands it to `emitModuleOfFront`; it now keeps the front,
+runs `missingExport` on it, and returns a **bare module** when it answers. That is how this path
+says no, and it is what the ladder's `module.len() <= 8` already looks for — so nothing on the Rust
+side changed, and no new check was invented.
+
+The reason travels through `declineFor`, which is the API for it: it sets `full` and records
+`fullWhy`, and `blockedLinked` — the fresh walk behind `drv_decline` — already returns that. Without
+it the ladder said *"wacc declined badfield.wac:"* with nothing after the colon, which would have
+traded a silent wrong artefact for a silent refusal.
+
+    before:  wacc built badfield.wac: 171344 bytes          exit 0, and no `main` in the module
+    after:   wacc declined badfield.wac: untyped member      exit 1
+
+**Why this could not newly refuse a good program.** It is the same call on the same `Front` that
+`wac build` has always made — the guard was never missing, only on one of two entry points — so
+anything it stops here is something `wac build` already stops. Its own measurement when written was
+1797 non-exported functions across seven entry files, none of them dropped (`issues/lang/0170a`).
+The seed is the sharpest test of that and builds: fixed point in one round, *"and it compiles and
+runs a program"*.
+
+Green: `cases_test` 323/323, `illtyped_test`, `twokeys_test`, `selfhostemit_test`.
+
+**What was tried first and is worth not repeating**: asking the compiler for diagnostics
+(`dumpTypeErrorsFiles`) instead. It reports **0** for this reproduction, because the fault reaches
+its type through `std/platform.wac`, which is not *in* an in-memory file set — and every program the
+ladder builds imports the platform. That check would have read zero on all of them. The section
+above has the measurement.

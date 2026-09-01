@@ -4746,10 +4746,31 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
 u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                       string[] filePaths, bool checked, bool covered, Env envIn,
                       u8[][] srcs, Lexed?[] lexeds, Program?[] progs) {
-  return emitModuleOfFront(
-    frontOfRawIn(src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn,
-                 srcs, lexeds, progs),
-    checked, covered);
+  Front f = frontOfRawIn(src, entryDecls, starts, edges, names, filePaths, checked, covered, envIn,
+                         srcs, lexeds, progs);
+  u8[] wasm = emitModuleOfFront(f, checked, covered);
+  // **The same net the other entry point applies** — `issues/system/0298c`. `missingExport` had one
+  // caller, in the `Built`-returning path that `wac build` takes, so `emitFiles` — which is what
+  // `bootstrap.sh` builds the `wac` command through — returned a module with the entry's exports
+  // missing and no decline. A type error anywhere in that graph therefore produced a seed whose
+  // every subcommand answered *"exports no `task`"*, naming neither the file nor the fault.
+  //
+  // An empty module is how this path says no, which is what the ladder's `module.len() <= 8`
+  // already looks for, so nothing outside the compiler changes. The guard cannot newly refuse
+  // anything `wac build` accepts: it is the same call on the same `Front`, and it was measured over
+  // seven entry files at 0 false positives when it was written (`issues/lang/0170a`).
+  //
+  // **Through `declineFor`, so the reason travels.** Returning a bare module alone made the ladder
+  // say *"wacc declined badfield.wac:"* with nothing after the colon: `drv_decline` asks
+  // `blockedLinked`, which walks again from a fresh `Env` and does not run this net. `declineFor`
+  // is the mechanism that exists for exactly that — it sets `full` and records `fullWhy`, which
+  // that walk already returns — and its own comment says the field "means declined in practice".
+  string gone = missingExport(f.env, f.src, f.lexed, f.prog, f.entryDecls);
+  if (gone != "") {
+    f.env.declineFor(gone);
+    return bareModule();
+  }
+  return wasm;
 }
 
 /** Codegen, from a front somebody else built. */
