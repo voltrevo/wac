@@ -182,7 +182,9 @@ needs to compile a program that uses `@/`.
 `tools/wac/size.wac`: same wasm bytes and the same 12,319-line closure as the TypeScript, byte for
 byte, so the walk is the walk.
 
-**`bench:compile` is not unblocked, and reading it for the port is what showed why.** It does not
+**`bench:compile` is not unblocked, and reading it for the port is what showed why.** *(Superseded —
+it was ported on 2026-08-31 and the blocker below expired rather than being resolved. The reasoning
+is left standing because the final section is about how it expired.)* It does not
 time *a* build; it times the phases of the build as `harness/waccBuild.ts` makes them, in that order,
 and `benchCompile.test.ts` asserts that every `api.*` call in that harness file is either timed here
 or carries a `bench-exempt` line saying why — a guard added because the list silently drifted twice
@@ -267,8 +269,8 @@ file after the six ports of that day, nothing left in it is available:
   `discovery.ts`/`discovery.test.ts` — carve-outs where Deno, npm or the JavaScript bootstrap
   *is* the subject. Checked rather than inherited: `syncBootstrap` imports `bootstrap/hosts/deno.js`
   and `_spawncmp` imports three files from `packages/platform/host/`.
-- `checkTypes.ts`, `typecheck.test.ts`, `benchCompile*` — dissolve with the TypeScript they check,
-  or wait on a decision about which build they measure.
+- `checkTypes.ts`, `typecheck.test.ts` — dissolve with the TypeScript they check. `benchCompile*`
+  was in this row and is **done**; see the 2026-09-01 section at the end.
 
 So the next thing that moves here is not a port. It is `0183` being answered, or somebody deciding
 to move `packages/sh`'s three TypeScript tests so `corpusStderr` can follow them.
@@ -339,7 +341,7 @@ actually available to port:
 | ~~`corpus:stderr`~~ | — | **done, 2026-08-30** — the knot was untied and it is `tools/wac/corpusstderr.wac` |
 | ~~`corpus:hosts`~~ | — | **done, 2026-08-30** — `tools/wac/corpushosts.wac`; the `buildNative` blocker below was mine and was wrong |
 | `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
-| `benchCompile.ts` + test | 275 | a decision — which build it measures — plus peak RSS |
+| ~~`benchCompile.ts` + test~~ | — | **done, 2026-08-31** — `tools/wac/benchcompile.wac`; the decision is answered below |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
 | `suiteGate.ts` + test | 116 | waits for **three** announcers now, not eight — and it is already a remnant |
 | `suiteGuard.ts` | 66 | waits for `mutate`, its last two callers |
@@ -505,3 +507,28 @@ The move that unties it, in the order that keeps everything green:
 
 What it is *not* is a translation of 1,474 lines, which is how the row above reads and how I read it
 before measuring.
+
+## `bench:compile` was ported, and the decision it waited on answered itself — agent-b, 2026-09-01
+
+Three places above say `bench:compile` is blocked on *which build it measures*: the row in the table,
+the paragraph beginning "**`bench:compile` is not unblocked**", and the carve-out list's
+"`benchCompile*` — dissolve with the TypeScript they check, or wait on a decision". All three are
+stale. `tools/wac/benchcompile.wac` and `tools/wac/benchcompile_test.wac` are in the tree and
+`tools/benchCompile.ts` and its test are deleted.
+
+**The decision dissolved rather than being taken.** The question was whether to time
+`harness/waccBuild.ts`'s sequence — the one the drift guard was written against — or the build that
+actually runs. It only looked like a choice while both existed: the guard's subject is *the phases a
+build has*, and `packages/wac/src/wac.wac` is now the file that has them. So the ported guard scans
+that instead, and the answer to "which build" is "the only one there is". Nobody had to prefer a
+sequence; the TypeScript one stopped being a build.
+
+That is worth keeping because it is the second time on this issue that a blocker was a property of
+the moment rather than of the work — the `buildNative` blocker on `corpus:hosts` was the first, and
+its row above says it "was mine and was wrong". A carve-out justified by a TypeScript file's
+behaviour needs re-reading once that file is gone, and neither of these announced itself when it
+expired.
+
+`runPhase` in the port is a literal dispatch rather than a table, deliberately: the guard finds the
+phases by scanning for the calls, so a table would hide them from the check that exists to notice a
+phase going missing.
