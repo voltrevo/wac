@@ -11664,7 +11664,38 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // compiles and answers, so the cell does get built at entry. Left as a note about what the
       // decline below is *not* for, since the reachable declines here are caps rather than constructs.
 
-      if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
+      // **Walk the body, and throw the verdict away** — `issues/lang/0295c`.
+      //
+      // **Before the `li` check, not inside it**, which is the whole of why the first attempt at
+      // this changed nothing. `li` comes from `lambdaAtPos`, and during `collectInstances` —
+      // the walk this descent exists for — `findLambdas` has not run yet, so `li` is -1 and the
+      // branch below is not taken. By the time it *is* taken the module is being emitted and
+      // discovering an instance is too late to monomorphise it.
+      {
+        i32 lsaved = env.localCount;
+        for (i32 pi = 0; pi < params.len(); pi++) {
+          env.addLocal(tokenTextOf(src, lexed, params[pi].nameTok),
+                       typeOfTyName(env, src, lexed, params[pi].type));
+        }
+        unsupportedIn(src, lexed, env, body);
+        env.localCount = lsaved;
+      }
+      if (li >= 0 && env.lambdaSigs[li] != "") {
+        //
+        // This walk is what *discovers* generic instantiations: `genericFuncInstance` and
+        // `genericCallInstance` are called a little below, and `collectInstances` runs the whole
+        // thing for that alone. It stopped at the lambda boundary, so a generic named **only**
+        // inside one — `() => b.mapish<bool>(…)`, or a ticket mapped inside a `then`, which is the
+        // ordinary way to write it — was never monomorphised and its letter reached emission as
+        // *a value of a type this emitter cannot write: U*. `findLambdasExpr` already descends
+        // here, for the mirror-image reason; this is the same blind spot in the other walk.
+        //
+        // **The reason is discarded rather than returned**, which is the whole care in this: a
+        // lambda body that genuinely cannot be emitted is already refused by name at emission, and
+        // returning a decline from here would change which programs compile for reasons that have
+        // nothing to do with collecting instances. This descends to *record*, not to judge.
+        return "";
+      }
       i32 untyped = 0;
       for (i32 i = 0; i < env.lambdaCount; i++) {
         if (env.lambdaSigs[i] == "") { untyped = untyped + 1; }

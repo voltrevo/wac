@@ -1,0 +1,30 @@
+// expect: answers f = 1
+// why: the walk that discovers instantiations has to enter a lambda body, or a generic used only there is never monomorphised
+// from: issues/lang/0295c
+
+/**
+ * `mapish<bool>` is named **once**, inside a lambda.
+ *
+ * Instantiations of a generic are discovered by walking every body — a call to a generic is the one
+ * instance nothing declares — and that walk stopped at the lambda boundary. So this program named
+ * an instance nothing recorded, nothing monomorphised, and `U` reached the emitter as *a value of a
+ * type this emitter cannot write*.
+ *
+ * **The control is one line**: adding `Box<bool> top = b.mapish<bool>(…);` at statement level made
+ * the same program compile, because then the instance was named somewhere the walk did reach. So
+ * the instance emits perfectly well; what failed was *discovering* it. That is why this case has
+ * exactly one mention of it, and why adding a second would stop it testing anything.
+ *
+ * `Pending<T>.map<U>` is the reachable form: mapping a ticket inside a `then` is the ordinary way
+ * to write two dependent asynchronous steps, and every one of those met this.
+ */
+struct Box<T> {
+  T v;
+  Box<T> of(T v) { return Box<T>(v); }
+  Box<U> mapish<U>(const this, fn[U(T)] f) { return Box<U>(f(this.v)); }
+}
+export i32 f() {
+  Box<i32> b = Box.of(1);
+  fn[bool()] c = () => b.mapish<bool>((i32 x) => x > 0).v;
+  return c() ? 1 : 0;
+}

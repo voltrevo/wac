@@ -1,7 +1,9 @@
 # 0295 — a generic instantiated only inside a lambda is never monomorphised
 
-- **Status:** open
-- **Claimed by:** (nobody — diagnosed below, see the note at the end)
+- **Status:** closed
+- **Closed:** 2026-09-01 by agent-b
+- **Fixed in:** the commit closing this
+- **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -115,3 +117,41 @@ that lambdas are not yet registered when it runs.
 `env.lambdaBodies` I tried does nothing because `findLambdasInProgram` runs after `collectInstances`,
 so the registry is empty. The two ways past that are ordering decisions rather than patches, and
 holding the claim while not working it only stops someone else taking them.
+
+
+## Closed 2026-09-01 — the walk descends into a lambda body now
+
+`unsupportedExpr`'s `case Lambda` is the discovery walk's view of a lambda, and it returned without
+ever looking inside. It walks the body now, with the lambda's parameters in scope, and **throws the
+verdict away**: a body that genuinely cannot be emitted is already refused by name at emission, and
+returning a decline from here would change which programs compile for reasons unrelated to
+collecting instances. It descends to record, not to judge.
+
+`spec/cases/0321-a-generic-named-only-inside-a-lambda.wac` pins it, with exactly one mention of
+`mapish<bool>` — this issue's own control shows that a second mention outside the lambda makes the
+program compile, so a case with two would test nothing. 323 of 323 corpus cases met.
+
+**The first attempt was in the right function and on the wrong side of one `if`.** I put the descent
+inside `if (li >= 0 && env.lambdaSigs[li] != "")`, and nothing changed. `li` comes from
+`lambdaAtPos`, and during `collectInstances` — the walk this whole change exists to serve —
+`findLambdas` has not run yet, so `li` is **-1** and that branch is not taken. By the time it *is*
+taken the module is being emitted, and discovering an instantiation then is far too late to
+monomorphise it. The descent is before the check now.
+
+That was established by instrumenting rather than reasoning: making the branch return a marker
+string changed the compiler's own build, which proved the branch is reached — at emission — while
+the reproduction stayed broken, which proved it is not reached in time.
+
+**The instrument cost a toolchain and is worth recording.** A decline in that branch touches every
+typed lambda, including in `packages/wac/src/wac.wac`, which the binary carries as its payload — so
+the build produced a `wac` that answers *"exports no `build`"*. `bootstrap.sh` then refused to
+rebuild, because its `coretext.wac` staleness check runs `wac task gen:core --check` **through the
+existing binary**, and a broken binary fails that check for a reason that has nothing to do with
+`coretext`. The way out is the one that check documents: with no binary present it is skipped, so
+moving both hosts' binaries aside lets the ladder build a compiler from hand-written wasm. Nothing
+was lost, and `--no-install` never touched `$WAC_HOME`.
+
+**Not measured:** what this costs. The discovery walk now enters every lambda body in the program
+where it used to stop at the boundary, and `collectInstances` runs it up to eight times. The corpus
+is unchanged at 10.9s and the suite passes, so it is not visible at this size; a program with many
+large lambdas is where it would show.
