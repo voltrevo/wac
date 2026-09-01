@@ -31,6 +31,11 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
 /**
  * A sweep over seeds fixed here, so this is a regression rather than a search.
  *
+ * **200 programs, about 2.2s** — it was 0.9s before the generator grew generics, a second file, a
+ * struct, an enum, an array and a subtype, so the constructs roughly doubled it. Negligible against a
+ * 320s suite and worth watching rather than tuning: the count is what makes a disagreement findable,
+ * and cutting it to save two seconds would be trading the only thing this test does.
+ *
  * A fresh seed every run is a test that fails for a different reason each time and gets muted; a
  * fixed set means a disagreement stays reported until it is fixed. Searching is what the command line
  * is for — `--count` and `--seed` reach further than any suite should.
