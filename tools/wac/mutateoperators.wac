@@ -657,8 +657,11 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
  * kill, of nothing — or it does not, and is scored as a survivor of a file no other test asserts
  * about. Both numbers are made up, and the second is the one that flatters.
  *
- * A path segment, not a substring: `packages/test-vectors/src/x.wac` is source, and
- * `packages/fs/test/wac/fs_test.wac` is not.
+ * A path segment, not a substring: a package whose *name* begins with or contains "test" — say a
+ * hypothetical packages/test-vectors — is source, while anything under a `test/` or `bench/`
+ * directory is not. `mutateoperators_test.wac` has both directions, with the example paths as string
+ * literals rather than backticked, since a backticked path is one `tools/wac/links_test.wac` requires
+ * to exist and an invented example does not.
  */
 export bool isMutationTarget(string file) {
   return !hasSegment(file, "test") && !hasSegment(file, "bench");
