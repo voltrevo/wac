@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0318b](closed/0318b-a-variable-called-scope-is-deleted-by-the-wapy-round-trip.md) | `i32 scope = 3;` is legal wac and `wac check` accepts it, but the wapy round trip replaced the declaration with `(block ())` — `wapyparse` matched the word unconditionally, reported `expected` against a correct line and returned the `scope:` block anyway. The guard its sibling `pass` already had. | bug | a statement disappears and the diagnostic names a line that is not wrong |
 | [0317b](closed/0317b-a-wapy-dedent-may-land-on-a-column-no-enclosing-block-sits-at.md) | `spec/spec/wapy.md` says a dedent must land on a column some enclosing block already sits at. A four-line program whose body dedents to a column that is neither the body's nor the top level's is accepted with **zero** errors from both the lexer and the parser. The error code for it exists and is never raised — `werrDedent()` is 42, in the same table as `werrTab` and `werrUnclosed`, which are — and `werrMisspelled` and `werrIndent` are in the same position. Found by `deadexports`, whose closing line is that a dead function means either a call site is missing or the function is; here it is the call site. The rule is also **untagged**, so the guard that holds every clause to a case never asked for one | missing feature | closed |
 | [0316a](open/0316a-the-const-diagnostics-help-advises-a-silently-wrong-program.md) | the const refusal's help says "take a copy"; following it builds, runs, and drops the write, and the "destination" it names does not exist at any site the error fires | diagnostic | advice compiles to a wrong answer |
 | [0315a](open/0315a-a-const-reference-is-laundered-through-any-non-const-slot.md) | a reference reached through `const this` mutates at runtime once it passes through an argument, an array, a field or a type argument; the direct case is refused | bug | wrong answer |
@@ -69,7 +70,7 @@ has been fixed and why.
 
 ## Closed
 
-251 issues, 216 closed.
+252 issues, 217 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

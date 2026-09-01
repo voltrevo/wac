@@ -34,7 +34,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core } from "std/platform.wac";
 import { WParsed, wapyParse } from "../../src/wapyparse.wac";
 import { Pr, printProgram } from "../../src/print.wac";
-import { dump } from "../../src/api.wac";
+import { dump, dumpWapy, wapyOf } from "../../src/api.wac";
 import { Frontend, frontendOf } from "../../src/frontend.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -442,5 +442,41 @@ export string test_a_dedent_must_land_on_an_enclosing_column(Core core) {
   string ok = "def f(n: i32) -> i32:\n    if n > 0:\n        n = n - 1\n    return n\n";
   WParsed q = wapyParse(ok.toBytes());
   t.eqI32(q.errorCount, 0, "an aligned program is not");
+  return t.report();
+}
+
+/** Whether `needle` occurs in `haystack`. */
+bool holds(string haystack, string needle) {
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/**
+ * A variable called `scope` survives the round trip, because `scope` is not a wac keyword.
+ *
+ * **It did not until 2026-09-01, and it vanished rather than failing.** `wapyparse.wac` matched the
+ * word unconditionally, reported *expected* against a line that was correct, and returned the
+ * `scope:` block anyway — so `i32 scope = 3;` came back as `(block ())` and the declaration was
+ * simply gone. `issues/lang/0318b`.
+ *
+ * `wapyroundtrip_test.wac` covers this from the other side, over every tracked file, but only for as
+ * long as some file happens to use the name — `tools/wac/mutateoperators.wac` is the only one today
+ * and renaming its variable would silently retire the coverage. A case that names the word cannot.
+ */
+export string test_a_variable_called_scope_survives_the_round_trip(Core core) {
+  T t = T.create();
+  string src = "export i32 main() {\n  i32 scope = 3;\n  return scope;\n}\n";
+  string wapy = wapyOf(src.toBytes());
+  string back = dumpWapy(wapy.toBytes());
+  t.isTrue(holds(back, "(var"),
+           "the declaration survived — the tree came back as: " + back);
+  t.isTrue(!holds(back, "(block ())"),
+           "and was not replaced by an empty block, which is what `scope:` parses to: " + back);
+  // The word still means a block when it is one, which is the half the guard must not break.
+  string blockSrc = "def f() -> i32:\n    scope:\n        pass\n    return 1\n";
+  t.isTrue(holds(dumpWapy(blockSrc.toBytes()), "block"),
+           "`scope:` is still a block statement");
   return t.report();
 }

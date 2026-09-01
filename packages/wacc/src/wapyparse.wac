@@ -577,9 +577,17 @@ WapyRes stmtAt(W w, i32 i, i32 hi) {
 
   if (word == "pass" && e == f + 1) { return WapyRes(Stmt(StmtKind.Break, ln, cl), i + 1, false); }
 
-  if (word == "scope") {
-    i32 c = headColon(w, i);
-    if (c != f + 1) { err(w, werrExpected(), ln, cl); }
+  // **Only when the colon is right there**, which is the guard `pass` above already has and this did
+  // not. `scope` is not a wac keyword — `wac check` accepts `i32 scope = 3;` and this repository now
+  // has one — so an unguarded match reads an ordinary declaration as a `scope:` block, reports
+  // *expected* against a line that is not wrong, and **returns the block anyway**, which is how the
+  // statement disappeared rather than failing. Round-tripping a file with a variable called `scope`
+  // lost the declaration and put `(block ())` in its place. `issues/lang/0318b`.
+  //
+  // Falling through instead costs the targeted diagnostic for a malformed `scope` statement: `scope`
+  // alone is now an unknown name and `scope x:` a syntax error, which are both what the reader would
+  // have got for any other identifier, and both are better than silently deleting a declaration.
+  if (word == "scope" && headColon(w, i) == f + 1) {
     return WapyRes(Stmt(StmtKind.Block(blockOf(w, i, hi)), ln, cl), blockEnd(w, i), true);
   }
 
