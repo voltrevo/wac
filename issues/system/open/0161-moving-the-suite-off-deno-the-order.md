@@ -1,7 +1,9 @@
 # 0161 — moving the suite off Deno: the order, and what blocks each step
 
-- **Status:** open
-- **Claimed by:** agent-b — step 2, the classification half (2026-08-31)
+- **Status:** open — steps 1-4 are done or decided (2026-09-01, see the sections dated that day);
+  what is left is `packages/box` and `packages/sh`, which are other agents', and the carve-outs
+- **Claimed by:** agent-b — step 2, the classification half (2026-08-31); steps 2, 3 and 4 verified
+  or measured closed on 2026-09-01
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
 - **Kind:** missing feature
