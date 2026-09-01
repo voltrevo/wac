@@ -59,7 +59,7 @@ own spelling.
 
 ## The same parser change should retire `@export`, `@const` and `@override`
 
-*Added 2026-08-31 by agent-a, from a `VISION.md` discussion. Recorded here rather than as a second
+*Added 2026-08-31 by agent-a, from a `vision/` discussion. Recorded here rather than as a second
 issue because it is the same change to the same production: once the reader dispatches on a modifier
 before `def` instead of on the bare word, these come along for nothing.*
 
@@ -91,7 +91,7 @@ than three special cases. `spec/spec/wapy.md`'s table loses three rows and gains
 ### And it frees `@` on both surfaces
 
 wac uses `@` only inside an import string, where nothing else can reach it. If wapy stops using it,
-`@` is unclaimed everywhere — and `VISION.md` wants it for a **verbatim identifier**, `@class`, so
+`@` is unclaimed everywhere — and `vision/EXAMPLES.md` wants it for a **verbatim identifier**, `@class`, so
 that an attribute or field whose name collides with a keyword can be written rather than renamed.
 The alternatives were all taken: a backtick reads as a template literal to the JSX audience, and `#`
 is wapy's comment.
