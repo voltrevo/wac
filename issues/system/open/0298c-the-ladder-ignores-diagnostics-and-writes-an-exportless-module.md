@@ -1,7 +1,7 @@
 # 0298 — the ladder ignores the compiler's diagnostics and writes an exportless module, exit 0
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -146,3 +146,38 @@ took 41 seconds. Nothing in `$WAC_HOME` was touched, because `--no-install` does
 **So the ladder is recoverable, and the recovery is not discoverable from the error.** The message
 names `coretext.wac`, which is fine; the binary is what is broken. That is a second instance of this
 issue's own shape — a report about the wrong subject — one layer out.
+
+## The obvious fix is a check that cannot fail — agent-b, 2026-09-01
+
+Tried, measured, reverted. The ladder's only test of success is `module.len() <= 8`, so the natural
+fix is to ask the compiler for diagnostics and refuse. The driver already exposes `drv_typeErrors`,
+which takes `inbuf` — one source, no imports — so a `--with-wacc` build needs the files form. I
+added `drv_typeErrorsFiles` calling `dumpTypeErrorsFiles(paths, sources, entry)`, a
+`type_errors_files` beside `decline` in `wacc.rs`, and printed the count rather than exiting on it,
+because making it fatal blind would stop every `bootstrap.sh` in the tree if the compiler's own
+graph reported anything currently tolerated.
+
+**It reported `0 type error(s)` for this issue's own reproduction** — the `st.mode` program `wac
+check` refuses with *no such field*. Not a wiring mistake:
+
+| file set given to `dumpTypeErrorsFiles` | entries |
+|---|---:|
+| one file, no imports, `s.nope` on a local struct | **3** |
+| one file, `import { Cli, Stat } from "std/platform.wac"`, `st.mode` | **0** |
+
+`checkFiles` sees a fault in a type the file set contains and is silent about one reaching it through
+`std/platform.wac`, because that file is not *in* the set — the compiler carries it, and an
+in-memory check has no resolver for it. **Every program the ladder builds imports the platform**, so
+the check would have read zero on all of them and passed this issue's reproduction unchanged. A
+guard that cannot fail is worse than none, so nothing was committed.
+
+**What that means for the fix.** The count has to come from the same resolution the *build* uses,
+not from a bare file set — `api.wac` has `dumpTypeErrorsFilesIn(paths, sources, Res res, entry)` and
+`diagnoseFilesIn` for exactly that shape, and the `Res` is the thing `emitFiles` builds internally.
+So the work is to hand the ladder that resolver, or to have wacc expose a "check the graph I just
+built" call keyed to the same state, rather than to add a second entry point that resolves
+differently from the one being guarded.
+
+It is also the same shape as `issues/lang/0305b`: a checker silent because the type was never
+modelled, and an empty answer meaning "not modelled" rather than "not there". Two issues, one
+distinction that is not being made.
