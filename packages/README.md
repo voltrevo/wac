@@ -13,9 +13,9 @@ compiler, this one is things built with it.
 it builds on, and every program and page you can build, each with a line on what it does. It
 is generated from the tree by `wac task map` and checked by the suite, so it cannot drift.
 
-Today, give or take whatever landed this morning: **38 packages, 134,750 lines of wac, 2,783
-tests written in wac, 82 command-line programs and 11 browser pages.** Those are MAP.md's own
-figures, copied on 2026-08-24 — the set before it said 39 packages and 2,480 tests from a week
+Today, give or take whatever landed this morning: **40 packages, 152,228 lines of wac, 3,112
+tests written in wac, 85 command-line programs and 11 browser pages.** Those are MAP.md's own
+figures, copied on 2026-09-01 — the set before it said 39 packages and 2,480 tests from a week
 earlier, which the doc check caught at exactly its 10% tolerance, and the set before *that* said 32
 packages and ~1,300 tests, which was not "give or take this morning" but a repository two thirds this
 size. MAP.md has them live, and the
