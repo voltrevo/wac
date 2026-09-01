@@ -28,9 +28,16 @@ wac task app:build packages/ssh/src/sshd.wac --allow-read --allow-net --allow-en
 ```
 
 `src/ssh.wac` is the whole program — argument parsing, the key file, known_hosts, the protocol.
-There is no TypeScript in `src/`. Built it is **354 KiB** and self-contained, and the shebang is
-exactly its grants — measured 2026-08-11 with the `app:build` line above, which is dated because it
+There is no TypeScript in `src/`. Built it is **621.2 KiB** and self-contained, and the shebang is
+exactly its grants — measured 2026-09-01 with the `app:build` line above, which is dated because it
 said 151K for months while the platform runtime every executable carries grew underneath it.
+
+The figure before this one was 354 KiB and dated 2026-08-11, and the program did not grow by three
+quarters to replace it: `tools/wac/size.wac` records that anything measured before 2026-08-12 came
+from the deleted TypeScript reference and is not comparable to a `wacc` build (`issues/lang/0105`).
+So the two numbers are two compilers, not two sizes, and a dated figure that does not name the
+compiler is the third way this class of prose goes wrong — `issues/system/0129` collects the other
+two.
 
 A package of [wac](../../README.md) — see the root README for layout and how to run things.
 All commands run from the repo root.

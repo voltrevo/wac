@@ -86,8 +86,8 @@ all sharing one pinned guard, and every connection becomes a stream on the circu
 port. Against the testnet it has carried 3.2MB across eight concurrent streams, byte-identical,
 and 400KB back the other way.
 
-Built, it is **490.1 KiB** as a self-contained executable — 259.5 KiB of wasm, 77.6 KiB gzipped — of
-which the proxy costs **19.5 KiB** over the fetch-and-exit program. Measured 2026-08-11:
+Built, it is **811.4 KiB** as a self-contained executable — 507.1 KiB of wasm, 136.5 KiB gzipped — of
+which the proxy costs **41.3 KiB** over the fetch-and-exit program. Measured 2026-09-01:
 
 ```sh
 wac task app:build packages/tor/src/app.wac   --allow-net --allow-read --allow-write -o tor
@@ -96,9 +96,22 @@ wac build packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o to
 ```
 
 Dated, because it is a snapshot and the last one sat here saying 386.7 KiB until this file was read
-with a build beside it. `wac task size` reports the layers separately — 133.5 KiB of wasm for the
-whole client without the program around it, against 86.2 for the TLS 1.3 client alone — and those
+with a build beside it. `wac task size` reports the layers separately — 181.9 KiB of wasm for the
+whole client without the program around it, against 118.7 for the TLS 1.3 client alone — and those
 four rows are what `size/` exists to keep re-measurable.
+
+**The figures before these were 490.1 / 259.5 / 77.6 / 19.5 and 133.5 / 86.2, and the client did not
+grow by 36% to replace them.** They were measured 2026-08-11, and `tools/wac/size.wac` says in its
+header that anything recorded before 2026-08-12 is the deleted TypeScript reference's output and is
+not comparable — the compiler changed, not the program (`issues/lang/0105`). A re-measured snapshot
+that does not say which compiler produced it invites exactly the reading that a number twice the
+size means the code doubled, so: everything above is `wacc`, self-hosted.
+
+**Two fifths of that wasm is not code.** Broken into sections, the 507.1 KiB is 195.5 KiB of `code`,
+then 116.4 KiB of `wac.manifest` and 91.3 KiB of `name` — 41% in custom sections, with the type and
+export tables another 73 KiB between them. The manifest is what `wac build` reads back to know what
+it built (`issues/system/0204`), so it lives in the artefact by design and is the largest single
+non-code section in anything we ship. Worth knowing before reading a size number as a code size.
 
 It reaches **onion services**. `src/hsconnect.wac` takes a `.onion` address and fetches a page from
 the service behind it — over our own circuits, end to end, against a real one:

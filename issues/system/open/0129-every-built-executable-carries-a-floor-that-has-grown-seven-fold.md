@@ -461,3 +461,68 @@ So the bundling question this issue leaves open is not only about what a user do
 bytes are emitted from source on every build, and `issues/system/0275b` traces the suite's largest
 chunk to exactly that: `commandparity_test.wac` makes 34 invocations across three hosts, whose entries
 import the platform, at about a second of emit each.
+
+## The manifest is 23% of a shipped module, and the near-miss above is the general case — agent-b, 2026-09-01
+
+The note above calls `wac.manifest` "a custom section" and uses it to explain why one number
+disagreed with another. It never says how big it is. Broken into sections, `wac build` over
+`packages/tor/src/app.wac` — 507.1 KiB of wasm, the largest thing we build from a single entry:
+
+| section | bytes | KiB | share |
+| --- | ---: | ---: | ---: |
+| `code` | 200,207 | 195.5 | 39% |
+| **`custom:wac.manifest`** | **119,163** | **116.4** | **23%** |
+| `custom:name` | 93,473 | 91.3 | 18% |
+| `type` | 38,312 | 37.4 | 7% |
+| `export` | 36,892 | 36.0 | 7% |
+| `elem` / `func` / `data` / `global` / rest | 31,205 | 30.5 | 6% |
+
+**Two fifths of the module is not code**, and the largest single non-code section is the build
+cache's bookkeeping. It is there by design — `wac build` reads it back to know what it built
+(`issues/system/0204`) — and this is not an argument that it should not be. It is an argument that
+the number is worth knowing, because 116 KiB is close to the 149 KiB host floor this issue is named
+for, and nobody has been counting it on the wasm side.
+
+It also generalises the near-miss. That note frames the manifest as a hazard when comparing
+`wac build` against `build.ts`; the table says any size read off a `wac build` artefact is 23% larger
+than the code in it, so **every** wasm figure in this repository is one of two quantities and the
+documents rarely say which. `tools/wac/size.wac` compiles in-process and measures the compiler's
+output directly, so its four rows are the other one — that is why they are so much smaller than a
+built file for the same program, and it is not a discrepancy.
+
+### The tor row's third point, and it is not growth
+
+This issue opens with a table of READMEs that drifted, one of them `packages/tor`'s at 386.7 → 490.1
+KiB. Re-measured today with the commands that README states:
+
+| `packages/tor` | 2026-08-11 | 2026-09-01 |
+| --- | ---: | ---: |
+| executable, `app:build` | 490.1 KiB | **811.4 KiB** |
+| wasm, `wac build` | 259.5 KiB | **507.1 KiB** |
+| that wasm, gzipped | 77.6 KiB | **136.5 KiB** |
+| the SOCKS proxy over the fetch-and-exit program | 19.5 KiB | **41.3 KiB** |
+| `wac task size`, whole client | 133.5 KiB | **181.9 KiB** |
+| `wac task size`, TLS 1.3 client alone | 86.2 KiB | **118.7 KiB** |
+
+Corrected in the README with today's date. **The client did not grow by 36–66%.**
+`tools/wac/size.wac` says in its header that figures recorded before 2026-08-12 are the deleted
+TypeScript reference's and are not comparable — the compiler changed, not the program
+(`issues/lang/0105`) — and 2026-08-11 is one day inside that window. Every figure in the left column
+is the retired compiler's.
+
+Which is a third failure mode for the prose this issue is about, after "nobody re-measured" and
+"two artefacts of one program": **a snapshot that does not name the compiler that produced it reads
+as a claim about the program.** The README now says which one. The cheap guard would be for a dated
+size figure to carry its compiler the way `producers: processed-by wacc` does in the artefact, and
+that is a decision rather than work, so it is recorded here rather than done.
+
+### And `packages/ssh`, which is the same trap in a second README
+
+The opening table's `packages/ssh` row was 151K → 352 KiB. Its README carried **354 KiB, measured
+2026-08-11** — again one day inside the window — against **621.2 KiB** rebuilt today with the
+`app:build` line it states. Corrected there with the same caveat.
+
+Three READMEs were dated inside that window; the third is `packages/box`'s, which is another agent's
+package and is left for them. The grep that finds them is `Measured 2026-08-` against `01`–`11`, and
+it is worth running whenever this issue is picked up, because a figure from the retired compiler
+does not announce itself — it just looks like the program used to be smaller.
