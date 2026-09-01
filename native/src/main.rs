@@ -1155,26 +1155,31 @@ fn prepare(
         }
     }
 
-    // **A world is built because `main` asked for one, and to the arity it asked with.** Both were
-    // unconditional: a `main` declaring no capabilities has no `Core` in its manifest, so building one
-    // refused it with *no struct Core in the manifest* — the host's bookkeeping, about the smallest
-    // program that demonstrates the language's central claim — and `main(Core core)` alone was handed
-    // two arguments and failed on arity. The V8 host reads the same list for the same reason.
-    let main_params: Vec<String> = m
-        .exports
-        .iter()
-        .find(|e| e.name == "main")
-        .map(|e| e.params.clone())
-        .unwrap_or_default();
-    let args: Vec<Val> = if main_params.is_empty() {
-        Vec::new()
-    } else if main_params.len() == 1 {
-        vec![build(&mut *store, &instance, m, "Core")?]
-    } else {
-        let core = build(&mut *store, &instance, m, "Core")?;
-        let cli = build(&mut *store, &instance, m, "Cli")?;
-        vec![core, cli]
-    };
+    // **A world is built to what the *module* offers, and each caller takes the arity it asked with.**
+    // Neither is required and neither is an error to be without: a `main` declaring no capabilities has
+    // no `Core` in its manifest, so building one unconditionally refused it with *no struct Core in the
+    // manifest* — the host's bookkeeping, about the smallest program that demonstrates the language's
+    // central claim.
+    //
+    // **It was sized from `main`'s parameters until 2026-09-01, and that is not a property of the
+    // module.** `enter` has a `main` and `load` does not: a test file compiles to a module whose
+    // exports are all `test_*(Core, Cli)` and which has no `main` at all, so the lookup found nothing,
+    // the world was built empty, and `call_loaded` refused every single export with *this module was
+    // built without Core and Cli*. That is the whole of `wac test` on this host — every file, not one
+    // package — while `wac run` stayed fine throughout, because a program is exactly the case that has
+    // the export this was keyed on. `issues/system/0316b`.
+    //
+    // The V8 host builds it this way and its comment says why in the same words; it also warns that
+    // "the same mistake is available here", which it was. `call_loaded` already takes `world_arity`
+    // from the export being called, and `enter` truncates to `main`'s own signature below, so building
+    // what is there and letting each caller take its share is the arrangement both need.
+    let mut args: Vec<Val> = Vec::new();
+    if let Ok(core) = build(&mut *store, &instance, m, "Core") {
+        args.push(core);
+        if let Ok(cli) = build(&mut *store, &instance, m, "Cli") {
+            args.push(cli);
+        }
+    }
 
     Ok((instance, args))
 }
@@ -1186,7 +1191,7 @@ fn enter(
     linker: &Linker<Host>,
     m: &Manifest,
 ) -> Result<i32, wasmtime::Error> {
-    let (instance, args) = prepare(store, module, linker, m)?;
+    let (instance, mut args) = prepare(store, module, linker, m)?;
     let main = instance
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
@@ -1195,6 +1200,13 @@ fn enter(
     // single slot made wasmtime refuse it with *expected 0 results, got 1*: a sentence about this
     // host's bookkeeping, in answer to a program that was right, before any of it ran. The V8 host
     // reads the signature and has always taken either.
+    //
+    // The same signature now decides how much of the world `main` is handed. `prepare` builds what the
+    // *module* offers, which is the only question a module can answer — `load` has no `main` to ask —
+    // so a program whose `main` takes fewer than it built takes its own arity here. Read from the
+    // instantiated function rather than from the manifest, which is the copy that could disagree.
+    let params = main.ty(&mut *store).params().len();
+    args.truncate(params);
     let results = main.ty(&mut *store).results().len();
     let mut out = vec![Val::I32(0); results];
     // **What the program said, if it said anything.** A `trap "…"` puts its message in a global before

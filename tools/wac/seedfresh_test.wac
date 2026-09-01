@@ -45,6 +45,7 @@ import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Closure, closureOf, nativeHost, nativeHostWhyNot } from "../../packages/wactest/src/built.wac";
 
 string SEED() { return "native/v8/seed/wacc.wasm"; }
+string WASMTIME_SEED() { return "native/seed/wacc.wasm"; }
 string ENTRY() { return "packages/wac/src/wac.wac"; }
 string HOST() { return "native/v8/target/release/wac"; }
 
@@ -72,29 +73,42 @@ string tenths(i64 value, i64 unit) {
   return itoa64(t / ten) + "." + itoa64(t % ten);
 }
 
-export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_is_built_from(
-    Core core, Cli cli) {
-  T t = T.create();
-  Stat seed = cli.stat(SEED()).wait();
-  t.isTrue(seed.isFile,
-           SEED() + " is missing, so `wac build`, `wac run` and `wac test` have no\n"
+/**
+ * `""` when `seed` is present and not older than anything `ENTRY()` is built from, otherwise the
+ * sentence saying which and by how much, ending in `rebuild`.
+ *
+ * **Returned rather than asserted, because there are two of these.** Both hosts carry the same
+ * program as their seed — `native/Cargo.toml` says so — built from the same graph, and the only
+ * thing that differs is the command that makes each one. Written as one implementation for the
+ * reason the docstring on the wasmtime binary check below gives for consulting
+ * `nativeHostWhyNot` rather than walking again: two copies of a rule get fixed once.
+ */
+string seedWhyNot(Cli cli, string seed, string rebuild) {
+  Stat s = cli.stat(seed).wait();
+  if (!s.isFile) {
+    return seed + " is missing, so `wac build`, `wac run` and `wac test` have no\n"
            + "  compiler in them. It is gitignored — one per agent — so a fresh container has none,\n"
            + "  and the tests that drive the binary fail downstream of this with messages about the\n"
            + "  files it did not write. Build it:\n"
-           + "    wac task seed");
-  if (!seed.isFile) { return t.report(); }
-
+           + "    " + rebuild;
+  }
   Closure c = closureOf(cli, ENTRY());
   // A graph of one file is a walk that did not resolve, and would make this pass for ever.
-  t.isTrue(c.count >= 10,
-           "the seed's import graph came back as " + itoa(c.count) + " file(s) — it did not resolve");
-  if (c.count < 10) { return t.report(); }
+  if (c.count < 10) {
+    return "the seed's import graph came back as " + itoa(c.count) + " file(s) — it did not resolve";
+  }
+  if (s.modifiedMillis >= c.newest) { return ""; }
+  return seed + " is " + behind(c.newest - s.modifiedMillis) + " older than " + c.what + ".\n"
+         + "  Every `wac build`, `wac run` and `wac test` on that host is compiling with that older\n"
+         + "  compiler, and will report plausible numbers from it. Rebuild:\n"
+         + "    " + rebuild;
+}
 
-  t.isTrue(seed.modifiedMillis >= c.newest,
-           SEED() + " is " + behind(c.newest - seed.modifiedMillis) + " older than " + c.what + ".\n"
-           + "  Every `wac build`, `wac run` and `wac test` is compiling with that older compiler,\n"
-           + "  and will report plausible numbers from it. Rebuild:\n"
-           + "    wac task seed");
+export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_is_built_from(
+    Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(seedWhyNot(cli, SEED(), "wac task seed"), "",
+          "the compiler inside the default host is not current");
   return t.report();
 }
 
@@ -230,5 +244,46 @@ export string test_the_wasmtime_host_if_built_is_not_older_than_the_rust_it_is_b
           + "  two-host differential then fails saying the host lacks something the tree has.\n"
           + "  `./bootstrap.sh --host wasmtime` rebuilds it — or delete the binary and let the\n"
           + "  callers rebuild it.");
+  return t.report();
+}
+
+/**
+ * **And that host has a seed too, which is the artefact the check above cannot see.**
+ *
+ * The binary and its payload go stale independently, and the payload is the one `cargo build` cannot
+ * fix: `native/build.rs` reads `seed/wacc.wasm` as an *input*, so rebuilding the crate refreshes the
+ * binary's timestamp and leaves an old compiler sitting inside it. The check above then passes —
+ * every Rust input is older than the binary, which is true and is not the question.
+ *
+ * **It was 1.6 days behind when this check was written**, on 2026-09-01, which is a stale compiler
+ * inside a host eleven test files drive — worth catching on its own. It was *not* the cause of the
+ * `wac test` failure found the same day, and this comment said it was until the rebuild disproved it:
+ * the seed went current, the guard went green, and every test on that host still failed. That was
+ * `prepare` sizing the world from `main`, which a test module does not have — `issues/system/0316b`.
+ *
+ * The two are worth keeping apart, because the coincidence is the trap. `issues/system/closed/0306b`
+ * met the identical sentence, rebuilt this seed, saw it clear, and recorded the rebuild as the
+ * remedy — a plausible cause that held for one observation.
+ *
+ * What makes staleness here worth a check of its own is `nativeHostWhyNot` returning `""`. Four files
+ * ask it whether to skip their native halves; with a stale seed it says nothing is wrong, so they do
+ * not skip and compare answers from a compiler that is days old — and `design/system/0001` D9 says
+ * this host exists to test the claim that a wac program does not depend on one.
+ *
+ * **Absent is fine, stale is not**, on the same reasoning as the binary above: a fresh clone has no
+ * wasmtime host and the callers build it when they want it.
+ */
+export string test_the_wasmtime_seed_if_built_is_not_older_than_anything_it_is_built_from(
+    Core core, Cli cli) {
+  T t = T.create();
+  Stat built = cli.stat(nativeHost(cli)).wait();
+  if (!built.exists) {
+    t.eqBool(built.exists, false, "the wasmtime host is not built here, so its seed cannot be stale");
+    return t.report();
+  }
+  t.eqStr(seedWhyNot(cli, WASMTIME_SEED(), "./bootstrap.sh --host wasmtime"), "",
+          "the compiler inside the wasmtime host is not current, and `cargo build` will not fix\n"
+          + "  it — the seed is an input to that build, not an output of it, so the binary check\n"
+          + "  above passes while an old compiler sits inside it.");
   return t.report();
 }
