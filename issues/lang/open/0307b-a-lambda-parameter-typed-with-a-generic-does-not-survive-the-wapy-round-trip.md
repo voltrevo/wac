@@ -111,6 +111,18 @@ before handing the tokens over; or have `wapyparse` parse lambda parameter lists
 parses `def` parameter lists. That is a design choice about where the two surfaces diverge, which is
 why it is still filed rather than fixed.
 
+**And the mode flag is not a one-liner, because wapy overloads the bracket.** `spec/spec/wapy.md`'s
+own table gives both:
+
+    | `i32[3](fill: v)` | `i32[3](fill=v)` |      an array keeps its brackets
+    | `Vec<i32>` in a type | `Vec[i32]` |         type arguments become brackets
+
+So `[` after a type name is an array in one reading and a type-argument list in the other, and only
+`wapyparse`'s `typeIn` currently knows how to tell them apart — which is precisely why a `def`
+parameter survives and a lambda parameter does not. Whatever the fix, it has to carry that
+disambiguation into the shared grammar or keep the parse on the wapy side; teaching `parseTypeArgs`
+to accept `kLbrack` without it would break `i32[]`.
+
 The reasoning that led there, kept because it predicted the controls before the code was read: That file's header
 says it parses the *structure* itself and calls **`parse.wac`'s shared expression, ty and statement
 grammar** for the rest — and a lambda is an expression. wapy spells type arguments with **brackets**,
