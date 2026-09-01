@@ -1,0 +1,117 @@
+// Staging a tree, against a fixture rather than against the repository.
+//
+// Each case is something that failed *quietly*: a directory that was not staged produced
+// `Module not found`, a red baseline, and a run that reported nothing measurable — the right answer,
+// reading like somebody else's problem. `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Change, Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { isSource, stageDir, stageInto, stagedFrom } from "./mutatestage.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string ROOT() { return ".cache/mutatestage-fixture"; }
+
+string write(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) {
+    if (path.slice(i, i + 1) == "/") { cut = i; }
+  }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  Change c = cli.writeFile(path, text.toBytes()).wait();
+  return c.ok() ? "" : c.message;
+}
+
+/**
+ * A small tree with the two shapes the exclusions are about: a `target/` full of build output, and a
+ * root file that a test reads.
+ */
+string makeFixture(Cli cli) {
+  cli.exec("bash", string[]("-c", "rm -rf '" + ROOT() + "'"), u8[0]()).wait();
+  string why = write(cli, ROOT() + "/pkg/src/a.wac", "export i32 a() { return 1; }\n");
+  if (why != "") { return why; }
+  why = write(cli, ROOT() + "/pkg/target/huge.bin", "build output nothing here reads\n");
+  if (why != "") { return why; }
+  why = write(cli, ROOT() + "/tools/t.wac", "export i32 t() { return 2; }\n");
+  if (why != "") { return why; }
+  return write(cli, ROOT() + "/README.md", "a real file of real text\n");
+}
+
+bool exists(Cli cli, string path) { return cli.stat(path).wait().exists; }
+
+/**
+ * A staged tree has the directories, the root files, and not the build output.
+ *
+ * **The root file is the case that cost the most.** `packages/box/test/box.test.ts` reads `README.md`
+ * as its input — real text to run `wc`, `sort` and `head` over — and staging without it made five box
+ * tests fail. A red scope reports every mutant in it as unmeasurable, correctly and by design, so one
+ * missing file silently withdrew a large part of the repository from measurement: a `--package
+ * unicode` run excluded 150 of 251 mutants and said so in a line easy to read as bookkeeping.
+ */
+export string test_a_staged_tree_has_the_source_and_not_the_build_output(Core core, Cli cli) {
+  T t = T.create();
+  string why = makeFixture(cli);
+  t.eqStr(why, "", "the fixture was made");
+  if (why != "") { return t.report(); }
+
+  string root = cli.cwd().wait() + "/" + ROOT();
+  string dest = cli.cwd().wait() + "/" + ROOT() + "-staged";
+  cli.exec("bash", string[]("-c", "rm -rf '" + dest + "'"), u8[0]()).wait();
+
+  string failed = stageInto(cli, root, dest, string[]("pkg", "tools"), string[]("README.md"), "");
+  t.eqStr(failed, "", "staging succeeded");
+  if (failed != "") { return t.report(); }
+
+  t.isTrue(exists(cli, dest + "/pkg/src/a.wac"), "the source came");
+  t.isTrue(exists(cli, dest + "/tools/t.wac"),
+           "and so did tools/, which tests import from and which was once not staged at all");
+  t.isTrue(exists(cli, dest + "/README.md"),
+           "and the root file, which a test reads as its input");
+  t.isTrue(!exists(cli, dest + "/pkg/target/huge.bin"),
+           "and target/ did not — that is what the tar exclusion is for");
+
+  cli.exec("bash", string[]("-c", "rm -rf '" + dest + "' '" + root + "'"), u8[0]()).wait();
+  return t.report();
+}
+
+/**
+ * The exclusions are a list of what is *not* source.
+ *
+ * A list of what to include drifts and did, twice, without anybody seeing it: the compiler moved
+ * inside the repository and was never staged, and `tools/` was never staged though tests import from
+ * it. A list of what to exclude is short and its entries are obvious.
+ */
+export string test_only_the_obvious_non_source_directories_are_skipped() {
+  T t = T.create();
+  t.isTrue(!isSource(".git"), ".git is not source");
+  t.isTrue(!isSource("node_modules"), "nor is node_modules");
+  t.isTrue(!isSource(".cache"), "nor .cache, which is where staging itself lives");
+  t.isTrue(isSource("packages"), "packages is");
+  t.isTrue(isSource("tools"), "and so is tools, which the include list forgot");
+  t.isTrue(isSource("native"), "and native, which it forgot too");
+  return t.report();
+}
+
+/** Distinct per mutant, and under `.cache/` so it is still there to look at afterwards. */
+export string test_each_mutant_stages_somewhere_of_its_own() {
+  T t = T.create();
+  t.eqStr(stageDir("/r", 0), "/r/.cache/mutate/0", "numbered from the counter, not from a clock");
+  t.isTrue(stageDir("/r", 1) != stageDir("/r", 2), "and two mutants do not share a directory");
+  return t.report();
+}
+
+/**
+ * What was staged, for the line printed beside the score.
+ *
+ * A score is about a tree and the tree is not `git status`; a run staged at one moment and read at
+ * another are about different things, so the line says which.
+ */
+export string test_the_staged_line_names_the_revision(Core core, Cli cli) {
+  T t = T.create();
+  string said = stagedFrom(cli, "09:41");
+  t.isTrue(said != "", "it says something");
+  t.isTrue(said.indexOf("staged at 09:41") >= 0,
+           "including when, so two runs of one revision are told apart: " + said);
+  t.isTrue(said.indexOf("an unknown revision") < 0 || said == "an unknown revision",
+           "and either a revision or the honest absence of one: " + said);
+  return t.report();
+}

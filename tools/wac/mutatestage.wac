@@ -1,0 +1,174 @@
+// Staging a copy of the project to mutate in — `stageProject` and `stagedFrom` from `tools/mutate.ts`.
+//
+// A mutant is applied to a *copy*, so the working tree is never touched and several mutants can run
+// at once. What is staged decides what compiles, and this has twice been wrong in the direction that
+// does not go red. `issues/system/0161` step 6.
+//
+// ## The scratch directory, and why there is no capability for it
+//
+// The reference uses `Deno.makeTempDir`, which `std/platform.wac` has no equivalent for. It does not
+// need one: `.cache/mutate/<n>` under the project is the convention two other wac tools already
+// follow — `tools/wac/appletvectors.wac` and `tools/wac/corpushosts.wac` both make scratch space by
+// hand at a fixed path — and a counter supplies the distinctness that staging per mutant needs.
+//
+// A directory under `.cache/` also survives the run, which a temp directory does not, and the tree a
+// strange mutant was built in is the first thing worth looking at. Adding a capability instead means
+// the several registries a new one implies and four hosts to implement it on, and is expensive to
+// undo; this is a few lines and can be replaced by one later without anything outside noticing.
+// `issues/system/0161` has the argument in full.
+
+import { Change, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** `.cache/mutate/<n>` — distinct per mutant, and still there when the run ends. */
+export string stageDir(string root, i32 n) { return root + "/.cache/mutate/" + itoa(n); }
+
+/**
+ * Directories that are not source, and so are not staged.
+ *
+ * **A list of what to exclude rather than what to include**, and that is the whole lesson of this
+ * function. The include list was `packages` and `harness`; then the compiler moved inside the
+ * repository and was never staged, and `tools/` was never staged though tests import from it. Both
+ * produced `Module not found`, a red baseline, and a run that correctly reported **nothing is
+ * measurable** — which is the right answer and reads like somebody else's problem. A red baseline
+ * looks like a broken suite; the suite was green. The tool had withdrawn itself from the
+ * repository's measurements and said so in a sentence nobody had reason to disbelieve.
+ *
+ * A list of what to exclude is short and its entries are obvious. A list of what to include drifts,
+ * and this one drifted twice without anybody seeing it.
+ */
+export bool isSource(string name) {
+  return name != ".git" && name != "node_modules" && name != ".cache";
+}
+
+/**
+ * Copy `dir` into `dest`, minus the build output nothing here reads.
+ *
+ * `tar` piped into `tar` rather than a copy, for one reason: `native/target` is hundreds of megabytes
+ * of Rust build output and a plain copy has no exclusion. It is the portable way to copy a tree minus
+ * a subdirectory, and it is what the exclusion costs.
+ */
+export string copyTree(Cli cli, string root, string dir, string dest) {
+  Exec r = cli.exec("bash",
+                    string[]("-c",
+                             "cd '" + root + "' && tar -c --exclude=target --exclude=node_modules"
+                             + " -f - '" + dir + "' | tar -x -f - -C '" + dest + "'"),
+                    u8[0]()).wait();
+  if (!r.ran()) { return "copy " + dir + ": the shell did not run"; }
+  if (r.status != 0) { return "copy " + dir + " failed: " + string.fromBytes(r.stderr); }
+  return "";
+}
+
+/**
+ * The `wac` binary, linked rather than copied.
+ *
+ * `--exclude=target` above drops the build output that nothing read — until wac tests started driving
+ * the binary themselves: `packages/gzip`'s fuzz test asks for the compiler to build its probe, and in
+ * a staged copy that file was not there. The test says so plainly and the scope goes red, which
+ * excludes every mutant in it.
+ *
+ * A link because it is an artefact rather than a source: a mutation never changes it, and a copy per
+ * staged worker is 68 MB each. Made with `ln -s` through the shell this function is already using —
+ * `Cli` has no symlink capability, which is `issues/system/0300c`, and this needs no new one.
+ */
+export string linkBinary(Cli cli, string root, string dest, string bin) {
+  Stat have = cli.stat(root + "/" + bin).wait();
+  if (!have.exists) { return ""; }               // nothing to link is not a failure
+  i32 cut = lastSlash(bin);
+  string dir = cut < 0 ? dest : dest + "/" + bin.slice(0, cut);
+  cli.mkdir(dir, true).wait();
+  Exec r = cli.exec("bash",
+                    string[]("-c", "ln -sfn '" + root + "/" + bin + "' '" + dest + "/" + bin + "'"),
+                    u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    return "linking the binary failed: " + string.fromBytes(r.stderr);
+  }
+  return "";
+}
+
+i32 lastSlash(string s) {
+  i32 at = -1;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "/") { at = i; }
+  }
+  return at;
+}
+
+/**
+ * Stage `dirs` and `files` from `root` into `dest`. `""` when it worked.
+ *
+ * **Every file at the repository root comes too, and that is not tidiness.**
+ * `packages/box/test/box.test.ts` reads `README.md` as its input — a real file of real text to run
+ * `wc`, `sort` and `head` over — and staging without it made five box tests fail. The consequence was
+ * invisible and expensive: a red scope means every mutant in it is reported as *unmeasurable* rather
+ * than killed, correctly and by design, so one missing file silently withdrew a large part of the
+ * repository from measurement. A `--package unicode` run excluded 150 of 251 mutants for this reason
+ * and said so in a line easy to read as bookkeeping.
+ *
+ * Root files are a handful of kilobytes, so copying all of them is cheaper than maintaining a list of
+ * which ones some test happens to read.
+ *
+ * The caller passes the lists rather than this walking them, so a test can stage two directories
+ * instead of the repository.
+ */
+export string stageInto(Cli cli, string root, string dest, string[] dirs, string[] files,
+                        string bin) {
+  cli.mkdir(dest, true).wait();
+  for (i32 i = 0; i < dirs.len(); i++) {
+    if (!isSource(dirs[i])) { continue; }
+    string why = copyTree(cli, root, dirs[i], dest);
+    if (why != "") { return why; }
+  }
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult f = cli.readFile(root + "/" + files[i]).wait();
+    if (!f.ok) { continue; }                     // a file that vanished mid-run is not a failure
+    Change wrote = cli.writeFile(dest + "/" + files[i], f.bytes).wait();
+    if (!wrote.ok()) { return "copying " + files[i] + ": " + wrote.message; }
+  }
+  return bin == "" ? "" : linkBinary(cli, root, dest, bin);
+}
+
+/**
+ * What was staged, for the line every run prints beside its score.
+ *
+ * **A score is about a tree, and the tree is not `git status`.** A run staged at one moment and read
+ * at another are about different things, so every run says what it staged — the revision, how many
+ * files were modified, and when — and a reader comparing a score against their working tree can see
+ * that the two are not the same thing.
+ */
+export string stagedFrom(Cli cli, string clock) {
+  Exec head = cli.exec("git", string[]("rev-parse", "--short", "HEAD"), u8[0]()).wait();
+  if (!head.ran() || head.status != 0) { return "an unknown revision"; }
+  string rev = trimmed(string.fromBytes(head.stdout));
+  if (rev == "") { return "an unknown revision"; }
+
+  Exec status = cli.exec("git", string[]("status", "--porcelain"), u8[0]()).wait();
+  i32 dirty = 0;
+  if (status.ran() && status.status == 0) {
+    string lines = string.fromBytes(status.stdout);
+    i32 from = 0;
+    for (i32 i = 0; i <= lines.len(); i++) {
+      if (i < lines.len() && lines.slice(i, i + 1) != "\n") { continue; }
+      if (trimmed(lines.slice(from, i)) != "") { dirty = dirty + 1; }
+      from = i + 1;
+    }
+  }
+  return rev + (dirty > 0 ? " with " + itoa(dirty) + " file(s) modified" : "")
+             + ", staged at " + clock;
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to) {
+    string c = s.slice(from, from + 1);
+    if (c != " " && c != "\n" && c != "\t" && c != "\r") { break; }
+    from = from + 1;
+  }
+  while (to > from) {
+    string c = s.slice(to - 1, to);
+    if (c != " " && c != "\n" && c != "\t" && c != "\r") { break; }
+    to = to - 1;
+  }
+  return s.slice(from, to);
+}
