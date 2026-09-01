@@ -194,3 +194,56 @@ export Verdict mergeRuns(Verdict[] parts) {
   }
   return Verdict.NoTestsHere;
 }
+
+bool isWordChar(string c) {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
+}
+
+/** `\b<word>\b` in `source` — the word, not the letters inside a longer identifier. */
+bool namesWord(string source, string word) {
+  for (i32 i = 0; i + word.len() <= source.len(); i++) {
+    if (source.slice(i, i + word.len()) != word) { continue; }
+    bool leftOk = i == 0 || !isWordChar(source.slice(i - 1, i));
+    i32 after = i + word.len();
+    bool rightOk = after >= source.len() || !isWordChar(source.slice(after, after + 1));
+    if (leftOk && rightOk) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Whether a test file spawns processes of its own, decided by what it names.
+ *
+ * **`--jobs` counts mutant runs, not processes, and that is the trap.** Several test files here are
+ * themselves swarms: `packages/box/test/box.test.ts` spawns about three hundred built binaries, each
+ * a process plus a worker. Four such jobs is not four processes, it is hundreds — and the machine is
+ * shared, so a fifty-second suite next door took over half an hour — `issues/system/0031`, the one
+ * titled "a mutation sweep starves every other agent on this machine" rather than the box one that
+ * shares its number.
+ *
+ * **Read from what the file names rather than from a list of packages**, because a hand-kept list is
+ * wrong the first time somebody writes a spawning test in a package that is not on it — and wrong
+ * *silently*, which is the direction that matters. `buildApp` and `appRunner` are the two doors to a
+ * built program; `spawnChild` is the third, for tests that drive the worker protocol themselves.
+ */
+export bool spawnsProcesses(string source) {
+  return namesWord(source, "buildApp") || namesWord(source, "appRunner")
+      || namesWord(source, "spawnChild") || namesWord(source, "workerSource");
+}
+
+/**
+ * How many mutants to run at once for a scope, given what its tests do.
+ *
+ * An explicit `--jobs` wins: the caller asked. Otherwise one spawning file in the scope drops the
+ * whole scope to one, because the cost is the processes rather than the files.
+ *
+ * A file that could not be read is not evidence of anything and the others still decide — passing `""`
+ * for it says so.
+ */
+export i32 jobsFor(string[] sources, i32 explicitJobs, i32 defaultJobs) {
+  if (explicitJobs > 0) { return explicitJobs; }
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (spawnsProcesses(sources[i])) { return 1; }
+  }
+  return defaultJobs;
+}

@@ -10,7 +10,7 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Verdict, classify, isWacRun, mergeRuns, splitHalves, wacTestArgs }
+import { Verdict, classify, isWacRun, jobsFor, mergeRuns, spawnsProcesses, splitHalves, wacTestArgs }
        from "./mutatenative.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -138,5 +138,30 @@ export string test_the_merge_prefers_a_kill_then_an_abort() {
           "both halves surviving is the only way to survive");
   t.eqStr(mergeRuns(Verdict[0](fill: Verdict.NoTestsHere)).word(), "no-tests-here",
           "and no halves at all is an absence rather than a pass");
+  return t.report();
+}
+
+/**
+ * One spawning file in a scope drops the whole scope to one job.
+ *
+ * `--jobs` counts mutant runs and not processes: four jobs over a file that spawns three hundred
+ * binaries is hundreds of processes on a shared machine — `issues/system/0031`, the mutation-sweep
+ * one; two issues share that number.
+ */
+export string test_a_spawning_test_file_drops_the_scope_to_one_job() {
+  T t = T.create();
+  t.isTrue(spawnsProcesses("import { buildApp } from '../platform/build.ts';"),
+           "buildApp is one of the doors to a built program");
+  t.isTrue(spawnsProcesses("const r = appRunner(x);"), "and appRunner is the other");
+  t.isTrue(spawnsProcesses("spawnChild(w)"), "spawnChild is the third, for the worker protocol");
+  t.isTrue(!spawnsProcesses("i32 buildApplication = 1;"),
+           "but a longer identifier that merely contains one is not a match");
+  t.isTrue(!spawnsProcesses("nothing here spawns"), "and a file that names none does not");
+
+  t.eqI32(jobsFor(string[]("plain", "also plain"), 0, 4), 4, "no spawner keeps the default");
+  t.eqI32(jobsFor(string[]("plain", "uses buildApp"), 0, 4), 1, "one spawner drops the scope to one");
+  t.eqI32(jobsFor(string[]("uses buildApp"), 3, 4), 3, "and an explicit --jobs wins, because it was asked for");
+  t.eqI32(jobsFor(string[]("", "plain"), 0, 4), 4,
+          "an unreadable file is not evidence, and the others still decide");
   return t.report();
 }
