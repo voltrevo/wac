@@ -4,7 +4,8 @@
 // the tests that nobody made. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Score, exclusions, headline, percent, scoreOf } from "./mutatescore.wac";
+import { Score, exclusions, headline, isStaleKnown, percent, runFails, scoreOf }
+       from "./mutatescore.wac";
 
 /**
  * Equivalent, duplicate and uncompilable are excluded rather than counted as killed.
@@ -71,5 +72,30 @@ export string test_the_percentage_rounds_to_nearest() {
   t.eqI32(percent(scoreOf(2, 3, 0, 0, 0, 0)), 67, "two of three");
   t.eqI32(percent(scoreOf(1, 3, 0, 0, 0, 0)), 33, "one of three");
   t.eqI32(percent(scoreOf(1, 8, 0, 0, 0, 0)), 13, "one of eight is 12.5, which rounds up");
+  return t.report();
+}
+
+/**
+ * What fails the run, and the two failures that are not surviving mutants.
+ *
+ * A curated mutation that cannot be located is the one that looks harmless: it is never applied, so
+ * it is never killed and never survives — it simply leaves the count, and the run gets quieter rather
+ * than redder. That is a test that stopped running.
+ */
+export string test_what_makes_a_run_fail() {
+  T t = T.create();
+  t.isTrue(runFails(1, 0, 0), "a surviving mutant is untested behaviour");
+  t.isTrue(runFails(0, 1, 0), "a curated mutation that will not apply is a test that stopped running");
+  t.isTrue(runFails(0, 0, 1), "and a documented survivor that got killed has a reason that has stopped holding");
+  t.isTrue(!runFails(0, 0, 0), "none of the three is a pass");
+  return t.report();
+}
+
+/** Documented, unobservable and ratio-only survivors are expected: each has an argument beside it. */
+export string test_a_documented_survivor_that_dies_is_the_error() {
+  T t = T.create();
+  t.isTrue(isStaleKnown(true, true), "listed in known.ts and killed — the entry has to go");
+  t.isTrue(!isStaleKnown(false, true), "listed and still surviving is the entry doing its job");
+  t.isTrue(!isStaleKnown(true, false), "and killed without being listed is the ordinary good case");
   return t.report();
 }

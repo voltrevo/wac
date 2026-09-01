@@ -78,3 +78,34 @@ export i32 percent(Score s) {
   if (s.harnessBroken || s.measured <= 0) { return -1; }
   return (2 * 100 * s.killed + s.measured) / (2 * s.measured);
 }
+
+/**
+ * A documented survivor that got killed: the recorded reason has stopped holding.
+ *
+ * `known.ts` lists generated mutants that survive *for a reason*, each with an argument. When one of
+ * them is killed the argument is wrong — the tests changed, or it was never right — and the entry has
+ * to go rather than sit there being wrong. Listing a mutant that later gets killed is an error in the
+ * same way listing one that never survives would be.
+ */
+export bool isStaleKnown(bool killed, bool listedInKnown) { return killed && listedInKnown; }
+
+/**
+ * Whether the run fails, which is the tool's exit status.
+ *
+ * Three things, and the middle one is the one that looks harmless:
+ *
+ * - **surviving mutants** — untested behaviour, which is what the tool is for.
+ * - **curated mutations that could not be located** — a mutation that does not apply is not a passing
+ *   result; it is a test that stopped running. The pattern went stale when the code moved, and
+ *   nothing else notices, because a mutation that is never applied is never killed and never
+ *   survives. It simply leaves the count.
+ * - **stale `known.ts` entries** — a documented survivor that was killed, whose argument has stopped
+ *   holding.
+ *
+ * Documented survivors, mutants claimed unobservable with evidence, and ratio-only ones are all
+ * expected and do not fail: each has an argument recorded beside it, which is the difference between
+ * a survivor that is understood and one that is not.
+ */
+export bool runFails(i32 survivors, i32 unlocatable, i32 staleKnown) {
+  return survivors > 0 || unlocatable > 0 || staleKnown > 0;
+}
