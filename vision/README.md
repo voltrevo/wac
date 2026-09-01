@@ -33,6 +33,9 @@ behaviour; none of them is on its own a reason to use the language.
 best way to write the thing: an entry here is written to pin the detail down. Read together these are
 meant to be enough to implement the language from.
 
+Add to that one freely. A technical entry is scrutinised for being correct rather than for being
+worth showing; the other two tiers are selective and this one is not.
+
 **`DECISIONS.md`** — small decisions already taken. One rule each, with enough of the reason that it
 can be revisited; a rule without its reason is one nobody can argue with.
 

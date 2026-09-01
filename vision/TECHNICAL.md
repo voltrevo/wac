@@ -43,6 +43,24 @@ The call site writes `for`, and the parameter it fills is `@"for"`.
 
 ---
 
+## A hyphenated attribute
+
+```wac
+Node widget(string @"data-size") {
+  return <"my-widget" data-size={@"data-size"} />;
+}
+
+Node sized() {
+  return <widget data-size="8" />;
+}
+```
+
+The parameter is `@"data-size"`. Both tags write the attribute as HTML does.
+
+**Not yet.**
+
+---
+
 ## `@` on a name that does not need it
 
 ```wac
