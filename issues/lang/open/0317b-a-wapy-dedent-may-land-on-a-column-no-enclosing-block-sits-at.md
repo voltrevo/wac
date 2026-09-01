@@ -59,6 +59,29 @@ with nothing holding the compiler to it, and this is what that looks like from t
 `packages/wacc/test/wac/wapy_test.wac` mentions indentation once, in a comment about continuations.
 Nothing tests a bad dedent.
 
+## The messages are written too — only the raising is missing
+
+`packages/wacc/src/diag.wac` renders wapy's codes by number, and all three unraised ones have their
+text already:
+
+    if (code == 41) { return "wapy spells this differently"; }
+    if (code == 42) { return "this dedent lands on no enclosing block"; }
+    if (code == 44) { return "the indentation of this line is not a block"; }
+
+Beside 40 and 43, which are raised. So somebody wrote *"this dedent lands on no enclosing block"* —
+the sentence this issue is about — and nothing can ever print it.
+
+That makes the work smaller than it looked: the diagnostic exists end to end except for the one
+`errs.push(werrDedent())` that would reach it. The comment above that table is worth reading beside
+this, because it is the same argument one level down: *"Unnamed is worse than mislabelled. Without
+these the renderer fell back to 'the parser refused this' at the position of the end-of-file token,
+which reads as a compiler bug rather than as a wapy program with a missing colon in it."*
+
+**Found by looking at the wrong thing first.** Grepping for `werrDedent` across the tree finds only
+its declaration, which reads as "there is no message for it either". `diag.wac` matches on the
+*number*, not the name, so the text is invisible to that search. Ask how a code that *is* raised
+gets rendered, and the table appears.
+
 ## Why it is filed rather than fixed
 
 Raising `werrDedent` where the spec says to is a new diagnostic on a surface that already has
