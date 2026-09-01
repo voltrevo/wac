@@ -1,0 +1,27 @@
+// A test that is handed a world and uses it — the smallest one there is.
+//
+// **It exists to be run by another host**, which `hostrunstests_test.wac` beside it does: it names
+// this file, runs it under the wasmtime binary, and requires it to pass there too. Kept in its own
+// file for that reason, since a file that spawned a run of itself would not stop.
+//
+// **Taking `Core` and `Cli` is the whole point.** `issues/system/0316b` was the wasmtime host
+// building the world from the parameters of the export named `main`, which a test module does not
+// have — so every export taking a world was refused and the ones taking nothing were fine. Of the
+// four tests in `packages/wactest/test/wac/daemon_test.wac`, the only one that passed on the broken
+// host was the only one with no parameters. A probe written without a world would have been green
+// throughout.
+//
+// So this asserts the two things a refused world cannot fake: that it arrived, and that a capability
+// on it answers.
+
+import { Core, Cli } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+export string test_a_test_is_handed_a_world_that_answers(Core core, Cli cli) {
+  T t = T.create();
+  // `cwd` because every host has one and it needs no grant — a refusal here would be about the world
+  // rather than about what this run was allowed to do.
+  string here = cli.cwd().wait();
+  t.isTrue(here.len() > 0, "the world arrived and `cwd` answered with something");
+  return t.report();
+}

@@ -85,10 +85,14 @@ The fix and the guard are in. What is not done:
 - **`nativeHostWhyNot()` should have a reason to return for a stale seed**, which its docstring already
   promises callers. Today it answers the binary question only, so the four files that consult it still
   cannot tell a current host from one carrying an old compiler.
-- **Nothing asserts that `wac test` works on this host**, which is the check that would have caught
-  this in a form no freshness rule can: every guard here compares timestamps, and the failure was in
-  what the binary *does*. A single test file run under the wasmtime host, asserting it ran at all,
-  is the shape — and it belongs wherever `tools/push.sh` can see it.
+- ~~**Nothing asserts that `wac test` works on this host**~~ — done.
+  `packages/platform/test/wac/hostrunstests_test.wac` runs the wasmtime binary on
+  `worldarrives_test.wac` and requires a passing count back, naming *built without* so a future
+  variant does not arrive as an unexplained number. The fixture takes `Core` and `Cli` deliberately:
+  the only one of `daemon_test`'s four tests that passed on the broken host was the only one with no
+  parameters, so a probe written without a world would have been green throughout. Canaried against
+  the pre-fix binary rather than assumed — reverted, rebuilt, and it fails with the original
+  sentence.
 - **`issues/system/0128`** is a two-host differential timing out under load; worth a glance from
   whoever picks this up, since a host that refuses every export is one way for a differential to look
   slow rather than broken.

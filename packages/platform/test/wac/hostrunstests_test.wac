@@ -1,0 +1,57 @@
+// The wasmtime host can run a test file at all.
+//
+// **Every other check on that host compares timestamps, and this failure was in what it does.**
+// `tools/wac/seedfresh_test.wac` asks whether the binary is older than its Rust and whether the seed
+// is older than the graph it is built from; both were current on 2026-09-01 while `wac test` on that
+// host refused **every export of every file** in the repository with *this module was built without
+// Core and Cli*. `issues/system/0316b`. No freshness rule can catch that, because nothing was stale.
+//
+// `nativeHostWhyNot()` answered `""` — nothing wrong — throughout, so the eleven test files that
+// consult it did not skip and did not compare. That is the shape worth guarding: `design/system/0001`
+// D9 says this host exists to test the claim that a wac program does not depend on one, and a suite
+// that never asked it does not test that claim. A green run and a run that never happened look the
+// same from here unless something asserts the difference.
+//
+// **Why it runs a whole `wac test` rather than a program.** `wac run` worked the entire time this was
+// broken — a program has the `main` the world was sized from, and that is exactly why the bug reached
+// production. The two entry points build the world by different routes, so a probe through the
+// working one proves nothing about the other. This drives the route the eleven files use.
+//
+// **And it reads the count rather than the exit status.** A host that cannot run the file at all and
+// one whose test genuinely fails both leave a non-zero status; only the report says which.
+// `issues/system/0316b`'s failure printed `0 passed, 6 failed` per file, which is a sentence a status
+// cannot carry.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
+
+string SUBJECT() { return "packages/platform/test/wac/worldarrives_test.wac"; }
+
+export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Core core, Cli cli) {
+  T t = T.create();
+  string why = nativeHostWhyNot(cli);
+  if (why != "") {
+    core.log("skipped: " + why);
+    // Asserted rather than returned silently, so a skip is not indistinguishable from a run.
+    t.isTrue(why != "", "the wasmtime host is not available: " + why);
+    return t.report();
+  }
+
+  Exec r = cli.exec(nativeHost(cli),
+                    string[]("test", "--allow-read", "--allow-write", "--allow-run", SUBJECT()),
+                    u8[0]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r.ran(), "the wasmtime host ran at all");
+  if (!r.ran()) { return t.report(); }
+
+  // The sentence itself, named, because it is the one this exists for and a future variant of it
+  // would otherwise arrive as an unexplained count.
+  t.isTrue(said.indexOf("built without") < 0,
+           "the host refused the module's world — `" + SUBJECT() + "` takes `Core` and `Cli`, and\n"
+           + "  a world sized from something other than the export being called refuses exactly that.\n"
+           + "  See issues/system/0316b. It said:\n  " + said);
+  t.isTrue(said.indexOf("1 passed, 0 failed") >= 0,
+           "the wasmtime host reported a passing test, rather than:\n  " + said);
+  return t.report();
+}
