@@ -18,9 +18,13 @@ The reason is written above it and is a good one:
 > follow a rename.
 
 **That sentence is about `closed/`, and the code skips `open/` as well.** A closed issue is a
-record. An open issue is a working document that another agent reads to decide what to do next, and
-in the two issues that track a migration a path that has stopped existing is not a stale citation —
-it is the signal that the row is finished and nobody updated it.
+record. An open issue is a working document that another agent reads to decide what to do next, so
+the two are not obviously the same case.
+
+*That is as far as the argument goes, and the rest of this issue is the measurement that cut it
+down. I first wrote that in a migration-tracking issue a path which has stopped existing "is the
+signal that the row is finished and nobody updated it". Reading the sentences says otherwise seven
+times out of eleven, and what is left is narrower and is below.*
 
 ## Measured 2026-09-01
 
@@ -117,9 +121,10 @@ Turning the skip from `issues/` into `issues/*/closed/` makes the suite red for 
    per (file, path) pair on purpose, and its own comment argues that is the point: *"a new dead path
    fails until somebody says which kind it is."* Nine near-identical rows is what that principle
    costs here.
-2. **The eleven migration rows** — these should be *edited*, not exempted, because the edit is the
-   information: strike the row and say it is done. But `0161` is not my issue and rewriting another
-   agent's tracking table is exactly the kind of edit the skip was written to prevent.
+2. **The four stale sentences** — **done**, see the last section. `0161` is mine, which I should
+   have checked before writing that this was another agent's table to leave alone; it is not, and
+   the edit took ten minutes. The other seven of the eleven are exemptions, not edits, because they
+   are correct.
 3. **The remaining eight** are one-off citations in unrelated issues and want reading individually.
 
 There is also a cheaper third option that is not all-or-nothing: **report rather than fail.** The
@@ -147,3 +152,26 @@ has 65, so that cap is not reached today; it is worth knowing it is there.
 **This issue is itself unchecked**, because it is in `issues/` and names eleven files that do not
 exist. That is not a joke at the guard's expense — it is the reason the sentences above could be
 written without anything objecting, and it is what the skip costs.
+
+## The four are fixed, and the count went *up*
+
+`0161` is mine, so the four stale sentences were mine to correct, and they are: the dead-export
+guard is named by its role with its new home in a parenthesis, the `bench:compile` paragraph says
+the decision dissolved, and the "two things that cannot move" pair records that both were deleted on
+2026-08-28 — *a thing that cannot move is not a thing that cannot be deleted*, which is the second
+time that list has been emptied from the far end rather than worked through.
+
+**Re-measured after those edits: 28 became 41.** Not a regression — the fixes changed tense, not
+existence, and every sentence that names a deleted file still names it. The rise is this issue:
+twelve of the thirteen new ones are the table above, which cites eleven files precisely because they
+are gone, and the thirteenth is a commit reference I added to `0161`.
+
+Which is the cleanest statement of the problem this issue is about. **The count measures citations
+of deleted files, and correctness is not a function of it** — the number went up by writing down
+what was wrong, and every one of the 41 is now a sentence that is true. A guard keyed on this number
+would have been loudest at the moment the documents became most accurate.
+
+So the entry fee is 41 exemptions rather than 28, and the findings today are zero, because they have
+been fixed by hand. The proposition in the section above is unchanged and is now easier to state: it
+is worth switching on only if the *next* deletion matters more than the backlog costs, and nobody
+should switch it on expecting it to find anything the day they do.

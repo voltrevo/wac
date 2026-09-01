@@ -877,8 +877,9 @@ both explicit bounds checks left it green, because `items[i]!` traps on the null
 
 **The probe usually dies with it.** A `test/wac/*probe.wac` exists to be reached from the host —
 `crcprobe.wac` exported `whole` and `chunked` so a TypeScript test could drive them. With the test in
-wac it had no callers at all. Check and delete; `tools/deadexports.test.ts` will not, since probe
-files are exempt from it.
+wac it had no callers at all. Check and delete; the dead-export guard will not say so, since probe
+files are exempt from it. *(That guard was `tools/deadexports.test.ts` when this was written; it is
+`tools/wac/deadexports_test.wac` since `57a10c8c`, and the exemption came across with it.)*
 
 **Deleting the file breaks its citations.** Both conversions were cited elsewhere as *the shape* for
 that kind of test — five files across `ens`, `crypto` and `rlp` pointed at `packages/std/test/traps.*`
@@ -1143,7 +1144,11 @@ That is moot for this benchmark now. It is not moot for `harness/wacFiles.ts`'s 
 `tools/mutate/`, `packages/ts`'s two differential tests — where "the files this program is made of"
 answering three short may matter more than a column. Not chased: it belongs to whoever ports those.
 
-**One thing the port has to decide, which is not mechanical.** `tools/benchCompile.test.ts` asserts
+**One thing the port has to decide, which is not mechanical.** *(Decided, and not by anybody
+choosing: the port landed on 2026-08-31 as `tools/wac/benchcompile.wac`, and the question dissolved
+when `harness/waccBuild.ts` stopped being a build — `issues/system/0289b` has the account. The
+paragraph is left as written because what it decides is no longer live.)* `tools/benchCompile.test.ts`
+asserted
 that every `api.*` call in `harness/waccBuild.ts` is either timed here or carries a `bench-exempt`
 line saying why — a guard that exists because the list silently drifted twice, the second time
 *"within the hour, by the person who wrote"* the note telling them not to let it. A wac benchmark
@@ -1764,7 +1769,10 @@ The sweep went 62 → 68 of 77 with both fixed. Of the nine left, eight are in `
 no tests, and one is `actionUse` gutted to `return 0` where `USE()` is 0.
 
 **Two things that cannot move, for the record**, both matching the "what stays" rule above:
-`tools/install.test.ts`, because `tools/install.ts` is TypeScript and a wac test cannot import it;
+`tools/install.test.ts`, because `tools/install.ts` was TypeScript and a wac test cannot import it —
+*and both went on 2026-08-28 with `tools/seed.sh` (`be6bae86`), when `bootstrap.sh` became the only
+way to build `wac`. A thing that cannot move is not a thing that cannot be deleted, which is the
+second time this list has been emptied from the far end rather than worked through*;
 and packages/wacc/test/renderDiag.test.ts, whose subject is agreement with the reference's own
 `wacDiag`. Same reason as `packages/stream/test/stream.test.ts`.
 
