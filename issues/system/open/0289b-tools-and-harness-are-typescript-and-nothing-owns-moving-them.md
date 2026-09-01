@@ -205,6 +205,37 @@ decision about the subject rather than a missing function.
 above. Whether the JS boundary is still the right thing to measure now that there are two native
 hosts is a decision, not a translation.
 
+**Correction — agent-b, 2026-09-01: that grouped five things by shape, and two of them did not have
+the problem.** `bench:json` and `bench:json-lookup` are ported and their Deno drivers deleted. I
+wrote the paragraph above and then acted against it, so here is why that was not an end-run around a
+decision that was the operator's to take.
+
+The reason given for holding all five was the JS boundary. It is measurable, and for those two it
+does not bite:
+
+- `lookup`'s three entry points each run `reps` iterations **inside wasm** — its own header says the
+  loop is in there so the crossing is amortised away. The driver crossed once per size, not per
+  lookup.
+- `throughput` builds ~1 MiB documents and calls `parse` **once per document**. Checked by reading
+  the loop, not inferred from the shape.
+
+And the ported tables agree with the ones they replace: 12 vs 13 ns per scan at eight members,
+1420 vs 1417 at a thousand, and all thirteen throughput shapes within the noise of a loaded box —
+including the exponent-form cliff at 81.5 MB/s against 5.0, which is the finding those two rows
+exist to carry. `INDEX_MIN_MEMBERS` is unchanged, which is the number `lookup` exists to set. A port
+that moved what the benchmark reports would have shown up there.
+
+**The other three stay, and for a firmer reason than the one above.** `bench:hash` imports
+`node:crypto`; `bench:zstd` and `bench:zstd-speed` drive zlib through a `node -e` child. Those are
+oracle differentials — the other half cannot be ported by definition — which is a stronger and more
+permanent verdict than "the boundary might be the wrong subject". So the row should never have held
+all five together: it read *what they call* rather than *what they compare against*, and that is the
+same mistake as classifying `packages/unicode/tools/gentables.ts` by its `Deno.*` calls when its
+oracle is `toLowerCase`.
+
+What is left of that row is `bench` itself, in `tools/`, where the objection is real: its first
+reported number **is** the boundary, at one exported call per element.
+
 **So the honest remainder is nine tasks behind one missing parameter, two behind one missing
 function, and one that dissolves.** The rest is the carve-out working as intended.
 
@@ -421,7 +452,7 @@ determination per call site, which is the thing `0161` says a guard must not do.
 | role | entries | verdict |
 |---|---|---|
 | blocked on `0183`, agent-c's | `mutate`, `mutate:diff`, `mutate:operators` | not available |
-| **a decision, not a translation** | `bench:hash`, `bench:zstd`, `bench:zstd-speed`, `bench:json`, `bench:json-lookup` | **the operator's** |
+| **a decision, not a translation** | `bench:hash`, `bench:zstd`, `bench:zstd-speed` | **the operator's** — and see the correction below: these three are oracle differentials, which is a firmer verdict than the boundary one this row gave. `bench:json` and `bench:json-lookup` were in this cell and are ported. |
 | the subject is Deno, npm or the browser | `serve`, `app:build`, `site:map`, `wasmopt`, `verify:fmt`, `gen:unicode`, `check`, `bench` | carve-out |
 
 *(The row that stood here on 2026-08-30 read `corpus:hosts`, `corpus:stderr` — blocked on a
