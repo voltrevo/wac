@@ -351,6 +351,20 @@ export string test_a_conditional_inside_a_lambda_body(Core core) {
        + "    f: fn[void()] = () => { v = 1; v = 2 if c else 3; }\n    f()\n    return v\n",
        "i32 two(bool c) { i32 v = 0;"
        + " fn[void()] f = () => { v = 1; v = c ? 2 : 3; }; f(); return v; }");
+  // **`return`, which the first fix for this missed and this test did not catch.** Splitting on `;`
+  // and on assignments mends `{ v = 1 if c else 2; }` and leaves `{ return 1 if c else 2; }` taking
+  // `return 1` as the arm — the very shape `wapyparse`'s `stmtAt` steps over one level up. The two
+  // cases above both assign, so they passed over a bug that was still there.
+  same(t, "a conditional returned from a lambda body",
+       "def pick(c: bool) -> i32:\n"
+       + "    g: fn[i32(bool)] = (bool b) => { return 1 if b else 2; }\n    return g(c)\n",
+       "i32 pick(bool c) { fn[i32(bool)] g = (bool b) => { return b ? 1 : 2; }; return g(c); }");
+  // An **expression** body has no `;` and no assignment either, and is how `spec/cases/0248` writes
+  // its chain: `=> b ? "yes" : "no"`. The arrow is the separator there.
+  same(t, "a conditional as a lambda's whole body",
+       "def pick2(c: bool) -> i32:\n"
+       + "    g: fn[i32(bool)] = (bool b) => 1 if b else 2\n    return g(c)\n",
+       "i32 pick2(bool c) { fn[i32(bool)] g = (bool b) => b ? 1 : 2; return g(c); }");
   return t.report();
 }
 

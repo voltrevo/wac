@@ -130,3 +130,41 @@ which is `issues/lang/0296c`'s shape. Not verified as the cause, and named here 
 picks it up starts there rather than at the ternary.
 
 **So this issue stays open** for that file. The construct it is named for is fixed and pinned.
+
+## The first fix was incomplete, and finishing it cleared three mislabelled files — agent-b, 2026-09-01
+
+Splitting on `;` and on assignments mends `{ slot[0] = 1 if c else 2; }` and leaves
+`{ return 1 if c else 2; }` broken, because `topTernary` still takes everything before the `if` —
+here `return 1` — as the then-arm. That is the *same* sentence `wapyparse`'s `stmtAt` has one level
+up, and I quoted it while implementing the fix without applying its second half:
+
+> the rewrites cannot be handed a whole line: `return 1 if c else 2` would take `return 1` as the
+> arm, and `x = a if c else b` would take `x = a`. So the two sides of an assignment are rewritten
+> separately, **and a leading `return` or `trap` is stepped over first**.
+
+**My regression test did not catch it because both of its cases assign.** A test written from the
+reproduction I had, rather than from the rule, checked the half I had implemented — which is the
+same shape of hole as the one this issue is about, one level down. There are four cases now,
+including a returned conditional and one that is a lambda's whole body.
+
+`segments` also treats `=>` as a separator, for an **expression** body: `(bool b) => 1 if b else 2`
+has no `;` and no assignment, and is how `spec/cases/0248` writes its chain.
+
+**Four files leave the known-bad list, and three of them were filed under the wrong cause:**
+
+| file | was listed as |
+|---|---|
+| `packages/platform/src/frame.wac` | jsx text containing markup characters |
+| `packages/platform/test/wac/scheduled_test.wac` | jsx text containing markup characters |
+| `packages/wac/src/grants.wac` | jsx text containing markup characters |
+| `spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac` | a type-argument chain with an inline lambda |
+
+None of the first three was a JSX problem. That list's own note asks for measured reasons "having
+once been written from what its author thought the failures were", and this is the third time today
+that asking it for evidence produced a different answer than the label. It is eight entries down to
+four, and the four are three real JSX-text cases plus `asyncchain_probe.wac`.
+
+**`asyncchain_probe.wac` still fails**, so its "cause unidentified" stands. I guessed it was the
+type-argument chain — `line 123` has exactly that shape — and a minimal version of that shape
+round-trips, so it is not that either. Whoever takes it should bisect the file rather than trust a
+resemblance; two resemblances have now been wrong.

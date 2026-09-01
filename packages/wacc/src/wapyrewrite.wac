@@ -18,9 +18,9 @@
 
 import { WVec } from "./wvec.wac";
 import {
-  kAndEq, kAssign, kCaretEq, kColon, kComma, kElse, kGt, kIdent, kIf, kLbrace, kLbrack, kLparen,
-  kLt, kMatch, kMinusEq, kNull, kOr, kOrEq, kPercentEq, kPlusEq, kQuestion, kRbrace, kRbrack,
-  kRparen, kSemi, kShlEq, kShrEq, kShrUEq, kSlashEq, kStarEq,
+  kAndEq, kAssign, kCaretEq, kColon, kComma, kElse, kFatArrow, kGt, kIdent, kIf, kLbrace, kLbrack,
+  kLparen, kLt, kMatch, kMinusEq, kNull, kOr, kOrEq, kPercentEq, kPlusEq, kQuestion, kRbrace,
+  kRbrack, kReturn, kRparen, kSemi, kShlEq, kShrEq, kShrUEq, kSlashEq, kStarEq, kTrap,
 } from "./kinds.wac";
 import {
   Toks, kindAt, pushRange, pushTok, pushTokAs, setKindAt, slice, toksLen, toksNew,
@@ -120,9 +120,9 @@ Toks segments(Toks t) {
   Toks seg = toksNew();
   for (i32 i = 0; i < toksLen(t); i++) {
     i32 k = kindAt(t, i);
-    if ((k == kComma() || k == kColon() || k == kSemi() || assignK(k))
+    if ((k == kComma() || k == kColon() || k == kSemi() || k == kFatArrow() || assignK(k))
         && depthAt(seg, toksLen(seg)) == 0) {
-      Toks done = topTernary(seg);
+      Toks done = afterKeyword(seg);
       pushRange(out, done, 0, toksLen(done));
       pushTok(out, t, i);
       seg = toksNew();
@@ -130,9 +130,29 @@ Toks segments(Toks t) {
     }
     pushTok(seg, t, i);
   }
-  Toks done = topTernary(seg);
+  Toks done = afterKeyword(seg);
   pushRange(out, done, 0, toksLen(done));
   return out;
+}
+
+/**
+ * `topTernary` over a segment, stepping over a leading `return` or `trap` first.
+ *
+ * **The operand, not the statement** — `wapyparse`'s `stmtAt` says it in those words and does the
+ * same thing one level up, because `return 1 if c else 2` otherwise takes `return 1` as the arm.
+ * Inside a lambda body that rule has to hold again, and the first fix for `issues/lang/0297c` split
+ * on `;` and on assignments without it: a body of `{ slot[0] = 1 if c else 2; }` was mended and one
+ * of `{ return 1 if c else 2; }` was not. The test written with it only had the first shape.
+ */
+Toks afterKeyword(Toks seg) {
+  if (toksLen(seg) > 0 && (kindAt(seg, 0) == kReturn() || kindAt(seg, 0) == kTrap())) {
+    Toks out = toksNew();
+    pushTok(out, seg, 0);
+    Toks rest = topTernary(slice(seg, 1, toksLen(seg)));
+    pushRange(out, rest, 0, toksLen(rest));
+    return out;
+  }
+  return topTernary(seg);
 }
 
 /**
