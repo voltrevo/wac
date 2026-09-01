@@ -106,6 +106,34 @@ export function isWacRun(
 }
 
 /**
+ * The scope split into the halves `mergeRuns` merges — *"split here, merge below"*.
+ *
+ * A mixed scope is **two runs, not one**: `testCommand` returns a single command, so a set holding
+ * both a directory the binary runs and one Deno runs would go to Deno entire. That is correct only
+ * while the wrappers exist; after step 3 of `issues/system/0161` deletes them the wac half cannot
+ * run under Deno at all, so it silently does not run and the mutant reads as **survived**.
+ *
+ * **One half, not two, when the scope is uniform**, and the whole `runDirs` is returned rather than
+ * the half that happens to be non-empty. They are the same list, and returning the original keeps
+ * the caller's single-run path taking exactly the argument it took before there was a split.
+ *
+ * Extracted from `mutate.ts` on 2026-09-01 so that it can be tested: the merge rule beside it had a
+ * decision table under test and the split feeding it had none, which is the half of a mixed scope
+ * that decides whether `mergeRuns` is ever handed two things. An empty scope stays one run and is
+ * `isWacRun`'s "an empty list is not a native run" — it goes to Deno and finds nothing, which is
+ * what it did before.
+ */
+export function splitHalves(
+  runDirs: string[],
+  hostlessPackages: ReadonlySet<string>,
+  nativeRunnableDirs: ReadonlySet<string>,
+): string[][] {
+  const wac = runDirs.filter((d) => isWacRun([d], hostlessPackages, nativeRunnableDirs));
+  const deno = runDirs.filter((d) => !isWacRun([d], hostlessPackages, nativeRunnableDirs));
+  return wac.length > 0 && deno.length > 0 ? [wac, deno] : [runDirs];
+}
+
+/**
  * One verdict from the halves of a **mixed** scope — some directories run by the binary, the rest by
  * Deno.
  *

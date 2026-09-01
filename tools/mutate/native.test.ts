@@ -9,7 +9,7 @@
 //
 // Skipped without a binary, as `tools/wac/seedfresh_test.wac` skips without a seed.
 
-import { classify, isWacRun, mergeRuns, WAC_BIN, wacTestArgs } from "./native.ts";
+import { classify, isWacRun, mergeRuns, splitHalves, WAC_BIN, wacTestArgs } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
 /** A file with several passing tests and no host oracle, so every code below is reachable. */
@@ -162,6 +162,55 @@ Deno.test("one unproven directory in the set sends the whole run to Deno", () =>
 Deno.test("an empty scope is not a native run", () => {
   if (isWacRun([], new Set(["gzip"]), new Set(["packages/gzip/test/wac"]))) {
     throw new Error("`wac test` with no directories has nothing to select from");
+  }
+});
+
+// ── `splitHalves`, which decides whether `mergeRuns` is ever handed two things ────
+
+// The split had no test until 2026-09-01 while the merge below it had a decision table, which is
+// the wrong way round: `mergeRuns` cannot be wrong about a mixed scope it is never given.
+
+Deno.test("a uniform wac scope is one run, not two", () => {
+  const pkgs = new Set(["gzip"]);
+  const got = splitHalves(["packages/gzip/test/wac", "packages/gzip/test/wac/inner"], pkgs, new Set());
+  if (got.length !== 1) throw new Error(`split a scope that needs no splitting: ${JSON.stringify(got)}`);
+});
+
+Deno.test("a uniform Deno scope is one run, not two", () => {
+  const got = splitHalves(["packages/stream/test", "packages/raster/test"], new Set(), new Set());
+  if (got.length !== 1) throw new Error(`split a Deno-only scope: ${JSON.stringify(got)}`);
+});
+
+Deno.test("a mixed scope splits, wac half first", () => {
+  // The order matters only for reading a log, but a test that does not pin it lets it drift.
+  const got = splitHalves(
+    ["packages/stream/test", "packages/gzip/test/wac", "packages/raster/test"],
+    new Set(["gzip"]),
+    new Set(),
+  );
+  if (got.length !== 2) throw new Error(`a mixed scope must be two runs: ${JSON.stringify(got)}`);
+  if (JSON.stringify(got[0]) !== JSON.stringify(["packages/gzip/test/wac"])) {
+    throw new Error(`wac half wrong: ${JSON.stringify(got[0])}`);
+  }
+  if (JSON.stringify(got[1]) !== JSON.stringify(["packages/stream/test", "packages/raster/test"])) {
+    throw new Error(`Deno half wrong, or lost order: ${JSON.stringify(got[1])}`);
+  }
+});
+
+Deno.test("the single-run path is handed the original list", () => {
+  // Not the non-empty half, which is an equal list built by a filter. The caller passed `runDirs`
+  // before there was a split and must keep passing it, or a future filter changes the argument.
+  const dirs = ["packages/gzip/test/wac"];
+  const got = splitHalves(dirs, new Set(["gzip"]), new Set());
+  if (got[0] !== dirs) throw new Error("the uniform case must return the caller's own array");
+});
+
+Deno.test("an empty scope stays one run", () => {
+  // `isWacRun([])` is false, so both halves are empty and it goes to Deno and finds nothing —
+  // which is what it did before the split existed.
+  const got = splitHalves([], new Set(["gzip"]), new Set());
+  if (got.length !== 1 || got[0].length !== 0) {
+    throw new Error(`an empty scope became ${JSON.stringify(got)}`);
   }
 });
 

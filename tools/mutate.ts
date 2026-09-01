@@ -96,7 +96,7 @@ import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type E
   from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
-import { classify, isWacRun as runsNatively, mergeRuns, WAC_BIN,
+import { classify, isWacRun as runsNatively, mergeRuns, splitHalves, WAC_BIN,
   type NativeVerdict } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
@@ -1328,9 +1328,7 @@ try {
       // is correct only while the wrappers exist: after `issues/system/0161` step 3 deletes them the
       // wac half cannot run under Deno at all, so it silently does not run and the mutant reads as
       // survived. Split here, merge below.
-      const wacHalf = runDirs.filter((d) => isWacRun([d]));
-      const denoHalf = runDirs.filter((d) => !isWacRun([d]));
-      const halves = wacHalf.length > 0 && denoHalf.length > 0 ? [wacHalf, denoHalf] : [runDirs];
+      const halves = splitHalves(runDirs, hostless, nativeRunnableDirs);
       let timedOut = false;
       // The full scope's baseline, not the narrowed run's: a narrowed run is a subset and therefore
       // faster, so this errs towards a longer deadline, which is the safe direction for a scoring
