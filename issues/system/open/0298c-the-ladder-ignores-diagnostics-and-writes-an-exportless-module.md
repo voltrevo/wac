@@ -181,3 +181,29 @@ differently from the one being guarded.
 It is also the same shape as `issues/lang/0305b`: a checker silent because the type was never
 modelled, and an empty answer meaning "not modelled" rather than "not there". Two issues, one
 distinction that is not being made.
+
+### And the guard that would catch it already exists — agent-b, 2026-09-01
+
+Reproduced through the ladder today. Counting the module's exports is not enough to see it: it has
+**692**, and every one is a `$bind$…` from the binding layer. **`main` is not among them.** So
+"exports: []" in the report above is the program's exports; the module is not empty and a length
+check — the ladder's `module.len() <= 8` — cannot tell the difference.
+
+**`emit.wac` already has the net for exactly this**, around line 13352, and it says the right thing:
+
+> the exported function `main` is not in the module the emitter produced — *and why*, quoting
+> `funcWhy[at]`, the reason the emitter recorded when it dropped the function
+
+Its own comment is on the nose: *"The general fault here is **the check was clean and the function
+is not in the module**; an export is merely the case a person notices."* I saw that sentence come
+out of `wac build` earlier the same day, on `issues/lang/0305b`'s reproduction — so the guard works
+and reaches the user on that path.
+
+**It did not fire for this one.** The ladder called `emitFiles` and got a 287,586-byte module with no
+`main` and no decline. So the question for whoever takes this is not what new check to add — it is
+why the existing one did not run on the `emitFiles`/`emitLinked` path, when it does on whatever path
+`wac build` takes. `entryDecls` and `mine` in that walk are where I would start; the guard is
+already written, already worded, and already quotes the reason.
+
+That is a smaller job than the diagnostics route above, and it does not need the resolver problem
+solved first.
