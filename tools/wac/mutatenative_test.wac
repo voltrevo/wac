@@ -1,0 +1,135 @@
+// The exit-code contract, the run split, and the merge — the cases `tools/mutate/native.test.ts` has.
+//
+// Ported with the module rather than after it, because these are the cases that say what the module
+// is *for*. Its own header calls the exit codes "the whole point": a mutation runner reads one as a
+// verdict, so conflating two corrupts a score silently and in a direction nobody can spot-check.
+//
+// The process-level half of the TypeScript file — five cases that actually spawn `wac test` against
+// a fixture — is not here. Those exercise the binary rather than this logic, and the binary answers
+// them in `packages/wac/test/wac/`. What is here is every case that is about the mapping.
+// `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Verdict, classify, isWacRun, mergeRuns, splitHalves, wacTestArgs }
+       from "./mutatenative.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " ") + xs[i]; }
+  return out;
+}
+
+string shape(string[][] halves) {
+  string out = "";
+  for (i32 i = 0; i < halves.len(); i++) {
+    out = out + (i == 0 ? "" : " | ") + joined(halves[i]);
+  }
+  return out;
+}
+
+/**
+ * **`[§wac-cli-status-8kz4rp6]`** — the four codes, and the two that a careless runner conflates.
+ *
+ * `1` is the dangerous one and in the unobvious direction: it is non-zero, so "non-zero means killed"
+ * records a kill for a mutant nothing ran and the score goes *up*.
+ */
+export string test_an_exit_code_is_a_verdict_or_it_is_not_one() {
+  T t = T.create();
+  t.eqStr(classify(0).word(), "survived", "0 — the tests ran and passed");
+  t.eqStr(classify(3).word(), "killed", "3 — the tests ran and one failed");
+  t.eqStr(classify(4).word(), "no-tests-here", "4 — every test needs an oracle this cannot supply");
+  t.eqStr(classify(1).word(), "abort", "1 — nothing matched the filter, which is not a verdict");
+  t.eqStr(classify(2).word(), "abort", "and anything unexpected is an abort rather than a guess");
+  t.eqStr(classify(127).word(), "abort", "including a shell's `command not found`");
+  return t.report();
+}
+
+export string test_the_filter_goes_before_the_entry_and_is_omitted_when_absent() {
+  T t = T.create();
+  t.eqStr(joined(wacTestArgs("packages/fs/test/wac", "")), "test packages/fs/test/wac",
+          "no filter is `test <entry>`");
+  t.eqStr(joined(wacTestArgs("a/b_test.wac", "test_basics")),
+          "test --filter test_basics a/b_test.wac",
+          "and a filter goes before the entry, where the binary expects it");
+  return t.report();
+}
+
+/**
+ * Which scopes the binary runs, by the two rules that qualify one.
+ *
+ * The `wacc` case is the reason the second rule exists: ninety wac files and no TypeScript in
+ * `packages/wacc/test/wac`, disqualified by the package rule on the strength of three `.test.ts` a
+ * level above it that the runner is never handed.
+ */
+export string test_which_scopes_the_binary_runs() {
+  T t = T.create();
+  string[] hostless = string[]("fs", "rlp");
+  string[] runnable = string[]("packages/wacc/test/wac");
+
+  t.isTrue(isWacRun(string[]("packages/fs/test/wac"), hostless, runnable),
+           "a package with no TypeScript test at all, which is the original rule");
+  t.isTrue(isWacRun(string[]("packages/wacc/test/wac"), hostless, runnable),
+           "and a directory the profile proved runnable, though its package does not qualify");
+  t.isTrue(!isWacRun(string[]("packages/fs/test/wac", "packages/box/test/wac"), hostless, runnable),
+           "one unproven directory sends the whole run to Deno");
+  t.isTrue(!isWacRun(string[0](fill: ""), hostless, runnable),
+           "and an empty scope is not a native run — there is nothing to select from");
+  return t.report();
+}
+
+/**
+ * The split, whose job is to make a mixed scope two runs.
+ *
+ * **A uniform scope is one run and gets the original list back**, not the half that happens to be
+ * non-empty. They are the same list, and returning the original keeps the caller's single-run path
+ * taking exactly the argument it took before there was a split.
+ */
+export string test_a_mixed_scope_splits_and_a_uniform_one_does_not() {
+  T t = T.create();
+  string[] hostless = string[]("fs");
+  string[] runnable = string[0](fill: "");
+
+  t.eqStr(shape(splitHalves(string[]("packages/fs/test/wac", "packages/fs/test/other"),
+                            hostless, runnable)),
+          "packages/fs/test/wac packages/fs/test/other",
+          "a uniform wac scope is one run, not two");
+  t.eqStr(shape(splitHalves(string[]("packages/box/test/wac"), hostless, runnable)),
+          "packages/box/test/wac",
+          "and a uniform Deno scope is one run, not two");
+  t.eqStr(shape(splitHalves(string[]("packages/box/test/wac", "packages/fs/test/wac"),
+                            hostless, runnable)),
+          "packages/fs/test/wac | packages/box/test/wac",
+          "a mixed scope splits, wac half first, whatever order it arrived in");
+  t.eqI32(splitHalves(string[0](fill: ""), hostless, runnable).len(), 1,
+          "an empty scope stays one run");
+  return t.report();
+}
+
+/**
+ * The merge, whose rule order is its whole content.
+ *
+ * **`abort` beating `survived` is the one that matters.** A half that could not run might have been
+ * the half that killed it, so "everything I managed to run passed" is not a statement that the mutant
+ * survived — and the made-up number in that direction flatters the suite.
+ */
+export string test_the_merge_prefers_a_kill_then_an_abort() {
+  T t = T.create();
+  t.eqStr(mergeRuns(Verdict[](Verdict.Killed, Verdict.Survived)).word(), "killed",
+          "a kill in either half is a kill");
+  t.eqStr(mergeRuns(Verdict[](Verdict.Survived, Verdict.Killed)).word(), "killed",
+          "whichever half caught it");
+  t.eqStr(mergeRuns(Verdict[](Verdict.Killed, Verdict.Abort("nothing ran"))).word(), "killed",
+          "and a half that could not run does not make the catch less true");
+  t.eqStr(mergeRuns(Verdict[](Verdict.Survived, Verdict.Abort("nothing ran"))).word(), "abort",
+          "an abort beside a survival is an abort, not a survival");
+  t.eqStr(mergeRuns(Verdict[](Verdict.NoTestsHere, Verdict.Survived)).word(), "survived",
+          "`no-tests-here` defers to the half that ran");
+  t.eqStr(mergeRuns(Verdict[](Verdict.NoTestsHere, Verdict.NoTestsHere)).word(), "no-tests-here",
+          "and two absences are still an absence");
+  t.eqStr(mergeRuns(Verdict[](Verdict.Survived, Verdict.Survived)).word(), "survived",
+          "both halves surviving is the only way to survive");
+  t.eqStr(mergeRuns(Verdict[0](fill: Verdict.NoTestsHere)).word(), "no-tests-here",
+          "and no halves at all is an absence rather than a pass");
+  return t.report();
+}
