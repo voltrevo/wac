@@ -677,3 +677,35 @@ bool hasSegment(string path, string name) {
   }
   return false;
 }
+
+/**
+ * The `.wac` files named by a `git diff --name-only` transcript.
+ *
+ * **The range the caller passes matters more than this filter does.** `mutate.ts` asks for
+ * `origin/master...HEAD` — three dots, the symmetric difference, which is *what this branch changed
+ * since it diverged*. Two dots would add everything master has gained in the meantime, so a
+ * `--changed` run after a long-lived branch falls behind would mutate other people's work and report
+ * it as this branch's untested behaviour.
+ *
+ * Non-wac paths are dropped rather than passed on: a mutation operator has nothing to say about a
+ * `.ts` or a `.md`, and handing one to the compiler is a diagnostic about the wrong thing.
+ */
+export string[] changedWacFiles(string diffOutput) {
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    i32 at = 0;
+    i32 from = 0;
+    for (i32 i = 0; i <= diffOutput.len(); i++) {
+      if (i < diffOutput.len() && charAt(diffOutput, i) != "\n") { continue; }
+      string line = diffOutput.slice(from, i);
+      from = i + 1;
+      if (line.len() < 5 || line.slice(line.len() - 4, line.len()) != ".wac") { continue; }
+      if (pass == 1) { out[at] = line; }
+      at = at + 1;
+    }
+    if (pass == 1) { return out; }
+    n = at;
+  }
+  return string[0](fill: "");
+}

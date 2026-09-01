@@ -19,7 +19,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { GenStats, Mutant, bumpLiteral, generate, isMutationTarget, short }
+import { GenStats, Mutant, bumpLiteral, changedWacFiles, generate, isMutationTarget, short }
        from "./mutateoperators.wac";
 
 string[] SUBJECTS() {
@@ -195,5 +195,27 @@ export string test_test_and_bench_files_are_not_mutation_targets() {
            "a package whose name merely begins with `test` is still source");
   t.isTrue(isMutationTarget("packages/attest/src/a.wac"),
            "and one that merely contains it is too");
+  return t.report();
+}
+
+/**
+ * Which files a `--changed` run mutates.
+ *
+ * The filter is the small half; the range the caller asks git for is the large one, and the doc
+ * comment records why it is three dots.
+ */
+export string test_only_the_wac_files_of_a_diff_are_mutated() {
+  T t = T.create();
+  string diff = "packages/rlp/src/rlp.wac\n"
+              + "tools/mutate.ts\n"
+              + "README.md\n"
+              + "packages/fs/src/fs.wac\n"
+              + "\n";
+  string[] got = changedWacFiles(diff);
+  t.eqI32(got.len(), 2, "two of the five lines name a .wac");
+  t.eqStr(got[0] + " " + got[1], "packages/rlp/src/rlp.wac packages/fs/src/fs.wac",
+          "in the order git listed them");
+  t.eqI32(changedWacFiles("").len(), 0, "an empty diff names nothing");
+  t.eqI32(changedWacFiles(".wac\n").len(), 0, "and a bare extension is not a path");
   return t.report();
 }
