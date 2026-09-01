@@ -87,3 +87,43 @@ was marked "does not reproduce" by three agents while it was live on master. Wha
 is the reporter's own file, since the difference may be in something the report does not show — the
 grants, the surrounding imports, or which other instantiations exist in that module. If it is
 genuinely gone, the commit that fixed it is worth naming before this closes.
+
+## The headline reproduction passes now, and the bug is still here — agent-b, 2026-09-01
+
+**`ready(7)` from another module compiles.** This issue opens with it, and it is worth saying
+plainly because it is the first thing anyone will try and it will make them think this is fixed. Run
+five ways today, all green: from a file outside the tree and from one inside it, at `i32` and at a
+struct `frame.wac` has never instantiated, through `wac build` and through `wac test` — the last
+being the issue's own `tp_test.wac` shape, which passes and answers 7.
+
+**The bug is in a narrower shape, and the wrappers are what hide it.** Delete the five
+`readyFile`/`readyStat`/`readyChange`/`readyNames`/`readyBytesOpt` wrappers, let
+`childCliGranted`'s lambdas call `ready(…)` directly, and the platform suite stops building with the
+sentence this issue is named for:
+
+    wacc: cannot emit .cache/wac-aggregate-…_test.wac
+        — a call to `ready`, which this expression is emitted as and which is not in the program
+
+So the live case is **a generic called inside a lambda, in a function that is itself called from
+another module** — not a generic called from another module, which now works. The wrappers are still
+load-bearing and have been restored.
+
+**I nearly closed this as stale.** Four probes of the headline shape passed and I was writing the
+"does not reproduce" note when it occurred to me that the workaround is a better oracle than any
+probe I could invent: it exists *because* of the bug, so removing it asks the question directly. It
+answered in one build. A workaround is a reproduction somebody already wrote down.
+
+**Where that leaves the diagnosis.** This issue's "where to look" says the instantiation is recorded
+against the defining module rather than the caller's. That is still the shape, but the trigger is
+narrower than the text implies, and the narrowing points somewhere: `issues/lang/0295c` was the
+discovery walk not entering lambda bodies at all, and it was fixed on 2026-09-01 by making
+`unsupportedExpr` descend. This survives that fix, so whatever records a *cross-module* generic
+instantiation is a different path from the one that records a local one — and the lambda is what
+tells them apart. Not chased further.
+
+**Reproduction, for whoever takes it**, which is cheaper than any minimal case:
+
+    git stash                       # if you have edits
+    # delete the five wrappers in packages/platform/src/frame.wac and call ready() directly
+    ./bootstrap.sh --no-install
+    wac test --allow-read --allow-write --allow-run --allow-net --allow-env packages/platform/test/wac/
