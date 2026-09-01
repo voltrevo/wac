@@ -2726,3 +2726,36 @@ decrement is not ours should say so rather than look stalled.
 *Method, since I got this wrong three times in `0289b` before getting it right: judge by the
 sentence naming what the test calls, not by the summary line. A subject phrased in wac vocabulary
 can still be reachable only from the host.*
+
+## Step 2's verification blocker has a smaller scope after all — agent-b, 2026-09-01
+
+*"What step 2 costs to verify"* says `--package gzip` did not finish in 15 minutes and that
+*"`--package std` selects no mutants at all, so there is no smaller scope to iterate on"*. The
+second half does not follow from the first, and I checked it instead of inheriting it:
+
+    deno run -A --unstable-net tools/mutate.ts --dry-run
+
+    42 mutant(s) generated; compiling for equivalence…
+      42 to run, 0 provably equivalent, 0 duplicate, 0 did not compile
+
+    mutants that would run, by package:
+      bytes      3
+      gzip      40
+
+**`packages/bytes` selects three.** The whole default sweep is 42 mutants across two packages —
+`mutate.ts` walks all of `packages` (line 238) and `--diff` was not passed, so this is the full
+scope, not a narrowed one. `std` selecting nothing was one sample, and the sentence generalised from
+it to *"no smaller scope"*; there is one, and it is a thirteenth of the size.
+
+**And the enumeration itself is not the fifteen minutes.** `--dry-run` exits before staging but
+*after* the equivalence compile — the phase that "was still compiling the 40 mutants" — and all 42
+compiled in about two minutes on a machine also running a suite. So the expensive part of that
+15-minute figure was the running rather than the compiling, which is the half a 3-mutant scope
+actually removes.
+
+`packages/bytes` has wac tests (`test/wac/buf_test.wac` among them), so it exercises the path step 2
+is about rather than being small and irrelevant.
+
+**Not yet measured:** what a complete `--package bytes` sweep costs end to end, which is the number
+that says whether the iteration loop is minutes or an hour. That is the next thing to run, and it is
+a small enough scope to run without asking for the machine.
