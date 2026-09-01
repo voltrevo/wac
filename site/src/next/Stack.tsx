@@ -373,11 +373,16 @@ export default function Stack() {
           <Code label="tor/src/socks.wac · the whole loop, less the branches" code={EX_WAIT} />
           <P>
             Against a local testnet it has carried 3.2MB across eight concurrent streams,
-            byte-identical. Built, the whole thing is <Lead>513.7 KiB</Lead> as a self-contained
-            executable, 143.9 KiB gzipped — of which the wasm this repository compiles is{" "}
-            <Lead>133.8 KiB</Lead>, the rest being the floor every executable here stands on.
-            Measured 2026-08-11, and dated because a size is a snapshot: the figure before this one
-            said 386.7 KiB and had sat here long enough to read as a fact. That the floor dominates
+            byte-identical. Built, the whole thing is <Lead>852.7 KiB</Lead> as a self-contained
+            executable, 241.9 KiB gzipped — of which the wasm this repository compiles is{" "}
+            <Lead>181.9 KiB</Lead>, the rest being the floor every executable here stands on.
+            Measured 2026-09-01, and dated because a size is a snapshot: the figures before these
+            said 513.7 and 133.8 KiB and had sat here long enough to read as facts. They are not
+            evidence that the client grew by two thirds, and this is the trap a date alone does not
+            catch — they were measured 2026-08-11, and everything recorded before the 12th came from
+            the TypeScript compiler this project has since deleted. A snapshot needs to name the
+            compiler that produced it as well as the day, so: these are{" "}
+            {m({ children: "wacc" })}, self-hosted. That the floor dominates
             is the finding rather than an aside, and it has since been pinned to one number:{" "}
             <Lead>149 KB of host JavaScript</Lead>, the same under a program that only reads standard
             input and under one carrying 65 applets and a shell. No wasm tool touches it —{" "}

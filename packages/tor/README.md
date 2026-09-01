@@ -101,7 +101,7 @@ whole client without the program around it, against 118.7 for the TLS 1.3 client
 four rows are what `size/` exists to keep re-measurable.
 
 **The figures before these were 490.1 / 259.5 / 77.6 / 19.5 and 133.5 / 86.2, and the client did not
-grow by 36% to replace them.** They were measured 2026-08-11, and `tools/wac/size.wac` says in its
+grow by between 36% and 66% to replace them.** They were measured 2026-08-11, and `tools/wac/size.wac` says in its
 header that anything recorded before 2026-08-12 is the deleted TypeScript reference's output and is
 not comparable — the compiler changed, not the program (`issues/lang/0105`). A re-measured snapshot
 that does not say which compiler produced it invites exactly the reading that a number twice the

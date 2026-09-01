@@ -526,3 +526,12 @@ Three READMEs were dated inside that window; the third is `packages/box`'s, whic
 package and is left for them. The grep that finds them is `Measured 2026-08-` against `01`–`11`, and
 it is worth running whenever this issue is picked up, because a figure from the retired compiler
 does not announce itself — it just looks like the program used to be smaller.
+
+### The public page had it too
+
+`site/src/next/Stack.tsx` is described above as "the public version of this issue", and it carried
+the same 2026-08-11 snapshot: 513.7 KiB executable, 143.9 gzipped, 133.8 of wasm. Rebuilt, those are
+**852.7 / 241.9 / 181.9**. It is the one place in this repository where these numbers are read by
+somebody who cannot run the build to check them, which makes it the worst place for a figure from a
+compiler that no longer exists — and it was the last of the four to be found, because the grep that
+finds the others looks at `README.md`.
