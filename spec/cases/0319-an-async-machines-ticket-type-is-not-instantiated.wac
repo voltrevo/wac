@@ -1,0 +1,45 @@
+// expect: declined
+// why: the synthesised `Pending<T>` is the only mention of it, and nothing registers the instance
+// spec: §wac-async-nosuspend-6pv2wkn
+
+/**
+ * An `async` function whose machine builds the only `Pending<i32>` in the program.
+ *
+ * `step` suspends at nothing, so the machine `lowerProgram` gives it has zero slots and the
+ * `Pending<i32>` it constructs on the way out is the sole mention of that instantiation anywhere.
+ * The emitter has no instance registered under it, falls back to the bare name, and declines:
+ *
+ *     wacc: cannot emit … — a call to Pending
+ *
+ * **Three probes fix the cause, and none of them is the one this was first filed as.**
+ *
+ *     async, no suspension, `Pending<i32>` never named            declined
+ *     async, suspends on a `Pending<i32>`-returning helper        builds
+ *     async, no suspension, but `Pending<i32> p = step(20);`      builds
+ *     ditto, but only as an unused function's parameter type      builds
+ *
+ * The third and fourth are the ones that name it: adding a declaration nobody needs — even a
+ * parameter of a function nothing calls — makes the program compile, and neither changes anything
+ * about `step`. So a *declared* `Pending<T>` anywhere registers the instance. The lowered `step`
+ * has `Pending<i32>` as its own declared return type and that one does not, which is the narrowest
+ * statement this case can make: whatever collects instantiations is not seeing the type the
+ * lowering wrote. So the subject is not suspension and never was — a suspending
+ * function works only because awaiting a ticket means the source already spells `Pending<T>`
+ * somewhere, which registers the instance the machine then reuses. A function with nothing to
+ * suspend at is simply the ordinary way to have no other mention.
+ *
+ * **The route to it was three wrong statements**, each committed: "`await` on a call to another
+ * `async` function is declined" — but `0306` awaits a call and works; "the callee's return type must
+ * spell the ticket" — closer, still a description of the experiments rather than the rule; and a
+ * mechanism claiming `planBody` returns `!ok` and the declaration is skipped, which I wrote as
+ * though checked. Making `lowerProgram` skip zero-suspension functions on purpose disproved that
+ * one: the message becomes *the function `step` is not in the module the emitter produced*, so
+ * normally they are lowered. Each correction came from removing a variable, never from re-reading
+ * what I had written. `issues/lang/0301b`.
+ *
+ * When this is lifted the case answers 21, and the workaround in the meantime is the third probe:
+ * name the ticket type once.
+ */
+async i32 step(i32 v) { return v + 1; }
+
+export i32 total() { return step(20).wait(); }

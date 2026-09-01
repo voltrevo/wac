@@ -157,13 +157,12 @@ These are refused by name rather than mis-lowered, and each states what it would
   returned value, an assignment to something declared earlier. The lowering runs on the
   tree with no type information, and a declaration is the one place the `Pending<R>` it
   needs is written down. The same limit, from the same cause, as the item above it.
-- `[§wac-async-nosuspend-6pv2wkn]` an `async` function whose body **never suspends**. With no
-  `await` in it there is nothing unlowerable either, so it is lowered like any other — to a machine
-  with **zero suspensions**, which is the one the emitter declines with *a call to `Pending`*. The
-  checker has already given every caller the `Pending<i32>` this page promises, so `.wait()` has
-  nothing to wait on. Adding one `await` to the same function makes the program build. Two rules above
-  disagree here: `§wac-async-eager-2rf9kdp` is satisfied trivially and `§wac-async-decl-h3vq81m` not at all, since
-  what such a body should hand back is a ticket that is **already answered**. It is also how a
-  function is written before its first `await` is added. `spec/cases/0319` holds it, and the
+- `[§wac-async-nosuspend-6pv2wkn]` an `async` function whose machine constructs the **only**
+  `Pending<T>` in the program. The lowering builds that ticket itself, and building it does not
+  register the generic instantiation, so with nothing else naming the type the emitter reads it as a
+  call to the bare name and declines with *a call to `Pending`*. It shows up as "a function that
+  never suspends cannot be waited on", because awaiting is what otherwise puts `Pending<T>` in the
+  source; writing `Pending<T> p = f(…);` anywhere makes the same program build, which is both the
+  workaround and the proof of what is missing. `spec/cases/0319` holds it, and the
   awaiting forms that look like separate limits — a call to another `async` function, or to another
   `async` method — were all measured against callees that never suspended.
