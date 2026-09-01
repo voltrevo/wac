@@ -645,13 +645,28 @@ things cannot import each other outlives any migration between them, and these t
 example in the tree of a guard that is *created* by the boundary this project has decided to keep.
 
 **The remaining eight** — `describe`, `listen`, `sinks`, `timeout`, `unnameable`, `datagram`,
-`project`, `subprocess_profile` — are about behaviour a wac test could in principle assert, and at
-least three name Deno as the far end or the host (*"with Deno's own UDP at the far end"*,
-*"compiled through the Deno host"*), which is the permitted oracle rather than a leftover.
+`project`, `subprocess_profile` — looked like behaviour a wac test could assert. I said they wanted
+opening properly, so I opened five of them, and **three are carve-outs too**:
 
-So the floor under `packages/platform` is somewhere around **24 of 32 by construction**, and the
-candidates are single figures. That is worth having before anybody sizes this directory as 32 files
-of work: it is closer to five, and the other twenty-seven are either the subject or a consequence.
+- `describe` tests `describeSlots`, *"what a hung run prints"* — the **bridge's** stall report,
+  narrated by `harness/appRun.ts`.
+- `unnameable`'s subject is `Deno.readDir` handing back `bad-�-name` for a filename that is not
+  valid UTF-8, *"lossily, with no byte-oriented alternative anywhere in that API"*. The Deno API is
+  the thing under test.
+- `sinks` is about four callbacks *"declared to return `void` and implemented `async`"*, and
+  **TypeScript allowing a `Promise<void>` where `void` is expected** so every call site dropped the
+  promise. That is a fact about TypeScript's type system; there is nothing to port it to.
 
-Still not a full read — first lines rather than whole files, and the eight want opening properly by
-whoever takes them.
+`timeout` and `listen` are the only two of the five that a wac test could plausibly assert, and both
+are marginal — `timeout`'s subject is two *silent permanent parks*, which needs something outside the
+program to notice, and `listen`'s is which interface the **host** binds.
+
+**So the candidate set in `packages/platform` is about two marginal files, not eight.** The floor is
+not "24 of 32"; it is very nearly all of it. That directory's TypeScript is not migration debt — it
+is the host and the boundary, which this repository has decided to keep.
+
+*That is the third time in an hour I read a short header as evidence of portability and was wrong —
+the two duplication guards, then three of these five. The pattern is that a test's first line names
+its **subject**, and a subject phrased in wac vocabulary ("the stall report", "bounding a call") can
+still be reachable only from the host. The check that works is not the summary line: it is the
+sentence naming what the test calls.*
