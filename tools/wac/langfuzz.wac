@@ -76,6 +76,7 @@
 //     arr   every array element off by one        10 / 200
 //     enum  match's A and C arms swapped           9 / 200
 //     str   struct's two fields swapped           10 / 200
+//     sub   `bv.tag()` expected to dispatch         4 / 200
 //     loop  oracle ignores `continue`            32 / 200
 //     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
@@ -126,7 +127,7 @@
 //      the two files' `h0` were ever resolved across the boundary the answer would move, which is
 //      the family this item was about. Canary 69/200 — the highest here, because the imported value
 //      lands in a top-level local that expressions pick often;
-//   3. structs, enums and `match` — **done, 2026-09-01**, except a narrowed subject.
+//   3. structs, enums and `match`, including a narrowed subject — **done, 2026-09-01**.
 //      `enum En { A, B(i32 v), C }` with the variant chosen when `ev` is constructed, read by the
 //      expression form of `match` — comma-separated arms, a binding taking its type from the
 //      declaration. Confined to `main`, since a helper cannot see `ev`. Canary 9/200.
@@ -135,9 +136,14 @@
 //      the thing `spec/tour.wac` warns about and a generator gets wrong the obvious way.
 //
 //      `struct Pt { i32 x; i32 y; }` beside it, constructed positionally and read by name, canary
-//      10/200. What is still open is **narrowing** — an `is` test on a parent/child pair, which
-//      needs struct extension and is the one part of this item that adds a type relation rather than
-//      a type;
+//      10/200.
+//
+//      Narrowing came last and brought a second rule with it. `Bs bv = Sb(1, 2)` puts a subtype in a
+//      parent-typed local, so `bv is Sb` is true — and `bv.tag()` answers the **parent's** 11 rather
+//      than the child's 22, because `override` is a source-level check and WasmGC has no virtual
+//      dispatch. `spec/tour.wac` marks that CRITICAL, and a compiler that ever dispatched
+//      dynamically would answer 22. Canary 4/200 — the thinnest row here, because it is one call
+//      site among seven expression arms, but it watches a rule nothing else does;
 //   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
 //      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
 //      value known at generation time and the environment never has to hold a reference. Canary
@@ -693,6 +699,16 @@ export struct Gen {
         // expression form, a binding takes its type from the declaration, and the variant was chosen
         // when `ev` was constructed — so the answer is known here. Confined to `main` for the reason
         // the array read is: a helper cannot see `ev`.
+        if (!this.inHelper && ty == TY_I32() && this.rng.intTop(7) == 0) {
+          if (this.coin()) {
+            // Static dispatch: the local's type decides, not the value's.
+            return Expr("bv.tag()", ty, (Env e) => 11);
+          }
+          i64 yes = 40 + (this.rng.intTop(50) as i64);
+          i64 no = 900 + (this.rng.intTop(50) as i64);
+          return Expr("((bv is Sb) ? " + itoa64(yes) + " : " + itoa64(no) + ")", ty,
+                      (Env e) => yes);
+        }
         if (!this.inHelper && ty == TY_I32() && this.rng.intTop(6) == 0) {
           bool useX = this.coin();
           i64 fieldVal = useX ? this.ptX : this.ptY;
@@ -1084,6 +1100,12 @@ export struct Gen {
     // generator gets wrong the obvious way.
     // A struct with two fields, constructed positionally and read by name — the values are chosen
     // here, so a field read is answerable without the environment holding a reference.
+    // **A subtype held in a parent-typed local.** Two rules come out of this and both are known
+    // here: `is` answers true because that is what was constructed, and `bv.tag()` answers the
+    // *parent's* 11 rather than the child's 22, because `override` is a source-level check and
+    // WasmGC has no virtual dispatch — `spec/tour.wac` marks that CRITICAL. A compiler that ever
+    // dispatched dynamically would answer 22 and this would see it.
+    this.emit("Bs bv = Sb(1, 2);");
     this.ptX = 300000 + (this.rng.intTop(500) as i64);
     this.ptY = 700000 + (this.rng.intTop(500) as i64);
     this.emit("Pt pt = Pt(" + itoa64(this.ptX) + ", " + itoa64(this.ptY) + ");");
@@ -1172,7 +1194,9 @@ export struct Gen {
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
     string src = "import { sideValue } from \"./s.wac\";\n"
                + "enum En { A, B(i32 v), C }\n"
-               + "struct Pt { i32 x; i32 y; }\n";
+               + "struct Pt { i32 x; i32 y; }\n"
+               + "struct Bs { i32 a; i32 tag(const this) { return 11; } }\n"
+               + "struct Sb : Bs { i32 b; override i32 tag(const this) { return 22; } }\n";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
     src = src + "export i32 main() {\n";
     for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
