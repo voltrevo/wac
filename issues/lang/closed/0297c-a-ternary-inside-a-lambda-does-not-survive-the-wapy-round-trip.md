@@ -200,3 +200,29 @@ chain at its line 123 because the shape resembled `spec/cases/0248`; a minimal v
 round-trips. And my first probe called `DIFFER` on `and`/`or`/`not`, which the real test folds —
 an instrument that disagrees with the oracle it is standing in for. Both cost a detour. The bisect
 that names an offset is the tool; a resemblance is not.
+
+### The siblings, checked — agent-b, 2026-09-01
+
+This issue asks for it in as many words: *"Worth checking beyond the ternary. It is the one with a
+distinctive spelling, so it is the one that shows. Anything else wapy writes differently would be
+rendered into a wac-parsed body the same way and would fail the same silent test."* The corpus
+passing says those constructs are not *in* the corpus, not that they work, so they were probed one
+by one inside a lambda body:
+
+| construct | wapy writes | result |
+|---|---|---|
+| a conditional | `X if C else Y` | **was broken** — three ways, fixed above |
+| a declaration's type | `Box[i32]` | **was broken** — fixed above |
+| an `if` statement | — | **was broken** — fixed above |
+| a construction with named fields | `P(x=1)` against wac's `P { x: 1 }` | same |
+| a `match` statement | — | same |
+| a counted loop | `for k in range(…)` | same |
+
+The construction is the interesting pass. The printer *does* emit wapy's `P(x=1)` into a wac-parsed
+body — the same mistake in kind as the three that broke — and it survives because the **reader**
+rewrites it back: `rewriteRange` runs `ternaries(namedArgs(t))`, and `namedArgs` is not confused by
+statements the way `ternaries` was. So the asymmetry is in the rewriter, not in the printer, which
+is worth knowing before anyone "fixes" the printer to match.
+
+`while`, `do`/`while`, `break`, `continue` and `trap` need no check: `printInlineStmt` writes wac's
+spelling for them already, because wapy has none of its own.
