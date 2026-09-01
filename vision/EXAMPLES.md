@@ -51,8 +51,8 @@ export enum Shape {
 
   f64 area(const this) {
     match (this) {
-      case Circle(r):    { return 3.14159 * r * r; }
-      case Square(side): { return side * side; }
+      Circle(r):    { return 3.14159 * r * r; }
+      Square(side): { return side * side; }
     }
   }
 }
@@ -231,9 +231,9 @@ async Result<u8[], string> readAll(Socket sock) {
   Buf got = Buf.create();
   while (true) {
     match (await sock.recv()) {
-      case Data(bytes): { got.append(bytes); }
-      case End:         { return Result.Ok(got.bytes()); }
-      case Failed(why): { return Result.Err(why); }
+      Data(bytes): { got.append(bytes); }
+      End:         { return Result.Ok(got.bytes()); }
+      Failed(why): { return Result.Err(why); }
     }
   }
 }
