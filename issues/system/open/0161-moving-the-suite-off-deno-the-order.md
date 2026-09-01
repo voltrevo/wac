@@ -2962,8 +2962,23 @@ from 94% of the population without knowing which 6% was missing, and the missing
 an odd signature would live.
 
 **What this does not say.** It is about wac tests. The *TypeScript* tier this section also names —
-files that spawn `bash`, GNU `tar`, `openssl`, a real TLS server, C tor — is untouched by it, and
-`issues/system/0165` still records that wac cannot call an external command at all: `Cli`'s
-thirty-five capabilities include `spawn` and `spawnSelf`, and both start a **wasm module**. The
-"file first, then spawn" order this section sets out is unaffected; what has gone is the wac-side
-half of the population, not the capability gap.
+files that spawn `bash`, GNU `tar`, `openssl`, a real TLS server, C tor — is untouched by it.
+
+**And the sentence above this one said the capability gap was still open, which is wrong and was
+wrong when I wrote it.** The section it corrects — *"wac cannot call an external command at all, and
+the tier that wants one is blocked on a new capability rather than on a grant"* — is dated
+2026-08-16, and `issues/system/0165` records `Cli.exec` landing on **2026-08-17**:
+
+    fn[Pending<Exec>(string, string[], u8[])] exec;
+    struct Exec { i32 status; u8[] stdout; u8[] stderr; string error; }
+
+Buffered, granted by `--allow-run` with its own bit rather than `write`'s or `spawn`'s, an argument
+vector and never a shell line, implemented on all four hosts with `browser.ts` answering that a page
+cannot run a host program. What `0165` still has open is the *streaming* `start`/`stop` half, not the
+capability.
+
+So the blocker under this section expired the day after it was written, and I repeated it from the
+issue in the same commit where I was correcting other sentences for being stale — which is the
+sharpest possible demonstration that reading a paragraph is not checking it. The "file first, then
+spawn" order stands on its own merits: `x509_path` reads `/etc/ssl` and `raster` reads a font, and
+neither wants a subprocess.
