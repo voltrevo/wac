@@ -52,3 +52,189 @@ export string cachePath(string dir, string key) { return dir + "/" + key + ".jso
 export bool isProfileFile(string name) {
   return name.len() > 5 && name.slice(name.len() - 5, name.len()) == ".json";
 }
+
+// ── Storing a profile ────────────────────────────────────────────────────────────────
+//
+// **The wac cache is a directory of its own while both tools exist**, and that is the same asymmetry
+// the temp-directory ruling turns on. Sharing `.cache/mutate-profile` with the TypeScript means
+// either can read a file the other wrote, and a subtle disagreement about the encoding is then a
+// *misread profile* — which does not fail, it selects the wrong tests and moves the score. A second
+// directory costs one extra profile build during the window where both exist (9-23 seconds) and
+// cannot corrupt anything. When the TypeScript goes, taking the canonical path back is a rename.
+//
+// The *shape* is the reference's, so the two are comparable by eye and the rename is all it takes.
+
+import { JsonArray, JsonObject, JsonValue } from "../../packages/json/src/value.wac";
+import { parse, stringify } from "../../packages/json/src/json.wac";
+
+/** Ours while the TypeScript still writes to `CACHE_DIR()`. */
+export string WAC_CACHE_DIR() { return ".cache/mutate-profile-wac"; }
+
+JsonValue str(string s) { return JsonValue.Str(s.toBytes()); }
+
+JsonValue num(i32 n) { return JsonValue.Number(n as f64, itoa(n).toBytes()); }
+
+/**
+ * A profile as JSON, with the test names held once.
+ *
+ * **`names` is a table and `lines` holds indices into it**, which is the reference's encoding and is
+ * not an optimisation to drop: a profile names the same test on thousands of lines, and writing the
+ * name each time turns tens of megabytes into hundreds.
+ */
+export string encodeProfile(string[] known, string[] tests, string[] files, i32[] cost) {
+  // The name table, in first-seen order so the encoding is a function of the input alone.
+  string[] names = string[0](fill: "");
+  i32 n = 0;
+  string[] buf = string[4096](fill: "");
+  for (i32 i = 0; i < tests.len(); i++) {
+    string[] each = splitOn(tests[i], " ");
+    for (i32 j = 0; j < each.len(); j++) {
+      if (each[j] == "") { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) {
+        if (buf[k] == each[j]) { have = true; break; }
+      }
+      if (!have && n < buf.len()) { buf[n] = each[j]; n = n + 1; }
+    }
+  }
+  names = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { names[i] = buf[i]; }
+
+  JsonArray nameArr = JsonArray.create();
+  for (i32 i = 0; i < names.len(); i++) { nameArr.push(str(names[i])); }
+
+  JsonArray lineArr = JsonArray.create();
+  for (i32 i = 0; i < known.len(); i++) {
+    JsonArray pair = JsonArray.create();
+    pair.push(str(known[i]));
+    JsonArray ids = JsonArray.create();
+    string[] each = splitOn(tests[i], " ");
+    for (i32 j = 0; j < each.len(); j++) {
+      if (each[j] == "") { continue; }
+      for (i32 k = 0; k < names.len(); k++) {
+        if (names[k] == each[j]) { ids.push(num(k)); break; }
+      }
+    }
+    pair.push(JsonValue.Array(ids));
+    lineArr.push(JsonValue.Array(pair));
+  }
+
+  JsonArray fileArr = JsonArray.create();
+  for (i32 i = 0; i < files.len(); i++) { fileArr.push(str(files[i])); }
+
+  JsonArray costArr = JsonArray.create();
+  for (i32 i = 0; i < files.len() && i < cost.len(); i++) {
+    JsonArray pair = JsonArray.create();
+    pair.push(str(files[i]));
+    pair.push(num(cost[i]));
+    costArr.push(JsonValue.Array(pair));
+  }
+
+  JsonObject root = JsonObject.create();
+  root.push("names".toBytes(), JsonValue.Array(nameArr));
+  root.push("lines".toBytes(), JsonValue.Array(lineArr));
+  root.push("testFiles".toBytes(), JsonValue.Array(fileArr));
+  root.push("cost".toBytes(), JsonValue.Array(costArr));
+  return string.fromBytes(stringify(JsonValue.Object(root)));
+}
+
+/** What `encodeProfile` wrote, or a profile with nothing in it when the text is not one. */
+export struct Decoded {
+  bool ok;
+  string[] known;
+  string[] tests;
+  string[] files;
+  i32[] cost;
+}
+
+Decoded nothing() {
+  return Decoded(false, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""),
+                 i32[0](fill: 0));
+}
+
+export Decoded decodeProfile(string text) {
+  JsonValue? root = parse(text.toBytes());
+  if (root is null) { return nothing(); }
+  JsonObject obj = match (root!) { case Object(o): o, else: JsonObject.create() };
+  if (obj.len() == 0) { return nothing(); }
+
+  JsonArray names = arrayAt(obj, "names");
+  JsonArray lines = arrayAt(obj, "lines");
+  JsonArray files = arrayAt(obj, "testFiles");
+  JsonArray costs = arrayAt(obj, "cost");
+
+  string[] nameList = string[names.len()](fill: "");
+  for (i32 i = 0; i < names.len(); i++) { nameList[i] = textOf(names.get(i)); }
+
+  string[] known = string[lines.len()](fill: "");
+  string[] tests = string[lines.len()](fill: "");
+  for (i32 i = 0; i < lines.len(); i++) {
+    JsonArray pair = asArray(lines.get(i));
+    if (pair.len() < 2) { continue; }
+    known[i] = textOf(pair.get(0));
+    JsonArray ids = asArray(pair.get(1));
+    string joined = "";
+    for (i32 j = 0; j < ids.len(); j++) {
+      i32 at = numberOf(ids.get(j));
+      if (at < 0 || at >= nameList.len()) { continue; }
+      joined = joined + (joined == "" ? "" : " ") + nameList[at];
+    }
+    tests[i] = joined;
+  }
+
+  string[] fileList = string[files.len()](fill: "");
+  for (i32 i = 0; i < files.len(); i++) { fileList[i] = textOf(files.get(i)); }
+
+  // Cost is keyed by file, so it is looked up rather than positional: a profile whose `cost` lists
+  // fewer files than `testFiles` is one where some file was never measured, and that is `-1`.
+  i32[] costList = i32[fileList.len()](fill: -1);
+  for (i32 i = 0; i < costs.len(); i++) {
+    JsonArray pair = asArray(costs.get(i));
+    if (pair.len() < 2) { continue; }
+    string file = textOf(pair.get(0));
+    for (i32 k = 0; k < fileList.len(); k++) {
+      if (fileList[k] == file) { costList[k] = numberOf(pair.get(1)); break; }
+    }
+  }
+  return Decoded(true, known, tests, fileList, costList);
+}
+
+JsonArray arrayAt(JsonObject o, string key) {
+  JsonValue? v = o.get(key.toBytes());
+  if (v is null) { return JsonArray.create(); }
+  return asArray(v!);
+}
+
+JsonArray asArray(JsonValue v) {
+  return match (v) { case Array(a): a, else: JsonArray.create() };
+}
+
+string textOf(JsonValue v) {
+  return match (v) { case Str(b): string.fromBytes(b), else: "" };
+}
+
+i32 numberOf(JsonValue v) {
+  return match (v) { case Number(f, _): f as~ i32, else: -1 };
+}
+
+string[] splitOn(string s, string sep) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i + sep.len() <= s.len(); i++) {
+    if (s.slice(i, i + sep.len()) == sep) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  i32 i = 0;
+  while (i <= s.len()) {
+    if (i == s.len() || (i + sep.len() <= s.len() && s.slice(i, i + sep.len()) == sep)) {
+      if (at < n) { out[at] = s.slice(from, i); at = at + 1; }
+      from = i + sep.len();
+      i = i + sep.len();
+      continue;
+    }
+    i = i + 1;
+  }
+  return out;
+}

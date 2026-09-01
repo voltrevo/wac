@@ -3,7 +3,8 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { KEEP, cachePath, isProfileFile, toEvict } from "./mutateprofile.wac";
+import { Decoded, KEEP, cachePath, decodeProfile, encodeProfile, isProfileFile, toEvict }
+       from "./mutateprofile.wac";
 
 string joined(string[] xs) {
   string out = "";
@@ -52,5 +53,58 @@ export string test_what_counts_as_a_profile_file() {
   t.eqStr(cachePath(".cache/mutate-profile", "deadbeef"),
           ".cache/mutate-profile/deadbeef.json", "one file per tree state");
   t.eqI32(KEEP(), 3, "three of them");
+  return t.report();
+}
+
+string show(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : "|") + xs[i]; }
+  return out;
+}
+
+/**
+ * A profile survives being written and read back.
+ *
+ * **The name table is where a silent loss would be.** `lines` holds indices into `names`, so an
+ * off-by-one or a table built in a different order does not fail — it names *different tests* for a
+ * line, and the run then selects tests that cannot reach the mutation. That is the under-selection
+ * this whole tool treats as a wrong answer, arriving through the cache rather than through the
+ * selection rule.
+ */
+export string test_a_profile_survives_the_round_trip() {
+  T t = T.create();
+  string[] known = string[]("a.wac:10", "a.wac:11", "b.wac:3");
+  string[] tests = string[]("test_one test_two", "", "test_two test_three");
+  string[] files = string[]("x_test.wac", "y_test.wac");
+  i32[] cost = i32[](50, -1);
+
+  Decoded got = decodeProfile(encodeProfile(known, tests, files, cost));
+  t.isTrue(got.ok, "it decoded");
+  t.eqStr(show(got.known), show(known), "every line came back");
+  t.eqStr(show(got.tests), show(tests),
+          "with the same tests against each, which is what the name table has to preserve");
+  t.eqStr(show(got.files), show(files), "and the test files");
+  t.eqI32(got.cost[0], 50, "with their measured cost");
+  t.eqI32(got.cost[1], -1, "and the unmeasured one still unmeasured, rather than zero");
+  return t.report();
+}
+
+/** A line no test reaches is not the same as a line the profile does not know. */
+export string test_an_unhit_line_round_trips_as_unhit_rather_than_absent() {
+  T t = T.create();
+  Decoded got = decodeProfile(encodeProfile(string[]("a.wac:11"), string[](""),
+                                            string[0](fill: ""), i32[0](fill: 0)));
+  t.isTrue(got.ok, "it decoded");
+  t.eqI32(got.known.len(), 1, "the line is still known");
+  t.eqStr(got.tests[0], "", "and still reached by nothing — which is not the same as unknown");
+  return t.report();
+}
+
+/** Anything that is not a profile decodes to nothing rather than to a plausible empty one. */
+export string test_text_that_is_not_a_profile_is_refused() {
+  T t = T.create();
+  t.isTrue(!decodeProfile("").ok, "empty text is not a profile");
+  t.isTrue(!decodeProfile("{").ok, "nor is truncated JSON");
+  t.isTrue(!decodeProfile("[1,2,3]").ok, "nor a JSON value of the wrong shape");
   return t.report();
 }
