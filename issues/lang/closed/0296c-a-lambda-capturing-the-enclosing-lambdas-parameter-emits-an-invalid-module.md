@@ -1,7 +1,9 @@
 # 0296 — a lambda capturing the enclosing lambda's parameter emits an invalid module
 
-- **Status:** open
-- **Claimed by:** (nobody — diagnosed below, see the note at the end)
+- **Status:** closed
+- **Closed:** 2026-09-01 by agent-b
+- **Fixed in:** the commit closing this
+- **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -171,3 +173,55 @@ of their own. Moving it there is safe on its own, and is the half of this cleanu
 lambda. Fixing it means deciding where a lambda's parameters live — or wiring up the decline the
 dead `lambdaCapturesParam` documents — and that is a call about the capture model. The tracing is
 above so whoever makes it does not have to repeat it.
+
+## Closed 2026-09-01 — one change, and not the one this issue proposed
+
+The reproduction builds, loads and answers: `wac run` on it exits **1**, which is `n[0]`, so the
+inner lambda read the outer lambda's parameter through a cell that now exists.
+`spec/cases/0320-a-lambda-capturing-the-enclosing-lambdas-parameter.wac` pins it without
+capabilities, since the corpus grants none — the shape is the same one
+`p.then(a => { q.then(b => … a …); })` has.
+
+**The second half was already there.** This issue says the fix is "two changes that only work
+together", the second being that "the lambda emitter makes the cell at entry when `paramNeedsCell`
+says so … the lambda emission path does none of that". It does: lambdas are emitted **through
+`emitFunctionOf`**, which is handed `env.lambdaLine[li], env.lambdaCol[li]` as its `line, col`, and
+that function's parameter loop already calls `env.paramNeedsCell(line, col, pnm)` and builds the
+three-instruction cell. Nothing was missing at emission. Only the key the record was filed under was
+wrong.
+
+**And the first half is not what was proposed either.** The plan was to set
+`walkFuncLine`/`walkFuncCol` to the lambda's own position on entering its body, saved and restored
+"the same save-and-restore shape `walkLambdaDepth` already uses". That records the wrong owner:
+`noteParamCell` fires where the name is **read**, not where it is declared, so a reference to `a`
+from inside the *inner* lambda would file `a`'s cell against the inner lambda — which does not have
+a parameter `a` and would make no cell for it. The bug would move rather than go.
+
+The owner has to come from the declaration, and it is already on the stack without a new field. A
+parameter is declared immediately after its own lambda pushes its scope mark, so the innermost `d`
+with `walkMarkStack[d] <= at` is the lambda that owns it:
+
+    i32 ownLine = this.walkFuncLine;
+    i32 ownCol = this.walkFuncCol;
+    for (i32 d = 0; d < this.walkLambdaDepth; d++) {
+      if (this.walkMarkStack[d] <= at) { … ownLine = this.lambdaLine[li]; … }
+    }
+    this.noteParamCell(ownLine, ownCol, name);
+
+**A function parameter is declared before any lambda mark**, so no `d` matches and the enclosing
+function is still the answer — which is why the three shapes this issue records as working stay
+working, and why nothing else in the emitter had to move.
+
+Canaried: with the loop removed, `0320` fails with *"answered , wanted 42"* — an empty answer,
+because the module does not load. `Env` is untouched, which was worth aiming for: its constructor is
+one long positional literal and adding parallel arrays to it by hand is the kind of edit that goes
+wrong silently.
+
+**Not this issue, and worth saying so precisely:**
+`packages/platform/test/wac/asyncchain_probe.wac` has nested lambdas and is the one file still on
+`wapyroundtrip_test`'s known-bad list, now reading *"cause unidentified"* after `issues/lang/0297c`
+found its old reason wrong. It is tempting to point that at this fix because the shapes rhyme, and
+it does not follow: this bug is an **invalid module** — the emitter writes bytes the engine refuses
+— and that file's failure is a **tree mismatch** between two parsings, on a file that compiles.
+Different failure, different phase; a fix in the emitter cannot move a wapy round trip. Whoever
+takes it should start from the rendering, not from here.

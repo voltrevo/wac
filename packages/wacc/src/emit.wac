@@ -2598,8 +2598,28 @@ export struct Env {
     if (captured && this.walkDeclLine[at] >= 0) {
       this.notePromoted(this.walkDeclLine[at], this.walkDeclCol[at]);
     }
+    // **A captured parameter is keyed by whatever owns it, which may be a lambda.**
+    // `issues/lang/0296c`: `walkFuncLine`/`walkFuncCol` name the innermost *declaration* — a
+    // function or a method, never a lambda — so `p.then(a => { q.then(b => … a …); })` recorded
+    // `a`'s cell against the enclosing function, which makes no cell, while the inner lambda's
+    // environment was built expecting one. The module was written and the engine refused it.
+    //
+    // The owner is already on the stack rather than needing a field: a parameter is declared
+    // immediately after its own lambda pushes its scope mark, so the innermost `d` whose mark is at
+    // or below the declaration is the lambda that owns it. A *function* parameter is declared
+    // before any lambda mark, so no `d` matches and the enclosing function is still the answer —
+    // which is why the working cases stay working.
     if (captured && this.walkDeclLine[at] < 0) {
-      this.noteParamCell(this.walkFuncLine, this.walkFuncCol, name);
+      i32 ownLine = this.walkFuncLine;
+      i32 ownCol = this.walkFuncCol;
+      for (i32 d = 0; d < this.walkLambdaDepth; d++) {
+        if (this.walkMarkStack[d] <= at) {
+          i32 li = this.walkLambdaStack[d];
+          ownLine = this.lambdaLine[li];
+          ownCol = this.lambdaCol[li];
+        }
+      }
+      this.noteParamCell(ownLine, ownCol, name);
     }
   }
 

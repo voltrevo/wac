@@ -1,0 +1,31 @@
+// expect: answers f = 42
+// why: a lambda's parameter captured by an inner lambda needs a cell, keyed by the lambda that owns it
+// from: issues/lang/0296c
+
+/**
+ * The inner lambda reads `a`, which is the **outer lambda's parameter**.
+ *
+ * A captured local lives in a one-field cell so the lambda and the code it came from share one
+ * storage, and the emitter records "this needs a cell" against the position of whatever owns it.
+ * That record was keyed by `walkFuncLine`/`walkFuncCol`, which name the innermost *declaration* —
+ * a function or a method, never a lambda. So `a`'s cell was recorded against the enclosing
+ * function, which makes no cell, while the inner lambda's environment was built expecting one:
+ * `struct.new` was handed a raw value where a `(ref null …)` belonged and the engine refused the
+ * module.
+ *
+ * Three lambdas nested capturing a *function* local were always fine, and so was one level of it.
+ * It takes a parameter of a lambda, read from inside another lambda, and that is what this is.
+ *
+ * Written without capabilities because the corpus grants none — the shape is the same one
+ * `p.then(a => { q.then(b => … a …); })` has, which is how two dependent asynchronous steps are
+ * ordinarily written and is why every continuation-passing program met it.
+ */
+export i32 f() {
+  i32[] n = i32[1]();
+  fn[void(i32)] outer = (i32 a) => {
+    fn[void()] inner = () => { n[0] = a + 1; };
+    inner();
+  };
+  outer(41);
+  return n[0];
+}
