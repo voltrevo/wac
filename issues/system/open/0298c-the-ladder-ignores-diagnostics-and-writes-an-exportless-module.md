@@ -108,3 +108,41 @@ Two things worth doing and they are separable:
    program, and saying so is one comparison.
 
 Either alone would have turned a confusing twenty minutes into a line and a column.
+
+## It happened again, and the way back is narrower than "the ladder again" — agent-b, 2026-09-01
+
+Hit while instrumenting the compiler for `issues/lang/0295c`: a decline added to `unsupportedExpr`'s
+lambda arm to find out whether the branch was reached. It is reached — by every typed lambda in the
+tree, including in `packages/wac/src/wac.wac`, which the binary carries as its payload. The ladder
+printed its byte count and exit 0, and the next command said
+
+    wac: packages/wac/src/wac.wac exports no `build`. It exports:
+
+which is this issue's sentence exactly. Nothing in between reported a diagnostic. The instrument was
+mine and the mistake was mine; what this issue is about is that the toolchain agreed with it.
+
+**`./bootstrap.sh` alone does not get you back, and the reason is worth writing down.** Its
+pre-flight staleness check runs
+
+    "$wac_have" task gen:core --check
+
+through **the binary that is already there** — the broken one — so it fails, and the script stops
+with *"`coretext.wac` is out of step with `core/` and `std/`"*, which is a true sentence about a
+check that could not run and a false one about the tree. `coretext.wac` was in step; the same commit
+had regenerated it. Two rebuild attempts died there before I read the script.
+
+The way out is the case that check documents for a fresh clone — *"Only when a binary is already
+here to ask with"*:
+
+    mv native/v8/target/release/wac      /tmp/wac.broken
+    mv native/target/release/wac         /tmp/wac.wasmtime.saved   # both hosts, it loops over them
+    ./bootstrap.sh --no-install                                    # no binary to ask, so no check
+    # then put the wasmtime one back
+
+With no binary present the check is skipped, the five rungs build from hand-written wasm assembly
+text, and the fixpoint check at the end is the thing that would have caught the original fault. It
+took 41 seconds. Nothing in `$WAC_HOME` was touched, because `--no-install` does not.
+
+**So the ladder is recoverable, and the recovery is not discoverable from the error.** The message
+names `coretext.wac`, which is fine; the binary is what is broken. That is a second instance of this
+issue's own shape — a report about the wrong subject — one layer out.
