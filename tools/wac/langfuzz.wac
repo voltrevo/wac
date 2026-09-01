@@ -69,16 +69,16 @@
 //
 //     i32   narrowing removed from `wrapTo`      66 / 200
 //     u32   literal read as signed               33 / 200
-//     i64   results truncated to 32 bits         12 / 200
+//     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
 //
-// **i64 is the thin one, and that is where the bugs have been.** `issues/lang/0306b` was an i64
-// literal losing its top half, and this generator needed three corpus-sized runs to surface it. A
-// reader deciding what to widen next should weigh that against the list below: adding a type the
-// oracle observes 6% of the time buys less than making an existing one observable.
+// **Two of those rows were bought, not found.** `u32` read 0 of 1500 until the answer was routed
+// through a u32 comparison and a wide u32 local was seeded in every program; `i64` read 12 until a
+// wide i64 was seeded too and the answer took its **high half** — `(v >> 32) as@ i32`, which is the
+// one part of an i64 that a narrowing cast throws away and nothing else in a generated program sees.
 //
-// The u32 row is 33 only because the answer is routed through a u32 comparison deliberately and a
-// wide u32 local is seeded in every program. Before that it was 0 of 1500. Nothing about a type's
-// presence in the source predicts its row here.
+// `issues/lang/0306b` was an i64 literal losing exactly that half, and this generator needed three
+// corpus-sized runs to surface it. Nothing about a type's presence in the generated source predicts
+// its row here, which is the whole reason the rows exist.
 //
 // ## What it does not reach yet
 //
@@ -317,6 +317,18 @@ i64 evalCall(Helper h, Vec<Expr> args, Env e) {
  * (`issues/lang/0297c`, `issues/lang/0307b`). I wrote one back in anyway and the gate caught it,
  * which is what that test is for.
  */
+/**
+ * The high 32 bits of an i64 local, as an i32 — the answer's i64 route.
+ *
+ * `(v >> 32) as@ i32` is the cheapest thing that *cannot* be answered from the low half, which is
+ * the half everything else in a generated program already sees. The audit above measured i64 at
+ * 12/200 without this: an i64 only reached the answer through a narrowing cast deep in an
+ * expression, and a wrong high half survives that untouched exactly when it is truncated away.
+ */
+i64 evalHighHalf(Env e, string name) {
+  return wrapTo(e.get(name) >> 32, TY_I32());
+}
+
 i64 evalTopBit(Env e, string name) {
   if (e.get(name) > 2147483647) { return 1; }
   return 0;
@@ -869,6 +881,13 @@ export struct Gen {
     //
     // Seeded wide, since under 2^31 a u32 and an i32 answer alike and the type tests nothing.
     this.declare(TY_U32(), this.wideU32Literal());
+    // **And a wide i64, for the same reason.** The audit in the header puts i64 at 12 programs in
+    // 200 — the thinnest of the three, and the one `issues/lang/0306b` lived in. A value whose high
+    // half differs from its low one is what makes the half observable at all.
+    i64[] widei64 = i64[](4294967296, 1099511627776, 9223372036854775807,
+                          (0 - 9223372036854775807) - 1, 0 - 4294967297);
+    i64 iv = widei64[this.rng.intTop(widei64.len())];
+    this.declare(TY_I64(), Expr(this.intLiteral(iv, TY_I64()), TY_I64(), (Env e) => iv));
     this.statements(3);
     // **The answer takes a u32 route a quarter of the time**, when one is in scope.
     //
@@ -879,9 +898,19 @@ export struct Gen {
     //
     // Drawn *before* the expression either way, so the sequence a seed names does not depend on
     // whether a u32 local happened to exist.
+    bool viaHigh = this.rng.intTop(4) == 0;
     bool viaU32 = this.rng.intTop(4) == 0;
     Vec<Local> unsigned = this.inScope(TY_U32());
     Expr result = this.expr(TY_I32(), 3);
+    Vec<Local> wides = this.inScope(TY_I64());
+    if (viaHigh && wides.len() > 0) {
+      string hn = wides.get(this.rng.intTop(wides.len())).name;
+      Expr base0 = result;
+      Expr high = Expr("((" + hn + " >> 32) as@ i32)", TY_I32(), (Env e) => evalHighHalf(e, hn));
+      result = Expr("(" + base0.src + " ^ " + high.src + ")", TY_I32(),
+                    (Env e) => wrapTo(applyBin(OP_XOR(), base0.evalIn(e), high.evalIn(e)),
+                                      TY_I32()));
+    }
     if (viaU32 && unsigned.len() > 0) {
       // **Prefer one that actually holds a value past the sign boundary.** Any u32 local satisfies
       // the type, and most hold something under 2^31 where `> 2147483647` is false whichever way it
