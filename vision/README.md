@@ -36,6 +36,9 @@ meant to be enough to implement the language from.
 Add to that one freely. A technical entry is scrutinised for being correct rather than for being
 worth showing; the other two tiers are selective and this one is not.
 
+Correct means intended to be correct: that the entry can be implemented sensibly, and that it does
+the thing wanted.
+
 **`DECISIONS.md`** — small decisions already taken. One rule each, with enough of the reason that it
 can be revisited; a rule without its reason is one nobody can argue with.
 
