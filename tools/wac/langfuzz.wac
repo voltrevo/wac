@@ -71,6 +71,7 @@
 //     bool  every comparison inverted            30 / 200
 //     u32   literal read as signed               33 / 200
 //     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
+//     gen   generic `gsel` arms swapped          21 / 200
 //     loop  oracle ignores `continue`            32 / 200
 //     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
@@ -104,8 +105,18 @@
 // actually lived — and which I dropped when porting the generator, which is the more useful half of
 // what that file knew:
 //
-//   1. generics — instantiating one generated template at several argument types, which is the
-//      seam that produced the most bugs of any in the month it was written;
+//   1. generics — **done, 2026-09-01.** One template, `T gsel<T>(T a, T b, bool c)`, called wherever
+//      no monomorphic helper fits. Instantiated in 169 programs in 200 and at **two or more distinct
+//      types in 105**, which is the property this item was about: each set of type arguments makes a
+//      separate concrete function. Canary 21/200. No compiler disagreement over 2,000 programs.
+//
+//      The type argument is *written* — `gsel<i32>(…)` — and that is load-bearing rather than
+//      stylistic. Inferring it fails on a bare literal argument, which has no type of its own:
+//      `gsel(someU32, 0, c)` asks inference to agree that `0` is a u32, and seed 2 duly said *"the
+//      arguments imply two different types for one type parameter"*. Writing it gives every argument
+//      a slot, which is the same rule the literal pools follow. It also exercises
+//      `§wacc-written-type-args`, and puts a `<` before a parenthesised list — the shape
+//      `issues/lang/0308b` was about;
 //   2. several files, so the "a name is unique only within its file" family is in range;
 //   3. structs, enums and `match`, including a narrowed subject;
 //   4. arrays, with in-bounds indices;
@@ -345,6 +356,23 @@ i64 evalCall(Helper h, Vec<Expr> args, Env e) {
  */
 i64 evalHighHalf(Env e, string name) {
   return wrapTo(e.get(name) >> 32, TY_I32());
+}
+
+/**
+ * The generated generic selector, `T gsel<T>(T a, T b, bool c)`.
+ *
+ * One template, instantiated at whatever types a program happens to need — which is the seam the
+ * roadmap below ranks first: *"instantiating one generated template at several argument types, the
+ * seam that produced the most bugs of any"* in the month it was written. Each distinct set of type
+ * arguments produces a separate concrete function (`§wac-generic-fn-5hvq3mt`), so a program calling
+ * it at i32 and i64 and bool is asking the compiler to emit three.
+ *
+ * A *selector* rather than a `max`, because `>` is not defined on `bool` and the point is to reach
+ * every type this generator has rather than the two that order.
+ */
+i64 evalGeneric(Expr a, Expr b, Expr c, Env e) {
+  if (c.evalIn(e) != 0) { return a.evalIn(e); }
+  return b.evalIn(e);
 }
 
 i64 evalTopBit(Env e, string name) {
@@ -711,7 +739,24 @@ export struct Gen {
     for (i32 i = 0; i < this.sigs.len(); i++) {
       if (this.sigs.get(i).ret == ty) { usable.push(this.sigs.get(i)); }
     }
-    if (usable.len() == 0) { return null; }
+    if (usable.len() == 0) {
+      // **The generic one fits every type**, so this arm answers where it used to give up — and an
+      // arm that gives up costs a draw and changes what the next one means, which is the other
+      // reason to take it.
+      Expr ga = this.expr(ty, depth - 1);
+      Expr gb = this.expr(ty, depth - 1);
+      Expr gc = this.expr(TY_BOOL(), depth - 1);
+      // **The type argument is written, not inferred**, and that is not a stylistic choice: a bare
+      // literal argument has no type of its own, so `gsel(someU32, 0, c)` asks inference to agree
+      // that `0` is a u32 when it is an i32 by default — *"the arguments imply two different types
+      // for one type parameter"*, at seed 2. Naming `T` gives every argument a slot, which is the
+      // same rule that governs the literal pools above.
+      //
+      // It also exercises `§wacc-written-type-args` and `§wacc-type-args-commit`, and puts a `<`
+      // before a parenthesised argument list — the shape `issues/lang/0308b` was about.
+      return Expr("gsel<" + typeText(ty) + ">(" + ga.src + ", " + gb.src + ", " + gc.src + ")", ty,
+                  (Env e) => evalGeneric(ga, gb, gc, e));
+    }
     Helper h = usable.get(this.rng.intTop(usable.len()));
 
     // The arguments go in a `Vec` and the lambda captures **the Vec**, not a local reused per
@@ -922,6 +967,9 @@ export struct Gen {
 
   /** Build one program: its source, and the value `main()` must return. */
   Program program(this) {
+    // **One generic template, always.** Its instantiations come from wherever `callHelper` falls
+    // back to it, so a program reaches several without the generator choosing them.
+    this.helpers.push("T gsel<T>(T a, T b, bool c) { return c ? a : b; }");
     for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
     // **One u32 local, at the top, always.** Without it the answer's u32 route fired in 1 program
     // in 200 — measured — because a u32 declaration drawn inside a block goes out of scope before
