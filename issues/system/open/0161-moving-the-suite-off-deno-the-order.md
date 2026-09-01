@@ -984,7 +984,7 @@ this page — what is the *subject* — and it splits them three and three:
 | `packages/zstd/bench/ratio.ts` | 91 | **stays.** Our ratio against zlib's, driven through a `node -e` child. |
 | `packages/json/bench/throughput.ts` | 85 | **ported and deleted** — `packages/json/bench/throughput.wac`. All thirteen shapes agree with the Deno table within noise, including the exponent-form cliff the two rows exist to separate. |
 | `packages/json/bench/lookup.ts` | 52 | **ported and deleted** — the driver moved into `packages/json/bench/lookup.wac`, which already held the three measured loops. Same break-even, so `INDEX_MIN_MEMBERS` is unchanged. |
-| `packages/unicode/tools/gentables.ts` | 171 | **portable.** Reads Unicode data and writes two `.wac` files — a generator, like `gen:core`, with no oracle and no boundary in it. |
+| `packages/unicode/tools/gentables.ts` | 171 | **stays** — see the correction below. It has no data file to read: the host's own Unicode database is its input. |
 
 **The three that stay are the rule working, not exceptions to it.** *"Deno as a bootstrap host and an
 oracle called by wac tests"* is exactly what those are: a differential needs the other implementation,
@@ -999,6 +999,27 @@ loop rather than assumed from the shape.
 So there are three ports here that need no ruling — which is worth knowing beside the paragraph above
 saying step 6's remainder is all decision. That paragraph is true of `tools/`; it was not true of the
 repository.
+
+#### Correction, an hour later: `gentables.ts` stays, and it is four and two
+
+It is **four that stay and two portable**, both of which are now done. I classified `gentables.ts`
+from a grep for `Deno.[A-Za-z]+`, which found `Deno.writeTextFile` twice and nothing else — the
+*output* — and read that as a generator with no oracle. Its own first line says otherwise:
+
+> The host already carries a Unicode database — that is what `toLowerCase` consults — so the
+> tables are *derived from the authority* rather than transcribed from it.
+
+It has no input file because its input is JavaScript: `toLowerCase`, `toUpperCase`, and
+`new RegExp("\\u{...}", "iu")` for simple case folding, which the file notes is a *different table*
+from `toLowerCase` and the only correct definition of that function. So it is the same carve-out as
+`fmt/tools/sweep.ts` — a differential whose other half cannot come with us.
+
+**The trap is worth naming, because the grep was the wrong instrument rather than a careless one.**
+Searching for `Deno.*` finds the programs that use the *runtime*. A program can depend on
+**JavaScript the language** without calling `Deno` once, and those are exactly the oracles: `String(x)`,
+`toLowerCase`, `RegExp`. Classifying by API surface finds the ports and misses the carve-outs, which
+is the direction that costs — porting one would silently replace the authority with our own
+transcription of it.
 
 **`benchCompile` is scoped, and blocked on one placement decision.** Every phase it measures is an
 export of `packages/wacc/src/api.wac` — `diagnoseGraphIn`, `buildFilesIn`, `blockedFiles`,
