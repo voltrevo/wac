@@ -81,7 +81,7 @@
   // Benchmarks. None of these gate anything; they print numbers.
   "bench": "deno run -A tools/bench.ts",
   "bench:hash": "deno run -A packages/crypto/bench/hash.ts",
-  "bench:compile": "deno run -A tools/benchCompile.ts",
+  "bench:compile": "./native/v8/target/release/wac run --allow-read --allow-env --allow-run tools/wac/benchcompile.wac",
   "bench:zstd": "deno run -A packages/zstd/bench/ratio.ts",
   "bench:zstd-speed": "deno run -A packages/zstd/bench/speed.ts",
   "bench:json": "deno run -A packages/json/bench/throughput.ts",

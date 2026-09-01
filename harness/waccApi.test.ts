@@ -19,13 +19,13 @@
 //
 // The extractor bounds the invariant, which is worth saying out loud: this reads the *text* of a type
 // declaration and of `export` lines, so a member written across lines in a shape the regex does not
-// expect is a member this cannot see. `tools/benchCompile.test.ts` is the same shape and the same
+// expect is a member this cannot see. `tools/wac/benchcompile_test.wac` is the same shape and the same
 // caveat, and the alternative — generating the declaration from the wire, `0231a`'s option 2 — is the
 // thing that would make the caveat go away.
 
 import { ROOT } from "./programs.ts";
 
-/** `throw` on a false claim — the convention `tools/benchCompile.test.ts` uses, and no import for it. */
+/** `throw` on a false claim — the convention `tools/wac/benchcompile_test.wac` uses, and no import for it. */
 function must(ok: boolean, why: string): void {
   if (!ok) throw new Error(why);
 }
