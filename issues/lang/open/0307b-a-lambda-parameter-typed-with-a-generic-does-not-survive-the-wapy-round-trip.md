@@ -98,7 +98,20 @@ failing loudly, which is why this surfaced as a silent tree difference rather th
 Both other lambda losses recorded here — the statement body, and `0297c`'s ternary — should be
 re-checked on the reader side first for the same reason.
 
-**A hypothesis worth checking first, because it explains every control above.** That file's header
+**Confirmed by reading, 2026-09-01.** `parseLambda` (`packages/wacc/src/parse.wac:2224`) calls
+`parseParams`, which calls **`parseType`** — wac's type parser — for each parameter. In wac a `[`
+after a type name begins an *array*, so `Map[string, i32] e` reads the name `Map`, fails on the
+bracket where type arguments would be, loses the parameter name to the resync (hence `?`), and takes
+the body with it.
+
+**And there is no wapy mode to consult.** `P.overTokens` wraps a bare token array and the shared
+grammar has no idea which surface it is serving, so a fix is one of three shapes rather than a
+one-liner: thread a mode flag through to `parseType`; have `wapyparse` rewrite bracket type arguments
+before handing the tokens over; or have `wapyparse` parse lambda parameter lists itself, as it already
+parses `def` parameter lists. That is a design choice about where the two surfaces diverge, which is
+why it is still filed rather than fixed.
+
+The reasoning that led there, kept because it predicted the controls before the code was read: That file's header
 says it parses the *structure* itself and calls **`parse.wac`'s shared expression, ty and statement
 grammar** for the rest — and a lambda is an expression. wapy spells type arguments with **brackets**,
 `Map[string, i32]`, where the shared grammar is wac's and expects `Map<string, i32>`; brackets there
