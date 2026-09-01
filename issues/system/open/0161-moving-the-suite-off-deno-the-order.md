@@ -931,11 +931,34 @@ these are that, and one is now gone.
 | `benchCompile.ts` | 226 | **portable, and the cleanest next one.** Compile time by phase; the subject is our own compiler and it reaches it through `waccApi` — a wasm instance driven from Deno. wac calls those same phases directly, which is the bridge `wapyroundtrip_test.wac` dropped when it moved. The one thing to check first is `--mem`, which measures peak memory per phase in a process each. |
 | `suiteGuard.ts` | — | **portable, but last.** It is the marker *every tool that spawns `deno test`* sets and checks, so it serves the tools above rather than being one. |
 | `suiteGate.ts` | — | **portable, but coupled.** A heavy runner announcing itself to the gate; `tools/push.sh` depends on the arrangement. |
-| `mutate.ts` + `tools/mutate/*.ts` | 1,562 + | **portable in principle, and the large one.** It keeps a Deno lane either way, because it must run the `.test.ts` that legitimately remain — so porting it moves the driver, not the dependency. |
+| `mutate.ts` + `tools/mutate/*.ts` | 1,562 + 3,109 | **portable in principle, and the large one.** It keeps a Deno lane either way, because it must run the `.test.ts` that legitimately remain — so porting it moves the driver, not the dependency. |
+
+**`mutate` surveyed, 2026-09-01: 4,671 lines and one capability gap.** Its Deno surface is ordinary —
+`readTextFile`, `writeTextFile`, `readDir`, `stat`, `mkdir`, `remove`, `cwd`, `exit` and
+`Deno.Command`, all of which `Cli` answers — with one exception. **`Deno.makeTempDir`, used eleven
+times, has no equivalent**: `std/platform.wac` has no temp facility at all, and the wac tools that
+need scratch space make it by hand at a *fixed* path, `.cache/<toolname>`, as `corpushosts.wac` and
+`appletvectors.wac` do.
+
+**And it cannot be done incrementally**, which matters more than the size. Seven of the thirteen
+modules under `tools/mutate/` are pure logic and use no Deno API at all — `curated`, `deadline`,
+`known`, `operators`, `sample`, `types`, `why` — so each looks like a bounded first step. None is:
+`mutate.ts` imports all nine of its modules, and TypeScript cannot import a wac one. The first module
+ported breaks the tool and it stays broken until the last one lands.
+
+So this wants a session long enough to finish, or a workspace kept red in the meantime and nothing
+pushed until it is whole. That is the opposite of how the rest of step 6 went, where each tool moved
+on its own.
+
+That pattern does not carry over unchanged, because `mutate` stages the project once per mutant and
+needs the directories to be distinct. So a port has to choose: add a temp-directory capability to the
+platform — a new capability, with the several registries that implies — or build unique names from
+something the guest already has, which is `core.monotonicNanos()` or a counter. Worth settling before
+the first line, since it decides how the staging code is shaped.
 
 So the honest shape of what is left: **one clean port** (`benchCompile`), **one that changes what it
-measures** (`bench`), **one large one** (`mutate`), and a tail that either stays permanently or goes
-only once the tools it serves have.
+measures** (`bench`), **one large one** (`mutate`, 4,671 lines and a capability question), and a tail
+that either stays permanently or goes only once the tools it serves have.
 
 **`benchCompile` is scoped, and blocked on one placement decision.** Every phase it measures is an
 export of `packages/wacc/src/api.wac` — `diagnoseGraphIn`, `buildFilesIn`, `blockedFiles`,
