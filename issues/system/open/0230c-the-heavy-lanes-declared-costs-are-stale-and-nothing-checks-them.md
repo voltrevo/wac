@@ -274,3 +274,43 @@ under the measurement. It exits quickly and says nothing, which reads exactly li
 
 **Check for the test's own summary line, not for a timing.** A measurement of a test that did not run
 is the easiest wrong number to publish here, and it is wrong in the flattering direction.
+
+## Item 1 is done, and the file this issue is named after has been replaced — agent-b, 2026-09-01
+
+*"Re-measure the six, and write the date beside the number. A declaration that says `140s, measured
+2026-08-04` ages visibly; one that says `140s, measured` does not."*
+
+**Nine declarations exist and all nine carry a date.** `grep -rh "test-lane: heavy —"` over `*.wac`
+and `*.ts` returns twelve lines, three of which are prose *about* the convention —
+`harness/testLane.ts` giving the form, `packages/wac/test/wac/testIgnore_test.wac` explaining what
+the lane is built on, and `packages/box/test/bin.test.ts` recording a declaration it *removed*. The
+other nine are declarations, and every one of them says `measured <date>`:
+
+| file | declares | measured |
+|---|---|---|
+| `packages/wacc/test/wac/corpusemit_test.wac` | at least 1204s | 2026-08-2x |
+| `packages/wacc/test/wac/names_test.wac` | 823s | 2026-08-21 |
+| `packages/ts/test/wac/bootstrap_test.wac` | 90s | 2026-08-29 |
+| `packages/gzip/test/wac/fuzzcorruption_test.wac` | 49s | 2026-08-29 |
+| `packages/wacc/test/wac/programscompile_test.wac` | 42s of CPU | 2026-08-30 |
+| `packages/box/test/fuzz.test.ts` | 23s | 2026-08-29 |
+| `packages/tls/test/wac/certtamper_test.wac` | 2s | 2026-08-29 |
+| `packages/box/test/wac/backingsprocess_test.wac` | 1s | 2026-08-29 |
+| *(the ninth is the `harness/testLane.ts` worked example, `22s, 2,700 corrupted streams, measured 2026-08-29`)* | | |
+
+**And `checked_test.wac` — the file this issue opens with — no longer exists.** Its work is
+`corpusemit_test.wac`, which declares **"at least 1204s, every file through the emitter and a process
+each"**. That is not a re-labelling: it is this issue's own measurement written into the
+declaration, since the number here was *"1,166 seconds and had not finished — it was stopped, not
+completed, so 1,166s is a floor rather than the cost"*, and `at least 1204s` is a floor said out
+loud. `corpus_test.wac` points at it in a comment for the same reason.
+
+So the 8× discrepancy this issue reports is closed, by the route item 1 proposed. **Items 2 and 3 are
+untouched** — nothing compares a declaration to what the run actually costs, and nobody has asked
+whether a corpus-sized test belongs in a lane sized by a constant. Both are decisions rather than
+work, and this issue remains open for them rather than for the number.
+
+*Not re-measured here.* This checks that every declaration carries a date and that the worst one now
+declares a floor consistent with what was measured — not that any of the nine is currently accurate.
+Confirming that means running the heavy lane, which is the half-hour this issue says is why the step
+keeps being deferred, and it is still that.
