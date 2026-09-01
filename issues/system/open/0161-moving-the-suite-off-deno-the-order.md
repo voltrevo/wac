@@ -2682,3 +2682,47 @@ So there is **one** site to isolate: the run loop, which spawns `wac test` again
 and compiles a test aggregate each time. Corrected because the earlier wording pointed at a path that
 cannot affect the cache, which would have someone isolating the harmless one while the real one
 stayed shared.
+
+## The package half is done except for two agents' directories — agent-b, 2026-09-01
+
+**60 `packages/**/*.test.ts` remain, and every one I am able to judge is deliberate.** Counted and
+then read, rather than counted:
+
+| package | files | verdict |
+|---|---:|---|
+| `packages/platform` | 32 | the JS host and its boundary — classified one by one in `issues/system/0289b` |
+| `packages/box` | 17 | another agent's |
+| `packages/sh` | 3 | another agent's |
+| `packages/wacc` | 3 | carve-outs |
+| `packages/ts` | 2 | one oracle, one bootstrap |
+| `raster`, `stream`, `webrtc` | 3 | carve-outs |
+
+The eight outside `platform`, `box` and `sh`, by the sentence that names what each *calls*:
+
+- `wacc/bindgen.test.ts` — *"generate the glue, import it, call it"*, and `jsBindgen.test.ts` —
+  *"the generator emits JavaScript as well as TypeScript, and the JavaScript runs"*, and
+  `jsxBoundary.test.ts` — *"rendered by a renderer written in JavaScript"*. Three statements of the
+  same thing: the artefact under test is JavaScript, so the test is JavaScript.
+- `ts/stripDifferential.test.ts` — *"the wac stripper against TypeScript's own"*. TypeScript is the
+  oracle, which is the permitted use.
+- `ts/tinyInterface.test.ts` — *"the way a bootstrap runs it: no `wac` binary, no capabilities, no
+  bridge"*. A wac test needs the binary this one exists to do without.
+- `raster/live.test.ts` — *"on a real canvas, with the pixels read back"*, and
+  `webrtc/browser.test.ts` — *"Chromium's WebRTC stack, which is libwebrtc"*. Both are the browser
+  as the far end, and both packages say their other tests are screenless or against aiortc and
+  coturn, so this is the deliberate one of each pair.
+- `stream/stream.test.ts` — *"streamed through a worker"*, which this issue already lists as one
+  that cannot move.
+
+**So this issue's package half is finished as far as I can take it.** What is left is 17 files in
+`packages/box` and 3 in `packages/sh`, both other agents' directories, and 32 in
+`packages/platform` that `0289b` now records as the host rather than as debt.
+
+That is worth stating plainly because the count alone reads as a third of the job outstanding. It is
+not: **60 files remain and 0 of them are waiting on a port that anybody has decided to do.** The
+number stops going down here until somebody else's directory moves, and a tracking number whose next
+decrement is not ours should say so rather than look stalled.
+
+*Method, since I got this wrong three times in `0289b` before getting it right: judge by the
+sentence naming what the test calls, not by the summary line. A subject phrased in wac vocabulary
+can still be reachable only from the host.*
