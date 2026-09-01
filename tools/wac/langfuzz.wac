@@ -75,6 +75,7 @@
 //     gen   generic `gsel` arms swapped          21 / 200
 //     arr   every array element off by one        10 / 200
 //     enum  match's A and C arms swapped           9 / 200
+//     str   struct's two fields swapped           10 / 200
 //     loop  oracle ignores `continue`            32 / 200
 //     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
@@ -125,14 +126,18 @@
 //      the two files' `h0` were ever resolved across the boundary the answer would move, which is
 //      the family this item was about. Canary 69/200 — the highest here, because the imported value
 //      lands in a top-level local that expressions pick often;
-//   3. enums and `match` — **done, 2026-09-01**, structs and a narrowed subject not yet.
+//   3. structs, enums and `match` — **done, 2026-09-01**, except a narrowed subject.
 //      `enum En { A, B(i32 v), C }` with the variant chosen when `ev` is constructed, read by the
 //      expression form of `match` — comma-separated arms, a binding taking its type from the
 //      declaration. Confined to `main`, since a helper cannot see `ev`. Canary 9/200.
 //
 //      A payload-less variant is a *value* rather than a call — `En.A`, never `En.A()` — which is
-//      the thing `spec/tour.wac` warns about and a generator gets wrong the obvious way. Structs and
-//      narrowing (`is`) are the part of this item still open;
+//      the thing `spec/tour.wac` warns about and a generator gets wrong the obvious way.
+//
+//      `struct Pt { i32 x; i32 y; }` beside it, constructed positionally and read by name, canary
+//      10/200. What is still open is **narrowing** — an `is` test on a parent/child pair, which
+//      needs struct extension and is the one part of this item that adds a type relation rather than
+//      a type;
 //   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
 //      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
 //      value known at generation time and the environment never has to hold a reference. Canary
@@ -480,6 +485,9 @@ export struct Gen {
   i64[] arr;
   /** What the second file's `sideValue()` answers, chosen before `main` is written. */
   i64 sideK;
+  /** The seeded struct's two fields, known here so a field read can be answered. */
+  i64 ptX;
+  i64 ptY;
   /** Which variant of the seeded enum was constructed: 0 = A, 1 = B(payload), 2 = C. */
   i32 evVariant;
   /** `B`'s payload, when that is the variant. */
@@ -496,7 +504,7 @@ export struct Gen {
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
                Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "",
-               i64[0](fill: 0), 0, 0, 0, false);
+               i64[0](fill: 0), 0, 0, 0, 0, 0, false);
   }
 
   /**
@@ -685,6 +693,11 @@ export struct Gen {
         // expression form, a binding takes its type from the declaration, and the variant was chosen
         // when `ev` was constructed — so the answer is known here. Confined to `main` for the reason
         // the array read is: a helper cannot see `ev`.
+        if (!this.inHelper && ty == TY_I32() && this.rng.intTop(6) == 0) {
+          bool useX = this.coin();
+          i64 fieldVal = useX ? this.ptX : this.ptY;
+          return Expr(useX ? "pt.x" : "pt.y", ty, (Env e) => fieldVal);
+        }
         if (!this.inHelper && ty == TY_I32() && this.rng.intTop(5) == 0) {
           i64 kA = 7 + (this.rng.intTop(90) as i64);
           i64 kC = 500 + (this.rng.intTop(90) as i64);
@@ -1069,6 +1082,11 @@ export struct Gen {
     // **An enum value, with the variant chosen here so the oracle knows it.** A payload-less variant
     // is a value rather than a call — `En.A`, never `En.A()` — which `spec/tour.wac` states and a
     // generator gets wrong the obvious way.
+    // A struct with two fields, constructed positionally and read by name — the values are chosen
+    // here, so a field read is answerable without the environment holding a reference.
+    this.ptX = 300000 + (this.rng.intTop(500) as i64);
+    this.ptY = 700000 + (this.rng.intTop(500) as i64);
+    this.emit("Pt pt = Pt(" + itoa64(this.ptX) + ", " + itoa64(this.ptY) + ");");
     this.evVariant = this.rng.intTop(3);
     this.evPayload = 100000 + (this.rng.intTop(1000) as i64);
     this.emit("En ev = " + (this.evVariant == 1
@@ -1153,7 +1171,8 @@ export struct Gen {
     }
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
     string src = "import { sideValue } from \"./s.wac\";\n"
-               + "enum En { A, B(i32 v), C }\n";
+               + "enum En { A, B(i32 v), C }\n"
+               + "struct Pt { i32 x; i32 y; }\n";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
     src = src + "export i32 main() {\n";
     for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
