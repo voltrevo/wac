@@ -1,6 +1,9 @@
 # 0306b — a comparison of two i64 constants is folded on their low 32 bits
 
-- **Status:** open
+- **Status:** open — **the ternary face is fixed, the comparison face is not**
+- **Partly fixed in:** `packages/wacc/src/emit.wac` — `integerLiteralsFitI32` gained `Ternary` and
+  `MatchExpr` cases, so a wide literal one shape deep no longer defeats `0281b`'s guard. Measured
+  with `tools/wac/langfuzz.wac`: 10 disagreements in 200 seeds, then 3.
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
@@ -159,6 +162,44 @@ That comment also names the fix it thinks is right, which is worth more than thi
 
 So do not repair this one by deciding from the literals' family. It has been tried in the float case
 and it is the wrong shape of answer.
+
+### And tried again, for integers, on 2026-08-31 — reverted
+
+I thought the integer case escaped that warning. A float literal's family does not say whether the
+slot wants `f32` or `f64`, but an integer literal past i32's range *cannot* be an i32, so `i64` looked
+like a fact rather than a preference. The patch was:
+
+```wac
+if (!isFloatLiteral(left) && !isFloatLiteral(right)
+    && !(integerLiteralsFitI32(src, lexed, left) && integerLiteralsFitI32(src, lexed, right))) {
+  return "i64";
+}
+```
+
+It cleared the fuzzer completely — 200 seeds at 0 disagreements, and 400 more from seed 1000 — and it
+**broke `spec/cases/0294`**, which is `issues/lang/0281b`'s own case. The module became invalid wasm.
+
+The line that did it is not one of the casts; it is the check at the end:
+
+```wac
+low == (0 - 2147483648)
+```
+
+`low` is an `i32` local, so `operandType` answers `"i32"` from the *left* and the right side is
+emitted with `want = "i32"` — correctly. But `(0 - 2147483648)` is itself a binary of two literals,
+and inside it my change answered `"i64"`, so `i64.sub` ran where the slot had promised an i32.
+
+**That is the warning above, exactly.** The literals' width is not the answer even when it looks like
+a fact, because a slot one level up may already have decided, and this function cannot see it. The
+float attempt broke twelve corpus files; this one broke one, and only because a single case happened
+to write the shape.
+
+**What is left for whoever takes this.** The answer has to be conditioned on the `want` the emitter
+holds at the operator — which is available, since the `Binary` arm sits inside `emitExprAt`. The
+distinction that makes it tractable: for an *arithmetic* binary the caller's `want` is the slot and
+should win, and for a *comparison* the caller's `want` is the result type (`bool`) and imposes nothing
+on the operands, so there the literals' width is free to decide. Passing `want` into `operandType`
+and answering `"i64"` only when nothing narrower has been imposed is the shape that fits both.
 
 **This face is what the three remaining seeds are.** `tools/wac/langfuzz_test.wac` excuses 21, 74 and
 188; seed 74's program carries `(-2147483649 <= 2147483648)` and `(-2147483649 > 1000000000000)`,

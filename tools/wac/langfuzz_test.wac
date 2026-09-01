@@ -35,32 +35,27 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * fixed set means a disagreement stays reported until it is fixed. Searching is what the command line
  * is for — `--count` and `--seed` reach further than any suite should.
  *
- * **Three seeds are known-open and excused by number**, listed in `knownOpen` below. Each reproduces
- * what is left of `issues/lang/0306b` — a wide integer literal losing its top half under an operator
- * whose result type is not its operand type, with no expected type to inherit. The ternary face of
- * that issue is fixed; these are the comparison face.
+ * **Three seeds are excused by number**, in `knownOpen` below, and they are the comparison face of
+ * `issues/lang/0306b`. The ternary face of that issue is fixed, which took the list from ten to
+ * three; the comparison face had a fix that cleared all three and broke `spec/cases/0294`, so it was
+ * reverted and the issue records why.
  *
- * Excused as a *subset*, not as an expected count: the run passes when the seeds that disagree are
- * among these, so fixing `0306b` leaves this green rather than turning it red for having got better.
- * A disagreement at any other seed still fails, which is the property worth keeping. It deliberately
- * does not assert the wrong answers — that would hold the bug in place.
+ * The check is a *subset*, not an expected count, so a disagreement at any seed fails and fixing a
+ * listed bug never turns this red for having got better. It deliberately does not assert the wrong
+ * answers, which would hold a bug in place.
  *
- * **This list is derived from a run and goes stale when the generator changes.** It has already
- * happened once: adding helpers, branches and loops moved the failures from 9/53/84/131 to these ten,
- * because a seed names a sequence of draws and new arms consume different ones. If you change the
- * generator, re-derive it rather than adding to it — a list that is not the list of actual failures
- * reads as knowledge, which is the mistake `wapyroundtrip_test.wac` records making.
+ * **A list here is derived from a run and goes stale when the generator changes.** That happened
+ * twice: adding helpers, branches and loops moved the failures from 9/53/84/131 to ten different
+ * seeds, because a seed names a sequence of draws and new arms consume different ones. Re-derive
+ * rather than extend — a list that is not the list of actual failures reads as knowledge, which is
+ * the mistake `wapyroundtrip_test.wac` records making.
  */
 /**
- * The seeds whose disagreement is `issues/lang/0306b`, derived from a run on 2026-08-31.
+ * Seeds whose disagreement is a known-open issue — the comparison face of `issues/lang/0306b`.
  *
- * **Was ten; the ternary half of that issue is fixed and these three are the comparison half.** The
- * fix taught `integerLiteralsFitI32` about ternaries, which cleared 16, 42, 52, 54, 77, 119 and 128.
- * What is left is a comparison of two wide constants — seed 74 has `(-2147483649 <= 2147483648)` —
- * which is a different site, `operandType` answering empty and the caller reading empty as i32.
- *
- * Seed 21 is worth a word: its answer *changed* under the fix, from 727379968 to -2147483648, so it
- * carries both faces rather than only the second.
+ * Seed 21 carries **both** faces: its answer changed under the ternary fix, from 727379968 to
+ * -2147483648, without becoming right. A fix for the comparison face should be checked against it
+ * rather than against 74 alone, since a reproduction holding one face is how half a bug gets closed.
  */
 i32[] knownOpen() { return i32[](21, 74, 188); }
 
