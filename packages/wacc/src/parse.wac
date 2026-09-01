@@ -845,18 +845,24 @@ i32 afterTypeArgs(P p, i32 from) {
     // the answer is closed: names, `fn[…]`, `[]`, `?`, a nested `<…>` and the commas between them.
     // Anything else — a literal, an operator, a keyword — means this was a comparison all along.
     if (!typeToken(kind)) { return -1; }
+    // **An angle inside a group closes nothing**, which the closers below have to agree with. A
+    // `>` between parentheses is a comparison in somebody's expression, not this list's end:
+    // `a < (a >> 1)` read the `>>` as the close, took the whole thing for a generic call, and
+    // complained *expected a type* about a line with no type in it — `issues/lang/0308b`. `group`
+    // was already tracked for `Box<fn[i32(i32)]>` and already consulted by the `)` arm; the angle
+    // arms simply did not ask.
     if (kind == kLparen() || kind == kLbrack()) { group++; }
     else if (kind == kRparen() || kind == kRbrack()) {
       if (group == 0) { break; }                   // a closer nothing opened: not a type list
       group--;
-    } else if (kind == kLt()) { depth++; }
-    else if (kind == kGt()) {
+    } else if (kind == kLt() && group == 0) { depth++; }
+    else if (kind == kGt() && group == 0) {
       depth--;
       if (depth == 0) { k++; break; }
-    } else if (kind == kShr()) {
+    } else if (kind == kShr() && group == 0) {
       depth -= 2;
       if (depth <= 0) { k++; break; }
-    } else if (kind == kShrU()) {
+    } else if (kind == kShrU() && group == 0) {
       depth -= 3;
       if (depth <= 0) { k++; break; }
     } else if (kind == kSemi() || kind == kLbrace()) { break; }

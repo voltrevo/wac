@@ -1,7 +1,12 @@
 # 0308b — `a < (…)` is parsed as generic type arguments when the parentheses contain a `>`
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** `packages/wacc/src/parse.wac` — `afterTypeArgs` tracked `group` for parentheses and
+  brackets already, and the `)` arm already consulted it; the `>`, `>>` and `>>>` arms did not, so an
+  angle inside a group closed a list it was never part of. Four `&& group == 0` guards.
+  `spec/cases/0318` pins it and `spec/spec/generics.md` states the refinement, since that file says
+  this is a rule about the grammar rather than an implementation detail.
+- **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-b
 - **Date:** 2026-09-01
 - **Kind:** bug
