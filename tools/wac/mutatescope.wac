@@ -156,3 +156,56 @@ export Applied applyEdits(string[] paths, string[] texts, Mutant m) {
   }
   return Applied(true, "", paths, out);
 }
+
+/**
+ * The packages whose tests can see this mutant, from the import graph — **its own package first**.
+ *
+ * `dependentFiles[i]` is a source file and `dependentPkgs[i]` the space-separated packages whose
+ * tests import it; `hostless` is the packages with no host test. The reference reads those from a map
+ * built at import; here they are arguments, which is what makes this testable at all.
+ *
+ * The set decides whether a survivor is real and the *order* decides how long a kill takes:
+ * `--fail-fast` stops at the first failure, and almost every mutant is killed by its own package.
+ * `issues/system/0139` measured a `std` mutant at ten minutes without a verdict.
+ *
+ * **A mutant whose own packages have no host test is scoped to those packages alone**, and that is
+ * narrower than the dependent scope on purpose. Its dependents would be a `deno test` that never
+ * reaches it — green, and silent about the tests that do — while `wac test` over its own package runs
+ * exactly them. What a verdict needs is the tests that cover the mutation. `issues/system/0183`.
+ */
+export string[] scopeFor(Mutant m, string[] hostless,
+                         string[] dependentFiles, string[] dependentPkgs) {
+  string[] own = packagesOf(m);
+  if (isBlindScope(own, hostless)) { return testDirsFor(own, own); }
+
+  string[] all = string[own.len() + dependentFiles.len() * 8](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < own.len(); i++) {
+    if (!holds(all, own[i])) { all[n] = own[i]; n = n + 1; }
+  }
+  for (i32 e = 0; e < m.edits.len(); e++) {
+    i32 at = -1;
+    for (i32 d = 0; d < dependentFiles.len(); d++) {
+      if (dependentFiles[d] == m.edits[e].file) { at = d; break; }
+    }
+    if (at < 0) { continue; }
+    // Space-separated rather than nested arrays, which is the same shape `mutateplan.wac` uses for a
+    // profile's test names and for the same reason: one lookup, no second dimension to keep in step.
+    i32 from = 0;
+    string list = dependentPkgs[at];
+    for (i32 i = 0; i <= list.len(); i++) {
+      if (i < list.len() && list.slice(i, i + 1) != " ") { continue; }
+      string pkg = list.slice(from, i);
+      from = i + 1;
+      if (pkg == "") { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) {
+        if (all[k] == pkg) { have = true; break; }
+      }
+      if (!have && n < all.len()) { all[n] = pkg; n = n + 1; }
+    }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = all[i]; }
+  return testDirsFor(own, exact);
+}

@@ -6,7 +6,8 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Edit, Mutant } from "./mutateoperators.wac";
-import { Applied, applyEdits, isBlindScope, packagesOf, testDirsFor } from "./mutatescope.wac";
+import { Applied, applyEdits, isBlindScope, packagesOf, scopeFor, testDirsFor }
+       from "./mutatescope.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 string joined(string[] xs) {
@@ -114,5 +115,37 @@ export string test_edits_across_two_files_each_apply() {
                                           Edit("b.wac", 3, 4, "Y", "b"))));
   t.isTrue(got.ok, "both applied — " + got.why);
   t.eqStr(got.texts[0] + "/" + got.texts[1], "aXaa/bbbY", "each file gets its own edit and no other");
+  return t.report();
+}
+
+Mutant editingFile(string file) {
+  return Mutant("m", "operator", Edit[](Edit(file, 0, 0, "", "")));
+}
+
+/**
+ * A mutant's scope: its own package first, then its dependents.
+ *
+ * **And a blind mutant is scoped to its own packages alone**, which is narrower on purpose. Its
+ * dependents would be a `deno test` that never reaches it — green, and silent about the tests that
+ * do — while `wac test` over its own package runs exactly them. `issues/system/0183`.
+ */
+export string test_a_mutants_scope_is_its_package_then_its_dependents() {
+  T t = T.create();
+  string[] files = string[]("packages/std/src/a.wac");
+  string[] pkgs = string[]("box abi");
+
+  t.eqStr(joined(scopeFor(editingFile("packages/std/src/a.wac"), string[0](fill: ""), files, pkgs)),
+          "packages/std packages/abi packages/box",
+          "own package first, then the dependents alphabetically");
+
+  // Blind: `std` has no host test, so the dependents would run nothing that reaches it.
+  t.eqStr(joined(scopeFor(editingFile("packages/std/src/a.wac"), string[]("std"), files, pkgs)),
+          "packages/std",
+          "a blind mutant is scoped to its own package alone, not to dependents that cannot see it");
+
+  // A file nothing imports is still tested by its own package.
+  t.eqStr(joined(scopeFor(editingFile("packages/rlp/src/z.wac"), string[0](fill: ""), files, pkgs)),
+          "packages/rlp",
+          "a file no dependent names still runs its own package");
   return t.report();
 }
