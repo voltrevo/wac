@@ -188,37 +188,6 @@ export Toks namedArgs(Toks t) {
   return cur;
 }
 
-/**
- * `T | None` → `T?`, and `Name[args]` → `Name<args>` for a generic reference.
- *
- * Only in a type. `Vec[i32]` is a generic there and an index everywhere else, which is exactly why
- * this is a separate pass applied where a type is expected rather than a rule in the lexer. `fn[…]`
- * keeps its brackets — that is wac's own spelling for a function type — and so does an empty `[]`,
- * which is an array suffix. `fn` needs no test of its own here, unlike in the reference: `lex` gives
- * it `kFn` and the guard below already demands `kIdent` before the bracket.
- */
-export Toks typeTokens(Toks t) {
-  i32 n = toksLen(t);
-  bool nullable = n >= 2 && kindAt(t, n - 1) == kNull() && kindAt(t, n - 2) == kOr();
-  Toks body = nullable ? slice(t, 0, n - 2) : slice(t, 0, n);
-
-  for (i32 i = 0; i < toksLen(body); i++) {
-    if (kindAt(body, i) != kLbrack()) { continue; }
-    if (i == 0) { continue; }
-    i32 prev = kindAt(body, i - 1);
-    if (prev != kIdent()) { continue; }
-    if (i + 1 < toksLen(body) && kindAt(body, i + 1) == kRbrack()) { continue; }
-    i32 close = matching(body, i);
-    if (close < 0) { continue; }
-    setKindAt(body, i, kLt());
-    setKindAt(body, close, kGt());
-  }
-  if (!nullable) { return body; }
-  Toks out = toksNew();
-  pushRange(out, body, 0, toksLen(body));
-  pushTokAs(out, t, n - 1, kQuestion());
-  return out;
-}
 
 /**
  * `match x { … }` → `match (x) { … }`.

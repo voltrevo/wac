@@ -50,11 +50,6 @@ export void pushFrom(Toks t, Lexed src, i32 i) {
         src.tokens[at + 3], src.tokens[at + 4]);
 }
 
-/** Append token `i` of `src`, with a different kind — the respellings and the synthetic operators. */
-export void pushFromAs(Toks t, Lexed src, i32 i, i32 kind) {
-  i32 at = i * tokenStride();
-  push5(t, kind, src.tokens[at + 1], src.tokens[at + 2], src.tokens[at + 3], src.tokens[at + 4]);
-}
 
 /** Append token `i` of another `Toks`. */
 export void pushTok(Toks t, Toks src, i32 i) {
@@ -78,12 +73,3 @@ export Toks slice(Toks src, i32 from, i32 to) {
   return out;
 }
 
-/** The flat array `P.create` wants, with a `kEof` appended. */
-export i32[] finish(Toks t, i32 eofKind, i32 line, i32 col) {
-  Toks c = toksNew();
-  pushRange(c, t, 0, toksLen(t));
-  push5(c, eofKind, 0, 0, line, col);
-  i32[] out = i32[c.a.len()](fill: 0);
-  for (i32 i = 0; i < c.a.len(); i++) { out[i] = c.a.get(i); }
-  return out;
-}
