@@ -71,7 +71,8 @@
 //     bool  every comparison inverted            30 / 200
 //     u32   literal read as signed               33 / 200
 //     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
-//     loop  oracle ignores `break`                8 / 200
+//     loop  oracle ignores `continue`            32 / 200
+//     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
 // **Two of those rows were bought, not found.** `u32` read 0 of 1500 until the answer was routed
 // through a u32 comparison and a wide u32 local was seeded in every program; `i64` read 12 until a
@@ -82,12 +83,20 @@
 // corpus-sized runs to surface it. Nothing about a type's presence in the generated source predicts
 // its row here, which is the whole reason the rows exist.
 //
-// **The loop row is the thin one now**, and it is a *behaviour* rather than a type: an oracle that
-// forgot `break` entirely would still agree with the compiler on 96% of programs. The TypeScript
-// this ports found a `do`/`while` bug where `continue` skipped the condition, so this is a path with
-// a bug already to its name and eight programs in two hundred watching it. Loops are generated far
-// more often than that number suggests — what is rare is a loop whose *trip count* reaches the
-// answer, since the body only ever assigns to one accumulator.
+// **The loop rows found two generator bugs rather than a compiler one**, which is the other thing a
+// canary is for. `break` sat at 8 of 200 with loops in 159 of 200 and a `break` printed in 56, so
+// most of them were doing nothing — and they were: `breakAt` was drawn from `1..trips`, which a `for`
+// never reaches, since a `for` counts `0..trips-1` in the body while `while` and `do` count
+// `1..trips`. `contAt` had the mirror of it, drawn `0..trips-1`, so a `continue` at 0 was dead in
+// both of the other forms. Statements generated, printed, and unreachable, with the oracle agreeing
+// with the compiler about code neither ran.
+//
+// Fixing the bounds took `break` to 12. `continue` reads 32 because skipping an iteration shifts the
+// accumulator every time it fires, where a `break` only matters for the trips it removes.
+//
+// The TypeScript this ports found a `do`/`while` bug where `continue` skipped the condition, so this
+// is a path with a compiler bug already to its name — and it had been watching a third of the
+// statements it thought it was.
 //
 // ## What it does not reach yet
 //
@@ -399,10 +408,19 @@ export struct Gen {
   Vec<Helper> sigs;
   Env env;
   string indent;
+  /**
+   * The local the most recent loop accumulated into, or "" if no loop has run.
+   *
+   * Recorded so the answer can be routed through it — the audit in the header puts the loop path at
+   * 8 programs in 200, and the reason is not that loops are rare. They are generated constantly; what
+   * is rare is a loop whose *trip count* reaches `main`, because the body only ever assigns to one
+   * accumulator and nothing makes the final expression pick that variable.
+   */
+  string lastAcc;
 
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
-               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ");
+               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "");
   }
 
   /**
@@ -500,6 +518,13 @@ export struct Gen {
     if (cands.len() == 0) { return null; }
     string name = cands.get(this.rng.intTop(cands.len())).name;
     return Expr(name, ty, (Env e) => e.get(name));
+  }
+
+  bool inScopeNamed(this, string name) {
+    for (i32 i = 0; i < this.locals.len(); i++) {
+      if (this.locals.get(i).name == name) { return true; }
+    }
+    return false;
   }
 
   Expr? binary(this, i32 ty, i32 depth) {
@@ -738,12 +763,22 @@ export struct Gen {
     Local acc = existing.len() == 0
       ? this.declare(TY_I32(), this.literal(TY_I32()))
       : existing.get(0);
+    this.lastAcc = acc.name;
     string i = this.fresh("i");
     Expr step = this.expr(TY_I32(), 1);
     bool useContinue = this.coin();
-    i32 contAt = this.rng.intTop(trips);
+    // The same mismatch mirrored: `intTop(trips)` is 0..trips-1, which a `while` or `do` never sees
+    // because those count 1..trips. A `continue` at 0 was printed and dead in both of those forms.
+    i32 contAt = form == 1 ? this.rng.intTop(trips) : 1 + this.rng.intTop(trips);
     bool useBreak = !useContinue && this.coin();
-    i32 breakAt = 1 + this.rng.intTop(trips);   // never the first, so the body runs at least once
+    // **Never the first, so the body runs at least once — and within the range this form reaches.**
+    // A `for` counts 0..trips-1 in the body where `while` and `do` count 1..trips, so a bound of
+    // `1 + intTop(trips)` can name `trips` itself, which a `for` never sees: the break was generated,
+    // printed, and dead. The oracle agreed with the compiler about a statement neither ran, which is
+    // one of the reasons the loop row of the audit above is the thin one.
+    i32 breakAt = form == 1
+      ? (trips <= 1 ? 1 : 1 + this.rng.intTop(trips - 1))
+      : 1 + this.rng.intTop(trips);
 
     string ind = this.indent + "  ";
     if (form == 1) {
@@ -907,10 +942,20 @@ export struct Gen {
     //
     // Drawn *before* the expression either way, so the sequence a seed names does not depend on
     // whether a u32 local happened to exist.
+    bool viaLoop = this.rng.intTop(4) == 0;
     bool viaHigh = this.rng.intTop(4) == 0;
     bool viaU32 = this.rng.intTop(4) == 0;
     Vec<Local> unsigned = this.inScope(TY_U32());
     Expr result = this.expr(TY_I32(), 3);
+    // **A loop's accumulator, when one ran and is still in scope.** This is what makes a wrong trip
+    // count — a `break` the oracle forgot, a `continue` that skipped a condition — change the answer
+    // rather than a variable nobody reads.
+    if (viaLoop && this.lastAcc != "" && this.inScopeNamed(this.lastAcc)) {
+      string an = this.lastAcc;
+      Expr baseL = result;
+      result = Expr("(" + baseL.src + " + " + an + ")", TY_I32(),
+                    (Env e) => wrapTo(applyBin(OP_ADD(), baseL.evalIn(e), e.get(an)), TY_I32()));
+    }
     Vec<Local> wides = this.inScope(TY_I64());
     if (viaHigh && wides.len() > 0) {
       string hn = wides.get(this.rng.intTop(wides.len())).name;
