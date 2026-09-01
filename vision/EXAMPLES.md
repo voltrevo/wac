@@ -332,3 +332,57 @@ error: this `default` is unreachable
 ```
 
 **Not yet.**
+
+---
+
+## Passing a failure on
+
+```wac
+async Result<Config> load(Sys sys) {
+  u8[] bytes = try await sys.readFile("config.json");
+  Config config = try parse(bytes);
+  return Result.Ok(config);
+}
+```
+
+`try` yields the value and returns the failure to the caller. An error type left unwritten is the
+union of what the body passes on — here, `readFile`'s and `parse`'s.
+
+```wac
+export async Result<Config, union<NotFound, Malformed>> load(Sys sys) { … }
+```
+
+Written out, it is checked: a body that gains a third way to fail is refused at this line.
+
+**Not yet.**
+
+---
+
+## Any of several types
+
+```wac
+union<f64, string, bool> parseCell(string text) {
+  if (text == "true")  { return true; }
+  if (text == "false") { return false; }
+
+  f64? n = parseNum(text);
+  if (n is null) { return text; }
+  return n;
+}
+```
+
+```wac
+string render(union<f64, string, bool> cell) {
+  return match (cell) {
+    f64:    fmt(cell),
+    string: cell,
+    bool:   cell ? "true" : "false",
+  };
+}
+```
+
+A member is returned as itself; there is nothing to construct. An arm names a type, and inside it the
+value is that type.
+
+**Not yet.**
+
