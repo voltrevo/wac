@@ -21,16 +21,29 @@ compiles it, the shell that runs it, the cryptography that carries it.
 
 ## What is in here
 
-**`EXAMPLES.md`** — the examples. Each is a program somebody would want to write, marked **done** or
-**not yet**.
+Three tiers of examples, and one page of rules.
+
+**`SHOWCASE.md`** — the examples worth showing first. Each is the best possible spelling of its
+behaviour, and each one is a reason to use the language.
+
+**`IDIOMS.md`** — ordinary wac, spelled the way wac spells it. Also the best possible spelling of its
+behaviour; none of them is on its own a reason to use the language.
+
+**`TECHNICAL.md`** — one detail of the language per entry, with the outcome shown. Not always the
+best way to write the thing: an entry here is written to pin the detail down. Read together these are
+meant to be enough to implement the language from.
 
 **`DECISIONS.md`** — small decisions already taken. One rule each, with enough of the reason that it
 can be revisited; a rule without its reason is one nobody can argue with.
 
-The two have opposite lifecycles, and the difference is not an oversight. **An examples entry is kept
-and marked `done` when it lands** — it is a picture of how the language reads, and that stays true
-afterwards. **A decisions entry is deleted once it is true** — it is a rule, and a rule written twice
-is a rule that drifts.
+An example belongs to one tier at a time and moves between them freely. The line between the first
+two is worth showing rather than defining: a server, and an import written from the project root, are
+both the best spelling of what they do.
+
+The examples and the decisions have opposite lifecycles, and the difference is not an oversight. **An
+example is kept and marked `done` when it lands** — it is a picture of how the language reads, and
+that stays true afterwards. **A decisions entry is deleted once it is true** — it is a rule, and a
+rule written twice is a rule that drifts.
 
 ## Nothing here is checked by anything
 

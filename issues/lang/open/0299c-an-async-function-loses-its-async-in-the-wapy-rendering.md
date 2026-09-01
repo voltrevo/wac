@@ -91,8 +91,9 @@ than three special cases. `spec/spec/wapy.md`'s table loses three rows and gains
 ### And it frees `@` on both surfaces
 
 wac uses `@` only inside an import string, where nothing else can reach it. If wapy stops using it,
-`@` is unclaimed everywhere — and `vision/EXAMPLES.md` wants it for a **verbatim identifier**, `@class`, so
-that an attribute or field whose name collides with a keyword can be written rather than renamed.
+`@` is unclaimed everywhere — and `vision/TECHNICAL.md` wants it for a **verbatim identifier**,
+`@class`, so that an attribute or field whose name collides with a keyword can be written rather
+than renamed.
 The alternatives were all taken: a backtick reads as a template literal to the JSX audience, and `#`
 is wapy's comment.
 

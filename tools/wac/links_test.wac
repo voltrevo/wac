@@ -680,7 +680,7 @@ export string test_every_backticked_repository_path_names_a_file_that_exists(Cor
     // be the wrong guard — it would be checking imaginary code against real directories.
     //
     // **The whole directory, not one page.** It was `VISION.md` until 2026-08-31, when it became
-    // `vision/{README,EXAMPLES,DECISIONS}.md`. `DECISIONS.md` does quote real paths as evidence, so
+    // `vision/{README,SHOWCASE,IDIOMS,TECHNICAL,DECISIONS}.md`. `DECISIONS.md` does quote real paths as evidence, so
     // there is a check worth having there — and it is still not wanted, because that directory is
     // maintained by hand and nothing programmatic runs over it.
     if (!prosePath(f) || hasPrefix(f, "issues/") || hasPrefix(f, "vision/")) { continue; }
