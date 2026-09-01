@@ -670,3 +670,17 @@ the two duplication guards, then three of these five. The pattern is that a test
 its **subject**, and a subject phrased in wac vocabulary ("the stall report", "bounding a call") can
 still be reachable only from the host. The check that works is not the summary line: it is the
 sentence naming what the test calls.*
+
+**The last three, so the eight are all accounted for rather than five of them.** `datagram` puts
+Deno's own UDP at the far end of the capability boundary, which is the permitted oracle.
+`project` tests `harness/wacFiles.ts` performing the `@/` project-root search that
+`design/lang/0009` D7 requires and "the compiler cannot look up" — so its subject is harness code and
+it goes when that goes. `subprocess_profile` is mutation testing's problem of coverage counters
+living in a child process, so it goes with `tools/mutate`.
+
+**Which completes the answer: none of the 32 is a port today.** Twenty-two are the bridge, the worker
+or the browser; two are permanent cross-boundary agreement guards; three more are host or TypeScript
+facts; one is a Deno oracle; two dissolve with the harness and the mutation tooling they test; and
+two — `timeout` and `listen` — are marginal and would need something outside the program to observe
+what they assert. The right next question for this directory is not "which do we port" but "which of
+these dissolve when `harness/` and `tools/mutate` do", and that is three of them.
