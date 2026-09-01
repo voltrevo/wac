@@ -59,8 +59,10 @@ Two things follow from *how* it surfaced, both worth keeping:
 `packages/box/README.md` says **"It is now 0 ignored against 7 refused", over the same 375 flags and
 43 applets**. Re-measured on 2026-08-30 against a box built from `packages/box/src/box.wac` at
 `fa63a7b7`, it is **2 ignored against 4 refused** — the same population, a different answer. Both
-`tools/ignoredFlags.ts` and its wac port say so, and their outputs are byte-identical, so this is not
-an artefact of the port.
+`tools/ignoredFlags.ts` and its wac port said so on that date, and their outputs were byte-identical,
+so this is not an artefact of the port. *(The TypeScript one has since been deleted and the
+measurement is `tools/wac/ignoredflags.wac`'s alone — which is why the sentence is past tense: there
+is no longer a second tool to agree with.)*
 
 Three flags that were refused are not refused now, and two are ignored that were not. The README has
 been corrected to record the measurement rather than the aspiration; what moved between the two runs
