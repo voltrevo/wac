@@ -98,6 +98,17 @@ failing loudly, which is why this surfaced as a silent tree difference rather th
 Both other lambda losses recorded here — the statement body, and `0297c`'s ternary — should be
 re-checked on the reader side first for the same reason.
 
+**A hypothesis worth checking first, because it explains every control above.** That file's header
+says it parses the *structure* itself and calls **`parse.wac`'s shared expression, ty and statement
+grammar** for the rest — and a lambda is an expression. wapy spells type arguments with **brackets**,
+`Map[string, i32]`, where the shared grammar is wac's and expects `Map<string, i32>`; brackets there
+are an index or an array type.
+
+That predicts exactly what is observed: a *function* parameter of the same type survives, because
+`wapyparse`'s own `paramsIn`/`typeIn` read the wapy spelling, while a *lambda* parameter is handed to
+a grammar that cannot. Not verified by reading the lambda path in `parse.wac`, which is the next step
+rather than a conclusion.
+
 ## Notes
 
 Two entries in `knownBad()` are *"a ternary inside a lambda — issues/lang/0297c"*, one is *"a
