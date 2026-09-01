@@ -103,7 +103,9 @@ re-checked on the reader side first for the same reason.
 Two entries in `knownBad()` are *"a ternary inside a lambda — issues/lang/0297c"*, one is *"a
 type-argument chain with an inline lambda"*, and this issue adds the parameter type and the statement
 body. Five shapes, all lambdas losing something, so whoever takes this should check whether the
-lambda arm of the wapy printer is **one fault rather than five** before fixing them separately.
+lambda arm of the wapy **reader** is **one fault rather than five** before fixing them separately.
+(This paragraph said *printer* until the section above measured which side loses it. It is the
+reader.)
 
 The workaround in `tools/wac/langfuzz.wac` is worth knowing because it is cheap and general: keep
 every lambda a single call and put the branching in a named function. That file's `evalAndOr`,
