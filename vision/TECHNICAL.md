@@ -37,8 +37,30 @@ Node dot() {
 A quoted tag name may be any name. An attribute name is written as it is in HTML, and runs to `=`,
 whitespace, `/` or `>`.
 
-`@for` is a verbatim identifier: any word taken as a name, so a keyword can be one. The call site
-writes `for`, and the parameter it fills is `@for`.
+The call site writes `for`, and the parameter it fills is `@for`.
+
+**Not yet.**
+
+---
+
+## `@` on a name that does not need it
+
+```wac
+i32 double(i32 @n) {
+  return n * 2;
+}
+```
+
+```
+warning: `@` is not needed on `n`
+  --> math.wac:1:16
+   |
+ 1 | i32 double(i32 @n) {
+   |                ^^
+   = help: `n` is not a keyword — write `n`
+```
+
+`@n` and `n` are the same name. The program compiles.
 
 **Not yet.**
 
