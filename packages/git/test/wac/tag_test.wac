@@ -33,20 +33,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { ParsedTag, Tag, parseTag } from "../../src/commit.wac";
 import { encode as hexOf } from "../../../codec/src/hex.wac";
-
-/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
-string agentDir(Cli cli) {
-  string cwd = cli.cwd().wait();
-  u8[] b = cwd.toBytes();
-  for (i32 i = 0; i + 7 < b.len(); i++) {
-    if (b[i] != '/') { continue; }
-    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
-    i32 end = i + 7;
-    while (end < b.len() && b[end] != '/') { end = end + 1; }
-    return cwd.slice(i + 1, end);
-  }
-  return "";
-}
+import { agentDir } from "../../../wactest/src/host.wac";
 
 /** One `git -C <dir>` run: everything this test needs, in one place. */
 struct Git {

@@ -24,20 +24,7 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 import { sha3_256 } from "../../crypto/src/keccak.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { field, hex, pad } from "./capturejson.wac";
-
-/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
-string agentDir(Cli cli) {
-  string cwd = cli.cwd().wait();
-  u8[] b = cwd.toBytes();
-  for (i32 i = 0; i + 7 < b.len(); i++) {
-    if (b[i] != '/') { continue; }
-    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
-    i32 end = i + 7;
-    while (end < b.len() && b[end] != '/') { end = end + 1; }
-    return cwd.slice(i + 1, end);
-  }
-  return "";
-}
+import { agentDir } from "../../wactest/src/host.wac";
 
 string homeDir(Cli cli) {
   u8[]? home = cli.env("HOME").wait();

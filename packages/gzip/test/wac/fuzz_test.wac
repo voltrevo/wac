@@ -24,6 +24,7 @@ import { gunzipBytes } from "../../src/inflate.wac";
 import { firstDifference } from "./external.wac";
 import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
 import { Swept, assertSwept, sweepCorruptions } from "./corruption.wac";
+import { agentDir } from "../../../wactest/src/host.wac";
 
 const i32 CORPUS_SIZE = 260;
 const i32 SEED = 20260731;
@@ -32,20 +33,6 @@ const string ORACLE = "packages/gzip/test/fuzz/oracle.py";
 const string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
 
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
-
-/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
-string agentDir(Cli cli) {
-  string cwd = cli.cwd().wait();
-  u8[] b = cwd.toBytes();
-  for (i32 i = 0; i + 7 < b.len(); i++) {
-    if (b[i] != '/') { continue; }
-    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
-    i32 end = i + 7;
-    while (end < b.len() && b[end] != '/') { end = end + 1; }
-    return cwd.slice(i + 1, end);
-  }
-  return "";
-}
 
 string workDir(Cli cli, string what) {
   string who = agentDir(cli);
