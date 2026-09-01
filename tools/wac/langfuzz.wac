@@ -290,6 +290,19 @@ i64 evalCall(Helper h, Vec<Expr> args, Env e) {
   return h.body.evalIn(callEnv);
 }
 
+/**
+ * Whether a u32 local's value has its top bit set — the answer's u32 route.
+ *
+ * A named function rather than a ternary in the lambda, for the reason the other `eval*` helpers
+ * here give: neither a ternary nor a statement survives inside a lambda through the wapy round trip
+ * (`issues/lang/0297c`, `issues/lang/0307b`). I wrote one back in anyway and the gate caught it,
+ * which is what that test is for.
+ */
+i64 evalTopBit(Env e, string name) {
+  if (e.get(name) > 2147483647) { return 1; }
+  return 0;
+}
+
 i64 evalTernary(Expr c, Expr t, Expr f, Env e) {
   if (c.evalIn(e) != 0) { return t.evalIn(e); }
   return f.evalIn(e);
@@ -870,7 +883,7 @@ export struct Gen {
       // operations `spec/tour.wac` lists as differing — `/ % < <= > >=` and `>>` — can show it, and
       // `> 2147483647` is the cheapest: true for exactly the values whose top bit is set.
       Expr asI32 = Expr("((" + un + " > 2147483647) ? 1 : 0)", TY_I32(),
-                        (Env e) => e.get(un) > 2147483647 ? 1 : 0);
+                        (Env e) => evalTopBit(e, un));
       // **`base`, not `result`.** Captures are by reference, so a lambda that reads `result` while
       // `result` is being reassigned to that very lambda calls itself — `RangeError: Maximum call
       // stack size exceeded`, which is what the header's warning about reused locals means in
