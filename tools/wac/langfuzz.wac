@@ -68,8 +68,10 @@
 // whatever the generated source contains.
 //
 //     i32   narrowing removed from `wrapTo`      66 / 200
+//     bool  every comparison inverted            30 / 200
 //     u32   literal read as signed               33 / 200
 //     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
+//     loop  oracle ignores `break`                8 / 200
 //
 // **Two of those rows were bought, not found.** `u32` read 0 of 1500 until the answer was routed
 // through a u32 comparison and a wide u32 local was seeded in every program; `i64` read 12 until a
@@ -79,6 +81,13 @@
 // `issues/lang/0306b` was an i64 literal losing exactly that half, and this generator needed three
 // corpus-sized runs to surface it. Nothing about a type's presence in the generated source predicts
 // its row here, which is the whole reason the rows exist.
+//
+// **The loop row is the thin one now**, and it is a *behaviour* rather than a type: an oracle that
+// forgot `break` entirely would still agree with the compiler on 96% of programs. The TypeScript
+// this ports found a `do`/`while` bug where `continue` skipped the condition, so this is a path with
+// a bug already to its name and eight programs in two hundred watching it. Loops are generated far
+// more often than that number suggests — what is rare is a loop whose *trip count* reaches the
+// answer, since the body only ever assigns to one accumulator.
 //
 // ## What it does not reach yet
 //
