@@ -937,6 +937,18 @@ So the honest shape of what is left: **one clean port** (`benchCompile`), **one 
 measures** (`bench`), **one large one** (`mutate`), and a tail that either stays permanently or goes
 only once the tools it serves have.
 
+**`benchCompile` is scoped, and blocked on one placement decision.** Every phase it measures is an
+export of `packages/wacc/src/api.wac` — `diagnoseGraphIn`, `buildFilesIn`, `blockedFiles`,
+`exportSigsFiles`, `bindTypesFiles`, `emitFiles` — which wac calls directly. `performance.now` maps to
+`core.monotonicNanos`, and `--mem` reads `/proc/self/status`, which `cli.readFile` can do.
+
+What it also needs is the import-graph walk that `wacFiles` does for it, and wac's is
+`gather(Fs, Cli, string) -> Sources` at `packages/wac/src/wac.wac:633` — **private to the command's
+own app module**. Importing it from there would pull the whole `wac` command into a benchmark's
+dependency graph. So either export it and accept that, or move `gather` and `Sources` into a module
+both can import. The second is the "factor before the second caller" answer and is a small refactor
+of the command's internals, which is why it is written down rather than done in passing.
+
 The `bench` row is a correction made an hour after this table was written: I classified it from its
 header line and its clock, and only reading the body showed that a section of it is *about* the
 boundary it would stop having.
