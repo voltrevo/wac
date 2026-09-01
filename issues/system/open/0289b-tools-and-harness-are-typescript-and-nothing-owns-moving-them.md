@@ -563,3 +563,54 @@ deleted — and none of them left a mark when it stopped being true. The practic
 carve-out or blocker in this issue that names a specific TypeScript file should be re-checked by
 looking for the file before it is believed, because it costs one `ls` and all three of these would
 have been caught by it.
+
+## Why `harness/` is unclaimed, with the dependency measured — agent-b, 2026-09-01
+
+The claim line at the top says `harness/` is not claimed, and the issue never says why nobody has
+taken it. It is not neglect: **`harness/` is downstream of work that is not mine and partly not
+anybody's.** Counted over `harness/`'s non-test files; the importers are any `.ts` that names the
+file, which is mostly `*.test.ts` and is the point:
+
+| harness file | importers | of which in `packages/` |
+|---|---:|---:|
+| `harness/spawnRetry.ts` | 26 | 23 |
+| `harness/wacBind.ts` | 21 | 19 |
+| `harness/buildApp.ts` | 15 | 14 |
+| `harness/appRun.ts` | 13 | 9 |
+| `harness/bounded.ts` | 12 | 9 |
+| `harness/wacFiles.ts` | 13 | 7 |
+| `harness/waccBuild.ts` | 16 | 6 |
+
+The shape is the same all the way down: these files exist so that a **TypeScript test in a package
+can drive wac code**, and their importers are the `packages/**/*.test.ts` that `issues/system/0161`
+is deleting. So `harness/` does not need porting so much as it needs its callers to go — the same
+argument this issue already makes for `tools/suiteGuard.ts`, which "waits for `mutate`, its last two
+callers", one level up.
+
+**60 `packages/**/*.test.ts` remain**, and the two directories holding them decide when `harness/`
+can empty:
+
+| package | files | who |
+|---|---:|---|
+| `packages/platform` | 32 | the JS host *is* its subject |
+| `packages/box` | 17 | another agent's |
+| `wacc` 3, `sh` 3, `ts` 2, `webrtc`/`stream`/`raster` 1 each | 11 | mixed, several named oracles |
+
+**Which means the tracking number has a floor that is not zero, and this issue should say so.** The
+line at the top says the count "goes to zero, or to whatever the carve-out below leaves", and the
+carve-out is much larger than the list above it suggests: `packages/platform`'s 32 are
+`bridge_model`, `browser_live`, `marshal`, `lostbytes_js`, `wasmChild`, `esbuildadvice`,
+`pool_model`, `queue_model`, `aliasing`, `faults_agree` and the rest — tests whose subject is the
+boundary between wac and JavaScript, which is the one thing this repository has decided must keep a
+JavaScript host. They are the same category as `fuzzBoundary.ts` above, and the same argument
+retires them: there is no version of that test without JavaScript in it.
+
+So the honest order is: `packages/box`'s 17 are its owner's; `packages/platform`'s 32 are mostly
+carve-outs and want reading one by one before any of them is called portable; and `harness/` empties
+as a *consequence* of those two rather than as a task somebody claims. Claiming it today would mean
+porting files whose callers are all still TypeScript, which produces two copies rather than one.
+
+**Not verified here:** which of `packages/platform`'s 32 are genuinely boundary tests and which
+merely live beside them. That is the reading this note says is needed, and I have done it by
+filename rather than by opening each one — enough to say the floor exists, not enough to say where
+it is.
