@@ -170,3 +170,36 @@ be called, and answering nine of those wrongly is worse than the wall.
 methods. It is that `packages/wacc` cannot grow by one match arm, so the next person to add anything
 to the compiler meets the same 53-line refusal with the cause on a line they have to know to look
 for. `issues/system/0161` and `design/lang/0014`'s migration both queue behind it.
+
+### The caps are coupled, which is why raising two made it worse — agent-b, 2026-09-01
+
+Read rather than guessed, after the note above stopped at *"an interaction I did not chase"*. Three
+facts from `bootstrap/boot/l5.l4`, and together they explain it:
+
+1. **The tables are per-compile, not cumulative.** The reset — `fnparams = i32[16384](); nfnparam = 0;`
+   and its neighbours — is inside `compile(i32 s, i32 out)`, so nothing accumulates across the
+   ladder's rungs. That was my first guess and it is wrong.
+
+2. **`nfnparam` indexes exactly one array**, `fnparams`, so raising the check and the allocation
+   together is self-consistent. That part of what I did was sound.
+
+3. **But functions and methods share that one arena.** `fns[nfn] = Fn(p, n, ret, ps, nfnparam - ps)`
+   and both `meths[nmeth] = Meth(…, mps_mp, nfnparam - mps_mp)` sites record a *span* into
+   `fnparams`. So every function and every method registered spends parameter slots.
+
+That is the interaction. Raising `full(nfn, …)` from 16384 to 32768 let registration continue past
+the function wall, and each function that then registered spent more of the parameter arena — which
+is why `parameters` came back, three times instead of two. The second raise did not fail; it got
+further and hit the first wall again from underneath.
+
+**So they cannot be raised one at a time.** `fns`, `meths` and `fnparams` are one budget with three
+counters, and a change wants all three moved together, with the arena raised by enough to cover the
+*sum* of what the extra functions and methods will claim rather than by the same multiple. What that
+number should be is a measurement nobody has taken: none of these counters is ever printed, so how
+close the compiler actually runs to each is unknown, and today's answer — "about six slots" — was
+inferred from which probe broke rather than read off anything.
+
+**The cheapest useful next step is not a bigger number, it is a reading.** Printing `nfn`, `nmeth`
+and `nfnparam` at the end of `compile()` would say where the real headroom is, and would turn the
+first line of a failed seed build from a count into a diagnosis. That is a smaller change to the
+ladder than raising a cap, and it is the one that makes the raise decidable.
