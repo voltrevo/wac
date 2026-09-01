@@ -254,16 +254,6 @@ string elemOf(string t) {
  * byte and cannot be. Every place that wrote `types.byte(valType(t))` had to become a call here,
  * which is the shape a GC type forces on an emitter that started with scalars.
  */
-/**
- * How a wac type is **represented**, which is not the same as what it is.
- *
- * A `string` is stored as an `i8[]` — the reference's type section says so and a literal is
- * `array.new_fixed` over the bytes — but it is *not* an `i8[]` to the language: `s[i]` on a string
- * gives a one-character string where `b[i]` on a `u8[]` gives an `i32`. Normalising the two into one
- * type erased that and emitted `array.get_s` for a string index, which returns the wrong kind of
- * thing entirely. The representation is shared; the type is not.
- */
-string repType(string t) { return t == "string" ? "i8[]" : t; }
 
 void writeValType(B out, Env env, string t) {
   // **The heap type after `0x63` is signed.** A reference type is `0x63` followed by an *s33* — the
@@ -454,12 +444,6 @@ i32 lexedCol(Lexed lexed, i32 t) {
   return lexed.tokens[t * tokenStride() + 4];
 }
 
-/** The storage type inside an array type, where a packed element is narrower than a value type. */
-i32 storageType(string elem) {
-  if (elem == "i8" || elem == "u8") { return 120; }
-  if (elem == "i16" || elem == "u16") { return 119; }
-  return valType(elem);
-}
 
 /** Whether a wac type is one of the unsigned integers, which decides `_s` from `_u`. */
 /**
@@ -2984,15 +2968,6 @@ export struct Env {
   }
 }
 
-/** Whether a declaration is a function this slice can emit. */
-bool emittable(Decl d) {
-  match (d.kind) {
-    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-      return typeParams.len() == 0;
-    }
-    else: { return false; }
-  }
-}
 
 /** Every array type a body mentions, whether as a local's type or as something it constructs. */
 void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
@@ -3095,13 +3070,6 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   }
 }
 
-/** The last `/` in a path, or -1 — the one piece of path arithmetic everything else here needs. */
-i32 lastSlash(string path) {
-  for (i32 i = path.len() - 1; i >= 0; i--) {
-    if (path[i] == "/") { return i; }
-  }
-  return -1;
-}
 
 /**
  * The file an import names, resolved against the file that wrote it.
@@ -3127,22 +3095,6 @@ export string resolveImportIn(string from, string rel, string root) {
   return resolveFromIn(from, rel, root);
 }
 
-/**
- * `dir` (which ends in `/`, or is empty) followed by `r`, with one separator between them.
- *
- * Concatenating them plainly doubles the slash when the path is already rooted: `/main.wac`
- * importing `"/c.wac"` resolved to `//c.wac`, which is a key no file in the program map has. Nothing
- * reported that, because a name whose file never resolved is a name this checker does not know, and
- * unknown is silence — so an entire imported file went missing quietly, and the spec's own
- * `§wac-modconst-import-p7fm2wj` was accepted for want of the file that would have refused it.
- */
-string joinDir(string dir, string r) {
-  if (dir.len() > 0 && r.len() > 0 && dir.slice(dir.len() - 1, dir.len()) == "/"
-      && r.slice(0, 1) == "/") {
-    return dir + r.slice(1, r.len());
-  }
-  return dir + r;
-}
 
 /**
  * `core`'s declarations, which ship inside the compiler rather than living in a file.
@@ -14177,13 +14129,6 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
  * tell "already big enough" from "grown to fit" without asking twice.
  */
 
-/** Whether a module already deals in this array type, asked without registering one that does not. */
-bool hasArrayType(Env env, string t) {
-  for (i32 i = 0; i < env.arrayCount; i++) {
-    if (env.arrayTypes[i] == t) { return true; }
-  }
-  return false;
-}
 
 /**
  * The element types a bulk transfer knows how to move, and how.
@@ -14228,35 +14173,12 @@ i32 bulkGet(string el) {
   return 11;                                        // array.get
 }
 
-/** The wasm value type an element arrives as, which is not the element's own for a packed one. */
-string bulkValType(string el) {
-  if (el == "i64" || el == "u64") { return "i64"; }
-  if (el == "f32") { return "f32"; }
-  if (el == "f64") { return "f64"; }
-  return "i32";
-}
 
 /** Whether this array type can cross through the staging buffer at all. */
 bool isBulkArray(string t) {
   return isArrayType(t) && !isArrayType(elemOf(t)) && bulkWidth(elemOf(t)) > 0;
 }
 
-/**
- * `$bind$arr_<el>_len(a) -> i32` — how many elements the array holds.
- *
- * The first of three a host needs to move an array across the boundary: it asks the length,
- * allocates, and copies through the staging buffer.
- */
-void emitArrLen(B funcs, B code, Env env, string arrType) {
-  funcs.u32leb(env.sigType("fn[i32(" + arrType + ")]"));
-  B b = B.create();
-  b.u32leb(0);
-  b.byte(32); b.u32leb(0);
-  b.byte(251); b.u32leb(15);            // array.len
-  b.byte(11);
-  code.u32leb(b.len);
-  code.bytes(b);
-}
 
 /**
  * `$bind$arr_<el>_to_mem(a) -> i32` — copy the array into the staging buffer, answer its length.
@@ -15170,13 +15092,6 @@ bool arrNeedsFill(Env env, string el) {
   return el == "string";
 }
 
-/** Whether an array's elements cross as an opaque reference rather than as a number. */
-bool refElem(Env env, string el) {
-  if (isArrayType(el) || el == "string") { return true; }
-  u8[] a = el.toBytes();
-  if (a.len() > 1 && a[a.len() - 1] == 63) { return true; }
-  return env.isStructName(el);
-}
 
 /** How the element crosses: a packed one arrives as an `i32`, a reference as itself. */
 string bindElemType(string el) {

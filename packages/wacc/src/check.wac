@@ -2411,8 +2411,6 @@ i32 tokenKind(C c, i32 t) {
 /** A token's line, for the diagnostics that name a keyword rather than a node. */
 i32 tokenLine(C c, i32 t) { return c.toks[t * tokenStride() + 3]; }
 
-/** A token's column, paired with `tokenLine`. */
-i32 tokenCol(C c, i32 t) { return c.toks[t * tokenStride() + 4]; }
 
 /** A token's source text. Primitive type names are ordinary identifiers, so this is how they are read. */
 string tokenText(C c, i32 t) {

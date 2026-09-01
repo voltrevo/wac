@@ -759,16 +759,6 @@ struct Edges {
   i32[] to;
 }
 
-/**
- * Every file's imports, resolved to indices, in two passes over the sources.
- *
- * A spec that resolves to a path this graph does not contain is dropped, which is the rule the
- * text-domain walk had: a missing file is the caller's to report, and `example/wacc.wac` does, by
- * name, before anything here is asked.
- */
-Edges edgesOf(string[] paths, string[] sources) {
-  return edgesOfIn(paths, sources, Res.empty());
-}
 
 /**
  * The same, resolving each specifier the way the reader did — `design/lang/0009` D7 and D9.
@@ -938,11 +928,6 @@ export string diagnoseFilesIn(string[] paths, string[] sources, Res res, string 
   return diagnoseFilesWithIn(paths, sources, res, entry, counts, lexes, progs);
 }
 
-/** The same, with the declaration counts already taken — see `declCountsOf`. */
-string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] counts,
-                         Lexed?[] lexes, Program?[] progs) {
-  return diagnoseFilesWithIn(paths, sources, Res.empty(), entry, counts, lexes, progs);
-}
 
 /** The same again with the resolution context — see `checkFilesWithIn` for what it buys. */
 string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string entry, i32[] counts,
@@ -1255,17 +1240,6 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
   return out;
 }
 
-/**
- * How many declarations each of `paths` contributes, plus `core`'s in a final slot.
- *
- * One parse per file. `checkFilesWith` sums these instead of parsing its closure to count them,
- * which is the whole of `issues/lang/0133`: `diagnoseGraph` checks every file against its own
- * closure, the closures overlap almost entirely, and so the sizing pass parsed a core file once for
- * every file that reached it. Counted here once for the whole graph instead.
- */
-i32[] declCountsOf(string[] paths, string[] sources) {
-  return declCountsInto(paths, sources, Lexed?[paths.len() + 1](), Program?[paths.len() + 1]());
-}
 
 /**
  * The same, keeping what it parsed.
@@ -1314,15 +1288,6 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
   return checkFilesWithIn(callerPaths, callerSources, Res.empty(), entry, counts, lexes, progs);
 }
 
-/**
- * `checkFilesWithIn` with nothing resolved — every caller that has no filesystem.
- *
- * `counts` runs parallel to `callerPaths`, with `core`'s count in one extra slot at the end.
- */
-C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32[] counts,
-                 Lexed?[] lexes, Program?[] progs) {
-  return checkFilesWithIn(callerPaths, callerSources, Res.empty(), entry, counts, lexes, progs);
-}
 
 /**
  * The checker over a file and its closure, with the resolution context.
