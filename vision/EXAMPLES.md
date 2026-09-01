@@ -190,7 +190,7 @@ Vec<string> nonEmpty(string[] lines) {
 
 i32 totalLength(Vec<string> lines) {
   i32 n = 0;
-  for (string line in lines) {
+  for (auto line in lines) {
     n = n + line.len();
   }
   return n;
@@ -198,7 +198,7 @@ i32 totalLength(Vec<string> lines) {
 ```
 
 The same head walks an array and a `Vec`, and an index that exists only to be a cursor never appears.
-The head keeps its parentheses and its type, as every other head in the language does.
+The head keeps its parentheses, and declares its variable the way any local is declared.
 
 **Not yet.**
 
