@@ -120,3 +120,32 @@ generic, so it cannot show this.
 Writing `tools/wac/langfuzz.wac` (`issues/system/0161` step 6). I guessed `Option.or` from memory —
 the real name is `orElse` — and `wac check` told me the file was clean. The mistake was mine; the
 issue is that the tool whose job is to catch it did not.
+
+## The decline says where now — agent-b, 2026-09-01
+
+Half of this, and the half that costs the time. The emitter's answer is a reason string that
+propagates outward through every method the walk was inside, so the reader saw
+
+    a method Gen.program, declined: a method Gen.statement, declined: no method Option<i64>.or
+
+with nothing saying where any of it is. It reads
+
+    no method Option<i32>.noSuchMethodAtAll on line 5
+
+now, matching `unresolved name … on line N` a few hundred lines above it in the same file —
+`emit.wac` already had the convention and this one call had not taken it.
+`packages/wacc/test/wac/illtyped_test.wac` pins the position rather than the wording.
+
+**The silence is untouched and is the larger half.** `wac check` still passes this file, because
+`unsupportedExpr`'s method arm ends at
+
+    if (recv == typeNone() || recv == "" || !(c.isStruct(recv) || c.isEnum(recv))) { return; }
+
+and `Option<i32>` is neither, in a file that never imported `Option`. The comment beside it says why
+that is deliberate — *"an empty answer there means 'not modelled' rather than 'not there'"* — and
+that is exactly the distinction this issue needs made. Making it means the checker modelling a type
+that arrives only as a return type, which is a question about what a file can see rather than a
+diagnostic, so it stays filed rather than being decided here.
+
+**Status stays open** for that. What is fixed is that when the emitter does catch it, the reader is
+told which line to look at.

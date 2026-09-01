@@ -874,3 +874,31 @@ export string test_no_two_file_program_here_is_accepted_by_both() {
   t.eqI32(goodDiags, 0, "refused the well-typed twin of b01");
   return t.report();
 }
+
+/**
+ * A decline about a missing method says **where**.
+ *
+ * `issues/lang/0305b`. The checker is silent here — the receiver's type arrives only as `Map.get`'s
+ * return type and the file never imported it, so there is no model to ask — and the emitter is what
+ * catches it. Its answer propagates outward through every method the walk was inside, so what the
+ * reader sees is *"a method Gen.program, declined: a method Gen.statement, declined: no method
+ * Option<i64>.or"*: three names that are fine, one that is the subject, and nothing saying where.
+ *
+ * This pins the position rather than the wording. The silence is the larger half of that issue and
+ * is not fixed here: it wants the checker to model a type that arrives as a return type, which is a
+ * question about what a file can see rather than a diagnostic.
+ */
+export string test_a_missing_method_decline_carries_its_line() {
+  T t = T.create();
+  string src = "import { Map } from \"core/map.wac\";\n"
+             + "import { hashString, stringEq } from \"core/hash.wac\";\n"
+             + "export i32 main() {\n"
+             + "  Map<string, i32> m = Map.create(hashString, stringEq);\n"
+             + "  return m.get(\"x\").noSuchMethodAtAll(0);\n"
+             + "}\n";
+  string why = blockedFiles(string[]("/m.wac"), string[](src), "/m.wac");
+  t.isTrue(why != "", "the emitter did not decline a call to a method that does not exist");
+  t.isTrue(why.indexOf("noSuchMethodAtAll") >= 0, "the decline does not name the method: " + why);
+  t.isTrue(why.indexOf("on line 5") >= 0, "the decline gives no position: " + why);
+  return t.report();
+}

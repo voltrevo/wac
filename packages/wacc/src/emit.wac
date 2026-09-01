@@ -12015,7 +12015,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             return "";
           }
           i32 ma = methodOn(env, ot, mn);
-          if (ma < 0) { return "no method " + ot + "." + mn; }
+          // **With the line, because this one arrives wrapped.** `issues/lang/0305b`: a decline
+          // propagates outward through every method the walk was inside, so the reader sees
+          // *"a method Gen.program, declined: a method Gen.statement, declined: no method
+          // Option<i64>.or"* — three names that are fine and one that is the subject, with nothing
+          // saying where. `wac check` having just passed the same file makes it worse. Same shape
+          // as `unresolved name … on line N` above.
+          if (ma < 0) {
+            return "no method " + ot + "." + mn + " on line " + numText(lexedLine(lexed, nameTok));
+          }
           // **A method with its own type parameters parses and cannot yet be called.** Nothing infers
           // its type arguments and nothing monomorphises per argument, so the honest answer is to say
           // which feature is missing: without this the reader got whichever mismatch fell out first —
