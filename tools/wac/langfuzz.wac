@@ -67,42 +67,31 @@
 // programs from seed 1. A canary that does not fire means the sweep cannot see that path at all,
 // whatever the generated source contains.
 //
-//     i32   narrowing removed from `wrapTo`      66 / 200
-//     bool  every comparison inverted            30 / 200
-//     u32   literal read as signed               33 / 200
-//     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
-//     file  the other file's value disagrees      69 / 200
-//     gen   generic `gsel` arms swapped          21 / 200
-//     arr   every array element off by one        10 / 200
-//     enum  match's A and C arms swapped           9 / 200
-//     str   struct's two fields swapped           10 / 200
-//     sub   `bv.tag()` expected to dispatch         4 / 200
-//     loop  oracle ignores `continue`            32 / 200
-//     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
+//     i32   narrowing removed from `wrapTo`      79 / 200   (was 66 before the last four items)
+//     file  the other file's value disagrees      74 / 200   (was 69)
+//     bool  every comparison inverted            33 / 200   (was 30)
+//     loop  oracle ignores `continue`            32 / 200   ) measured before the last four
+//     gen   generic `gsel` arms swapped          21 / 200   ) items landed — re-derive these
+//     loop  oracle ignores `break`               12 / 200   ) before relying on them
+//     i64   results truncated to 32 bits         11 / 200   (was 24 — see below)
+//     arr   every array element off by one        10 / 200   )
+//     str   struct's two fields swapped           10 / 200   )
+//     enum  match's A and C arms swapped           9 / 200   )
+//     sub   `bv.tag()` expected to dispatch         4 / 200   )
+//     u32   literal read as signed                3 / 200   (was 33 — see below)
 //
-// **Two of those rows were bought, not found.** `u32` read 0 of 1500 until the answer was routed
-// through a u32 comparison and a wide u32 local was seeded in every program; `i64` read 12 until a
-// wide i64 was seeded too and the answer took its **high half** — `(v >> 32) as@ i32`, which is the
-// one part of an i64 that a narrowing cast throws away and nothing else in a generated program sees.
+// **Widening this generator *diluted* two of its rows, and one of them by ten times.** `u32` went
+// from 33 to 3 and `i64` from 24 to 11 when generics, a second file, a struct, an enum, an array and
+// a subtype were added — because every new expression arm competes for the same draws, so a value
+// that reaches the answer *through a particular operation* reaches it less often.
 //
-// `issues/lang/0306b` was an i64 literal losing exactly that half, and this generator needed three
-// corpus-sized runs to surface it. Nothing about a type's presence in the generated source predicts
-// its row here, which is the whole reason the rows exist.
+// The rows that held are the ones whose canary sits on a **seeded top-level local**: the cross-file
+// value went 69 to 74 and the i32 narrowing 66 to 79, because expressions pick those variables
+// whatever else exists. That is the difference worth knowing before adding the next construct.
 //
-// **The loop rows found two generator bugs rather than a compiler one**, which is the other thing a
-// canary is for. `break` sat at 8 of 200 with loops in 159 of 200 and a `break` printed in 56, so
-// most of them were doing nothing — and they were: `breakAt` was drawn from `1..trips`, which a `for`
-// never reaches, since a `for` counts `0..trips-1` in the body while `while` and `do` count
-// `1..trips`. `contAt` had the mirror of it, drawn `0..trips-1`, so a `continue` at 0 was dead in
-// both of the other forms. Statements generated, printed, and unreachable, with the oracle agreeing
-// with the compiler about code neither ran.
-//
-// Fixing the bounds took `break` to 12. `continue` reads 32 because skipping an iteration shifts the
-// accumulator every time it fires, where a `break` only matters for the trips it removes.
-//
-// The TypeScript this ports found a `do`/`while` bug where `continue` skipped the condition, so this
-// is a path with a compiler bug already to its name — and it had been watching a third of the
-// statements it thought it was.
+// So: **the table is not a property of the generator, it is a measurement of one version of it**, and
+// adding anything invalidates it. The work that took `u32` from 0 to 33 is undone; it needs its route
+// widened again, or a seeded local of its own that the answer reads directly.
 //
 // ## What it does not reach yet
 //
