@@ -945,7 +945,16 @@ export of `packages/wacc/src/api.wac` — `diagnoseGraphIn`, `buildFilesIn`, `bl
 What it also needs is the import-graph walk that `wacFiles` does for it, and wac's is
 `gather(Fs, Cli, string) -> Sources` at `packages/wac/src/wac.wac:633` — **private to the command's
 own app module**. Importing it from there would pull the whole `wac` command into a benchmark's
-dependency graph. So either export it and accept that, or move `gather` and `Sources` into a module
+dependency graph.
+
+**Sized, so the decision is not made in the dark.** `gather` is `wac.wac:633-807` — **174 lines** —
+and it calls eleven helpers local to that file. Of those eleven, exactly **one** (`projectRootAbs`)
+is used anywhere else in it; the other ten move with it and leave nothing behind. So moving it is a
+bounded ~200 lines plus the `Sources` struct, with a single shared helper to decide about, rather
+than an open-ended untangling of a 2,779-line module. I had assumed the coupling was the risk; it is
+one helper.
+
+So either export it and accept that, or move `gather` and `Sources` into a module
 both can import. The second is the "factor before the second caller" answer and is a small refactor
 of the command's internals, which is why it is written down rather than done in passing.
 
