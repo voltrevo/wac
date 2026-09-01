@@ -2759,3 +2759,29 @@ is about rather than being small and irrelevant.
 **Not yet measured:** what a complete `--package bytes` sweep costs end to end, which is the number
 that says whether the iteration loop is minutes or an hour. That is the next thing to run, and it is
 a small enough scope to run without asking for the machine.
+
+### While in there: `mutate.ts` still talks about the reference compiler, and that branch is now dead
+
+Reading `mutate.ts` for the above, two things about the same code. **Neither is why the sweep is 42**
+— I guessed that first and it is wrong, so it is written down as a wrong guess rather than left out.
+
+`wasmHash` hashes a file's compiled bytes to detect equivalent mutants, and it uses **wacc**: its own
+comment is *"An empty module is how wacc says no. Its emitter answers a program that does not check
+with no bytes rather than a complaint."* But the branch handling files it cannot hash still calls
+that compiler *the reference*, in a comment — *"This baseline is `wasmHash`, which calls the
+**reference** — and the reference has not been able to parse a lambda since they landed in
+`std/platform.wac`"* — and in a message a user sees: *"the reference compiler cannot compile these
+file(s)"*. The reference is deleted. Whoever next hits that error is told to think about a compiler
+that is not in the tree.
+
+**And the branch does not fire any more.** It is guarded on `brokenBaselineAll`, the files whose
+hash came back null, and today's full dry run reports **`0 did not compile`** — so `refBlind` is
+empty and none of it runs. That is expected: it existed because the reference could not parse a
+lambda, and 125 of 361 sources under `packages/*/src` reached the capability layer. With the
+reference gone, the condition it was built for went too.
+
+**What it is not:** a filter that hides mutants. `refBlind` files are given `verdict: "run"` and
+merely skip equivalence pruning, so they are counted *in*, not out. The 42 is not this.
+
+Worth knowing before `mutate.ts` is ported or deleted — a port that carried this across would carry a
+diagnostic about a compiler nobody can run and a branch nothing reaches.
