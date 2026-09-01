@@ -1,0 +1,80 @@
+// What the mutation score counts, and what it refuses to count — from `tools/mutate.ts`'s report.
+//
+// The number this tool exists to produce, and the only failure mode that matters is **upward**: a
+// score is read as "the suite catches this much", so anything wrongly counted as killed is a claim
+// about the tests that nobody made. Every exclusion below is one that would otherwise inflate it.
+//
+// Pure, and taking counts rather than a run, so the rule can be tested without one.
+// `issues/system/0161` step 6.
+
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** A run's outcome, once the verdicts are in. */
+export struct Score {
+  /** Mutants killed, out of those that were actually measured. */
+  i32 killed;
+  i32 measured;
+  /** Excluded before running, and *not* counted as killed. */
+  i32 equivalent;
+  i32 duplicate;
+  i32 invalid;
+  /**
+   * A control was reported killed, which means the harness is broken and every other result in the
+   * run is meaningless.
+   */
+  bool harnessBroken;
+  i32 brokenControls;
+}
+
+/**
+ * The score, given what each group came to.
+ *
+ * **Controls are not in the denominator.** A control is a no-op by construction: it exists to prove
+ * the staging and test pipeline works, and its survival is the pipeline working rather than the suite
+ * failing to catch something. Counting it as a survivor would deflate the score by exactly the number
+ * of controls, and counting it as a kill would inflate it by the same.
+ *
+ * **Equivalent, duplicate and uncompilable are excluded rather than counted as killed**, which is the
+ * line the report spells out: counting them is what inflates a mutation score. A duplicate is the
+ * same experiment twice, an equivalent mutant is one no test could ever kill, and a mutation that
+ * does not compile was never a question about the tests at all.
+ *
+ * **A killed control means the run is void.** Not "one bad mutant": a staged project that fails to
+ * build or run for a reason unrelated to the mutation kills the control *and* everything else, so a
+ * score computed from that run reads as a well-tested suite. That is why it is a flag on the result
+ * rather than a line in the report.
+ */
+export Score scoreOf(i32 killed, i32 measured, i32 equivalent, i32 duplicate, i32 invalid,
+                     i32 controlsKilled) {
+  return Score(killed, measured, equivalent, duplicate, invalid,
+               controlsKilled > 0, controlsKilled);
+}
+
+/** `"7/9 mutants killed"`, or why the run cannot be read at all. */
+export string headline(Score s, string staged) {
+  if (s.harnessBroken) {
+    return "HARNESS BROKEN: " + itoa(s.brokenControls)
+         + " no-op control mutation(s) were reported killed. Every other result in this run is"
+         + " meaningless — a staged project is failing to build or run for a reason unrelated to"
+         + " the mutation.";
+  }
+  return itoa(s.killed) + "/" + itoa(s.measured) + " mutants killed, measuring " + staged;
+}
+
+/** The line beside it: what was left out, and why leaving it out is the honest choice. */
+export string exclusions(Score s) {
+  return "discarded before running: " + itoa(s.equivalent) + " provably equivalent, "
+       + itoa(s.duplicate) + " duplicate, " + itoa(s.invalid) + " uncompilable";
+}
+
+/**
+ * The score as a percentage, rounded, or `-1` when nothing was measured.
+ *
+ * **`-1` rather than 0 or 100**, because a run that measured nothing has no score and both of those
+ * are readable as one. A scope whose every mutant was excluded is the case: it happens, and reporting
+ * it as 0% would look like a suite that catches nothing.
+ */
+export i32 percent(Score s) {
+  if (s.harnessBroken || s.measured <= 0) { return -1; }
+  return (2 * 100 * s.killed + s.measured) / (2 * s.measured);
+}

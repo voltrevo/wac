@@ -1,0 +1,75 @@
+// What the score counts, at the points where counting wrongly would inflate it.
+//
+// A mutation score is read as "the suite catches this much", so every mistake here is a claim about
+// the tests that nobody made. `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Score, exclusions, headline, percent, scoreOf } from "./mutatescore.wac";
+
+/**
+ * Equivalent, duplicate and uncompilable are excluded rather than counted as killed.
+ *
+ * Counting them is what inflates a score: a duplicate is the same experiment twice, an equivalent
+ * mutant is one no test could ever kill, and a mutation that does not compile was never a question
+ * about the tests at all.
+ */
+export string test_the_excluded_are_not_counted_as_killed() {
+  T t = T.create();
+  Score s = scoreOf(7, 9, 4, 3, 2, 0);
+  t.eqI32(s.killed, 7, "seven killed");
+  t.eqI32(s.measured, 9, "out of nine measured — the nine excluded are not in the denominator");
+  t.eqI32(percent(s), 78, "which is 78%, not the 78 + nine free kills a lax count would give");
+  t.eqStr(exclusions(s), "discarded before running: 4 provably equivalent, 3 duplicate, 2 uncompilable",
+          "and the report says what was left out");
+  return t.report();
+}
+
+/**
+ * **A killed control voids the run.**
+ *
+ * Not one bad mutant: a staged project failing to build for a reason unrelated to the mutation kills
+ * the control *and* everything else, so the score computed from it reads as a well-tested suite.
+ */
+export string test_a_killed_control_voids_the_whole_run() {
+  T t = T.create();
+  Score s = scoreOf(20, 20, 0, 0, 0, 1);
+  t.isTrue(s.harnessBroken, "one control killed is a broken harness");
+  t.eqI32(percent(s), -1, "and there is no score, rather than the perfect one the counts suggest");
+  t.isTrue(headline(s, "abc123").indexOf("HARNESS BROKEN") >= 0,
+           "the headline says so instead of reporting 20/20: " + headline(s, "abc123"));
+  t.isTrue(headline(s, "abc123").indexOf("meaningless") >= 0,
+           "and says the rest of the run cannot be read");
+  return t.report();
+}
+
+/**
+ * A run that measured nothing has no score.
+ *
+ * **`-1` rather than 0**, because a scope whose every mutant was excluded is a real case and
+ * reporting it as 0% looks like a suite that catches nothing.
+ */
+export string test_a_run_that_measured_nothing_has_no_score() {
+  T t = T.create();
+  t.eqI32(percent(scoreOf(0, 0, 5, 2, 1, 0)), -1, "nothing measured is no score, not zero");
+  t.eqI32(percent(scoreOf(0, 4, 0, 0, 0, 0)), 0, "but four measured and none killed really is zero");
+  t.eqI32(percent(scoreOf(4, 4, 0, 0, 0, 0)), 100, "and all four killed really is a hundred");
+  return t.report();
+}
+
+export string test_the_headline_names_what_was_measured() {
+  T t = T.create();
+  string said = headline(scoreOf(3, 4, 0, 0, 0, 0), "abc123 with 2 file(s) modified, staged at 09:41");
+  t.isTrue(said.indexOf("3/4 mutants killed") >= 0, "the count: " + said);
+  t.isTrue(said.indexOf("staged at 09:41") >= 0,
+           "and the tree it is about, because a score is about a tree: " + said);
+  return t.report();
+}
+
+/** Rounding is to the nearest, not toward zero: 2 of 3 is 67% rather than 66%. */
+export string test_the_percentage_rounds_to_nearest() {
+  T t = T.create();
+  t.eqI32(percent(scoreOf(2, 3, 0, 0, 0, 0)), 67, "two of three");
+  t.eqI32(percent(scoreOf(1, 3, 0, 0, 0, 0)), 33, "one of three");
+  t.eqI32(percent(scoreOf(1, 8, 0, 0, 0, 0)), 13, "one of eight is 12.5, which rounds up");
+  return t.report();
+}
