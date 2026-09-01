@@ -984,6 +984,45 @@ platform — a new capability, with the several registries that implies — or b
 something the guest already has, which is `core.monotonicNanos()` or a counter. Worth settling before
 the first line, since it decides how the staging code is shaped.
 
+### The capability gap is exactly one, and it does not need a capability — agent-b, 2026-09-01
+
+The survey above says `mutate`'s Deno surface is ordinary "with one exception", `Deno.makeTempDir`.
+Checked against `std/platform.wac` rather than assumed, for `profile.ts`, which is the module the
+question actually blocks — its whole Deno surface, by count:
+
+    readDir 7   readTextFile 6   remove 4   makeTempDir 3   Command 3   stat 2
+    writeTextFile 1   rename 1   mkdir 1   exit 1   cwd 1
+
+`Cli` answers every one of those — `readDir`, `readFile`, `remove`, `stat`, `writeFile`, `rename`,
+`mkdir`, `cwd`, `exec`/`execWith` are all capability fields on it — **except** `makeTempDir`, and
+there is no `tempDir` or `mkdtemp` under any spelling either. So the port is blocked on one thing
+rather than on a class of things, which is a smaller question than "a capability gap" sounds.
+
+**And the answer that costs nothing is available.** Two wac tools already make scratch space by hand
+at a fixed path, which is the convention this would follow:
+
+    tools/wac/appletvectors.wac:104   string dir = ".cache/wac-appletvectors";
+    tools/wac/corpushosts.wac:75      string tmp = cli.cwd().wait() + "/.cache/corpushosts";
+
+What `mutate` needs beyond that is *distinctness* — it stages the project once per mutant — and
+`core.monotonicNanos()` plus a counter gives it without asking the host for anything. A directory
+under `.cache/mutate/` is also visible after a crash, which a real temp directory is not, and the
+thing you most want to look at when a mutant behaves strangely is the tree it was built in.
+
+**Recommending the counter rather than the capability, and the asymmetry is the reason.** Adding
+`makeTempDir` to the platform means the several registries a new capability implies and four hosts to
+implement it on — `issues/system/0161`'s own note about `Cli.exec` is what that costs — and it is
+expensive to undo. Building names from a clock is a few lines inside `mutate` and can be replaced by
+a capability later without anything outside noticing. When one of two answers forecloses nothing, it
+is not really the decision it looks like.
+
+It also sits with the operator's standing principle that a program gets what it is given: a temp
+facility is the host choosing a location the program cannot see, which is the shape that principle is
+about.
+
+**Not implemented here** — this is the ruling the section above asks for, so that whoever ports
+`profile.ts` does not have to re-derive it. The port itself is 627 lines and wants its own pass.
+
 So the honest shape of what is left: **one clean port** (`benchCompile`), **one that changes what it
 measures** (`bench`), **one large one** (`mutate`, 4,671 lines and a capability question), and a tail
 that either stays permanently or goes only once the tools it serves have.
