@@ -940,6 +940,16 @@ times, has no equivalent**: `std/platform.wac` has no temp facility at all, and 
 need scratch space make it by hand at a *fixed* path, `.cache/<toolname>`, as `corpushosts.wac` and
 `appletvectors.wac` do.
 
+**And it cannot be done incrementally**, which matters more than the size. Seven of the thirteen
+modules under `tools/mutate/` are pure logic and use no Deno API at all — `curated`, `deadline`,
+`known`, `operators`, `sample`, `types`, `why` — so each looks like a bounded first step. None is:
+`mutate.ts` imports all nine of its modules, and TypeScript cannot import a wac one. The first module
+ported breaks the tool and it stays broken until the last one lands.
+
+So this wants a session long enough to finish, or a workspace kept red in the meantime and nothing
+pushed until it is whole. That is the opposite of how the rest of step 6 went, where each tool moved
+on its own.
+
 That pattern does not carry over unchanged, because `mutate` stages the project once per mutant and
 needs the directories to be distinct. So a port has to choose: add a temp-directory capability to the
 platform — a new capability, with the several registries that implies — or build unique names from
