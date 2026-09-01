@@ -18,8 +18,9 @@
 
 import { WVec } from "./wvec.wac";
 import {
-  kAssign, kColon, kComma, kElse, kGt, kIdent, kIf, kLbrace, kLbrack, kLparen,
-  kLt, kMatch, kNull, kOr, kQuestion, kRbrace, kRbrack, kRparen,
+  kAndEq, kAssign, kCaretEq, kColon, kComma, kElse, kGt, kIdent, kIf, kLbrace, kLbrack, kLparen,
+  kLt, kMatch, kMinusEq, kNull, kOr, kOrEq, kPercentEq, kPlusEq, kQuestion, kRbrace, kRbrack,
+  kRparen, kSemi, kShlEq, kShrEq, kShrUEq, kSlashEq, kStarEq,
 } from "./kinds.wac";
 import {
   Toks, kindAt, pushRange, pushTok, pushTokAs, setKindAt, slice, toksLen, toksNew,
@@ -94,18 +95,33 @@ Toks topTernary(Toks t) {
   return out;
 }
 
+/** An assignment operator, which ends a conditional's operand exactly as a comma does. */
+bool assignK(i32 k) {
+  return k == kAssign() || k == kPlusEq() || k == kMinusEq() || k == kStarEq() || k == kSlashEq()
+      || k == kPercentEq() || k == kAndEq() || k == kOrEq() || k == kCaretEq() || k == kShlEq()
+      || k == kShrEq() || k == kShrUEq();
+}
+
 /**
  * `topTernary` between separators rather than across them.
  *
  * A conditional's operands stop at the nearest `,` or `:` — in `f(a, 1 if c else b, d)` the then-arm
  * is `1`, not `a, 1`. Scanning the whole level at once swallowed the argument list.
+ *
+ * **`;` and an assignment are separators too, and that is `issues/lang/0297c`.** A lambda body is a
+ * statement list inside an *expression* range — `() => { slot[0] = 1 if c else 2; }` — which is the
+ * one place statements reach this rewriter. Without `;` the whole body is one segment; without the
+ * assignment the then-arm of `slot[0] = 1 if c else 2` is `slot[0] = 1`. `wapyparse`'s `stmtAt`
+ * already splits both, one level up, for the same reason and says so: *"the rewrites cannot be
+ * handed a whole line"*. It never had to hold inside a bracket group until lambdas put one there.
  */
 Toks segments(Toks t) {
   Toks out = toksNew();
   Toks seg = toksNew();
   for (i32 i = 0; i < toksLen(t); i++) {
     i32 k = kindAt(t, i);
-    if ((k == kComma() || k == kColon()) && depthAt(seg, toksLen(seg)) == 0) {
+    if ((k == kComma() || k == kColon() || k == kSemi() || assignK(k))
+        && depthAt(seg, toksLen(seg)) == 0) {
       Toks done = topTernary(seg);
       pushRange(out, done, 0, toksLen(done));
       pushTok(out, t, i);

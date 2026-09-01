@@ -325,6 +325,36 @@ export string test_a_lexical_fault_is_the_lexers_on_either_surface(Core core) {
 }
 
 /**
+ * A wapy conditional inside a lambda body, which is a statement list inside an expression.
+ *
+ * `issues/lang/0297c`. `wapyparse` does not parse wapy's spellings — it rewrites the tokens in
+ * place, `X if C else Y` into `C ? X : Y`, and hands the range to wac's parser. That rewrite splits
+ * a level on `,` and `:`, which is right for a call's arguments and is every place a conditional
+ * could sit until a lambda put **statements** inside an expression. Without `;` the whole body was
+ * one segment; without the assignment the then-arm of `slot[0] = 1 if c else 2` was `slot[0] = 1`.
+ *
+ * The tree that came back had the arms swapped and a `null` where one belonged, and nothing said
+ * so: the only thing checking was `wapyroundtrip_test`, which listed the two files it broke as
+ * known-bad rather than failing.
+ */
+export string test_a_conditional_inside_a_lambda_body(Core core) {
+  T t = T.create();
+  same(t, "a conditional in a lambda body",
+       "def main() -> i32:\n    slot: i32[] = i32[1](fill=0)\n"
+       + "    r: fn[void()] = () => { slot[0] = 1 if slot[0] > 0 else 2; }\n"
+       + "    r()\n    return slot[0]\n",
+       "i32 main() { i32[] slot = i32[1](fill: 0);"
+       + " fn[void()] r = () => { slot[0] = slot[0] > 0 ? 1 : 2; }; r(); return slot[0]; }");
+  // Two statements in the body, so the `;` split is exercised rather than just the assignment one.
+  same(t, "two statements, the second conditional",
+       "def two(c: bool) -> i32:\n    v: i32 = 0\n"
+       + "    f: fn[void()] = () => { v = 1; v = 2 if c else 3; }\n    f()\n    return v\n",
+       "i32 two(bool c) { i32 v = 0;"
+       + " fn[void()] f = () => { v = 1; v = c ? 2 : 3; }; f(); return v; }");
+  return t.report();
+}
+
+/**
  * `async def` carries the `async` across, and `async` alone is not a declaration.
  *
  * `[§wac-wapy-asyncdef-9mk2xrt]` — wapy spells wac's `async i32 f(…)` as `async def f(…) -> i32:`,

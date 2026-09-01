@@ -1,7 +1,7 @@
 # 0297 — a ternary inside a lambda does not survive the wapy round trip
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
 - **Kind:** bug
@@ -74,3 +74,59 @@ Found because two new files tripped the round trip and neither contained anythin
 lowerings for `design/lang/0014`. They are on the known-bad list with this reason, measured rather
 than guessed — which is what that list's own note asks for, having once been written from what its
 author thought the failures were and naming five files that were not these.
+
+## It is a separator set, not a choice — agent-b, 2026-09-01
+
+This issue says *"the fix is a choice rather than a patch: the body is wapy throughout, or the
+expressions inside it stay wac's. Either closes it; mixing is what does not work."* Neither was
+needed, because **`wapyparse` does not parse wapy's expression spellings at all** — it rewrites the
+tokens in place and hands the range to wac's parser:
+
+> `X if C else Y` → `C ? X : Y` moves three operand groups around and retags two keywords … So the
+> range is recomputed with the shared helpers and written over itself.
+
+That rewrite runs through `segments` in `wapyrewrite.wac`, which cuts a level at its separators
+before letting `topTernary` at each piece. The separators were `,` and `:`, and the header says why:
+
+> A conditional's operands stop at the nearest `,` or `:` — in `f(a, 1 if c else b, d)` the then-arm
+> is `1`, not `a, 1`. Scanning the whole level at once swallowed the argument list.
+
+**A lambda body is the one place statements sit inside an expression range**, and its statements are
+separated by `;`, which was not a separator. So `() => { slot[0] = 1 if c else 2; }` reached
+`topTernary` as a single segment, and `topTernary` takes *everything* before the `if` as the then-arm
+— `slice(t, 0, ifAt)` — which is `slot[0] = 1`. That is exactly the tree this issue records, arms
+swapped with a `null` where one belonged.
+
+**`wapyparse` already knew this and says so one level up.** `stmtAt` splits an assignment's two sides
+before rewriting, with the comment *"the rewrites cannot be handed a whole line: `return 1 if c else
+2` would take `return 1` as the arm, and `x = a if c else b` would take `x = a`"*. The same rule
+simply never had to hold **inside** a bracket group, because until lambdas nothing put a statement
+there.
+
+So `segments` now cuts on `;` and on an assignment operator as well, and the printer is untouched —
+which keeps it consistent with `[§wac-wapy-matchexpr-3jx8rvc]`, the existing ruling on this exact
+shape: *"The match expression keeps braces, because it is an expression and cannot open an indented
+block."* A lambda is the same kind of thing and keeps wac's braces for the same reason.
+
+    packages/platform/test/wac/asynclower_test.wac — round-trips now, removed from the known-bad list
+
+`packages/wacc/test/wac/wapy_test.wac` gains `test_a_conditional_inside_a_lambda_body`, with two
+cases so the `;` split is exercised and not only the assignment one. Canaried: with the separators
+back to `,` and `:` it fails on four assertions.
+
+## The second file was mislabelled, and it stays
+
+`packages/platform/test/wac/asyncchain_probe.wac` was listed with the same reason and **is not this
+bug**. It contains no ternary inside a lambda: its two `?` are `Pending<U>?[]`, a nullable type, and
+`return f.ok ? f.bytes.len() : 0 - 1` in `sizeOf`, which is a plain function. It still fails the
+round trip after this fix, so its entry is kept with the reason corrected to *"cause unidentified —
+not the ternary"*.
+
+That list's own note asks for measured reasons, *"having once been written from what its author
+thought the failures were and naming five files that were not these"* — this is the same slip one
+file wide, and a wrong reason is worse than none because it makes the next reader think the cause is
+known. What the file does have is **nested lambdas** — `fin` inside `armSecond` inside `force` —
+which is `issues/lang/0296c`'s shape. Not verified as the cause, and named here only so whoever
+picks it up starts there rather than at the ternary.
+
+**So this issue stays open** for that file. The construct it is named for is fixed and pinned.

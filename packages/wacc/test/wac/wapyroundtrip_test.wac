@@ -67,7 +67,6 @@ string[] knownBad() {
     "packages/platform/test/wac/scheduled_test.wac",
     "packages/wac/src/grants.wac",
     "spec/cases/0248-a-chain-of-method-type-arguments-with-inline-lambdas.wac",
-    "packages/platform/test/wac/asynclower_test.wac",
     "packages/platform/test/wac/asyncchain_probe.wac");
 }
 
@@ -81,8 +80,7 @@ string[] knownBadWhy() {
     "jsx text containing markup characters",
     "jsx text containing markup characters",
     "a type-argument chain with an inline lambda",
-    "a ternary inside a lambda — issues/lang/0297c",
-    "a ternary inside a lambda — issues/lang/0297c");
+    "cause unidentified — not the ternary; see issues/lang/0297c");
 }
 
 /**
