@@ -113,16 +113,26 @@ export i32 TY_BOOL() { return 2; }
  * bitwise ops, `<<`, `==` and `!=` are bit-identical. Unary `-` is not defined on unsigned and
  * `>>>` is refused as redundant — this generator emits neither, so nothing needs excluding.
  *
- * **Thinly observed, measured rather than assumed.** `u32` reaches the *source* of 158 programs in
- * 200, but it reaches the *answer* far less often: breaking this mask to a sign extension — the
- * canary for the whole u32 path — disagrees on only **8 of 1500** programs. So a clean u32 sweep of
- * 200 says much less than a clean i32 one, and the suite's sweep would miss a broken mask about a
- * third of the time.
+ * **Present, correct, and very thinly distinguishing — measured, and the number got worse when the
+ * oracle got right.** Breaking this mask to a sign extension is the canary for the whole u32 path,
+ * and it disagrees on **2 of 1500** programs. `main` now takes a u32 route a quarter of the time
+ * when one is in scope, which was meant to fix that and barely moved it.
  *
- * The cause is that a u32 value only influences `main` through the `as@ i32` arm of `cast`, which is
- * one of seven expression arms and needs a u32 local already in scope. Making u32 load-bearing —
- * letting the final expression take one directly, or generating u32 helper returns — is the work
- * that would make this type genuinely tested rather than merely present.
+ * The reason is the literal pool below. Every u32 literal is under 2^31, where masking and
+ * sign-extending agree — so the only values that can *tell the two apart* are ones that arrived by
+ * wrapping arithmetic in a u32 slot, and those are rare.
+ *
+ * **The fix is slot-aware literals, and it is precise.** wac types a literal from its context, so a
+ * wide literal is a `u32` wherever a u32 slot surrounds it — `u32 v = 3000000000;` and
+ * `u32 v = 3000000000 + 1;` are both fine, and the second wraps exactly as the oracle does. It is
+ * unsafe only where nothing supplies the slot, which in this generator is the comparison arm that
+ * may pick two u32 *literals*: there wac reads them by width as i64 and the oracle wraps them, and
+ * `(3000000000 + 2147483647)` duly disagreed at seed 41. Requiring a u32 *variable* on one side of
+ * such a comparison, and drawing the wide pool inside declarations, would restore the sign boundary
+ * without the ambiguity.
+ *
+ * Until then, treat a clean u32 sweep as saying almost nothing. The type is exercised in the source
+ * — 158 programs in 200 — and observed by the oracle in about one in 750.
  */
 export i32 TY_U32() { return 3; }
 
@@ -393,9 +403,18 @@ export struct Gen {
       return Expr(b == 1 ? "true" : "false", ty, (Env e) => b);
     }
     if (ty == TY_U32()) {
-      // Chosen around the sign boundary, because that is the only place unsigned differs: every
-      // value at or above 2^31 reads as negative if the compiler picks a signed instruction.
-      i64[] upool = i64[](0, 1, 7, 255, 65536, 2147483647, 2147483648, 4294967295, 3000000000);
+      // **All below 2^31, and that is not timidity — it is the same rule the i64 pool follows.**
+      // wac types an integer literal from its *context*, so a bare `3000000000` in a comparison of
+      // two literals has no u32 slot to take and is an i64 by its own width. The generator meant it
+      // as a u32 and the compiler read it as an i64; the oracle wrapped to 32 bits and the compiler
+      // did not, and `(3000000000 + 2147483647)` disagreed at seed 41 — my fault, not the
+      // compiler's, which is the failure mode the header warns about.
+      //
+      // The sign boundary is still reached, and more honestly: a `u32` *local* carries its type, so
+      // `2147483647 + 2147483647` in a u32 slot wraps to 4294967294 and every use of that variable
+      // is unambiguously unsigned. Values above 2^31 arrive by arithmetic rather than by a literal
+      // nobody typed.
+      i64[] upool = i64[](0, 1, 7, 255, 65536, 2147483646, 2147483647, 1073741824);
       i64 uv = upool[this.rng.intTop(upool.len())];
       return Expr(itoa64(uv), ty, (Env e) => uv);
     }
@@ -785,7 +804,32 @@ export struct Gen {
   Program program(this) {
     for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
     this.statements(3);
+    // **The answer takes a u32 route a quarter of the time**, when one is in scope.
+    //
+    // Without this a u32 value only reaches `main` through the `as@ i32` arm of `cast`, one of seven
+    // expression arms — measured at about one program in 190, by two independent canaries. A type the
+    // oracle almost never observes is a type the sweep does not test, however often it appears in the
+    // source, and it appeared in 158 programs out of 200.
+    //
+    // Drawn *before* the expression either way, so the sequence a seed names does not depend on
+    // whether a u32 local happened to exist.
+    bool viaU32 = this.rng.intTop(4) == 0;
+    Vec<Local> unsigned = this.inScope(TY_U32());
     Expr result = this.expr(TY_I32(), 3);
+    if (viaU32 && unsigned.len() > 0) {
+      Local u = unsigned.get(this.rng.intTop(unsigned.len()));
+      string un = u.name;
+      Expr asI32 = Expr("(" + un + " as@ i32)", TY_I32(),
+                        (Env e) => wrapTo(e.get(un), TY_I32()));
+      // **`base`, not `result`.** Captures are by reference, so a lambda that reads `result` while
+      // `result` is being reassigned to that very lambda calls itself — `RangeError: Maximum call
+      // stack size exceeded`, which is what the header's warning about reused locals means in
+      // practice. A fresh local holds the old value.
+      Expr base = result;
+      result = Expr("(" + base.src + " + " + asI32.src + ")", TY_I32(),
+                    (Env e) => wrapTo(applyBin(OP_ADD(), base.evalIn(e), asI32.evalIn(e)),
+                                      TY_I32()));
+    }
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
     string src = "";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
