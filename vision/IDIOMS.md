@@ -24,8 +24,8 @@ T? find<T>(T[] xs, fn[bool(T)] p) {
 }
 ```
 
-Takes no capability, so it cannot reach the world. Absence is a type, a loop says what it walks, and
-a predicate is a value.
+Takes no capability, so it cannot reach the world. The predicate is an ordinary parameter, and `T?`
+is what comes back when nothing matches.
 
 **Not yet.**
 
