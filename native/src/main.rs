@@ -2363,11 +2363,28 @@ fn dispatch(
                 c.stdout.finish();
                 c.stderr.finish();
             }
-            if let Some(Sock::Open(s)) = socket_at(caller, h) {
-                // Both directions, which is what closing a socket means: a peer blocked on a read
-                // must find out rather than wait for a process that has finished with it.
-                let _ = s.shutdown(std::net::Shutdown::Both);
-                caller.data().handles.lock().unwrap().close(h);
+            // **All three kinds, and it matched only one until 2026-09-01.** `Sock` is `Listening`,
+            // `Open` and `Datagram`; this arm read `Some(Sock::Open(s))`, so closing a *listener* or a
+            // bound UDP socket fell through and did nothing at all — the handle stayed in the table and
+            // the port stayed bound. Measured: listen on port 0, `closeSocket` the listener, dial the
+            // port again, and this host answered `handle=4 fault=0` where the V8 host answers
+            // `FAULT_REFUSED`. So a readiness probe built on "can I connect yet?" is satisfied by the
+            // listener the test just closed, and `packages/wactest/test/wac/daemon_test.wac` fails two
+            // tests and hangs a third on it. `issues/system/0317b`.
+            //
+            // Only a stream has a `shutdown`: it is the two directions of an established connection,
+            // and a peer blocked on a read must find out rather than wait for a process that has
+            // finished with it. A listener and a datagram socket have no peer to tell — dropping the
+            // last handle is the whole of closing them, which is what `close(h)` does.
+            match socket_at(caller, h) {
+                Some(Sock::Open(s)) => {
+                    let _ = s.shutdown(std::net::Shutdown::Both);
+                    caller.data().handles.lock().unwrap().close(h);
+                }
+                Some(Sock::Listening(_)) | Some(Sock::Datagram(_)) => {
+                    caller.data().handles.lock().unwrap().close(h);
+                }
+                None => {}
             }
             // **A child's handle stays.** Its status is still a question worth asking — a parent that
             // stops a service and wants to know it is gone asks `exitCode` next — and the JavaScript

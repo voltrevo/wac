@@ -135,3 +135,45 @@ export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, C
 
   return t.report();
 }
+
+/**
+ * Closing a **listener** stops it accepting — the same question one socket kind over.
+ *
+ * The test above is about a close reaching the peer of an established connection. This is about a
+ * close happening at all: `Sock` has three kinds in `native/src/main.rs` — `Listening`, `Open` and
+ * `Datagram` — and `Cap::CloseSocket` matched only `Open` until 2026-09-01. So on the wasmtime host
+ * closing a listener fell through the `if let` and did nothing: the handle stayed in the table and
+ * the port stayed bound. `issues/system/0317b`.
+ *
+ * **What it cost is worth more than the arm it broke.** `packages/wactest/src/daemon.wac` gets a free
+ * port by binding zero and releasing, and its readiness wait dials until something answers. With the
+ * listener never released, "is the server up yet?" was answered *yes* by the listener the test had
+ * just closed — so `daemon_test.wac` failed two tests saying `something answered on a port nothing is
+ * listening on`, and hung a third talking to a server that did not exist. A close that silently does
+ * nothing does not look like a close bug from any of those.
+ *
+ * **The control arm is the point.** Dialling while the listener is open must succeed, or a refusal
+ * afterwards proves only that the dial never worked — which is the shape
+ * `packages/tor/test/wac/` calls a probe that cannot fail.
+ */
+export string test_closing_a_listener_stops_it_accepting(Core core, Cli cli) {
+  T t = T.create();
+  Socket l = cli.listen("127.0.0.1", 0).wait();
+  t.isTrue(l.handle >= 0, "a listener was opened — " + l.error);
+  if (l.handle < 0) { return t.report(); }
+
+  Socket up = cli.connect("127.0.0.1", l.port).wait();
+  t.isTrue(up.handle >= 0,
+           "the control arm: dialling it while it is open succeeds, so a refusal below is the close\n"
+           + "  rather than a dial that never worked — " + up.error);
+  if (up.handle >= 0) { cli.closeSocket(up.handle); }
+
+  cli.closeSocket(l.handle);
+
+  Socket down = cli.connect("127.0.0.1", l.port).wait();
+  if (down.handle >= 0) { cli.closeSocket(down.handle); }
+  t.isTrue(down.handle < 0,
+           "dialling port " + itoa(l.port) + " after closing its listener was accepted — the listener\n"
+           + "  is still there. A readiness probe built on this reads a closed port as a live server.");
+  return t.report();
+}

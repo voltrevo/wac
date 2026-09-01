@@ -1,7 +1,7 @@
 # 0317 — on the wasmtime host a dial to an unbound port appears to succeed
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-09-01
 - **Kind:** bug
@@ -70,3 +70,50 @@ the helper both go through and names what its readiness probe actually calls.
 `issues/system/0128` — the two-host differential that times out under load — is worth reading beside
 this. A host that reports every port as live is one way for a differential to look slow rather than
 wrong.
+
+## Fixed, and the title describes the symptom rather than the fault — agent-b, 2026-09-01
+
+**`closeSocket` matched one socket kind of three.** `Sock` in `native/src/main.rs` is `Listening`,
+`Open` and `Datagram`; `Cap::CloseSocket` read
+
+```rust
+if let Some(Sock::Open(s)) = socket_at(caller, h) { … }
+```
+
+so closing a **listener** — or a bound UDP socket — fell through the `if let` and did nothing at all.
+The handle stayed in the table and the port stayed bound. Nothing was wrong with `connect`: it was
+answering correctly about a listener that was still there.
+
+Reduced to four lines, which is the reproduction worth keeping:
+
+| | v8 | wasmtime, before | wasmtime, after |
+|---|---|---|---|
+| dial while listening | `handle=3 fault=0` | `handle=3 fault=0` | `handle=3 fault=0` |
+| `closeSocket(listener)`, dial again | `handle=-1 fault=15` | **`handle=4 fault=0`** | `handle=-1 fault=15` |
+
+`fault=15` is `FAULT_REFUSED`, *Connection refused (os error 111)*.
+
+**Why it presented as a `connect` fault.** `packages/wactest/src/daemon.wac` takes a free port by
+binding zero and releasing, then waits for readiness by dialling until something answers. With the
+release doing nothing, "is the server up yet?" was answered *yes* by the listener the test had just
+closed — so the two failures said `something answered on a port nothing is listening on` and
+`a command that does not exist appeared to serve a port`, and the third hung talking to a server that
+was never started. Three symptoms, none of them shaped like a close that silently returns.
+
+**Only a stream has a `shutdown`** — it is the two directions of an established connection, and a
+peer blocked on a read must be told. A listener and a datagram socket have no peer; dropping the last
+handle is the whole of closing them. The `match` now names all three kinds, so a fourth would be a
+compile error rather than a silent no-op, which is the property the `if let` gave away.
+
+**The datagram half was never reported and is fixed by the same line.** Nothing exercised it, which
+is why: `packages/platform/test/wac/datagram_probe.wac` is about delivery rather than about closing.
+
+**Test:** `test_closing_a_listener_stops_it_accepting` in
+`packages/platform/test/wac/closewhilereading_test.wac`, beside `0304b`'s — the same question one
+socket kind over. It dials while the listener is open first, so a refusal afterwards is the close
+rather than a dial that never worked. Canaried against the pre-fix binary: reverting only
+`native/src/main.rs` fails it and leaves the neighbouring test passing.
+
+`packages/wactest/test/wac/` is **8 files, 8 ok** on that host, from 0 of 8 before `0316b`.
+
+**Fixed in:** `native/src/main.rs`, `packages/platform/test/wac/closewhilereading_test.wac`.
