@@ -1173,6 +1173,40 @@ is a wac import-closure walk already, but it takes sources **already in memory**
 it is a superset-scan that deliberately does not parse. It does not read from disk, so it is not a
 substitute.
 
+### Where the `mutate` port stands — agent-b, 2026-09-01
+
+3,166 lines of wac across nine files in `tools/wac/`, beside 4,746 lines of TypeScript that still
+runs the tool. Nothing has been deleted, so `tools/mutate.ts` is unchanged and every gate since has
+been green — the claim above that this port "cannot be done in pieces" was about deleting as you go.
+
+| ported | what it holds |
+|---|---|
+| `mutateoperators` | the four operators, the lexer walk, shape sampling. Differential against the reference over real files: 401 mutants, in order |
+| `mutatewhy` | `firstFailureLine`, differential over seven transcripts |
+| `mutatesample` | `mulberry32` and the stratified draw, differential on five seeds |
+| `mutatedeadline` | the deadline, at the boundaries |
+| `mutatenative` | the exit-code contract, the run split, the merge, the spawning-test rule |
+| `mutatescope` | `testDirsFor`, `isBlindScope`, `packagesOf`, `applyEdits`, `scopeFor` |
+| `mutateplan` | `byCost`, `selectTests`, `planFor`, `filterFor`, `linesOf` |
+| `mutatelocate` | placing a curated mutation, and its four refusals |
+| `mutatetriage` | the TCE decision and `wasmHashOf` |
+
+**What is left is the impure orchestration and the two data tables**, in this order:
+
+1. **`stageProject`** — the piece the temp-directory ruling above unblocks. Shells out already, so the
+   symlink goes the same way.
+2. **`buildProfile`** — the other half of `profile.ts`: runs `wac test --coverage`, stores and reads
+   the profile. `selectTests` above is what consumes it and is already here.
+3. **the driver** — `mutate.ts`'s own loop: gather, triage, run, report. It composes the nine.
+4. **`curated.ts` and `known.ts`** — pure data, 42 entries and a survivor list. Last on purpose:
+   duplicated *data* drifts in a way duplicated code does not, so the window where both exist should
+   be as short as it can be. They move in the commit that deletes the TypeScript.
+
+**Three differences from the reference are deliberate and pinned by cases**, so they do not read as
+port bugs later: `bumpLiteral` declines a literal wider than `i64` rather than wrapping it,
+`sampleMutants` computes its shuffle index in integers because no wac cast is `Math.floor`, and
+`wasmHashOf` asks the front end because an empty module is *not* how this compiler says no.
+
 ### Done, and `benchCompile` has no missing dependency left — agent-b, 2026-09-01
 
 `gather`, `Sources`, `projectRootAbs` and `wacHomeOf` are exported from
