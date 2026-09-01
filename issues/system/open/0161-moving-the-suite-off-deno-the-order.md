@@ -1029,6 +1029,32 @@ is a wac import-closure walk already, but it takes sources **already in memory**
 it is a superset-scan that deliberately does not parse. It does not read from disk, so it is not a
 substitute.
 
+### Done, and `benchCompile` has no missing dependency left — agent-b, 2026-09-01
+
+`gather`, `Sources`, `projectRootAbs` and `wacHomeOf` are exported from
+`packages/wac/src/sources.wac`. Every one of `benchCompile.ts`'s three harness imports now has a wac
+home:
+
+| TypeScript | wac | |
+|---|---|---|
+| `harness/wacFiles.ts` — `wacFiles` | `packages/wac/src/sources.wac` — `gather` | this commit |
+| `harness/programs.ts` — `findPrograms` | `tools/wac/programs.wac` — `findPrograms(Cli)` | already there |
+| `harness/waccBuild.ts` — `waccApi` | `packages/wacc/src/api.wac` | direct imports; wac needs no API object |
+
+and the rest of what it uses maps directly: `performance.now` to `core.monotonicNanos`,
+`/proc/self/status` to `cli.readFile`, and `--mem`'s re-invocation of itself to `cli.exec` of the
+binary. **So the port is work, not a blocked item**, which is a change of status for the row above
+that calls it "the cleanest next one".
+
+**One thing the port has to decide, which is not mechanical.** `tools/benchCompile.test.ts` asserts
+that every `api.*` call in `harness/waccBuild.ts` is either timed here or carries a `bench-exempt`
+line saying why — a guard that exists because the list silently drifted twice, the second time
+*"within the hour, by the person who wrote"* the note telling them not to let it. A wac benchmark
+does not go through `waccBuild.ts`, so that guard has to be re-pointed at whatever the wac build
+path is — `packages/wac/src/wac.wac`'s own sequence — or it will keep passing while measuring a
+path nobody takes, which is precisely the failure it was written to catch. Porting the benchmark and
+leaving the guard reading the TypeScript would be worse than not porting it.
+
 The `bench` row is a correction made an hour after this table was written: I classified it from its
 header line and its clock, and only reading the body showed that a section of it is *about* the
 boundary it would stop having.
