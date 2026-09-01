@@ -19,7 +19,8 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { GenStats, Mutant, bumpLiteral, generate, short } from "./mutateoperators.wac";
+import { GenStats, Mutant, bumpLiteral, generate, isMutationTarget, short }
+       from "./mutateoperators.wac";
 
 string[] SUBJECTS() {
   return string[](
@@ -174,5 +175,25 @@ export string test_the_cases_the_differential_pinned() {
           "and a path that is not under src/ keeps the rest of itself");
   t.eqStr(short("tools/wac/covreport.wac"), "tools/wac/covreport.wac",
           "anything outside packages/ is left alone");
+  return t.report();
+}
+
+/**
+ * Which files are worth mutating at all.
+ *
+ * A mutant of a test file changes the thing doing the measuring rather than the thing measured, and
+ * both outcomes are made-up numbers: it breaks the test and is scored as a kill of nothing, or it does
+ * not and is scored as a survivor of a file nothing asserts about.
+ */
+export string test_test_and_bench_files_are_not_mutation_targets() {
+  T t = T.create();
+  t.isTrue(isMutationTarget("packages/rlp/src/rlp.wac"), "source is a target");
+  t.isTrue(!isMutationTarget("packages/fs/test/wac/fs_test.wac"), "a test file is not");
+  t.isTrue(!isMutationTarget("packages/gzip/bench/speed.wac"), "and neither is a benchmark");
+  // A segment, not a substring — the distinction a regex over the whole path gets wrong.
+  t.isTrue(isMutationTarget("packages/test-vectors/src/x.wac"),
+           "a package whose name merely begins with `test` is still source");
+  t.isTrue(isMutationTarget("packages/attest/src/a.wac"),
+           "and one that merely contains it is too");
   return t.report();
 }

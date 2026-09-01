@@ -648,3 +648,29 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
   for (i32 i = 0; i < count; i++) { out[i] = buf[i]; }
   return out;
 }
+
+/**
+ * Whether a file is code under test, and so worth mutating.
+ *
+ * **Test fixtures and benchmarks are not the code under test.** A mutant of a test file changes the
+ * thing doing the measuring rather than the thing measured: it either breaks the test — scored as a
+ * kill, of nothing — or it does not, and is scored as a survivor of a file no other test asserts
+ * about. Both numbers are made up, and the second is the one that flatters.
+ *
+ * A path segment, not a substring: `packages/test-vectors/src/x.wac` is source, and
+ * `packages/fs/test/wac/fs_test.wac` is not.
+ */
+export bool isMutationTarget(string file) {
+  return !hasSegment(file, "test") && !hasSegment(file, "bench");
+}
+
+/** Whether `name` appears in `path` as a whole `/`-delimited segment. */
+bool hasSegment(string path, string name) {
+  i32 from = 0;
+  for (i32 i = 0; i <= path.len(); i++) {
+    if (i < path.len() && path.slice(i, i + 1) != "/") { continue; }
+    if (path.slice(from, i) == name) { return true; }
+    from = i + 1;
+  }
+  return false;
+}
