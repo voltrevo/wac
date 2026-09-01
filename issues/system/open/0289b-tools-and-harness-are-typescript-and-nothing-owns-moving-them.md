@@ -340,7 +340,7 @@ actually available to port:
 | `mutate.ts` + `tools/mutate/` + their tests | ~5,500 | blocked: `0290b` → `issues/lang/0291c`, and `issues/system/0183` |
 | ~~`corpus:stderr`~~ | — | **done, 2026-08-30** — the knot was untied and it is `tools/wac/corpusstderr.wac` |
 | ~~`corpus:hosts`~~ | — | **done, 2026-08-30** — `tools/wac/corpushosts.wac`; the `buildNative` blocker below was mine and was wrong |
-| `fuzz.ts` + `fuzzBoundary.ts` | 954 | carve-out — see below. I had these as the available remainder and was wrong |
+| ~~`fuzz.ts`~~ + `fuzzBoundary.ts` | — | `fuzz.ts` **deleted** (`0161` step 6, `b3c8f30c`); `fuzzBoundary.ts` is still a carve-out — see below |
 | ~~`benchCompile.ts` + test~~ | — | **done, 2026-08-31** — `tools/wac/benchcompile.wac`; the decision is answered below |
 | `checkTypes.ts`, `typecheck.test.ts` | 128 | dissolve with the TypeScript they check |
 | `suiteGate.ts` + test | 116 | waits for **three** announcers now, not eight — and it is already a remnant |
@@ -532,3 +532,34 @@ expired.
 `runPhase` in the port is a literal dispatch rather than a table, deliberately: the guard finds the
 phases by scanning for the calls, so a table would hide them from the check that exists to notice a
 phase going missing.
+
+### Re-measured 2026-09-01, and a third carve-out that expired
+
+The counts above are dated 2026-08-30. Same method — `find <dir> -name '*.ts'`, which the note there
+insists on because a glob misses `tools/mutate/`:
+
+| where | files | lines | then |
+|---|---|---|---|
+| `tools/**/*.ts` | 28 | **6,716** | 31 files, 7,246 |
+| `harness/**/*.ts` | 35 | **5,809** | unchanged |
+
+**The tracking number is 15 of 76**, down from 16 — `tasks.json5` entries that spawn `deno`.
+`harness/` has not moved at all, which is what the claim line at the top of this issue predicts:
+it says `tools/` is being ported leaf-first and `harness/` is not claimed. Nobody has taken it.
+
+*One caveat on the title.* It says 15,437 lines, and the two rows above sum to 12,525 — they summed
+to 13,055 when they were written, so the title has never reproduced under this method. I have not
+worked out what it counted and am not adjusting it on a guess; the two rows are measured and the
+title is not.
+
+**And `tools/fuzz.ts` is gone**, deleted by `0161` step 6 in `b3c8f30c`. The section below argues at
+length that both fuzzers are carve-outs, and for `fuzzBoundary.ts` — whose subject is the JavaScript
+boundary itself — that still holds. For `fuzz.ts` the question stopped existing.
+
+That is the third blocker on this issue to lapse without anyone noticing, after `buildNative` on
+`corpus:hosts` and the `bench:compile` decision above. The three failed differently — one was wrong
+when written, one expired when its subject was deleted, one expired when the *alternative* was
+deleted — and none of them left a mark when it stopped being true. The practical form of that: a
+carve-out or blocker in this issue that names a specific TypeScript file should be re-checked by
+looking for the file before it is believed, because it costs one `ls` and all three of these would
+have been caught by it.
