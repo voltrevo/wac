@@ -1,0 +1,102 @@
+// The triage decision, in the order that makes two of its rules load-bearing.
+//
+// Trivial compiler equivalence is a pruner, and a pruner's failure mode is discarding something it
+// should have run — which never goes red, it just quietly shrinks what was measured.
+// `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Triage, signatureOf, triageOf } from "./mutatetriage.wac";
+
+string[] none() { return string[0](fill: ""); }
+
+export string test_identical_wasm_is_provably_equivalent() {
+  T t = T.create();
+  Triage got = triageOf(false, "", false, "a.wac=H1", "a.wac=H1", none(), none());
+  t.eqStr(got.verdict, "equivalent", "the same bytes cannot be told apart by any test");
+  t.isTrue(!got.record, "and an equivalent mutant does not claim the signature");
+  return t.report();
+}
+
+export string test_a_second_mutant_with_the_same_wasm_is_a_duplicate() {
+  T t = T.create();
+  Triage got = triageOf(false, "", false, "a.wac=H2", "a.wac=H1",
+                        string[]("a.wac=H2"), string[]("relational/a:1:1"));
+  t.eqStr(got.verdict, "duplicate", "the same question asked twice");
+  t.eqStr(got.detail, "relational/a:1:1", "and it names the mutant that asked it first");
+  return t.report();
+}
+
+export string test_a_distinct_mutant_runs_and_claims_its_signature() {
+  T t = T.create();
+  Triage got = triageOf(false, "", false, "a.wac=H2", "a.wac=H1", none(), none());
+  t.eqStr(got.verdict, "run", "different wasm is a real question");
+  t.isTrue(got.record, "and it claims the signature, so the next identical one is a duplicate");
+  return t.report();
+}
+
+/**
+ * **A control is run even though TCE proves it equivalent.**
+ *
+ * It is a no-op by construction, so the equivalence rule would discard it — and discarding it
+ * deletes the only check that the staging and test pipeline works at all. Both facts are kept: it
+ * runs, and whether the compiler agreed it changes nothing is recorded separately. A control whose
+ * wasm *differs* is not a control any more, and TCE failing to notice a genuine no-op would mean the
+ * equivalence detector is broken.
+ */
+export string test_a_control_is_always_run_and_its_noop_ness_recorded() {
+  T t = T.create();
+  Triage same = triageOf(false, "", true, "a.wac=H1", "a.wac=H1", none(), none());
+  t.eqStr(same.verdict, "run", "a control runs though its wasm is identical");
+  t.isTrue(same.controlIsNoop, "and the compiler agreeing is recorded rather than acted on");
+  t.isTrue(!same.record, "it does not claim the signature — it is not a distinct question");
+
+  Triage differs = triageOf(false, "", true, "a.wac=H9", "a.wac=H1", none(), none());
+  t.eqStr(differs.verdict, "run", "a control whose wasm differs still runs");
+  t.isTrue(!differs.controlIsNoop,
+           "and that it is not a no-op is recorded — it has stopped being a control");
+  return t.report();
+}
+
+/**
+ * **A file the reference cannot read is run, not pruned.**
+ *
+ * There is no hash to compare, so the equivalence question cannot be asked; the binary answers in the
+ * worker whether the mutation compiles. Pruning here would discard every mutant in 125 files.
+ */
+export string test_a_file_without_a_hash_is_run() {
+  T t = T.create();
+  Triage got = triageOf(true, "", false, "", "a.wac=H1", string[]("" ), string[]("earlier"));
+  t.eqStr(got.verdict, "run", "no hash means the question cannot be asked, so ask the worker");
+  t.isTrue(!got.record, "and it claims nothing, so it cannot make a later mutant a duplicate of it");
+  return t.report();
+}
+
+/** A mutation the language rejects is reported, not scored. */
+export string test_a_mutation_that_does_not_compile_is_invalid() {
+  T t = T.create();
+  Triage got = triageOf(false, "a.wac", false, "", "a.wac=H1", none(), none());
+  t.eqStr(got.verdict, "invalid", "it is not a mutant, it is a mutation the language rejects");
+  t.eqStr(got.detail, "a.wac does not compile", "and it says which file");
+  return t.report();
+}
+
+/**
+ * The blind and invalid rules come before the control rule, and that order is deliberate: a control
+ * over a file with no hash has no `isNoop` to record, and claiming one would be inventing it.
+ */
+export string test_the_earlier_rules_win() {
+  T t = T.create();
+  t.eqStr(triageOf(true, "a.wac", true, "x", "y", none(), none()).verdict, "run",
+          "blind comes first — there is nothing to compare");
+  t.eqStr(triageOf(false, "a.wac", true, "x", "y", none(), none()).verdict, "invalid",
+          "and a file that does not compile beats being a control");
+  return t.report();
+}
+
+export string test_the_signature_pairs_each_file_with_its_hash() {
+  T t = T.create();
+  t.eqStr(signatureOf(string[]("a.wac", "b.wac"), string[]("H1", "H2")), "a.wac=H1|b.wac=H2",
+          "file=hash, joined, so two files that swapped hashes are not the same signature");
+  t.eqStr(signatureOf(string[]("a.wac"), string[]("H1")), "a.wac=H1", "one file needs no separator");
+  return t.report();
+}

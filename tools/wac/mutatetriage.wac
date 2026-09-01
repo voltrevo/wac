@@ -1,0 +1,75 @@
+// Which mutants are worth running — the decision half of `triage` in `tools/mutate.ts`.
+//
+// Trivial compiler equivalence: compile the mutated sources, and if the wasm is byte-identical to the
+// baseline's then no test can tell the two programs apart and running it would prove nothing. The
+// compiling is the impure half and stays with the driver; what is here is the decision, which takes
+// the hashes it is given.
+//
+// **The order of the rules is the content**, and two of them exist to stop this pruning something it
+// should not. `issues/system/0161` step 6.
+
+/**
+ * `verdict` is one of `run`, `equivalent`, `duplicate`, `invalid`.
+ *
+ * `detail` carries the duplicate's original or the invalid's reason, and is `""` otherwise.
+ * `record` is whether the caller should remember this signature — see `triageOf`.
+ */
+export struct Triage {
+  string verdict;
+  string detail;
+  bool record;
+  /** For a control mutant only: whether the compiler agreed it changes nothing. */
+  bool controlIsNoop;
+}
+
+i32 indexOfIn(string[] xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) {
+    if (xs[i] == want) { return i; }
+  }
+  return -1;
+}
+
+/**
+ * What to do with a mutant whose files hash to `signature`, against a baseline of `original`.
+ *
+ * - `blind` — at least one edited file is one the reference compiler cannot read, so there is no
+ *   hash to compare. **Run it**, and let the binary say in the worker whether the mutation compiles.
+ *   Pruning here would discard every mutant in 125 files.
+ * - `invalidFile` — non-empty when a file did not compile at all. That is not a mutant, it is a
+ *   mutation the language rejects, and it is reported rather than scored.
+ * - `mustSurvive` — a control. It is a no-op by construction, so TCE proves it equivalent, and
+ *   **discarding it on that basis would delete the only check that the staging and test pipeline
+ *   works at all**. So a control is always run, and whether TCE called it a no-op is recorded
+ *   separately: a control whose wasm *differs* is not a control any more, and TCE failing to notice
+ *   a genuine no-op would mean the equivalence detector is broken. Both facts are worth having.
+ * - identical to baseline — provably equivalent, and no test can distinguish the two programs.
+ * - already seen — a duplicate of the mutant that produced that wasm first. Running it again asks
+ *   one question twice.
+ *
+ * **`record` is false on every path but the last**, which matches the reference: a control and a
+ * blind mutant are run without claiming their signature, so they cannot make a later, genuinely
+ * distinct mutant look like a duplicate of them.
+ */
+export Triage triageOf(bool blind, string invalidFile, bool mustSurvive,
+                       string signature, string original,
+                       string[] seenSignatures, string[] seenNames) {
+  if (blind) { return Triage("run", "", false, false); }
+  if (invalidFile != "") {
+    return Triage("invalid", invalidFile + " does not compile", false, false);
+  }
+  bool isNoop = signature == original;
+  if (mustSurvive) { return Triage("run", "", false, isNoop); }
+  if (isNoop) { return Triage("equivalent", "", false, false); }
+  i32 at = indexOfIn(seenSignatures, signature);
+  if (at >= 0) { return Triage("duplicate", seenNames[at], false, false); }
+  return Triage("run", "", true, false);
+}
+
+/** `file=hash|file=hash`, the files sorted — the shape both sides of the comparison are built in. */
+export string signatureOf(string[] files, string[] hashes) {
+  string out = "";
+  for (i32 i = 0; i < files.len(); i++) {
+    out = out + (i == 0 ? "" : "|") + files[i] + "=" + hashes[i];
+  }
+  return out;
+}
