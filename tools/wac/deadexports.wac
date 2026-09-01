@@ -16,6 +16,19 @@
 // The dot is the whole point: `x.name(` is a method on a value and not a call of the free function,
 // and `\b` cannot say that. So those two predicates are written out by hand here, which is shorter
 // than the regex and says what it means.
+//
+// **It sees wac callers and only wac callers, which the report says and this is what it means.**
+// An export can be reached from TypeScript — `harness/waccBuild.ts` declares the compiler's API
+// surface member by member, `importSpecsFor: (path: string, src: Uint8Array) => string[]` among
+// them — and such an export is listed here as uncalled. Deleting it would not break a wac build;
+// it would make that declaration a lie, and the guard beside it that checks the declared members
+// exist. So the answer for an *exported* function is "no wac code calls it", not "nothing does",
+// and the difference is one `grep -rn <name> --include=*.ts` away. Checked over the whole list on
+// 2026-09-01: of 41, exactly one is in that position, and two more match a TypeScript *parameter*
+// or a word in prose rather than a call — so the check is worth making by hand and cheap to make.
+//
+// The unexported half has no such caveat: a private function is reachable only from its own file,
+// which is why the report says so where it prints them.
 
 import { Core, Cli, FileResult, Stat } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
