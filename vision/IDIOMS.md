@@ -3,8 +3,8 @@
 Ordinary wac, spelled the way wac spells it. Each is the best possible spelling of its behaviour.
 None of them is on its own a reason to use the language.
 
-Each is marked **done** or **not yet**, and that marker is the only thing on this page that refers to
-an implementation.
+Each is marked **done** or **not yet**, and that marker is the only thing here that refers to an
+implementation.
 
 See [README.md](README.md) for the three tiers and why nothing checks them.
 
