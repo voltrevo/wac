@@ -122,7 +122,7 @@ function, its attributes are that function's named parameters, and its children 
 ## Const is deep
 
 ```wac
-const i32[] xs = i32[](1, 2, 3);
+const i32[] xs = [1, 2, 3];
 xs[0] = 9;
 ```
 
@@ -136,7 +136,7 @@ error: cannot write through const reference
 
 In JavaScript `const` binds the name and leaves the contents open. Here it reaches the elements.
 
-**Done.**
+**Not yet.**
 
 ---
 
