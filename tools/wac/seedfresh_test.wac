@@ -42,11 +42,10 @@
 import { Core, Cli, Stat } from "std/platform.wac";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
-import { Closure, closureOf, nativeHost, nativeHostWhyNot } from "../../packages/wactest/src/built.wac";
+import { Closure, SEED_ENTRY, WASMTIME_SEED, closureOf, nativeHost, nativeHostWhyNot, seedStale }
+       from "../../packages/wactest/src/built.wac";
 
 string SEED() { return "native/v8/seed/wacc.wasm"; }
-string WASMTIME_SEED() { return "native/seed/wacc.wasm"; }
-string ENTRY() { return "packages/wac/src/wac.wac"; }
 string HOST() { return "native/v8/target/release/wac"; }
 
 /**
@@ -74,7 +73,7 @@ string tenths(i64 value, i64 unit) {
 }
 
 /**
- * `""` when `seed` is present and not older than anything `ENTRY()` is built from, otherwise the
+ * `""` when `seed` is present and not older than anything `SEED_ENTRY()` is built from, otherwise the
  * sentence saying which and by how much, ending in `rebuild`.
  *
  * **Returned rather than asserted, because there are two of these.** Both hosts carry the same
@@ -92,12 +91,14 @@ string seedWhyNot(Cli cli, string seed, string rebuild) {
            + "  files it did not write. Build it:\n"
            + "    " + rebuild;
   }
-  Closure c = closureOf(cli, ENTRY());
-  // A graph of one file is a walk that did not resolve, and would make this pass for ever.
+  Closure c = closureOf(cli, SEED_ENTRY());
+  // A graph of one file is a walk that did not resolve, and would make this pass for ever. Asserted
+  // here rather than inside `seedStale`, which answers "not stale" to an unresolved graph because its
+  // other caller is deciding whether to skip and must not skip on a broken walk.
   if (c.count < 10) {
     return "the seed's import graph came back as " + itoa(c.count) + " file(s) — it did not resolve";
   }
-  if (s.modifiedMillis >= c.newest) { return ""; }
+  if (seedStale(cli, seed) == "") { return ""; }
   return seed + " is " + behind(c.newest - s.modifiedMillis) + " older than " + c.what + ".\n"
          + "  Every `wac build`, `wac run` and `wac test` on that host is compiling with that older\n"
          + "  compiler, and will report plausible numbers from it. Rebuild:\n"

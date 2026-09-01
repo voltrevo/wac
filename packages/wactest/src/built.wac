@@ -336,7 +336,43 @@ export string nativeHostWhyNot(Cli cli) {
           + " — `./bootstrap.sh --host wasmtime` rebuilds it";
     }
   }
+  // **And the compiler inside it, which the loop above cannot see.** Every input named there is Rust,
+  // and `native/build.rs` reads the seed as an *input* to the build — so `cargo build` refreshes this
+  // binary's timestamp while leaving an old compiler in it, and every question asked so far answers
+  // "current" about a host carrying a compiler from days ago. The four callers that consult this to
+  // decide whether to skip were told nothing was wrong and compared answers from it.
+  // `issues/system/0316b`.
+  string stale = seedStale(cli, WASMTIME_SEED());
+  if (stale != "") { return stale + " — `./bootstrap.sh --host wasmtime` rebuilds it"; }
   return "";
+}
+
+/** The seed carried by the wasmtime host — `native/build.rs` reads it from `seed/`. */
+export string WASMTIME_SEED() { return "native/seed/wacc.wasm"; }
+
+/** The program both hosts carry as their seed; `native/Cargo.toml` says why it is the same one. */
+export string SEED_ENTRY() { return "packages/wac/src/wac.wac"; }
+
+/**
+ * `""` when `seed` is present and not older than anything `SEED_ENTRY()` is built from, otherwise
+ * which file it is behind.
+ *
+ * **One comparison, two callers**, on the same reasoning `nativeHostWhyNot` is consulted rather than
+ * re-walked: `tools/wac/seedfresh_test.wac` asks this to fail a gate and says how far behind in its
+ * own words, and `nativeHostWhyNot` asks it to decide whether a host is fit to be compared against.
+ * A second copy of the rule is the failure `issues/system/0208` already paid for once.
+ *
+ * **Absent is not stale** and is not this function's question — a fresh clone has no wasmtime seed,
+ * and the caller that cares about absence distinguishes it with its own `stat`.
+ */
+export string seedStale(Cli cli, string seed) {
+  Stat s = cli.stat(seed).wait();
+  if (!s.isFile) { return ""; }
+  Closure c = closureOf(cli, SEED_ENTRY());
+  // A graph of one file is a walk that did not resolve, and would make this answer "fresh" for ever.
+  if (c.count < 10) { return ""; }
+  if (s.modifiedMillis >= c.newest) { return ""; }
+  return seed + " is older than " + c.what;
 }
 
 /**
