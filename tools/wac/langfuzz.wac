@@ -78,12 +78,18 @@
 //     str   struct's two fields swapped           10 / 200   )
 //     enum  match's A and C arms swapped           9 / 200   )
 //     sub   `bv.tag()` expected to dispatch         4 / 200   )
-//     u32   literal read as signed                3 / 200   (was 33 — see below)
+//     u32   wide literal read as signed          41 / 200   (the seeded local and its route)
+//     u32   `wrapTo` at u32 sign-extends           3 / 200   (was 33 — u32 *arithmetic*, see below)
 //
-// **Widening this generator *diluted* two of its rows, and one of them by ten times.** `u32` went
-// from 33 to 3 and `i64` from 24 to 11 when generics, a second file, a struct, an enum, an array and
-// a subtype were added — because every new expression arm competes for the same draws, so a value
-// that reaches the answer *through a particular operation* reaches it less often.
+// **Widening this generator diluted the rows that ride on an *operation*, and not the others.**
+// `wrapTo` at u32 went from 33 to 3 and at i64 from 24 to 11 when generics, a second file, a struct,
+// an enum, an array and a subtype were added: every new expression arm competes for the same draws,
+// so a value that reaches the answer *through a particular operation* reaches it less often.
+//
+// **`u32` itself is fine, and saying otherwise was a conflation of two canaries.** The seeded wide
+// local and the comparison route that reads it measure 41 of 200 — better than before the widening.
+// What fell is u32 *arithmetic*. Two paths, one type, and only one of them diluted; the row that
+// collapsed was never the one the seeding was for.
 //
 // The rows that held are the ones whose canary sits on a **seeded top-level local**: the cross-file
 // value went 69 to 74 and the i32 narrowing 66 to 79, because expressions pick those variables
