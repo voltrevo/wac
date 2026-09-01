@@ -23,6 +23,14 @@
  * ticket is a *value* the caller names, where a call to an `async` function is a ticket the callee
  * only produces once the caller's own machine has been synthesised around it.
  *
+ * **Where the decline comes from**, read but not fixed: `packages/wacc/src/emit.wac`'s call arm
+ * answers `"a call to " + tokenTextOf(…)` when `env.funcAt(n)` finds no function under that name,
+ * and the name here is `Pending`. So the synthesised machine contains a *call* whose callee token is
+ * `Pending`, which is a type and not a function — the lowering is building a wrapper around the
+ * awaited expression and, when that expression is itself a call, emitting the wrapper in a form the
+ * emitter reads as calling the type. The synthesis site in `asyncsynth.wac` is where to start; this
+ * paragraph stops at the diagnosis because that is as far as it was checked.
+ *
  * `issues/lang/0301b` has the measurements. When this is lifted, the two `await` lines below become
  * an ordinary suspension and this case flips to `answers total = 42`, like `0315`.
  */
