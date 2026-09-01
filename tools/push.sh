@@ -249,6 +249,31 @@ if ! "$WAC" test --allow-read --allow-env tools/wac/seedfresh_test.wac >/dev/nul
     echo "   build itself." >&2
     exit 1
   fi
+
+  # **And the wasmtime host's copy of it, which `wac task seed` does not write.** That task is
+  # `bootstrap.sh --host v8`, so it refreshes `native/v8/seed/wacc.wasm` and leaves
+  # `native/seed/wacc.wasm` behind — and since 2026-09-01 `tools/wac/seedfresh_test.wac` checks that
+  # one too, so every change to `packages/wacc/src` reddened the docs lane until somebody ran a
+  # two-minute ladder by hand. `issues/system/0316b` is why the check is there: `cargo build` reads
+  # the seed as an *input*, so the binary looks current while carrying a compiler days old, and
+  # eleven test files then compare against it without saying so.
+  #
+  # **The two seeds are the same artefact, measured rather than assumed.** After
+  # `bootstrap.sh --host wasmtime` on 2026-09-01 the two files were byte-identical — 1,961,833 bytes,
+  # `cmp` clean — which is `design/system/0001` D9 being true: the seed is a wac program compiled to
+  # wasm and neither engine is in it. So the copy reproduces exactly what the ladder would produce,
+  # at three seconds against two minutes.
+  #
+  # If they ever diverge, that is a finding rather than a nuisance, and `./bootstrap.sh --host
+  # wasmtime` is the way back.
+  if [ -f native/target/release/wac ] && [ -f native/v8/seed/wacc.wasm ]; then
+    cp native/v8/seed/wacc.wasm native/seed/wacc.wasm
+    if ! (cd native && cargo build --release > "$log.seedwt" 2>&1); then
+      echo "== the wasmtime host will not rebuild around the new seed: not running the suite ==" >&2
+      tail -20 "$log.seedwt" | sed 's/^/   /' >&2
+      exit 1
+    fi
+  fi
 fi
 
 # **Every phase is timed, and the gate says where its minutes went.** Until 2026-08-29 only the suite
