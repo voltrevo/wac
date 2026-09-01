@@ -525,14 +525,6 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
 
 // ── Assembling the machine ───────────────────────────────────────────────────
 
-/** The expression a suspension awaits. */
-Expr awaitedOf(Ctx c, Stmt s) {
-  match (s.kind) {
-    case Var(type, nameTok, init, isConst): { return innerAwait(c, init); }
-    case Return(value): { return (value is null) ? eNull(c) : innerAwait(c, value!); }
-    else: { return eNull(c); }
-  }
-}
 
 Expr innerAwait(Ctx c, Expr e) {
   match (e.kind) {
@@ -541,13 +533,6 @@ Expr innerAwait(Ctx c, Expr e) {
   }
 }
 
-/** The local a suspension binds, or -1 when it is `return await e;`. */
-i32 boundOf(Stmt s) {
-  match (s.kind) {
-    case Var(type, nameTok, init, isConst): { return nameTok; }
-    else: { return 0 - 1; }
-  }
-}
 
 /** `__wacState[0] = k; break;` — leaving the arm so the dispatch picks up state `k`. */
 Stmt[] gotoS(Ctx c, i32 k) {

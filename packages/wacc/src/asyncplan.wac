@@ -190,26 +190,6 @@ export bool awaitInBody(Stmt[] body) {
 
 // ── The plan ─────────────────────────────────────────────────────────────────
 
-/**
- * Whether `s` is a suspension this cut can flatten — one of the three statement shapes.
- *
- * The `await` must be the **whole** of the initialiser, the expression, or the returned value.
- * `T x = f(await e);` is not one of these: the call's arguments would have to be evaluated around a
- * suspension, which is a rewrite of the expression rather than a split of the block.
- */
-bool isSuspension(Stmt s) {
-  match (s.kind) {
-    // **Both shapes name the ticket's type, and that is why they are the two.** The machine has to
-    // keep the ticket it suspended at, in a slot of type `Pending<X>` — and the only way to know `X`
-    // from the AST is to have it written: `T x = await e;` says `T`, and `return await e;` says the
-    // function's own return type. A bare `await e;` says neither, which is the whole reason it is
-    // declined below rather than supported here.
-    case Var(type, nameTok, init, isConst): { return isAwait(init); }
-    case Return(value): { return (value is not null) && isAwait(value!); }
-    else: { return false; }
-  }
-}
-
 bool isAwait(Expr e) {
   match (e.kind) {
     case Await(operand): { return true; }
@@ -264,6 +244,12 @@ void walkPlan(Stmt[] body, Walked w) {
     if (w.why != "") { return; }
     Stmt s = body[i];
     match (s.kind) {
+      // **Both shapes name the ticket's type, and that is why they are the two.** The machine has
+      // to keep the ticket it suspended at, in a slot of type `Pending<X>`, and the only way to
+      // know that from the AST is to have it written: `T x = await e;` says `T`, and
+      // `return await e;` says the function's own return type. A bare `await e;` says neither,
+      // which is why it is declined rather than counted. This rule lived in an `isSuspension`
+      // nothing called as well as here, until 2026-09-01 — `tools/wac/deadexports.wac` found it.
       case Var(type, nameTok, init, isConst): {
         if (w.h < w.hoist.len()) {
           w.hoist[w.h] = nameTok; w.hoistTy[w.h] = type; w.h = w.h + 1;
