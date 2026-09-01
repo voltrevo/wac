@@ -69,16 +69,17 @@
 //
 //     i32   narrowing removed from `wrapTo`      79 / 200   (was 66 before the last four items)
 //     file  the other file's value disagrees      74 / 200   (was 69)
+//     i64   seeded local's value disagrees       47 / 200   (the seeded local and its high-half route)
+//     u32   wide literal read as signed          41 / 200   (the seeded local and its route)
 //     bool  every comparison inverted            33 / 200   (was 30)
 //     loop  oracle ignores `continue`            32 / 200   ) measured before the last four
 //     gen   generic `gsel` arms swapped          21 / 200   ) items landed — re-derive these
 //     loop  oracle ignores `break`               12 / 200   ) before relying on them
-//     i64   results truncated to 32 bits         11 / 200   (was 24 — see below)
+//     i64   `wrapTo` at i64 truncates            11 / 200   (was 24 — i64 *arithmetic*, see below)
 //     arr   every array element off by one        10 / 200   )
 //     str   struct's two fields swapped           10 / 200   )
 //     enum  match's A and C arms swapped           9 / 200   )
 //     sub   `bv.tag()` expected to dispatch         4 / 200   )
-//     u32   wide literal read as signed          41 / 200   (the seeded local and its route)
 //     u32   `wrapTo` at u32 sign-extends           3 / 200   (was 33 — u32 *arithmetic*, see below)
 //
 // **Widening this generator diluted the rows that ride on an *operation*, and not the others.**
@@ -86,10 +87,14 @@
 // an enum, an array and a subtype were added: every new expression arm competes for the same draws,
 // so a value that reaches the answer *through a particular operation* reaches it less often.
 //
-// **`u32` itself is fine, and saying otherwise was a conflation of two canaries.** The seeded wide
-// local and the comparison route that reads it measure 41 of 200 — better than before the widening.
-// What fell is u32 *arithmetic*. Two paths, one type, and only one of them diluted; the row that
-// collapsed was never the one the seeding was for.
+// **Neither type is in trouble, and saying so was a conflation of two canaries per type.** The
+// seeded locals and the routes that read them measure 47 (i64) and 41 (u32) of 200 — both better
+// than before the widening, because the answer reads a top-level local. What fell is *arithmetic* at
+// those widths, which rides on `wrapTo` and so competes with every new expression arm.
+//
+// So each of those two types has two rows here and they move in opposite directions. The rows the
+// seeding work was for were never the rows that collapsed, and reading one number per type is what
+// made it look otherwise for ten minutes.
 //
 // The rows that held are the ones whose canary sits on a **seeded top-level local**: the cross-file
 // value went 69 to 74 and the i32 narrowing 66 to 79, because expressions pick those variables
