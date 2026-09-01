@@ -140,6 +140,26 @@ In JavaScript `const` binds the name and leaves the contents open. Here it reach
 
 ---
 
+## The compiler is a library
+
+```wac
+import { compile } from "wacc";
+
+async Result<i32> runSource(Sys sys, string src) {
+  u8[] wasm  = try compile("main.wac", src);
+  auto child = try await sys.spawn(wasm, [], [Grant.Read]);
+  return Result.Ok(await child.exit());
+}
+```
+
+Compiling is a function call that answers bytes, and spawning takes bytes — no file is written and
+no toolchain is looked up. The child runs with the grants named here, never more than the caller
+holds.
+
+**Not yet.**
+
+---
+
 ## A ticket is a value
 
 ```wac
