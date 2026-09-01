@@ -1,0 +1,207 @@
+// What to run for a mutant — the selection half of `tools/mutate/profile.ts`.
+//
+// The other half of that file builds the profile by running `wac test --coverage` and staging trees,
+// which is where `issues/system/0161`'s temp-directory question lives. This half only reads one, and
+// is where the decisions are: under-selection is a **wrong answer**, over-selection is only slow, and
+// every rule below exists because that asymmetry was got wrong once.
+//
+// `issues/system/0161` step 6.
+
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * What a coverage profile knows, as the three parallel lists this half needs.
+ *
+ * The reference carries `Map<string, string[]>` and a `Set<string>`; here they are lists, because the
+ * populations are per-package and the lookups are per-mutant. `known` is separate from `lines` on
+ * purpose — that is what tells an *unknown* line from an *unhit* one, and the two mean opposite
+ * things about a mutant.
+ */
+export struct Profile {
+  /** `"file:line"` for each entry of `tests`, and every line the profile knows. */
+  string[] known;
+  /** `tests[i]` are the test names that execute `known[i]`, space-separated. */
+  string[] tests;
+  /** Test file paths, and the milliseconds each took while profiling. `-1` is unmeasured. */
+  string[] files;
+  i32[] cost;
+}
+
+i32 indexOfIn(string[] xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) {
+    if (xs[i] == want) { return i; }
+  }
+  return -1;
+}
+
+bool holds(string[] xs, string want) { return indexOfIn(xs, want) >= 0; }
+
+string[] split(string s, string sep) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i + sep.len() <= s.len(); i++) {
+    if (s.slice(i, i + sep.len()) == sep) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  i32 i = 0;
+  while (i <= s.len()) {
+    if (i == s.len() || (i + sep.len() <= s.len() && s.slice(i, i + sep.len()) == sep)) {
+      if (at < n) { out[at] = s.slice(from, i); at = at + 1; }
+      from = i + sep.len();
+      i = i + sep.len();
+      continue;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+string[] sorted(string[] xs) {
+  string[] out = string[xs.len()](fill: "");
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string k = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > k) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = k;
+  }
+  return out;
+}
+
+/**
+ * The test files in the order they should be run: cheapest first, then by name.
+ *
+ * With `--fail-fast` the order decides how much of a scope a killed mutant actually pays for, and
+ * alphabetical order is not the cheap one — in `packages/ssh` it puts the one in-process suite behind
+ * two that each spawn.
+ *
+ * **An unmeasured file sorts last rather than first.** If the profile never ran it, the honest
+ * assumption is that it is the expensive or awkward one.
+ */
+export string[] byCost(string[] files, Profile p) {
+  string[] out = sorted(files);
+  // Insertion sort on the cost key, which is stable over the name order established above — so equal
+  // costs keep their alphabetical order rather than depending on the sort's internals.
+  for (i32 i = 1; i < out.len(); i++) {
+    string k = out[i];
+    i32 kc = costOf(p, k);
+    i32 j = i - 1;
+    while (j >= 0 && costOf(p, out[j]) > kc) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = k;
+  }
+  return out;
+}
+
+/** A file's measured cost, or "expensive" when the profile never ran it. */
+i32 costOf(Profile p, string file) {
+  i32 i = indexOfIn(p.files, file);
+  if (i < 0 || p.cost[i] < 0) { return 2147483647; }
+  return p.cost[i];
+}
+
+/**
+ * The tests that could react to a mutation at these lines, or `null` for "cannot narrow".
+ *
+ * An empty array means the profile knows the lines and no test reaches them; `null` means run
+ * everything in scope. The two are different answers and the caller acts differently on each.
+ *
+ * **Any known line, not every one.** A mutation spans a whole syntactic construct — an `extreme`
+ * mutant replaces an entire function body — and most interior lines are plain statements the coverage
+ * build does not model, since it instruments branches. Requiring every line to be known meant one
+ * unmodelled statement discarded the whole selection, which is how 83 of 235 mutants ended up running
+ * the full scope for no reason. Sound because control enters a construct through its entry: a test
+ * that executes an interior line must have reached the line that dominates it.
+ *
+ * **But the empty answer is only trusted when every line is accounted for.** Selecting on any known
+ * line is fine; concluding *nothing executes this* from it is not. An edit span need not contain the
+ * line its coverage point sits on — a function whose signature wraps has its entry point above where
+ * the span begins — so a span can hold known-but-uncovered interior lines while the covered entry is
+ * outside it. Read literally that says no test reaches the function, and
+ * `extreme/tls/client/tlsClientInit` was reported exactly that way for a function every client test
+ * calls. Falling back costs time and cannot be wrong.
+ */
+export struct Selection {
+  /** False means "cannot narrow, run everything in scope" — the reference's `null`. */
+  bool narrowed;
+  string[] tests;
+}
+
+export Selection selectTests(Profile p, string[] locations) {
+  string[] picked = string[0](fill: "");
+  i32 n = 0;
+  string[] buf = string[256](fill: "");
+  bool anyKnown = false;
+  bool allKnown = true;
+
+  for (i32 l = 0; l < locations.len(); l++) {
+    i32 at = indexOfIn(p.known, locations[l]);
+    if (at < 0) { allKnown = false; continue; }
+    anyKnown = true;
+    string[] names = split(p.tests[at], " ");
+    for (i32 t = 0; t < names.len(); t++) {
+      if (names[t] == "") { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) {
+        if (buf[k] == names[t]) { have = true; break; }
+      }
+      if (!have && n < buf.len()) { buf[n] = names[t]; n = n + 1; }
+    }
+  }
+
+  if (!anyKnown) { return Selection(false, picked); }
+  if (n == 0 && !allKnown) { return Selection(false, picked); }
+
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = buf[i]; }
+  return Selection(true, sorted(exact));
+}
+
+/**
+ * What to run for a mutant at these lines, as one decision rather than three flags.
+ *
+ * - `narrow` — the profile names the tests that reach it. Run those.
+ * - `widen`  — the profile cannot say. Run the whole scope; slow, never wrong.
+ * - `unhit`  — the profile accounts for every line of the span and no test hits any of them.
+ *
+ * **`unhit` is not "skip".** It used to be: the runner recorded such a mutant as unmeasurable and
+ * left it out of the score. That is wrong for anything the compiler can fold — a function returning a
+ * constant is inlined into its call sites, so its own line's counter stays at zero while the constant
+ * reaches every caller, and gutting it fails two tests. So `unhit` means "run everything, and if it
+ * survives, say that nothing executes the line" — the useful half of the old message, without the
+ * verdict the counter cannot support. `issues/system/0005`.
+ */
+export string planFor(Profile p, string[] locations) {
+  Selection s = selectTests(p, locations);
+  if (!s.narrowed) { return "widen"; }
+  if (s.tests.len() == 0) { return "unhit"; }
+  return "narrow";
+}
+
+/** `""` when there is nothing to filter on. */
+export string filterFor(string[] names) {
+  if (names.len() == 0) { return ""; }
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    out = out + (i == 0 ? "" : "|") + escaped(names[i]);
+  }
+  // Deno treats a value wrapped in slashes as a regex; anchoring makes it exact, so a name that is a
+  // prefix of another cannot drag it in.
+  return "/^(?:" + out + ")$/";
+}
+
+/** The regex metacharacters the reference escapes: `.*+?^${}()|[]\` */
+string escaped(string name) {
+  string meta = ".*+?^${}()|[]\\";
+  string out = "";
+  for (i32 i = 0; i < name.len(); i++) {
+    string c = name.slice(i, i + 1);
+    bool special = false;
+    for (i32 m = 0; m < meta.len(); m++) {
+      if (meta.slice(m, m + 1) == c) { special = true; break; }
+    }
+    out = out + (special ? "\\" + c : c);
+  }
+  return out;
+}

@@ -1,0 +1,124 @@
+// Which tests a mutant runs, at the three decisions that were each wrong once.
+//
+// The asymmetry this whole module is written around: **under-selection is a wrong answer and
+// over-selection is only slow.** Every case below is a mutant that was mis-selected, and in two of
+// them the mis-selection produced a *verdict* rather than a delay. `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Profile, Selection, byCost, filterFor, planFor, selectTests } from "./mutateplan.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " ") + xs[i]; }
+  return out;
+}
+
+/** A profile knowing three lines of `a.wac`, where only two are reached by a test. */
+Profile sample() {
+  return Profile(
+    string[]("a.wac:10", "a.wac:11", "a.wac:12"),
+    string[]("test_one test_two", "", "test_two"),
+    string[]("x_test.wac", "y_test.wac", "z_test.wac"),
+    i32[](50, 10, -1));
+}
+
+/**
+ * **Any known line, not every one.**
+ *
+ * A mutation spans a whole construct and most interior lines are statements the coverage build does
+ * not model. Requiring every line to be known meant one unmodelled statement discarded the whole
+ * selection — 83 of 235 mutants ran the full scope for no reason.
+ */
+export string test_one_unknown_line_does_not_discard_the_selection() {
+  T t = T.create();
+  Selection got = selectTests(sample(), string[]("a.wac:10", "a.wac:99"));
+  t.isTrue(got.narrowed, "a span with one unmodelled line still narrows");
+  t.eqStr(joined(got.tests), "test_one test_two", "to the tests the known line names");
+  return t.report();
+}
+
+/**
+ * **But an empty answer is only trusted when every line is accounted for.**
+ *
+ * An edit span need not contain the line its coverage point sits on — a function whose signature
+ * wraps has its entry above where the span begins — so a span can hold known-but-uncovered interior
+ * lines while the covered entry is outside it. Read literally that says no test reaches the function,
+ * and `extreme/tls/client/tlsClientInit` was reported exactly that way for a function every client
+ * test calls.
+ */
+export string test_an_empty_answer_needs_every_line_accounted_for() {
+  T t = T.create();
+  // Line 11 is known and unhit; line 99 is unknown. Empty *and* incomplete — fall back.
+  Selection mixed = selectTests(sample(), string[]("a.wac:11", "a.wac:99"));
+  t.isTrue(!mixed.narrowed,
+           "a span that is known-but-unhit and also incomplete falls back rather than claiming unhit");
+
+  // Every line known, and none hit: that empty answer is the real one.
+  Selection all = selectTests(sample(), string[]("a.wac:11"));
+  t.isTrue(all.narrowed, "a fully accounted span does narrow");
+  t.eqI32(all.tests.len(), 0, "and its empty answer means no test reaches it");
+  return t.report();
+}
+
+export string test_a_span_the_profile_does_not_know_widens() {
+  T t = T.create();
+  Selection got = selectTests(sample(), string[]("b.wac:1", "b.wac:2"));
+  t.isTrue(!got.narrowed, "no known line at all is `cannot narrow`");
+  t.eqStr(planFor(sample(), string[]("b.wac:1")), "widen", "which the plan calls widen");
+  return t.report();
+}
+
+/**
+ * The three plans, and `unhit` is not `skip`.
+ *
+ * It used to be: such a mutant was recorded unmeasurable and left out of the score. That is wrong for
+ * anything the compiler folds — a function returning a constant is inlined, so its own line's counter
+ * stays at zero while the constant reaches every caller, and gutting it fails two tests.
+ * `issues/system/0005`.
+ */
+export string test_the_three_plans() {
+  T t = T.create();
+  t.eqStr(planFor(sample(), string[]("a.wac:10")), "narrow", "a line with tests narrows to them");
+  t.eqStr(planFor(sample(), string[]("a.wac:11")), "unhit", "a known line no test reaches is unhit");
+  t.eqStr(planFor(sample(), string[]("zz.wac:1")), "widen", "and an unknown line widens");
+  return t.report();
+}
+
+/**
+ * Cheapest first, then by name — and an unmeasured file last.
+ *
+ * With `--fail-fast` the order decides how much of a scope a killed mutant pays for, and alphabetical
+ * is not the cheap one: in `packages/ssh` it puts the one in-process suite behind two that spawn.
+ */
+export string test_the_cheap_files_run_first_and_the_unmeasured_one_last() {
+  T t = T.create();
+  t.eqStr(joined(byCost(string[]("x_test.wac", "y_test.wac", "z_test.wac"), sample())),
+          "y_test.wac x_test.wac z_test.wac",
+          "10ms, then 50ms, then the one the profile never ran");
+  // Equal costs keep their alphabetical order rather than depending on the sort's internals.
+  Profile flat = Profile(string[0](fill: ""), string[0](fill: ""),
+                         string[]("b.wac", "a.wac"), i32[](7, 7));
+  t.eqStr(joined(byCost(string[]("b.wac", "a.wac"), flat)), "a.wac b.wac",
+          "and equal costs fall back to the name");
+  return t.report();
+}
+
+/**
+ * The filter is anchored, so a name that is a prefix of another cannot drag it in.
+ *
+ * That is the whole reason it is a regex rather than a substring: `--filter` matches by substring, so
+ * `test_read` selects `test_read_after_close` too — and a mutant scored against tests it was not
+ * selected for is a wrong number in the flattering direction.
+ */
+export string test_the_filter_is_anchored_and_escaped() {
+  T t = T.create();
+  t.eqStr(filterFor(string[]("test_a", "test_b")), "/^(?:test_a|test_b)$/",
+          "alternation, anchored at both ends");
+  t.eqStr(filterFor(string[0](fill: "")), "", "and nothing to filter on is the empty answer");
+  t.eqStr(filterFor(string[]("test_a.b")), "/^(?:test_a\\.b)$/",
+          "a metacharacter in a name is escaped, or it would match more than the name");
+  t.eqStr(filterFor(string[]("a+b(c)")), "/^(?:a\\+b\\(c\\))$/",
+          "and so are the rest of them");
+  return t.report();
+}
