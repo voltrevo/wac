@@ -65,9 +65,30 @@ the fix is upstream of the call, not at it:
 - take the receiver or parameter non-const, if the caller can grant that;
 - call a method that does not write.
 
-Something closer to `` `mutate` writes, and `i` is const — take `i` non-const, or call a method that
-does not write ``. Neither route changes behaviour silently, which is the property the current help
-lacks.
+Something closer to `` `mutate` writes, and `i` is const ``. Neither route changes behaviour
+silently, which is the property the current help lacks.
+
+## But no fixed sentence is right here, and that is the actual finding
+
+The operator's objection to a first attempt at replacement wording — `` `push` writes, and `s` is
+const `` — is the general case. At `s.table().push(r)` the const thing is **`s.table()`**; `s` is why
+*that* is const, one link further back. A canned string has to guess how many links to name and is
+wrong whenever the chain is not the length it assumed, which is exactly how "declare the destination
+`const` too" fails: it assumes a chain ending in an assignment.
+
+The chain can be any length — a const parameter, a field of it, a method call returning something
+reached through that field — and the compiler knows all of it, because computing the taint is what
+raised the error. So the message has to be **derived from the provenance** rather than chosen from a
+list, the way a borrow error explains a lifetime instead of proposing a stock remedy.
+
+Failing that, **omit the help entirely and put the local fact on the caret**:
+
+    2 |   s.table().push(r);
+      |             ^ `push` writes, and `s.table()` is const
+
+That is true at every site with no chain-walking at all, and it is strictly better than advice which
+is sometimes wrong — this issue exists because the current advice compiles to a silent wrong
+answer.
 
 ## Not `issues/lang/0315a`
 
