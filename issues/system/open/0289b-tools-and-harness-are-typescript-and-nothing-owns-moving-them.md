@@ -625,14 +625,24 @@ compiler that produces what it reads"*, and the rest of the model, ring, queue a
 These are `fuzzBoundary.ts`'s argument applied thirty-two times: there is no version of the test
 without JavaScript in it.
 
-**Two are duplication guards and do not want porting at all — they want deleting.**
-`grants.test.ts` is *"The two `Grants` declarations have to carry the same fields"* and
+**Two are duplication guards, and they are the hardest carve-outs of the set rather than the
+softest.** `grants.test.ts` is *"The two `Grants` declarations have to carry the same fields"* and
 `faults_agree.test.ts` is *"The fault numbering exists twice, so this is where the two copies are
-made to agree"*. Both exist **because** a declaration is written twice, once in TypeScript and once
-in wac. Port either and you have written a third copy; delete the TypeScript declaration and the
-test has nothing left to compare. They are in the same category as `coverageOrder.ts` above — a file
-whose right move is not "translate it" — and they are the clearest sign that this directory empties
-from its callers rather than through a queue of ports.
+made to agree"*.
+
+*I first wrote that these two "want deleting rather than porting" — that a declaration written twice
+needs one copy removed and the guard goes with it. Both headers say otherwise, and I had not read
+them.* `grants.test.ts` compares **two TypeScript declarations**, `build.ts`'s and
+`host/entry.ts`'s, which are separate because "the launcher is a host module rather than part of the
+build's type graph and cannot import from it". `faults_agree.test.ts` does span the languages —
+`host/faults.ts` against `src/platform.wac` — and says in the same breath that *"neither can import
+the other — one is TypeScript running the world, the other is wac compiled to wasm"*.
+
+So in both cases the duplication is **structural and permanent**, not a migration artefact waiting
+to be cleaned up. Neither can be ported, because a wac copy is a third copy; neither can be deleted,
+because both sides are load-bearing and one of them is the host. A test that exists because two
+things cannot import each other outlives any migration between them, and these two are the clearest
+example in the tree of a guard that is *created* by the boundary this project has decided to keep.
 
 **The remaining eight** — `describe`, `listen`, `sinks`, `timeout`, `unnameable`, `datagram`,
 `project`, `subprocess_profile` — are about behaviour a wac test could in principle assert, and at
