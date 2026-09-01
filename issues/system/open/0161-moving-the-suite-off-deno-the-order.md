@@ -953,6 +953,31 @@ So this wants a session long enough to finish, or a workspace kept red in the me
 pushed until it is whole. That is the opposite of how the rest of step 6 went, where each tool moved
 on its own.
 
+**That is wrong, and `operators` is in as the counter-example — agent-b, 2026-09-01.** "The first
+module ported breaks the tool" is only true if the TypeScript one is *deleted* as each piece moves.
+Ported **alongside**, each module lands on its own, `tools/mutate.ts` keeps importing the TypeScript
+it has always imported, and nothing is red at any point. The claim above assumed a swap where what
+was needed was an addition — the order `~/notes` calls *port, then delete*, and the reason is that
+the implementation being replaced is the only complete statement of the contract until its
+replacement passes.
+
+It also buys the best oracle available: `tools/wac/mutateoperators_test.wac` runs both over real
+files in this repository and requires them to agree **mutant for mutant, in order** — 53, 159 and 189
+mutants for `fmt/itoa`, `rlp` and `fmt/ftoa`, 401 in all, and order included because the names carry
+line and column, so two lists agreeing as sets and differing in order mean the walks visit tokens
+differently. Deno is the oracle and nothing else, which is the role it keeps.
+
+`tools/wac/mutateoperators.wac` is the first of the nine. Two differences from the reference are
+deliberate and pinned by cases that outlive the oracle: `bumpLiteral` uses `i64` where the reference
+uses `BigInt`, so a literal that does not fit is **declined** rather than wrapped — a mutant claiming
+to have moved a bound it overflowed instead would read as *nothing tests this* when nothing was
+tested — and the shape classes are grouped by counting sort rather than a `Map<string, number[]>`,
+because appending to an array held in a map copies it and one class in `unicode/src/tables.wac` has
+8,792 members.
+
+The temp-directory question below is untouched by this and still open: it belongs to the staging code
+in `mutate.ts` and `profile.ts`, not to the modules that are pure logic over a token stream.
+
 That pattern does not carry over unchanged, because `mutate` stages the project once per mutant and
 needs the directories to be distinct. So a port has to choose: add a temp-directory capability to the
 platform — a new capability, with the several registries that implies — or build unique names from

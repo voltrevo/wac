@@ -1,0 +1,650 @@
+// Mechanical mutation operators — the wac side of `tools/mutate/operators.ts`.
+//
+// Driven by wac's own lexer rather than by regex, which matters for more than tidiness: a regex for
+// `<` finds every one inside a comment and a string literal, and mutating those produces mutants
+// that are either uncompilable or trivially equivalent. Running the real lexer means a token is a
+// token.
+//
+// The operator set is deliberately small. Mutation testing's value comes from mutants a test suite
+// *ought* to catch, and the classic families cover that: a flipped comparison, a shifted boundary, a
+// removed guard, a gutted function. Adding operators past the point where survivors are still worth
+// reading makes the report longer and less useful — Google's finding was that unproductive mutants
+// cost human attention, not machine time.
+//
+// ## Why this is here twice for now
+//
+// `issues/system/0161` step 6, and `issues/system/0289b` owns the rest of `tools/`. The TypeScript
+// is still the tool: `tools/mutate.ts` imports nine modules and TypeScript cannot import a wac one,
+// so nothing switches over until the last of them lands. My own note in 0161 said that made the port
+// impossible to do in pieces; that is only true if the TypeScript is *deleted* as each piece moves.
+// Ported alongside, each module lands on its own and the tool keeps working — the order
+// `~/notes` calls "port, then delete", and the reason the reference implementation is the only
+// complete statement of the contract until its replacement passes.
+//
+// So `mutateoperators_test.wac` compares this against that, over real files in this repository,
+// through `deno` as an oracle — which is the one role Deno keeps here. When `tools/mutate.ts` goes,
+// the differential goes with it and the recorded cases stay.
+//
+// **The lexer entry points exist for this.** `packages/wacc/src/api.wac`'s own comment says so: they
+// were added because `tools/mutate.ts` places mutations at token positions and "the lexer that
+// decides what the program means is this one".
+
+import { dumpErrors, lexTokenStride, lexTokensOf, tokenKindName } from "../../packages/wacc/src/api.wac";
+import { Map } from "core/map.wac";
+import { hashString, stringEq } from "core/hash.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+
+/** A token as this file reads them: the four fields it actually asks for. */
+export struct Tok {
+  string kind;
+  string text;
+  i32 line;
+  i32 col;
+}
+
+/** One edit, as a byte span rather than a pattern, so its location is unambiguous. */
+export struct Edit {
+  string file;
+  i32 start;
+  i32 end;
+  string replacement;
+  /** The text being replaced, kept for the report. */
+  string was;
+}
+
+export struct Mutant {
+  string name;
+  string origin;
+  Edit[] edits;
+}
+
+/** What `generate` chose not to emit, so the caller can report it rather than hide it. */
+export struct GenStats {
+  i32 literalSampled;
+  i32 literalSkipped;
+  i32 shapes;
+}
+
+/**
+ * How many literal mutants to emit per repeated statement shape. See `shapeKey`.
+ *
+ * Three rather than one because a table's entries are not interchangeable: a binary search notices a
+ * corrupted first key and may never reach the five-hundredth. Three spread through the run is cheap
+ * insurance against sampling only the part the tests happen to cover.
+ */
+export i32 LITERAL_PER_SHAPE() { return 3; }
+
+export string[] ALL_OPERATORS() {
+  return string[]("relational", "literal", "guard", "extreme");
+}
+
+bool wants(string[] operators, string name) {
+  for (i32 i = 0; i < operators.len(); i++) {
+    if (operators[i] == name) { return true; }
+  }
+  return false;
+}
+
+string charAt(string s, i32 i) { return s.slice(i, i + 1); }
+
+bool isDigit(string c) { return c >= "0" && c <= "9"; }
+
+bool isHexDigit(string c) {
+  return isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
+}
+
+/** `\n`, `\t`, `\r`, `\0`, and the character itself for anything else — `spec/spec/grammar.md`. */
+string unescaped(string body) {
+  string out = "";
+  for (i32 i = 0; i < body.len(); i++) {
+    string c = charAt(body, i);
+    if (c != "\\") { out = out + c; continue; }
+    i = i + 1;
+    if (i >= body.len()) { break; }
+    string e = charAt(body, i);
+    if (e == "n") { out = out + "\n"; }
+    else if (e == "t") { out = out + "\t"; }
+    else if (e == "r") { out = out + "\r"; }
+    else if (e == "0") { u8[] z = u8[1](fill: 0); out = out + string.fromBytes(z); }
+    else { out = out + e; }
+  }
+  return out;
+}
+
+/** A character literal's numeric value, which is what it lexes as. */
+i32 charValue(string raw) {
+  string body = raw.slice(1, raw.len() - 1);
+  if (body.len() == 0) { return 0; }
+  if (charAt(body, 0) == "\\") {
+    if (body.len() < 2) { return 0; }
+    string c = charAt(body, 1);
+    if (c == "n") { return 10; }
+    if (c == "t") { return 9; }
+    if (c == "r") { return 13; }
+    if (c == "0") { return 0; }
+    return body.toBytes()[1];
+  }
+  // The first code point. ASCII in every character literal this repository has, and a multi-byte one
+  // would be its leading byte — which is what the reference's `charCodeAt` gives for the same input.
+  u8[] b = body.toBytes();
+  return b.len() == 0 ? 0 : b[0];
+}
+
+/**
+ * The token stream, from wacc's flat array.
+ *
+ * The text is sliced out of the source rather than carried across: `start` and `len` are two of the
+ * five numbers per token, so shipping the bytes as well would be the same string twice.
+ *
+ * **Two conversions, and both were found by comparing rather than reasoned out.** A string token's
+ * `text` is its *value* — quotes off, escapes resolved — and a character literal lexes as an `int`
+ * whose `text` is the number, not `'0'`. A raw slice gets both wrong, silently, and the literal
+ * mutations would then be placed against text that is not what the compiler read.
+ */
+export Tok[] lexOf(string source) {
+  u8[] bytes = source.toBytes();
+  i32[] flat = lexTokensOf(bytes);
+  i32 stride = lexTokenStride();
+  i32 n = stride <= 0 ? 0 : flat.len() / stride;
+  Tok[] out = Tok[n](fill: Tok("", "", 0, 0));
+  for (i32 t = 0; t < n; t++) {
+    i32 i = t * stride;
+    string kind = tokenKindName(flat[i]);
+    i32 from = flat[i + 1];
+    string text = source.slice(from, from + flat[i + 2]);
+    if (kind == "string" && text.len() >= 2) {
+      text = unescaped(text.slice(1, text.len() - 1));
+    }
+    if (kind == "int" && text.len() > 0 && charAt(text, 0) == "'") {
+      text = itoa(charValue(text));
+    }
+    out[t] = Tok(kind, text, flat[i + 3], flat[i + 4]);
+  }
+  return out;
+}
+
+/** Whether the source lexes and parses — the caller emits nothing for a file that does not. */
+export bool lexes(string source) { return dumpErrors(source.toBytes()).len() == 0; }
+
+/**
+ * Line/column, as the lexer reports it, to an absolute offset in `source`.
+ *
+ * The starts are computed once and indexed, rather than counted per token: a file with 8,792
+ * literals in it would otherwise walk the source once per mutation.
+ */
+i32[] lineStarts(string source) {
+  i32 lines = 1;
+  for (i32 i = 0; i < source.len(); i++) {
+    if (charAt(source, i) == "\n") { lines = lines + 1; }
+  }
+  i32[] out = i32[lines](fill: 0);
+  i32 at = 1;
+  for (i32 i = 0; i < source.len(); i++) {
+    if (charAt(source, i) == "\n" && at < lines) { out[at] = i + 1; at = at + 1; }
+  }
+  return out;
+}
+
+i32 offsetAt(i32[] starts, i32 line, i32 col) {
+  i32 l = line - 1;
+  if (l < 0 || l >= starts.len()) { return 0; }
+  return starts[l] + (col - 1);
+}
+
+Edit editOf(string file, i32 at, string was, string replacement) {
+  return Edit(file, at, at + was.len(), replacement, was);
+}
+
+/**
+ * Comparison flips.
+ *
+ * `<` to `<=` is the off-by-one that boundary tests exist to catch; `<` to `>` is the gross error
+ * that any test at all should catch. Both are worth generating: a survivor of the first is a missing
+ * boundary case, a survivor of the second means the code is barely tested.
+ */
+string[] relationalAlts(string kind) {
+  if (kind == "<") { return string[]("<=", ">"); }
+  if (kind == "<=") { return string[]("<", ">="); }
+  if (kind == ">") { return string[](">=", "<"); }
+  if (kind == ">=") { return string[](">", "<="); }
+  if (kind == "==") { return string[]("!="); }
+  if (kind == "!=") { return string[]("=="); }
+  return string[0](fill: "");
+}
+
+bool allDigits(string s) {
+  if (s.len() == 0) { return false; }
+  for (i32 i = 0; i < s.len(); i++) {
+    if (!isDigit(charAt(s, i))) { return false; }
+  }
+  return true;
+}
+
+bool isHexLiteral(string s) {
+  if (s.len() < 3) { return false; }
+  if (charAt(s, 0) != "0") { return false; }
+  string x = charAt(s, 1);
+  if (x != "x" && x != "X") { return false; }
+  for (i32 i = 2; i < s.len(); i++) {
+    if (!isHexDigit(charAt(s, i))) { return false; }
+  }
+  return true;
+}
+
+i64 hexValue(string s) {
+  i64 v = 0 as i64;
+  for (i32 i = 2; i < s.len(); i++) {
+    string c = charAt(s, i);
+    i64 d = 0 as i64;
+    if (isDigit(c)) { d = (c.toBytes()[0] as i64) - (48 as i64); }
+    else if (c >= "a" && c <= "f") { d = (c.toBytes()[0] as i64) - (87 as i64); }
+    else { d = (c.toBytes()[0] as i64) - (55 as i64); }
+    v = v * (16 as i64) + d;
+  }
+  return v;
+}
+
+i64 decValue(string s) {
+  i64 v = 0 as i64;
+  for (i32 i = 0; i < s.len(); i++) {
+    v = v * (10 as i64) + ((charAt(s, i).toBytes()[0] as i64) - (48 as i64));
+  }
+  return v;
+}
+
+string toHex(i64 v) {
+  if (v == (0 as i64)) { return "0"; }
+  string digits = "0123456789abcdef";
+  string out = "";
+  i64 n = v;
+  while (n > (0 as i64)) {
+    i32 d = (n % (16 as i64)) as! i32;
+    out = digits.slice(d, d + 1) + out;
+    n = n / (16 as i64);
+  }
+  return out;
+}
+
+/**
+ * Bump an integer literal by one, preserving hex or decimal notation. `""` for one this declines.
+ *
+ * **The reference used `BigInt` and this uses `i64`, which is a real difference at one value.** A
+ * literal wider than `i64` — `0xFFFFFFFFFFFFFFFF`, or a decimal past `9223372036854775807` — would
+ * overflow rather than carry, so a literal whose digits cannot fit is declined instead of bumped
+ * wrongly. Emitting a mutant that says it changed a number it did not is worse than emitting none:
+ * a survivor would be read as "nothing tests this bound" when the bound was never moved.
+ */
+export string bumpLiteral(string text) {
+  // **The overflow is detected, not guessed at by digit count.** `0xFFFFFFFFFFFFFFFF` is eighteen
+  // characters and fits none of i64, so a length rule either lets it through or declines
+  // `0x1000000000000000`, which is the same width and perfectly fine. Accumulating past i64's range
+  // lands in the sign bit, so a negative result is exactly the set that did not fit — and `+ 1` is
+  // checked the same way, because `0x7FFFFFFFFFFFFFFF` parses cleanly and overflows on the bump.
+  if (isHexLiteral(text)) {
+    if (text.len() - 2 > 16) { return ""; }
+    i64 v = hexValue(text);
+    if (v < (0 as i64)) { return ""; }
+    i64 w = v + (1 as i64);
+    if (w < (0 as i64)) { return ""; }
+    return "0x" + toHex(w);
+  }
+  if (allDigits(text)) {
+    if (text.len() > 19) { return ""; }
+    i64 v = decValue(text);
+    if (v < (0 as i64)) { return ""; }
+    i64 w = v + (1 as i64);
+    if (w < (0 as i64)) { return ""; }
+    return itoa64(w);
+  }
+  return "";                                          // suffixed, float-ish or not worth guessing at
+}
+
+/**
+ * Replace a function body with the simplest value of its return type. `""` means "no default",
+ * which is not the same as `void`'s empty replacement — `hasDefault` tells them apart.
+ *
+ * "Extreme mutation" in the literature. One mutant per function rather than dozens, and a survivor
+ * says something blunt and useful: this whole function could return a constant and nothing would
+ * notice. Return types that cannot be defaulted generically — a struct, an enum, a generic — are
+ * skipped rather than guessed at, since a wrong guess only produces an INVALID.
+ */
+bool isPrimitiveName(string t) {
+  return t == "i8" || t == "i16" || t == "i32" || t == "i64"
+      || t == "u8" || t == "u16" || t == "u32" || t == "u64";
+}
+
+bool hasDefault(string t) {
+  if (t == "void" || t == "bool" || t == "string") { return true; }
+  if (t == "f32" || t == "f64") { return true; }
+  if (isPrimitiveName(t)) { return true; }
+  if (t.len() > 0 && charAt(t, t.len() - 1) == "?") { return true; }
+  return elementOfArray(t) != "";
+}
+
+/** `i32` for `i32[]`, and `""` for anything that is not an array of a defaultable primitive. */
+string elementOfArray(string t) {
+  if (t.len() < 3) { return ""; }
+  if (t.slice(t.len() - 2, t.len()) != "[]") { return ""; }
+  string el = t.slice(0, t.len() - 2);
+  if (isPrimitiveName(el) || el == "f32" || el == "f64" || el == "bool" || el == "string") {
+    return el;
+  }
+  return "";
+}
+
+string defaultValueFor(string t) {
+  if (t == "void") { return ""; }
+  if (t == "bool") { return "false"; }
+  if (t == "string") { return "\"\""; }
+  if (t == "f32" || t == "f64") { return "0.0"; }
+  if (isPrimitiveName(t)) { return "0"; }
+  if (t.len() > 0 && charAt(t, t.len() - 1) == "?") { return "null"; }
+  string el = elementOfArray(t);
+  if (el != "") { return el + "[0]()"; }
+  return "";
+}
+
+/** A top-level function: its return type joined, its name, and the brace span of its body. */
+export struct Fn {
+  string retType;
+  string name;
+  i32 open;
+  i32 close;
+}
+
+/**
+ * Every top-level function in `tokens`, as (return-type tokens, body span).
+ *
+ * Found by walking the token stream and brace-matching, rather than by parsing. The parser would
+ * give a cleaner answer, but it reports line/col for declarations and not spans for bodies, so the
+ * brace walk is needed either way — and the lexer has already dealt with braces inside strings and
+ * comments, which is the only hard part.
+ */
+export Fn[] functionsOf(Tok[] tokens) {
+  Fn[] out = Fn[tokens.len()](fill: Fn("", "", 0, 0));
+  i32 n = 0;
+  i32 depth = 0;
+  for (i32 i = 0; i < tokens.len(); i++) {
+    if (tokens[i].kind == "{") { depth = depth + 1; continue; }
+    if (tokens[i].kind == "}") { depth = depth - 1; continue; }
+    if (depth != 0) { continue; }
+
+    // A function at top level is <type> <ident> ( ... ) { — optionally after `export`.
+    if (tokens[i].kind != "(") { continue; }
+    if (i < 1) { continue; }
+    Tok nameTok = tokens[i - 1];
+    if (nameTok.kind != "ident") { continue; }
+
+    // The return type: the tokens between the start of the declaration and the name. Walk back to
+    // `export`, `;`, `}`, `{` or `,`, or the start of file.
+    string retType = "";
+    for (i32 j = i - 2; j >= 0; j--) {
+      string k = tokens[j].kind;
+      if (k == "export" || k == ";" || k == "}" || k == "{" || k == ",") { break; }
+      retType = tokens[j].text + retType;
+    }
+    if (retType == "") { continue; }
+
+    i32 paren = 1;
+    i32 p = i + 1;
+    while (p < tokens.len() && paren > 0) {
+      if (tokens[p].kind == "(") { paren = paren + 1; }
+      else if (tokens[p].kind == ")") { paren = paren - 1; }
+      p = p + 1;
+    }
+    if (p >= tokens.len() || tokens[p].kind != "{") { continue; }
+
+    i32 braces = 1;
+    i32 q = p + 1;
+    while (q < tokens.len() && braces > 0) {
+      if (tokens[q].kind == "{") { braces = braces + 1; }
+      else if (tokens[q].kind == "}") { braces = braces - 1; }
+      q = q + 1;
+    }
+    if (braces != 0) { continue; }
+    out[n] = Fn(retType, nameTok.text, p, q - 1);
+    n = n + 1;
+    i = q - 1;
+  }
+  Fn[] exact = Fn[n](fill: Fn("", "", 0, 0));
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/**
+ * A key identifying "the same kind of literal, in the same place, in the same function".
+ *
+ * The literal operator's cost is dominated by code that repeats one statement: a constant table
+ * (`v[0] = 0x...;` twelve times, or `u8[](0x63, 0x7c, ...)` two hundred and fifty-six times) and
+ * unrolled arithmetic. Bumping the third entry of a table and bumping the fourth are not two
+ * experiments; they are one experiment run twice, and the answer is the same both times because the
+ * same assertions decide it.
+ *
+ * The key is the enclosing function plus the *kinds* of the four tokens either side — the literal's
+ * syntactic neighbourhood with names and values erased. Function-scoped on purpose: `map.wac` has
+ * three dozen separate constant tables written identically, and collapsing them to one class would
+ * throw away thirty-five real questions to save nothing.
+ */
+string shapeKey(Tok[] tokens, i32 i, string scopeName) {
+  string kinds = "";
+  for (i32 k = i - 4; k <= i + 4; k++) {
+    if (k == i) { continue; }
+    string kind = (k < 0 || k >= tokens.len()) ? "^" : tokens[k].kind;
+    kinds = kinds == "" ? kind : kinds + " " + kind;
+  }
+  return scopeName + "|" + kinds;
+}
+
+/** Whitespace removed, not collapsed: `{ return 0; }` and `{return 0;}` are the same program. */
+string normalised(string text) {
+  string out = "";
+  for (i32 i = 0; i < text.len(); i++) {
+    string c = charAt(text, i);
+    if (c == " " || c == "\t" || c == "\n" || c == "\r") { continue; }
+    out = out + c;
+  }
+  return out;
+}
+
+/** `packages/gzip/src/inflate.wac` → `gzip/inflate`, to keep mutant names readable. */
+export string short(string file) {
+  string head = "packages/";
+  if (file.len() <= head.len() || file.slice(0, head.len()) != head) { return file; }
+  if (file.len() < 4 || file.slice(file.len() - 4, file.len()) != ".wac") { return file; }
+  string rest = file.slice(head.len(), file.len() - 4);
+  i32 slash = rest.indexOf("/");
+  if (slash < 0) { return file; }
+  string pkg = rest.slice(0, slash);
+  string tail = rest.slice(slash + 1, rest.len());
+  if (tail.len() > 4 && tail.slice(0, 4) == "src/") { tail = tail.slice(4, tail.len()); }
+  if (tail == "") { return file; }
+  return pkg + "/" + tail;
+}
+
+/**
+ * `round(a / b)` for non-negative integers, without a float.
+ *
+ * The reference spreads the sample with `Math.round((k * (n - 1)) / (perShape - 1))`, and rounding
+ * *down* instead would take entries 0, 1 and 2 of a three-member class rather than 0, 1 and 2 of the
+ * run — the two agree there and disagree everywhere else.
+ */
+i32 roundedDiv(i32 a, i32 b) { return (2 * a + b) / (2 * b); }
+
+/**
+ * Every mutant the requested operators produce for one file.
+ *
+ * `stats` is filled in as it goes; pass a fresh one and read it afterwards.
+ */
+export Mutant[] generate(string file, string source, string[] operators, GenStats stats,
+                         i32 perShape) {
+  if (!lexes(source)) { return Mutant[0](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", "")))); }
+  Tok[] tokens = lexOf(source);
+  i32[] starts = lineStarts(source);
+  Fn[] bodySpans = functionsOf(tokens);
+
+  Mutant[] out = Mutant[0](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  i32 count = 0;
+  // Sized from the work rather than grown: the relational operator emits at most two per token and
+  // the others at most one, so this is an upper bound that no file can exceed.
+  Mutant[] buf = Mutant[tokens.len() * 3 + bodySpans.len() + 1](
+    fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+
+  // Token index -> the declaration a literal belongs to, for `shapeKey`: the enclosing top-level
+  // function, or for module-level code the `const` being initialised.
+  //
+  // The `const` half is not a detail. The largest tables in the repo are module-level
+  // `const u8[] SBOX = u8[](...)` initialisers, which are outside every function span; keying them
+  // all to one empty scope put `unicode/src/tables.wac`'s six separate tables into a single class
+  // and sampled three literals for the lot. Six tables are six questions.
+  string[] scope = string[tokens.len()](fill: "");
+  for (i32 f = 0; f < bodySpans.len(); f++) {
+    for (i32 k = bodySpans[f].open; k <= bodySpans[f].close && k < scope.len(); k++) {
+      scope[k] = bodySpans[f].name;
+    }
+  }
+  string lastConst = "";
+  for (i32 k = 0; k < tokens.len(); k++) {
+    if (scope[k] != "") { continue; }
+    if (tokens[k].kind == "const") {
+      for (i32 j = k + 1; j < tokens.len() && tokens[j].kind != ";"; j++) {
+        if (tokens[j].kind == "=") {
+          if (j > 0 && tokens[j - 1].kind == "ident") { lastConst = tokens[j - 1].text; }
+          break;
+        }
+      }
+    }
+    scope[k] = lastConst;
+  }
+
+  // Which literal tokens to mutate, decided before emitting any: see `shapeKey`. Two passes are
+  // needed because "three spread through the run" cannot be known on the way past the first one, and
+  // taking the first three instead would sample a 1,459-entry table at entries 0, 1 and 2 — three
+  // adjacent code points, all covered by the same test.
+  //
+  // **Grouped by counting rather than by a map of lists.** Appending to an array held in a map copies
+  // it, so one class with 8,792 members in `unicode/src/tables.wac` would be quadratic. Two passes
+  // and a prefix sum are linear, which is what the reference's `Map<string, number[]>` is on a host
+  // with growable arrays.
+  bool[] literalWanted = bool[tokens.len()](fill: false);
+  i32 shapes = 0;
+  if (wants(operators, "literal")) {
+    Map<string, i32> classOf = Map.create(hashString, stringEq);
+    i32[] classIdOf = i32[tokens.len()](fill: -1);
+    for (i32 i = 0; i < tokens.len(); i++) {
+      if (tokens[i].kind != "int" || bumpLiteral(tokens[i].text) == "") { continue; }
+      string key = shapeKey(tokens, i, scope[i]);
+      if (classOf.has(key)) {
+        classIdOf[i] = classOf.getOr(key, -1);
+      } else {
+        classOf.set(key, shapes);
+        classIdOf[i] = shapes;
+        shapes = shapes + 1;
+      }
+    }
+    i32[] countIn = i32[shapes + 1](fill: 0);
+    for (i32 i = 0; i < tokens.len(); i++) {
+      if (classIdOf[i] >= 0) { countIn[classIdOf[i]] = countIn[classIdOf[i]] + 1; }
+    }
+    i32[] startIn = i32[shapes + 1](fill: 0);
+    i32 running = 0;
+    for (i32 c = 0; c < shapes; c++) { startIn[c] = running; running = running + countIn[c]; }
+    i32[] members = i32[running + 1](fill: 0);
+    i32[] filled = i32[shapes + 1](fill: 0);
+    for (i32 i = 0; i < tokens.len(); i++) {
+      i32 c = classIdOf[i];
+      if (c < 0) { continue; }
+      members[startIn[c] + filled[c]] = i;
+      filled[c] = filled[c] + 1;
+    }
+    for (i32 c = 0; c < shapes; c++) {
+      i32 n = countIn[c];
+      if (n <= perShape) {
+        for (i32 m = 0; m < n; m++) { literalWanted[members[startIn[c] + m]] = true; }
+        continue;
+      }
+      for (i32 k = 0; k < perShape; k++) {
+        literalWanted[members[startIn[c] + roundedDiv(k * (n - 1), perShape - 1)]] = true;
+      }
+    }
+  }
+  stats.shapes = stats.shapes + shapes;
+
+  if (wants(operators, "extreme")) {
+    for (i32 f = 0; f < bodySpans.len(); f++) {
+      Fn fun = bodySpans[f];
+      if (!hasDefault(fun.retType)) { continue; }
+      string value = defaultValueFor(fun.retType);
+      Tok open = tokens[fun.open];
+      Tok close = tokens[fun.close];
+      i32 start = offsetAt(starts, open.line, open.col);
+      i32 end = offsetAt(starts, close.line, close.col) + 1;
+      string replacement = value == "" ? "{ }" : "{ return " + value + "; }";
+      // A body that *is* the default is not a mutation. `nc`'s `i32 STDIN() { return 0; }` produced
+      // `{ return 0; }` — the same program, reported as a surviving mutant because no test can tell
+      // one program from itself. Not generating it is cheaper than explaining it, and cannot be
+      // wrong: whitespace aside, the two texts are the same. `issues/system/0005`.
+      string was = source.slice(start, end);
+      if (normalised(was) == normalised(replacement)) { continue; }
+      buf[count] = Mutant("extreme/" + short(file) + "/" + fun.name, "operator",
+                          Edit[](Edit(file, start, end, replacement, was)));
+      count = count + 1;
+    }
+  }
+
+  for (i32 i = 0; i < tokens.len(); i++) {
+    Tok t = tokens[i];
+    i32 start = offsetAt(starts, t.line, t.col);
+
+    if (wants(operators, "relational")) {
+      string[] alts = relationalAlts(t.kind);
+      if (alts.len() > 0 && t.text == t.kind) {
+        for (i32 a = 0; a < alts.len(); a++) {
+          buf[count] = Mutant(
+            "relational/" + short(file) + ":" + itoa(t.line) + ":" + itoa(t.col)
+              + "/" + t.text + "→" + alts[a],
+            "operator", Edit[](editOf(file, start, t.text, alts[a])));
+          count = count + 1;
+        }
+      }
+    }
+
+    if (wants(operators, "literal") && t.kind == "int") {
+      string bumped = bumpLiteral(t.text);
+      if (bumped != "") {
+        // One experiment per repeated shape, not one per occurrence.
+        if (!literalWanted[i]) {
+          stats.literalSkipped = stats.literalSkipped + 1;
+          continue;
+        }
+        stats.literalSampled = stats.literalSampled + 1;
+        buf[count] = Mutant(
+          "literal/" + short(file) + ":" + itoa(t.line) + ":" + itoa(t.col)
+            + "/" + t.text + "→" + bumped,
+          "operator", Edit[](editOf(file, start, t.text, bumped)));
+        count = count + 1;
+      }
+    }
+
+    // A `trap` guard removed. `if (bad) { trap; }` becomes `if (bad) { }`, which is what a decoder
+    // looks like when someone deletes a validity check — the exact defect this repo's adversarial
+    // streams exist to catch.
+    //
+    // The trailing `;` goes with it. Leaving one behind produces `if (bad) { ; }`, and wac has no
+    // empty statement — so the first version of this operator generated 46 mutants and all 46 failed
+    // to compile, scoring a perfect zero while testing nothing.
+    if (wants(operators, "guard") && t.kind == "trap") {
+      i32 end = start + t.text.len();
+      if (i + 1 < tokens.len() && tokens[i + 1].kind == ";") {
+        end = offsetAt(starts, tokens[i + 1].line, tokens[i + 1].col) + 1;
+      }
+      buf[count] = Mutant(
+        "guard/" + short(file) + ":" + itoa(t.line) + ":" + itoa(t.col), "operator",
+        Edit[](Edit(file, start, end, "", source.slice(start, end))));
+      count = count + 1;
+    }
+  }
+
+  out = Mutant[count](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  for (i32 i = 0; i < count; i++) { out[i] = buf[i]; }
+  return out;
+}

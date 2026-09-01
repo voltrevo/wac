@@ -1,0 +1,178 @@
+// The ported mutation operators answer what the TypeScript ones answer.
+//
+// **A differential while both exist, which is the whole point of porting alongside.**
+// `tools/wac/mutateoperators.wac` is a port of `tools/mutate/operators.ts`, and until `tools/mutate.ts`
+// itself moves the TypeScript is still the tool that runs. So the reference is right there, and it is
+// the only complete statement of the contract — this file asks it, over real files in this
+// repository, and requires the two to agree mutant for mutant. `issues/system/0161` step 6,
+// `issues/system/0289b`.
+//
+// Deno is the oracle here and nothing else, which is the role it keeps: the port is the subject, the
+// TypeScript is what it is measured against. When `tools/mutate/operators.ts` is deleted this
+// differential goes with it, and `test_the_cases_the_differential_pinned` below stays — the cases it
+// found, recorded, so the contract survives the oracle.
+//
+// **The files are chosen to reach the parts that are easy to get wrong**, not for coverage: one with
+// a module-level constant table (the `const` scope rule), one with ordinary functions and guards, and
+// one small enough that a disagreement can be read by eye.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { GenStats, Mutant, bumpLiteral, generate, short } from "./mutateoperators.wac";
+
+string[] SUBJECTS() {
+  return string[](
+    "packages/fmt/src/itoa.wac",
+    "packages/rlp/src/rlp.wac",
+    "packages/fmt/src/ftoa.wac");
+}
+
+string read(Core core, Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) { return ""; }
+  return string.fromBytes(r.bytes);
+}
+
+/** The port's mutant names for `file`, one per line, in the order it emits them. */
+string oursFor(Core core, Cli cli, string file) {
+  string source = read(core, cli, file);
+  if (source == "") { return ""; }
+  GenStats stats = GenStats(0, 0, 0);
+  Mutant[] got = generate(file, source, string[]("relational", "literal", "guard", "extreme"),
+                          stats, 3);
+  string out = "";
+  for (i32 i = 0; i < got.len(); i++) {
+    out = out + got[i].name + "\n";
+  }
+  return out;
+}
+
+/**
+ * The reference's names for the same file, through `deno`.
+ *
+ * A one-line program rather than a checked-in script: what is being compared is
+ * `operators.ts`'s own `generate`, and anything between it and this test is another thing that can
+ * differ. `--no-check` because the suite type-checks that tree already and this is not the place to
+ * find out.
+ */
+string theirsFor(Core core, Cli cli, string file) {
+  string program =
+    "import { generate } from './tools/mutate/operators.ts';\n"
+    + "const src = await Deno.readTextFile('" + file + "');\n"
+    + "for (const m of generate('" + file + "', src)) console.log(m.name);\n";
+  Exec r = cli.exec("deno",
+                    string[]("run", "-A", "--no-check", "--unstable-sloppy-imports", "-",
+                             ),
+                    program.toBytes()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("the oracle did not run: " + string.fromBytes(r.stderr));
+    return "";
+  }
+  return string.fromBytes(r.stdout);
+}
+
+/** The next `\n` at or after `from`, or the end. `indexOf` in wac takes no offset. */
+i32 nextNewline(string s, i32 from) {
+  for (i32 i = from; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { return i; }
+  }
+  return s.len();
+}
+
+/** The first line at which two blocks differ, and what each says there. */
+string firstDifference(string a, string b) {
+  i32 ai = 0;
+  i32 bi = 0;
+  i32 line = 1;
+  while (ai < a.len() || bi < b.len()) {
+    i32 an = nextNewline(a, ai);
+    i32 bn = nextNewline(b, bi);
+    string al = a.slice(ai, an);
+    string bl = b.slice(bi, bn);
+    if (al != bl) {
+      return "line " + itoa(line) + ":\n    ours:   " + (al == "" ? "(nothing)" : al)
+             + "\n    theirs: " + (bl == "" ? "(nothing)" : bl);
+    }
+    ai = an + 1;
+    bi = bn + 1;
+    line = line + 1;
+  }
+  return "";
+}
+
+i32 lineCount(string s) {
+  i32 n = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { n = n + 1; }
+  }
+  return n;
+}
+
+/**
+ * The port and the reference emit the same mutants, in the same order, for the same files.
+ *
+ * Order included deliberately: the mutant name carries line and column, so two lists that agree as
+ * sets and differ in order mean the two walks visit the tokens differently — which is the kind of
+ * difference that stays invisible until a sampled operator picks a different member.
+ */
+export string test_the_port_agrees_with_the_typescript_it_replaces(Core core, Cli cli) {
+  T t = T.create();
+  string[] files = SUBJECTS();
+  for (i32 f = 0; f < files.len(); f++) {
+    string file = files[f];
+    string ours = oursFor(core, cli, file);
+    string theirs = theirsFor(core, cli, file);
+    // A pair of empty answers is two failures wearing one face — a file that did not read and a
+    // reference that did not run both look like agreement.
+    // **A floor with a number in it, not just "non-empty".** One matching line is agreement about
+    // almost nothing, and an oracle that half-ran would pass a zero floor. These three produced 53,
+    // 159 and 189 mutants when this was written, so twenty apiece is well under the real answer and
+    // well over anything a broken oracle would emit.
+    t.isTrue(lineCount(theirs) >= 20,
+             file + ": the reference produced " + itoa(lineCount(theirs))
+               + " mutants, too few to be comparing anything");
+    if (lineCount(theirs) < 20) { continue; }
+    t.isTrue(ours != "", file + ": the port produced nothing where the reference produced "
+                         + itoa(lineCount(theirs)) + " mutants");
+    if (ours == "") { continue; }
+    string diff = firstDifference(ours, theirs);
+    t.eqStr(diff, "", file + ": " + itoa(lineCount(ours)) + " ours against "
+                      + itoa(lineCount(theirs)) + " theirs, first difference at ");
+  }
+  return t.report();
+}
+
+/**
+ * The cases the differential pinned, written out so they outlive the oracle.
+ *
+ * Each of these is something the reference does that a reimplementation gets wrong by default, and
+ * every one cost a disagreement to find. They are asserted directly rather than through `deno` so
+ * that deleting `tools/mutate/operators.ts` costs nothing here.
+ */
+export string test_the_cases_the_differential_pinned() {
+  T t = T.create();
+
+  // Hex keeps its notation and its lowercase; decimal stays decimal.
+  t.eqStr(bumpLiteral("0xff"), "0x100", "a hex literal bumps in hex");
+  t.eqStr(bumpLiteral("0xFF"), "0x100", "and comes back lowercase, as `toString(16)` gives");
+  t.eqStr(bumpLiteral("0"), "1", "a decimal literal bumps in decimal");
+  t.eqStr(bumpLiteral("255"), "256", "including across a power of two");
+
+  // Not every `int` token is a number this can bump.
+  t.eqStr(bumpLiteral("1.5"), "", "a float is declined rather than guessed at");
+  t.eqStr(bumpLiteral("12u8"), "", "and so is a suffixed literal");
+
+  // **The i64 limit, which is a real difference from the reference's BigInt.** Declining is the
+  // deliberate answer: a mutant claiming to have moved a bound it overflowed instead would read as
+  // "nothing tests this" when nothing was tested.
+  t.eqStr(bumpLiteral("0xFFFFFFFFFFFFFFFF"), "", "a literal wider than i64 is declined, not wrapped");
+
+  // `short` is what makes a mutant name readable, and it is a path rule rather than a regex.
+  t.eqStr(short("packages/gzip/src/inflate.wac"), "gzip/inflate", "src/ is dropped");
+  t.eqStr(short("packages/fs/test/wac/fs_test.wac"), "fs/test/wac/fs_test",
+          "and a path that is not under src/ keeps the rest of itself");
+  t.eqStr(short("tools/wac/covreport.wac"), "tools/wac/covreport.wac",
+          "anything outside packages/ is left alone");
+  return t.report();
+}
