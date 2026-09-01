@@ -928,7 +928,7 @@ these are that, and one is now gone.
 | `_spawncmp.ts` | — | **stays.** Imports `packages/platform/host/children.ts`; the subject is the JS host's child spawning. |
 | `checkTypes.ts` | — | **stays while any TypeScript does.** It type-checks every `.ts` in the repository, so it is the last thing to go rather than a candidate. |
 | `bench.ts` | 232 | **portable, but the port drops a section.** It benchmarks `packages/gzip` against python's zlib, which `Cli.exec` can still drive — but its *first* reported number is the bindgen boundary, "one exported wasm call per element in each direction", and that cost exists only because the tool runs through Deno. In wac there is no boundary to measure, so the codec numbers get better and stop being comparable to the recorded ones. Moving it is a decision about what the benchmark is for, not a translation. |
-| `benchCompile.ts` | 226 | **portable, and the cleanest next one.** Compile time by phase; the subject is our own compiler and it reaches it through `waccApi` — a wasm instance driven from Deno. wac calls those same phases directly, which is the bridge `wapyroundtrip_test.wac` dropped when it moved. The one thing to check first is `--mem`, which measures peak memory per phase in a process each. |
+| `benchCompile.ts` | 226 | **ported and deleted** — `tools/wac/benchcompile.wac`, with its guard re-pointed from `harness/waccBuild.ts` to `packages/wac/src/wac.wac`. All four modes moved, `--mem` included. The section below has the two tables and what they disagreed about. |
 | `suiteGuard.ts` | — | **portable, but last.** It is the marker *every tool that spawns `deno test`* sets and checks, so it serves the tools above rather than being one. |
 | `suiteGate.ts` | — | **portable, but coupled.** A heavy runner announcing itself to the gate; `tools/push.sh` depends on the arrangement. |
 | `mutate.ts` + `tools/mutate/*.ts` | 1,562 + 3,109 | **portable in principle, and the large one.** It keeps a Deno lane either way, because it must run the `.test.ts` that legitimately remain — so porting it moves the driver, not the dependency. |
@@ -959,6 +959,46 @@ the first line, since it decides how the staging code is shaped.
 So the honest shape of what is left: **one clean port** (`benchCompile`), **one that changes what it
 measures** (`bench`), **one large one** (`mutate`, 4,671 lines and a capability question), and a tail
 that either stays permanently or goes only once the tools it serves have.
+
+**The clean one is done — 2026-09-01 — and what is left of step 6 is all decision.** `benchCompile`
+was the last item here that was translation rather than judgement. `bench` is explicitly not one:
+its first reported number is the bindgen boundary, which does not exist in wac, so porting it
+*improves* the codec numbers and thereby breaks comparability with every figure already recorded —
+that is a question about what the benchmark is for. `mutate` needs the temp-directory answer settled
+before its first line, and cannot land in pieces. `suiteGuard` and `suiteGate` serve the Deno tools
+that remain, so they go last by construction, and `checkTypes` goes only when the last `.ts` does.
+
+Nobody should read that as step 6 being finished. It means the next move on it is a ruling, not a
+commit.
+
+### The survey read `tools/` and there are six Deno programs outside it — agent-b, 2026-09-01
+
+This table is `tools/` file by file, and `tasks.json5` still names **15 Deno tasks of 76**. Six of
+them run programs under `packages/`, which no pass here ever classified. Same test as the rest of
+this page — what is the *subject* — and it splits them three and three:
+
+| program | lines | verdict |
+|---|---|---|
+| `packages/fmt/tools/sweep.ts` | 35 | **stays.** 500k random doubles against JavaScript's own `String(x)`, and 100k decimals back through `atof`. JS *is* the oracle. |
+| `packages/crypto/bench/hash.ts` | 83 | **stays.** Imports `node:crypto`; the number is ours against Node's. |
+| `packages/zstd/bench/ratio.ts` | 91 | **stays.** Our ratio against zlib's, driven through a `node -e` child. |
+| `packages/json/bench/throughput.ts` | 85 | **portable.** Only binds our own `json.wac`. |
+| `packages/json/bench/lookup.ts` | 52 | **portable.** Only binds our own `lookup.wac`. |
+| `packages/unicode/tools/gentables.ts` | 171 | **portable.** Reads Unicode data and writes two `.wac` files — a generator, like `gen:core`, with no oracle and no boundary in it. |
+
+**The three that stay are the rule working, not exceptions to it.** *"Deno as a bootstrap host and an
+oracle called by wac tests"* is exactly what those are: a differential needs the other implementation,
+and JavaScript's `String(x)`, Node's `createHash` and zlib cannot be ported here by definition.
+
+**And the boundary objection that makes `bench` a decision does not reach the json two.** `bench`'s
+first number is the bindgen boundary at *one exported call per element*. `throughput.ts` builds ~1 MiB
+documents with its `corpus()` helper and calls `parse` **once per document**, so the crossing is
+amortised over a megabyte and porting it does not move the number it reports. Checked by reading the
+loop rather than assumed from the shape.
+
+So there are three ports here that need no ruling — which is worth knowing beside the paragraph above
+saying step 6's remainder is all decision. That paragraph is true of `tools/`; it was not true of the
+repository.
 
 **`benchCompile` is scoped, and blocked on one placement decision.** Every phase it measures is an
 export of `packages/wacc/src/api.wac` — `diagnoseGraphIn`, `buildFilesIn`, `blockedFiles`,
