@@ -84,8 +84,8 @@
   "bench:compile": "./native/v8/target/release/wac run --allow-read --allow-env --allow-run tools/wac/benchcompile.wac",
   "bench:zstd": "deno run -A packages/zstd/bench/ratio.ts",
   "bench:zstd-speed": "deno run -A packages/zstd/bench/speed.ts",
-  "bench:json": "deno run -A packages/json/bench/throughput.ts",
-  "bench:json-lookup": "deno run -A packages/json/bench/lookup.ts",
+  "bench:json": "./native/v8/target/release/wac run --allow-env packages/json/bench/throughput.wac",
+  "bench:json-lookup": "./native/v8/target/release/wac run --allow-env packages/json/bench/lookup.wac",
 
   // The shell corpus, measured different ways.
   "corpus:through": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env tools/wac/corpusthrough.wac --",

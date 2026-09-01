@@ -271,8 +271,8 @@ src/stringify.wac  serializer
 src/json.wac       entry points shaped for the bindgen boundary
 test/              host-side differential tests
 test/wac/          unit tests written in wac, via the wactest package
-bench/throughput.ts   MB/s by document shape
-bench/lookup.ts       scan vs hash index, and what the index costs to build
+bench/throughput.wac  MB/s by document shape
+bench/lookup.wac      scan vs hash index, and what the index costs to build
 ```
 
 A `JsonValue` tree crosses the boundary directly: structs and enums bind as

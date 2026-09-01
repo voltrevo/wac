@@ -982,8 +982,8 @@ this page — what is the *subject* — and it splits them three and three:
 | `packages/fmt/tools/sweep.ts` | 35 | **stays.** 500k random doubles against JavaScript's own `String(x)`, and 100k decimals back through `atof`. JS *is* the oracle. |
 | `packages/crypto/bench/hash.ts` | 83 | **stays.** Imports `node:crypto`; the number is ours against Node's. |
 | `packages/zstd/bench/ratio.ts` | 91 | **stays.** Our ratio against zlib's, driven through a `node -e` child. |
-| `packages/json/bench/throughput.ts` | 85 | **portable.** Only binds our own `json.wac`. |
-| `packages/json/bench/lookup.ts` | 52 | **portable.** Only binds our own `lookup.wac`. |
+| `packages/json/bench/throughput.ts` | 85 | **ported and deleted** — `packages/json/bench/throughput.wac`. All thirteen shapes agree with the Deno table within noise, including the exponent-form cliff the two rows exist to separate. |
+| `packages/json/bench/lookup.ts` | 52 | **ported and deleted** — the driver moved into `packages/json/bench/lookup.wac`, which already held the three measured loops. Same break-even, so `INDEX_MIN_MEMBERS` is unchanged. |
 | `packages/unicode/tools/gentables.ts` | 171 | **portable.** Reads Unicode data and writes two `.wac` files — a generator, like `gen:core`, with no oracle and no boundary in it. |
 
 **The three that stay are the rule working, not exceptions to it.** *"Deno as a bootstrap host and an

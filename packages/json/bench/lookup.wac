@@ -77,3 +77,67 @@ export i32 buildOnly(i32 n, i32 reps) {
   }
   return acc;
 }
+
+// ---------------------------------------------------------------------------------------------
+// The driver, which was a Deno program beside this file until 2026-09-01 — in git, and not
+// named here, since a backticked path to something deleted is what `tools/wac/links_test.wac`
+// refuses.
+//
+// It only ever timed the three exports above and printed a table; the loops it measured were
+// already in here, which is what this file's header means by the crossing being amortised away.
+// So the port moves the harness and not the measurement, and the numbers are the same numbers.
+
+import { Core, Cli } from "std/platform.wac";
+
+i32 REPS() { return 200000; }
+i32 BUILD_REPS() { return 20000; }
+
+/** One of the three measured entry points, by index — see `runOne`'s note in `benchcompile.wac`. */
+i32 runOne(i32 which, i32 n, i32 reps) {
+  if (which == 0) { return scanKeys(n, reps); }
+  if (which == 1) { return indexedKeys(n, reps); }
+  return buildOnly(n, reps);
+}
+
+/** Best of three, because the fastest run is the one least disturbed by the rest of the box. */
+i64 bestOfThree(Core core, i32 which, i32 n, i32 reps) {
+  i64 best = 0;
+  for (i32 i = 0; i < 3; i++) {
+    i64 t0 = core.monotonicNanos().wait();
+    i32 sink = runOne(which, n, reps);
+    i64 took = core.monotonicNanos().wait() - t0;
+    if (sink == 0 - 1) { return 0; }        // never true; keeps the call live
+    if (i == 0 || took < best) { best = took; }
+  }
+  return best;
+}
+
+/** Nanoseconds per operation, which is what the table reports. */
+i64 perOp(i64 nanos, i32 reps) { return nanos / (reps as i64); }
+
+export i32 main(Core core, Cli cli) {
+  i32[] sizes = i32[](2, 4, 8, 12, 16, 24, 32, 64, 128, 256, 1024);
+
+  // Warm up, so the first measured size does not pay for whatever the host does on a first call.
+  scanKeys(8, 10000);
+  indexedKeys(8, 10000);
+
+  core.log(itoaLocal(REPS()) + " lookups, cycling through every key. ns.\n");
+  core.log("| members | scan/lookup | indexed/lookup | index build | break-even lookups |");
+  core.log("|---:|---:|---:|---:|---|");
+
+  for (i32 i = 0; i < sizes.len(); i++) {
+    i32 n = sizes[i];
+    i64 scan = perOp(bestOfThree(core, 0, n, REPS()), REPS());
+    i64 indexed = perOp(bestOfThree(core, 1, n, REPS()), REPS());
+    i64 build = perOp(bestOfThree(core, 2, n, BUILD_REPS()), BUILD_REPS());
+    // How many lookups it takes for the index to repay its own construction.
+    i64 saved = scan - indexed;
+    string verdict = "never";
+    if (saved > 0) { verdict = itoaLocal(((build + saved - 1) / saved) as! i32); }
+    core.log("| " + itoaLocal(n) + " | " + itoaLocal(scan as! i32) + " | "
+             + itoaLocal(indexed as! i32) + " | " + itoaLocal(build as! i32) + " | "
+             + verdict + " |");
+  }
+  return 0;
+}

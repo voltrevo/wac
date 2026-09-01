@@ -1,0 +1,161 @@
+// Throughput by document shape, so a slow path can be attributed rather than guessed at.
+//
+// One aggregate number over "realistic JSON" hides everything: a parser can be fast on structure
+// and slow on strings and still look fine. Each corpus below isolates one path, and the ratios
+// between them are the useful part.
+//
+//   wac task bench:json
+//
+// **This was a Deno program beside this file until 2026-09-01** — in git, and not named here,
+// because a backticked path to something deleted is what `tools/wac/links_test.wac` refuses. It
+// bound `packages/json/src/json.wac` and drove it from JavaScript; the crossing was one call per
+// ~1 MiB document, so moving the harness into wac does not move the numbers. `issues/system/0161`.
+
+import { Core, Cli } from "std/platform.wac";
+import { Canonical, canonicalize, parse } from "../src/json.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { JsonValue } from "../src/value.wac";
+
+i32 MIB() { return 1048576; }
+
+/**
+ * Repeat `unit` inside an array until the document is about a mebibyte.
+ *
+ * **Through a `Buf`, not by concatenating a string.** `out = out + unit` around this loop is
+ * quadratic — about eighty thousand rounds each copying up to a megabyte — and the first version of
+ * this port did exactly that. It did not fail; it sat on the first of thirteen shapes for minutes
+ * while the Deno original it was being compared against finished. Bytes are also what the parser
+ * takes, so building them directly drops a conversion as well.
+ */
+u8[] corpus(string unit) {
+  u8[] u = unit.toBytes();
+  Buf b = Buf.withCapacity(MIB() + u.len() + 2);
+  b.push('[');
+  i32 size = 2;
+  bool first = true;
+  while (size < MIB()) {
+    if (!first) { b.push(','); size = size + 1; }
+    b.pushAll(u);
+    size = size + u.len();
+    first = false;
+  }
+  b.push(']');
+  return b.bytes();
+}
+
+string repeated(string s, i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + s; }
+  return out;
+}
+
+/**
+ * The shapes, each isolating one path through the parser.
+ *
+ * Two rows for exponent-form, not one. `atofSpan`'s fast path is exact only for |exponent| <= 22,
+ * and everything else bisects over a bignum — an 11x cliff, measured in `issues/system/0158`. A
+ * single row mixing both populations averaged them into one number that described neither, and read
+ * as "numbers with exponents are slow" rather than "one branch of them is".
+ */
+string[] shapeLabels() {
+  return string[]("structure only (nested empties)", "small integers", "simple decimals",
+                  "exponent-form, fast path", "exponent-form, exact path", "long-mantissa numbers",
+                  "short ASCII strings", "long ASCII strings", "strings with escapes",
+                  "multi-byte UTF-8 strings", "objects, short keys", "objects, long keys",
+                  "realistic mixed");
+}
+
+string shapeUnit(i32 i) {
+  if (i == 0) { return "[[],{},[{}]]"; }
+  if (i == 1) { return "1,22,333,4444,55555,666666"; }
+  if (i == 2) { return "1.5,2.25,3.125,-4.0625,0.5"; }
+  if (i == 3) { return "1e10,2.5e-8"; }
+  if (i == 4) { return "3.75e100,-1.25e-300"; }
+  if (i == 5) { return "1.2345678901234567890123,9.87654321098765432109e-45"; }
+  if (i == 6) { return "\"alpha\",\"beta\",\"gamma\",\"delta\""; }
+  if (i == 7) { return "\"" + repeated("x", 200) + "\""; }
+  if (i == 8) { return "\"a\\nb\\tc\\\"d\\\\e\",\"f\\u0041g\""; }
+  if (i == 9) { return "\"日本語テキスト\",\"café naïve\",\"😀😀😀\""; }
+  if (i == 10) { return "{\"a\":1,\"b\":2,\"c\":3,\"d\":4}"; }
+  if (i == 11) { return "{\"aaaaaaaaaaaaaaaaaaaa\":1,\"bbbbbbbbbbbbbbbbbbbb\":2}"; }
+  return "{\"id\":1234,\"name\":\"item-1234\",\"score\":98.6,\"tags\":[\"a\",\"b\"],\"ok\":true}";
+}
+
+/** `x` to one decimal place, which is what the table reports. */
+string oneDecimal(i64 tenths) {
+  i64 whole = tenths / 10;
+  i64 frac = tenths - whole * 10;
+  if (frac < 0) { frac = 0 - frac; }
+  return itoa64(whole) + "." + itoa64(frac);
+}
+
+string itoa64(i64 v) {
+  if (v == 0) { return "0"; }
+  bool neg = v < 0;
+  i64 n = neg ? 0 - v : v;
+  string out = "";
+  while (n > 0) {
+    out = string.fromCodepoint(48 + ((n % 10) as! i32)) + out;
+    n = n / 10;
+  }
+  return neg ? "-" + out : out;
+}
+
+/** MB/s in tenths, from a byte count and the best time in nanoseconds. */
+i64 mbpsTenths(i32 bytes, i64 nanos) {
+  if (nanos <= 0) { return 0; }
+  // bytes/MiB / (nanos/1e9) == bytes * 1e9 / (MiB * nanos), and ×10 for one decimal.
+  return ((bytes as i64) * 10000000000) / ((MIB() as i64) * nanos);
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] labels = shapeLabels();
+
+  core.log("| shape | MB/s | ms |");
+  core.log("|---|---:|---:|");
+  for (i32 s = 0; s < labels.len(); s++) {
+    u8[] bytes = corpus(shapeUnit(s));
+    for (i32 i = 0; i < 3; i++) { canonicalize(bytes); }
+    i64 best = 0;
+    for (i32 i = 0; i < 7; i++) {
+      i64 t0 = core.monotonicNanos().wait();
+      Canonical out = canonicalize(bytes);
+      i64 dt = core.monotonicNanos().wait() - t0;
+      if (!out.ok) {
+        core.warn(labels[s] + ": parse failed with code " + itoa64(out.code as i64)
+                  + " at " + itoa64(out.pos as i64));
+        return 1;
+      }
+      if (i == 0 || dt < best) { best = dt; }
+    }
+    core.log("| " + labels[s] + " | " + oneDecimal(mbpsTenths(bytes.len(), best))
+             + " | " + oneDecimal(best / 100000) + " |");
+  }
+
+  // The same documents into a tree instead of into bytes.
+  //
+  // This used to measure scanning with nothing built, through an `errorCode` export that has since
+  // been removed — it re-parsed the input to answer a question `canonicalize` already answers.
+  // There is no scan-only path left to measure, because `parseDocument` always builds the tree, so
+  // the honest comparison is against the other thing you might do with it: the ratio between the
+  // two columns is emitting canonical bytes versus allocating a tree.
+  core.log("\n| shape | parse-to-tree MB/s |");
+  core.log("|---|---:|");
+  for (i32 s = 0; s < labels.len(); s++) {
+    u8[] bytes = corpus(shapeUnit(s));
+    for (i32 i = 0; i < 3; i++) { parse(bytes); }
+    i64 best = 0;
+    for (i32 i = 0; i < 7; i++) {
+      i64 t0 = core.monotonicNanos().wait();
+      JsonValue? v = parse(bytes);
+      i64 dt = core.monotonicNanos().wait() - t0;
+      if (v is null) {
+        core.warn(labels[s] + ": parse returned null");
+        return 1;
+      }
+      if (i == 0 || dt < best) { best = dt; }
+    }
+    core.log("| " + labels[s] + " | " + oneDecimal(mbpsTenths(bytes.len(), best)) + " |");
+  }
+  return 0;
+}
