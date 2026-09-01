@@ -118,6 +118,39 @@ ok   test: an empty read returns End
 
 ---
 
+## Const through an accessor
+
+```wac
+struct Server {
+  Vec<Route> routes;
+  Vec<Route> table(const this) { return this.routes; }
+}
+
+i32 count(const Server s) {
+  return s.table().len();
+}
+```
+
+```wac
+void add(const Server s, Route r) {
+  s.table().push(r);
+}
+```
+
+```
+error: a non-const reference cannot be taken from a const one
+  --> server.wac:2:13
+   |
+ 2 |   s.table().push(r);
+   |             ^ `push` writes, and `s.table()` is const
+```
+
+`table` hands back the real `Vec`. Reading it is allowed and writing to it is not.
+
+**Not yet.**
+
+---
+
 ## Matching an enum
 
 ```wac
