@@ -1,0 +1,133 @@
+// The stratified draw is the same draw the TypeScript makes, for the same seed.
+//
+// **This is the module where a differential earns its keep.** `sampleMutants` promises that "the same
+// seed gives the same draw, so a surprising result can be reproduced exactly" — a promise about exact
+// arithmetic, spanning `Math.imul`, `>>>`, an unsigned widening and an IEEE division. Every one of
+// those is a place where a port can be plausibly wrong and still return a well-shaped sample. Nothing
+// about a lopsided draw looks like a bug in a report you read once.
+//
+// So the wac and TypeScript implementations are run over the same population with the same seed and
+// required to pick the same members in the same order. `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Change, Core, Cli, Exec } from "std/platform.wac";
+import { Edit, Mutant } from "./mutateoperators.wac";
+import { Rand, fileCount, mulberry32, next, sampleMutants } from "./mutatesample.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string ORACLE() { return ".cache/mutatesample-oracle.ts"; }
+
+/**
+ * A population both sides can build identically: `m<i>` in file `f<i % files>`.
+ *
+ * Round-robin rather than blocked, so the strata interleave with the source order — a port that
+ * grouped by first-seen order instead of by sorted key would still pass a blocked population.
+ */
+Mutant[] population(i32 n, i32 files) {
+  Mutant[] out = Mutant[n](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  for (i32 i = 0; i < n; i++) {
+    string file = "f" + itoa(i % files);
+    out[i] = Mutant("m" + itoa(i), "operator",
+                    Edit[](Edit(file, 0, 0, "", "")));
+  }
+  return out;
+}
+
+string namesOf(Mutant[] ms) {
+  string out = "";
+  for (i32 i = 0; i < ms.len(); i++) { out = out + (i == 0 ? "" : ",") + ms[i].name; }
+  return out;
+}
+
+/** `""` once the oracle program is on disk, or why not. */
+string writeOracle(Cli cli) {
+  cli.mkdir(".cache", true).wait();
+  string program =
+    "import { sampleMutants } from '../tools/mutate/sample.ts';\n"
+    + "const [n, files, want, seed] = Deno.args.map(Number);\n"
+    + "const pop = [];\n"
+    + "for (let i = 0; i < n; i++) {\n"
+    + "  pop.push({ name: 'm' + i, origin: 'operator',\n"
+    + "             edits: [{ file: 'f' + (i % files), start: 0, end: 0, replacement: '', was: '' }] });\n"
+    + "}\n"
+    + "console.log(sampleMutants(pop, want, seed).map((m) => m.name).join(','));\n";
+  Change wrote = cli.writeFile(ORACLE(), program.toBytes()).wait();
+  return wrote.ok() ? "" : wrote.message;
+}
+
+string theirs(Cli cli, i32 n, i32 files, i32 want, i32 seed) {
+  Exec r = cli.exec("deno",
+                    string[]("run", "-A", "--no-check", "--unstable-sloppy-imports", ORACLE(),
+                             itoa(n), itoa(files), itoa(want), itoa(seed)), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "oracle-failed"; }
+  string s = string.fromBytes(r.stdout);
+  if (s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n") { s = s.slice(0, s.len() - 1); }
+  return s;
+}
+
+/**
+ * The generator itself, before the draw that uses it.
+ *
+ * Checked separately because a wrong `next` and a wrong shuffle produce the same symptom — a
+ * different sample — and only one of them is about the arithmetic. In particular the value must be
+ * in `[0, 1)` and never negative: `>>> 0` before the division is the step a port drops, and a
+ * negative random indexes out of range rather than skewing the result.
+ */
+export string test_the_generator_is_in_range_and_deterministic() {
+  T t = T.create();
+  Rand a = mulberry32(20260901);
+  Rand b = mulberry32(20260901);
+  bool inRange = true;
+  bool sameTwice = true;
+  bool moved = false;
+  f64 first = next(a);
+  f64 firstB = next(b);
+  if (first != firstB) { sameTwice = false; }
+  for (i32 i = 0; i < 500; i++) {
+    f64 x = next(a);
+    f64 y = next(b);
+    if (x < 0.0 || x >= 1.0) { inRange = false; }
+    if (x != y) { sameTwice = false; }
+    if (x != first) { moved = true; }
+  }
+  t.isTrue(inRange, "every value is in [0, 1) — a negative one is `>>> 0` missing");
+  t.isTrue(sameTwice, "and two generators on one seed agree, which is the promise");
+  t.isTrue(moved, "and it is not a constant, which would satisfy both of the above");
+  return t.report();
+}
+
+export string test_the_draw_matches_the_typescript_for_the_same_seed(Core core, Cli cli) {
+  T t = T.create();
+  string why = writeOracle(cli);
+  t.eqStr(why, "", "the oracle program was written");
+  if (why != "") { return t.report(); }
+
+  // Sizes chosen so the strata are uneven and `want` is not a multiple of the file count: a draw that
+  // round-robins correctly and one that takes the first n of each file agree when everything divides.
+  i32[] ns = i32[](50, 50, 97, 97, 13);
+  i32[] fs = i32[](5, 5, 7, 7, 3);
+  i32[] wants = i32[](7, 23, 31, 96, 12);
+  i32[] seeds = i32[](1, 20260901, 7, 99, 20260901);
+  for (i32 c = 0; c < ns.len(); c++) {
+    Mutant[] pop = population(ns[c], fs[c]);
+    string got = namesOf(sampleMutants(pop, wants[c], seeds[c]));
+    string want = theirs(cli, ns[c], fs[c], wants[c], seeds[c]);
+    t.isTrue(want != "oracle-failed", "the oracle ran for case " + itoa(c));
+    if (want == "oracle-failed") { continue; }
+    t.eqStr(got, want,
+            "n=" + itoa(ns[c]) + " files=" + itoa(fs[c]) + " want=" + itoa(wants[c])
+              + " seed=" + itoa(seeds[c]));
+  }
+  return t.report();
+}
+
+export string test_the_degenerate_draws_return_everything() {
+  T t = T.create();
+  Mutant[] pop = population(10, 3);
+  t.eqI32(sampleMutants(pop, 0, 1).len(), 10, "a draw of nothing is the whole population");
+  t.eqI32(sampleMutants(pop, -1, 1).len(), 10, "and so is a negative one");
+  t.eqI32(sampleMutants(pop, 10, 1).len(), 10, "and one that is not smaller than the population");
+  t.eqI32(sampleMutants(pop, 99, 1).len(), 10, "including one larger than it");
+  t.eqI32(fileCount(pop), 3, "and the file count is the number of distinct files");
+  return t.report();
+}

@@ -1,0 +1,41 @@
+// How long a mutant may run before it is called hung — the wac side of `tools/mutate/deadline.ts`.
+//
+// In a module of its own so a test can import it, which is the shape the whole of `tools/mutate` has
+// for the same reason: `tools/mutate.ts` runs the tool at import, so anything a test needs to reach
+// lives beside it rather than in it. `issues/system/0161` step 6.
+
+/**
+ * The multiplier is generous on purpose. A mutant is either detected — usually in the first failing
+ * test, with `--fail-fast` — or it runs to completion in about baseline time. Ten times baseline is
+ * not "a bit slow", it is hung.
+ */
+export i32 TIMEOUT_MULTIPLIER() { return 10; }
+export i32 TIMEOUT_FLOOR_MS() { return 30000; }
+export i32 TIMEOUT_CAP_MS() { return 600000; }
+
+i32 maxOf(i32 a, i32 b) { return a > b ? a : b; }
+i32 minOf(i32 a, i32 b) { return a < b ? a : b; }
+
+/**
+ * The deadline for a mutant whose scope took `baseline` ms unmutated.
+ *
+ * **The cap must never fall below the baseline**, and it could: `min(600s, baseline × 10)` is less
+ * than the baseline itself once a scope takes more than a minute, and a deadline below the baseline
+ * cannot tell a hung mutant from an undetected one. An undetected mutant runs to completion in about
+ * baseline time — so it would be timed out and recorded as *killed*, which is the false kill the
+ * multiplier's own comment exists to prevent.
+ *
+ * Seen for real on 2026-08-13, and by making the tool *more* honest: adding `--unstable-net` let the
+ * net tests actually run instead of failing fast, the slowest scope's baseline went to **673s**, and
+ * the run printed `deadline: 10x each scope's own baseline (slowest 673.1s -> 600s)` — a deadline 73
+ * seconds shorter than doing nothing at all.
+ *
+ * So the cap yields to twice the baseline when the two disagree. Twice rather than ten times because
+ * the cap is there for a reason — a genuinely hung mutant should not hold a slot for two hours — and
+ * twice baseline is still unambiguously "hung" for work that either fails fast or finishes in
+ * baseline time.
+ */
+export i32 deadlineFor(i32 baseline) {
+  i32 want = maxOf(TIMEOUT_FLOOR_MS(), baseline * TIMEOUT_MULTIPLIER());
+  return maxOf(minOf(TIMEOUT_CAP_MS(), want), baseline * 2);
+}

@@ -1,0 +1,156 @@
+// Random sampling of a mutant set — the wac side of `tools/mutate/sample.ts`.
+//
+// A whole-package sweep at `--operators=all` is minutes to tens of minutes, which in practice means
+// it is run rarely and the number is usually stale. Mutant sampling is the standard answer: a random
+// subset estimates the mutation score of the whole set, and it has been known since Acree and Budd
+// that a fairly small fraction tracks the full figure closely. A five-minute sample you run beats a
+// half-hour sweep you keep meaning to.
+//
+// **The arithmetic is the contract, not an implementation detail.** `mulberry32` is specified by its
+// exact 32-bit operations: the same seed must give the same draw, on every host, in both languages,
+// or a "surprising result, reproduced exactly" is neither. `Math.imul` is a wrapping 32-bit multiply
+// and wasm's `i32.mul` is the same one, `>>>` exists in wac with the same meaning, and the final
+// division is IEEE-754 in both — so this is a transliteration rather than a reimplementation, and
+// `mutatesample_test.wac` checks it against the reference for the same seed.
+
+import { Mutant } from "./mutateoperators.wac";
+
+/** mulberry32's state: it is a generator in the reference, and wac has no closures over a mutable. */
+export struct Rand {
+  i32 a;
+}
+
+/**
+ * The next value in `[0, 1)`, advancing the state.
+ *
+ * `>>> 0` in the reference makes the result unsigned before the division; here the shift already
+ * produces the bits and the widening to `f64` is where the sign would otherwise leak, so the value
+ * is masked into an `i64` first. That step is the one a careless port drops, and it shows up as
+ * negative randoms and a shuffle that indexes out of range rather than as a wrong distribution.
+ */
+export i64 nextBits(Rand r) {
+  r.a = r.a + 0x6D2B79F5;
+  i32 t = (r.a ^ (r.a >>> 15)) * (1 | r.a);
+  t = (t + ((t ^ (t >>> 7)) * (61 | t))) ^ t;
+  i32 bits = t ^ (t >>> 14);
+  return (bits as i64) & (0xFFFFFFFF as i64);
+}
+
+export f64 next(Rand r) { return (nextBits(r) as~ f64) / 4294967296.0; }
+
+export Rand mulberry32(i32 seed) { return Rand(seed); }
+
+/** The file a mutant edits, or `""` — the key the strata are built on. */
+string fileOf(Mutant m) { return m.edits.len() == 0 ? "" : m.edits[0].file; }
+
+/** How many files the draw spans, for the line the run prints. */
+export i32 fileCount(Mutant[] mutants) {
+  string[] seen = string[mutants.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < mutants.len(); i++) {
+    string f = fileOf(mutants[i]);
+    bool have = false;
+    for (i32 j = 0; j < n; j++) {
+      if (seen[j] == f) { have = true; break; }
+    }
+    if (!have) { seen[n] = f; n = n + 1; }
+  }
+  return n;
+}
+
+/**
+ * `n` mutants drawn from `mutants`, stratified by file.
+ *
+ * **Stratified rather than uniform.** A uniform draw over `bls` would be dominated by whichever file
+ * holds the most mutants — one file can hold a fifth of them — and could return nothing at all about
+ * a small file, which is where the interesting gaps usually are. Round-robin across files guarantees
+ * every file is represented before any file gets a second mutant.
+ *
+ * Deterministic in `seed`: the same seed gives the same draw, so a surprising result can be
+ * reproduced exactly. The caller supplies a random seed by default and prints it, so that repeated
+ * runs cover different ground instead of re-asking one subset for ever.
+ *
+ * Returns the input unchanged when `n` is not a useful number or is not smaller than the population.
+ */
+export Mutant[] sampleMutants(Mutant[] mutants, i32 n, i32 seed) {
+  if (n <= 0 || n >= mutants.len()) { return mutants; }
+  Rand rand = mulberry32(seed);
+
+  // Sorted keys so the grouping does not depend on iteration order — the reference sorts the map's
+  // keys for the same reason, and a draw that depended on insertion order would not be reproducible
+  // from the seed alone, which is the whole promise.
+  string[] keys = string[mutants.len()](fill: "");
+  i32 groups = 0;
+  for (i32 i = 0; i < mutants.len(); i++) {
+    string f = fileOf(mutants[i]);
+    bool have = false;
+    for (i32 j = 0; j < groups; j++) {
+      if (keys[j] == f) { have = true; break; }
+    }
+    if (!have) { keys[groups] = f; groups = groups + 1; }
+  }
+  for (i32 i = 1; i < groups; i++) {
+    string k = keys[i];
+    i32 j = i - 1;
+    while (j >= 0 && keys[j] > k) { keys[j + 1] = keys[j]; j = j - 1; }
+    keys[j + 1] = k;
+  }
+
+  // Each group's members in source order, then Fisher-Yates within it, in the reference's order:
+  // group by sorted key, shuffle that group, move to the next.
+  i32[] sizes = i32[groups + 1](fill: 0);
+  for (i32 i = 0; i < mutants.len(); i++) {
+    string f = fileOf(mutants[i]);
+    for (i32 g = 0; g < groups; g++) {
+      if (keys[g] == f) { sizes[g] = sizes[g] + 1; break; }
+    }
+  }
+  i32[] starts = i32[groups + 1](fill: 0);
+  i32 running = 0;
+  for (i32 g = 0; g < groups; g++) { starts[g] = running; running = running + sizes[g]; }
+  i32[] members = i32[running + 1](fill: 0);
+  i32[] filled = i32[groups + 1](fill: 0);
+  for (i32 i = 0; i < mutants.len(); i++) {
+    string f = fileOf(mutants[i]);
+    for (i32 g = 0; g < groups; g++) {
+      if (keys[g] == f) { members[starts[g] + filled[g]] = i; filled[g] = filled[g] + 1; break; }
+    }
+  }
+  for (i32 g = 0; g < groups; g++) {
+    i32 base = starts[g];
+    for (i32 i = sizes[g] - 1; i > 0; i--) {
+      // **`Math.floor`, done in integers, because wac has neither of the casts that would do it.**
+      // `as~` takes the *nearest* value — it rounds 2.7 up to 3 and picks a different member half the
+      // time, which the differential caught on all five cases with the strata and the round-robin
+      // already right. `as!` is exact-or-trap, so it traps on any fraction at all.
+      //
+      // `floor(u / 2^32 * (i + 1))` is `u * (i + 1) / 2^32` in integers, and the two agree exactly
+      // here rather than approximately: `u < 2^32` over a power of two is exact in a double, and the
+      // product stays under 2^53 for any group this will ever see, so neither side rounds.
+      i32 j = ((nextBits(rand) * ((i + 1) as i64)) / 4294967296) as! i32;
+      i32 a = members[base + i];
+      members[base + i] = members[base + j];
+      members[base + j] = a;
+    }
+  }
+
+  Mutant[] picked = Mutant[n](fill: mutants[0]);
+  i32 taken = 0;
+  i32 round = 0;
+  while (taken < n) {
+    bool tookAny = false;
+    for (i32 g = 0; g < groups; g++) {
+      if (round >= sizes[g]) { continue; }
+      picked[taken] = mutants[members[starts[g] + round]];
+      taken = taken + 1;
+      tookAny = true;
+      if (taken == n) { break; }
+    }
+    if (!tookAny) { break; }        // every file exhausted; `n` exceeded what the strata hold
+    round = round + 1;
+  }
+  if (taken == n) { return picked; }
+  Mutant[] exact = Mutant[taken](fill: mutants[0]);
+  for (i32 i = 0; i < taken; i++) { exact[i] = picked[i]; }
+  return exact;
+}

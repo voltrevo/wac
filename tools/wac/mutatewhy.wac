@@ -1,0 +1,180 @@
+// Why a test run failed, out of its transcript — the wac side of `tools/mutate/why.ts`.
+//
+// One function, in a module of its own so a test can import it. `issues/system/0161` step 6.
+//
+// **The regexes are hand-written here and that is where the risk is.** Each of the four patterns
+// below encodes something this function was wrong about once, so a loose translation would quietly
+// undo a fix. `mutatewhy_test.wac` pins each of them by the case that produced it.
+
+
+/**
+ * `\x1b[0-9;]*m` removed — the SGR sequences a coloured transcript is full of.
+ *
+ * Stripped rather than matched around, because every pattern below would otherwise need to allow for
+ * an escape anywhere in it, and each one that forgot would fail only on coloured input — which is
+ * all of it in practice and none of it in a hand-written test.
+ */
+/** The escape byte itself: wac has no `\x` escape, so it is built rather than spelled. */
+string esc() { u8[] e = u8[1](fill: 27); return string.fromBytes(e); }
+
+string stripAnsi(string s) {
+  string out = "";
+  i32 i = 0;
+  while (i < s.len()) {
+    if (s.slice(i, i + 1) == esc() && i + 1 < s.len() && s.slice(i + 1, i + 2) == "[") {
+      i32 j = i + 2;
+      while (j < s.len() && (isDigitChar(s.slice(j, j + 1)) || s.slice(j, j + 1) == ";")) {
+        j = j + 1;
+      }
+      if (j < s.len() && s.slice(j, j + 1) == "m") { i = j + 1; continue; }
+    }
+    out = out + s.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+bool isWordChar(string c) {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
+}
+
+bool isSpaceChar(string c) { return c == " " || c == "\t" || c == "\r"; }
+
+bool isDigitChar(string c) { return c >= "0" && c <= "9"; }
+
+/** `\bFAILED\b` — the word, not the letters inside a longer one. */
+bool hasFailedWord(string line) {
+  string want = "FAILED";
+  for (i32 i = 0; i + want.len() <= line.len(); i++) {
+    if (line.slice(i, i + want.len()) != want) { continue; }
+    bool leftOk = i == 0 || !isWordChar(line.slice(i - 1, i));
+    i32 after = i + want.len();
+    bool rightOk = after >= line.len() || !isWordChar(line.slice(after, after + 1));
+    if (leftOk && rightOk) { return true; }
+  }
+  return false;
+}
+
+/**
+ * `\.\.\.\s+ok\b` — a test line reporting success.
+ *
+ * **A test's *name* is not a failure**, and this is the guard that says so. The original was
+ * `l.includes("FAILED") || l.includes("error")` and it reported
+ * `a new image is an empty world, not an error ... ok` — a *passing* test whose name contains the
+ * word. The scope that was red was 23 packages; the line printed pointed at one of them more or less
+ * at random, and following it cost an hour.
+ */
+bool hasDotsThenOk(string line) {
+  for (i32 i = 0; i + 3 <= line.len(); i++) {
+    if (line.slice(i, i + 3) != "...") { continue; }
+    i32 j = i + 3;
+    i32 spaces = 0;
+    while (j < line.len() && isSpaceChar(line.slice(j, j + 1))) { j = j + 1; spaces = spaces + 1; }
+    if (spaces == 0) { continue; }                       // `\s+`, at least one
+    if (j + 2 > line.len() || line.slice(j, j + 2) != "ok") { continue; }
+    bool rightOk = j + 2 >= line.len() || !isWordChar(line.slice(j + 2, j + 3));
+    if (rightOk) { return true; }
+  }
+  return false;
+}
+
+/** `^\s*error:` — Deno's own, which may be indented. */
+bool startsWithError(string line) {
+  i32 i = 0;
+  while (i < line.len() && isSpaceChar(line.slice(i, i + 1))) { i = i + 1; }
+  return i + 6 <= line.len() && line.slice(i, i + 6) == "error:";
+}
+
+/** `^FAIL\s` — a `wac test` per-test line, which is not spelled the way Deno spells it. */
+bool startsWithFail(string line) {
+  return line.len() >= 5 && line.slice(0, 4) == "FAIL" && isSpaceChar(line.slice(4, 5));
+}
+
+/**
+ * `^\d+ files?:.*(with failures|did not run)` — a `wac test` summary.
+ *
+ * Without this and the one above, a scope whose tests are wac files reached the fallback and the
+ * caller printed `BASELINE RED: … —` with nothing after the dash, which is the same silence this
+ * function exists to end. `issues/system/0183`.
+ */
+bool isWacSummary(string line) {
+  i32 i = 0;
+  while (i < line.len() && isDigitChar(line.slice(i, i + 1))) { i = i + 1; }
+  if (i == 0) { return false; }
+  if (i + 6 <= line.len() && line.slice(i, i + 6) == " file:") { }
+  else if (i + 7 <= line.len() && line.slice(i, i + 7) == " files:") { }
+  else { return false; }
+  return contains(line, "with failures") || contains(line, "did not run");
+}
+
+bool contains(string haystack, string needle) {
+  if (needle.len() == 0) { return true; }
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+string trimmedEnds(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && (isSpaceChar(s.slice(from, from + 1)) || s.slice(from, from + 1) == "\n")) {
+    from = from + 1;
+  }
+  while (to > from && (isSpaceChar(s.slice(to - 1, to)) || s.slice(to - 1, to) == "\n")) {
+    to = to - 1;
+  }
+  return s.slice(from, to);
+}
+
+string[] linesOf(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i == s.len() || s.slice(i, i + 1) == "\n") {
+      if (at < n) { out[at] = s.slice(from, i); at = at + 1; }
+      from = i + 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The line that says why a run failed, out of a `deno test` or `wac test` transcript.
+ *
+ * A line Deno itself begins with `error:`, or a test line whose verdict is FAILED — and a test line
+ * reporting `ok` is never either, however it is named. ANSI is stripped first because every one of
+ * these arrives coloured.
+ *
+ * The last resort is the final non-empty line. A reason nobody can read is worse than a line that
+ * might be the wrong one — the caller quotes it as *why*, and an empty quote sent me looking for a
+ * fault in the suite when the run had simply said something this function did not recognise.
+ */
+export string firstFailureLine(string out) {
+  string[] raw = linesOf(out);
+  string[] lines = string[raw.len()](fill: "");
+  for (i32 i = 0; i < raw.len(); i++) {
+    lines[i] = stripAnsi(raw[i]);
+  }
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (hasFailedWord(lines[i]) && !hasDotsThenOk(lines[i])) { return lines[i]; }
+  }
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (startsWithError(lines[i])) { return lines[i]; }
+  }
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (startsWithFail(lines[i])) { return lines[i]; }
+  }
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (isWacSummary(lines[i])) { return lines[i]; }
+  }
+  for (i32 i = lines.len() - 1; i >= 0; i--) {
+    if (trimmedEnds(lines[i]) != "") { return lines[i]; }
+  }
+  return "";
+}

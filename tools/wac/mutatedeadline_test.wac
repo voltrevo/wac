@@ -1,0 +1,32 @@
+// The deadline a mutant gets, at the boundaries that have been wrong before.
+//
+// Pure arithmetic, so there is no oracle here and none is wanted: the reference is four lines and the
+// interesting part is which of the three bounds wins where. `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, deadlineFor } from "./mutatedeadline.wac";
+
+export string test_the_deadline_is_never_below_the_baseline() {
+  T t = T.create();
+
+  // A quick scope gets the floor, not ten times almost nothing.
+  t.eqI32(deadlineFor(100), TIMEOUT_FLOOR_MS(), "a 0.1s baseline gets the 30s floor");
+  t.eqI32(deadlineFor(0), TIMEOUT_FLOOR_MS(), "and so does a baseline of nothing at all");
+
+  // In the ordinary range the multiplier decides.
+  t.eqI32(deadlineFor(10000), 100000, "10s baseline: ten times it");
+  t.eqI32(deadlineFor(60000), 600000, "60s baseline: ten times it, exactly at the cap");
+
+  // **Past the cap, and this is the case that was wrong.** `min(600s, baseline × 10)` is *less than
+  // the baseline* once a scope takes more than a minute, and a deadline below the baseline cannot
+  // tell a hung mutant from an undetected one — an undetected mutant runs to completion in about
+  // baseline time, so it would be timed out and recorded as killed. Seen for real on 2026-08-13 at a
+  // 673s baseline, where the run printed a deadline 73 seconds shorter than doing nothing.
+  t.eqI32(deadlineFor(673100), 1346200, "a 673s baseline gets twice itself, not the 600s cap");
+  t.isTrue(deadlineFor(673100) > 673100, "and that is above the baseline, which is the whole point");
+
+  // The crossover: the cap holds while it is still above twice the baseline.
+  t.eqI32(deadlineFor(300000), TIMEOUT_CAP_MS(), "a 300s baseline is capped at 600s, which is 2x");
+  t.eqI32(deadlineFor(300001), 600002, "and one millisecond more takes the twice-baseline branch");
+  return t.report();
+}

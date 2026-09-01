@@ -1,0 +1,134 @@
+// `firstFailureLine` picks the same line the TypeScript picks.
+//
+// **Every case here is a bug this function had.** `tools/mutate/why.ts` is four patterns and a
+// fallback, and each pattern was added because the one before it printed the wrong line — so a port
+// that translates the regexes loosely undoes a fix without failing anything. The differential against
+// the reference catches that while both exist; the cases below outlive it. `issues/system/0161`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Change, Core, Cli, Exec } from "std/platform.wac";
+import { firstFailureLine } from "./mutatewhy.wac";
+
+string ORACLE() { return ".cache/mutatewhy-oracle.ts"; }
+
+/**
+ * The reference's answer for the same transcript, through `deno`.
+ *
+ * **The program goes in a file and the transcript goes on stdin, and it has to be that way round.**
+ * Passing the program on stdin as `/dev/stdin` — which is what this did first — makes `deno` consume
+ * the pipe, so the transcript never arrives and the oracle answers about an empty string for every
+ * case. That is a differential that compares nothing and passes: the wac side would have to return
+ * `""` for all seven inputs to fail it.
+ *
+ * The transcript is not embedded in the program text either, for the reason the case list shows: it
+ * is full of quotes, escapes and newlines, and a program that embeds it tests my quoting rather than
+ * their function.
+ */
+string theirs(Core core, Cli cli, string transcript) {
+  Exec r = cli.exec("deno", string[]("run", "-A", "--no-check", "--unstable-sloppy-imports",
+                                     ORACLE()), transcript.toBytes()).wait();
+  if (!r.ran() || r.status != 0) { return "oracle-failed"; }
+  return string.fromBytes(r.stdout);
+}
+
+/** `""` once the oracle program is on disk, or why not. */
+string writeOracle(Cli cli) {
+  cli.mkdir(".cache", true).wait();
+  string program =
+    "import { firstFailureLine } from '../tools/mutate/why.ts';\n"
+    + "const t = await new Response(Deno.stdin.readable).text();\n"
+    + "console.log(JSON.stringify(firstFailureLine(t)));\n";
+  Change wrote = cli.writeFile(ORACLE(), program.toBytes()).wait();
+  return wrote.ok() ? "" : wrote.message;
+}
+
+/** `"…"` as JSON, so a comparison with the oracle's output is a comparison of the same shape. */
+string quoted(string s) {
+  string out = "\"";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c == "\"") { out = out + "\\\""; }
+    else if (c == "\\") { out = out + "\\\\"; }
+    else { out = out + c; }
+  }
+  return out + "\"";
+}
+
+/**
+ * The four patterns, each by the case that put it there.
+ *
+ * Asserted against this port directly rather than through `deno`, so deleting `tools/mutate/why.ts`
+ * costs nothing here.
+ */
+export string test_the_line_it_picks_is_the_one_that_says_why() {
+  T t = T.create();
+
+  // **A test's name is not a failure.** The original was `includes("FAILED") || includes("error")`
+  // and it reported a *passing* test whose name contains the word. The scope that was red was 23
+  // packages; the line printed pointed at one of them at random and following it cost an hour.
+  t.eqStr(firstFailureLine(
+            "running 3 tests\n"
+            + "a new image is an empty world, not an error ... ok (2ms)\n"
+            + "FAILED | 2 passed | 1 failed\n"),
+          "FAILED | 2 passed | 1 failed",
+          "a passing test whose name says `error` is not the reason");
+
+  // `...  ok` never counts, however the name reads.
+  t.eqStr(firstFailureLine("the FAILED case is handled ... ok (1ms)\nerror: boom\n"),
+          "error: boom",
+          "and `FAILED` inside a passing test's name does not count either");
+
+  // Deno's own error, which may be indented.
+  t.eqStr(firstFailureLine("ok one ... ok\n   error: Uncaught TypeError: x\n"),
+          "   error: Uncaught TypeError: x",
+          "an indented `error:` is Deno's own");
+
+  // **A `wac test` transcript says it differently.** Without this the caller printed
+  // `BASELINE RED: … —` with nothing after the dash. `issues/system/0183`.
+  t.eqStr(firstFailureLine("ok   test_a ...\nFAIL test_b — 1 failed: nope\n"),
+          "FAIL test_b — 1 failed: nope",
+          "a `wac test` per-test line");
+  t.eqStr(firstFailureLine("running\n8 files: 7 ok, 1 with failures in 3.3s\n"),
+          "8 files: 7 ok, 1 with failures in 3.3s",
+          "and its summary, when no single test line is in the transcript");
+
+  // The fallback: a reason nobody can read is worse than a line that might be the wrong one.
+  t.eqStr(firstFailureLine("something unrecognised\nand then this\n\n"),
+          "and then this", "the last non-empty line when nothing matches");
+  t.eqStr(firstFailureLine(""), "", "and nothing at all for an empty transcript");
+  return t.report();
+}
+
+/**
+ * The port and the reference agree on transcripts that are exactly the awkward ones.
+ *
+ * Order matters as much as the match: the reference scans *all* lines for `FAILED` before it looks
+ * for `error:` anywhere, so a transcript with both — which is most real ones — distinguishes a port
+ * that checks line by line from one that checks pattern by pattern. The third case below is that.
+ */
+export string test_it_agrees_with_the_typescript_it_replaces(Core core, Cli cli) {
+  T t = T.create();
+  string why = writeOracle(cli);
+  t.eqStr(why, "", "the oracle program was written");
+  if (why != "") { return t.report(); }
+  string[] cases = string[](
+    "a new image is an empty world, not an error ... ok (2ms)\nFAILED | 2 passed | 1 failed\n",
+    "   error: Uncaught TypeError: x\nok two ... ok\n",
+    "error: this comes first\nFAILED | 1 failed\n",
+    "ok   test_a ...\nFAIL test_b — 1 failed: nope\n",
+    "8 files: 7 ok, 1 with failures in 3.3s\n",
+    "something unrecognised\nand then this\n\n",
+    "");
+  for (i32 i = 0; i < cases.len(); i++) {
+    string got = quoted(firstFailureLine(cases[i]));
+    string want = theirs(core, cli, cases[i]);
+    // The oracle prints a JSON string and a newline; compare without it.
+    if (want.len() > 0 && want.slice(want.len() - 1, want.len()) == "\n") {
+      want = want.slice(0, want.len() - 1);
+    }
+    t.isTrue(want != "oracle-failed", "the oracle ran for case " + quoted(cases[i]));
+    if (want == "oracle-failed") { continue; }
+    t.eqStr(got, want, "case " + quoted(cases[i]));
+  }
+  return t.report();
+}
