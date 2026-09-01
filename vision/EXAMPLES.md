@@ -203,6 +203,30 @@ The head keeps its parentheses, and declares its variable the way any local is d
 
 ---
 
+## A type the caller supplies
+
+```wac
+i32 totalLength<C>(C parts) {
+  i32 n = 0;
+  for (auto part in parts) {
+    n += part.len();
+  }
+  return n;
+}
+```
+
+```wac
+totalLength(names);       // string[], so `part` is a string
+totalLength(chunks);      // Vec<u8[]>, so `part` is a u8[]
+```
+
+`part` is whatever `C` holds: a `string` in the first call, a `u8[]` in the second. Each
+instantiation supplies the type.
+
+**Not yet.**
+
+---
+
 ## A ticket is a value
 
 ```wac
