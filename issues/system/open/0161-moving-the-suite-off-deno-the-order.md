@@ -2932,3 +2932,38 @@ happened. That is not a gap to fill but a check that expired with its subject, a
 better than leaving a step that reads as pending work nobody can do.
 
 Steps 4, 5 and 6 stand: the oracle question is still a decision, and `tools/` is classified above.
+
+## Step 4's premise is gone too: no wac test takes an oracle as a parameter — agent-b, 2026-09-01
+
+*"The decision in step 4"* opens with the population it is about:
+
+> 31 of the 83 wac test files cannot run under `wac test` at all: every test in them takes the oracle
+> as a *parameter*, supplied by a host.
+
+**That is zero now.** Every `export string test_*` declaration under `packages/` and `core/`, by
+signature:
+
+| signature | count |
+|---|---:|
+| `()` | 1,536 |
+| `(Core core, Cli cli)` | 1,181 + 177 written across two lines |
+| `(Core core)` | 20 |
+
+2,924 declarations, three shapes, and none of them takes anything else — no `fn[…]`, no oracle, no
+host-supplied value. The decision was answered *yes* on 2026-08-16 and the conversions that followed
+have emptied the category the question was asked about.
+
+**Method, because a text scan over these has been wrong repeatedly and this issue says so.** The
+first pass matched a closing parenthesis on the declaration's own line and found 2,737 of 2,924 —
+187 short. Those are signatures wrapped across two lines, and reading the continuation lines says
+177 of them are `Core core, Cli cli) {`; the rest are the file's own prose and helper calls picked
+up by the context window. Had I stopped at the first number I would have reported "three shapes"
+from 94% of the population without knowing which 6% was missing, and the missing 6% is exactly where
+an odd signature would live.
+
+**What this does not say.** It is about wac tests. The *TypeScript* tier this section also names —
+files that spawn `bash`, GNU `tar`, `openssl`, a real TLS server, C tor — is untouched by it, and
+`issues/system/0165` still records that wac cannot call an external command at all: `Cli`'s
+thirty-five capabilities include `spawn` and `spawnSelf`, and both start a **wasm module**. The
+"file first, then spawn" order this section sets out is unaffected; what has gone is the wac-side
+half of the population, not the capability gap.
