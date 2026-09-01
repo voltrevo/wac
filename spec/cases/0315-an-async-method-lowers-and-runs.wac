@@ -1,0 +1,65 @@
+// expect: answers total = 42
+// why: an async method builds a machine like a free function, and `this` survives the suspension
+// spec: §wac-async-method-4kx7vqd
+
+/**
+ * `async` on a **method**, lowered and run.
+ *
+ * The receiver is an ordinary parameter, so the machine that already carries arguments across a
+ * suspension carries `this` too — which is why the lowering needed no new mechanism, only somewhere
+ * to look. `lowerProgram` matched `case Func(…)` and let every other declaration fall into an
+ * `else`, so a struct's methods were never offered to it, and the four registries that size the
+ * synthesised machine could not see them either.
+ *
+ * `total` awaits **twice**, so the machine has two suspension points and has to come back to the
+ * same receiver both times: if `this` were not carried across, `base` would not read 20 on the
+ * second resumption and the answer would not be 42.
+ *
+ * **This case was `expect: declined` from 2026-08-31 to 2026-09-01**, and before that the same
+ * source was a parse error saying *expected a type … found 'async'* — a diagnostic about where the
+ * parser had got to, whose help line offered to accept a type, which is advice that cannot be
+ * followed. The three front-end fixes landed first and deliberately without the lowering, so the
+ * refusal named the real thing while the work was outstanding. `issues/lang/0301b`.
+ *
+ * **It suspends on a hand-built ticket, and that is a correction rather than a simplification.**
+ * The case asked for `Cli.readFile` until it was run under the corpus, which drives a case with no
+ * capabilities: it answered nothing at all rather than a number, and a grant failure is not a test
+ * failure. `Pending<i32>.driven` is how `0306` makes a ticket for the same reason.
+ *
+ * **Two shapes it deliberately does not use, because neither works for a free function either.**
+ * `await` on a call to another `async` function is `a call to Pending`, and on a call to another
+ * `async` method is `a null in a Pending<i32> slot` — both reproduce with no method in sight, so
+ * they are limits of the lowering as a whole rather than anything about a receiver. Checked, not
+ * assumed: the free-function control fails identically. `issues/lang/0301b`.
+ */
+import { Pending } from "std/platform.wac";
+
+/**
+ * A ticket that is already answered, built by hand — the same helper `0306` uses.
+ *
+ * A case is driven with no capabilities, so a suspension has to be on a ticket the program makes
+ * rather than one a `Cli` hands back.
+ */
+Pending<i32> ready(i32 v) {
+  i32[] cell = i32[1](fill: v);
+  fn[i32(i32)] r = (i32 id) => cell[0];
+  fn[bool(i32)] s = (i32 id) => true;
+  fn[void(i32)] d = (i32 id) => { };
+  return Pending<i32>.driven(0, r, s, d);
+}
+
+struct Counter {
+  i32 base;
+
+  /** Two suspensions, and `this.base` read again after the second. */
+  async i32 both(this) {
+    i32 a = await ready(this.base);
+    i32 b = await ready(this.base + 2);
+    return a + b;
+  }
+}
+
+export i32 total() {
+  Counter c = Counter(20);
+  return c.both().wait();
+}

@@ -1,7 +1,7 @@
 # 0301 — `async` cannot be written on a method, and the refusal does not say so
 
-- **Status:** open — three of the four places take it; the lowering is written and does not fit
-- **Claimed by:** agent-b did the front three and the lowering; it is blocked on wac-L5's capacity, which is unclaimed
+- **Status:** closed — all four places take it; `spec/cases/0315` answers 42
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-30
 - **Kind:** missing feature
@@ -203,3 +203,57 @@ inferred from which probe broke rather than read off anything.
 and `nfnparam` at the end of `compile()` would say where the real headroom is, and would turn the
 first line of a failed seed build from a count into a diagnosis. That is a smaller change to the
 ladder than raising a cap, and it is the one that makes the raise decidable.
+
+
+## Closed — the blocker was `const`, not capacity — agent-b, 2026-09-01
+
+**Both sections above are wrong about the cause and are kept because the method that corrected them
+is the point.** They say `packages/wacc` is about six slots from `wac-L5`'s tables. It is not:
+instrumenting `compile()` to print its counters gives **nfn=1444, nmeth=331, nfnparam=3463** against
+caps of 16384 — twenty-one per cent of the tightest one. Nothing was full.
+
+What wac-L5 cannot take is **`const` on a struct parameter**. Bisected with one appended function at
+a time against a clean tree:
+
+| probe | result |
+|---|---|
+| `i32 f(i32 a)` | builds |
+| six parameters | builds |
+| `i32 f(const Decl d) { return d.line; }` | **refuses** |
+| `i32 f(Decl d) { return d.line; }` | builds |
+| `match` + `case StructDecl(…)`, non-const | builds |
+
+`grep -rhoE "\(const [A-Z][A-Za-z]* " packages/wacc/src/*.wac` returns **nothing** — no file in the
+compiler had ever used one, so nothing had found this. `methodsOf(const Decl d)` was the whole of the
+53 refusals, and `ran out of room for parameters` was a parser that had lost sync consuming the
+table, not a table that was full. Dropping two `const`s built the compiler at a fixed point in one
+round.
+
+**The lesson is about the diagnosis, not the language.** I raised two ladder caps on the strength of
+that message, watched the count go 53 → 51 → 53, and wrote a whole section theorising about coupled
+budgets. The counters were three lines of instrumentation away the entire time. A capacity message
+is a claim about a counter, and the counter can be read.
+
+### What landed
+
+`asynclower.wac` grew `methodsOf`, which answers a struct's or an enum's methods, and `loweredMethods`,
+which makes the same three calls per async method that `lowerProgram` makes per free function. The
+four registries — `anyLowerable`, `slotsNeeded`, `numsNeeded`, `argsNeeded` — each walk it, since a
+method-only program has to be visible to all four. Enums are covered as well as structs: `EnumDecl`
+holds `Method[]` too, and covering one and not the other would have left the same silent miss one
+declaration kind over.
+
+`spec/cases/0315` flipped from `declined` to `answers total = 42`, and `spec/spec/async.md` gained
+`§wac-async-method-4kx7vqd` in place of the retired declined clause.
+
+### One limit found on the way, and it is not about methods
+
+`spec/cases/0319` is new: **`await` on a call to another `async` function is declined** — *a call to
+`Pending`* — and the method form is *a null in a `Pending<i32>` slot*. My first draft of `0315`
+awaited an async method and I took the failure for a fault in the new lowering. The control says
+otherwise: two free functions in the same shape fail identically, with no receiver anywhere.
+`§wac-async-await-call-4mv8pqr` states it and `0319` holds it.
+
+That matters for `issues/system/0294c`: `Conn.readPacket` calling `Conn.fill` is exactly this shape,
+so the sshd migration needs that limit lifted as well as this one. Awaiting a ticket the program
+already holds — a capability's, or `Pending<T>.driven` — works today.

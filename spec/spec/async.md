@@ -23,6 +23,18 @@ the caller receives a `Pending<T>` of it. So `fileSize` above is written as answ
 `Pending<i32>`. Writing `async Pending<i32>` would mean a body that hands back a ticket
 — see below — rather than being a second spelling of the same thing.
 
+`[§wac-async-method-4kx7vqd]` **A method may be `async`**, written where it sits on a free
+function — after any `override` and before the return type — and it lowers the same way. The
+receiver is an ordinary parameter, so a suspension carries `this` across exactly as it carries any
+other argument, and a caller sees `Pending<T>` of what the body answers. This is the shape that
+matters in practice: a struct owning a socket and reading through a method on itself is what
+`packages/ssh`'s `Conn`, `packages/tor`'s `Link` and `packages/fs`'s `Chan` are, and those methods
+are the ones that want to suspend. An enum's methods take it on the same terms. What such a method
+may `await` is the same set a free function may — see `§wac-async-await-call-4mv8pqr` for the one
+shape neither can. Until 2026-09-01 an
+`async` method was declined by the emitter, and before 2026-08-30 it was a parse error naming the
+wrong thing — `issues/lang/0301b` has both.
+
 `[§wac-async-eager-2rf9kdp]` Calling an async function **runs its body immediately**, as
 far as its first `await`, and returns a ticket for the rest. It does not wait to be
 driven. A program that calls one and never consumes the ticket has still run everything
@@ -141,16 +153,15 @@ These are refused by name rather than mis-lowered, and each states what it would
   the type of the ticket it suspends on, and the machine needs that type for the slot it
   suspends into. `T x = await e;` and `return await e;` are exactly the two shapes that
   name it;
-- `[§wac-async-method-declined-7kq2vnm]` an `async` **method**. The parser takes it where it sits on a
-  free function, the checker sets its async context around the body, and a caller sees `Pending<T>`
-  of what the body answers — but `asynclower.wac` works on free-function declarations and has no
-  notion of a receiver, so it arrives at the emitter and is declined by name: *a method `T.f`,
-  declined: `await`, which the emitter does not lower yet*. Until 2026-08-30 the same source said
-  *expected a type … found 'async'*, which was a diagnostic about where the parser had got to.
-  `issues/lang/0301b`. It matters more than the four above: a struct that owns a socket and reads
-  through a method on itself is what `packages/ssh`'s `Conn`, `packages/tor`'s `Link` and
-  `packages/fs`'s `Chan` are, and those methods are the ones that want to suspend;
 - an `async` lambda that is **not the initialiser of a declaration** — an argument, a
   returned value, an assignment to something declared earlier. The lowering runs on the
   tree with no type information, and a declaration is the one place the `Pending<R>` it
   needs is written down. The same limit, from the same cause, as the item above it.
+- `[§wac-async-await-call-4mv8pqr]` an `await` on a call to **another `async` function or method**.
+  `i32 a = await step(n);` where `step` is itself `async` is declined with *a call to `Pending`*,
+  and the method form with *a null in a `Pending<i32>` slot*. Both reproduce with no method
+  involved, so this is a limit of the lowering rather than anything about a receiver: the callee has
+  already been rewritten to answer a ticket by the time the caller's machine is built, and the
+  caller's slot is typed from a source that no longer says what it used to. What does work is
+  awaiting a ticket a program *has* — a capability's, or one built with `Pending<T>.driven` — which
+  is what every case in the corpus does. Found while landing `§wac-async-method-4kx7vqd`.

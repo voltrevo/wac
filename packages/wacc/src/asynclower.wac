@@ -53,7 +53,7 @@
 // arm.
 
 import {
-  Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, NamedArg, Param,
+  Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param,
   Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import { Lexed } from "./lex.wac";
@@ -1043,6 +1043,30 @@ bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
 }
 
 /**
+ * The methods a declaration carries — a struct's or an enum's, and none for anything else.
+ *
+ * **One accessor rather than five copies of the same `match`.** `anyLowerable`, `slotsNeeded`,
+ * `numsNeeded`, `argsNeeded` and `lowerProgram` all walk `prog.decls`, and every one of them was
+ * written as a `case Func(…)` with `else: { }` — so a method was invisible to all five at once.
+ * `issues/lang/0301b` is explicit about why that matters: miss `anyLowerable` and nothing is lowered
+ * at all, miss one of the sizes and the machine is built with too few cells. Neither says anything;
+ * both produce a program that is wrong rather than refused.
+ *
+ * **Enums too, not just structs.** `EnumDecl` holds `Method[]` exactly as `StructDecl` does —
+ * `Option<T>` has six — so covering only structs would leave the same silent miss one declaration
+ * kind over.
+ */
+Method[] methodsOf(Decl d) {
+  match (d.kind) {
+    case StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
+      return sMethods;
+    }
+    case EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): { return eMethods; }
+    else: { return Method[](); }
+  }
+}
+
+/**
  * The widest parameter list any lowerable `async` lambda has.
  *
  * One `__wacArgK` per position, shared across the file the way the suspension slots are — the tail
@@ -1051,6 +1075,19 @@ bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
 i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
   i32 most = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
+    Method[] ms = methodsOf(prog.decls[d]);
+    for (i32 m = 0; m < ms.len(); m++) {
+      for (i32 i = 0; i < ms[m].body.len(); i++) {
+        Expr? lamM = asyncLambdaOf(src, lexed, ms[m].body[i]);
+        if (lamM is null) { continue; }
+        match (lamM!.kind) {
+          case Lambda(mps, mbody, ma): {
+            if (planBody(mbody).ok && mps.len() > most) { most = mps.len(); }
+          }
+          else: { }
+        }
+      }
+    }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         for (i32 i = 0; i < body.len(); i++) {
@@ -1081,6 +1118,12 @@ i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
 i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
   i32 most = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
+    Method[] ms = methodsOf(prog.decls[d]);
+    for (i32 m = 0; m < ms.len(); m++) {
+      if (!ms[m].isAsync || !planBody(ms[m].body).ok) { continue; }
+      i32 wantM = statesNeeded(ms[m].body);
+      if (wantM > most) { most = wantM; }
+    }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (isAsync && planBody(body).ok) {
@@ -1110,6 +1153,12 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
 i32 slotsNeeded(Program prog, u8[] src, Lexed lexed) {
   i32 most = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
+    Method[] ms = methodsOf(prog.decls[d]);
+    for (i32 m = 0; m < ms.len(); m++) {
+      if (!ms[m].isAsync) { continue; }
+      AsyncPlan pm = planBody(ms[m].body);
+      if (pm.ok && planSuspends(pm) > most) { most = planSuspends(pm); }
+    }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (isAsync) {
@@ -1137,6 +1186,10 @@ i32 slotsNeeded(Program prog, u8[] src, Lexed lexed) {
 /** Whether anything here is worth extending the source for. */
 bool anyLowerable(Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
+    Method[] ms = methodsOf(prog.decls[d]);
+    for (i32 m = 0; m < ms.len(); m++) {
+      if (ms[m].isAsync && planBody(ms[m].body).ok) { return true; }
+    }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (isAsync && planBody(body).ok) { return true; }
@@ -1209,6 +1262,53 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
 }
 
 /**
+ * `ms` with every `async` method rewritten into a machine, and every method's lambdas lowered.
+ *
+ * The same three calls `lowerProgram` makes for a free function — `lowerLambdasIn`, `planBody`,
+ * `machineBody` — and the same rebuild with `lowPendingTy` and `isAsync: false`, because a lowered
+ * machine is an ordinary function that answers a `Pending<T>` and must not be lowered twice.
+ *
+ * A method whose plan does not hold is left exactly as it was, which is what `lowerProgram` does
+ * with a free function in the same position: the emitter then declines it by name rather than
+ * emitting a half-rewritten body.
+ *
+ * **Six parameters, and it takes the `Decl` rather than the pieces for that reason.** This file has
+ * to compile on **wac-L5**, the ladder rung that builds the compiler, and rung 5 has a fixed
+ * parameter capacity: at eight it answers `wac-L5: ran out of room for parameters` and then buries
+ * it under fifty-two cascading `unexpected token` lines from a parser that has given up. The decl
+ * carries the methods — via `methodsOf` — and the line and column, which is three parameters in
+ * one. `lowerLambdasIn` beside it takes six and is the shape to copy.
+ */
+Method[] loweredMethods(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Decl at) {
+  Method[] ms = methodsOf(at);
+  i32 line = at.line;
+  i32 col = at.col;
+  Method[] out = Method[ms.len()](fill: ms[0]);
+  for (i32 m = 0; m < ms.len(); m++) {
+    Method me = ms[m];
+    Stmt[] body2 = lowerLambdasIn(first, ups, args, src2, lexed2, me.body);
+    if (!me.isAsync) {
+      out[m] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
+                      me.hasThis, me.thisConst, me.typeParams, false);
+      continue;
+    }
+    AsyncPlan plan = planBody(body2);
+    if (!plan.ok) { out[m] = me; continue; }
+
+    string[] names = string[plan.hoist.len()](fill: "");
+    for (i32 i = 0; i < plan.hoist.len(); i++) {
+      names[i] = synthTextAt(src2, lexed2, plan.hoist[i]);
+    }
+    Ctx c = Ctx(first, ups, args, line, col, names, src2, lexed2,
+                i32[1](fill: col + 1000), bool[1]());
+    Stmt[] machine = machineBody(c, body2, plan, me.returnType);
+    out[m] = Method(me.nameTok, lowPendingTy(c, cloneTy(me.returnType)), me.params, machine,
+                    me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false);
+  }
+  return out;
+}
+
+/**
  * Every `async` function in `prog`, rewritten into a state machine.
  *
  * **A function this cut cannot flatten is left exactly as it was**, still marked `async`, so the
@@ -1265,6 +1365,25 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
         Stmt[] machine = machineBody(c, body2, plan, returnType);
         out[d] = Decl(DeclKind.Func(nameTok, lowPendingTy(c, cloneTy(returnType)), params, machine,
                                     exported, typeParams, false),
+                      prog.decls[d].line, prog.decls[d].col);
+      }
+      // **A method is a `Func` in all but name** — `nameTok`, `returnType`, `params`, `body` —
+      // and `this` is an ordinary parameter, so the machine that already survives a suspension
+      // over parameters needs nothing new for a receiver. `issues/lang/0301b`.
+      case StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
+        if (sMethods.len() == 0) { continue; }
+        out[d] = Decl(DeclKind.StructDecl(sName, sParent, sFields,
+                                          loweredMethods(first, ups, args, src2, lexed2,
+                                                         prog.decls[d]),
+                                          sExported, sConst, sTypeParams),
+                      prog.decls[d].line, prog.decls[d].col);
+      }
+      case EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
+        if (eMethods.len() == 0) { continue; }
+        out[d] = Decl(DeclKind.EnumDecl(eName, eVariants, eExported,
+                                        loweredMethods(first, ups, args, src2, lexed2,
+                                                       prog.decls[d]),
+                                        eTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
       else: { }

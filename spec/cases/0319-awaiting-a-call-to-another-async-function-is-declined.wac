@@ -1,0 +1,37 @@
+// expect: declined
+// why: the callee already answers a ticket by the time the caller's machine is built
+// spec: §wac-async-await-call-4mv8pqr
+
+/**
+ * `await` on a call to **another `async` function**, which the lowering does not do.
+ *
+ * `step` is `async`, so it answers `Pending<i32>`; `both` awaits it twice. That reads like the most
+ * ordinary thing async code does, and it is declined:
+ *
+ *     wacc: cannot emit … — a call to Pending
+ *
+ * **No method is involved, which is the point of writing it this way.** The limit was found while
+ * landing `§wac-async-method-4kx7vqd`, where a first draft of `spec/cases/0315` awaited a call to
+ * another async *method* and was declined with *a null in a `Pending<i32>` slot*. That looked like a
+ * fault in the new method lowering. It is not: this file is the same shape with two free functions
+ * and it fails the same way, so the limit belongs to the lowering as a whole and the receiver has
+ * nothing to do with it. A control that can distinguish the two is worth more than the guess it
+ * replaces.
+ *
+ * **What does work is awaiting a ticket the program already has** — one a capability handed back,
+ * or one built with `Pending<T>.driven` as `0306` and `0315` do. The difference is that such a
+ * ticket is a *value* the caller names, where a call to an `async` function is a ticket the callee
+ * only produces once the caller's own machine has been synthesised around it.
+ *
+ * `issues/lang/0301b` has the measurements. When this is lifted, the two `await` lines below become
+ * an ordinary suspension and this case flips to `answers total = 42`, like `0315`.
+ */
+async i32 step(i32 base) { return base + 1; }
+
+async i32 both(i32 base) {
+  i32 a = await step(base);
+  i32 b = await step(base + 2);
+  return a + b;
+}
+
+export i32 total() { return both(20).wait(); }
