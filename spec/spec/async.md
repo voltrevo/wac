@@ -30,8 +30,8 @@ other argument, and a caller sees `Pending<T>` of what the body answers. This is
 matters in practice: a struct owning a socket and reading through a method on itself is what
 `packages/ssh`'s `Conn`, `packages/tor`'s `Link` and `packages/fs`'s `Chan` are, and those methods
 are the ones that want to suspend. An enum's methods take it on the same terms. What such a method
-may `await` is the same set a free function may — see `§wac-async-await-call-4mv8pqr` for the one
-shape neither can. Until 2026-09-01 an
+may `await` is the same set a free function may — see `§wac-async-nosuspend-6pv2wkn` for the one
+shape neither can be. Until 2026-09-01 an
 `async` method was declined by the emitter, and before 2026-08-30 it was a parse error naming the
 wrong thing — `issues/lang/0301b` has both.
 
@@ -157,11 +157,13 @@ These are refused by name rather than mis-lowered, and each states what it would
   returned value, an assignment to something declared earlier. The lowering runs on the
   tree with no type information, and a declaration is the one place the `Pending<R>` it
   needs is written down. The same limit, from the same cause, as the item above it.
-- `[§wac-async-await-call-4mv8pqr]` an `await` on a call to **another `async` function or method**.
-  `i32 a = await step(n);` where `step` is itself `async` is declined with *a call to `Pending`*,
-  and the method form with *a null in a `Pending<i32>` slot*. Both reproduce with no method
-  involved, so this is a limit of the lowering rather than anything about a receiver: the callee has
-  already been rewritten to answer a ticket by the time the caller's machine is built, and the
-  caller's slot is typed from a source that no longer says what it used to. What does work is
-  awaiting a ticket a program *has* — a capability's, or one built with `Pending<T>.driven` — which
-  is what every case in the corpus does. Found while landing `§wac-async-method-4kx7vqd`.
+- `[§wac-async-nosuspend-6pv2wkn]` an `async` function whose body **never suspends**. With no
+  `await` in it there is nothing unlowerable either, so it is lowered like any other — to a machine
+  with **zero suspensions**, which is the one the emitter declines with *a call to `Pending`*. The
+  checker has already given every caller the `Pending<i32>` this page promises, so `.wait()` has
+  nothing to wait on. Adding one `await` to the same function makes the program build. Two rules above
+  disagree here: `§wac-async-eager-2rf9kdp` is satisfied trivially and `§wac-async-decl-h3vq81m` not at all, since
+  what such a body should hand back is a ticket that is **already answered**. It is also how a
+  function is written before its first `await` is added. `spec/cases/0319` holds it, and the
+  awaiting forms that look like separate limits — a call to another `async` function, or to another
+  `async` method — were all measured against callees that never suspended.
