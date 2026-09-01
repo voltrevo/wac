@@ -175,3 +175,39 @@ So the entry fee is 41 exemptions rather than 28, and the findings today are zer
 been fixed by hand. The proposition in the section above is unchanged and is now easier to state: it
 is worth switching on only if the *next* deletion matters more than the backlog costs, and nobody
 should switch it on expecting it to find anything the day they do.
+
+## The remaining eight, read — and one of them cannot be satisfied at all
+
+The list above said these wanted reading individually. Read:
+
+- **`0292b`** — *"Both `tools/ignoredFlags.ts` and its wac port say so, and their outputs are
+  byte-identical"*. Genuinely stale: written on 2026-08-30 when both existed, and the present tense
+  claims a corroboration that cannot be repeated now the TypeScript one is deleted. **Fixed.**
+- **`0286b`** (*"`tools/testChanged.ts` ran `deno test` directly and never entered this runner"*) and
+  **`0136`** (an assertion that failed *"because its fixture could not make a directory"*) are past
+  tense about past events. Records. Leave.
+- **`0300b`** names `packages/tor/src/within.wac` as *"on this branch and not committed"* — a scratch
+  file that never entered the tree. The sentence is accurate and the file was never findable.
+- **`0005`**, **`0203`** and **`0146`**'s `tools/siblingpath.test.ts` name predecessors of guards that
+  still exist under new names — `tools/wac/spawnretry_test.wac`, `tools/wac/siblingpath_test.wac`,
+  `tools/wac/deadexports.wac`. These are the case the skip's own comment forbids editing: *"must not
+  be rewritten to name a file that did not exist when it was written."* Leave, and they are three
+  more exemptions if this is ever switched on.
+
+**And `0146` has one that no exemption scheme fixes.** Its line 68 reads:
+
+> `CLAUDE.md` beside the paragraph about the site's other two flags, because `site/README.md` **does
+> not exist** and a lone file for one sentence is worth less than putting it where the neighbouring
+> fact already is.
+
+The sentence's content *is* that the file does not exist, and it is true today. A check for
+backticked paths that do not exist would fail on a sentence asserting the path does not exist, and
+the only way to make it pass is to stop backticking a filename that is being used as a filename.
+That is not a stale record and not a rename — it is a sentence that is right, flagged for being
+right.
+
+**Which settles my recommendation.** Every category is now accounted for: 1 stale and fixed, 3
+records, 3 renames the guard's own comment protects, 1 unsatisfiable, and 9 `tools/seed.sh`. **Zero
+findings remain and one sentence could never be made green.** I would leave the skip as it is, and
+the value of this issue is the reading rather than a change — it is now known what is in there, and
+it was not before.
