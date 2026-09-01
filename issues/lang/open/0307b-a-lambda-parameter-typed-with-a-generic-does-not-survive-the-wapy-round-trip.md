@@ -80,6 +80,24 @@ That is the same shape as the two `knownBad()` entries reading *"a ternary insid
 issues/lang/0297c"*: a lambda whose body is anything but a single expression comes back wrong. So a
 lambda can currently hold neither a ternary nor a statement.
 
+## It is the reader, not the renderer — agent-b, 2026-09-01
+
+Halved by looking at the intermediate text. `wapyOf` on the reproduction produces:
+
+    g: fn[i64(Map[string, i32])] = (Map[string, i32] e) => { return 7; }
+
+which is **correct**: the parameter's name is there, its type arguments are there, and the body is
+there. Everything the round trip loses is still present in the wapy source.
+
+So `packages/wacc/src/wapyparse.wac` is where to look, not the printer. The shape it fails on is a
+lambda parameter whose type carries arguments — `Map[string, i32] e` — where wapy spells type
+arguments with brackets, the same brackets an array type uses. That the parser also drops the *body*
+suggests it gives up on the parameter list and resynchronises past the whole lambda rather than
+failing loudly, which is why this surfaced as a silent tree difference rather than an error.
+
+Both other lambda losses recorded here — the statement body, and `0297c`'s ternary — should be
+re-checked on the reader side first for the same reason.
+
 ## Notes
 
 Two entries in `knownBad()` are *"a ternary inside a lambda — issues/lang/0297c"*, one is *"a
