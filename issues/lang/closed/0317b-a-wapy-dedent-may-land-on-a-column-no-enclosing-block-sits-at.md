@@ -1,7 +1,7 @@
 # 0317 — a wapy dedent may land on a column no enclosing block sits at, and nothing says so
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — the check is in, `§wac-wapy-dedent-3nq8vrk` tags the rule
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-09-01
 - **Kind:** missing feature
@@ -105,3 +105,45 @@ is switched on rather than after.
 Whoever takes it wants, in order: a tag on the sentence, a `spec/cases/` file holding it, then the
 check, then `werrMisspelled` and `werrIndent` answered the same way — either raised where their name
 says, or deleted with the reason written down.
+
+
+## Fixed — agent-b, 2026-09-01
+
+`checkDedents` in `wapyparse.wac` walks the segments once keeping a stack of open indent columns,
+and raises `werrDedent` where the column matches no enclosing one. In the parser rather than the
+lexer for the reason above: there are no INDENT or DEDENT tokens to hang it on.
+
+The rule is now `[§wac-wapy-dedent-3nq8vrk]` in `spec/spec/wapy.md`, and
+`packages/wacc/test/wac/wapy_test.wac` holds it with the bad program **and** the aligned control —
+a check that only ever fires proves as little as one that never does.
+
+**The risk this issue was filed for did not materialise.** `wapyroundtrip_test` renders wac to wapy
+and reads it back on every gate and is green; so are `wapy_test`, `wapylink_test` and the corpus at
+321. The printer emits four-space steps, which was checked before the change rather than after.
+
+**A `.wapy` case was the wrong vehicle and was nearly the shape of this fix.** `spec/cases/` is
+walked with `endsWith(name, ".wac")`, so a `.wapy` file there is picked up by nothing and would have
+left the tag held by no case at all — the guard would then have failed, but only after the file had
+looked right for a while. `spectags_test.wac` accepts a *test* as well as a case, which is what this
+uses.
+
+`werrMisspelled` (41) and `werrIndent` (44) are still declared, still rendered by `diag.wac`, and
+still never raised. They are the same question one step over and are left open deliberately.
+
+For 44 — *the indentation of this line is not a block* — the gap is measured and the same shape:
+
+    def f() -> i32:
+        a = 1
+            b = 2
+        return a
+
+`a = 1` is not a block header and the next line is indented under it. `wapyParse` reports **0
+errors**.
+
+**But it is a decision where the dedent was not, which is the whole difference.** The dedent rule is
+a *sentence* in `spec/spec/wapy.md` — the compiler disagreed with something already written, so
+enforcing it needed no new judgement. This one is only implied by the grammar, where `block` appears
+after a header and an unheaded INDENT has no production. Turning that into a diagnostic means
+writing the rule down first, including what it says about the continuation exemption two sections
+up — *"Indentation inside a continuation is not significant"* — and that is authoring spec rather
+than holding the compiler to it.

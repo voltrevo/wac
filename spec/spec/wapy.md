@@ -159,8 +159,11 @@ receiver       = [ "const" ] , "this" , [ ":" , IDENT ] ;
 ```
 
 `block` is `INDENT , { statement } , DEDENT`, where INDENT and DEDENT are
-changes in leading whitespace rather than tokens. A dedent must land on a column
-some enclosing block already sits at.
+changes in leading whitespace rather than tokens. `[§wac-wapy-dedent-3nq8vrk]` **A dedent must land
+on a column some enclosing block already sits at.** One that lands between two levels is refused
+with *this dedent lands on no enclosing block*. The check is the parser's rather than the lexer's,
+because there are no INDENT or DEDENT tokens to hang it on — a block is the run of following lines
+indented further, so the stack that notices this exists only once the lines do.
 
 ### Statements
 

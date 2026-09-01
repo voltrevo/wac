@@ -323,3 +323,30 @@ export string test_a_lexical_fault_is_the_lexers_on_either_surface(Core core) {
   t.isTrue(fb.errorCount > 0, "wapy: and it is still reported");
   return t.report();
 }
+
+/**
+ * A dedent that lands between two levels is refused.
+ *
+ * `[§wac-wapy-dedent-3nq8vrk]` — `a` sits at column 5 and the top level at 1, so `b` at 3 lands on
+ * no enclosing block. The message is *this dedent lands on no enclosing block*.
+ *
+ * **The diagnostic was written years before anything raised it.** `wapylex.wac` numbers five wapy
+ * codes and `diag.wac` gives all five their text, but only two were ever pushed —
+ * `tools/wac/deadexports.wac` listed `werrDedent` among functions nothing calls, and its closing
+ * line is that this means either a call site is missing or the function is. It was the call site.
+ * `issues/lang/0317b`.
+ *
+ * The aligned program beside it is the control: the rule must refuse the one and not the other, and
+ * a check that only ever fires proves as little as one that never does.
+ */
+export string test_a_dedent_must_land_on_an_enclosing_column(Core core) {
+  T t = T.create();
+  string bad = "def f() -> i32:\n    a = 1\n  b = 2\n  return b\n";
+  WParsed p = wapyParse(bad.toBytes());
+  t.isTrue(p.errorCount > 0, "a dedent onto column 3 is refused");
+
+  string ok = "def f(n: i32) -> i32:\n    if n > 0:\n        n = n - 1\n    return n\n";
+  WParsed q = wapyParse(ok.toBytes());
+  t.eqI32(q.errorCount, 0, "an aligned program is not");
+  return t.report();
+}

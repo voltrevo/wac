@@ -60,7 +60,7 @@ import {
   kShlEq, kShrEq, kShrUEq, kSlashEq, kStarEq, kString, kSwitch, kThis, kTrap, kWhile,
 } from "./kinds.wac";
 import { P, parseExpr, parseStatement, parseType } from "./parse.wac";
-import { WLexed, WLine, textAt, wapyLex } from "./wapylex.wac";
+import { WLexed, WLine, textAt, wapyLex, werrDedent } from "./wapylex.wac";
 import {
   Toks, kindAt, pushFrom, pushRange, toksLen, toksNew, push5, startAt, lenAt, lineAt, colAt,
 } from "./wapytok.wac";
@@ -1163,6 +1163,31 @@ export struct WParsed {
 }
 
 /**
+ * **A dedent must land on a column some enclosing block already sits at** — `spec/spec/wapy.md`.
+ *
+ * Checked here rather than in the lexer because the lexer emits no INDENT or DEDENT: a block is
+ * "the run of following lines indented further than it", so the stack that would notice a landing
+ * between two levels does not exist until the segments do. This walks them once and keeps that
+ * stack, which is the only thing the rule needs.
+ *
+ * `werrDedent` and its message — *this dedent lands on no enclosing block* — were written when the
+ * codes were numbered and had never been raised; `tools/wac/deadexports.wac` is what found that.
+ * `issues/lang/0317b`.
+ */
+void checkDedents(W w) {
+  if (w.segs.len() == 0) { return; }
+  i32[] open = i32[w.segs.len() + 1](fill: 0);
+  open[0] = w.segs[0].indent;
+  i32 n = 1;
+  for (i32 i = 1; i < w.segs.len(); i++) {
+    i32 ind = w.segs[i].indent;
+    if (ind > open[n - 1]) { open[n] = ind; n = n + 1; continue; }
+    while (n > 1 && open[n - 1] > ind) { n = n - 1; }
+    if (open[n - 1] != ind) { err(w, werrDedent(), w.segs[i].line, ind); }
+  }
+}
+
+/**
  * Parse a `.wapy` source into wac's AST.
  *
  * **The `src` and `toks` handed back are not the caller's.** `src` has `synthTail()` appended and
@@ -1177,6 +1202,7 @@ export WParsed wapyParse(u8[] src) {
   // Counted before the parser adds any, which is the only moment the boundary is knowable.
   i32 lexErrors = b.errorCount;
   W w = W(b.src, b.toks, b.tokCount, b.segs, b.pool, b.i32Tok, errs);
+  checkDedents(w);
   Decl[] decls = topLevel(w);
   i32[] flat = i32[w.errors.len()](fill: 0);
   for (i32 i = 0; i < w.errors.len(); i++) { flat[i] = w.errors.get(i); }
