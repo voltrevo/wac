@@ -2901,3 +2901,34 @@ the tests that reach them, 0 fell back to the full scope"*, 3/3 killed, measured
 processes and pushes both verdicts. What to run is tested, how to combine it is tested, and what is
 left is the `for (const half of halves)` loop doing what a loop does. That is worth saying precisely,
 because "the wiring is unverified" sounded like a reason to keep step 2 open and this does not.
+
+## Steps 2 and 3 have both happened, and the step list still describes them as ahead
+
+*"The order, and why it is not the obvious one"* has step 2 as *"the selection half is ready and the
+running half is not"*, and step 3 as *"Delete the 37 pure wrappers"*. Measured today, both sentences
+are behind the tree.
+
+**Step 2's running half is ready.** `tools/mutate/native.ts` holds `classify`, `isWacRun`,
+`mergeRuns` and now `splitHalves`; `mutate.ts` splits the scope at 1333, spawns per half at 1345 and
+merges at 1363. Verified rather than read: `--package bytes` runs the native path end to end in
+three minutes with *"3/3 ran only the tests that reach them, 0 fell back to the full scope"*, and the
+module's own suite is 19 green.
+
+**Step 3's wrappers are gone.** `grep -rln wacTestRun --include='*.test.ts' packages/` returns
+**nothing** — not 37 remaining, none. What is left of that population is **56 calls in one file**,
+`harness/wac/hostless.test.ts`, which is the shape line 378 calls *"fifty-six seam wrappers are one
+driver"* and which `issues/system/0289b` lists as a thing that must **not** move: it runs every
+host-independent wac test under Deno *as well*, which is `CLAUDE.md`'s "the browser is not
+scaffolding". Deleting it would not finish this step; it would remove the second run that step
+exists to protect.
+
+So the wrapper-per-test population that step 3 names is at zero, and `wacTestRun` is still live
+because one deliberate driver calls it — which is why "no wrappers left" and "the helper is dead
+code" are different statements, and only the first is true.
+
+**What that leaves.** Step 3's other half — *"verifying mutation scores unchanged either side"* —
+cannot be run now: there is no "before" side left to compare against, the deletions having already
+happened. That is not a gap to fill but a check that expired with its subject, and saying so is
+better than leaving a step that reads as pending work nobody can do.
+
+Steps 4, 5 and 6 stand: the oracle question is still a decision, and `tools/` is classified above.
