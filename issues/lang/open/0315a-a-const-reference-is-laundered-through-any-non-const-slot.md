@@ -46,9 +46,26 @@ The direct case is caught. Everything that puts the reference somewhere first is
 | `Inner[] a = Inner[](this.inner); a[0].mutate();` | accepted |
 | `Box b = Box(this.inner); b.it.mutate();` | accepted |
 | `hop<Inner>(this.inner)` for `void hop<T>(T x)` | accepted |
+| `o.get().mutate()` where `get` declares `const Inner` | accepted — the qualifier parses and is ignored |
 
-They are one missing rule rather than four bugs: **a const-tainted reference may flow into a
-non-const slot.** Argument positions, array elements, struct fields, type arguments.
+They are one missing rule rather than five bugs: **a const-tainted reference may flow into a
+non-const slot.** Argument positions, array elements, struct fields, type arguments, and a return
+type that declared itself const.
+
+## What already works, and is worth not breaking
+
+Two cases are handled, and the second is the interesting one:
+
+```wac
+Inner get(const this)   { return this.inner; }   // .mutate() on the result is refused
+Inner fresh(const this) { return Inner(0); }     // .mutate() on the result is allowed
+```
+
+So the checker looks at what a method returns rather than only at the receiver being const: a value
+made inside a const method is not const, and only what was reached through the receiver is. Any fix
+for the rows above has to keep that distinction — a rule that made every result of a const call const
+would be simpler and would make constructors and copies unwritable as methods, which is the cost
+`~/notes/living/wac/language-friction-log.md` records as "deep const cannot return a fresh value".
 
 ## Two of them contradict a written claim
 
