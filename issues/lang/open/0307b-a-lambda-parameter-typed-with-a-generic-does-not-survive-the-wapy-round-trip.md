@@ -80,12 +80,43 @@ That is the same shape as the two `knownBad()` entries reading *"a ternary insid
 issues/lang/0297c"*: a lambda whose body is anything but a single expression comes back wrong. So a
 lambda can currently hold neither a ternary nor a statement.
 
+## It is the reader, not the renderer — agent-b, 2026-09-01
+
+Halved by looking at the intermediate text. `wapyOf` on the reproduction produces:
+
+    g: fn[i64(Map[string, i32])] = (Map[string, i32] e) => { return 7; }
+
+which is **correct**: the parameter's name is there, its type arguments are there, and the body is
+there. Everything the round trip loses is still present in the wapy source.
+
+So `packages/wacc/src/wapyparse.wac` is where to look, not the printer. The shape it fails on is a
+lambda parameter whose type carries arguments — `Map[string, i32] e` — where wapy spells type
+arguments with brackets, the same brackets an array type uses. That the parser also drops the *body*
+suggests it gives up on the parameter list and resynchronises past the whole lambda rather than
+failing loudly, which is why this surfaced as a silent tree difference rather than an error.
+
+Both other lambda losses recorded here — the statement body, and `0297c`'s ternary — should be
+re-checked on the reader side first for the same reason.
+
+**A hypothesis worth checking first, because it explains every control above.** That file's header
+says it parses the *structure* itself and calls **`parse.wac`'s shared expression, ty and statement
+grammar** for the rest — and a lambda is an expression. wapy spells type arguments with **brackets**,
+`Map[string, i32]`, where the shared grammar is wac's and expects `Map<string, i32>`; brackets there
+are an index or an array type.
+
+That predicts exactly what is observed: a *function* parameter of the same type survives, because
+`wapyparse`'s own `paramsIn`/`typeIn` read the wapy spelling, while a *lambda* parameter is handed to
+a grammar that cannot. Not verified by reading the lambda path in `parse.wac`, which is the next step
+rather than a conclusion.
+
 ## Notes
 
 Two entries in `knownBad()` are *"a ternary inside a lambda — issues/lang/0297c"*, one is *"a
 type-argument chain with an inline lambda"*, and this issue adds the parameter type and the statement
 body. Five shapes, all lambdas losing something, so whoever takes this should check whether the
-lambda arm of the wapy printer is **one fault rather than five** before fixing them separately.
+lambda arm of the wapy **reader** is **one fault rather than five** before fixing them separately.
+(This paragraph said *printer* until the section above measured which side loses it. It is the
+reader.)
 
 The workaround in `tools/wac/langfuzz.wac` is worth knowing because it is cheap and general: keep
 every lambda a single call and put the branching in a named function. That file's `evalAndOr`,

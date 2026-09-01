@@ -71,7 +71,14 @@
 //     bool  every comparison inverted            30 / 200
 //     u32   literal read as signed               33 / 200
 //     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
-//     loop  oracle ignores `break`                8 / 200
+//     file  the other file's value disagrees      69 / 200
+//     gen   generic `gsel` arms swapped          21 / 200
+//     arr   every array element off by one        10 / 200
+//     enum  match's A and C arms swapped           9 / 200
+//     str   struct's two fields swapped           10 / 200
+//     sub   `bv.tag()` expected to dispatch         4 / 200
+//     loop  oracle ignores `continue`            32 / 200
+//     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
 // **Two of those rows were bought, not found.** `u32` read 0 of 1500 until the answer was routed
 // through a u32 comparison and a wide u32 local was seeded in every program; `i64` read 12 until a
@@ -82,12 +89,20 @@
 // corpus-sized runs to surface it. Nothing about a type's presence in the generated source predicts
 // its row here, which is the whole reason the rows exist.
 //
-// **The loop row is the thin one now**, and it is a *behaviour* rather than a type: an oracle that
-// forgot `break` entirely would still agree with the compiler on 96% of programs. The TypeScript
-// this ports found a `do`/`while` bug where `continue` skipped the condition, so this is a path with
-// a bug already to its name and eight programs in two hundred watching it. Loops are generated far
-// more often than that number suggests — what is rare is a loop whose *trip count* reaches the
-// answer, since the body only ever assigns to one accumulator.
+// **The loop rows found two generator bugs rather than a compiler one**, which is the other thing a
+// canary is for. `break` sat at 8 of 200 with loops in 159 of 200 and a `break` printed in 56, so
+// most of them were doing nothing — and they were: `breakAt` was drawn from `1..trips`, which a `for`
+// never reaches, since a `for` counts `0..trips-1` in the body while `while` and `do` count
+// `1..trips`. `contAt` had the mirror of it, drawn `0..trips-1`, so a `continue` at 0 was dead in
+// both of the other forms. Statements generated, printed, and unreachable, with the oracle agreeing
+// with the compiler about code neither ran.
+//
+// Fixing the bounds took `break` to 12. `continue` reads 32 because skipping an iteration shifts the
+// accumulator every time it fires, where a `break` only matters for the trips it removes.
+//
+// The TypeScript this ports found a `do`/`while` bug where `continue` skipped the condition, so this
+// is a path with a compiler bug already to its name — and it had been watching a third of the
+// statements it thought it was.
 //
 // ## What it does not reach yet
 //
@@ -95,11 +110,49 @@
 // actually lived — and which I dropped when porting the generator, which is the more useful half of
 // what that file knew:
 //
-//   1. generics — instantiating one generated template at several argument types, which is the
-//      seam that produced the most bugs of any in the month it was written;
-//   2. several files, so the "a name is unique only within its file" family is in range;
-//   3. structs, enums and `match`, including a narrowed subject;
-//   4. arrays, with in-bounds indices;
+//   1. generics — **done, 2026-09-01.** One template, `T gsel<T>(T a, T b, bool c)`, called wherever
+//      no monomorphic helper fits. Instantiated in 169 programs in 200 and at **two or more distinct
+//      types in 105**, which is the property this item was about: each set of type arguments makes a
+//      separate concrete function. Canary 21/200. No compiler disagreement over 2,000 programs.
+//
+//      The type argument is *written* — `gsel<i32>(…)` — and that is load-bearing rather than
+//      stylistic. Inferring it fails on a bare literal argument, which has no type of its own:
+//      `gsel(someU32, 0, c)` asks inference to agree that `0` is a u32, and seed 2 duly said *"the
+//      arguments imply two different types for one type parameter"*. Writing it gives every argument
+//      a slot, which is the same rule the literal pools follow. It also exercises
+//      `§wacc-written-type-args`, and puts a `<` before a parenthesised list — the shape
+//      `issues/lang/0308b` was about;
+//   2. several files — **done, 2026-09-01.** Every program is now two: `m.wac` imports `sideValue`
+//      from `s.wac`, and `s.wac` defines an `h0` of its own with a body no helper in `m.wac` has. If
+//      the two files' `h0` were ever resolved across the boundary the answer would move, which is
+//      the family this item was about. Canary 69/200 — the highest here, because the imported value
+//      lands in a top-level local that expressions pick often;
+//   3. structs, enums and `match`, including a narrowed subject — **done, 2026-09-01**.
+//      `enum En { A, B(i32 v), C }` with the variant chosen when `ev` is constructed, read by the
+//      expression form of `match` — comma-separated arms, a binding taking its type from the
+//      declaration. Confined to `main`, since a helper cannot see `ev`. Canary 9/200.
+//
+//      A payload-less variant is a *value* rather than a call — `En.A`, never `En.A()` — which is
+//      the thing `spec/tour.wac` warns about and a generator gets wrong the obvious way.
+//
+//      `struct Pt { i32 x; i32 y; }` beside it, constructed positionally and read by name, canary
+//      10/200.
+//
+//      Narrowing came last and brought a second rule with it. `Bs bv = Sb(1, 2)` puts a subtype in a
+//      parent-typed local, so `bv is Sb` is true — and `bv.tag()` answers the **parent's** 11 rather
+//      than the child's 22, because `override` is a source-level check and WasmGC has no virtual
+//      dispatch. `spec/tour.wac` marks that CRITICAL, and a compiler that ever dispatched
+//      dynamically would answer 22. Canary 4/200 — the thinnest row here, because it is one call
+//      site among seven expression arms, but it watches a rule nothing else does;
+//   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
+//      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
+//      value known at generation time and the environment never has to hold a reference. Canary
+//      10/200.
+//
+//      The arm is confined to `main`: a helper sees its parameters and nothing else, so an array
+//      read inside one is `no arr in scope` — seed 1 said so immediately. That is the third time a
+//      construct has been valid in one context and not another here, after the u32 literal slot and
+//      the generic type argument, which is worth noticing as a shape rather than three accidents;
 //   5. u32/u64/f64, whose semantics are already verified pointwise but not in combination.
 //
 // Each adds oracle surface, and the oracle is the thing to keep honest: **every failure it reports
@@ -221,8 +274,17 @@ export struct Ran {
 }
 
 export Ran runProgram(Cli cli, string src) {
-  string[] paths = string[](entryName());
-  string[] texts = string[](src);
+  return runGraph(cli, string[](entryName()), string[](src));
+}
+
+/**
+ * The same, for a graph of more than one file.
+ *
+ * `buildLinked` and `diagnoseGraphIn` both take parallel `paths` and `texts`, so a second file costs
+ * nothing but naming it — and it buys the family of bugs that only exists once a name can be defined
+ * twice in one program. `issues/system/0161`'s roadmap ranks that second.
+ */
+export Ran runGraph(Cli cli, string[] paths, string[] texts) {
   Res res = Res.empty();
 
   // **Diagnosed before it is emitted.** wacc's emitter is asked separately from its checker, and a
@@ -338,6 +400,23 @@ i64 evalHighHalf(Env e, string name) {
   return wrapTo(e.get(name) >> 32, TY_I32());
 }
 
+/**
+ * The generated generic selector, `T gsel<T>(T a, T b, bool c)`.
+ *
+ * One template, instantiated at whatever types a program happens to need — which is the seam the
+ * roadmap below ranks first: *"instantiating one generated template at several argument types, the
+ * seam that produced the most bugs of any"* in the month it was written. Each distinct set of type
+ * arguments produces a separate concrete function (`§wac-generic-fn-5hvq3mt`), so a program calling
+ * it at i32 and i64 and bool is asking the compiler to emit three.
+ *
+ * A *selector* rather than a `max`, because `>` is not defined on `bool` and the point is to reach
+ * every type this generator has rather than the two that order.
+ */
+i64 evalGeneric(Expr a, Expr b, Expr c, Env e) {
+  if (c.evalIn(e) != 0) { return a.evalIn(e); }
+  return b.evalIn(e);
+}
+
 i64 evalTopBit(Env e, string name) {
   if (e.get(name) > 2147483647) { return 1; }
   return 0;
@@ -399,10 +478,39 @@ export struct Gen {
   Vec<Helper> sigs;
   Env env;
   string indent;
+  /**
+   * The local the most recent loop accumulated into, or "" if no loop has run.
+   *
+   * Recorded so the answer can be routed through it — the audit in the header puts the loop path at
+   * 8 programs in 200, and the reason is not that loops are rare. They are generated constantly; what
+   * is rare is a loop whose *trip count* reaches `main`, because the body only ever assigns to one
+   * accumulator and nothing makes the final expression pick that variable.
+   */
+  string lastAcc;
+  /** The elements of the seeded array, so an index can be answered without holding a reference. */
+  i64[] arr;
+  /** What the second file's `sideValue()` answers, chosen before `main` is written. */
+  i64 sideK;
+  /** The seeded struct's two fields, known here so a field read can be answered. */
+  i64 ptX;
+  i64 ptY;
+  /** Which variant of the seeded enum was constructed: 0 = A, 1 = B(payload), 2 = C. */
+  i32 evVariant;
+  /** `B`'s payload, when that is the variant. */
+  i64 evPayload;
+  /**
+   * Whether a helper's body is being generated, in which case `arr` is not in scope.
+   *
+   * A helper sees its parameters and nothing else — wac has no closures at function scope — so a
+   * construct that reads a local of `main` is valid in one context and a compile error in the other.
+   * `no arr in scope`, at seed 1, before this existed.
+   */
+  bool inHelper;
 
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
-               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ");
+               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "",
+               i64[0](fill: 0), 0, 0, 0, 0, 0, false);
   }
 
   /**
@@ -502,6 +610,13 @@ export struct Gen {
     return Expr(name, ty, (Env e) => e.get(name));
   }
 
+  bool inScopeNamed(this, string name) {
+    for (i32 i = 0; i < this.locals.len(); i++) {
+      if (this.locals.get(i).name == name) { return true; }
+    }
+    return false;
+  }
+
   Expr? binary(this, i32 ty, i32 depth) {
     if (ty == TY_BOOL()) {
       if (this.coin()) {
@@ -576,6 +691,47 @@ export struct Gen {
       i32 choice = this.rng.intTop(7);
       if (choice == 0) { return this.literal(ty); }
       if (choice == 1) {
+        // **An array read, a quarter of the time, at i32.** The index is a constant in range and
+        // nothing writes to `arr`, so the value is known here — which is what lets the oracle answer
+        // without holding a reference. `.len()` goes in beside it because it is the other thing a
+        // fixed array knows about itself.
+        // **A `match` on the seeded enum, at i32.** The arms are comma-separated values in the
+        // expression form, a binding takes its type from the declaration, and the variant was chosen
+        // when `ev` was constructed — so the answer is known here. Confined to `main` for the reason
+        // the array read is: a helper cannot see `ev`.
+        if (!this.inHelper && ty == TY_I32() && this.rng.intTop(7) == 0) {
+          if (this.coin()) {
+            // Static dispatch: the local's type decides, not the value's.
+            return Expr("bv.tag()", ty, (Env e) => 11);
+          }
+          i64 yes = 40 + (this.rng.intTop(50) as i64);
+          i64 no = 900 + (this.rng.intTop(50) as i64);
+          return Expr("((bv is Sb) ? " + itoa64(yes) + " : " + itoa64(no) + ")", ty,
+                      (Env e) => yes);
+        }
+        if (!this.inHelper && ty == TY_I32() && this.rng.intTop(6) == 0) {
+          bool useX = this.coin();
+          i64 fieldVal = useX ? this.ptX : this.ptY;
+          return Expr(useX ? "pt.x" : "pt.y", ty, (Env e) => fieldVal);
+        }
+        if (!this.inHelper && ty == TY_I32() && this.rng.intTop(5) == 0) {
+          i64 kA = 7 + (this.rng.intTop(90) as i64);
+          i64 kC = 500 + (this.rng.intTop(90) as i64);
+          i32 variant = this.evVariant;
+          i64 payload = this.evPayload;
+          i64 known = variant == 0 ? kA : (variant == 1 ? payload : kC);
+          return Expr("match (ev) { case A: " + itoa64(kA) + ", case B(v): v, case C: "
+                      + itoa64(kC) + " }", ty, (Env e) => known);
+        }
+        if (!this.inHelper && ty == TY_I32() && this.arr.len() > 0 && this.rng.intTop(4) == 0) {
+          i32 at = this.rng.intTop(this.arr.len());
+          if (this.coin()) {
+            i64 known = this.arr[at];
+            return Expr("arr[" + itoa(at) + "]", ty, (Env e) => known);
+          }
+          i64 n = this.arr.len() as i64;
+          return Expr("arr.len()", ty, (Env e) => n);
+        }
         Expr? v = this.variable(ty);
         if (!(v is null)) { return v!; }
       } else if (choice <= 3) {
@@ -661,6 +817,8 @@ export struct Gen {
 
     // Swap the scope out for the parameters, generate, and swap it back. A parameter's value at
     // generation time is 0; the call site supplies the real one.
+    bool savedInHelper = this.inHelper;
+    this.inHelper = true;
     Vec<Local> savedLocals = this.locals;
     Env savedEnv = this.env;
     this.locals = Vec<Local>.create();
@@ -672,6 +830,7 @@ export struct Gen {
     Expr body = this.expr(ret, 3);
     this.locals = savedLocals;
     this.env = savedEnv;
+    this.inHelper = savedInHelper;
 
     string sig = "";
     for (i32 k = 0; k < nparams; k++) {
@@ -686,7 +845,24 @@ export struct Gen {
     for (i32 i = 0; i < this.sigs.len(); i++) {
       if (this.sigs.get(i).ret == ty) { usable.push(this.sigs.get(i)); }
     }
-    if (usable.len() == 0) { return null; }
+    if (usable.len() == 0) {
+      // **The generic one fits every type**, so this arm answers where it used to give up — and an
+      // arm that gives up costs a draw and changes what the next one means, which is the other
+      // reason to take it.
+      Expr ga = this.expr(ty, depth - 1);
+      Expr gb = this.expr(ty, depth - 1);
+      Expr gc = this.expr(TY_BOOL(), depth - 1);
+      // **The type argument is written, not inferred**, and that is not a stylistic choice: a bare
+      // literal argument has no type of its own, so `gsel(someU32, 0, c)` asks inference to agree
+      // that `0` is a u32 when it is an i32 by default — *"the arguments imply two different types
+      // for one type parameter"*, at seed 2. Naming `T` gives every argument a slot, which is the
+      // same rule that governs the literal pools above.
+      //
+      // It also exercises `§wacc-written-type-args` and `§wacc-type-args-commit`, and puts a `<`
+      // before a parenthesised argument list — the shape `issues/lang/0308b` was about.
+      return Expr("gsel<" + typeText(ty) + ">(" + ga.src + ", " + gb.src + ", " + gc.src + ")", ty,
+                  (Env e) => evalGeneric(ga, gb, gc, e));
+    }
     Helper h = usable.get(this.rng.intTop(usable.len()));
 
     // The arguments go in a `Vec` and the lambda captures **the Vec**, not a local reused per
@@ -738,12 +914,27 @@ export struct Gen {
     Local acc = existing.len() == 0
       ? this.declare(TY_I32(), this.literal(TY_I32()))
       : existing.get(0);
+    this.lastAcc = acc.name;
     string i = this.fresh("i");
     Expr step = this.expr(TY_I32(), 1);
     bool useContinue = this.coin();
-    i32 contAt = this.rng.intTop(trips);
+    // The same mismatch mirrored: `intTop(trips)` is 0..trips-1, which a `while` or `do` never sees
+    // because those count 1..trips. A `continue` at 0 was printed and dead in both of those forms.
+    i32 contAt = form == 1 ? this.rng.intTop(trips) : 1 + this.rng.intTop(trips);
     bool useBreak = !useContinue && this.coin();
-    i32 breakAt = 1 + this.rng.intTop(trips);   // never the first, so the body runs at least once
+    // **A one-trip loop has nowhere to break**, since the rule below is that a break never fires on
+    // the first iteration — so the statement would be printed and dead, which is the case the bounds
+    // were fixed for. Rather than drop the break, give it somewhere to go: a second trip. Decided
+    // after the draw, so the sequence a seed names is unchanged.
+    if (useBreak && trips < 2) { trips = 2; }
+    // **Never the first, so the body runs at least once — and within the range this form reaches.**
+    // A `for` counts 0..trips-1 in the body where `while` and `do` count 1..trips, so a bound of
+    // `1 + intTop(trips)` can name `trips` itself, which a `for` never sees: the break was generated,
+    // printed, and dead. The oracle agreed with the compiler about a statement neither ran, which is
+    // one of the reasons the loop row of the audit above is the thin one.
+    i32 breakAt = form == 1
+      ? (trips <= 1 ? 1 : 1 + this.rng.intTop(trips - 1))
+      : 1 + this.rng.intTop(trips);
 
     string ind = this.indent + "  ";
     if (form == 1) {
@@ -882,6 +1073,20 @@ export struct Gen {
 
   /** Build one program: its source, and the value `main()` must return. */
   Program program(this) {
+    // **One generic template, always.** Its instantiations come from wherever `callHelper` falls
+    // back to it, so a program reaches several without the generator choosing them.
+    this.helpers.push("T gsel<T>(T a, T b, bool c) { return c ? a : b; }");
+    // **One i32 array, with elements the oracle knows.** Indices are constants in range, and nothing
+    // writes to it, so `arr[k]` is a value known at generation time — which is the point: it tests
+    // `array.new_fixed`, `array.get` and `.len()` without needing the environment to hold a
+    // reference. Out-of-bounds traps, so every index the generator writes is checked against the
+    // length it just chose rather than assumed.
+    this.arr = i64[](0, 1, 0 - 1, 2147483647, 12345);
+    string elems = "";
+    for (i32 k = 0; k < this.arr.len(); k++) {
+      elems = elems + (k == 0 ? "" : ", ") + this.intLiteral(this.arr[k], TY_I32());
+    }
+    this.helpers.push("i32[] mkArr() { return i32[](" + elems + "); }");
     for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
     // **One u32 local, at the top, always.** Without it the answer's u32 route fired in 1 program
     // in 200 — measured — because a u32 declaration drawn inside a block goes out of scope before
@@ -889,6 +1094,32 @@ export struct Gen {
     // declared a u32 and almost none could be seen.
     //
     // Seeded wide, since under 2^31 a u32 and an i32 answer alike and the type tests nothing.
+    this.emit("i32[] arr = mkArr();");
+    // **An enum value, with the variant chosen here so the oracle knows it.** A payload-less variant
+    // is a value rather than a call — `En.A`, never `En.A()` — which `spec/tour.wac` states and a
+    // generator gets wrong the obvious way.
+    // A struct with two fields, constructed positionally and read by name — the values are chosen
+    // here, so a field read is answerable without the environment holding a reference.
+    // **A subtype held in a parent-typed local.** Two rules come out of this and both are known
+    // here: `is` answers true because that is what was constructed, and `bv.tag()` answers the
+    // *parent's* 11 rather than the child's 22, because `override` is a source-level check and
+    // WasmGC has no virtual dispatch — `spec/tour.wac` marks that CRITICAL. A compiler that ever
+    // dispatched dynamically would answer 22 and this would see it.
+    this.emit("Bs bv = Sb(1, 2);");
+    this.ptX = 300000 + (this.rng.intTop(500) as i64);
+    this.ptY = 700000 + (this.rng.intTop(500) as i64);
+    this.emit("Pt pt = Pt(" + itoa64(this.ptX) + ", " + itoa64(this.ptY) + ");");
+    this.evVariant = this.rng.intTop(3);
+    this.evPayload = 100000 + (this.rng.intTop(1000) as i64);
+    this.emit("En ev = " + (this.evVariant == 1
+                            ? "En.B(" + itoa64(this.evPayload) + ")"
+                            : (this.evVariant == 0 ? "En.A" : "En.C")) + ";");
+    // **Declared, not merely emitted.** A line printed into the body that `locals` does not know
+    // about is a line no expression can reference and the oracle never sees — which is how a
+    // construct ends up in 200 programs and observed in none.
+    this.sideK = 1000003 + (this.rng.intTop(1000) as i64);
+    i64 sk = this.sideK;
+    this.declare(TY_I32(), Expr("sideValue()", TY_I32(), (Env e) => sk));
     this.declare(TY_U32(), this.wideU32Literal());
     // **And a wide i64, for the same reason.** The audit in the header puts i64 at 12 programs in
     // 200 — the thinnest of the three, and the one `issues/lang/0306b` lived in. A value whose high
@@ -907,10 +1138,20 @@ export struct Gen {
     //
     // Drawn *before* the expression either way, so the sequence a seed names does not depend on
     // whether a u32 local happened to exist.
+    bool viaLoop = this.rng.intTop(4) == 0;
     bool viaHigh = this.rng.intTop(4) == 0;
     bool viaU32 = this.rng.intTop(4) == 0;
     Vec<Local> unsigned = this.inScope(TY_U32());
     Expr result = this.expr(TY_I32(), 3);
+    // **A loop's accumulator, when one ran and is still in scope.** This is what makes a wrong trip
+    // count — a `break` the oracle forgot, a `continue` that skipped a condition — change the answer
+    // rather than a variable nobody reads.
+    if (viaLoop && this.lastAcc != "" && this.inScopeNamed(this.lastAcc)) {
+      string an = this.lastAcc;
+      Expr baseL = result;
+      result = Expr("(" + baseL.src + " + " + an + ")", TY_I32(),
+                    (Env e) => wrapTo(applyBin(OP_ADD(), baseL.evalIn(e), e.get(an)), TY_I32()));
+    }
     Vec<Local> wides = this.inScope(TY_I64());
     if (viaHigh && wides.len() > 0) {
       string hn = wides.get(this.rng.intTop(wides.len())).name;
@@ -951,11 +1192,20 @@ export struct Gen {
                                       TY_I32()));
     }
     i64 want = wrapTo(result.evalIn(this.env), TY_I32());
-    string src = "";
+    string src = "import { sideValue } from \"./s.wac\";\n"
+               + "enum En { A, B(i32 v), C }\n"
+               + "struct Pt { i32 x; i32 y; }\n"
+               + "struct Bs { i32 a; i32 tag(const this) { return 11; } }\n"
+               + "struct Sb : Bs { i32 b; override i32 tag(const this) { return 22; } }\n";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
     src = src + "export i32 main() {\n";
     for (i32 i = 0; i < this.lines.len(); i++) { src = src + this.lines.get(i) + "\n"; }
-    return Program(src + "  return " + result.src + ";\n}\n", want);
+    // **The second file reuses `h0`.** Its own `h0` returns a value nothing in `m.wac` returns, and
+    // its exported `sideValue` calls it — so if the two files' `h0` were ever confused, the answer
+    // moves. `m.wac` has an `h0` of its own for exactly that reason.
+    string side = "i32 h0() { return " + itoa64(this.sideK) + "; }\n"
+                + "export i32 sideValue() { return h0(); }\n";
+    return Program(src + "  return " + result.src + ";\n}\n", want, side);
   }
 }
 
@@ -971,6 +1221,15 @@ string typeText(i32 ty) {
 export struct Program {
   string src;
   i64 want;
+  /**
+   * The second file's source, and the name it is imported under.
+   *
+   * It exists to make a *collision* possible: it defines `h0` too, with a different body, and its
+   * exported entry calls its own. If the compiler ever resolved that name across files the answer
+   * would change, which is the family `issues/system/0161`'s roadmap ranks second — "a name is
+   * unique only within its file".
+   */
+  string side;
 }
 
 // ── The operators, as codes rather than strings ──────────────────────────────────────────────────
@@ -1045,7 +1304,7 @@ export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
   for (i32 k = 0; k < count; k++) {
     i32 s = seed + k;
     Program p = Gen.create(s).program();
-    Ran r = runProgram(cli, p.src);
+    Ran r = runGraph(cli, string[](entryName(), "s.wac"), string[](p.src, p.side));
     if (!r.ok) {
       bad.push(Outcome(s, p.src, p.want, r.why));
     } else if ((r.value as i64) != p.want) {
