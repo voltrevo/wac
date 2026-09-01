@@ -67,6 +67,31 @@ two-parameter struct at both parameters, a method taking a type-parameter argume
 surface: a caller writes `xs.at(0).foo()` or `m.get(k).foo()` without naming the intermediate type,
 which is the ordinary way to write those, and gets no check on `foo` at all.
 
+### The mechanism: the type table is scope-based, not graph-based
+
+The same file, asked to *name* the type it is already using:
+
+```wac
+Option<i32> x = m.get("x");     // without the import
+```
+
+    error: undefined type ... unknown type 'Option'
+
+So `Option` is not merely unmodelled, it is **not in scope**. `core/option.wac` is in the graph —
+`core/map.wac` imports it — but the checker registers types per *file scope*: `declareEnum` is called
+over the declarations a file can see, under `c.renamed(...)`, so a type the file never imported has no
+entry at all. A method call on a value of that type then falls through
+`if (recv == typeNone() || recv == "" || …) { return; }`, and unknown-is-silent does the rest.
+
+That silence is deliberate elsewhere and right elsewhere: an unmodelled receiver should not produce
+false alarms. What makes it wrong here is that the receiver is not unmodelled anywhere — it is fully
+declared, one module away, and only unnameable *here*.
+
+**So a fix is a change to the type model, not a missing case.** Either the table becomes reachable
+through signatures rather than through imports, or the lookup resolves a receiver's methods in the
+module that declared it when the current scope cannot name it. Both are decisions about what a file
+knows, which is why this is left filed rather than patched.
+
 ## Notes — four controls, all of which had the type in scope
 
 **Read this table with the section above in mind**: it is what I built before finding the rule, and
