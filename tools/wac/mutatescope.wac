@@ -1,0 +1,158 @@
+// The scope a mutant is measured in, and applying its edits — the logic half of `tools/mutate/types.ts`.
+//
+// The types themselves are in `mutateoperators.wac` beside the operators that build them; what is
+// here is the four functions that sat with them. Each is pure and in a module of its own for the
+// reason the whole of `tools/mutate/` is shaped this way: `tools/mutate.ts` builds its dependency map
+// with a top-level `await`, so importing it to check one function runs the whole tool.
+// `issues/system/0161` step 6.
+
+import { Edit, Mutant } from "./mutateoperators.wac";
+
+bool holds(string[] xs, string want) {
+  for (i32 i = 0; i < xs.len(); i++) {
+    if (xs[i] == want) { return true; }
+  }
+  return false;
+}
+
+/** Insertion sort — the lists here are package names, tens of them at most. */
+string[] sorted(string[] xs) {
+  string[] out = string[xs.len()](fill: "");
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string k = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > k) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = k;
+  }
+  return out;
+}
+
+/**
+ * The directories to run, with the mutant's own packages first.
+ *
+ * **The order is the part that costs.** `deno test --fail-fast` stops at the first failing test, so a
+ * mutant whose own package's tests kill it should meet them first. Sorted alphabetically, a mutant in
+ * `std` walked `bignum, bls, box, bytes, codec, crypto, datetime…` before reaching the tests written
+ * for the function it edited — and `box` alone spawns about three hundred subprocesses.
+ * `issues/system/0139`.
+ *
+ * Each half is sorted, so the answer does not depend on the order the caller happened to collect
+ * them in; the symptom of losing that is "mutation runs got slow", which nobody attributes to a sort.
+ */
+export string[] testDirsFor(string[] own, string[] all) {
+  string[] ownSorted = sorted(own);
+  i32 restCount = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!holds(own, all[i])) { restCount = restCount + 1; }
+  }
+  string[] rest = string[restCount](fill: "");
+  i32 r = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!holds(own, all[i])) { rest[r] = all[i]; r = r + 1; }
+  }
+  string[] restSorted = sorted(rest);
+
+  string[] out = string[ownSorted.len() + restSorted.len()](fill: "");
+  for (i32 i = 0; i < ownSorted.len(); i++) { out[i] = "packages/" + ownSorted[i]; }
+  for (i32 i = 0; i < restSorted.len(); i++) {
+    out[ownSorted.len() + i] = "packages/" + restSorted[i];
+  }
+  return out;
+}
+
+/**
+ * Whether a mutant's own packages have no host test between them, so a `deno test` over the scope
+ * runs nothing that reaches it.
+ *
+ * **Every, not some.** A mutant touching two packages where one still has host tests is measured by
+ * those, partially and honestly; one whose every package has moved to wac tests is not measured at
+ * all.
+ *
+ * This shape does not fail loudly — Deno does not object to a directory with no test modules as long
+ * as another has some. It passes: green baseline, tests that cover the mutant never run, and a
+ * verdict of *survived* if no dependent happens to catch it. `issues/system/0183`.
+ */
+export bool isBlindScope(string[] own, string[] hostless) {
+  if (own.len() == 0) { return false; }
+  for (i32 i = 0; i < own.len(); i++) {
+    if (!holds(hostless, own[i])) { return false; }
+  }
+  return true;
+}
+
+/** The packages a mutant edits, sorted and without repeats. */
+export string[] packagesOf(Mutant m) {
+  string[] seen = string[m.edits.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < m.edits.len(); i++) {
+    string file = m.edits[i].file;
+    string head = "packages/";
+    if (file.len() <= head.len() || file.slice(0, head.len()) != head) { continue; }
+    string rest = file.slice(head.len(), file.len());
+    i32 slash = rest.indexOf("/");
+    string pkg = slash < 0 ? rest : rest.slice(0, slash);
+    if (pkg == "") { continue; }
+    if (!holds(seen, pkg)) { seen[n] = pkg; n = n + 1; }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = seen[i]; }
+  return sorted(exact);
+}
+
+/**
+ * `sources` with `m`'s edits applied. `ok` is false when an edit names a file that was not loaded.
+ *
+ * **Right to left within a file**, so an earlier edit's offsets stay valid after a later one is
+ * applied — every `start` and `end` is an offset into the *original* text, and applying in reading
+ * order invalidates every offset after the first replacement whose length differs.
+ *
+ * A missing source is refused rather than skipped: the reference throws, and the caller must not
+ * treat "the edit did nothing" as a mutant that survived.
+ */
+export struct Applied {
+  bool ok;
+  string why;
+  string[] paths;
+  string[] texts;
+}
+
+export Applied applyEdits(string[] paths, string[] texts, Mutant m) {
+  string[] out = string[texts.len()](fill: "");
+  for (i32 i = 0; i < texts.len(); i++) { out[i] = texts[i]; }
+
+  for (i32 f = 0; f < paths.len(); f++) {
+    // The edits for this file, taken highest `start` first. Selection rather than a sort of a copy:
+    // a mutant has one or two edits, and the reference's `sort` over a per-file list is the same
+    // answer as taking the maximum each time.
+    i32 applied = 0;
+    i32 want = 0;
+    for (i32 e = 0; e < m.edits.len(); e++) {
+      if (m.edits[e].file == paths[f]) { want = want + 1; }
+    }
+    i32 lastStart = 2147483647;
+    while (applied < want) {
+      i32 pick = -1;
+      for (i32 e = 0; e < m.edits.len(); e++) {
+        if (m.edits[e].file != paths[f]) { continue; }
+        if (m.edits[e].start >= lastStart) { continue; }
+        if (pick < 0 || m.edits[e].start > m.edits[pick].start) { pick = e; }
+      }
+      if (pick < 0) { break; }
+      Edit ed = m.edits[pick];
+      out[f] = out[f].slice(0, ed.start) + ed.replacement + out[f].slice(ed.end, out[f].len());
+      lastStart = ed.start;
+      applied = applied + 1;
+    }
+  }
+
+  // Every edit must have found its file. A mutant whose edit names a source nobody loaded would
+  // otherwise compile unchanged and be recorded as having survived.
+  for (i32 e = 0; e < m.edits.len(); e++) {
+    if (!holds(paths, m.edits[e].file)) {
+      return Applied(false, m.name + ": no source loaded for " + m.edits[e].file,
+                     paths, texts);
+    }
+  }
+  return Applied(true, "", paths, out);
+}

@@ -1,0 +1,118 @@
+// The scope order, the blind-scope rule, and the edit application.
+//
+// Each of these guards something that fails *quietly*: an ordering whose loss reads as "mutation runs
+// got slow", a scope that measures nothing and reports a green baseline, and an edit application that
+// corrupts the source it was meant to mutate. `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Edit, Mutant } from "./mutateoperators.wac";
+import { Applied, applyEdits, isBlindScope, packagesOf, testDirsFor } from "./mutatescope.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " ") + xs[i]; }
+  return out;
+}
+
+Mutant editing(Edit[] edits) { return Mutant("m", "operator", edits); }
+
+/**
+ * The mutant's own packages come first, and each half is sorted.
+ *
+ * `--fail-fast` stops at the first failing test, so a mutant whose own package's tests kill it should
+ * meet them first. Alphabetically, a mutant in `std` walked `bignum, bls, box, …` before reaching the
+ * tests written for the function it edited, and `box` alone spawns about three hundred subprocesses.
+ * `issues/system/0139`.
+ */
+export string test_a_mutants_own_packages_are_walked_first() {
+  T t = T.create();
+  t.eqStr(joined(testDirsFor(string[]("std"), string[]("bignum", "std", "box", "abi"))),
+          "packages/std packages/abi packages/bignum packages/box",
+          "own first, then the rest alphabetically");
+  t.eqStr(joined(testDirsFor(string[]("std", "abi"), string[]("bignum", "std", "abi"))),
+          "packages/abi packages/std packages/bignum",
+          "and the own half is sorted too, so the answer does not depend on collection order");
+  t.eqStr(joined(testDirsFor(string[0](fill: ""), string[]("b", "a"))),
+          "packages/a packages/b",
+          "no own packages is just the sorted rest");
+  return t.report();
+}
+
+/**
+ * **Every, not some**, which is the difference between measured partially and not measured at all.
+ */
+export string test_a_scope_is_blind_only_when_every_package_is() {
+  T t = T.create();
+  string[] hostless = string[]("fs", "rlp");
+  t.isTrue(isBlindScope(string[]("fs"), hostless), "one package with no host test is blind");
+  t.isTrue(isBlindScope(string[]("fs", "rlp"), hostless), "and so are two");
+  t.isTrue(!isBlindScope(string[]("fs", "box"), hostless),
+           "but a package that still has host tests measures it, partially and honestly");
+  t.isTrue(!isBlindScope(string[0](fill: ""), hostless),
+           "and an empty scope is not blind — there is nothing it fails to measure");
+  return t.report();
+}
+
+export string test_the_packages_a_mutant_edits() {
+  T t = T.create();
+  t.eqStr(joined(packagesOf(editing(Edit[](Edit("packages/rlp/src/rlp.wac", 0, 0, "", ""),
+                                            Edit("packages/abi/src/abi.wac", 0, 0, "", ""))))),
+          "abi rlp", "sorted, and one entry per package");
+  t.eqStr(joined(packagesOf(editing(Edit[](Edit("packages/rlp/src/a.wac", 0, 0, "", ""),
+                                            Edit("packages/rlp/src/b.wac", 0, 0, "", ""))))),
+          "rlp", "two files in one package is one package");
+  t.eqStr(joined(packagesOf(editing(Edit[](Edit("tools/wac/x.wac", 0, 0, "", ""))))),
+          "", "and a path outside packages/ names none");
+  return t.report();
+}
+
+/**
+ * **Right to left, and this is the case that proves it.**
+ *
+ * Every `start` and `end` is an offset into the *original* text, so applying in reading order
+ * invalidates every offset after the first replacement whose length differs. Two edits of different
+ * lengths in one file is the smallest case that can tell the two orders apart: applied left to right
+ * with a lengthening first edit, the second lands in the wrong place and the result is a source that
+ * is neither the original nor the mutant.
+ */
+export string test_edits_apply_right_to_left_within_a_file() {
+  T t = T.create();
+  string[] paths = string[]("a.wac");
+  string[] texts = string[]("0123456789");
+
+  // Replace [2,3) with "XXX" and [6,7) with "Y". Right to left the offsets stay valid.
+  Applied one = applyEdits(paths, texts,
+                           editing(Edit[](Edit("a.wac", 2, 3, "XXX", "2"),
+                                          Edit("a.wac", 6, 7, "Y", "6"))));
+  t.isTrue(one.ok, "the edits applied — " + one.why);
+  t.eqStr(one.texts[0], "01XXX345Y789",
+          "both replacements land where their offsets say, whatever order they arrived in");
+
+  // The same two edits given in the other order must give the same answer.
+  Applied two = applyEdits(paths, texts,
+                           editing(Edit[](Edit("a.wac", 6, 7, "Y", "6"),
+                                          Edit("a.wac", 2, 3, "XXX", "2"))));
+  t.eqStr(two.texts[0], one.texts[0], "and the order the caller lists them in does not matter");
+
+  // A single edit, which is what almost every mutant is.
+  Applied lone = applyEdits(paths, texts, editing(Edit[](Edit("a.wac", 0, 1, "Z", "0"))));
+  t.eqStr(lone.texts[0], "Z123456789", "one edit is the ordinary case");
+
+  // **A missing source is refused, not skipped.** Otherwise the mutant compiles unchanged and is
+  // recorded as having survived — a made-up number in the direction that flatters the suite.
+  Applied gone = applyEdits(paths, texts, editing(Edit[](Edit("b.wac", 0, 1, "Z", "0"))));
+  t.isTrue(!gone.ok, "an edit naming a source nobody loaded is a failure");
+  t.isTrue(gone.why != "", "and it says which file: " + gone.why);
+  return t.report();
+}
+
+export string test_edits_across_two_files_each_apply() {
+  T t = T.create();
+  Applied got = applyEdits(string[]("a.wac", "b.wac"), string[]("aaaa", "bbbb"),
+                           editing(Edit[](Edit("a.wac", 1, 2, "X", "a"),
+                                          Edit("b.wac", 3, 4, "Y", "b"))));
+  t.isTrue(got.ok, "both applied — " + got.why);
+  t.eqStr(got.texts[0] + "/" + got.texts[1], "aXaa/bbbY", "each file gets its own edit and no other");
+  return t.report();
+}
