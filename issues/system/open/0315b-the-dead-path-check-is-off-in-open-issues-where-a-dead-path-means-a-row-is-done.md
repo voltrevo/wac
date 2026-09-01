@@ -46,8 +46,27 @@ moving TypeScript to wac:
 | `issues/system/0161` | `packages/json/bench/lookup.ts`, `packages/json/bench/throughput.ts`, `tools/benchCompile.test.ts`, `tools/deadexports.test.ts`, `tools/install.test.ts`, `tools/install.ts` |
 | `issues/system/0289b` | `tools/benchCompile.ts`, `tools/corpusHosts.ts`, `tools/fuzz.ts`, `tools/genCore.ts`, `tools/seedFresh.test.ts` |
 
-Every one of those eleven is a file that was ported or deleted — which is to say **every one is a
-completed row that still reads as outstanding work.**
+**I wrote "every one of those eleven is a completed row that still reads as outstanding work", and
+then read them.** It is wrong, and the correction is the useful part of this issue.
+
+Seven of the eleven are *accurate history*: `packages/json/bench/lookup.ts` and `throughput.ts` are
+in a table whose cell says "**ported and deleted**", `tools/genCore.ts` "went on 2026-08-30",
+`tools/seedFresh.test.ts` is "done 2026-08-30", `tools/corpusHosts.ts` appears in a paragraph
+recording that a blocker was wrong, and `tools/benchCompile.ts` in one saying it is deleted. A
+sentence that names a file in order to say it is gone is *correct*, and a check that flags it is
+asking for the record to be falsified.
+
+Four are genuinely stale, and all four are present tense about a file that no longer exists:
+
+| where | the sentence |
+|---|---|
+| `0161` | "`tools/benchCompile.test.ts` **asserts** …" — it asserts nothing; it is deleted |
+| `0161` | "`tools/deadexports.test.ts` **will not**, since probe …" |
+| `0161` | "because `tools/install.ts` **is** TypeScript and a wac test cannot import it" |
+| `0161` | the same sentence's `tools/install.test.ts` |
+
+So the signal is four sentences in 592 paths, against 24 that a check would flag and that are right
+as they stand. **That is the ratio that decides this, and it is roughly one to six against.**
 
 ## Why this is worth a check rather than more care
 
@@ -64,6 +83,32 @@ fixed by anybody being more careful, because the person who deletes the file is 
 reading the issue.
 
 ## The decision, and why this is filed rather than done
+
+**Existence is the wrong predicate, and that is what the correction above establishes.** The
+question a reader needs answered is not "does this file exist" but "does this sentence claim the
+file currently does something" — the four real ones are all present tense (*asserts*, *will not*,
+*is*) and the twenty-four sound ones are all past (*went*, *ported and deleted*, *was one of
+these*). A check keyed on existence flags both and cannot rank them, which is why `gone()` is a
+hand-maintained list of pairs rather than a rule: somebody has to read the sentence.
+
+I do not know how to check tense mechanically and I am not proposing that anybody try. What that
+leaves is a much smaller claim than this issue started with, and it is worth writing down plainly:
+**turning this check on for `open/` would find four wrong sentences and demand twenty-four
+exemptions.** On those numbers, enabling it today is a poor trade.
+
+**But the twenty-four are a backlog rather than a rate, and that is the argument for doing it
+anyway.** Every sound sentence in that set was written *after* the file was deleted — you can only
+write "`tools/genCore.ts` went on 2026-08-30" once it has gone. The unsound four were written
+*before*, and became false the moment somebody deleted the file. So a check running continuously
+fires at exactly the right instant: on the commit that removes the file, against every open issue
+still speaking about it in the present. The four would each have failed one push, been fixed by the
+person doing the deleting, and never reached this issue.
+
+That is a different proposition from switching it on now. Now it costs 24 exemptions for 4 findings;
+run from the day it is clean, it costs one edit per deletion and catches the sentence while the
+person who invalidated it is still holding it. `0289b`'s three lapsed blockers are three instances
+of nobody being there to do that. Whether the 24-exemption entry fee buys that is the decision, and
+it is a judgement about a backlog rather than about the check.
 
 Turning the skip from `issues/` into `issues/*/closed/` makes the suite red for everyone until all
 28 are dispositioned, and the dispositions are not mine to pick:
