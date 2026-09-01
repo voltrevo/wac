@@ -5,8 +5,8 @@ way to write the thing; it is written to pin the detail down.
 
 Read together these are meant to be enough to implement the language from.
 
-Each is marked **done** or **not yet**, and that marker is the only thing on this page that refers to
-an implementation.
+Each is marked **done** or **not yet**, and that marker is the only thing here that refers to an
+implementation.
 
 See [README.md](README.md) for the three tiers and why nothing checks them.
 
@@ -15,8 +15,8 @@ See [README.md](README.md) for the three tiers and why nothing checks them.
 ## Literal tags and verbatim names
 
 ```wac
-Node label(string id, string @for, Node[] kids) {   // `for` is a keyword; `@for` is the name
-  return <"label" id={id} for={@for}>{kids}</"label">;
+Node label(string id, string @"for", Node[] kids) {   // `for` is a keyword
+  return <"label" id={id} for={@"for"}>{kids}</"label">;
 }
 
 Node field(string who) {
@@ -37,7 +37,7 @@ Node dot() {
 A quoted tag name may be any name. An attribute name is written as it is in HTML, and runs to `=`,
 whitespace, `/` or `>`.
 
-The call site writes `for`, and the parameter it fills is `@for`.
+The call site writes `for`, and the parameter it fills is `@"for"`.
 
 **Not yet.**
 
@@ -46,21 +46,55 @@ The call site writes `for`, and the parameter it fills is `@for`.
 ## `@` on a name that does not need it
 
 ```wac
-i32 double(i32 @n) {
+i32 double(i32 @"n") {
   return n * 2;
 }
 ```
 
 ```
-warning: `@` is not needed on `n`
+warning: `@"n"` is just `n`
   --> math.wac:1:16
    |
- 1 | i32 double(i32 @n) {
-   |                ^^
-   = help: `n` is not a keyword — write `n`
+ 1 | i32 double(i32 @"n") {
+   |                ^^^^
+   = help: `n` needs no quoting — write `n`
 ```
 
-`@n` and `n` are the same name. The program compiles.
+`@"n"` and `n` are the same name. The program compiles.
+
+**Not yet.**
+
+---
+
+## A quoted tag and a quoted name
+
+```wac
+Node caption(Node[] kids) {
+  return <"label">{kids}</"label">;
+}
+
+Node one()   { return <caption>Name</caption>; }
+Node two()   { return <@"caption">Name</@"caption">; }
+Node three() { return <"caption">Name</"caption">; }
+```
+
+`one` and `two` both call `caption`. `three` is the `caption` element.
+
+**Not yet.**
+
+---
+
+## A test names itself
+
+```wac
+export void @"test: an empty read returns End"() {
+  // …
+}
+```
+
+```
+ok   test: an empty read returns End
+```
 
 **Not yet.**
 
