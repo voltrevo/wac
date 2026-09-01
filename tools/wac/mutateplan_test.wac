@@ -5,7 +5,8 @@
 // them the mis-selection produced a *verdict* rather than a delay. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Profile, Selection, byCost, filterFor, planFor, selectTests } from "./mutateplan.wac";
+import { Profile, Selection, byCost, filterFor, linesOf, planFor, selectTests }
+       from "./mutateplan.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 string joined(string[] xs) {
@@ -120,5 +121,25 @@ export string test_the_filter_is_anchored_and_escaped() {
           "a metacharacter in a name is escaped, or it would match more than the name");
   t.eqStr(filterFor(string[]("a+b(c)")), "/^(?:a\\+b\\(c\\))$/",
           "and so are the rest of them");
+  return t.report();
+}
+
+/**
+ * A span's lines, including the multi-line case that is the reason for the union rule.
+ *
+ * A curated mutation can cover a whole `if`, and an `extreme` mutant an entire function body — so a
+ * span of one line is the easy case and not the interesting one.
+ */
+export string test_a_span_names_every_line_it_touches() {
+  T t = T.create();
+  string src = "one\ntwo\nthree\nfour\n";      // lines start at 0, 4, 8, 14
+  t.eqStr(joined(linesOf("a.wac", src, 0, 3)), "a.wac:1", "a span inside one line is that line");
+  t.eqStr(joined(linesOf("a.wac", src, 4, 7)), "a.wac:2", "and the count is of newlines before it");
+  t.eqStr(joined(linesOf("a.wac", src, 4, 13)), "a.wac:2 a.wac:3",
+          "a span crossing one newline names both lines");
+  t.eqStr(joined(linesOf("a.wac", src, 0, 15)), "a.wac:1 a.wac:2 a.wac:3 a.wac:4",
+          "and one crossing three names four");
+  t.eqStr(joined(linesOf("a.wac", src, 5, 5)), "a.wac:2",
+          "an empty span still starts somewhere, and that line carries the coverage point");
   return t.report();
 }

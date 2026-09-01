@@ -205,3 +205,36 @@ string escaped(string name) {
   }
   return out;
 }
+
+/**
+ * Every source line an edit touches, as `"file:line"` — the locations `selectTests` takes.
+ *
+ * Edits are byte spans and one can cover several lines: the two-file distance-guard mutation spans a
+ * whole `if`, and an `extreme` mutant replaces an entire function body. **A mutation is reachable if
+ * *any* of its lines is**, so all of them are looked up and the union of their tests selected — which
+ * is the same rule `selectTests` applies one level up, and for the same reason.
+ *
+ * The first line is always included even when the span is empty, because the span still *starts*
+ * somewhere and that line is the one carrying the coverage point.
+ */
+export string[] linesOf(string file, string source, i32 start, i32 end) {
+  i32 line = 1;
+  for (i32 i = 0; i < start && i < source.len(); i++) {
+    if (source.slice(i, i + 1) == "\n") { line = line + 1; }
+  }
+  i32 breaks = 0;
+  for (i32 i = start; i < end && i < source.len(); i++) {
+    if (source.slice(i, i + 1) == "\n") { breaks = breaks + 1; }
+  }
+  string[] out = string[breaks + 1](fill: "");
+  out[0] = file + ":" + itoa(line);
+  i32 at = 1;
+  for (i32 i = start; i < end && i < source.len(); i++) {
+    if (source.slice(i, i + 1) == "\n") {
+      line = line + 1;
+      out[at] = file + ":" + itoa(line);
+      at = at + 1;
+    }
+  }
+  return out;
+}
