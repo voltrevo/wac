@@ -610,7 +610,38 @@ carve-outs and want reading one by one before any of them is called portable; an
 as a *consequence* of those two rather than as a task somebody claims. Claiming it today would mean
 porting files whose callers are all still TypeScript, which produces two copies rather than one.
 
-**Not verified here:** which of `packages/platform`'s 32 are genuinely boundary tests and which
-merely live beside them. That is the reading this note says is needed, and I have done it by
-filename rather than by opening each one — enough to say the floor exists, not enough to say where
-it is.
+### The 32, read by their own first lines
+
+The paragraph above said this wanted doing one by one and that I had gone by filename. Done — every
+one of the 32 states its subject in its first line, so the classification is theirs rather than
+mine. Three groups, and the middle one I did not expect:
+
+**Twenty-two are the bridge, the worker or the browser**, which is the thing that cannot exist
+without a JavaScript host: *"The bridge itself: a worker calling `hostCall`"*, *"The bridge's ring,
+from a real worker"*, *"The bridge's slot protocol"*, *"The buffer pool, walked rather than
+sampled"*, *"A JavaScript host starting a **wasm module** as a child"*, *"The browser target, in an
+actual browser"*, *"An abandoned read on the JavaScript host"*, *"The runtime marshaller against the
+compiler that produces what it reads"*, and the rest of the model, ring, queue and pointer files.
+These are `fuzzBoundary.ts`'s argument applied thirty-two times: there is no version of the test
+without JavaScript in it.
+
+**Two are duplication guards and do not want porting at all — they want deleting.**
+`grants.test.ts` is *"The two `Grants` declarations have to carry the same fields"* and
+`faults_agree.test.ts` is *"The fault numbering exists twice, so this is where the two copies are
+made to agree"*. Both exist **because** a declaration is written twice, once in TypeScript and once
+in wac. Port either and you have written a third copy; delete the TypeScript declaration and the
+test has nothing left to compare. They are in the same category as `coverageOrder.ts` above — a file
+whose right move is not "translate it" — and they are the clearest sign that this directory empties
+from its callers rather than through a queue of ports.
+
+**The remaining eight** — `describe`, `listen`, `sinks`, `timeout`, `unnameable`, `datagram`,
+`project`, `subprocess_profile` — are about behaviour a wac test could in principle assert, and at
+least three name Deno as the far end or the host (*"with Deno's own UDP at the far end"*,
+*"compiled through the Deno host"*), which is the permitted oracle rather than a leftover.
+
+So the floor under `packages/platform` is somewhere around **24 of 32 by construction**, and the
+candidates are single figures. That is worth having before anybody sizes this directory as 32 files
+of work: it is closer to five, and the other twenty-seven are either the subject or a consequence.
+
+Still not a full read — first lines rather than whole files, and the eight want opening properly by
+whoever takes them.
