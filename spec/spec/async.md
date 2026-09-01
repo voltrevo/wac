@@ -157,16 +157,13 @@ These are refused by name rather than mis-lowered, and each states what it would
   returned value, an assignment to something declared earlier. The lowering runs on the
   tree with no type information, and a declaration is the one place the `Pending<R>` it
   needs is written down. The same limit, from the same cause, as the item above it.
-- `[§wac-async-nosuspend-6pv2wkn]` an `async` function whose machine constructs the **only**
-  `Pending<T>` in the program. The instance is registered — the compiler says so when asked — but
-  the construction the lowering synthesises cannot be resolved to it: the instance name is inferred
-  from the call's arguments and comes back empty, so the lookup falls back to the bare name and
- declines with *a call to `Pending`*. The same construction written by hand compiles, and the
-  emitter reports `n=Pending<i32> isStruct=no` — so the name resolves correctly and the instance is
-  registered, but the predicate that decides whether a construct is a struct does not agree, and the
-  construct falls into the arm that looks for a function. It shows up as "a function that never suspends cannot be
-  waited on", because awaiting is what otherwise puts a `Pending<T>` in the source; writing
-  `Pending<T> p = f(…);` anywhere — even as an unused parameter — makes the same program build,
-  which is the workaround. `spec/cases/0319` holds it, and the
+- `[§wac-async-nosuspend-6pv2wkn]` an `async` function in a file that does not **import**
+  `Pending`. The lowering builds the ticket itself but does not add `std/platform.wac` to the
+  graph, so with no import the template is absent from the merged declarations, the instance is
+  never registered as a struct, and the construct is declined as *a call to `Pending`*. It shows up
+  as "a function that never suspends cannot be waited on", because awaiting means the source
+  already names `Pending` and therefore already imports it. Adding
+  `import { Pending } from "std/platform.wac";` and nothing else makes such a program build, which
+  is both the workaround and where the fix belongs. `spec/cases/0319` holds it, and the
   awaiting forms that look like separate limits — a call to another `async` function, or to another
   `async` method — were all measured against callees that never suspended.
