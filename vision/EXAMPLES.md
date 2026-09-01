@@ -258,3 +258,89 @@ asked of the system on the socket's behalf, so a handle carries its own authorit
 can touch one connection and nothing else.
 
 **Not yet.**
+
+---
+
+## Matching an enum
+
+```wac
+async void show(Sys sys) {
+  match (await sys.readFile("a.txt")) {
+    Ok(bytes):        { use(bytes); }
+    Err(is NotFound): { sys.log("no a.txt — using the default"); }
+    Err(_):           { sys.warn("cannot read a.txt"); }
+  }
+}
+```
+
+```wac
+async Result<Config, string> load(Sys sys) {
+  return match (await sys.readFile("config.json")) {
+    Ok(bytes):        parse(bytes),
+    Err(is NotFound): Result.Ok(Config.defaults()),
+    Err(e):           Result.Err(e.message()),
+  };
+}
+```
+
+Arms hold blocks or values, and a match holding values is an expression. `is` matches a variant
+inside a payload; a bare name there binds it.
+
+**Not yet.**
+
+---
+
+## An arm can leave
+
+```wac
+async i32 totalSize(Sys sys, string[] names) {
+  i32 total = 0;
+  for (string name in names) {
+    u8[] bytes = match (await sys.readFile(name)) {
+      Ok(b):  b,
+      Err(_): continue,
+    };
+    total += bytes.len();
+  }
+  return total;
+}
+```
+
+An arm that leaves gives no value, and is not asked to agree with the others.
+
+**Not yet.**
+
+---
+
+## An enum with a default
+
+```wac
+string advice(Fault f) {
+  return match (f) {
+    NotGranted: "start it with the grant it needs",
+    IsDir:      "that path is a directory",
+    default:    "",
+  };
+}
+```
+
+```wac
+f64 area(Shape s) {
+  return match (s) {
+    Circle(r):  3.14159 * r * r,
+    Square(sd): sd * sd,
+    default:    0.0,
+  };
+}
+```
+
+```
+error: this `default` is unreachable
+  --> shapes.wac:6:5
+   |
+ 6 |     default:    0.0,
+   |     ^
+   = help: every variant is already named — remove it
+```
+
+**Not yet.**
