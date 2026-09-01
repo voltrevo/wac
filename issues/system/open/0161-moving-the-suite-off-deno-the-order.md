@@ -2831,3 +2831,43 @@ So the position is: step 2's code exists (`tools/mutate/native.ts`, wired throug
 `mergeRuns`), the pure-wac half of it is now verified on a three-minute loop, and what remains is a
 mixed scope to exercise the other half. That is a much smaller thing than "a change to a
 thousand-line tool that takes a quarter of an hour to check".
+
+### Looking for a mixed scope to exercise the wiring — where it ends, so nobody repeats it
+
+Seven packages hold both kinds of test, which is the precondition for a scope that needs `mergeRuns`:
+
+| package | `*_test.wac` | `*.test.ts` |
+|---|---:|---:|
+| `packages/wacc` | 90 | 3 |
+| `packages/platform` | 46 | 32 |
+| `packages/box` | 34 | 17 |
+| `packages/webrtc` | 12 | 1 |
+| `packages/sh` | 5 | 3 |
+| `packages/ts` | 5 | 2 |
+| `packages/raster` | 2 | 1 |
+
+None of them is cheap, and two dead ends are worth recording:
+
+- **`packages/stream` is not a candidate at all.** It looked like the smallest, and it has *no*
+  `*_test.wac` — `test/` holds `stream.test.ts` and two coverage fixtures. `--package stream
+  --operators=all` generates **33 mutants**, all of which would run under Deno. That measures the
+  path that is going away.
+- **`packages/ts` generates 2,020.** `--operators=all --dry-run` on it was still compiling them for
+  equivalence when I stopped it; the default `guard,extreme` set produces none there, which is why
+  it does not appear in the 42.
+
+`raster` and `webrtc` are the smallest that qualify, and both are the wrong shape: their single
+`.test.ts` each wants a real canvas or Chromium, so the Deno half is red at baseline and its mutants
+are excluded as unmeasurable — which is the silent-withdrawal failure `mutate.ts`'s own comments
+describe.
+
+So the merge **rule** is settled by unit test and the merge **wiring** wants a run that is not cheap
+on any package. Recorded rather than pursued, because the value left in it is small next to the
+three-minute loop above: this is the difference between "the two halves combine correctly", which is
+tested, and "a real scope issues two commands", which is a handful of lines at `mutate.ts:1359`.
+
+*One thing checked and not a problem:* interrupting a sweep leaves `/tmp/wac-heavy-<pid>` behind,
+because `announceHeavy`'s cleanup is an `unload` handler and SIGTERM does not run it. That does not
+starve anybody — `heavyOthers` in `tools/wac/suitegate.wac` tests `alive(pid)` and sweeps a note
+whose process is gone, *"A note whose process is gone is not a presence."* Worth knowing before
+anyone else kills one and goes looking for the damage.
