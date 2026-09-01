@@ -7,7 +7,7 @@
 //
 // **It was inside `packages/wac/src/wac.wac` until 2026-09-01**, which made it private to the
 // command's own app module: a second caller could only have it by importing the whole `wac`
-// command into its dependency graph. `tools/benchCompile.ts` is that second caller — it measures
+// command into its dependency graph. `tools/wac/benchcompile.wac` is that second caller — it measures
 // the compiler phase by phase and needs the same import-graph walk that `harness/wacFiles.ts` does
 // for it in TypeScript. `issues/system/0161`.
 //
@@ -20,7 +20,7 @@ import { Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
-import { normalisePath, resolveFromAt } from "../../wacc/src/path.wac";
+import { Res, normalisePath, resolveFromAt } from "../../wacc/src/path.wac";
 import { coreFile, coreFiles, coreSource, isBuiltinSpec, stdFile, stdFiles }
   from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
@@ -507,4 +507,25 @@ export Sources gather(Fs fs, Cli cli, string entry) {
     at = at + 1;
   }
   return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", "");
+}
+
+/**
+ * The first `n` of `xs`, which is what a `Sources` field means.
+ *
+ * Every array in a `Sources` is `maxFiles()` long and `n` (or `mapN`) of it is real — the rest is
+ * `""`. A consumer that forgets is not wrong by a little: it hands the compiler five hundred empty
+ * paths. It lived in `wac.wac` beside the one caller until `tools/wac/benchcompile.wac` became the
+ * second, which is when "gather is exported" turned out not to mean "gather is usable".
+ */
+export string[] exactly(string[] xs, i32 n) {
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
+  return out;
+}
+
+/** The `Res` a gathered graph resolves against — the five trims every caller of `gather` needs. */
+export Res resOf(const Sources src) {
+  return Res(exactly(src.roots, src.n),
+             exactly(src.mapFrom, src.mapN), exactly(src.mapSpec, src.mapN),
+             exactly(src.mapTo, src.mapN), src.base);
 }

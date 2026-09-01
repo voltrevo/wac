@@ -1,0 +1,306 @@
+// Compile time, by phase.
+//
+// Every other benchmark here measures a program this repo produces. This one measures the thing
+// that produces them, which had no instrument at all until `issues/lang/0129` — the finding that
+// a build repeated the whole front end for each question was made by hand, with a throwaway script,
+// which is exactly the state of affairs a benchmark exists to end.
+//
+// The interesting number is not the total. It is **emit's share of it**: `buildFilesIn` is the only
+// call that generates code, and the other exists to check the same program. If that share climbs
+// toward 100% someone has finished 0129; if the total climbs while the share holds, the compiler
+// got slower at everything at once.
+//
+//   wac task bench:compile          # four programs, small to large
+//   wac task bench:compile --mem    # peak memory per phase, one process each
+//   wac task bench:compile --all    # every program in the repo — about two minutes, and the
+//                                   # number `issues/lang/0129` quotes
+//
+// Timings are wall-clock on a shared box. The *shares* are what to quote: they are ratios taken
+// within one run and do not care what else is running, which the absolute milliseconds very much
+// do — `packages/zstd/README.md` has the cautionary tale of a table published without its load.
+//
+// **The `In` variants, because that is what a build calls.** `packages/wac/src/wac.wac` passes the
+// project roots through so a `@/` import resolves, and timing `diagnoseGraph` while a build calls
+// `diagnoseGraphIn` would report the cost of a different function with the same body.
+//
+// **This is a port of the Deno benchmark it replaces, and the guard beside it changed subject.**
+// That one read `harness/waccBuild.ts` to learn which compiler calls a build makes. A wac build
+// does not go through that file; it goes through `packages/wac/src/wac.wac`, which is the command.
+// `tools/wac/benchcompile_test.wac` reads *that* instead, which is a stronger guard than the one it
+// replaces — the old one watched a test harness, and this one watches the program people run.
+// `issues/system/0161`. The file it was ported from is in git; naming its path here would leave a
+// backticked path to something deleted, which `tools/wac/links_test.wac` rightly refuses.
+
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Fs } from "../../packages/fs/src/fs.wac";
+import { Sources, exactly, gather, resOf } from "../../packages/wac/src/sources.wac";
+import { Res } from "../../packages/wacc/src/path.wac";
+import { Built } from "../../packages/wacc/src/emit.wac";
+import { buildFilesIn, diagnoseGraphIn } from "../../packages/wacc/src/api.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { Program, findPrograms } from "./programs.wac";
+
+// bench-exempt: covTableFilesIn — only a coverage build asks for it.
+// bench-exempt: emitFilesCoveredIn — the coverage path's own front.
+// bench-exempt: emitFilesTraced — a traced build, which nobody's ordinary build is.
+// bench-exempt: emitFilesTracedSlots — the same, with a slot count.
+// bench-exempt: missingImportFilesIn — runs only once a graph has already failed.
+// bench-exempt: blockedFilesIn — the `--describe` path, not a build.
+// bench-exempt: exportSigsFilesIn — the same.
+// bench-exempt: bindTypesFilesIn — the same.
+// bench-exempt: bindgenDeclinedFilesIn — `wac bindgen`, which emits glue, not a build.
+
+/** How many phases are timed. Kept beside `phaseName` and `runPhase`, which must agree with it. */
+i32 phaseCount() { return 2; }
+
+string phaseName(i32 i) {
+  if (i == 0) { return "diagnoseGraphIn"; }
+  return "buildFilesIn";
+}
+
+/**
+ * One phase, by index — the switch the guard reads.
+ *
+ * A dispatch rather than an array of function values on purpose: the check in
+ * `benchcompile_test.wac` is a text scan for the compiler calls this file makes, so the calls have
+ * to be written here literally. An indirection through a table would hide them from it, and a guard
+ * that cannot see the call is the stale table this whole arrangement exists to prevent.
+ */
+void runPhase(i32 which, string[] paths, string[] texts, const Res res, string entry) {
+  if (which == 0) {
+    string wire = diagnoseGraphIn(paths, texts, res, entry);
+    if (wire.len() == 0 - 1) { return; }   // never true; keeps the result live
+    return;
+  }
+  Built built = buildFilesIn(paths, texts, res, entry);
+  if (built.wasm.len() == 0 - 1) { return; }
+}
+
+/** Small to large, spanning about 20x — the range over which emit's share stayed flat. */
+string[] samples() {
+  return string[]("packages/zstd/src/frame.wac",
+                  "packages/json/src/json.wac",
+                  "packages/wacc/src/api.wac",
+                  "packages/box/src/box.wac");
+}
+
+/** A gathered program, trimmed to the shape the compiler takes. */
+struct Loaded {
+  bool ok;
+  string[] paths;
+  string[] texts;
+  Res res;
+  i32 kib;
+}
+
+Loaded load(Fs fs, Cli cli, string entry) {
+  Sources src = gather(fs, cli, entry);
+  if (src.why != "") {
+    return Loaded(false, string[0](fill: ""), string[0](fill: ""), resOf(src), 0);
+  }
+  string[] paths = exactly(src.paths, src.n);
+  string[] texts = exactly(src.texts, src.n);
+  i32 bytes = 0;
+  for (i32 i = 0; i < texts.len(); i++) { bytes = bytes + texts[i].len(); }
+  return Loaded(true, paths, texts, resOf(src), bytes / 1024);
+}
+
+/** Peak resident set so far, in MiB, or `-1` where `/proc/self/status` is not readable. */
+i32 peakRssMiB(Cli cli) {
+  FileResult r = cli.readFile("/proc/self/status").wait();
+  if (!r.ok) { return 0 - 1; }
+  string text = string.fromBytes(r.bytes);
+  i32 at = text.indexOf("VmHWM:");
+  if (at < 0) { return 0 - 1; }
+  i32 i = at + 6;
+  while (i < text.len() && text.slice(i, i + 1) == " ") { i = i + 1; }
+  i32 start = i;
+  while (i < text.len() && text.slice(i, i + 1) >= "0" && text.slice(i, i + 1) <= "9") { i = i + 1; }
+  if (i == start) { return 0 - 1; }
+  i32 kb = 0;
+  for (i32 j = start; j < i; j++) { kb = kb * 10 + (text.toBytes()[j] - '0'); }
+  return kb / 1024;
+}
+
+/** Milliseconds for one call, measured around it. */
+i64 timePhase(Core core, i32 which, string[] paths, string[] texts, const Res res, string entry) {
+  i64 began = core.monotonicNanos().wait();
+  runPhase(which, paths, texts, res, entry);
+  return (core.monotonicNanos().wait() - began) / 1000000;
+}
+
+/** `packages/json/src/json.wac` → `json`, which is what names a row. */
+string shortName(string entry) {
+  string s = entry;
+  if (s.len() > 9 && s.slice(0, 9) == "packages/") { s = s.slice(9, s.len()); }
+  i32 cut = s.indexOf("/src/");
+  if (cut > 0) { s = s.slice(0, cut); }
+  return s;
+}
+
+i32 percent(i64 part, i64 whole) {
+  if (whole <= 0) { return 0; }
+  return (part * 100 / whole) as@ i32;
+}
+
+/** The default table: four programs, each phase twice after a warm-up. */
+i32 byPhase(Core core, Cli cli, Fs fs) {
+  core.log("## Compile time by phase\n");
+  string head = "| program | files | KiB";
+  for (i32 p = 0; p < phaseCount(); p++) { head = head + " | " + phaseName(p); }
+  core.log(head + " | total | build |");
+  string rule = "|---|---:|---:";
+  for (i32 p = 0; p < phaseCount(); p++) { rule = rule + "|---:"; }
+  core.log(rule + "|---:|---:|");
+
+  string[] entries = samples();
+  for (i32 i = 0; i < entries.len(); i++) {
+    Loaded l = load(fs, cli, entries[i]);
+    if (!l.ok) {
+      core.warn("could not gather " + entries[i] + " — skipped");
+      continue;
+    }
+    string row = "| " + shortName(entries[i]) + " | " + itoa(l.paths.len()) + " | " + itoa(l.kib);
+    i64 total = 0;
+    i64[] each = i64[phaseCount()](fill: 0);
+    for (i32 p = 0; p < phaseCount(); p++) {
+      runPhase(p, l.paths, l.texts, l.res, entries[i]);          // warm
+      i64 a = timePhase(core, p, l.paths, l.texts, l.res, entries[i]);
+      i64 b = timePhase(core, p, l.paths, l.texts, l.res, entries[i]);
+      each[p] = (a + b) / 2;
+      total = total + each[p];
+      row = row + " | " + itoa64(each[p]);
+    }
+    core.log(row + " | " + itoa64(total) + " | **" + itoa(percent(each[1], total)) + "%** |");
+  }
+  core.log("\nMilliseconds, mean of 2 after a warm-up. `buildFilesIn` is the whole of a build's\n"
+           + "compiler work in one call; `diagnoseGraphIn` is the checker. See `issues/lang/0129`.");
+  return 0;
+}
+
+/** Every program in the repository, cold, once each. */
+i32 overAll(Core core, Cli cli, Fs fs) {
+  Program[] list = findPrograms(cli);
+  i64[] totals = i64[phaseCount()](fill: 0);
+  i32 done = 0;
+  i32 skipped = 0;
+  i32 failed = 0;
+  i32 kib = 0;
+  for (i32 i = 0; i < list.len(); i++) {
+    Loaded l = load(fs, cli, list[i].path);
+    if (!l.ok) { skipped = skipped + 1; continue; }
+    kib = kib + l.kib;
+    for (i32 p = 0; p < phaseCount(); p++) {
+      totals[p] = totals[p] + timePhase(core, p, l.paths, l.texts, l.res, list[i].path);
+    }
+    done = done + 1;
+  }
+  i64 total = 0;
+  for (i32 p = 0; p < phaseCount(); p++) { total = total + totals[p]; }
+  core.log("## Every program, cold\n");
+  core.log("| phase | ms | share |");
+  core.log("|---|---:|---:|");
+  for (i32 p = 0; p < phaseCount(); p++) {
+    core.log("| " + phaseName(p) + " | " + itoa64(totals[p]) + " | "
+             + itoa(percent(totals[p], total)) + "% |");
+  }
+  core.log("| **total** | **" + itoa64(total) + "** | |");
+  core.log("\n" + itoa(done) + " program(s), " + itoa(kib) + " KiB"
+           + (skipped > 0 ? ", " + itoa(skipped) + " skipped (would not gather)" : "")
+           + (failed > 0 ? ", " + itoa(failed) + " declined" : "")
+           + ".\nNo warm-up and one run each: this is the cold-build cost a change to a"
+           + " widely-imported file imposes.");
+  return 0;
+}
+
+/** Where `./bootstrap.sh` leaves the binary — the one `tools/push.sh` runs as well. */
+string binaryPath(Cli cli) {
+  return cli.cwd().wait() + "/native/v8/target/release/wac";
+}
+
+/**
+ * Peak memory, one phase per process.
+ *
+ * **A collection during phase 3 otherwise reads as phase 4 using less**, which is how the first
+ * version of this measurement reported a phase at *minus* 178 MiB. So each phase is a child that
+ * does one thing and says what it peaked at, and `baseline` runs nothing — the compiler is bound
+ * either way, and that floor is most of the number.
+ */
+i32 byMemory(Core core, Cli cli) {
+  if (peakRssMiB(cli) < 0) {
+    core.log("`--mem` needs /proc/self/status — Linux only.");
+    return 0;
+  }
+  string entry = samples()[3];
+  core.log("## Peak memory by phase\n\n" + entry + "\n");
+  core.log("| phase | peak MiB | above baseline |");
+  core.log("|---|---:|---:|");
+  i32 base = 0;
+  for (i32 p = 0 - 1; p < phaseCount(); p++) {
+    string name = p < 0 ? "baseline" : phaseName(p);
+    Exec ran = cli.exec(binaryPath(cli),
+                        string[]("run", "--allow-read", "--allow-env",
+                                 "tools/wac/benchcompile.wac", "--phase", name, entry),
+                        u8[0]()).wait();
+    if (!ran.ran() || ran.status != 0) {
+      core.warn("the " + name + " child did not run — " + ran.error
+                + string.fromBytes(ran.stderr));
+      return 1;
+    }
+    i32 peak = 0;
+    string out = string.fromBytes(ran.stdout);
+    for (i32 i = 0; i < out.len(); i++) {
+      string c = out.slice(i, i + 1);
+      if (c >= "0" && c <= "9") { peak = peak * 10 + (out.toBytes()[i] - '0'); }
+    }
+    if (p < 0) { base = peak; }
+    core.log("| " + name + " | " + itoa(peak) + " | "
+             + (p < 0 ? "—" : itoa(peak - base)) + " |");
+  }
+  core.log("\nOne phase per process: a collection during one otherwise reads as another using"
+           + " less.\nThe call that is not `buildFilesIn` allocates about as much as emitting does,"
+           + " to check\nthe program emitting has already parsed — `issues/lang/0129`.");
+  return 0;
+}
+
+/** `--phase <name> <entry>`: this file re-invoked by `--mem`. Prints the peak and nothing else. */
+i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
+  Loaded l = load(fs, cli, entry);
+  if (!l.ok) {
+    core.warn("could not gather " + entry);
+    return 1;
+  }
+  if (name != "baseline") {
+    for (i32 p = 0; p < phaseCount(); p++) {
+      if (phaseName(p) == name) { runPhase(p, l.paths, l.texts, l.res, entry); }
+    }
+  }
+  core.log(itoa(peakRssMiB(cli)));
+  return 0;
+}
+
+export i32 main(Core core, Cli cli) {
+  bool all = false;
+  bool mem = false;
+  i32 phaseAt = 0 - 1;
+  string[] args = string[16](fill: "");
+  i32 argc = cli.argCount().wait();
+  if (argc > 16) { argc = 16; }
+  for (i32 i = 0; i < argc; i++) {
+    args[i] = string.fromBytes(cli.arg(i).wait());
+    if (args[i] == "--all") { all = true; }
+    if (args[i] == "--mem") { mem = true; }
+    if (args[i] == "--phase") { phaseAt = i; }
+  }
+  Fs fs = Fs.onHost(cli, 0);
+  if (phaseAt >= 0) {
+    if (phaseAt + 2 >= argc) {
+      core.warn("--phase needs a phase name and an entry");
+      return 1;
+    }
+    return onePhase(core, cli, fs, args[phaseAt + 1], args[phaseAt + 2]);
+  }
+  if (mem) { return byMemory(core, cli); }
+  if (all) { return overAll(core, cli, fs); }
+  return byPhase(core, cli, fs);
+}

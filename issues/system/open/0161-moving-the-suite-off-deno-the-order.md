@@ -1046,6 +1046,42 @@ and the rest of what it uses maps directly: `performance.now` to `core.monotonic
 binary. **So the port is work, not a blocked item**, which is a change of status for the row above
 that calls it "the cleanest next one".
 
+### Ported, and the two file-set walkers disagree — agent-b, 2026-09-01
+
+`tools/wac/benchcompile.wac` and `tools/wac/benchcompile_test.wac` are in; the Deno pair is deleted
+and `bench:compile` runs the wac one. Both tables, same machine, minutes apart:
+
+| program | wac: files / KiB | Deno: files / KiB |
+|---|---|---|
+| zstd | 7 / 70 | 7 / 70 |
+| json | **11** / 108 | **8** / 95 |
+| wacc | 29 / **2227** | 29 / **2215** |
+| box | **175** / 1506 | **169** / 1334 |
+
+**The KiB column is a units difference and not a fault.** wac's `.len()` is bytes and TypeScript's
+`.length` is UTF-16 code units, and this repository's prose is full of em-dashes — which is why
+`wacc` differs by 12 KiB at an identical file count.
+
+**The file counts are a real disagreement**, and `gather` is the one that is right: `wac check` —
+the compiler's own path — reports 11 for `packages/json/src/json.wac` and 7 for zstd, matching the
+wac column. Diffed, the three `json` is missing from `harness/wacFiles.ts` are:
+
+    core/hash.wac
+    core/map.wac
+    core/option.wac
+
+`gather` is a strict superset here; `wacFiles` returned nothing `gather` did not. So that walk does
+not follow imports into `core/`.
+
+**It did not make the Deno benchmark wrong, which is why nothing caught it.** The compiler carries
+`core/` and `std/` inside itself as `coretext.wac`, so a file list missing them still compiles —
+`wacc` fills them in from its embedded copy and does the same work. Only the `files` and `KiB`
+columns were understated, and the timings are comparable, which is what the two tables show.
+
+That is moot for this benchmark now. It is not moot for `harness/wacFiles.ts`'s other callers —
+`tools/mutate/`, `packages/ts`'s two differential tests — where "the files this program is made of"
+answering three short may matter more than a column. Not chased: it belongs to whoever ports those.
+
 **One thing the port has to decide, which is not mechanical.** `tools/benchCompile.test.ts` asserts
 that every `api.*` call in `harness/waccBuild.ts` is either timed here or carries a `bench-exempt`
 line saying why — a guard that exists because the list silently drifted twice, the second time

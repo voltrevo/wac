@@ -60,7 +60,7 @@ import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from ".
 import { coreFile, coreFiles, coreSource, isBuiltinSpec, stdFile, stdFiles }
   from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, dirOf, isProjectSpecifier } from "../../wacpkg/src/root.wac";
-import { Sources, gather, projectRootAbs, wacHomeOf } from "./sources.wac";
+import { Sources, exactly, gather, projectRootAbs, resOf, wacHomeOf } from "./sources.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
 import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
@@ -371,12 +371,6 @@ string fieldOf(string line, i32 n) {
 }
 
 /** The arrays the API wants: exactly `n` long, since it walks their whole length. */
-string[] exactly(string[] xs, i32 n) {
-  string[] out = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
-  return out;
-}
-
 /**
  * What this compiler answers, as the reader sees it first.
  *
@@ -1373,9 +1367,7 @@ export i32 main(Core core, Cli cli) {
   }
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
-  Res res = Res(exactly(src.roots, src.n),
-                exactly(src.mapFrom, src.mapN), exactly(src.mapSpec, src.mapN),
-                exactly(src.mapTo, src.mapN), src.base);
+  Res res = resOf(src);
 
   // **The artefact this build would write, if it has been written before.** `issues/system/0204`:
   // `wac build` compiled from source every time, and the box tests that build an application and run

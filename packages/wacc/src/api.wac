@@ -655,7 +655,7 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * declarations included. That is why this is what `check` calls and `diagnoseFiles` is what a build
  * calls — the issue records what it would take to make both affordable.
  *
- * **What it costs, `tools/benchCompile.ts`, 2026-08-19:** 378ms for wacc's own 17 files and 672ms for
+ * **What it costs, `tools/wac/benchcompile.wac`, 2026-08-19:** 378ms for wacc's own 17 files and 672ms for
  * box's 167, where box was 1347ms before the graph below was taken once instead of per file, and its
  * peak was 114 MiB above the floor rather than 51. The two numbers this docstring used to carry —
  * 0.9s and 9.9s — predate `issues/lang/0133` and were a good deal further out than they look, which

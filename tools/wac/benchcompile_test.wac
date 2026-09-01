@@ -1,0 +1,158 @@
+// The compile benchmark must time the build that happens.
+//
+// `tools/wac/benchcompile.wac` keeps a list of the compiler calls a build makes. Nothing connects
+// the two, and in the TypeScript this replaces they came apart twice: the benchmark timed five
+// calls after three were folded into one and reported ~106 s for a path nothing took, and then —
+// one commit after that was fixed, by the same person, within the hour — `buildFiles` folded two
+// more and the list was not updated again. Neither drift failed anything. Both produced a plausible
+// table for a build that did not exist.
+//
+// The first fix was a note in bold asking the next person to keep it in step. That is what did not
+// work. This is the check.
+//
+// **It reads `packages/wac/src/wac.wac`, which is a change of subject from the TypeScript.** That
+// one read `harness/waccBuild.ts`, a test harness that compiled things the way a build did. A wac
+// build does not go through it — it goes through the command, so the command is what this reads.
+// The guard is stronger for it: the old one could go green while the *program people run* drifted,
+// which is the failure it was written to catch, one level up.
+//
+// It is a text scan, which is coarse: it cannot tell a call on the default path from one only a
+// coverage or traced build makes. That is what `bench-exempt` is for — a line naming the call and
+// saying why it is not timed. The point is not that the benchmark times everything. It is that
+// adding a compiler call to the command forces someone to decide, instead of leaving a stale table
+// that still looks right.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+
+string readOr(Cli cli, string path, T t) {
+  FileResult r = cli.readFile(path).wait();
+  t.isTrue(r.ok, "could not read " + path);
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/**
+ * Every `name(` in `text` whose name is one `api.wac` exports and a build could make.
+ *
+ * The prefix list is what makes this a scan rather than a parse: `api.wac`'s build entry points all
+ * begin one of these ways, and a call written any other way is not one of them. A name that starts
+ * a comment line is still counted — `bench-exempt: emitFilesTraced` is a *claim about* the call,
+ * and counting it there would let an exemption satisfy itself, so exemptions are matched first and
+ * removed before this runs.
+ */
+string[] apiCallsIn(string text) {
+  Vec<string> out = Vec.create();
+  string[] stems = string[]("diagnoseGraph", "diagnoseFiles", "buildFiles", "emitFiles",
+                            "blockedFiles", "exportSigsFiles", "bindTypesFiles", "describeFiles",
+                            "covTableFiles", "missingImportFiles", "bindgenDeclinedFiles");
+  for (i32 s = 0; s < stems.len(); s++) {
+    i32 at = 0;
+    while (true) {
+      i32 rel = text.slice(at, text.len()).indexOf(stems[s]);
+      if (rel < 0) { break; }
+      i32 hit = at + rel;
+      // the whole identifier: letters after the stem, then it must be a call
+      i32 end = hit + stems[s].len();
+      while (end < text.len()) {
+        string c = text.slice(end, end + 1);
+        bool wordy = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
+        if (!wordy) { break; }
+        end = end + 1;
+      }
+      string name = text.slice(hit, end);
+      // not a call, or part of a longer identifier ending in the stem
+      bool isCall = end < text.len() && text.slice(end, end + 1) == "(";
+      bool starts = hit == 0 || !isWordByte(text, hit - 1);
+      if (isCall && starts && !has(out.toArray(), name)) { out.push(name); }
+      at = hit + 1;
+    }
+  }
+  return out.toArray();
+}
+
+bool isWordByte(string text, i32 i) {
+  string c = text.slice(i, i + 1);
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
+}
+
+bool has(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
+}
+
+/** The names on `// bench-exempt: <name> — why` lines. */
+string[] exemptIn(string text) {
+  Vec<string> out = Vec.create();
+  string mark = "bench-exempt:";
+  i32 at = 0;
+  while (true) {
+    i32 rel = text.slice(at, text.len()).indexOf(mark);
+    if (rel < 0) { break; }
+    i32 hit = at + rel;
+    i32 i = hit + mark.len();
+    while (i < text.len() && text.slice(i, i + 1) == " ") { i = i + 1; }
+    i32 start = i;
+    while (i < text.len() && isWordByte(text, i)) { i = i + 1; }
+    if (i > start) { out.push(text.slice(start, i)); }
+    at = hit + 1;
+  }
+  return out.toArray();
+}
+
+/** The benchmark's text with its `bench-exempt` lines removed, so a claim cannot satisfy itself. */
+string withoutExemptions(string text) {
+  string out = "";
+  string[] lines = splitLines(text);
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (lines[i].indexOf("bench-exempt:") < 0) { out = out + lines[i] + "\n"; }
+  }
+  return out;
+}
+
+string[] splitLines(string text) {
+  Vec<string> out = Vec.create();
+  i32 start = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { out.push(text.slice(start, i)); start = i + 1; }
+  }
+  out.push(text.slice(start, text.len()));
+  return out.toArray();
+}
+
+export string test_every_compiler_call_a_build_makes_is_timed_or_exempted(Core core, Cli cli) {
+  T t = T.create();
+  string command = readOr(cli, "packages/wac/src/wac.wac", t);
+  string bench = readOr(cli, "tools/wac/benchcompile.wac", t);
+  if (command == "" || bench == "") { return t.report(); }
+
+  string[] called = apiCallsIn(command);
+  string[] timed = apiCallsIn(withoutExemptions(bench));
+  string[] exempt = exemptIn(bench);
+
+  t.isTrue(called.len() > 0, "found no compiler calls in the command at all — the scan is broken");
+
+  string missing = "";
+  for (i32 i = 0; i < called.len(); i++) {
+    if (!has(timed, called[i]) && !has(exempt, called[i])) {
+      missing = missing + (missing == "" ? "" : ", ") + called[i];
+    }
+  }
+  t.eqStr(missing, "",
+          "packages/wac/src/wac.wac calls " + missing + ", which tools/wac/benchcompile.wac "
+          + "neither times nor exempts. Add it to the phases if a build's cost depends on it, or "
+          + "write `// bench-exempt: <name> — <why>` if it does not. A benchmark that misses a "
+          + "call reports a smaller build than the one anybody runs, and says nothing while "
+          + "doing it.");
+
+  // And the other direction, weakly: an exemption for a call the command no longer makes is dead
+  // text that will outlive whatever it was explaining.
+  string stale = "";
+  for (i32 i = 0; i < exempt.len(); i++) {
+    if (!has(called, exempt[i])) { stale = stale + (stale == "" ? "" : ", ") + exempt[i]; }
+  }
+  t.eqStr(stale, "",
+          "tools/wac/benchcompile.wac exempts " + stale + ", which packages/wac/src/wac.wac does "
+          + "not call any more — drop the bench-exempt line.");
+  return t.report();
+}
