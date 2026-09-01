@@ -1,6 +1,6 @@
 # 0165 — wac cannot run a host program, and the strongest oracles this repository has are host programs
 
-- **Status:** open — the buffered half is built; `start`/`stop` is not
+- **Status:** open — the buffered half is built; `start`/`stop` is not, and as of 2026-09-01 has no caller left to build it for (last section)
 - **Claimed by:** agent-b (buffered `exec`, landed 2026-08-17)
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
@@ -168,3 +168,41 @@ own, and answers with `Exec.stdout` and `Exec.stderr` empty.
 holds: nothing in wac reads the bytes incrementally. They go to a file descriptor as the child writes
 them, which is what a test runner wants — a lane that shows its output while it runs — and it needs
 no new type and no read loop. The `start`/`stop` half of this issue is untouched.
+
+## The population `start`/`stop` was for is empty now — agent-b, 2026-09-01
+
+This issue's remaining half is *"the fifteen cases that keep a child alive as a server and then talk
+to it over `connect`"*, and the 2026-08-18 re-measurement sizes it at **12,029 lines** of the 45,873
+then under `packages/**/*.test.ts`, a quarter of what was left.
+
+Re-measured today, both halves have moved and the second one has gone:
+
+| | 2026-08-18 | 2026-09-01 |
+|---|---:|---:|
+| `.test.ts` under `packages/` | 45,873 lines | **15,095** |
+| packages holding any | — | platform 6,753 · box 4,539 · sh 1,407 · webrtc 909 · wacc 620 · ts 354 · stream 296 · raster 217 |
+
+**`packages/tls`, `packages/ssh`, `packages/tor` and `packages/quic` have no `.test.ts` at all**, and
+they were where a test spawned a peer and connected to it. Of the nine files left anywhere under
+`packages/` that call `.spawn()`:
+
+- **five are `packages/box` and one is `packages/sh`** — another agent's, and not mine to judge;
+- `packages/platform/test/browser_live.test.ts` and `packages/webrtc/test/browser.test.ts` start a
+  **browser**, which `Cli.exec` is explicitly the wrong tool for and which this repository keeps on
+  purpose;
+- `packages/stream/test/stream.test.ts` drives a **worker**, not a host program.
+
+So in the packages I can act on, nothing is waiting for `start`/`stop`. The conversions
+`issues/system/0161` records did not go around this capability — they removed the files that wanted
+it, which is a better outcome than the one this issue was planning for and is the reason the
+capability stopped being on anybody's path.
+
+**What follows.** The process-lifetime question this half was staged behind — *"what happens to a
+live child when the program traps, exits, or the container stops"* — does not need answering yet,
+and answering it now would be designing for a caller that no longer exists. The buffered `Cli.exec`
+that landed on 2026-08-17 stays, since it has real users; the streaming pair should wait for a
+concrete case rather than be built against a count that has gone to zero.
+
+**Not claimed here:** that `box`'s and `sh`'s six are not server-shaped. They are another agent's
+files and I have counted them rather than read them. If either turns out to want a live child, this
+paragraph is the thing to correct — the six are the whole of the remaining evidence either way.
