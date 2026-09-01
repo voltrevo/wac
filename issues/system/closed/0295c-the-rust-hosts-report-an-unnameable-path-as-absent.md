@@ -1,6 +1,6 @@
 # 0295 — both Rust hosts report an unnameable path as absent, and both fault tests agree it is fine
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -125,3 +125,48 @@ reason, so the case exists and only the comparison does not.
 
 Not implemented here: 27 call sites over two hosts and a new cross-host test is more than this note,
 and it wants doing in one careful pass rather than at the end of a long one.
+
+## Fixed, and one of the two hosts never had it — agent-b, 2026-09-01
+
+**The title says both Rust hosts. Only the V8 one has this.** The evidence table above measures Deno
+and native v8; the wasmtime host is in the title by inference from the missing constant, and the
+inference does not hold. Asked directly, with a real `bad-\xff-name` on disk:
+
+| host | the name it holds | `stat` |
+| --- | --- | --- |
+| Deno | `bad-<U+FFFD>-name` | `exists=false fault=6` — already correct |
+| native v8, before | `bad-<U+FFFD>-name` | `exists=false fault=0` — **the bug** |
+| native v8, after | `bad-<U+FFFD>-name` | `exists=false fault=6` |
+| wasmtime | `bad-\xff-name`, unchanged | `exists=true fault=0` — **correct, and it always was** |
+
+A wasmtime path is a `Vec<u8>` that goes to the syscall as the bytes it arrived as, so that host can
+name the file and `stat` simply succeeds. It never mangles, so it never produces the condition. I had
+written the reclassification into it before measuring, and that was **actively wrong**: on a host that
+can represent U+FFFD, a genuine `NotFound` for a path containing one means not found. Reverted; it
+keeps the constant only, so the two hosts' numbering still matches.
+
+The missing constant was real in both and was the whole of the evidence — a vocabulary gap reads the
+same whether or not the host can reach the word.
+
+**What was done.** In `native/v8/src/main.rs`: `FAULT_NOT_REPRESENTABLE = 6`, a `fault_of_path`
+sibling to `fault_of` carrying `faultOfPath`'s rule verbatim, the **six** path-bearing call sites
+converted (`readFile`, `stat`, and four `Change` sites), and the `stat` `NotFound` arm guarded. The
+remaining four `fault_of` calls are all `Answer::Socket` and have no path — the "11 call sites"
+figure counted the two definitions and the socket arms. `native/src/main.rs` gets the constant alone.
+
+**The test the issue asks for**, in `packages/platform/test/wac/hostfaults_test.wac` beside the
+`FAULT_DENIED` one it is the sibling of — and its assertion is deliberately *not* "every host answers
+6", which is the trap this issue set. Demanding the fault would fail wasmtime for being right. What
+every host must satisfy is **either you can name it, or you say you cannot**; the third answer —
+absent, no fault, about a file on the disk — is the one a script acts on by creating the file, and it
+is the only one forbidden. It passes on all three hosts, which disagree about which half they satisfy.
+
+`Stat`'s doc in `std/platform.wac` already promised this category for "a file `ls` has just listed",
+so the contract was written and nothing ran it. A contract about failure needs a failure to test it.
+
+**Left for `packages/box`'s owner:** `test/unnameable.test.ts` is pinned to the Deno build because of
+this, under `issues/system/0193`. The default host now answers correctly, so the pin can come off —
+not done here, as that package is another agent's.
+
+**Fixed in:** `native/v8/src/main.rs`, `native/src/main.rs`,
+`packages/platform/test/wac/hostfaults_test.wac`.

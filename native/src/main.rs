@@ -3094,6 +3094,12 @@ const FAULT_DENIED: i32 = 2;
 const FAULT_EXISTS: i32 = 3;
 const FAULT_NOT_EMPTY: i32 = 4;
 const FAULT_OTHER: i32 = 5;
+/// The host cannot express this name — `issues/system/0295c`, and `0065` before it.
+///
+/// A name that came *out* of `read_dir` lossily carries U+FFFD, and handing it back in names a file
+/// that does not exist. Saying "not found" about it reads as *the caller got the name wrong* rather
+/// than *this runtime cannot express it*.
+const FAULT_NOT_REPRESENTABLE: i32 = 6;
 /// Not an operating-system failure at all: the program was built without the capability.
 const FAULT_NOT_GRANTED: i32 = 7;
 /// A directory where a file was wanted.

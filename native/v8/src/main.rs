@@ -314,6 +314,12 @@ const FAULT_DENIED: i32 = 2;
 const FAULT_EXISTS: i32 = 3;
 const FAULT_NOT_EMPTY: i32 = 4;
 const FAULT_OTHER: i32 = 5;
+/// The host cannot express this name — `issues/system/0295c`, and `0065` before it.
+///
+/// A name that came *out* of `readDir` lossily carries U+FFFD, and handing it back in names a file
+/// that does not exist. Saying "not found" about it reads as *the caller got the name wrong* rather
+/// than *this runtime cannot express it*, and `test -e` then answers no about a file that is there.
+const FAULT_NOT_REPRESENTABLE: i32 = 6;
 /// **Not the operating system's `FAULT_DENIED`.** This build was not granted the capability, which a
 /// caller can and does tell apart from a file that will not open — `platform.wac` keeps them
 /// separate for exactly that reason.
@@ -399,6 +405,21 @@ fn message_of(e: &std::io::Error) -> String {
         Some(at) if text.ends_with(')') => text[..at].to_string(),
         _ => text,
     }
+}
+
+/// The fault for an operation on `path`, given what the OS said.
+///
+/// The one refinement over `fault_of`, and the same one `packages/platform/host/faults.ts` makes in
+/// `faultOfPath`: a `NotFound` for a path containing U+FFFD is almost certainly a name this host
+/// could not express, because U+FFFD is what a lossy `readDir` produces and a name carrying it
+/// round-trips only if the file really does have a replacement character in it. Checked rather than
+/// assumed — a path that resolves keeps whatever fault it had.
+fn fault_of_path(e: &std::io::Error, path: &str) -> i32 {
+    let fault = fault_of(e);
+    if fault != FAULT_NOT_FOUND || !path.contains('\u{FFFD}') {
+        return fault;
+    }
+    FAULT_NOT_REPRESENTABLE
 }
 
 fn fault_of(e: &std::io::Error) -> i32 {
@@ -2130,7 +2151,7 @@ fn dispatch(
             std::thread::spawn(move || {
                 let a = match std::fs::read(&path) {
                     Ok(bytes) => Answer::File(true, bytes, String::new(), FAULT_NONE),
-                    Err(e) => Answer::File(false, Vec::new(), message_of(&e), fault_of(&e)),
+                    Err(e) => Answer::File(false, Vec::new(), message_of(&e), fault_of_path(&e, &path)),
                 };
                 let _ = worker.complete(id, a);
             });
@@ -3365,7 +3386,7 @@ fn dispatch(
                 };
                 match r {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
-                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
+                    Err(e) => Answer::Change(fault_of_path(&e, &a), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3382,7 +3403,7 @@ fn dispatch(
             } else {
                 match std::fs::write(&path, &data) {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
-                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
+                    Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3425,10 +3446,20 @@ fn dispatch(
                         },
                         fault: FAULT_NONE,
                     },
+                    // **Except when the name is one this host mangled.** `issues/system/0295c`:
+                    // a `NotFound` for a path carrying U+FFFD is this runtime being unable to
+                    // express the name, and answering `exists: false, FAULT_NONE` about it is how
+                    // `test -e` came to say no about a file that is there — `issues/system/0065`.
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::NotFound
+                            && path.contains('\u{FFFD}') =>
+                    {
+                        StatAnswer { fault: FAULT_NOT_REPRESENTABLE, ..Default::default() }
+                    }
                     // **Not an error.** A path that is not there is a fact about the world, and
                     // `exists: false` with `FAULT_NONE` is how this world says it.
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => StatAnswer::default(),
-                    Err(e) => StatAnswer { fault: fault_of(&e), ..Default::default() },
+                    Err(e) => StatAnswer { fault: fault_of_path(&e, &path), ..Default::default() },
                 }))
             };
             match ticket_for(scope, "Stat", answer) {
@@ -3471,7 +3502,7 @@ fn dispatch(
                         });
                         Answer::Change(FAULT_NONE, String::new())
                     }
-                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
+                    Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3606,7 +3637,7 @@ fn dispatch(
                         });
                         Answer::Change(FAULT_NONE, String::new())
                     }
-                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
+                    Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {

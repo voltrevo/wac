@@ -20,8 +20,8 @@
 // `issues/system/0132` is the conformance tier this belongs in.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_REFUSED, FileResult, Socket, Stat, faultWords }
-       from "std/platform.wac";
+import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_REPRESENTABLE, FAULT_REFUSED,
+         FileResult, Socket, Stat, faultWords } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
@@ -251,6 +251,62 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
   t.isTrue(!s.exists, "and does not claim it exists, which it cannot know");
 
   cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A name this host cannot *hold* is not reported as absence either.
+ *
+ * The same claim as the test above, about the other way a host loses a file that is plainly there.
+ * `Stat`'s own doc in `std/platform.wac` promises `FAULT_NOT_REPRESENTABLE` for "a file `ls` has just
+ * listed", and until 2026-09-01 nothing ran it: the V8 host answered `exists=false fault=0` — absent,
+ * and no fault to say why — for a file whose name it had itself mangled on the way to the syscall.
+ * `issues/system/0295c`.
+ *
+ * **The assertion is deliberately not "every host answers 6", and that is the finding.** The issue
+ * says both Rust hosts have this bug; measured, only one does. The wasmtime host holds a path as
+ * bytes and passes it through unchanged, so it *can* name the file and answers `exists=true` — and a
+ * test demanding the fault would have failed the one host that was right, or worse, been "fixed" by
+ * making it reclassify a genuine `NotFound` on any path containing U+FFFD. So what is required here
+ * is the property that holds on every host: **either you can name it, or you say you cannot.** The
+ * third answer — absent, no fault, about a file on the disk — is the one a caller acts on by
+ * creating the file, and it is the only one this forbids.
+ *
+ * Three hosts were measured against this fixture; all three satisfy it and they do not agree on how:
+ * Deno and V8 mangle the name and answer `fault=6`, wasmtime holds it and answers `exists=true`.
+ */
+export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/hostfaults-unnameable";
+  cli.exec("/bin/sh", string[]("-c", "rm -rf '" + dir + "'"), u8[0]()).wait();
+  cli.mkdir(dir, true).wait();
+
+  // A raw `0xFF` byte: a name the filesystem holds happily and UTF-8 cannot spell. Made through the
+  // shell because a wac string cannot carry it *to* `writeFile` on a host that would mangle it on the
+  // way out — which is the thing under test, so the fixture must not go through it.
+  Exec made = cli.exec("/bin/sh",
+                       string[]("-c", "cd '" + dir + "' && touch \"$(printf 'bad-\\377-name')\""),
+                       u8[0]()).wait();
+  t.isTrue(made.ran() && made.status == 0,
+           "the fixture was made — " + string.fromBytes(made.stderr));
+  if (!made.ran() || made.status != 0) { return t.report(); }
+
+  string[]? listed = cli.readDir(dir).wait();
+  t.isTrue(!(listed is null), "and the directory listed");
+  if (listed is null) { return t.report(); }
+  string[] names = listed!;
+  // A floor, so a listing that came back empty cannot pass by having nothing to check.
+  t.eqI32(names.len(), 1, "the listing has exactly the one fixture in it");
+
+  for (i32 i = 0; i < names.len(); i++) {
+    Stat s = cli.stat(dir + "/" + names[i]).wait();
+    t.isTrue(s.exists || s.fault == FAULT_NOT_REPRESENTABLE(),
+             "a file that is on the disk came back as exists="
+               + (s.exists ? "true" : "false") + " fault=" + itoa(s.fault)
+               + " (" + faultWords(s.fault) + ") — a caller acts on that by creating it");
+  }
+
+  cli.exec("/bin/sh", string[]("-c", "rm -rf '" + dir + "'"), u8[0]()).wait();
   return t.report();
 }
 
