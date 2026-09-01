@@ -771,6 +771,11 @@ export struct Gen {
     // because those count 1..trips. A `continue` at 0 was printed and dead in both of those forms.
     i32 contAt = form == 1 ? this.rng.intTop(trips) : 1 + this.rng.intTop(trips);
     bool useBreak = !useContinue && this.coin();
+    // **A one-trip loop has nowhere to break**, since the rule below is that a break never fires on
+    // the first iteration — so the statement would be printed and dead, which is the case the bounds
+    // were fixed for. Rather than drop the break, give it somewhere to go: a second trip. Decided
+    // after the draw, so the sequence a seed names is unchanged.
+    if (useBreak && trips < 2) { trips = 2; }
     // **Never the first, so the body runs at least once — and within the range this form reaches.**
     // A `for` counts 0..trips-1 in the body where `while` and `do` count 1..trips, so a bound of
     // `1 + intTop(trips)` can name `trips` itself, which a `for` never sees: the break was generated,
