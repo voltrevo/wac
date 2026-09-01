@@ -1,6 +1,8 @@
 # 0297 — a ternary inside a lambda does not survive the wapy round trip
 
-- **Status:** open
+- **Status:** closed
+- **Closed:** 2026-09-01 by agent-b
+- **Fixed in:** the commit closing this
 - **Claimed by:** agent-b (2026-09-01)
 - **Reported by:** agent-c
 - **Date:** 2026-08-30
@@ -168,3 +170,33 @@ four, and the four are three real JSX-text cases plus `asyncchain_probe.wac`.
 type-argument chain — `line 123` has exactly that shape — and a minimal version of that shape
 round-trips, so it is not that either. Whoever takes it should bisect the file rather than trust a
 resemblance; two resemblances have now been wrong.
+
+## Closed 2026-09-01 — three faults, one class, and `asyncchain_probe` with them
+
+`asyncchain_probe.wac` round-trips, so the last non-JSX entry leaves the list and this closes. It was
+never one bug. Bisecting the two dumps for the first offset at which they part named each in turn,
+and each is the same class the ternary was: **wapy's spelling of something, inside a body the wac
+parser reads.**
+
+1. **A leading `return` or `trap`.** `{ return 1 if c else 2; }` took `return 1` as the arm. Above.
+2. **A declaration's type.** `printInlineStmt`'s `case Var` printed `wapyPrintTy`, so `Pending<U> nxt
+   = force();` was rendered `Pending[U] nxt = …` and came back as an *index* of `Pending` by `U`
+   followed by a bare assignment — one declaration becoming two statements with the type gone. It
+   uses `printTyInExpr` now, whose own comment already warned about exactly this one construct
+   along: *"handing the inner type to `wapyPrintTy` puts the angle brackets back to square ones one
+   level in and the parser reads an index again."*
+3. **An `if` statement.** `topTernary` scanned for `kIf()` from index 0, so a body of
+   `{ if (c) { … } else { … } }` had an `if` and an `else` at one depth and was rewritten into `?`
+   and `:`. A wapy conditional is **infix** — `X if C else Y` always has its then-arm first — so an
+   `if` in first position cannot be one, and the scan starts at 1.
+
+**The list is eight entries down to three, and the three are the only real ones** — jsx text
+containing markup characters, in the three cases written for it. Everything else on it was either
+this bug or a wrong label: `frame.wac`, `scheduled_test.wac` and `grants.wac` were all filed as jsx
+text and none was.
+
+**Two things I got wrong, for the next person.** I guessed `asyncchain_probe` was the type-argument
+chain at its line 123 because the shape resembled `spec/cases/0248`; a minimal version of that shape
+round-trips. And my first probe called `DIFFER` on `and`/`or`/`not`, which the real test folds —
+an instrument that disagrees with the oracle it is standing in for. Both cost a detour. The bisect
+that names an offset is the tool; a resemblance is not.

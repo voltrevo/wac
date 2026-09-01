@@ -62,8 +62,7 @@ string[] knownBad() {
   return string[](
     "spec/cases/0124-jsx-text-children.wac",
     "spec/cases/0130-jsx-text-is-not-wac-source.wac",
-    "spec/cases/0135-a-jsx-fragment-is-a-node.wac",
-    "packages/platform/test/wac/asyncchain_probe.wac");
+    "spec/cases/0135-a-jsx-fragment-is-a-node.wac");
 }
 
 /** Why each is listed, index for index with `knownBad`. */
@@ -71,8 +70,7 @@ string[] knownBadWhy() {
   return string[](
     "jsx text containing markup characters",
     "jsx text containing markup characters",
-    "jsx text containing markup characters",
-    "cause unidentified — not the ternary; see issues/lang/0297c");
+    "jsx text containing markup characters");
 }
 
 /**

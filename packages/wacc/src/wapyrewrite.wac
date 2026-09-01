@@ -73,7 +73,12 @@ export WVec<Toks> splitToks(Toks t, i32 sep) {
  */
 Toks topTernary(Toks t) {
   i32 ifAt = -1;
-  for (i32 i = 0; i < toksLen(t) && ifAt < 0; i++) {
+  // **From 1, because a conditional is infix.** `X if C else Y` always has its then-arm before the
+  // `if`, so an `if` at the very start of a segment is wac's `if (c) { … } else { … }` — a
+  // *statement*, which a lambda body may hold and which nothing else in wapy can put here.
+  // Rewriting one turned the `if` into `?` and the `else` into `:`, and the body came back as a
+  // bare condition followed by a block. `issues/lang/0297c`.
+  for (i32 i = 1; i < toksLen(t) && ifAt < 0; i++) {
     if (kindAt(t, i) == kIf() && depthAt(t, i) == 0) { ifAt = i; }
   }
   if (ifAt < 0) { return t; }

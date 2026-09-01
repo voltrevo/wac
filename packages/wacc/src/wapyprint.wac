@@ -483,7 +483,12 @@ void printInlineStmt(Wp w, Stmt s) {
     case ExprStmt(expr): { wapyPrintExpr(w, expr); w.s(";"); }
     case Var(type, nameTok, init, isConst): {
       if (isConst) { w.s("const "); }
-      wapyPrintTy(w, type, false);
+      // **wac's type spelling, because this statement is wac's** — `issues/lang/0297c`. An inline
+      // body keeps wac's `T name = init;`, so a `Pending<U>` written here as wapy's `Pending[U]`
+      // is read back by the *wac* parser as an index of `Pending` by `U`, followed by a bare
+      // assignment: one declaration becomes two statements and the type is gone. Same reasoning as
+      // `printTyInExpr`'s own note about `Pending<i64>?[n]()`, one construct along.
+      printTyInExpr(w, type);
       w.s(" ");
       w.tok(nameTok);
       w.s(" = ");

@@ -365,6 +365,24 @@ export string test_a_conditional_inside_a_lambda_body(Core core) {
        "def pick2(c: bool) -> i32:\n"
        + "    g: fn[i32(bool)] = (bool b) => 1 if b else 2\n    return g(c)\n",
        "i32 pick2(bool c) { fn[i32(bool)] g = (bool b) => b ? 1 : 2; return g(c); }");
+  // **A declaration inside the body keeps wac's type spelling.** Written as wapy's `Box[i32]` it
+  // comes back through the *wac* parser as an index of `Box` by `i32` and then a bare assignment:
+  // one declaration becomes two statements and the type is gone.
+  same(t, "a generic declaration inside a lambda body",
+       "@export\nclass Box[T]:\n    v: T\n\n"
+       + "def mk() -> i32:\n"
+       + "    g: fn[i32()] = () => { Box<i32> b = Box<i32>(7); return b.v; }\n    return g()\n",
+       "export struct Box<T> { T v; }\n"
+       + "i32 mk() { fn[i32()] g = () => { Box<i32> b = Box<i32>(7); return b.v; }; return g(); }");
+  // **An `if` statement in the body is not a conditional expression.** The rewriter looks for
+  // `X if C else Y`, and a body of `{ if (c) { … } else { … } }` has an `if` and an `else` at the
+  // same depth — so it turned the keywords into `?` and `:` and the body parsed as a condition
+  // followed by a block. A conditional is infix, so an `if` in first position cannot be one.
+  same(t, "an if/else statement inside a lambda body",
+       "def two(c: bool) -> i32:\n    v: i32 = 0\n"
+       + "    g: fn[void()] = () => { if (c) { v = 1; } else { v = 2; } }\n    g()\n    return v\n",
+       "i32 two(bool c) { i32 v = 0;"
+       + " fn[void()] g = () => { if (c) { v = 1; } else { v = 2; } }; g(); return v; }");
   return t.report();
 }
 
