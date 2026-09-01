@@ -238,6 +238,29 @@ spawns the binary once per file and pays a compile each time, ~5s a file against
 directory-wide `wac test --coverage` achieves. That is about spawns rather than staging, and its
 remedy — profile a directory in one call and split the JSON by entry — is untouched by any of this.
 
+### An accidental cold measurement — agent-b, 2026-09-01
+
+The disk hit 100% and `wac test` could not write its scratch, so this workspace's `.cache` (846 MB)
+was deleted. The next gate is therefore a cold run against two warm ones from the same night, on the
+same tree give or take a few commits:
+
+    gate  suite   ratchets  total   .cache
+    240   338s    137s      578s    warm
+    241   402s    137s      578s    warm
+    242   558s    179s      776s    **deleted**
+
+So the directory is worth roughly **200 seconds of gate**, and the load average was *lower* on the
+cold run (1.43 against 3.07), which if anything understates it.
+
+**What this does and does not say.** It does not resurrect the mechanism retracted above: the build
+cache is still under `$WAC_HOME` and a staged copy still shares it. `.cache` holds generated
+*fixtures* — tor keys, corpora, the shells' scratch — as well as build products, and regenerating
+those is a plausible whole explanation on its own. What the number establishes is only that the
+directory is not free, which the retraction left open in both directions.
+
+Anyone wanting the mechanism should split it: time a suite with `.cache` present but the build cache
+in `$WAC_HOME` cleared, against the reverse. One observation each, and cheap.
+
 **The check is unchanged and still worth running:** time one scope's baseline staged against the same
 scope in the checkout. Predicted close, because both should hit. If the staged one is far slower, the
 key is missing something this reading says it has, and *that* is the finding.

@@ -913,6 +913,32 @@ the selection half is ready and the *running* half is not.
 
 **5. Tier 2, package by package.** **6. `tools/`.**
 
+### `tools/`, classified by subject — agent-b, 2026-09-01
+
+Step 6 is `tools/`, and the file count overstates it. The rule this issue already uses for
+`packages/` applies here too: **a tool whose subject is the host stays on the Deno side.** Four of
+these are that, and one is now gone.
+
+| tool | lines | verdict |
+|---|---|---|
+| `fuzz.ts` | 538 | **ported and deleted** — `tools/wac/langfuzz.wac` |
+| `fuzzBoundary.ts` | 416 | **stays.** Its subject is the JavaScript boundary: it sends values out through the bindgen wrappers and back through a dynamic import. It kept its own `Rng` when `fuzz.ts` went. |
+| `wasmopt.ts` | 81 | **stays.** `npm:binaryen` and `WebAssembly.Instance` — the question it answers is what a JS library does to our output. |
+| `syncBootstrap.ts` | 115 | **stays.** Imports `bootstrap/js/*.js` and drives the JavaScript ladder to produce the site's browser asset. |
+| `_spawncmp.ts` | — | **stays.** Imports `packages/platform/host/children.ts`; the subject is the JS host's child spawning. |
+| `checkTypes.ts` | — | **stays while any TypeScript does.** It type-checks every `.ts` in the repository, so it is the last thing to go rather than a candidate. |
+| `bench.ts` | 232 | **portable.** A throughput benchmark for `packages/gzip`; spawns a command and times it. |
+| `benchCompile.ts` | 226 | **portable.** Compile time by phase — the subject is our own compiler. |
+| `suiteGuard.ts` | — | **portable, but last.** It is the marker *every tool that spawns `deno test`* sets and checks, so it serves the tools above rather than being one. |
+| `suiteGate.ts` | — | **portable, but coupled.** A heavy runner announcing itself to the gate; `tools/push.sh` depends on the arrangement. |
+| `mutate.ts` + `tools/mutate/*.ts` | 1,562 + | **portable in principle, and the large one.** It keeps a Deno lane either way, because it must run the `.test.ts` that legitimately remain — so porting it moves the driver, not the dependency. |
+
+So the honest shape of what is left: **two clean ports** (`bench`, `benchCompile`), **one large one**
+(`mutate`), and a tail that either stays permanently or goes only once the tools it serves have.
+
+Recorded because the count in this issue's header reads as though `tools/` were 22,927 lines of work,
+and most of what remains is either host-side by rule or blocked behind something else.
+
 ### Step 3 is done, and not as a step — agent-b, 2026-08-31
 
 **There are no wrappers left to delete.** `find . -name '*_wac.test.ts'` answers zero, anywhere in
