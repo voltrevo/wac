@@ -109,10 +109,9 @@ i32 scan(Sys sys) {
 }
 ```
 
-`scan` runs to completion inside the program — its own scheduler, less authority than the caller
-holds, and nothing spawned. A grant can only be removed: a subsystem asking for more than its parent
-holds gets what its parent holds, so the ceiling falls as you go inward and never rises. It is what
-the host does when it runs `main`, one level up.
+`scan` runs to completion inside the program, on its own scheduler, with nothing spawned. It holds
+the grants listed and no others. A subsystem that asks for more than its parent holds gets what its
+parent holds.
 
 **Not yet.**
 
@@ -169,7 +168,7 @@ definition and nothing at the call site, which matches attributes by spelling.
 import { itoa } from "@/packages/fmt/src/itoa.wac";
 ```
 
-A header says where something is, not how many directories away the reader happens to be standing.
+An import names a path from the project root. The same header works from any file.
 
 **Done.**
 
@@ -190,15 +189,39 @@ Vec<string> nonEmpty(string[] lines) {
 
 i32 totalLength(Vec<string> lines) {
   i32 n = 0;
-  for (string line in lines) {
-    n = n + line.len();
+  for (auto line in lines) {
+    n += line.len();
   }
   return n;
 }
 ```
 
 The same head walks an array and a `Vec`, and an index that exists only to be a cursor never appears.
-The head keeps its parentheses and its type, as every other head in the language does.
+The head keeps its parentheses, and declares its variable the way any local is declared.
+
+**Not yet.**
+
+---
+
+## A type the caller supplies
+
+```wac
+i32 totalLength<C>(C parts) {
+  i32 n = 0;
+  for (auto part in parts) {
+    n += part.len();
+  }
+  return n;
+}
+```
+
+```wac
+totalLength(names);       // string[], so `part` is a string
+totalLength(chunks);      // Vec<u8[]>, so `part` is a u8[]
+```
+
+`part` is whatever `C` holds: a `string` in the first call, a `u8[]` in the second. Each
+instantiation supplies the type.
 
 **Not yet.**
 
@@ -216,9 +239,8 @@ async void both(Sys sys) {
 }
 ```
 
-Both reads are in flight before either is awaited, because starting the work and waiting for it are
-different acts. Concurrency is what you get by *not* awaiting yet — there is no parallel construct,
-no task type and nothing to join.
+Making a `Pending` starts the work, and `await` waits for one already running, so both reads are in
+flight before either is awaited. There is no parallel construct and nothing to join.
 
 **Not yet.**
 
@@ -239,8 +261,8 @@ async Result<u8[], string> readAll(Socket sock) {
 }
 ```
 
-Three outcomes, all named: a read that ended and a read that broke are different answers. The failure
-is returned rather than reported, so the caller decides what it means.
+`End` and `Failed` are separate cases, and the match covers all three, so neither can be skipped. The
+failure is returned to the caller, which decides what it means.
 
 Reading a socket is a method on the socket, so this function can touch one connection and nothing
 else.
@@ -352,7 +374,7 @@ union of what the body passes on — here, `readFile`'s and `parse`'s.
 export async Result<Config, union<NotFound, Malformed>> load(Sys sys) { … }
 ```
 
-Written out, it is checked: a body that gains a third way to fail is refused at this line.
+Written out, it is checked: a body that passes on an error outside the set is refused here.
 
 **Not yet.**
 
