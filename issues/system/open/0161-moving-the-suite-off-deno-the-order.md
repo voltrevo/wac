@@ -927,14 +927,19 @@ these are that, and one is now gone.
 | `syncBootstrap.ts` | 115 | **stays.** Imports `bootstrap/js/*.js` and drives the JavaScript ladder to produce the site's browser asset. |
 | `_spawncmp.ts` | — | **stays.** Imports `packages/platform/host/children.ts`; the subject is the JS host's child spawning. |
 | `checkTypes.ts` | — | **stays while any TypeScript does.** It type-checks every `.ts` in the repository, so it is the last thing to go rather than a candidate. |
-| `bench.ts` | 232 | **portable.** A throughput benchmark for `packages/gzip`; spawns a command and times it. |
-| `benchCompile.ts` | 226 | **portable.** Compile time by phase — the subject is our own compiler. |
+| `bench.ts` | 232 | **portable, but the port drops a section.** It benchmarks `packages/gzip` against python's zlib, which `Cli.exec` can still drive — but its *first* reported number is the bindgen boundary, "one exported wasm call per element in each direction", and that cost exists only because the tool runs through Deno. In wac there is no boundary to measure, so the codec numbers get better and stop being comparable to the recorded ones. Moving it is a decision about what the benchmark is for, not a translation. |
+| `benchCompile.ts` | 226 | **portable, and the cleanest next one.** Compile time by phase; the subject is our own compiler and it reaches it through `waccApi` — a wasm instance driven from Deno. wac calls those same phases directly, which is the bridge `wapyroundtrip_test.wac` dropped when it moved. The one thing to check first is `--mem`, which measures peak memory per phase in a process each. |
 | `suiteGuard.ts` | — | **portable, but last.** It is the marker *every tool that spawns `deno test`* sets and checks, so it serves the tools above rather than being one. |
 | `suiteGate.ts` | — | **portable, but coupled.** A heavy runner announcing itself to the gate; `tools/push.sh` depends on the arrangement. |
 | `mutate.ts` + `tools/mutate/*.ts` | 1,562 + | **portable in principle, and the large one.** It keeps a Deno lane either way, because it must run the `.test.ts` that legitimately remain — so porting it moves the driver, not the dependency. |
 
-So the honest shape of what is left: **two clean ports** (`bench`, `benchCompile`), **one large one**
-(`mutate`), and a tail that either stays permanently or goes only once the tools it serves have.
+So the honest shape of what is left: **one clean port** (`benchCompile`), **one that changes what it
+measures** (`bench`), **one large one** (`mutate`), and a tail that either stays permanently or goes
+only once the tools it serves have.
+
+The `bench` row is a correction made an hour after this table was written: I classified it from its
+header line and its clock, and only reading the body showed that a section of it is *about* the
+boundary it would stop having.
 
 Recorded because the count in this issue's header reads as though `tools/` were 22,927 lines of work,
 and most of what remains is either host-side by rule or blocked behind something else.
