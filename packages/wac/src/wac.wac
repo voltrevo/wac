@@ -59,7 +59,7 @@ import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/path.wac";
 import { coreFile, coreFiles, coreSource, isBuiltinSpec, stdFile, stdFiles }
   from "../../wacc/src/coretext.wac";
-import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
+import { MANIFEST_NAME, candidateRoots, dirOf, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
 import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
@@ -367,13 +367,6 @@ void sweepBuildCache(Cli cli, string dir) {
     }
   }
   for (i32 i = keep; i < n; i++) { cli.remove(dir + "/" + names![i], false).wait(); }
-}
-
-/** Everything before the last `/`, which is the directory a cache entry needs to exist in. */
-string dirOf(string path) {
-  i32 cut = 0 - 1;
-  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
-  return cut <= 0 ? "." : path.slice(0, cut);
 }
 
 /**

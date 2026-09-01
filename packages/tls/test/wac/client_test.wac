@@ -20,13 +20,6 @@ import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/s
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
-
-/** The directory holding a path, so the built artefact can find `wac` on PATH. */
-string dirOf(string p) {
-  i32 cut = -1;
-  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
-  return cut < 0 ? "." : p.slice(0, cut);
-}
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Store } from "../../src/roots.wac";

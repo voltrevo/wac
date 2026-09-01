@@ -14,18 +14,9 @@
 // must not be.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { binaryDir, binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
-
-/** The directory holding a path, so the built `wac` can be put on a child's PATH. */
-string dirOf(string p) {
-  i32 cut = -1;
-  for (i32 i = 0; i < p.len(); i++) {
-    if (p.slice(i, i + 1) == "/") { cut = i; }
-  }
-  return cut < 0 ? "." : p.slice(0, cut);
-}
 
 /**
  * A shell, because `Cli.exec` passes no environment and no working directory.
@@ -67,7 +58,7 @@ export string test_wac_app_builds_something_that_runs_itself(Core core, Cli cli)
 
   // Run it the way somebody who was handed the file would: by name, with `wac` on PATH and nothing
   // else about the environment arranged.
-  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/thing'");
+  Exec ran = sh(cli, "PATH='" + binaryDir(cli) + "':/usr/bin:/bin '" + dir + "/thing'");
   t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
   t.eqI32(ran.status, 0, "./thing failed: " + string.fromBytes(ran.stderr));
   t.eqStr(trimmed(string.fromBytes(ran.stdout)), "an app ran",
@@ -142,7 +133,7 @@ export string test_the_grants_are_in_the_module_and_not_the_preamble(Core core, 
   t.isTrue(same, "the preambles differ, so something outside the module decides the grants");
 
   // And the grant is real on both sides: refused without, allowed with.
-  string path = dirOf(binaryPath(cli));
+  string path = binaryDir(cli);
   Exec no = sh(cli, "PATH='" + path + "':/usr/bin:/bin '" + dir + "/sealed' '" + dir + "/data.txt'");
   t.isTrue(contains(string.fromBytes(no.stdout), "refused"),
            "the sealed app should be refused: " + string.fromBytes(no.stdout) +
@@ -215,7 +206,7 @@ export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli
   // `WAC_VERSION` on the shell line is what a host would have set. The binary passes an exported one
   // through untouched — it never had a reason to overwrite the caller's, and now it has none of its
   // own to prefer.
-  Exec ran = sh(cli, "WAC_VERSION=9.9.9-this-run PATH='" + dirOf(binaryPath(cli))
+  Exec ran = sh(cli, "WAC_VERSION=9.9.9-this-run PATH='" + binaryDir(cli)
                      + "':/usr/bin:/bin '" + dir + "/old'");
   t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
   t.eqI32(ran.status, 1, "a version mismatch should be refused: " +
@@ -228,7 +219,7 @@ export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli
   // **And the same file is not refused when this run names no version**, which is the half that
   // stopped being hypothetical: it is every invocation on every host today. Same artefact, same
   // command, `WAC_VERSION` simply absent.
-  Exec quiet = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/old'");
+  Exec quiet = sh(cli, "PATH='" + binaryDir(cli) + "':/usr/bin:/bin '" + dir + "/old'");
   t.isTrue(quiet.ran(), "the shell did not run — " + quiet.error);
   t.eqI32(quiet.status, 0, "a run that names no version cannot refuse for one: " +
           string.fromBytes(quiet.stdout) + string.fromBytes(quiet.stderr));
@@ -290,7 +281,7 @@ export string test_an_app_stamped_with_no_version_still_runs(Core core, Cli cli)
   t.isTrue(put.ok(), "could not write the edited artefact — " + put.message);
   cli.setExecutable(dir + "/blank", true).wait();
 
-  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/blank'");
+  Exec ran = sh(cli, "PATH='" + binaryDir(cli) + "':/usr/bin:/bin '" + dir + "/blank'");
   t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
   t.eqI32(ran.status, 0, "a blank stamp should not be refused: " +
           string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
@@ -415,7 +406,7 @@ export string test_a_closed_reader_stops_the_program(Core core, Cli cli) {
   // `timeout` is the detector rather than a safety margin: the failure is *not returning*, so a case
   // without one hangs the suite instead of failing it. Ten seconds against a case that answers in
   // well under one.
-  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin "
+  Exec ran = sh(cli, "PATH='" + binaryDir(cli) + "':/usr/bin:/bin "
                    + "timeout 10 sh -c '\"" + dir + "/forever\" | head -2'");
   t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
   t.isTrue(ran.status != 124, "the program never stopped writing into a closed pipe");

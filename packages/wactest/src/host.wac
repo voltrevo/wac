@@ -19,6 +19,18 @@ export string binaryPath(Cli cli) {
   return cli.cwd().wait() + "/native/v8/target/release/wac";
 }
 
+/**
+ * The directory `binaryPath` names — what a child needs on its `PATH` to find `wac`.
+ *
+ * Derived the same way `binaryPath` is rather than by taking the directory of it, because a test
+ * that wants this wants the pair and not a general path helper. Three copies of a `dirOf` existed
+ * to compute it, agreeing on the ordinary case and giving three different answers at a filesystem
+ * root; `packages/wacpkg/src/root.wac` owns the general one and is tested on those edges.
+ */
+export string binaryDir(Cli cli) {
+  return cli.cwd().wait() + "/native/v8/target/release";
+}
+
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 export string agentDir(Cli cli) {
   string cwd = cli.cwd().wait();
