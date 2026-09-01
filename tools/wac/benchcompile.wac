@@ -39,6 +39,7 @@ import { Built } from "../../packages/wacc/src/emit.wac";
 import { buildFilesIn, diagnoseGraphIn } from "../../packages/wacc/src/api.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Program, findPrograms } from "./programs.wac";
+import { binaryPath } from "../../packages/wactest/src/host.wac";
 
 // bench-exempt: covTableFilesIn — only a coverage build asks for it.
 // bench-exempt: emitFilesCoveredIn — the coverage path's own front.
@@ -211,11 +212,6 @@ i32 overAll(Core core, Cli cli, Fs fs) {
            + ".\nNo warm-up and one run each: this is the cold-build cost a change to a"
            + " widely-imported file imposes.");
   return 0;
-}
-
-/** Where `./bootstrap.sh` leaves the binary — the one `tools/push.sh` runs as well. */
-string binaryPath(Cli cli) {
-  return cli.cwd().wait() + "/native/v8/target/release/wac";
 }
 
 /**

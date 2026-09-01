@@ -15,6 +15,7 @@
 // `*_test.wac`. `issues/system/0161`.
 
 import { Cli, FileResult, Stat } from "std/platform.wac";
+import { isSpace } from "../../packages/wactest/src/strings.wac";
 
 /** A `main` — something with a command line. */
 export const i32 KIND_CLI = 0;
@@ -46,8 +47,6 @@ string trim(string s) {
   while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
   return s.slice(from, to);
 }
-
-bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
 
 /** Whether `src` has `export i32 <name>(` at the start of a line. */
 bool exportsEntry(string src, string name) {

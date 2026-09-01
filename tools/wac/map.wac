@@ -26,6 +26,7 @@
 import { Core, Cli, Change, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
+import { isSpace } from "../../packages/wactest/src/strings.wac";
 
 struct Package {
   string name;
@@ -133,8 +134,6 @@ string trim(string s) {
   while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
   return s.slice(from, to);
 }
-
-bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
 
 string replaceAll(string s, string from, string to) {
   string out = "";

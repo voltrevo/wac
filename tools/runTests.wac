@@ -82,6 +82,7 @@ import { Slot, take, takeAs, refused, release, refuseIfNested, killedLaneNote, m
          envOf } from "./wac/suitegate.wac";
 import { guardCodeCache, freeCaches, sweepStaleTemp, reapStaleDaemons, dropUnreachableTranspiles, mergedTimes }
   from "./wac/suitehouse.wac";
+import { quoted } from "../packages/wactest/src/childenv.wac";
 
 /** The roots the lane walks — `harness/testLane.ts`'s `LANE_ROOTS`, and one list for its reason. */
 string[] laneRoots() { return string[]("packages", "core"); }
@@ -645,23 +646,6 @@ i32 pollMs() { return 250; }
 
 /** Where a chunk's output goes while it is being read — one file per slot, swept at lane start. */
 string logDir(Cli cli) { return cli.cwd().wait() + "/.cache/suite-logs"; }
-
-/**
- * One shell word.
- *
- * Single quotes, so nothing inside is expanded or re-split; an embedded `'` ends the quoting, escapes
- * itself and reopens — `'\''`, the only form that works in `sh`, since single quotes do not nest.
- * A local copy rather than `packages/wactest`'s, which is test scaffolding: the runner should not
- * import the thing it runs.
- */
-string quoted(string s) {
-  string out = "'";
-  for (i32 i = 0; i < s.len(); i++) {
-    string c = s.slice(i, i + 1);
-    out = out + (c == "'" ? "'\\''" : c);
-  }
-  return out + "'";
-}
 
 /**
  * `wac test … > log 2>&1` as a shell line.
