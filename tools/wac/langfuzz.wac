@@ -72,6 +72,7 @@
 //     u32   literal read as signed               33 / 200
 //     i64   results truncated to 32 bits         24 / 200   (was 12 before the route below)
 //     gen   generic `gsel` arms swapped          21 / 200
+//     arr   every array element off by one        10 / 200
 //     loop  oracle ignores `continue`            32 / 200
 //     loop  oracle ignores `break`               12 / 200   (was 8; see the bounds below)
 //
@@ -119,7 +120,15 @@
 //      `issues/lang/0308b` was about;
 //   2. several files, so the "a name is unique only within its file" family is in range;
 //   3. structs, enums and `match`, including a narrowed subject;
-//   4. arrays, with in-bounds indices;
+//   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
+//      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
+//      value known at generation time and the environment never has to hold a reference. Canary
+//      10/200.
+//
+//      The arm is confined to `main`: a helper sees its parameters and nothing else, so an array
+//      read inside one is `no arr in scope` — seed 1 said so immediately. That is the third time a
+//      construct has been valid in one context and not another here, after the u32 literal slot and
+//      the generic type argument, which is worth noticing as a shape rather than three accidents;
 //   5. u32/u64/f64, whose semantics are already verified pointwise but not in combination.
 //
 // Each adds oracle surface, and the oracle is the thing to keep honest: **every failure it reports
@@ -445,10 +454,21 @@ export struct Gen {
    * accumulator and nothing makes the final expression pick that variable.
    */
   string lastAcc;
+  /** The elements of the seeded array, so an index can be answered without holding a reference. */
+  i64[] arr;
+  /**
+   * Whether a helper's body is being generated, in which case `arr` is not in scope.
+   *
+   * A helper sees its parameters and nothing else — wac has no closures at function scope — so a
+   * construct that reads a local of `main` is valid in one context and a compile error in the other.
+   * `no arr in scope`, at seed 1, before this existed.
+   */
+  bool inHelper;
 
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
-               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "");
+               Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "",
+               i64[0](fill: 0), false);
   }
 
   /**
@@ -629,6 +649,19 @@ export struct Gen {
       i32 choice = this.rng.intTop(7);
       if (choice == 0) { return this.literal(ty); }
       if (choice == 1) {
+        // **An array read, a quarter of the time, at i32.** The index is a constant in range and
+        // nothing writes to `arr`, so the value is known here — which is what lets the oracle answer
+        // without holding a reference. `.len()` goes in beside it because it is the other thing a
+        // fixed array knows about itself.
+        if (!this.inHelper && ty == TY_I32() && this.arr.len() > 0 && this.rng.intTop(4) == 0) {
+          i32 at = this.rng.intTop(this.arr.len());
+          if (this.coin()) {
+            i64 known = this.arr[at];
+            return Expr("arr[" + itoa(at) + "]", ty, (Env e) => known);
+          }
+          i64 n = this.arr.len() as i64;
+          return Expr("arr.len()", ty, (Env e) => n);
+        }
         Expr? v = this.variable(ty);
         if (!(v is null)) { return v!; }
       } else if (choice <= 3) {
@@ -714,6 +747,8 @@ export struct Gen {
 
     // Swap the scope out for the parameters, generate, and swap it back. A parameter's value at
     // generation time is 0; the call site supplies the real one.
+    bool savedInHelper = this.inHelper;
+    this.inHelper = true;
     Vec<Local> savedLocals = this.locals;
     Env savedEnv = this.env;
     this.locals = Vec<Local>.create();
@@ -725,6 +760,7 @@ export struct Gen {
     Expr body = this.expr(ret, 3);
     this.locals = savedLocals;
     this.env = savedEnv;
+    this.inHelper = savedInHelper;
 
     string sig = "";
     for (i32 k = 0; k < nparams; k++) {
@@ -970,6 +1006,17 @@ export struct Gen {
     // **One generic template, always.** Its instantiations come from wherever `callHelper` falls
     // back to it, so a program reaches several without the generator choosing them.
     this.helpers.push("T gsel<T>(T a, T b, bool c) { return c ? a : b; }");
+    // **One i32 array, with elements the oracle knows.** Indices are constants in range, and nothing
+    // writes to it, so `arr[k]` is a value known at generation time — which is the point: it tests
+    // `array.new_fixed`, `array.get` and `.len()` without needing the environment to hold a
+    // reference. Out-of-bounds traps, so every index the generator writes is checked against the
+    // length it just chose rather than assumed.
+    this.arr = i64[](0, 1, 0 - 1, 2147483647, 12345);
+    string elems = "";
+    for (i32 k = 0; k < this.arr.len(); k++) {
+      elems = elems + (k == 0 ? "" : ", ") + this.intLiteral(this.arr[k], TY_I32());
+    }
+    this.helpers.push("i32[] mkArr() { return i32[](" + elems + "); }");
     for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
     // **One u32 local, at the top, always.** Without it the answer's u32 route fired in 1 program
     // in 200 — measured — because a u32 declaration drawn inside a block goes out of scope before
@@ -977,6 +1024,7 @@ export struct Gen {
     // declared a u32 and almost none could be seen.
     //
     // Seeded wide, since under 2^31 a u32 and an i32 answer alike and the type tests nothing.
+    this.emit("i32[] arr = mkArr();");
     this.declare(TY_U32(), this.wideU32Literal());
     // **And a wide i64, for the same reason.** The audit in the header puts i64 at 12 programs in
     // 200 — the thinnest of the three, and the one `issues/lang/0306b` lived in. A value whose high
