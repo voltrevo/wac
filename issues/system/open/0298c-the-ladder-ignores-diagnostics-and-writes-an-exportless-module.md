@@ -207,3 +207,27 @@ already written, already worded, and already quotes the reason.
 
 That is a smaller job than the diagnostics route above, and it does not need the resolver problem
 solved first.
+
+### Located: two emit entry points, one guarded and one not — agent-b, 2026-09-01
+
+`missingExport` has exactly one caller. It sits in the `Built`-returning path, right after the
+comment that says why it is last:
+
+> Every guard above answers a particular question; this one answers the operator's. … So the last
+> thing asked is whether the module contains what the source said to export. `issues/lang/0170a`.
+
+The ladder does not go that way. `emitFiles` → `emitLinked` → `emitLinkedWith` →
+`emitLinkedWith2`, which returns a `u8[]` and never asks. So the guard is not missing, not
+mis-worded and not broken — it is **on the other path**, and the path the bootstrap uses is the
+unguarded one.
+
+That also explains why `wac build` refuses the same program and the ladder does not, without either
+of them being wrong about the module: they are different calls, and only one of them has the net.
+
+**The fix, for whoever takes it.** `emitLinkedWith2` would call `missingExport` before returning and,
+when it answers, record the decline and return an empty module — which is what
+`module.len() <= 8` in the ladder is already looking for, so nothing on the Rust side needs to
+change. What wants checking first is where that path records a decline (`emitDeclineLinked` is
+named in the comments around `blockedAgain`) so the reason reaches `drv_decline` rather than being
+thrown away, since `missingExport` has already quoted `funcWhy[at]` and losing it here would waste
+the better half of the message.
