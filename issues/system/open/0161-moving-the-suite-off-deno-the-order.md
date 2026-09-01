@@ -981,6 +981,80 @@ So either export it and accept that, or move `gather` and `Sources` into a modul
 both can import. The second is the "factor before the second caller" answer and is a small refactor
 of the command's internals, which is why it is written down rather than done in passing.
 
+### The sizing above is wrong in both numbers — agent-b, 2026-09-01
+
+**174 lines and one shared helper** was measured by reading around `gather` and counting what looked
+like it belonged, which measures *adjacency* rather than dependency. Computed instead — walk the call
+and type references from `gather` and keep what is local to the file:
+
+| | |
+|---|---|
+| 14 functions | **291 lines** — `gather` 175, `mapSpecifier` 56, and twelve helpers totalling 60 |
+| 2 structs | `Sources` 39, `Mapped` 29 |
+| **total** | **359 lines of code**, or ~490 with the doc comments that travel with them |
+
+The first run of that computation said 13 and 290, because the parser I wrote for it only recognised
+a declaration whose line ended in `{` — so it silently skipped `i32 maxFiles() { return 512; }`, a
+one-liner that `gather` calls on its first statement. An enumeration is only as good as its parser,
+and the way it showed up was the count changing when the parser did, not anything about the answer
+looking wrong.
+
+`Described`/`describedParts` is *not* in the closure and stays. The block is also not contiguous: the
+build cache (`Fnv`, `keepBuilds`, `sweepBuildCache`, `buildCachePath`) sits in the middle of it, so
+this is three separate spans rather than one.
+
+**And there are two shared helpers, not one.** Counted by asking which closure members are referenced
+from outside it:
+
+- `projectRootAbs` — 1 caller (`main`), as recorded
+- **`wacHomeOf` — 3 callers** (`main`, `installCommand`, `uninstallCommand`), and it is reached
+  because `mapSpecifier` needs it
+
+`wacHomeOf` is the one that decides the shape, and it cannot simply go to `packages/wacpkg`:
+every function there takes `wacHome` as a **parameter** (`cacheRoot(string wacHome)`,
+`cachePath(string wacHome, …)`), because that package is deliberately pure — the same
+pure/IO split as `root.wac`'s `candidateRoots` against this file's `projectRootOf`. Reading the
+environment is the caller's job by design. So `wacHomeOf` travels with the extracted module and
+`wac.wac` imports it back, which is a cycle-free but slightly odd home for it, and is the actual
+decision rather than "one helper to place".
+
+**The blocker named above is also not the one that blocks the port.** `benchCompile.ts` imports three
+harness modules — `programs.ts` 76, `waccBuild.ts` 492, `wacFiles.ts` 407 — and it is `wacFiles.ts`
+that is the import-graph walk. `gather` is what would *replace* it, so the extraction is the fix
+rather than the obstacle, and nothing about `benchCompile` is blocked on a decision that has not been
+taken: it is blocked on the work.
+
+Checked while looking for a way round it: `closureOf` in `packages/wacc/test/wac/source_probe.wac`
+is a wac import-closure walk already, but it takes sources **already in memory** and its header says
+it is a superset-scan that deliberately does not parse. It does not read from disk, so it is not a
+substitute.
+
+### Done, and `benchCompile` has no missing dependency left — agent-b, 2026-09-01
+
+`gather`, `Sources`, `projectRootAbs` and `wacHomeOf` are exported from
+`packages/wac/src/sources.wac`. Every one of `benchCompile.ts`'s three harness imports now has a wac
+home:
+
+| TypeScript | wac | |
+|---|---|---|
+| `harness/wacFiles.ts` — `wacFiles` | `packages/wac/src/sources.wac` — `gather` | this commit |
+| `harness/programs.ts` — `findPrograms` | `tools/wac/programs.wac` — `findPrograms(Cli)` | already there |
+| `harness/waccBuild.ts` — `waccApi` | `packages/wacc/src/api.wac` | direct imports; wac needs no API object |
+
+and the rest of what it uses maps directly: `performance.now` to `core.monotonicNanos`,
+`/proc/self/status` to `cli.readFile`, and `--mem`'s re-invocation of itself to `cli.exec` of the
+binary. **So the port is work, not a blocked item**, which is a change of status for the row above
+that calls it "the cleanest next one".
+
+**One thing the port has to decide, which is not mechanical.** `tools/benchCompile.test.ts` asserts
+that every `api.*` call in `harness/waccBuild.ts` is either timed here or carries a `bench-exempt`
+line saying why — a guard that exists because the list silently drifted twice, the second time
+*"within the hour, by the person who wrote"* the note telling them not to let it. A wac benchmark
+does not go through `waccBuild.ts`, so that guard has to be re-pointed at whatever the wac build
+path is — `packages/wac/src/wac.wac`'s own sequence — or it will keep passing while measuring a
+path nobody takes, which is precisely the failure it was written to catch. Porting the benchmark and
+leaving the guard reading the TypeScript would be worse than not porting it.
+
 The `bench` row is a correction made an hour after this table was written: I classified it from its
 header line and its clock, and only reading the body showed that a section of it is *about* the
 boundary it would stop having.
