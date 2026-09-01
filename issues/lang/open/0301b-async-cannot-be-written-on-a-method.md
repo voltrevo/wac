@@ -1,7 +1,7 @@
 # 0301 — `async` cannot be written on a method, and the refusal does not say so
 
-- **Status:** open — three of the four places now take it; the lowering does not
-- **Claimed by:** agent-b did the front three; the lowering is unclaimed
+- **Status:** open — three of the four places take it; the lowering is written and does not fit
+- **Claimed by:** agent-b did the front three and the lowering; it is blocked on wac-L5's capacity, which is unclaimed
 - **Reported by:** agent-b
 - **Date:** 2026-08-30
 - **Kind:** missing feature
@@ -120,3 +120,53 @@ synthesised source. A method-only program must be visible to each — miss `anyL
 happens, miss a size and the machine gets no cells. That is the failure this note exists to save.
 
 Not started: `asynclower.wac`, `asyncplan.wac` and `asyncsynth.wac` are agent-c's active files.
+
+## The lowering is written and does not fit — agent-b, 2026-09-01
+
+The change the section above prescribes works: `methodsOf(const Decl)` returning a struct's or an
+enum's `Method[]`, the four registries walking it, and a `loweredMethods` doing the same three calls
+per async method that `lowerProgram` does per free function. It compiles under `wac check`.
+
+**It cannot be built, because `wac-L5` has no room left.** The ladder rung that compiles the compiler
+keeps fixed tables, and `packages/wacc` has grown into them. Measured against a clean tree, each
+probe a single function appended to `asynclower.wac`:
+
+| probe | result |
+|---|---|
+| `i32 f(i32 a)` | builds |
+| `i32 f(i32 a, …, i32 f)` — six parameters | builds |
+| one `case StructDecl(sName, …, sTypeParams)` arm — seven bindings | **`wac-L5: ran out of room for parameters`** |
+
+So it is not the arity of anything I wrote: a six-parameter function is fine, and **one match arm
+that destructures `StructDecl` is not**. `bootstrap/boot/l5.l4` counts a case's bindings against
+`nfnparam`, whose cap and array are both 16384, and the compiler is now within about six slots of it.
+
+Any version of this change needs at least one such arm — `lowerProgram` has to rebuild the
+declaration, and a rebuild needs every field — so there is no way to write it smaller.
+
+**The count is buried.** The build says only `wac-L5 refused 53 things in wacc`; the other 52 are
+cascading `unexpected token` lines from a parser that has already given up.
+`deno run -A bootstrap/ts/spec_cases.ts` prints them all, and the capacity line is the first.
+That file exists because someone had this same problem before.
+
+### Two ways to make room, and both are somebody's call
+
+**Raise the caps in `bootstrap/boot/l5.l4`.** Each is a check and an array that must agree —
+`full(nfnparam, 16384, "parameters")` with `fnparams = i32[16384]()`. I tried it and stopped:
+16384→32768 for parameters cleared those two refusals and revealed `ran out of room for functions`
+at the same 16384; raising that one too put the count back up with `parameters` reported three
+times. There is an interaction there I did not chase, and trial-and-error on the bootstrap ladder is
+the wrong way to find it. Reverted — the tree builds and this section is what is left of it.
+
+**Or reclaim slots.** `tools/wac/deadexports.wac` reports **41 exported functions no wac code calls
+and 19 unreachable private ones**, including several in `packages/wacc`: `emitDecline`,
+`declineCatchAll` and `importSpecsFor` in `api.wac`, `resolveImportIn` in `emit.wac`, three `werr*`
+in `wapylex.wac`, `typeTokens` in `wapyrewrite.wac`. That is more than enough room. It is not a
+sweep, though — that tool's own closing line is that a dead **private** function means *either a call
+site is missing or the function is*, so each one is a question about whether something was meant to
+be called, and answering nine of those wrongly is worse than the wall.
+
+**Why this is worth reading even if neither is taken today.** The wall is not about `async` on
+methods. It is that `packages/wacc` cannot grow by one match arm, so the next person to add anything
+to the compiler meets the same 53-line refusal with the cause on a line they have to know to look
+for. `issues/system/0161` and `design/lang/0014`'s migration both queue behind it.
