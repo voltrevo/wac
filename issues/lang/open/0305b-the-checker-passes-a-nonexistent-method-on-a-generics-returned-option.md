@@ -39,10 +39,38 @@ what I actually saw first was
 which names three methods that are fine and one that is the real subject, with no line number
 anywhere. `check` had passed the same file a moment earlier.
 
-## Notes — four controls, all diagnosed correctly
+## The rule is wider than this title, and simpler — agent-b, 2026-09-01
 
-The gap is narrow. Each of these gets a proper `error: no such method` from the checker, with a
-caret on the call:
+**It is not about generics, and not about `Option`.** It is that the receiver's type was never
+imported into this file, so the checker has no model of it and says nothing.
+
+One line decides it. The reproduction above, unchanged except for adding `import { Option } from
+"core/option.wac";`, **is diagnosed**:
+
+    without the import:   probe.wac: 4 file(s), no diagnostics
+    with it:              error: no such method ... no Option.bogusChained
+
+`Option` is never written in that program. It arrives only as the return type of `Map.get`, and a type
+that arrives that way is unmodelled unless the file happens to have imported it for another reason.
+
+**Every control below is consistent with that and none of them tested it.** A *named* local of type
+`Option<i32>` has to import `Option` to be declared at all; the user-defined generics were declared in
+the same file. I read the pattern as "generics are exempt" because every case I built happened to have
+the type in scope — the controls agreed with each other rather than with the program.
+
+Checked afterwards and all diagnosed, each with its type in scope: a user generic enum chained through
+a function, a substituted return type `Opt2<T>` from a one-parameter struct, the same from a
+two-parameter struct at both parameters, a method taking a type-parameter argument, and
+`Vec.at(0)` — core `Option`, chained, with the import present.
+
+**So the scope is any library method returning a type the caller did not import**, which is a large
+surface: a caller writes `xs.at(0).foo()` or `m.get(k).foo()` without naming the intermediate type,
+which is the ordinary way to write those, and gets no check on `foo` at all.
+
+## Notes — four controls, all of which had the type in scope
+
+**Read this table with the section above in mind**: it is what I built before finding the rule, and
+every row of it had the receiver's type imported. It shows the checker working, not the gap's edge.
 
 | shape | diagnosed? |
 |---|---|
@@ -53,9 +81,10 @@ caret on the call:
 | user generic returning a *different* generic in `T` — `h.wrap().notAMethod(1)` | yes |
 | `Map<string,i32>.get(...)` chained — `m.get("x").notAMethod(0)` | **no** |
 
-So it is not "generics", not "chained calls", and not "`Option`" — a named `Option` is checked and a
-chained user generic is checked. Whatever `Map.get` returns is reaching the checker in a form that
-loses its methods, and I did not narrow past that.
+What I concluded from it — *"whatever `Map.get` returns is reaching the checker in a form that loses
+its methods"* — was wrong, and the section above has the real rule. The reason it looked like a
+property of `Map.get` is that `Map.get` was the only row whose type the file had no other reason to
+import.
 
 `core/map.wac`'s `get` is the one in the table that is both a **core** type and returns a *different*
 core generic substituted with the receiver's type argument. `Vec.get` returns `T` rather than a
