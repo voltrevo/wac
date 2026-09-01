@@ -8,6 +8,10 @@
 // **The order of the rules is the content**, and two of them exist to stop this pruning something it
 // should not. `issues/system/0161` step 6.
 
+import { dumpErrors, emitFiles } from "../../packages/wacc/src/api.wac";
+import { hashBytes } from "core/hash.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
 /**
  * `verdict` is one of `run`, `equivalent`, `duplicate`, `invalid`.
  *
@@ -72,4 +76,35 @@ export string signatureOf(string[] files, string[] hashes) {
     out = out + (i == 0 ? "" : "|") + files[i] + "=" + hashes[i];
   }
   return out;
+}
+
+/**
+ * Compile one file as its own entry and hash the wasm. `""` means it did not compile.
+ *
+ * Every `.wac` file is a module and compiles standalone, which makes the file the natural unit: a
+ * mutation changes one file, so that file's own compilation is the smallest thing whose bytes can
+ * answer *did this change anything at all*.
+ *
+ * **Narrowed to the entry's own import graph**, which the caller does by passing only those files.
+ * Handing the compiler every file in the repository means a single unrelated file that does not parse
+ * makes *every* mutant in *every* package report "did not compile" — which is exactly what
+ * `packages/tor/size/tor_only.wac` did, silently, for a one-line syntax error nothing else reaches.
+ *
+ * **The reference detects failure by emptiness and wacc does not**, which a test caught rather than a
+ * reading: *"an empty module is how wacc says no"* is true of the TypeScript compiler, and
+ * `emitFiles` here answers a program that does not check with a **bare module** — small, valid wasm
+ * with nothing in it. `issues/system/0298c` is that shape arriving in the ladder. So a zero-length
+ * test passes garbage through as a hash, and the front end has to be asked.
+ *
+ * That costs the second parse the reference's comment was avoiding — *"asking the checker separately
+ * would double the work for every mutant"* — and it is the price of the emitter not signalling. A
+ * caller that has already checked can hash `emitFiles` directly.
+ */
+export string wasmHashOf(string[] paths, string[] sources, string entry) {
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (dumpErrors(sources[i].toBytes()).len() != 0) { return ""; }
+  }
+  u8[] wasm = emitFiles(paths, sources, entry);
+  if (wasm.len() == 0) { return ""; }
+  return itoa(hashBytes(wasm)) + ":" + itoa(wasm.len());
 }

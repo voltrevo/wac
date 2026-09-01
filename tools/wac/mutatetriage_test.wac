@@ -5,7 +5,7 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Triage, signatureOf, triageOf } from "./mutatetriage.wac";
+import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
 
 string[] none() { return string[0](fill: ""); }
 
@@ -98,5 +98,31 @@ export string test_the_signature_pairs_each_file_with_its_hash() {
   t.eqStr(signatureOf(string[]("a.wac", "b.wac"), string[]("H1", "H2")), "a.wac=H1|b.wac=H2",
           "file=hash, joined, so two files that swapped hashes are not the same signature");
   t.eqStr(signatureOf(string[]("a.wac"), string[]("H1")), "a.wac=H1", "one file needs no separator");
+  return t.report();
+}
+
+/**
+ * The hash is of the compiled bytes, so it answers "did this change anything at all".
+ *
+ * **An empty module is how wacc says no**, so a source that does not compile hashes to `""` rather
+ * than to some hash of nothing — which is what `triageOf`'s `invalid` branch is fed.
+ */
+export string test_the_hash_is_of_what_the_file_compiles_to() {
+  T t = T.create();
+  string a = "export i32 answer() { return 41; }\n";
+  string b = "export i32 answer() { return 42; }\n";
+  // Whitespace only: a different source that is the same program.
+  string spaced = "export i32 answer() {   return 41;   }\n";
+
+  string ha = wasmHashOf(string[]("a.wac"), string[](a), "a.wac");
+  string hb = wasmHashOf(string[]("a.wac"), string[](b), "a.wac");
+  string hs = wasmHashOf(string[]("a.wac"), string[](spaced), "a.wac");
+
+  t.isTrue(ha != "", "a file that compiles has a hash — got " + ha);
+  t.isTrue(ha != hb, "a mutation that changes the program changes the bytes");
+  t.eqStr(ha, hs, "and one that changes only the spelling does not — which is what makes TCE work");
+
+  t.eqStr(wasmHashOf(string[]("a.wac"), string[]("this is not wac at all @@@\n"), "a.wac"), "",
+          "a source that does not compile hashes to nothing, which is the invalid branch's input");
   return t.report();
 }
