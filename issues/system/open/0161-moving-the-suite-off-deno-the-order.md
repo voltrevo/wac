@@ -1020,6 +1020,22 @@ It also sits with the operator's standing principle that a program gets what it 
 facility is the host choosing a location the program cannot see, which is the shape that principle is
 about.
 
+**The count above is `profile.ts`'s, and the driver adds a second — agent-b, 2026-09-01.** I wrote
+*one thing, not a class of things* from counting one module, which is the scope mistake this issue
+has made before in the other direction. `mutate.ts`'s `stageProject` also wants **`Deno.symlink`**,
+and `Cli` has no symlink capability under any spelling — `linkStat` reads one and nothing makes one.
+That is `issues/system/0300c`, already filed, so it is a known gap rather than a new one.
+
+**It does not block the port either, and for a reason already in that function.** The link is an
+optimisation with its reason written beside it — *"a link rather than a copy because it is an
+artefact rather than a source; a mutation never changes it, and 68 MB per staged worker would"* — and
+`stageProject` is **already shelling out**, piping `tar` into `tar` to exclude `native/target`. `ln -s`
+goes through the same door at no new cost. A copy would also work and costs the 68 MB the comment
+is avoiding.
+
+So the honest statement is: two capabilities are missing, both have answers that need no capability,
+and one of them has an issue of its own. Neither is what the port is waiting on.
+
 **Not implemented here** — this is the ruling the section above asks for, so that whoever ports
 `profile.ts` does not have to re-derive it. The port itself is 627 lines and wants its own pass.
 
