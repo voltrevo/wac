@@ -102,3 +102,38 @@ Two ends worth separating, as in `0291b`:
 2. **Failing that, say so.** `wac check core/hash.wac` answering *"no diagnostics"* about bytes it
    did not read is the fault that turns a five-minute fix into three bootstraps. A sentence naming
    the embedding would have ended `0292c` immediately.
+
+## The same embedding also puts these nine files out of reach of mutation testing — agent-b, 2026-09-01
+
+This issue is about `wac check`, and the cause it names — the compiler answering from
+`packages/wacc/src/coretext.wac` rather than from the disk — costs one more thing that is worth
+recording here rather than in a second issue, because it is the same sentence.
+
+**A program importing a built-in is unaffected by any edit to that built-in's file.** Not just a type
+error: a syntax error.
+
+    $ printf '\nthis is not valid wac at all @@@\n' >> core/hash.wac
+    $ wac run p.wac          # p.wac does `import { hashString } from "core/hash.wac"`
+    hash=nonzero
+
+Byte-identical to the run before the edit. The file is never opened.
+
+**So mutation testing cannot reach them, and must not try.** A mutant of `core/hash.wac` changes a
+file nothing reads, so it compiles and every test passes — it survives by construction. Nine files
+would come back as solid untested behaviour, which is the most expensive kind of wrong answer a
+mutation report can give, because it looks exactly like a real finding.
+
+That makes `harness/wacFiles.ts` **right** to leave `core/` out of a program's file set, and it is
+worth saying because it looks like an undercount and I recorded it as one. `issues/system/0161` has
+the measurement: `gather` in `packages/wac/src/sources.wac` reports 11 files for `packages/json` and
+`wacFiles` reports 8, the three being `core/hash.wac`, `core/map.wac` and `core/option.wac`. I wrote
+that `gather` "is the one that is right" and that the gap "may matter" for `tools/mutate/`. It does
+matter, in the opposite direction: `tools/mutate.ts:261` uses `wacFiles` to decide what to mutate,
+and the exclusion is what keeps its report honest. The two walkers answer different questions — the
+source graph, and the files this compilation actually reads — and only the second is the right
+question for a mutant. That note is corrected.
+
+**What it means for this issue.** Whatever fix lands here — making the compiler prefer the file when
+one exists, or checking `coretext.wac`'s sources as sources — decides the mutation question too, and
+the two should not be settled separately. Until then the nine files have no type-checking and no
+mutation coverage, and both facts have the same one-line cause.

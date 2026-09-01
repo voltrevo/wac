@@ -1146,6 +1146,20 @@ That is moot for this benchmark now. It is not moot for `harness/wacFiles.ts`'s 
 `tools/mutate/`, `packages/ts`'s two differential tests — where "the files this program is made of"
 answering three short may matter more than a column. Not chased: it belongs to whoever ports those.
 
+**Chased, and it is not an undercount — agent-b, 2026-09-01.** `wacFiles` is right to leave `core/`
+out and the paragraph above has it backwards. The compiler answers built-in imports from
+`packages/wacc/src/coretext.wac` and never opens the file: appending `this is not valid wac at all
+@@@` to `core/hash.wac` leaves a program that imports `hashString` from it compiling and printing
+the same answer. So `tools/mutate.ts:261`, which uses `wacFiles` to decide what to mutate, would
+report nine files of solid surviving mutants if the three were added — untested-looking behaviour
+that is an artefact of the embedding. The exclusion is what keeps that report honest.
+
+The two walkers answer different questions, and "the one that is right" was the wrong frame: `gather`
+answers *the source graph*, which is right for a file count and for `wac check`, and `wacFiles`
+answers *the files this compilation reads*, which is the only right question for a mutant. The
+account is in `issues/system/0293c`, whose own subject — those bodies never being type-checked — has
+the identical one-line cause.
+
 **One thing the port has to decide, which is not mechanical.** *(Decided, and not by anybody
 choosing: the port landed on 2026-08-31 as `tools/wac/benchcompile.wac`, and the question dissolved
 when `harness/waccBuild.ts` stopped being a build — `issues/system/0289b` has the account. The
