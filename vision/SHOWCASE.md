@@ -119,6 +119,27 @@ function, its attributes are that function's named parameters, and its children 
 
 ---
 
+## Const is deep
+
+```wac
+const i32[] xs = i32[](1, 2, 3);
+xs[0] = 9;
+```
+
+```
+error: cannot write through const reference
+  --> xs.wac:2:1
+   |
+ 2 | xs[0] = 9;
+   | ^ xs is const
+```
+
+In JavaScript `const` binds the name and leaves the contents open. Here it reaches the elements.
+
+**Done.**
+
+---
+
 ## A ticket is a value
 
 ```wac
