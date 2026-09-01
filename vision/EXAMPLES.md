@@ -191,7 +191,7 @@ Vec<string> nonEmpty(string[] lines) {
 i32 totalLength(Vec<string> lines) {
   i32 n = 0;
   for (auto line in lines) {
-    n = n + line.len();
+    n += line.len();
   }
   return n;
 }
