@@ -10,7 +10,8 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Verdict, classify, isWacRun, jobsFor, mergeRuns, spawnsProcesses, splitHalves, wacTestArgs }
+import { Outcome, Verdict, classify, isWacRun, jobsFor, mergeRuns, outcomeOf, spawnsProcesses,
+         splitHalves, wacTestArgs }
        from "./mutatenative.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -163,5 +164,73 @@ export string test_a_spawning_test_file_drops_the_scope_to_one_job() {
   t.eqI32(jobsFor(string[]("uses buildApp"), 3, 4), 3, "and an explicit --jobs wins, because it was asked for");
   t.eqI32(jobsFor(string[]("", "plain"), 0, 4), 4,
           "an unreadable file is not evidence, and the others still decide");
+  return t.report();
+}
+
+
+/**
+ * A timeout is a kill: an infinite loop is a detected defect, not a silent one.
+ *
+ * The deadline is generous by construction — ten times the scope's own baseline, floored at 30s —
+ * so reaching it is not "a bit slow", it is hung.
+ */
+export string test_a_timeout_is_a_kill() {
+  T t = T.create();
+  Outcome o = outcomeOf(true, Verdict[0](fill: Verdict.NoTestsHere), false);
+  t.isTrue(o.killed, "a mutation that stops the program terminating was caught");
+  t.eqStr(o.noVerdict, "", "and it is a verdict, not an absence of one");
+  return t.report();
+}
+
+/**
+ * **`notCovered` survives only if the mutant did**, and this is the contradiction it prevents.
+ *
+ * The profile saying no test reaches a line is a claim about coverage. A mutant that *died* on that
+ * line was reachable after all, whatever its own counter says — a constant-returning function is
+ * inlined into its call sites, so the counter stays at zero while the value reaches every caller.
+ * Reporting "nothing executes this" about a mutation something just caught is nonsense that a report
+ * would carry straight to a reader. `issues/system/0005`.
+ */
+export string test_a_killed_mutant_is_never_reported_as_uncovered() {
+  T t = T.create();
+  Outcome survived = outcomeOf(false, Verdict[](Verdict.Survived), true);
+  t.isTrue(!survived.killed, "it survived");
+  t.isTrue(survived.notCovered, "and the profile's claim stands: nothing executes that line");
+
+  Outcome killed = outcomeOf(false, Verdict[](Verdict.Killed), true);
+  t.isTrue(killed.killed, "it died");
+  t.isTrue(!killed.notCovered,
+           "so it was reachable after all, and the coverage claim is dropped rather than printed "
+             + "beside the kill that refutes it");
+  return t.report();
+}
+
+/** An abort and an absence are both "no verdict", and each says which. */
+export string test_a_run_that_answered_neither_has_no_verdict() {
+  T t = T.create();
+  Outcome abort = outcomeOf(false, Verdict[](Verdict.Abort("nothing matched the filter")), false);
+  t.isTrue(!abort.killed, "an abort is not a kill");
+  t.eqStr(abort.noVerdict, "nothing matched the filter", "and it carries the reason it was given");
+
+  Outcome absent = outcomeOf(false, Verdict[](Verdict.NoTestsHere), false);
+  t.isTrue(!absent.killed, "and neither is an absence");
+  t.eqStr(absent.noVerdict, "nothing in that scope ran", "which says which of the two it was");
+
+  Outcome plain = outcomeOf(false, Verdict[](Verdict.Survived), false);
+  t.eqStr(plain.noVerdict, "", "a survival is a verdict and says nothing extra");
+  return t.report();
+}
+
+/** Both halves feed one outcome, through the merge whose order is its content. */
+export string test_a_mixed_scope_is_one_outcome() {
+  T t = T.create();
+  t.isTrue(outcomeOf(false, Verdict[](Verdict.Survived, Verdict.Killed), false).killed,
+           "a kill in either half is a kill");
+  Outcome mixed = outcomeOf(false, Verdict[](Verdict.Survived, Verdict.Abort("half did not run")),
+                            false);
+  t.isTrue(!mixed.killed, "an abort beside a survival is not a kill");
+  t.eqStr(mixed.noVerdict, "half did not run",
+          "and not a survival either — the half that could not run might have been the one that "
+            + "killed it");
   return t.report();
 }

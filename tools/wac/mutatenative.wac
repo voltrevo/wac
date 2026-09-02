@@ -247,3 +247,46 @@ export i32 jobsFor(string[] sources, i32 explicitJobs, i32 defaultJobs) {
   }
   return defaultJobs;
 }
+
+
+/** What a mutant's run came to, once both halves have answered. */
+export struct Outcome {
+  bool killed;
+  /** The profile said nothing reaches this line, *and* the run bore that out. */
+  bool notCovered;
+  /** Non-empty when the run answered neither pass nor failure, so this mutant has no verdict. */
+  string noVerdict;
+}
+
+/**
+ * The result of running one mutant.
+ *
+ * **A timeout counts as killed**, because an infinite loop is a detected defect rather than a silent
+ * one — a mutation that makes the program not terminate is exactly the kind a suite should catch, and
+ * the deadline is generous enough (`mutatedeadline.wac`) that reaching it is not "a bit slow".
+ *
+ * **`notCovered` only survives if the mutant did.** The profile saying no test reaches a line is a
+ * claim about coverage; a mutant that *died* on that line was reachable after all, whatever its own
+ * line's counter says — a constant-returning function is inlined into its call sites, so the counter
+ * stays at zero while the value reaches every caller. Reporting "nothing executes this" about a
+ * mutation something just caught is the contradiction this rule prevents. `issues/system/0005`.
+ *
+ * **An abort is not a verdict and neither is an absence.** Both leave `noVerdict` set, so the caller
+ * scores nothing rather than guessing — which is the whole reason `classify` returns a verdict rather
+ * than a boolean.
+ */
+export Outcome outcomeOf(bool timedOut, Verdict[] verdicts, bool notCovered) {
+  if (timedOut) { return Outcome(true, false, ""); }
+  Verdict v = mergeRuns(verdicts);
+  bool killed = v.isKilled();
+  string why = "";
+  if (!killed && !v.isSurvived()) {
+    why = match (v) {
+      case NoTestsHere: "nothing in that scope ran",
+      case Abort(reason): reason,
+      case Killed: "",
+      case Survived: ""
+    };
+  }
+  return Outcome(killed, notCovered && !killed, why);
+}
