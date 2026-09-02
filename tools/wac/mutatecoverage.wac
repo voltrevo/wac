@@ -50,6 +50,17 @@ Share none(string why) {
  * The caller supplies the directory rather than this making one, for the reason `issues/system/0161`
  * records about temp directories: no capability is needed for a path the caller can name, and a
  * directory that survives the run is the one you can look at afterwards.
+ *
+ * **No nesting guard here, and that is deliberate.** `tools/runTests.wac` sets `WAC_SUITE_RUNNING=1`
+ * for every test it spawns, and the reference refuses a *whole profile* pass when it sees that —
+ * `refuseIfNested` in `buildProfile`, because a suite invoked from inside the suite recurses without
+ * bound. Profiling one entry does not: the inner run is over the entry it was handed, not over the
+ * suite, and `mutatecoverage_test.wac` proves it by doing exactly that from inside a suite run.
+ *
+ * So the guard belongs on whatever ports `buildProfile`, which walks *every* test file and would
+ * re-enter the suite. Written down here because the natural place to look for it is the function that
+ * spawns, and that is the wrong place: put it there and profiling from a test stops working, leave it
+ * out of `buildProfile` and a sweep started from inside the suite never terminates.
  */
 export Share shareOf(Core core, Cli cli, string binary, string work, string entry,
                      string profileDir) {
