@@ -6,25 +6,45 @@
 // what counts — and this is the loop around them.
 //
 // **The whole loop at a size where it can be watched.** `tools/mutate.ts` does this across every
-// package with profiling, caching, parallelism and per-mutant deadlines; the parts of that which are
-// judgement are ported and tested, and this is the mechanism, kept small enough that a single-package
-// run is minutes rather than an afternoon. What it does not yet do — coverage-narrowed test selection
-// (`mutatecoverage.wac`), several mutants at once (`jobsFor`), a deadline per mutant
-// (`mutatedeadline.wac`) — is mechanism on top of this rather than different decisions, and each of
-// those modules is already here waiting for a caller.
+// package with caching, parallelism and per-mutant deadlines; the parts of that which are judgement
+// are ported and tested, and this is the mechanism. What it does not yet do — several mutants at once
+// (`jobsFor`), a deadline per mutant (`mutatedeadline.wac`), a cached profile across runs
+// (`mutateprofile.wac`) — is mechanism on top of this rather than different decisions, and each of
+// those modules is here waiting for a caller.
 //
-// **It is deliberately slower than the reference and says so in its own output.** Running a scope's
-// whole test directory per mutant is what the coverage narrowing exists to avoid. Getting the loop
-// right first and fast second is the order that lets the narrowing be checked against something,
-// which is the point `issues/system/0161` makes about `--explain-selection`: a narrowed run has no
-// oracle unless an unnarrowed one exists.
+// **Every mutant is narrowed, and the report says how many actually were.** `buildProfile` runs each
+// test file under coverage once, and `runPlanFor` turns a mutant's lines into the entries that reach
+// them. A profile that cannot say widens to the whole scope: slower, never wrong. The count of each
+// is printed, because a run that narrowed nothing costs exactly what no profile costs and is
+// otherwise indistinguishable from one that narrowed everything — `issues/system/0161`'s complaint
+// about `--explain-selection` in one line.
+//
+// **Narrowing does not pay yet on a small scope, and the numbers say so rather than the intent.**
+// Measured 2026-09-02, cold, against the same run without a profile:
+//
+//     packages/rlp  --operators=guard      8.3s -> 14.5s    2 narrowed, 1 widened
+//     packages/bytes --operators=extreme   8.3s ->  9.6s    3 narrowed, 2 widened
+//
+// The profile costs one coverage run per *test file* and saves work per *mutant*, so it is a loss
+// until the mutants outnumber the test files several times over — three mutants against three test
+// files is the worst case, not a typical one. What makes it pay across runs is the cache in
+// `mutateprofile.wac`, which has no caller yet. Both scopes returned the same verdicts narrowed and
+// unnarrowed, which is the check that matters here: an unnarrowed run is the only oracle a narrowed
+// one has.
+//
+// **`rp.filter` is deliberately never used.** `filterFor` builds Deno's anchored-regex spelling and
+// `wac test --filter` matches a plain substring, so handing it over selects nothing and scores the
+// mutant a survivor. On this path selection is by *entry*, which `runPlanFor` has already reduced —
+// `isDenoFilter` exists to say that out loud rather than leave it to a comment in one of them.
 //
 // `issues/system/0161` step 6.
 
 import { Change, Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
-import { Flags, parseFlags, targetsUnder } from "./mutatefiles.wac";
+import { Flags, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
+import { Profiled, buildProfile } from "./mutatecoverage.wac";
+import { RunPlan, linesOf, runPlanFor } from "./mutateplan.wac";
 import { Edit, GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
@@ -44,11 +64,14 @@ export string STAGE() { return ".cache/mutate/run"; }
  * ran is green — so a missing grant does not fail this, it silently converts every mutant in the
  * scope into a survivor. `classify` can tell the two apart only if the tests get as far as running.
  */
-Verdict runTests(Cli cli, string binary, string work, string testDir) {
-  Exec r = cli.execWithIn(binary,
-                          string[]("test", "--allow-read", "--allow-write", "--allow-run",
-                                   "--allow-env", "--allow-net", testDir),
-                          u8[0](), string[0](fill: ""), false, false, work).wait();
+Verdict runTests(Cli cli, string binary, string work, string[] entries) {
+  string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
+                             "--allow-net");
+  string[] args = string[1 + grants.len() + entries.len()](fill: "");
+  args[0] = "test";
+  for (i32 i = 0; i < grants.len(); i++) { args[1 + i] = grants[i]; }
+  for (i32 i = 0; i < entries.len(); i++) { args[1 + grants.len() + i] = entries[i]; }
+  Exec r = cli.execWithIn(binary, args, u8[0](), string[0](fill: ""), false, false, work).wait();
   if (!r.ran()) { return Verdict.Abort("the binary did not run: " + r.error); }
   return classify(r.status);
 }
@@ -72,6 +95,30 @@ Verdict runTests(Cli cli, string binary, string work, string testDir) {
 export Mutant controlFor(string file, i32 length) {
   return Mutant("control:" + file, "control",
                 Edit[](Edit(file, length, length, "\n// control mutant: this must survive\n", "")));
+}
+
+/**
+ * Every `file:line` a mutant touches, across all its edits.
+ *
+ * **A mutation is reachable if *any* of its lines is**, which is why this is a union rather than a
+ * first line: an edit is a byte span and one can cover a whole function body, so a span whose first
+ * line the profile has never seen may still sit inside code every test runs. `linesOf` applies the
+ * same rule one level down, and `selectTests` applies it again over the result.
+ */
+export string[] locationsOf(string file, string source, Mutant m) {
+  i32 n = 0;
+  for (i32 e = 0; e < m.edits.len(); e++) {
+    n = n + linesOf(m.edits[e].file, source, m.edits[e].start, m.edits[e].end).len();
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 e = 0; e < m.edits.len(); e++) {
+    string[] each = linesOf(m.edits[e].file, source, m.edits[e].start, m.edits[e].end);
+    for (i32 i = 0; i < each.len(); i++) {
+      if (at < out.len()) { out[at] = each[i]; at = at + 1; }
+    }
+  }
+  return out;
 }
 
 /**
@@ -147,8 +194,19 @@ export i32 main(Core core, Cli cli) {
   if (why != "") { core.log("could not stage: " + why); return 2; }
 
   // The baseline first, and anything but green stops the run before it produces a number.
-  string refusal = refusalFor(runTests(cli, binary, stage, testDir), testDir);
+  string refusal = refusalFor(runTests(cli, binary, stage, string[](testDir)), testDir);
   if (refusal != "") { core.log(refusal); return exitFor(0, true); }
+
+  // **The profile, over the staged tree and before anything is mutated.** It has to describe the
+  // code the baseline ran, or it names lines that no longer exist. A pass that refuses costs
+  // narrowing and nothing else: `runPlanFor` widens every mutant to the whole scope, which is what
+  // this did before the profile existed.
+  Profiled prof = buildProfile(core, cli, binary, stage, testsUnder(cli, testDir),
+                               root + "/.cache/mutate-profile-wac");
+  if (!prof.ok) {
+    core.warn("not narrowing: " + prof.why);
+    core.warn("Every mutant will run the whole of " + testDir + " — slower, and never wrong.");
+  }
 
   GenStats stats = GenStats(0, 0, 0);
   i32 killed = 0;
@@ -159,6 +217,8 @@ export i32 main(Core core, Cli cli) {
   i32 noVerdict = 0;
   string[] noVerdictNames = string[4096](fill: "");
   i32 controlsKilled = 0;
+  i32 narrowed = 0;
+  i32 widened = 0;
   i32 equivalent = 0;
   i32 duplicate = 0;
   // Signatures claimed so far, so the second mutant with one is a duplicate of the first.
@@ -224,7 +284,15 @@ export i32 main(Core core, Cli cli) {
         continue;
       }
 
-      Outcome o = outcomeOf(false, Verdict[](runTests(cli, binary, stage, testDir)), false);
+      // **What to run for this mutant**, from the profile: the test files that reach its lines, or
+      // the whole scope when the profile cannot say. `rp.filter` is deliberately unused — it is
+      // Deno's anchored-regex spelling, and `wac test --filter` matches a plain substring, so
+      // handing it over selects nothing and scores the mutant a survivor. Selection here is by
+      // entry, which `runPlanFor` has already reduced. `isDenoFilter` is the note that says so.
+      RunPlan rp = runPlanFor(prof.p, locationsOf(files[fi], text, mutants[m]),
+                              prof.homeNames, prof.homeFiles, string[](testDir));
+      if (rp.narrowed) { narrowed = narrowed + 1; } else { widened = widened + 1; }
+      Outcome o = outcomeOf(false, Verdict[](runTests(cli, binary, stage, rp.dirs)), rp.notCovered);
       // Put the file back before the next mutant, or two mutations compose into a third nobody
       // generated and the name in the report describes one of them.
       cli.writeFile(staged, src.bytes).wait();
@@ -261,6 +329,12 @@ export i32 main(Core core, Cli cli) {
   core.log(headline(s, f.dir));
   if (s.harnessBroken) { return 2; }
   core.log("  " + exclusions(s));
+  // **The narrow/widen split, said out loud.** A run that narrowed nothing costs exactly what no
+  // profile costs, and without this line it is indistinguishable from one that narrowed everything.
+  // That is `issues/system/0161`'s complaint about `--explain-selection` in one number: a selection
+  // nobody can look at is the failure the tool exists to detect.
+  core.log("  " + itoa(narrowed) + " mutant(s) ran only the tests that reach them, "
+           + itoa(widened) + " ran the whole scope");
   i32 pct = percent(s);
   core.log(pct < 0 ? "  no score: nothing was measured" : "  " + itoa(pct) + "%");
   // **Said rather than left out of the arithmetic silently.** A mutant whose run answered neither

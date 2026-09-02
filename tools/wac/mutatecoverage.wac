@@ -174,6 +174,15 @@ export struct Profiled {
   bool ok;
   string why;
   Profile p;
+  /**
+   * Which file each test lives in, parallel arrays — what `runPlanFor` needs to turn a set of test
+   * names back into a set of entries to run.
+   *
+   * Not on `Profile` because `Profile` is what the reference's cache encodes, and adding a field to
+   * it would change the on-disk format for something the plan can be handed separately.
+   */
+  string[] homeNames;
+  string[] homeFiles;
 }
 
 Profile emptyProfile() {
@@ -237,7 +246,7 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
     return Profiled(false,
                     "refused: a profile pass runs every test file, so it must not start from inside"
                     + " the suite — see wac-mono 0077",
-                    emptyProfile());
+                    emptyProfile(), string[0](fill: ""), string[0](fill: ""));
   }
 
   Map<string, i32> at = Map.create(hashString, stringEq);
@@ -245,6 +254,8 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
   Vec<string> reaching = Vec.create();
   Vec<string> files = Vec.create();
   Vec<i32> cost = Vec.create();
+  Vec<string> homeNames = Vec.create();
+  Vec<string> homeFiles = Vec.create();
   i32 profiled = 0;
   i32 malformed = 0;
 
@@ -264,6 +275,8 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
     profiled = profiled + 1;
 
     for (i32 t = 0; t < s.tests.len(); t++) {
+      homeNames.push(s.tests[t]);
+      homeFiles.push(testFiles[f]);
       string[] points = splitSpaces(s.points[t]);
       for (i32 p = 0; p < points.len(); p++) {
         if (!looksLikeAPoint(points[p])) { malformed = malformed + 1; continue; }
@@ -291,7 +304,7 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
                     profiled == 0
                       ? "no test file could be profiled, so there is nothing to narrow against"
                       : "the profiles named no coverage points at all",
-                    p);
+                    p, homeNames.toArray(), homeFiles.toArray());
   }
   if (malformed > 0) {
     // Not fatal: some points landed, and those narrow. But a spelling `selectTests` cannot look up
@@ -299,5 +312,5 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
     core.warn("  " + itoa(malformed) + " coverage point(s) were not in the file:line shape "
               + "`selectTests` looks up, and were dropped");
   }
-  return Profiled(true, "", p);
+  return Profiled(true, "", p, homeNames.toArray(), homeFiles.toArray());
 }

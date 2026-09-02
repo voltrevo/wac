@@ -1,15 +1,16 @@
 // What `mutaterun` decides that the modules it composes do not.
 //
-// The loop itself is mechanism and is checked by running it; these are the three judgements it adds,
-// and each one is a case where the *reassuring* output is the wrong one — a refusal that scores, a
-// control that is counted, an exit code that says success. All three fail silently by construction,
-// which is why they are functions rather than lines inside `main`.
+// The loop itself is mechanism and is checked by running it; these are the judgements it adds, and
+// each one is a case where the *reassuring* output is the wrong one — a refusal that scores, a
+// control that is counted, an exit code that says success, a mutant narrowed to tests that cannot
+// reach it. All of them fail silently by construction, which is why they are functions rather than
+// lines inside `main`.
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Verdict } from "./mutatenative.wac";
-import { Mutant } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
-import { controlFor, exitFor, refusalFor } from "./mutaterun.wac";
+import { controlFor, exitFor, locationsOf, refusalFor } from "./mutaterun.wac";
+import { Edit, Mutant } from "./mutateoperators.wac";
 
 /**
  * A red baseline is refused rather than scored, and the message says why rather than only what.
@@ -87,5 +88,38 @@ export string test_a_refusal_and_a_clean_sweep_do_not_share_an_exit_code() {
   t.eqI32(exitFor(0, false), 0, "nothing survived");
   t.eqI32(exitFor(3, false), 1, "three did");
   t.eqI32(exitFor(0, true), 2, "and a refused run is neither, though it also has no survivors");
+  return t.report();
+}
+
+/**
+ * A mutant's locations are every line it touches, not the line it starts on.
+ *
+ * **A mutation is reachable if *any* of its lines is.** An edit is a byte span and one can cover a
+ * whole function body, so a span whose first line the profile has never seen may still sit inside
+ * code every test runs. Taking the first line alone would narrow such a mutant to the tests reaching
+ * one unlucky line — or, when that line is unknown, would widen where a union would have narrowed.
+ * `linesOf` applies the rule per edit and `selectTests` applies it again over the union.
+ */
+export string test_a_mutants_locations_are_every_line_it_touches() {
+  T t = T.create();
+  string src = "a\nb\nc\nd\n";           // offsets: a=0 b=2 c=4 d=6
+  // A span from the middle of line 2 to the middle of line 4.
+  Mutant spanning = Mutant("m", "operator", Edit[](Edit("f.wac", 2, 7, "", "")));
+  string[] got = locationsOf("f.wac", src, spanning);
+  t.eqI32(got.len(), 3, "lines 2, 3 and 4 — a span is not a point");
+  t.eqStr(got[0], "f.wac:2", "starting where the span starts");
+
+  // Two edits, as the two-file distance guard produces: both contribute.
+  Mutant two = Mutant("m", "operator",
+                      Edit[](Edit("f.wac", 0, 0, "", ""), Edit("f.wac", 6, 6, "", "")));
+  string[] both = locationsOf("f.wac", src, two);
+  t.eqI32(both.len(), 2, "one line from each edit");
+  t.eqStr(both[0] + " " + both[1], "f.wac:1 f.wac:4", "and both are named");
+
+  // The control appends at the end of the file, so it has a location like anything else — it is
+  // simply one the profile has never seen, which widens it. That is correct: a control has to
+  // exercise the whole pipeline.
+  string[] ctl = locationsOf("f.wac", src, controlFor("f.wac", src.len()));
+  t.eqI32(ctl.len(), 1, "a control still names a line rather than none");
   return t.report();
 }

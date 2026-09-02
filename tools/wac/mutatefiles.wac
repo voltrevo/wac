@@ -66,6 +66,35 @@ export string[] targetsUnder(Cli cli, string dir) {
 }
 
 /**
+ * The `*_test.wac` files under `dir` — the other half of `targetsUnder`.
+ *
+ * `isMutationTarget` excludes test files because they are not code under test; this is the set it
+ * excludes, which is what a profile pass has to run. The two walks share `wacFilesUnder` so a
+ * directory skipped by one is skipped by the other.
+ */
+export string[] testsUnder(Cli cli, string dir) {
+  string[] buf = string[8192](fill: "");
+  buf = wacFilesUnder(cli, dir, buf, 0);
+  i32 n = intOf(buf[buf.len() - 1]);
+  i32 kept = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (isTestFile(buf[i])) { kept = kept + 1; }
+  }
+  string[] out = string[kept](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (isTestFile(buf[i])) { out[at] = buf[i]; at = at + 1; }
+  }
+  return out;
+}
+
+/** `_test.wac`, the suffix the runner discovers by. */
+export bool isTestFile(string path) {
+  string want = "_test.wac";
+  return path.len() > want.len() && path.slice(path.len() - want.len(), path.len()) == want;
+}
+
+/**
  * The flags, parsed apart from the program so the rule can be tested without running it.
  *
  * `--package <name>` is the reference's spelling and means `packages/<name>`; a bare path is taken as

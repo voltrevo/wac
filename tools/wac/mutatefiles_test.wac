@@ -1,0 +1,62 @@
+// The two halves of the walk, and that they are halves of one thing.
+//
+// `targetsUnder` is code under test and `testsUnder` is what tests it. A mutation run needs both —
+// the first to mutate, the second to profile — and they have to partition the same set, because a
+// file counted by neither is a file nothing mutates and nothing profiles, while one counted by both
+// is a test file being mutated.
+//
+// `parseFlags` lives here too and is tested by `mutatelist_test.wac`, which was its home.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { isTestFile, targetsUnder, testsUnder } from "./mutatefiles.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** `_test.wac` is the suffix, and it is a suffix rather than a substring. */
+export string test_a_test_file_is_one_whose_name_ends_that_way() {
+  T t = T.create();
+  t.isTrue(isTestFile("packages/rlp/test/wac/rlp_test.wac"), "the shape the runner discovers");
+  t.isTrue(isTestFile("a_test.wac"), "with no directory at all");
+
+  t.isFalse(isTestFile("packages/rlp/src/rlp.wac"), "a source file is not a test");
+  t.isFalse(isTestFile("_test.wac"), "and the suffix alone is not a name");
+  t.isFalse(isTestFile("a_test.wac.bak"), "nor is it a substring — the suffix has to end the name");
+  t.isFalse(isTestFile("test/wac/helper.wac"),
+            "a file living beside tests is still not one, which is what makes this a name rule "
+              + "rather than a directory rule");
+  return t.report();
+}
+
+/**
+ * The two walks partition a package: every `.wac` is mutated or profiled, never both and never
+ * neither.
+ *
+ * **This is the assertion that catches a drift between them**, and the drift is silent in both
+ * directions. A file in neither set is one no mutant is generated for and no profile covers, so it
+ * simply stops being measured and the score goes *up*. A file in both is a test file being mutated,
+ * which generates mutants that break the tests measuring them and reads as a suite that catches
+ * everything.
+ */
+export string test_the_two_walks_partition_the_package(Core core, Cli cli) {
+  T t = T.create();
+  string[] src = targetsUnder(cli, "packages/rlp");
+  string[] tests = testsUnder(cli, "packages/rlp");
+
+  t.isTrue(src.len() > 0, "there is code under test in packages/rlp");
+  t.isTrue(tests.len() > 0, "and there are tests — a canary, since two empty sets partition too");
+
+  for (i32 i = 0; i < src.len(); i++) {
+    t.isFalse(isTestFile(src[i]), src[i] + " is mutated, so it must not be a test file");
+  }
+  for (i32 i = 0; i < tests.len(); i++) {
+    t.isTrue(isTestFile(tests[i]), tests[i] + " came back from the test walk");
+    bool alsoMutated = false;
+    for (i32 j = 0; j < src.len(); j++) {
+      if (src[j] == tests[i]) { alsoMutated = true; }
+    }
+    t.isFalse(alsoMutated,
+              tests[i] + " is in both sets: mutating a test file generates mutants that break the "
+                + "very tests measuring them, and the run reads as a suite that catches everything");
+  }
+  return t.report();
+}
