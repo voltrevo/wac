@@ -19,7 +19,7 @@ import { Core, Cli, FileResult, Stat } from "std/platform.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Note, Slot, announce, unannounce, heavyOthers, ownPid, alive, agentName,
-         killedLaneNote, envOf } from "./suitegate.wac";
+         killedLaneNote, envOf, marker, nestedWhy } from "./suitegate.wac";
 
 bool exists(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
 
@@ -149,3 +149,36 @@ export string test_a_killed_lane_is_told_apart_from_a_failed_one(Core core, Cli 
   return t.report();
 }
 
+
+/**
+ * A suite invoked from inside the suite is refused, and both arms are checked.
+ *
+ * **The arm worth testing is the one a test cannot normally reach.** `refuseIfNested` reads the
+ * environment, so a test asserting through it checks whichever arm its own runner happened to set up
+ * — one arm under `wac task test`, the other under `wac task docs`, and never both in one run. That
+ * is the shape of a guard nobody has watched fire. `nestedWhy` takes the marker's value as an
+ * argument for exactly this reason.
+ *
+ * `wac-mono 0077` is what it prevents: something running under the suite invokes a whole suite, which
+ * recurses without bound. `tools/wac/mutatecoverage.wac`'s `buildProfile` is the second caller — it
+ * runs every test file, so it re-enters the suite the same way.
+ */
+export string test_a_suite_inside_the_suite_is_refused_and_says_which_shape() {
+  T t = T.create();
+  t.eqStr(nestedWhy("", "the suite runner"), "",
+          "nothing above us is not a refusal, whatever else is in the environment");
+
+  string why = nestedWhy("1", "the suite runner");
+  t.isTrue(why != "", "the marker set is a refusal");
+  t.isTrue(contains(why, "the suite runner"),
+           "and it names the caller, because two things refuse for this reason and the message is "
+             + "the only thing that says which: " + why);
+  t.isTrue(contains(why, marker()),
+           "and names the variable, so the reader can check it rather than guess");
+  t.isTrue(contains(why, "0077"), "and cites the shape it prevents");
+
+  // Any value, not just `1` — the runner exports it as a marker rather than as a setting, so a
+  // caller testing it against a particular string would let `WAC_SUITE_RUNNING=0` straight through.
+  t.isTrue(nestedWhy("0", "x") != "", "the marker's presence is the signal, not its value");
+  return t.report();
+}

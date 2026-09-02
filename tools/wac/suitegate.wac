@@ -548,11 +548,25 @@ export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
  * something running under the suite invoking a whole suite, which recurses without bound.
  */
 export i32 refuseIfNested(Core core, Cli cli, string what) {
-  if (envOf(cli, marker()) == "") { return 0; }
-  core.warn(what + ": refusing to run the suite from inside the suite (" + marker() + " is set).");
-  core.warn("This is wac-mono 0077's shape: something running under the suite has invoked a whole");
-  core.warn("suite, which recurses without bound. Call the thing you need directly instead.");
+  string why = nestedWhy(envOf(cli, marker()), what);
+  if (why == "") { return 0; }
+  core.warn(why);
   return 2;
+}
+
+/**
+ * The refusal itself, given what the marker says — `""` when there is nothing above us.
+ *
+ * **Separate from the environment so both arms can be tested.** The interesting one is the refusal,
+ * and it is the one a test cannot reach through `refuseIfNested`: a test has whatever marker its
+ * runner happened to set, so asserting against the ambient value checks one arm on some runs and the
+ * other arm on others, and never both. That is the shape of a guard nobody has ever seen fire.
+ */
+export string nestedWhy(string markerValue, string what) {
+  if (markerValue == "") { return ""; }
+  return what + ": refusing to run the suite from inside the suite (" + marker() + " is set).\n"
+       + "This is wac-mono 0077's shape: something running under the suite has invoked a whole\n"
+       + "suite, which recurses without bound. Call the thing you need directly instead.";
 }
 
 /**

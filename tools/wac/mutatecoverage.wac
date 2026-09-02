@@ -15,6 +15,11 @@
 import { Cli, Core, Exec, FileResult } from "std/platform.wac";
 import { JsonArray, JsonObject, JsonValue } from "../../packages/json/src/value.wac";
 import { parse } from "../../packages/json/src/json.wac";
+import { Map } from "core/map.wac";
+import { hashString, stringEq } from "core/hash.wac";
+import { Vec } from "core/vec.wac";
+import { Profile } from "./mutateplan.wac";
+import { refuseIfNested } from "./suitegate.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /**
@@ -163,3 +168,136 @@ string joinArray(JsonArray a) {
 string keyAt(JsonObject o, i32 i) { return string.fromBytes(o.at(i).key); }
 
 JsonValue valueAt(JsonObject o, i32 i) { return o.at(i).value; }
+
+/** A profile and whether it can be trusted — `ok` false means run everything rather than narrow. */
+export struct Profiled {
+  bool ok;
+  string why;
+  Profile p;
+}
+
+Profile emptyProfile() {
+  return Profile(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), i32[0]());
+}
+
+/**
+ * Whether a coverage point is in the shape `selectTests` looks up — `file:line`.
+ *
+ * **Checked rather than assumed, because a mismatch is silent and comfortable.** `Profile.known` is
+ * keyed by `file:line` and `planFor` answers `widen` for any location it cannot find. So if the
+ * points arrived in some other spelling, every mutant would widen to its whole scope: slower, never
+ * wrong, and indistinguishable in the output from a profile that simply had nothing to say. The run
+ * would look like it was narrowing and never narrow once.
+ */
+export bool looksLikeAPoint(string point) {
+  i32 colon = -1;
+  for (i32 i = point.len() - 1; i >= 0; i--) {
+    if (point.slice(i, i + 1) == ":") { colon = i; break; }
+  }
+  if (colon <= 0 || colon + 1 >= point.len()) { return false; }
+  for (i32 i = colon + 1; i < point.len(); i++) {
+    string c = point.slice(i, i + 1);
+    if (c < "0" || c > "9") { return false; }
+  }
+  return true;
+}
+
+string[] splitSpaces(string s) {
+  Vec<string> out = Vec.create();
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != " ") { continue; }
+    if (i > from) { out.push(s.slice(from, i)); }
+    from = i + 1;
+  }
+  return out.toArray();
+}
+
+/**
+ * Profile every test file in `testFiles`, and assemble what `mutateplan.wac` selects against.
+ *
+ * **This is where the nesting guard belongs**, and `shareOf` above says why it is not in the function
+ * that spawns: profiling *one* entry from inside the suite is bounded and legitimate — the inner run
+ * is over the entry it was handed — while this walks every test file and would re-enter the suite
+ * without bound. `wac-mono 0077`'s shape. Put the guard in `shareOf` and profiling from a test stops
+ * working; leave it out of here and a sweep started from inside the suite never terminates.
+ *
+ * **A file that could not be profiled costs its own coverage and nothing else.** Its lines stay
+ * unknown, so `selectTests` finds no entry for them and `planFor` answers `widen` — the whole scope
+ * runs, which is slow and cannot be wrong. That is the right direction to fail in: the opposite,
+ * treating an unprofiled file as reaching nothing, would narrow every mutant in it to no tests at all
+ * and score the lot as survivors.
+ *
+ * `cost` is wall-clock milliseconds per file, and `-1` for a file whose profile was refused — the
+ * value `byCost` already reads as unmeasured.
+ */
+export Profiled buildProfile(Core core, Cli cli, string binary, string work, string[] testFiles,
+                             string profileDir) {
+  if (refuseIfNested(core, cli, "mutate: building a coverage profile") != 0) {
+    return Profiled(false,
+                    "refused: a profile pass runs every test file, so it must not start from inside"
+                    + " the suite — see wac-mono 0077",
+                    emptyProfile());
+  }
+
+  Map<string, i32> at = Map.create(hashString, stringEq);
+  Vec<string> known = Vec.create();
+  Vec<string> reaching = Vec.create();
+  Vec<string> files = Vec.create();
+  Vec<i32> cost = Vec.create();
+  i32 profiled = 0;
+  i32 malformed = 0;
+
+  for (i32 f = 0; f < testFiles.len(); f++) {
+    i64 started = core.monotonicNanos().wait() / (1000000 as i64);
+    Share s = shareOf(core, cli, binary, work, testFiles[f], profileDir);
+    i32 took = (core.monotonicNanos().wait() / (1000000 as i64) - started) as! i32;
+
+    files.push(testFiles[f]);
+    if (!s.ok) {
+      core.warn("  no profile for " + testFiles[f] + ": " + s.why
+                + " — its mutants will run the whole scope");
+      cost.push(-1);
+      continue;
+    }
+    cost.push(took);
+    profiled = profiled + 1;
+
+    for (i32 t = 0; t < s.tests.len(); t++) {
+      string[] points = splitSpaces(s.points[t]);
+      for (i32 p = 0; p < points.len(); p++) {
+        if (!looksLikeAPoint(points[p])) { malformed = malformed + 1; continue; }
+        i32 idx = at.getOr(points[p], -1);
+        if (idx < 0) {
+          idx = known.len();
+          known.push(points[p]);
+          reaching.push("");
+          at.set(points[p], idx);
+        }
+        string have = reaching.get(idx);
+        reaching.set(idx, have == "" ? s.tests[t] : have + " " + s.tests[t]);
+      }
+    }
+  }
+
+  Profile p = Profile(known.toArray(), reaching.toArray(), files.toArray(), cost.toArray());
+
+  // **A profile that named nothing is refused rather than returned.** Handed on, it makes every
+  // location unknown, so every mutant widens and the run is exactly as slow as no profile at all —
+  // while the report says it profiled. Saying so is the difference between a slow run and a silent
+  // one.
+  if (known.len() == 0) {
+    return Profiled(false,
+                    profiled == 0
+                      ? "no test file could be profiled, so there is nothing to narrow against"
+                      : "the profiles named no coverage points at all",
+                    p);
+  }
+  if (malformed > 0) {
+    // Not fatal: some points landed, and those narrow. But a spelling `selectTests` cannot look up
+    // is a profile that silently stops narrowing, which is the one failure worth naming out loud.
+    core.warn("  " + itoa(malformed) + " coverage point(s) were not in the file:line shape "
+              + "`selectTests` looks up, and were dropped");
+  }
+  return Profiled(true, "", p);
+}

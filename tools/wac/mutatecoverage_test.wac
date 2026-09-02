@@ -7,7 +7,9 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
-import { Share, WAC_LANE_GRANTS, shareFrom, shareOf } from "./mutatecoverage.wac";
+import { Profiled, Share, WAC_LANE_GRANTS, buildProfile, looksLikeAPoint, shareFrom, shareOf }
+  from "./mutatecoverage.wac";
+import { envOf, marker } from "./suitegate.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 string good() {
@@ -112,6 +114,120 @@ export string test_a_real_run_produces_a_profile_this_can_read(Core core, Cli cl
   t.eqI32(s.tests.len(), 1, "one test");
   t.eqStr(s.tests[0], "test_small_is_small", "named as the export is, with no translation");
   t.isTrue(s.points[0] != "", "and it reached something: " + s.points[0]);
+
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + root + "-prof'"), u8[0]()).wait();
+  return t.report();
+}
+
+/**
+ * A coverage point is `file:line`, and the check exists because a mismatch is comfortable.
+ *
+ * `Profile.known` is keyed by `file:line` and `planFor` answers `widen` for any location it cannot
+ * find. So a profile whose points arrived in some other spelling makes every mutant widen to its
+ * whole scope — slower, never wrong, and indistinguishable in the output from a profile that had
+ * nothing to say. The run would look like it was narrowing and never narrow once, which is why
+ * `buildProfile` counts what it drops and says so rather than quietly keying on it.
+ */
+export string test_a_coverage_point_is_a_file_and_a_line() {
+  T t = T.create();
+  t.isTrue(looksLikeAPoint("packages/rlp/src/rlp.wac:134"), "the shape the profile writes");
+  t.isTrue(looksLikeAPoint("a.wac:1"), "one digit is a line");
+  // The last colon wins: a path may hold one, and the line is what follows the final separator.
+  t.isTrue(looksLikeAPoint("a:b/c.wac:12"), "a colon earlier in the path is not the separator");
+
+  t.isFalse(looksLikeAPoint("packages/rlp/src/rlp.wac"), "a path with no line is not a point");
+  t.isFalse(looksLikeAPoint("packages/rlp/src/rlp.wac:"), "nor one with an empty line");
+  t.isFalse(looksLikeAPoint(":12"), "nor a line with no file");
+  t.isFalse(looksLikeAPoint("a.wac:12a"), "nor a line that is not a number");
+  t.isFalse(looksLikeAPoint(""), "nor nothing at all");
+  return t.report();
+}
+
+/**
+ * A profile pass that has nothing to profile refuses rather than answering an empty profile.
+ *
+ * **An empty profile is worse than no profile**, and that is the whole of this case: handed on, every
+ * location is unknown, so every mutant widens and the run costs exactly what it would have cost
+ * without profiling — while the report says it profiled. `ok: false` is the difference between a run
+ * that is slow and a run that is slow *and* silent about why.
+ *
+ * The nesting refusal is the other way this returns `ok: false`, and which one fires here depends on
+ * whether the runner set the marker — so this asserts against that rather than against one of them.
+ * `suitegate_test.wac` checks both arms of the decision itself, which is the part a test can pin.
+ */
+export string test_a_pass_with_nothing_to_profile_refuses(Core core, Cli cli) {
+  T t = T.create();
+  Profiled got = buildProfile(core, cli, "native/v8/target/release/wac", cli.cwd().wait(),
+                              string[0](fill: ""), ".cache/mutate-profile-wac");
+  t.isFalse(got.ok, "an empty pass has nothing to narrow against");
+  t.isTrue(got.why != "", "and says so rather than answering an empty profile silently");
+  t.eqI32(got.p.known.len(), 0, "the profile it carries knows no points");
+
+  bool nested = envOf(cli, marker()) != "";
+  if (nested) {
+    t.isTrue(got.why.indexOf("inside") >= 0,
+             "running under the suite, the nesting guard is what refused: " + got.why);
+  } else {
+    t.isTrue(got.why.indexOf("no test file") >= 0,
+             "not running under the suite, so it refused for want of anything to profile: "
+               + got.why);
+  }
+  return t.report();
+}
+
+/**
+ * A real pass over a real test file, assembled into what `selectTests` looks up.
+ *
+ * **The refusals above are only half a guard.** Every other case here asserts that `buildProfile`
+ * declines something; a module that declined *everything* would pass all of them. This is the arm
+ * that says it can also succeed — one fixture test, profiled, and the point it reaches keyed to the
+ * name of the test that reached it.
+ *
+ * Under a runner that sets the marker there is no such arm to check, so that case asserts the
+ * refusal instead. Both paths assert; neither skips.
+ */
+export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core, Cli cli) {
+  T t = T.create();
+  string root = ".cache/mutatebuild-fixture";
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.mkdir(root + "/test/wac", true).wait();
+  cli.writeFile(root + "/src.wac",
+                "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
+                  .toBytes()).wait();
+  cli.writeFile(root + "/test/wac/a_test.wac",
+                ("import { T } from \"../../../../packages/wactest/src/assert.wac\";\n"
+                 + "import { small } from \"../../src.wac\";\n"
+                 + "export string test_small_is_small() {\n"
+                 + "  T t = T.create();\n"
+                 + "  t.isTrue(small(1), \"one is small\");\n"
+                 + "  return t.report();\n"
+                 + "}\n").toBytes()).wait();
+
+  string cwd = cli.cwd().wait();
+  Profiled got = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd,
+                              string[](root + "/test/wac/a_test.wac"), cwd + "/" + root + "-prof");
+
+  if (envOf(cli, marker()) != "") {
+    t.isFalse(got.ok, "under the suite this refuses rather than re-entering it");
+    t.isTrue(got.why.indexOf("inside") >= 0, "and says which guard: " + got.why);
+  } else {
+    t.isTrue(got.ok, "the pass produced a profile — " + got.why);
+    if (got.ok) {
+      t.isTrue(got.p.known.len() > 0,
+               "and it knows some points, which is what makes it worth more than no profile");
+      t.eqI32(got.p.files.len(), 1, "one test file");
+      t.isTrue(got.p.cost[0] >= 0, "with a measured cost rather than the unmeasured -1");
+      // Every point it knows is reached by the only test there is, so the mapping is checkable
+      // without depending on which line the compiler assigns anything.
+      bool named = true;
+      for (i32 i = 0; i < got.p.known.len(); i++) {
+        if (got.p.tests[i].indexOf("test_small_is_small") < 0) { named = false; }
+      }
+      t.isTrue(named,
+               "and every point is keyed to the test that reached it, by the export's own name — a "
+                 + "translated name is how a filter comes to match nothing");
+    }
+  }
 
   cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + root + "-prof'"), u8[0]()).wait();
   return t.report();
