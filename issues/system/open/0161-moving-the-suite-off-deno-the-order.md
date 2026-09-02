@@ -1191,6 +1191,12 @@ been green — the claim above that this port "cannot be done in pieces" was abo
 | `mutatelocate` | placing a curated mutation, and its four refusals |
 | `mutatetriage` | the TCE decision and `wasmHashOf` |
 
+**Since then**: `mutatestage` (staging a tree, no new capability needed after all), `mutateprofile`
+(the cache — encode, decode, eviction), `mutatescore` (what the score counts and what fails a run),
+and `mutatelist` — the first ported piece that is a *program*, reachable as `wac task mutate:list`
+and documented in `packages/README.md`. It reproduces the operators differential's count for
+`packages/rlp` by a different route, which is the first end-to-end evidence that the modules compose.
+
 **What is left is the impure orchestration and the two data tables**, in this order:
 
 1. **`stageProject`** — the piece the temp-directory ruling above unblocks. Shells out already, so the
