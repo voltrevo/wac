@@ -9,7 +9,9 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Verdict } from "./mutatenative.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
-import { controlFor, exitFor, locationsOf, refusalFor } from "./mutaterun.wac";
+import { Ran, controlFor, exitFor, locationsOf, refusalFor, runTests } from "./mutaterun.wac";
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Edit, Mutant } from "./mutateoperators.wac";
 
 /**
@@ -121,5 +123,63 @@ export string test_a_mutants_locations_are_every_line_it_touches() {
   // exercise the whole pipeline.
   string[] ctl = locationsOf("f.wac", src, controlFor("f.wac", src.len()));
   t.eqI32(ctl.len(), 1, "a control still names a line rather than none");
+  return t.report();
+}
+
+/**
+ * A mutant that never terminates is stopped, and the process is stopped with it.
+ *
+ * **This is the case the deadline exists for, and the one that cannot be checked by reading.** A
+ * mutation that removes a loop's exit condition does not fail — it runs for ever, and without a
+ * deadline it holds the whole sweep. `outcomeOf` counts a timeout as a kill, because a mutation that
+ * stops the program terminating is a detected defect rather than a silent one.
+ *
+ * The run goes through `timeout` rather than being abandoned by the caller, because nothing in `Cli`
+ * can kill a child: noticing the overrun is expressible with `waitAny`, but a dropped wait leaves the
+ * process spinning, and on a machine three agents share that cost outlives the run and lands on
+ * somebody else. So this asserts the *process* is gone as well as the verdict.
+ */
+export string test_a_test_that_never_finishes_is_stopped_by_the_deadline(Core core, Cli cli) {
+  T t = T.create();
+  string root = ".cache/mutatedeadline-fixture";
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.mkdir(root, true).wait();
+  // A test that spins for ever: the shape a removed loop guard produces.
+  cli.writeFile(root + "/spin_test.wac",
+                ("export string test_spins_for_ever() {\n"
+                 + "  i32 n = 0;\n"
+                 + "  while (true) { n = n + 1; }\n"
+                 + "  return \"\";\n"
+                 + "}\n").toBytes()).wait();
+
+  string cwd = cli.cwd().wait();
+  Ran got = runTests(core, cli, cwd + "/native/v8/target/release/wac", cwd,
+                     string[](root + "/spin_test.wac"), 2000);
+
+  t.isTrue(got.timedOut, "the deadline stopped it rather than the run hanging");
+  t.isTrue(got.verdict.isKilled(),
+           "and a mutation that stops the program terminating counts as detected");
+  t.isTrue(got.tookMs < 20000,
+           "and it came back in about the deadline rather than never — " + itoa(got.tookMs) + "ms");
+
+  // **The canary, and it has to be able to disagree.** A `timedOut` that were always true would pass
+  // the assertions above and turn every mutant in every run into a kill — the flattering direction.
+  // So a test that finishes, under the same deadline, must come back not timed out.
+  cli.writeFile(root + "/quick_test.wac",
+                ("import { T } from \"../../packages/wactest/src/assert.wac\";\n"
+                 + "export string test_returns_at_once() {\n"
+                 + "  T t = T.create();\n"
+                 + "  t.isTrue(true, \"it finishes\");\n"
+                 + "  return t.report();\n"
+                 + "}\n").toBytes()).wait();
+  Ran quick = runTests(core, cli, cwd + "/native/v8/target/release/wac", cwd,
+                       string[](root + "/quick_test.wac"), 2000);
+  t.isFalse(quick.timedOut,
+            "a test that finishes is not reported as timed out — without this, a `timedOut` stuck "
+              + "true would score every mutant a kill and read as a perfect suite");
+  t.isTrue(quick.verdict.isSurvived(),
+           "and its verdict is the exit code's, not the deadline's — " + quick.verdict.word());
+
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
   return t.report();
 }

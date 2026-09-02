@@ -6,10 +6,17 @@
 // what counts — and this is the loop around them.
 //
 // **The whole loop at a size where it can be watched.** `tools/mutate.ts` does this across every
-// package with parallelism and per-mutant deadlines; the parts of that which are judgement are ported
-// and tested, and this is the mechanism. What it does not yet do — several mutants at once
-// (`jobsFor`), a deadline per mutant (`mutatedeadline.wac`) — is mechanism on top of this rather than
-// different decisions, and both modules are here waiting for a caller.
+// package in parallel; that is the one thing left here that it does and this does not — `jobsFor` is
+// in `mutatenative.wac` without a caller, because running several mutants at once needs concurrent
+// spawns rather than a different decision about any of them.
+//
+// **A mutant is bounded by `deadlineFor` the scope's own baseline**, spawned through `timeout`
+// rather than waited on with a bound: `Pending<Exec>` carries an id and `Cli.waitAny` takes a
+// millisecond deadline, so noticing an overrun is expressible in wac today — but nothing here can
+// *kill* a child, and the mutant this exists for is one that does not terminate. Abandoning it
+// leaves a process spinning on a machine three agents share, which is a cost that outlives the run
+// and lands on somebody else. The baseline itself is run unbounded, since sizing a measurement by a
+// number derived from that measurement is circular.
 //
 // **Every mutant is narrowed, and the report says how many actually were.** `buildProfile` runs each
 // test file under coverage once, and `runPlanFor` turns a mutant's lines into the entries that reach
@@ -55,6 +62,7 @@ import { Profiled, buildProfile } from "./mutatecoverage.wac";
 import { RunPlan, linesOf, runPlanFor } from "./mutateplan.wac";
 import { WAC_CACHE_DIR, treeKeyOf } from "./mutateprofile.wac";
 import { fileCount, sampleMutants } from "./mutatesample.wac";
+import { deadlineFor } from "./mutatedeadline.wac";
 import { Vec } from "core/vec.wac";
 import { Edit, GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
@@ -75,16 +83,58 @@ export string STAGE() { return ".cache/mutate/run"; }
  * ran is green — so a missing grant does not fail this, it silently converts every mutant in the
  * scope into a survivor. `classify` can tell the two apart only if the tests get as far as running.
  */
-Verdict runTests(Cli cli, string binary, string work, string[] entries) {
+export struct Ran {
+  Verdict verdict;
+  /** The deadline stopped it, which `outcomeOf` counts as a kill rather than as no verdict. */
+  bool timedOut;
+  /** Milliseconds the run took, for the baseline the deadline is computed from. */
+  i32 tookMs;
+}
+
+/** GNU `timeout`'s "I stopped it" code. */
+export i32 TIMED_OUT() { return 124; }
+
+/**
+ * Run `entries` inside the staged tree, bounded by `deadlineMs`, and say what the exit code means.
+ *
+ * **Spawned through `timeout` rather than waited on with a deadline, because nothing here can kill a
+ * child.** `Pending<Exec>` carries an id and `Cli.waitAny` takes a millisecond bound, so *noticing*
+ * the overrun is expressible in wac today — but dropping the wait leaves the process running, and the
+ * mutant this exists for is one that does not terminate. On a machine three agents share, a run that
+ * abandons a spinning process per hung mutant is worse than a run with no deadline at all, because
+ * the cost outlives it and lands on somebody else. `timeout` sends a signal.
+ *
+ * `mutatestage.wac` already reaches for the shell for `tar`, and this needs no shell — `timeout` is
+ * the program and the binary is its argument, so there is no quoting and no line to get wrong.
+ *
+ * **The grants are the wac lane's whole set**, for the reason `mutatecoverage.wac` gives about its
+ * own copy: a test skipped for want of a grant is a test that did not run, and a run where nothing
+ * ran is green — so a missing grant does not fail this, it silently converts every mutant in the
+ * scope into a survivor.
+ */
+export Ran runTests(Core core, Cli cli, string binary, string work, string[] entries,
+                    i32 deadlineMs) {
   string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
                              "--allow-net");
-  string[] args = string[1 + grants.len() + entries.len()](fill: "");
-  args[0] = "test";
-  for (i32 i = 0; i < grants.len(); i++) { args[1 + i] = grants[i]; }
-  for (i32 i = 0; i < entries.len(); i++) { args[1 + grants.len() + i] = entries[i]; }
-  Exec r = cli.execWithIn(binary, args, u8[0](), string[0](fill: ""), false, false, work).wait();
-  if (!r.ran()) { return Verdict.Abort("the binary did not run: " + r.error); }
-  return classify(r.status);
+  bool bounded = deadlineMs > 0;
+  i32 lead = bounded ? 2 : 0;
+  string[] args = string[lead + 1 + grants.len() + entries.len()](fill: "");
+  if (bounded) {
+    // Seconds, rounded up: a deadline shorter than the one computed is a false kill.
+    args[0] = itoa((deadlineMs + 999) / 1000);
+    args[1] = binary;
+  }
+  args[lead] = "test";
+  for (i32 i = 0; i < grants.len(); i++) { args[lead + 1 + i] = grants[i]; }
+  for (i32 i = 0; i < entries.len(); i++) { args[lead + 1 + grants.len() + i] = entries[i]; }
+
+  i64 started = core.monotonicNanos().wait() / (1000000 as i64);
+  Exec r = cli.execWithIn(bounded ? "timeout" : binary, args, u8[0](), string[0](fill: ""),
+                          false, false, work).wait();
+  i32 took = (core.monotonicNanos().wait() / (1000000 as i64) - started) as! i32;
+  if (!r.ran()) { return Ran(Verdict.Abort("the binary did not run: " + r.error), false, took); }
+  if (bounded && r.status == TIMED_OUT()) { return Ran(Verdict.Killed, true, took); }
+  return Ran(classify(r.status), false, took);
 }
 
 /**
@@ -235,9 +285,14 @@ export i32 main(Core core, Cli cli) {
                          string[0](fill: ""), "native/v8/target/release/wac");
   if (why != "") { core.log("could not stage: " + why); return 2; }
 
-  // The baseline first, and anything but green stops the run before it produces a number.
-  string refusal = refusalFor(runTests(cli, binary, stage, string[](testDir)), testDir);
+  // The baseline first, and anything but green stops the run before it produces a number. It is also
+  // what the deadline is sized from, so it is run unbounded: bounding the measurement by a number
+  // derived from the measurement is circular, and a slow scope would time out before it had told
+  // anyone how slow it was.
+  Ran base = runTests(core, cli, binary, stage, string[](testDir), 0);
+  string refusal = refusalFor(base.verdict, testDir);
   if (refusal != "") { core.log(refusal); return exitFor(0, true); }
+  i32 deadline = deadlineFor(base.tookMs);
 
   // **The profile, over the staged tree and before anything is mutated.** It has to describe the
   // code the baseline ran, or it names lines that no longer exist. A pass that refuses costs
@@ -292,6 +347,7 @@ export i32 main(Core core, Cli cli) {
   i32 controlsKilled = 0;
   i32 narrowed = 0;
   i32 widened = 0;
+  i32 timedOut = 0;
   i32 equivalent = 0;
   i32 duplicate = 0;
   // Signatures claimed so far, so the second mutant with one is a duplicate of the first.
@@ -377,7 +433,9 @@ export i32 main(Core core, Cli cli) {
       RunPlan rp = runPlanFor(prof.p, locationsOf(files[fi], text, mutants[m]),
                               prof.homeNames, prof.homeFiles, string[](testDir));
       if (rp.narrowed) { narrowed = narrowed + 1; } else { widened = widened + 1; }
-      Outcome o = outcomeOf(false, Verdict[](runTests(cli, binary, stage, rp.dirs)), rp.notCovered);
+      Ran ran = runTests(core, cli, binary, stage, rp.dirs, deadline);
+      if (ran.timedOut) { timedOut = timedOut + 1; }
+      Outcome o = outcomeOf(ran.timedOut, Verdict[](ran.verdict), rp.notCovered);
       // Put the file back before the next mutant, or two mutations compose into a third nobody
       // generated and the name in the report describes one of them.
       cli.writeFile(staged, text.toBytes()).wait();
@@ -420,6 +478,14 @@ export i32 main(Core core, Cli cli) {
   // nobody can look at is the failure the tool exists to detect.
   core.log("  " + itoa(narrowed) + " mutant(s) ran only the tests that reach them, "
            + itoa(widened) + " ran the whole scope");
+  // **Timeouts are named, because a kill by deadline is a different fact from a kill by a test.**
+  // Counted as killed — a mutation that stops the program terminating is a detected defect — but a
+  // run where most kills are timeouts is one where the deadline is too short, and that reads as a
+  // well-tested suite unless the number is on the page.
+  if (timedOut > 0) {
+    core.log("  " + itoa(timedOut) + " of those kills were the " + itoa(deadline / 1000)
+             + "s deadline rather than a failing test");
+  }
   i32 pct = percent(s);
   core.log(pct < 0 ? "  no score: nothing was measured" : "  " + itoa(pct) + "%");
   // **Said rather than left out of the arithmetic silently.** A mutant whose run answered neither
