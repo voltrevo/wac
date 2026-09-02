@@ -1192,10 +1192,23 @@ been green — the claim above that this port "cannot be done in pieces" was abo
 | `mutatetriage` | the TCE decision and `wasmHashOf` |
 
 **Since then**: `mutatestage` (staging a tree, no new capability needed after all), `mutateprofile`
-(the cache — encode, decode, eviction), `mutatescore` (what the score counts and what fails a run),
-and `mutatelist` — the first ported piece that is a *program*, reachable as `wac task mutate:list`
-and documented in `packages/README.md`. It reproduces the operators differential's count for
-`packages/rlp` by a different route, which is the first end-to-end evidence that the modules compose.
+(the cache — encode, decode, eviction, and the tree key), `mutatecoverage` (profiling one entry with
+`wac test --coverage`, verified against a real run), `mutatescore` (what the score counts and when it
+means nothing), and `mutatelist` — the first ported piece that is a *program*, reachable as
+`wac task mutate:list` and documented in `packages/README.md`. It reproduces the operators
+differential's count for `packages/rlp` by a different route, which is the first end-to-end evidence
+that the modules compose, and `--triage` adds the TCE pass over them.
+
+**The judgement is ported; what remains is mechanism.** What to mutate, where to place it, what
+compiles to the same thing, which tests reach it, what to run, what the run came to, what counts
+toward the score and when the number means nothing — all in wac, each rule carrying the case that put
+it there. What is left spawns processes and collects their output, which is the part where being
+wrong costs a slow run rather than a wrong number.
+
+**Three refusals are worth knowing about together**, because they are one idea: a killed control, a
+run that measured nothing, and every scope already red. Each is a condition under which the score is
+*meaningless rather than low*, and each answers with a sentence instead of a figure — the failure
+mode of all three is a flattering output, which is the only kind nobody double-checks.
 
 **What is left is the impure orchestration and the two data tables**, in this order:
 
