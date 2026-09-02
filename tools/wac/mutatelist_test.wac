@@ -8,6 +8,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Change, Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { parseFlags } from "./mutatelist.wac";
 
 string ROOT() { return ".cache/mutatelist-fixture"; }
 
@@ -87,5 +88,52 @@ export string test_it_says_what_it_wants_when_given_nothing(Core core, Cli cli) 
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(r.ran() && r.status != 0, "no argument is a failure rather than an empty report");
   t.isTrue(holds(said, "usage:"), "and it says what it wanted: " + said);
+  return t.report();
+}
+
+string ops(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : ",") + xs[i]; }
+  return out;
+}
+
+/** The flags, apart from the program, which is why they are parsed apart from it. */
+export string test_the_flags_are_the_references_spellings() {
+  T t = T.create();
+  t.eqStr(parseFlags(string[]("--package", "rlp")).dir, "packages/rlp",
+          "--package names a package, not a path");
+  t.eqStr(parseFlags(string[]("packages/rlp")).dir, "packages/rlp", "and a bare path is taken as given");
+  t.eqStr(ops(parseFlags(string[]("d", "--operators=guard,extreme")).operators), "guard,extreme",
+          "--operators= narrows the set");
+  t.eqI32(parseFlags(string[]("d")).perShape, 3, "three literals per shape by default");
+  t.isTrue(parseFlags(string[]("d", "--no-sample")).perShape > 1000000,
+           "and --no-sample means every one, which is the flag for a survivor sampling might hide");
+
+  // A flag that wants a value and does not get one is refused rather than ignored.
+  t.isTrue(parseFlags(string[]("--package")).problem != "", "--package with nothing after it");
+  t.isTrue(parseFlags(string[]("--nonsense", "d")).problem != "",
+           "an unknown flag is refused rather than read as a directory");
+  t.isTrue(parseFlags(string[]("a", "b")).problem != "",
+           "and two directories is a mistake worth naming, not a silent choice of one");
+  t.eqStr(parseFlags(string[0](fill: "")).dir, "", "no arguments names no directory");
+  return t.report();
+}
+
+/** `--operators=` really narrows what is generated, not just what is parsed. */
+export string test_narrowing_the_operators_narrows_the_output(Core core, Cli cli) {
+  T t = T.create();
+  string bin = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec all = cli.exec(bin, string[]("run", "--allow-read", "tools/wac/mutatelist.wac",
+                                    "--package", "rlp"), u8[0]()).wait();
+  Exec guard = cli.exec(bin, string[]("run", "--allow-read", "tools/wac/mutatelist.wac",
+                                      "--package", "rlp", "--operators=guard"), u8[0]()).wait();
+  t.isTrue(all.ran() && guard.ran(), "both runs happened");
+  if (!all.ran() || !guard.ran()) { return t.report(); }
+  string a = string.fromBytes(all.stdout);
+  string g = string.fromBytes(guard.stdout);
+  t.isTrue(holds(a, "relational/"), "the full set has comparisons");
+  t.isTrue(!holds(g, "relational/"), "and the narrowed one does not: " + g.slice(0, 80));
+  t.isTrue(holds(a, "over 1 file(s)") && holds(g, "over 1 file(s)"),
+           "both looked at the same file, so the difference is the operator set and not the walk");
   return t.report();
 }

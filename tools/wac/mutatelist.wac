@@ -72,16 +72,89 @@ string[] targetsUnder(Cli cli, string dir) {
 }
 
 /**
- * `mutate list <dir>` — the mutants that would be generated under `dir`.
+ * The flags, parsed apart from the program so the rule can be tested without running it.
+ *
+ * `--package <name>` is the reference's spelling and means `packages/<name>`; a bare path is taken as
+ * given. `--operators=a,b` narrows the set, and `--no-sample` mutates every integer literal rather
+ * than three per repeated shape — slow by design, and the flag for *I want the survivor that sampling
+ * might have hidden*.
+ */
+export struct Flags {
+  string dir;
+  string[] operators;
+  i32 perShape;
+  string problem;
+}
+
+export Flags parseFlags(string[] args) {
+  string dir = "";
+  string[] ops = string[]("relational", "literal", "guard", "extreme");
+  i32 perShape = 3;
+  for (i32 i = 0; i < args.len(); i++) {
+    string a = args[i];
+    if (a == "--package") {
+      if (i + 1 >= args.len()) { return Flags("", ops, perShape, "--package wants a name after it"); }
+      dir = "packages/" + args[i + 1];
+      i = i + 1;
+      continue;
+    }
+    if (a == "--no-sample") {
+      // Every literal, which is what this did before shape sampling existed.
+      perShape = 2147483647;
+      continue;
+    }
+    if (a.len() > 12 && a.slice(0, 12) == "--operators=") {
+      string list = a.slice(12, a.len());
+      ops = splitOnComma(list);
+      if (ops.len() == 0) { return Flags("", ops, perShape, "--operators= wants at least one"); }
+      continue;
+    }
+    if (a.len() > 2 && a.slice(0, 2) == "--") {
+      return Flags("", ops, perShape, "unknown flag " + a);
+    }
+    if (dir != "") { return Flags("", ops, perShape, "more than one directory: " + dir + " and " + a); }
+    dir = a;
+  }
+  return Flags(dir, ops, perShape, "");
+}
+
+string[] splitOnComma(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == ",") { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != ",") { continue; }
+    if (at < n) { out[at] = s.slice(from, i); at = at + 1; }
+    from = i + 1;
+  }
+  return out;
+}
+
+/**
+ * `mutatelist [--package <name>|<dir>] [--operators=a,b] [--no-sample]` — the mutants that would be
+ * generated.
  *
  * The counts come before the names because the counts are what a reader checks first: a package with
  * three mutants where you expected three hundred is pointing at the wrong tree, and that is visible
  * without reading a line of the list.
  */
 export i32 main(Core core, Cli cli) {
-  string dir = string.fromBytes(cli.arg(0).wait());
+  i32 argc = cli.argCount().wait();
+  string[] args = string[argc](fill: "");
+  for (i32 i = 0; i < argc; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
+  Flags f = parseFlags(args);
+  if (f.problem != "") {
+    core.log(f.problem);
+    return 1;
+  }
+  string dir = f.dir;
   if (dir == "") {
-    core.log("usage: mutatelist <dir>   — the mutants that would be generated under <dir>");
+    core.log("usage: mutatelist [--package <name>|<dir>] [--operators=a,b] [--no-sample]");
     return 1;
   }
 
@@ -91,14 +164,14 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
+  Flags f2 = f;
   GenStats stats = GenStats(0, 0, 0);
   i32 total = 0;
   string[] names = string[65536](fill: "");
   for (i32 f = 0; f < files.len(); f++) {
     FileResult r = cli.readFile(files[f]).wait();
     if (!r.ok) { continue; }
-    Mutant[] got = generate(files[f], string.fromBytes(r.bytes),
-                            string[]("relational", "literal", "guard", "extreme"), stats, 3);
+    Mutant[] got = generate(files[f], string.fromBytes(r.bytes), f2.operators, stats, f2.perShape);
     for (i32 i = 0; i < got.len(); i++) {
       if (total < names.len()) { names[total] = got[i].name; }
       total = total + 1;
