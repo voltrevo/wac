@@ -4,7 +4,8 @@
 // the tests that nobody made. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Score, exclusions, headline, isStaleKnown, percent, runFails, scoreOf }
+import { Score, exclusions, headline, isMeasurable, isStaleKnown, nothingMeasurable,
+         nothingMeasurableWhy, percent, runFails, scoreOf }
        from "./mutatescore.wac";
 
 /**
@@ -97,5 +98,42 @@ export string test_a_documented_survivor_that_dies_is_the_error() {
   t.isTrue(isStaleKnown(true, true), "listed in known.ts and killed — the entry has to go");
   t.isTrue(!isStaleKnown(false, true), "listed and still surviving is the entry doing its job");
   t.isTrue(!isStaleKnown(true, false), "and killed without being listed is the ordinary good case");
+  return t.report();
+}
+
+
+/**
+ * A mutant whose scope is already failing has no verdict rather than a good one.
+ *
+ * The run applies the mutation, the tests fail, and the mutant is recorded as detected — by a failure
+ * that was there before the mutation and has nothing to do with it.
+ */
+export string test_a_mutant_in_a_red_scope_is_not_measured() {
+  T t = T.create();
+  string[] red = string[]("packages/box packages/fs");
+  t.isTrue(!isMeasurable("packages/box packages/fs", red), "its scope is red, so it is withdrawn");
+  t.isTrue(isMeasurable("packages/rlp", red), "a scope that passes measures its mutants");
+  t.isTrue(isMeasurable("packages/box", red),
+           "and the key is the whole scope, not one directory of it — a mutant with a different "
+             + "scope is a different question");
+  return t.report();
+}
+
+/**
+ * **Every scope red is a perfect score, and that is the danger.**
+ *
+ * The third member of the family: a killed control, a run that measured nothing, and this. All three
+ * are conditions under which the number is meaningless rather than low, and each answers with a
+ * refusal instead of a figure — because the failure mode of every one of them is a *reassuring*
+ * output from a suite that is broken.
+ */
+export string test_every_scope_red_is_refused_rather_than_scored() {
+  T t = T.create();
+  t.isTrue(nothingMeasurable(0), "no clean scope means nothing to measure");
+  t.isTrue(!nothingMeasurable(1), "one is enough to have something to say");
+  t.isTrue(nothingMeasurableWhy().indexOf("perfect score") >= 0,
+           "and the message names the trap rather than only the state: " + nothingMeasurableWhy());
+  t.isTrue(nothingMeasurableWhy().indexOf("Fix the suite") >= 0,
+           "and says what to do about it");
   return t.report();
 }

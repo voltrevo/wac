@@ -109,3 +109,37 @@ export bool isStaleKnown(bool killed, bool listedInKnown) { return killed && lis
 export bool runFails(i32 survivors, i32 unlocatable, i32 staleKnown) {
   return survivors > 0 || unlocatable > 0 || staleKnown > 0;
 }
+
+
+/**
+ * Whether a mutant can be measured at all: its scope must not already be failing.
+ *
+ * **A red scope makes every mutant in it a kill.** The run applies the mutation, the tests fail, and
+ * the mutant is recorded as detected — by a failure that was there before the mutation and has
+ * nothing to do with it. So a mutant whose scope is red has no verdict rather than a good one, and
+ * the report says how many were withdrawn for that reason instead of counting them.
+ */
+export bool isMeasurable(string scopeKey, string[] redScopes) {
+  for (i32 i = 0; i < redScopes.len(); i++) {
+    if (redScopes[i] == scopeKey) { return false; }
+  }
+  return true;
+}
+
+/**
+ * Whether the run has anything to measure at all.
+ *
+ * **Every scope red is a perfect score, and that is the danger.** Each mutant would be recorded as
+ * killed and the number would come out at 100% — the most reassuring possible output from a suite
+ * that is entirely broken. It is the third member of the family `scoreOf` above has two of: a killed
+ * control, a run that measured nothing, and this. All three are conditions under which the number is
+ * meaningless rather than low, and all three answer with a refusal rather than a figure.
+ */
+export bool nothingMeasurable(i32 cleanScopes) { return cleanScopes <= 0; }
+
+/** What to say instead of a score when there is nothing to measure. */
+export string nothingMeasurableWhy() {
+  return "Nothing is measurable: every scope this run touches is already failing. Each mutant would"
+       + " be recorded as killed and the run would report a perfect score. Fix the suite before"
+       + " trusting any number from here.";
+}
