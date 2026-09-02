@@ -108,6 +108,9 @@
   "mutate": "deno run -A tools/mutate.ts",
   "mutate:diff": "deno run -A tools/mutate.ts --diff --operators",
   "mutate:operators": "deno run -A tools/mutate.ts --operators",
+  // The wac side of `mutate`, and the only mode of it that has moved so far: what a run *would*
+  // mutate, without running, staging or compiling anything. `issues/system/0161` step 6.
+  "mutate:list": "./native/v8/target/release/wac run --allow-read tools/wac/mutatelist.wac",
   "serve": "deno run -A packages/server/host/serve.ts",
   "app:build": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/build.ts",
   "check": "deno run -A tools/checkTypes.ts",
