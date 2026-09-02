@@ -5,7 +5,8 @@
 // them the mis-selection produced a *verdict* rather than a delay. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Profile, Selection, byCost, filterFor, linesOf, planFor, selectTests }
+import { Profile, RunPlan, Selection, byCost, filterFor, linesOf, planFor, runPlanFor,
+         selectTests }
        from "./mutateplan.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -141,5 +142,65 @@ export string test_a_span_names_every_line_it_touches() {
           "and one crossing three names four");
   t.eqStr(joined(linesOf("a.wac", src, 5, 5)), "a.wac:2",
           "an empty span still starts somewhere, and that line carries the coverage point");
+  return t.report();
+}
+
+/**
+ * A narrowed run is given a filter and the files those tests live in, cheapest first.
+ *
+ * Cheapest first because `--fail-fast` only pays when the killer runs early.
+ */
+export string test_a_narrowed_run_gets_a_filter_and_the_right_files() {
+  T t = T.create();
+  string[] names = string[]("test_one", "test_two");
+  string[] homes = string[]("x_test.wac", "y_test.wac");
+
+  RunPlan r = runPlanFor(sample(), string[]("a.wac:10"), names, homes,
+                         string[]("packages/whole"));
+  t.isTrue(r.narrowed, "the profile named the tests, so the scope narrows");
+  t.eqStr(r.filter, "/^(?:test_one|test_two)$/", "and the filter is anchored to exactly those");
+  t.eqStr(joined(r.dirs), "y_test.wac x_test.wac",
+          "the files they live in, cheapest first — y is 10ms and x is 50ms");
+  t.isTrue(!r.notCovered, "and it is covered");
+  return t.report();
+}
+
+/**
+ * **Narrowing needs every selected test's home**, and this is the case that says so.
+ *
+ * A filter names tests; a run needs the files to point it at. With one home unknown the filter would
+ * be aimed at a set of directories that does not contain it, and a filter matching nothing exits
+ * non-zero on the binary and zero under Deno — a false kill on one path and a false survival on the
+ * other. Widening costs time and cannot be wrong.
+ */
+export string test_one_unknown_home_widens_the_whole_run() {
+  T t = T.create();
+  string[] names = string[]("test_one");          // test_two's home is missing
+  string[] homes = string[]("x_test.wac");
+
+  RunPlan r = runPlanFor(sample(), string[]("a.wac:10"), names, homes,
+                         string[]("packages/whole"));
+  t.isTrue(!r.narrowed, "one test whose file is unknown sends the whole run wide");
+  t.eqStr(r.filter, "", "with no filter, because a filter it cannot aim is worse than none");
+  t.eqStr(joined(r.dirs), "packages/whole", "and the original scope");
+  return t.report();
+}
+
+/** An unhit span runs everything and says so; an unknown one just runs everything. */
+export string test_the_two_kinds_of_widening_are_told_apart() {
+  T t = T.create();
+  string[] names = string[]("test_one");
+  string[] homes = string[]("x_test.wac");
+
+  RunPlan unhit = runPlanFor(sample(), string[]("a.wac:11"), names, homes, string[]("scope"));
+  t.isTrue(!unhit.narrowed, "a line no test reaches does not narrow");
+  t.isTrue(unhit.notCovered,
+           "but it is marked, so a survivor can be reported as executing nothing rather than as "
+             + "untested behaviour");
+
+  RunPlan unknown = runPlanFor(sample(), string[]("zz.wac:1"), names, homes, string[]("scope"));
+  t.isTrue(!unknown.narrowed, "a line the profile does not know does not narrow either");
+  t.isTrue(!unknown.notCovered,
+           "and is not marked — the profile cannot say nothing reaches it, only that it cannot say");
   return t.report();
 }

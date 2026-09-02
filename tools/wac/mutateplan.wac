@@ -238,3 +238,53 @@ export string[] linesOf(string file, string source, i32 start, i32 end) {
   }
   return out;
 }
+
+/**
+ * What a mutant's run is actually given: a filter, the files to run it over, and whether the scope
+ * was narrowed at all.
+ *
+ * `homeNames[i]` is a test and `homeFiles[i]` the file that defines it — the profile's `home` map,
+ * passed rather than held, which is what lets this be tested without one.
+ *
+ * **Narrowing needs every selected test's home**, and that is the rule worth having a case for. A
+ * filter names tests; a run needs the *files* to point it at. If one selected test's file is unknown
+ * the filter would be aimed at a set of directories that does not contain it, and `--filter` matching
+ * nothing exits non-zero on the binary and zero under Deno — a false kill on one path and a false
+ * survival on the other. Widening costs time and cannot be wrong.
+ */
+export struct RunPlan {
+  bool narrowed;
+  /** The profile accounts for every line and no test reaches them — run everything, and say so. */
+  bool notCovered;
+  /** `""` when not narrowing. */
+  string filter;
+  string[] dirs;
+}
+
+export RunPlan runPlanFor(Profile p, string[] locations, string[] homeNames, string[] homeFiles,
+                          string[] scopeDirs) {
+  string plan = planFor(p, locations);
+  if (plan != "narrow") {
+    return RunPlan(false, plan == "unhit", "", scopeDirs);
+  }
+
+  Selection s = selectTests(p, locations);
+  string filter = filterFor(s.tests);
+  if (filter == "") { return RunPlan(false, false, "", scopeDirs); }
+
+  // The files those tests live in, without repeats. A test whose home the profile does not know
+  // sends the whole thing back to the full scope.
+  string[] files = string[s.tests.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < s.tests.len(); i++) {
+    i32 at = indexOfIn(homeNames, s.tests[i]);
+    if (at < 0 || at >= homeFiles.len() || homeFiles[at] == "") {
+      return RunPlan(false, false, "", scopeDirs);
+    }
+    if (!holds(files, homeFiles[at])) { files[n] = homeFiles[at]; n = n + 1; }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = files[i]; }
+  // Cheapest first, because `--fail-fast` only pays when the killer runs early.
+  return RunPlan(true, false, filter, byCost(exact, p));
+}
