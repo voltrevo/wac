@@ -108,9 +108,15 @@
   "mutate": "deno run -A tools/mutate.ts",
   "mutate:diff": "deno run -A tools/mutate.ts --diff --operators",
   "mutate:operators": "deno run -A tools/mutate.ts --operators",
-  // The wac side of `mutate`, and the only mode of it that has moved so far: what a run *would*
-  // mutate, without running, staging or compiling anything. `issues/system/0161` step 6.
+  // The wac side of `mutate`. `issues/system/0161` step 6.
+  //
+  // `mutate:list` says what a run *would* mutate, without running, staging or compiling anything.
+  // `mutate:run` does it: stage a copy, apply each mutant, run the scope's tests, score what came
+  // back. It runs the whole test directory per mutant, where `tools/mutate.ts` narrows to the tests
+  // that reach the mutated line — so it is slower by design, and it is the thing that narrowing can
+  // be checked against.
   "mutate:list": "./native/v8/target/release/wac run --allow-read tools/wac/mutatelist.wac",
+  "mutate:run": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/wac/mutaterun.wac",
   "serve": "deno run -A packages/server/host/serve.ts",
   "app:build": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/build.ts",
   "check": "deno run -A tools/checkTypes.ts",

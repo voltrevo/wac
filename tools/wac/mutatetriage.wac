@@ -8,7 +8,7 @@
 // **The order of the rules is the content**, and two of them exist to stop this pruning something it
 // should not. `issues/system/0161` step 6.
 
-import { dumpErrors, emitFiles } from "../../packages/wacc/src/api.wac";
+import { dumpErrors, dumpTypeErrorsFiles, emitFiles } from "../../packages/wacc/src/api.wac";
 import { hashBytes } from "core/hash.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -99,11 +99,25 @@ export string signatureOf(string[] files, string[] hashes) {
  * That costs the second parse the reference's comment was avoiding — *"asking the checker separately
  * would double the work for every mutant"* — and it is the price of the emitter not signalling. A
  * caller that has already checked can hash `emitFiles` directly.
+ *
+ * **And the front end is not enough on its own, because `dumpErrors` is the lexer and the parser.**
+ * A mutant that parses and does not *check* took the same route as a compiling one: the checker's
+ * complaint went nowhere, `emitFiles` answered its bare module, and the mutant was reported runnable.
+ * `mutaterun` then spent a test run on it and read the resulting exit 1 as "nothing matched the
+ * filter" — `classify`'s guess for a code that means several things — so it landed in *no verdict*
+ * rather than in `invalid`, and the run's uncompilable count stayed at zero while two mutants sat
+ * outside both totals.
+ *
+ * The case, from `packages/rlp`: the guard operator removes the `trap` from `case List(_): trap;` in
+ * a function returning `u8[]`, and the result parses perfectly. `not every path returns a value` is a
+ * *checker* sentence, so it has to be a checker question — `dumpTypeErrorsFiles` over the graph
+ * rather than a per-file parse, because the answer depends on the imports.
  */
 export string wasmHashOf(string[] paths, string[] sources, string entry) {
   for (i32 i = 0; i < sources.len(); i++) {
     if (dumpErrors(sources[i].toBytes()).len() != 0) { return ""; }
   }
+  if (dumpTypeErrorsFiles(paths, sources, entry).len() != 0) { return ""; }
   u8[] wasm = emitFiles(paths, sources, entry);
   if (wasm.len() == 0) { return ""; }
   return itoa(hashBytes(wasm)) + ":" + itoa(wasm.len());

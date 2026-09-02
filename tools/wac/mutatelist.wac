@@ -17,7 +17,8 @@
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
-import { GenStats, Mutant, generate, isMutationTarget } from "./mutateoperators.wac";
+import { Flags, parseFlags, targetsUnder } from "./mutatefiles.wac";
+import { GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
@@ -96,128 +97,6 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
   // is the same experiment twice and an equivalent mutant is one no test could ever kill.
   core.log("  equivalent and duplicate mutants are excluded from a score, not counted as killed");
   return 0;
-}
-
-/** Every `.wac` under `dir`, depth-first, skipping what is not source. */
-string[] wacFilesUnder(Cli cli, string dir, string[] into, i32 n) {
-  string[] out = into;
-  i32 at = n;
-  string[]? listed = cli.readDir(dir).wait();
-  if (listed is null) { out[out.len() - 1] = itoa(at); return out; }
-  string[] names = listed!;
-  for (i32 i = 0; i < names.len(); i++) {
-    string name = names[i];
-    if (name == "" || name.slice(0, 1) == ".") { continue; }
-    string path = dir + "/" + name;
-    if (name.len() > 4 && name.slice(name.len() - 4, name.len()) == ".wac") {
-      if (at < out.len() - 1) { out[at] = path; at = at + 1; }
-      continue;
-    }
-    // A directory, or a file of another kind — `readDir` on the latter answers nothing, which is the
-    // same as an empty directory here and costs one call rather than a `stat` for every entry.
-    out = wacFilesUnder(cli, path, out, at);
-    at = intOf(out[out.len() - 1]);
-  }
-  out[out.len() - 1] = itoa(at);
-  return out;
-}
-
-i32 intOf(string s) {
-  i32 v = 0;
-  for (i32 i = 0; i < s.len(); i++) {
-    string c = s.slice(i, i + 1);
-    if (c < "0" || c > "9") { return v; }
-    v = v * 10 + (c.toBytes()[0] - 48);
-  }
-  return v;
-}
-
-/** The `.wac` files under `dir` that are code under test. */
-string[] targetsUnder(Cli cli, string dir) {
-  // The last slot carries the count as the walk recurses, which is what lets it stay a plain
-  // function rather than needing a growable array in the middle of a recursion.
-  string[] buf = string[8192](fill: "");
-  buf = wacFilesUnder(cli, dir, buf, 0);
-  i32 n = intOf(buf[buf.len() - 1]);
-  i32 kept = 0;
-  for (i32 i = 0; i < n; i++) {
-    if (isMutationTarget(buf[i])) { kept = kept + 1; }
-  }
-  string[] out = string[kept](fill: "");
-  i32 at = 0;
-  for (i32 i = 0; i < n; i++) {
-    if (isMutationTarget(buf[i])) { out[at] = buf[i]; at = at + 1; }
-  }
-  return out;
-}
-
-/**
- * The flags, parsed apart from the program so the rule can be tested without running it.
- *
- * `--package <name>` is the reference's spelling and means `packages/<name>`; a bare path is taken as
- * given. `--operators=a,b` narrows the set, and `--no-sample` mutates every integer literal rather
- * than three per repeated shape — slow by design, and the flag for *I want the survivor that sampling
- * might have hidden*.
- */
-export struct Flags {
-  string dir;
-  string[] operators;
-  i32 perShape;
-  bool triage;
-  string problem;
-}
-
-export Flags parseFlags(string[] args) {
-  string dir = "";
-  string[] ops = string[]("relational", "literal", "guard", "extreme");
-  i32 perShape = 3;
-  bool triage = false;
-  for (i32 i = 0; i < args.len(); i++) {
-    string a = args[i];
-    if (a == "--triage") { triage = true; continue; }
-    if (a == "--package") {
-      if (i + 1 >= args.len()) { return Flags("", ops, perShape, triage, "--package wants a name after it"); }
-      dir = "packages/" + args[i + 1];
-      i = i + 1;
-      continue;
-    }
-    if (a == "--no-sample") {
-      // Every literal, which is what this did before shape sampling existed.
-      perShape = 2147483647;
-      continue;
-    }
-    if (a.len() > 12 && a.slice(0, 12) == "--operators=") {
-      string list = a.slice(12, a.len());
-      ops = splitOnComma(list);
-      if (ops.len() == 0) { return Flags("", ops, perShape, triage, "--operators= wants at least one"); }
-      continue;
-    }
-    if (a.len() > 2 && a.slice(0, 2) == "--") {
-      return Flags("", ops, perShape, triage, "unknown flag " + a);
-    }
-    if (dir != "") {
-      return Flags("", ops, perShape, triage, "more than one directory: " + dir + " and " + a);
-    }
-    dir = a;
-  }
-  return Flags(dir, ops, perShape, triage, "");
-}
-
-string[] splitOnComma(string s) {
-  if (s == "") { return string[0](fill: ""); }
-  i32 n = 1;
-  for (i32 i = 0; i < s.len(); i++) {
-    if (s.slice(i, i + 1) == ",") { n = n + 1; }
-  }
-  string[] out = string[n](fill: "");
-  i32 at = 0;
-  i32 from = 0;
-  for (i32 i = 0; i <= s.len(); i++) {
-    if (i < s.len() && s.slice(i, i + 1) != ",") { continue; }
-    if (at < n) { out[at] = s.slice(from, i); at = at + 1; }
-    from = i + 1;
-  }
-  return out;
 }
 
 /**

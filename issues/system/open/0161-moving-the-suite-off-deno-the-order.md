@@ -3131,3 +3131,57 @@ issue in the same commit where I was correcting other sentences for being stale 
 sharpest possible demonstration that reading a paragraph is not checking it. The "file first, then
 spawn" order stands on its own merits: `x509_path` reads `/etc/ssl` and `raster` reads a font, and
 neither wants a subprocess.
+
+## Step 6: the driver runs — `mutate:run`, and the bug it found in the triage that was already ported — agent-b, 2026-09-02
+
+`tools/wac/mutaterun.wac` closes the loop the ported modules were written for: stage a copy, apply
+each mutant to it, run the scope's tests, score what came back. Everything it *decides* was already
+here and tested — `mutateoperators` generates, `mutatescope` applies, `mutatestage` stages,
+`mutatenative` reads the exit code, `mutatetriage` prunes, `mutatescore` says what counts — so what
+this adds is the mechanism between them, plus three judgements of its own that are functions rather
+than lines inside `main` because each fails silently: `refusalFor`, `controlFor` and `exitFor`.
+
+Measured, end to end:
+
+    wac task mutate:run --package bytes --operators=extreme     3/3 killed, 100%, exit 0
+    wac task mutate:run --package datetime --operators=extreme  11/11 killed, 100%, exit 0
+    wac task mutate:run --package rlp --operators=guard         1/2 killed, 50%, exit 1
+                                                                2 uncompilable
+                                                                1 surviving: guard/rlp/rlp:134:18
+
+`rlp:134:18` is `if (len < 0) { trap; }` in `header`, whose two call sites pass `total` and
+`v.len()`. So it is a defensive guard no caller can reach rather than a hole in the tests, which is
+the population `known.ts` exists to hold — an entry there is a survivor *with an argument*, and this
+one has one.
+
+**The 100%s are checked rather than asserted.** A staged tree that fails to build for a reason having
+nothing to do with any mutation kills every mutant and prints exactly `3/3 killed, 100%`, so the
+figure is the same text for the best and worst cases. `controlFor` appends a comment to each file — a
+mutation the lexer consumes and the emitter never sees — and a control reported killed sets
+`scoreOf`'s `harnessBroken`, which voids the run instead of scoring it. Before that, three of
+`scoreOf`'s six inputs were the literal `0` in the driver's only call, which is the same defect one
+level up: a parameter whose whole job is to detect a broken run, wired to a constant.
+
+**And wiring the fourth one up found a real bug in `wasmHashOf`, which has been in the tree since the
+triage module was ported.** `dumpErrors` is the lexer and the parser. A mutant that parses and does
+not *check* went through it clean, `emitFiles` answered the bare module it answers for anything it
+cannot compile — 1,658 bytes, not zero, which is the case the module's own comment already warned
+about for the *emitter* — and the mutant was reported runnable. The reproduction is the guard
+operator on `case List(_): trap;` in a function returning `u8[]`: it parses perfectly, and `not every
+path returns a value` is a *checker* sentence. `wasmHashOf` now asks `dumpTypeErrorsFiles` over the
+graph, and `mutatetriage_test.wac` has the case; without the fix it reports the bare module's hash.
+
+The visible effect is the rlp line above. Before: `0 uncompilable` and `2 mutants had no verdict`,
+those two being the ones that did not compile, sitting outside both totals with `classify`'s guess
+for exit 1 — *"nothing matched the filter, or a file did not run"* — attached to them. `mutate:list
+--triage` was undercounting `invalid` the same way, silently, for the same reason.
+
+**What is left of the driver is narrowing, not deciding.** It runs the whole test directory per
+mutant where `tools/mutate.ts` runs only the tests that reach the mutated line; `mutatecoverage.wac`,
+`mutatedeadline.wac` and `jobsFor` are all here without a caller. That is deliberate in this order:
+a narrowed run has no oracle unless an unnarrowed one exists to disagree with it, which is the same
+point this issue makes about `--explain-selection` being dead the day after it produced its numbers.
+
+Not moved, and still last: `curated.ts` and `known.ts`. They are data, and the window where the data
+exists in two places should be as short as possible — so they go with the switchover rather than
+before it.

@@ -1,0 +1,282 @@
+// A mutation run, end to end, over one directory.
+//
+// The driver in miniature: stage a copy, apply each mutant to it, run the tests, and score what came
+// back. Everything it *decides* is decided by the ported modules — `mutateoperators` generates,
+// `mutatescope` applies, `mutatestage` stages, `mutatenative` reads the exit code, `mutatescore` says
+// what counts — and this is the loop around them.
+//
+// **The whole loop at a size where it can be watched.** `tools/mutate.ts` does this across every
+// package with profiling, caching, parallelism and per-mutant deadlines; the parts of that which are
+// judgement are ported and tested, and this is the mechanism, kept small enough that a single-package
+// run is minutes rather than an afternoon. What it does not yet do — coverage-narrowed test selection
+// (`mutatecoverage.wac`), several mutants at once (`jobsFor`), a deadline per mutant
+// (`mutatedeadline.wac`) — is mechanism on top of this rather than different decisions, and each of
+// those modules is already here waiting for a caller.
+//
+// **It is deliberately slower than the reference and says so in its own output.** Running a scope's
+// whole test directory per mutant is what the coverage narrowing exists to avoid. Getting the loop
+// right first and fast second is the order that lets the narrowing be checked against something,
+// which is the point `issues/system/0161` makes about `--explain-selection`: a narrowed run has no
+// oracle unless an unnarrowed one exists.
+//
+// `issues/system/0161` step 6.
+
+import { Change, Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Fs } from "../../packages/fs/src/fs.wac";
+import { Sources, gather } from "../../packages/wac/src/sources.wac";
+import { Flags, parseFlags, targetsUnder } from "./mutatefiles.wac";
+import { Edit, GenStats, Mutant, generate } from "./mutateoperators.wac";
+import { Applied, applyEdits } from "./mutatescope.wac";
+import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
+import { Outcome, Verdict, classify, outcomeOf } from "./mutatenative.wac";
+import { Score, exclusions, headline, percent, scoreOf } from "./mutatescore.wac";
+import { stageInto } from "./mutatestage.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** Where the staged copy lives. One directory, reused, because this runs one mutant at a time. */
+export string STAGE() { return ".cache/mutate/run"; }
+
+/**
+ * Run the tests under `testDir` inside the staged tree, and say what the exit code means.
+ *
+ * **The grants are the wac lane's whole set**, for the reason `mutatecoverage.wac` gives about its
+ * own copy: a test skipped for want of a grant is a test that did not run, and a run where nothing
+ * ran is green — so a missing grant does not fail this, it silently converts every mutant in the
+ * scope into a survivor. `classify` can tell the two apart only if the tests get as far as running.
+ */
+Verdict runTests(Cli cli, string binary, string work, string testDir) {
+  Exec r = cli.execWithIn(binary,
+                          string[]("test", "--allow-read", "--allow-write", "--allow-run",
+                                   "--allow-env", "--allow-net", testDir),
+                          u8[0](), string[0](fill: ""), false, false, work).wait();
+  if (!r.ran()) { return Verdict.Abort("the binary did not run: " + r.error); }
+  return classify(r.status);
+}
+
+/**
+ * A mutation that changes nothing, which must therefore survive.
+ *
+ * **This is what makes the score falsifiable.** `3/3 killed, 100%` is the output of a suite that
+ * catches everything and also the output of a staged tree that fails to build for a reason having
+ * nothing to do with any mutation — every mutant "killed" by the same unrelated error. Without a
+ * control the two are the same text and there is no way to tell from the report which one happened.
+ *
+ * A trailing comment rather than a token swap, because it has to be a no-op in the emitted wasm and
+ * not merely one a reader believes is a no-op: `bumpLiteral`'s own history is a reminder that "this
+ * cannot change behaviour" is a claim about the compiler. A comment is the one edit that survives
+ * lexing without reaching the emitter.
+ *
+ * `scoreOf` treats a killed control as voiding the whole run rather than as one bad mutant, which is
+ * why this is worth a test run per file.
+ */
+export Mutant controlFor(string file, i32 length) {
+  return Mutant("control:" + file, "control",
+                Edit[](Edit(file, length, length, "\n// control mutant: this must survive\n", "")));
+}
+
+/**
+ * Why the run cannot produce a number, or `""` when it can.
+ *
+ * **A red scope scores 100%.** The mutation is applied, the tests fail, and the mutant is recorded as
+ * detected — by a failure that was there before the mutation and has nothing to do with it. Every
+ * mutant in the scope goes the same way, so the most reassuring possible output comes out of the most
+ * broken possible suite. `mutatescore.wac`'s `nothingMeasurable` is the whole-run form of this and
+ * this is the one-scope form; both answer with a refusal rather than a figure, for the same reason.
+ *
+ * **An abort and an absence are refusals too, and not the same refusal.** A scope where nothing ran
+ * has no baseline rather than a green one — `classify` distinguishes them precisely so this does not
+ * have to guess, and a `NoTestsHere` read as green would score every mutant in an untested directory
+ * as a survivor, which is true but arrived at by luck.
+ */
+export string refusalFor(Verdict baseline, string testDir) {
+  if (baseline.isSurvived()) { return ""; }
+  if (baseline.isKilled()) {
+    return "the baseline is not green: " + testDir + " fails before any mutation. Every mutant would"
+         + " be recorded killed by a failure that was there first and the run would report a perfect"
+         + " score.";
+  }
+  return "there is no baseline (" + baseline.word() + "): nothing in " + testDir + " ran, so nothing"
+       + " here can kill a mutant and every mutation would be recorded as surviving.";
+}
+
+/**
+ * The exit code: 1 for survivors, 2 for a run that could not be read, 0 for a clean sweep.
+ *
+ * **2 rather than 1 for a refusal**, because "the suite has a hole" and "this run says nothing" are
+ * different answers and a caller that cannot tell them apart learns nothing from either. A refused
+ * run has no survivors to report, so collapsing it into 1 would be indistinguishable from success.
+ */
+export i32 exitFor(i32 survivors, bool refused) {
+  if (refused) { return 2; }
+  return survivors > 0 ? 1 : 0;
+}
+
+/**
+ * `mutaterun [--package <name>|<dir>] [--operators=a,b] [--no-sample]`.
+ *
+ * Exits 1 when anything survived, which is what makes it usable as a check rather than only as a
+ * report, and 2 when the run could not be read at all — a staging failure or a baseline that was
+ * already red. Those are different from "the suite has a hole", and a caller that treats them the
+ * same learns nothing from either.
+ */
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  string[] args = string[argc](fill: "");
+  for (i32 i = 0; i < argc; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
+  Flags f = parseFlags(args);
+  if (f.problem != "") { core.log(f.problem); return 2; }
+  if (f.dir == "") {
+    core.log("usage: mutaterun [--package <name>|<dir>] [--operators=a,b] [--no-sample]");
+    return 2;
+  }
+
+  string root = cli.cwd().wait();
+  string binary = root + "/native/v8/target/release/wac";
+  string testDir = f.dir + "/test/wac";
+
+  string[] files = targetsUnder(cli, f.dir);
+  if (files.len() == 0) {
+    core.log("no .wac files under " + f.dir + " that are code under test");
+    return 2;
+  }
+
+  string stage = root + "/" + STAGE();
+  cli.remove(stage, true).wait();          // a stale tree from a killed run is not a reason to fail
+  string why = stageInto(cli, root, stage, string[]("packages", "tools", "std", "core", "spec"),
+                         string[0](fill: ""), "native/v8/target/release/wac");
+  if (why != "") { core.log("could not stage: " + why); return 2; }
+
+  // The baseline first, and anything but green stops the run before it produces a number.
+  string refusal = refusalFor(runTests(cli, binary, stage, testDir), testDir);
+  if (refusal != "") { core.log(refusal); return exitFor(0, true); }
+
+  GenStats stats = GenStats(0, 0, 0);
+  i32 killed = 0;
+  i32 measured = 0;
+  i32 invalid = 0;
+  string[] survivors = string[4096](fill: "");
+  i32 survivorCount = 0;
+  i32 noVerdict = 0;
+  string[] noVerdictNames = string[4096](fill: "");
+  i32 controlsKilled = 0;
+  i32 equivalent = 0;
+  i32 duplicate = 0;
+  // Signatures claimed so far, so the second mutant with one is a duplicate of the first.
+  string[] seenSig = string[8192](fill: "");
+  string[] seenName = string[8192](fill: "");
+  i32 seen = 0;
+  Fs fs = Fs.onHost(cli, 0);
+
+  for (i32 fi = 0; fi < files.len(); fi++) {
+    FileResult src = cli.readFile(files[fi]).wait();
+    if (!src.ok) { core.warn("cannot read " + files[fi]); continue; }
+    string text = string.fromBytes(src.bytes);
+    string staged = stage + "/" + files[fi];
+    Mutant[] generated = generate(files[fi], text, f.operators, stats, f.perShape);
+
+    // **Triage before running, which is cheaper than it looks.** Compiling a mutant costs about a
+    // sixteenth of running its scope's tests, and every mutant it excludes is a test run that does
+    // not happen — so asking makes the run faster as well as making three of `scoreOf`'s six inputs
+    // real numbers rather than the constant zero. `mutatelist --triage` is the same composition
+    // without the running.
+    Sources gathered = gather(fs, cli, files[fi]);
+    bool blind = gathered.why != "";
+    if (blind) { core.warn("  cannot gather " + files[fi] + ": " + gathered.why + " — running its"
+                           + " mutants untriaged rather than discarding them"); }
+    string baseline = blind ? "" : wasmHashOf(gathered.paths, gathered.texts, files[fi]);
+
+    // The control goes first, so a staged tree that cannot build is found before the run spends a
+    // test run per mutant proving the same thing over and over.
+    Mutant[] mutants = Mutant[generated.len() + 1](fill: controlFor(files[fi], text.len()));
+    for (i32 i = 0; i < generated.len(); i++) { mutants[i + 1] = generated[i]; }
+
+    for (i32 m = 0; m < mutants.len(); m++) {
+      Applied a = applyEdits(string[](files[fi]), string[](text), mutants[m]);
+      if (!a.ok) { invalid = invalid + 1; continue; }
+
+      bool isControl = mutants[m].origin == "control";
+      if (!blind) {
+        Applied whole = applyEdits(gathered.paths, gathered.texts, mutants[m]);
+        string sig = whole.ok ? wasmHashOf(whole.paths, whole.texts, files[fi]) : "";
+        string signature = signatureOf(string[](files[fi]), string[](sig));
+        Triage tr = triageOf(false, sig == "" ? files[fi] : "", isControl, signature,
+                             signatureOf(string[](files[fi]), string[](baseline)),
+                             seenSig, seenName);
+        if (tr.record && seen < seenSig.len()) {
+          seenSig[seen] = signature;
+          seenName[seen] = mutants[m].name;
+          seen = seen + 1;
+        }
+        // Excluded rather than counted as killed, which is the line that keeps the score honest:
+        // a duplicate is the same experiment twice, an equivalent mutant is one no test could ever
+        // distinguish, and a mutation the language rejects was never a question about the tests.
+        if (tr.verdict == "equivalent") { equivalent = equivalent + 1; continue; }
+        if (tr.verdict == "duplicate") { duplicate = duplicate + 1; continue; }
+        if (tr.verdict == "invalid") { invalid = invalid + 1; continue; }
+      }
+
+      // Into the staged copy. The original is never written, which is the whole reason there is one:
+      // a run killed halfway through leaves the checkout exactly as it found it.
+      Change wrote = cli.writeFile(staged, a.texts[0].toBytes()).wait();
+      if (!wrote.ok()) {
+        core.warn("could not stage " + mutants[m].name + ": " + wrote.message);
+        noVerdict = noVerdict + 1;
+        continue;
+      }
+
+      Outcome o = outcomeOf(false, Verdict[](runTests(cli, binary, stage, testDir)), false);
+      // Put the file back before the next mutant, or two mutations compose into a third nobody
+      // generated and the name in the report describes one of them.
+      cli.writeFile(staged, src.bytes).wait();
+
+      if (o.noVerdict != "") {
+        // **Named, not just counted.** A mutant in neither total is the one line of this report a
+        // reader cannot check, and a count on its own cannot distinguish "two mutants did not
+        // compile" from "the runner is broken and every verdict after this is luck".
+        if (noVerdict < noVerdictNames.len()) {
+          noVerdictNames[noVerdict] = mutants[m].name + " — " + o.noVerdict;
+        }
+        noVerdict = noVerdict + 1;
+        continue;
+      }
+
+      // **A control is not in either total.** It is a no-op by construction, so counting its survival
+      // as a survivor would deflate the score by exactly the number of controls and counting it as a
+      // kill would inflate it by the same — `scoreOf`'s own account of why they sit outside.
+      if (isControl) {
+        if (o.killed) { controlsKilled = controlsKilled + 1; }
+        continue;
+      }
+
+      measured = measured + 1;
+      if (o.killed) { killed = killed + 1; continue; }
+      if (survivorCount < survivors.len()) {
+        survivors[survivorCount] = mutants[m].name;
+        survivorCount = survivorCount + 1;
+      }
+    }
+  }
+
+  Score s = scoreOf(killed, measured, equivalent, duplicate, invalid, controlsKilled);
+  core.log(headline(s, f.dir));
+  if (s.harnessBroken) { return 2; }
+  core.log("  " + exclusions(s));
+  i32 pct = percent(s);
+  core.log(pct < 0 ? "  no score: nothing was measured" : "  " + itoa(pct) + "%");
+  // **Said rather than left out of the arithmetic silently.** A mutant whose run answered neither
+  // pass nor failure is not a kill and not a survival, and a denominator that quietly shrank is the
+  // one number in this report a reader cannot check.
+  if (noVerdict > 0) {
+    core.log("  " + itoa(noVerdict) + " mutant(s) had no verdict and are in neither total:");
+    for (i32 i = 0; i < noVerdict && i < noVerdictNames.len(); i++) {
+      core.log("    " + noVerdictNames[i]);
+    }
+  }
+  if (survivorCount > 0) {
+    core.log("");
+    core.log(itoa(survivorCount) + " SURVIVING mutant(s) — behaviour no test in " + testDir
+             + " distinguishes:");
+    for (i32 i = 0; i < survivorCount; i++) { core.log("  " + survivors[i]); }
+  }
+  return exitFor(survivorCount, false);
+}

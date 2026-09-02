@@ -1,0 +1,91 @@
+// What `mutaterun` decides that the modules it composes do not.
+//
+// The loop itself is mechanism and is checked by running it; these are the three judgements it adds,
+// and each one is a case where the *reassuring* output is the wrong one — a refusal that scores, a
+// control that is counted, an exit code that says success. All three fail silently by construction,
+// which is why they are functions rather than lines inside `main`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Verdict } from "./mutatenative.wac";
+import { Mutant } from "./mutateoperators.wac";
+import { Applied, applyEdits } from "./mutatescope.wac";
+import { controlFor, exitFor, refusalFor } from "./mutaterun.wac";
+
+/**
+ * A red baseline is refused rather than scored, and the message says why rather than only what.
+ *
+ * **The output of a wholly broken suite is 100%.** Every mutation is applied to a scope that already
+ * fails, every run comes back failing, and every mutant is recorded as detected — by a failure that
+ * was there first. A reader who sees the figure has no way to tell it from a suite that catches
+ * everything, which is why this refuses instead of reporting.
+ */
+export string test_a_red_baseline_is_refused_rather_than_scored() {
+  T t = T.create();
+  string why = refusalFor(Verdict.Killed, "packages/rlp/test/wac");
+  t.isTrue(why != "", "a failing baseline stops the run");
+  t.isTrue(why.indexOf("perfect score") >= 0,
+           "and names the trap rather than only the state: " + why);
+  t.isTrue(why.indexOf("packages/rlp/test/wac") >= 0, "and says which scope");
+  t.eqStr(refusalFor(Verdict.Survived, "packages/rlp/test/wac"), "",
+          "a green baseline is not a refusal");
+  return t.report();
+}
+
+/**
+ * An absence is a refusal too, and a *different* one from a failure.
+ *
+ * A scope where nothing ran has no baseline rather than a green one. Read as green it would score
+ * every mutant in an untested directory as a survivor — a true answer arrived at by luck, and one
+ * that would be indistinguishable from a real hole in a suite that does run.
+ */
+export string test_a_scope_where_nothing_ran_has_no_baseline() {
+  T t = T.create();
+  string absent = refusalFor(Verdict.NoTestsHere, "packages/x/test/wac");
+  t.isTrue(absent != "", "an absence stops the run");
+  t.isTrue(absent.indexOf("surviving") >= 0,
+           "and names the failure mode that would follow: " + absent);
+  string abort = refusalFor(Verdict.Abort("the binary did not run"), "packages/x/test/wac");
+  t.isTrue(abort != "", "and so does an abort");
+  t.isTrue(abort.indexOf("no baseline") >= 0 && absent.indexOf("no baseline") >= 0,
+           "both say there is no baseline rather than that the baseline is bad — which is the "
+             + "distinction a caller acts on");
+  return t.report();
+}
+
+/**
+ * The control changes nothing that reaches the emitter.
+ *
+ * **A no-op a reader believes in is not a no-op.** The control's whole job is to be the one mutation
+ * that must survive, so its edit has to be inert in the wasm rather than inert-looking in the source:
+ * a comment is the only edit that a lexer consumes and an emitter never sees.
+ */
+export string test_the_control_is_a_comment_and_changes_nothing_else() {
+  T t = T.create();
+  string src = "i32 two() { return 2; }\n";
+  Mutant c = controlFor("a.wac", src.len());
+  Applied a = applyEdits(string[]("a.wac"), string[](src), c);
+  t.isTrue(a.ok, "it applies");
+  t.eqStr(a.texts[0].slice(0, src.len()), src,
+          "the program is untouched — the edit is appended, not spliced through it");
+  t.isTrue(a.texts[0].slice(src.len(), a.texts[0].len()).indexOf("//") >= 0,
+           "and what follows is a comment");
+  t.isTrue(c.origin == "control",
+           "and it is marked, because the loop has to keep it out of both totals rather than "
+             + "recognise it by its name");
+  return t.report();
+}
+
+/**
+ * A refusal exits 2, a survivor exits 1, and a clean sweep exits 0.
+ *
+ * **2 rather than 1 for a refusal**, because a refused run reports no survivors, so collapsing it
+ * into 1 would make "this run says nothing" and "the suite is perfect" the same two things a caller
+ * sees: exit 0 with no list, or exit 1 with a list. Neither is what happened.
+ */
+export string test_a_refusal_and_a_clean_sweep_do_not_share_an_exit_code() {
+  T t = T.create();
+  t.eqI32(exitFor(0, false), 0, "nothing survived");
+  t.eqI32(exitFor(3, false), 1, "three did");
+  t.eqI32(exitFor(0, true), 2, "and a refused run is neither, though it also has no survivors");
+  return t.report();
+}

@@ -8,7 +8,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Change, Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { parseFlags } from "./mutatelist.wac";
+import { parseFlags } from "./mutatefiles.wac";
 
 string ROOT() { return ".cache/mutatelist-fixture"; }
 

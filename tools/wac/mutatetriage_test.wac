@@ -126,3 +126,31 @@ export string test_the_hash_is_of_what_the_file_compiles_to() {
           "a source that does not compile hashes to nothing, which is the invalid branch's input");
   return t.report();
 }
+
+/**
+ * **A mutant that parses and does not check is invalid too**, and the front end cannot say so.
+ *
+ * `dumpErrors` is the lexer and the parser. Until this was asserted, a mutation that produced a
+ * well-formed program the *checker* rejects took the same route as a compiling one: the complaint
+ * went nowhere, `emitFiles` answered the bare module it answers for anything it cannot compile, and
+ * the mutant was reported runnable. `mutaterun` then spent a whole test run on it and read the exit 1
+ * as `classify`'s "nothing matched the filter" — so it landed outside both totals instead of in the
+ * uncompilable count, which stayed at zero while the report said two mutants had no verdict.
+ *
+ * The case is the real one that found it, reduced: `packages/rlp`'s guard operator removes the `trap`
+ * from a `match` arm in a function returning a value. `not every path returns a value` is a checker
+ * sentence about a program that parses.
+ */
+export string test_a_mutant_that_parses_but_does_not_check_is_not_runnable() {
+  T t = T.create();
+  string whole = "export i32 pick(bool b) {\n  if (b) { return 1; }\n  trap;\n}\n";
+  // The guard operator's edit: the `trap;` goes, and what is left parses.
+  string gutted = "export i32 pick(bool b) {\n  if (b) { return 1; }\n  \n}\n";
+
+  t.isTrue(wasmHashOf(string[]("a.wac"), string[](whole), "a.wac") != "",
+           "the original compiles");
+  t.eqStr(wasmHashOf(string[]("a.wac"), string[](gutted), "a.wac"), "",
+          "and the mutant hashes to nothing — it parses, so only the checker can reject it, and a "
+            + "hash here would send it to a test run whose exit code cannot say why it failed");
+  return t.report();
+}
