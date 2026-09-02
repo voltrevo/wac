@@ -3,7 +3,8 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Decoded, KEEP, cachePath, decodeProfile, encodeProfile, isProfileFile, toEvict }
+import { Decoded, KEEP, cachePath, decodeProfile, encodeProfile, isProfileFile, keyedFile,
+         skipsDir, toEvict, treeKeyOf }
        from "./mutateprofile.wac";
 
 string joined(string[] xs) {
@@ -106,5 +107,59 @@ export string test_text_that_is_not_a_profile_is_refused() {
   t.isTrue(!decodeProfile("").ok, "empty text is not a profile");
   t.isTrue(!decodeProfile("{").ok, "nor is truncated JSON");
   t.isTrue(!decodeProfile("[1,2,3]").ok, "nor a JSON value of the wrong shape");
+  return t.report();
+}
+
+/**
+ * The key is a function of the tree's *content*, and of nothing else.
+ *
+ * Four properties, and each one is a way a cache goes wrong rather than a way it fails:
+ *
+ * - **Stable**: the same tree twice is the same key, or nothing ever hits and the cache is a
+ *   nine-second tax that never pays.
+ * - **Order-independent**: a caller that gathered the files another way gets the same key. The
+ *   reference sorts inside its own walk, so this property is the caller's there and the function's
+ *   here — a property that cannot be got wrong by a caller is worth more than matching an order.
+ * - **Content-sensitive**: one byte changes the key, or a stale profile is served for an edited tree
+ *   and every mutant is selected against the wrong tests.
+ * - **Path-sensitive**: two files that swapped contents are a different tree. A key over contents
+ *   alone would call them the same one.
+ */
+export string test_the_tree_key_is_the_content_and_nothing_else() {
+  T t = T.create();
+  string[] entries = string[]("a_test.wac");
+  string[] paths = string[]("a.wac", "b.wac");
+  string[] texts = string[]("one", "two");
+
+  string k = treeKeyOf(entries, paths, texts);
+  t.eqStr(treeKeyOf(entries, paths, texts), k, "the same tree twice is the same key");
+
+  t.eqStr(treeKeyOf(entries, string[]("b.wac", "a.wac"), string[]("two", "one")), k,
+          "and so is the same tree gathered in another order");
+
+  t.isTrue(treeKeyOf(entries, paths, string[]("one!", "two")) != k,
+           "one byte of one file changes it");
+  t.isTrue(treeKeyOf(entries, paths, string[]("two", "one")) != k,
+           "and two files that swapped contents are a different tree, which a key over contents "
+             + "alone would miss");
+  t.isTrue(treeKeyOf(string[]("b_test.wac"), paths, texts) != k,
+           "asking about different test files is a different question");
+  return t.report();
+}
+
+/** What the walk does not descend into, and what it does not read. */
+export string test_what_the_key_walk_leaves_out() {
+  T t = T.create();
+  t.isTrue(skipsDir(".git") && skipsDir("node_modules") && skipsDir(".cache"),
+           "the three that are not source");
+  t.isTrue(skipsDir("target"),
+           "and target — build output changes constantly and decides no coverage, so including it "
+             + "would invalidate every profile on every cargo build");
+  t.isTrue(!skipsDir("packages") && !skipsDir("tools"), "the source trees are walked");
+
+  t.isTrue(keyedFile("a.wac") && keyedFile("b.ts") && keyedFile("deno.json"),
+           "the three kinds that decide what a test reaches");
+  t.isTrue(!keyedFile("README.md"), "prose does not");
+  t.isTrue(!keyedFile(".wac"), "and a bare extension names no file");
   return t.report();
 }

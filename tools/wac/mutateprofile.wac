@@ -4,6 +4,7 @@
 // kept between runs. `issues/system/0161` step 6.
 
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { hashString } from "core/hash.wac";
 
 export string CACHE_DIR() { return ".cache/mutate-profile"; }
 
@@ -237,4 +238,72 @@ string[] splitOn(string s, string sep) {
     i = i + 1;
   }
   return out;
+}
+
+/**
+ * Directories a tree key does not walk into.
+ *
+ * The staging list plus `target`: build output changes constantly and nothing in it decides which
+ * test reaches which line, so including it would invalidate every profile on every cargo build.
+ */
+export bool skipsDir(string name) {
+  return name == ".git" || name == "node_modules" || name == ".cache" || name == "target";
+}
+
+/** Whether a file's contents belong in the key — the three kinds that decide what a test reaches. */
+export bool keyedFile(string name) {
+  return endsWithText(name, ".wac") || endsWithText(name, ".ts") || endsWithText(name, ".json");
+}
+
+bool endsWithText(string s, string suffix) {
+  return s.len() > suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+/**
+ * The key a profile is cached under: the test files asked for, and every source that could change
+ * what they reach.
+ *
+ * **Sorted here rather than by the caller**, which is a deliberate difference from the reference — it
+ * sorts inside its directory walk, so a caller that gathered the files another way gets another key
+ * for the same tree. Sorting inside means the key is a function of the *set*, and a property that
+ * cannot be got wrong by a caller is worth more than matching an order.
+ *
+ * That is safe because the wac cache is a directory of its own and nothing reads a key written by the
+ * TypeScript. When the two merge, this is the line to revisit.
+ *
+ * **Content, not modification time.** A profile is invalidated by a byte changing rather than by a
+ * file being touched: a `git checkout` that restores a file unchanged must not cost a reprofile, and
+ * an edit that returns the tree to a previous state should hit the previous key.
+ */
+export string treeKeyOf(string[] testFiles, string[] paths, string[] texts) {
+  string parts = "profile-v2";
+  string[] entries = sortedCopy(testFiles);
+  for (i32 i = 0; i < entries.len(); i++) { parts = parts + " " + entries[i]; }
+
+  string[] order = sortedCopy(paths);
+  for (i32 i = 0; i < order.len(); i++) {
+    // The path *and* its content: two files that swapped contents are a different tree, and a key
+    // over contents alone would call them the same one.
+    parts = parts + " " + order[i] + " " + textFor(paths, texts, order[i]);
+  }
+  return itoa(hashString(parts));
+}
+
+string[] sortedCopy(string[] xs) {
+  string[] out = string[xs.len()](fill: "");
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string k = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > k) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = k;
+  }
+  return out;
+}
+
+string textFor(string[] paths, string[] texts, string path) {
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == path) { return i < texts.len() ? texts[i] : ""; }
+  }
+  return "";
 }
