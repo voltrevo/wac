@@ -137,3 +137,33 @@ export string test_narrowing_the_operators_narrows_the_output(Core core, Cli cli
            "both looked at the same file, so the difference is the operator set and not the walk");
   return t.report();
 }
+
+/**
+ * `--triage` compiles each mutant and says how many are worth running.
+ *
+ * **A count of zero equivalents is the honest answer here, not a broken comparison.** TCE finds a
+ * mutant equivalent when the emitter folds the difference away and wacc does not fold, so almost
+ * nothing is. That the comparison *can* report equality is proved in `mutatetriage_test.wac`, where a
+ * whitespace-only change hashes identically; what this asserts is that every mutant was accounted
+ * for, which is the property a miscount would break.
+ */
+export string test_triage_accounts_for_every_mutant(Core core, Cli cli) {
+  T t = T.create();
+  string why = makeFixture(cli);
+  t.eqStr(why, "", "the fixture was written");
+  if (why != "") { return t.report(); }
+
+  Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac",
+                    string[]("run", "--allow-read", "tools/wac/mutatelist.wac", ROOT(), "--triage"),
+                    u8[0]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r.ran() && r.status == 0, "the triage pass ran — " + said);
+  if (!r.ran()) { return t.report(); }
+  t.isTrue(holds(said, " to run, "), "it reports how many are worth running: " + said);
+  t.isTrue(holds(said, "provably equivalent"), "and how many are not, by name: " + said);
+  t.isTrue(holds(said, "not counted as killed"),
+           "and says why excluding them keeps a score honest: " + said);
+
+  cli.exec("bash", string[]("-c", "rm -rf '" + ROOT() + "'"), u8[0]()).wait();
+  return t.report();
+}

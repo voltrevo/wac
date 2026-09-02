@@ -15,8 +15,88 @@
 // `issues/system/0161` step 6.
 
 import { Core, Cli, FileResult } from "std/platform.wac";
+import { Fs } from "../../packages/fs/src/fs.wac";
+import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { GenStats, Mutant, generate, isMutationTarget } from "./mutateoperators.wac";
+import { Applied, applyEdits } from "./mutatescope.wac";
+import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * The same list, with each mutant compiled and classified — trivial compiler equivalence.
+ *
+ * **This is the expensive half and it is opt-in**, because it compiles the mutant's whole import
+ * graph once per mutant. The reference measures that at 66 ms each, so a package of a hundred and
+ * fifty is ten seconds and a sweep of the repository is minutes. What it buys is the number that
+ * decides whether a sweep is worth starting: a set where most mutants are equivalent or duplicate is
+ * one where the sweep will spend its time proving things twice.
+ *
+ * Baseline first, then each mutant against it, which is the order `triageOf` expects — a mutant whose
+ * wasm equals the baseline's is equivalent, and one whose wasm equals an earlier mutant's is that
+ * mutant asked again.
+ *
+ * **Expect the equivalent count to be low here, and that is the compiler rather than the check.**
+ * `packages/rlp` reports 159 to run and none equivalent. TCE finds a mutant equivalent when the
+ * emitter folds the difference away, and wacc does not fold: an unused local bumped from 5 to 6 still
+ * changes the bytes. The check itself distinguishes — `mutatetriage_test.wac` has a whitespace-only
+ * change hashing identically to prove equality is reachable at all, which is the assertion that stops
+ * a count of zero being read as a comparison that never fires.
+ */
+i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 total,
+           GenStats stats) {
+  Fs fs = Fs.onHost(cli, 0);
+  i32 equivalent = 0;
+  i32 duplicate = 0;
+  i32 invalid = 0;
+  i32 runnable = 0;
+
+  // Signatures claimed so far, so the second mutant with one is a duplicate of the first.
+  string[] seenSig = string[total + 1](fill: "");
+  string[] seenName = string[total + 1](fill: "");
+  i32 seen = 0;
+
+  i32 emitted = 0;
+  for (i32 fi = 0; fi < files.len(); fi++) {
+    Sources src = gather(fs, cli, files[fi]);
+    if (src.why != "") {
+      core.warn("  cannot gather " + files[fi] + ": " + src.why);
+      continue;
+    }
+    string baseline = wasmHashOf(src.paths, src.texts, files[fi]);
+
+    FileResult r = cli.readFile(files[fi]).wait();
+    if (!r.ok) { continue; }
+    GenStats each = GenStats(0, 0, 0);
+    Mutant[] got = generate(files[fi], string.fromBytes(r.bytes),
+                            string[]("relational", "literal", "guard", "extreme"), each, 3);
+    for (i32 m = 0; m < got.len(); m++) {
+      Applied a = applyEdits(src.paths, src.texts, got[m]);
+      string sig = a.ok ? wasmHashOf(a.paths, a.texts, files[fi]) : "";
+      Triage t = triageOf(false, sig == "" ? files[fi] : "", false,
+                          signatureOf(string[](files[fi]), string[](sig)),
+                          signatureOf(string[](files[fi]), string[](baseline)),
+                          seenSig, seenName);
+      if (t.verdict == "equivalent") { equivalent = equivalent + 1; }
+      else if (t.verdict == "duplicate") { duplicate = duplicate + 1; }
+      else if (t.verdict == "invalid") { invalid = invalid + 1; }
+      else { runnable = runnable + 1; }
+      if (t.record && seen < seenSig.len()) {
+        seenSig[seen] = signatureOf(string[](files[fi]), string[](sig));
+        seenName[seen] = got[m].name;
+        seen = seen + 1;
+      }
+      emitted = emitted + 1;
+    }
+  }
+
+  core.log(itoa(emitted) + " mutant(s) over " + itoa(files.len()) + " file(s) under " + dir);
+  core.log("  " + itoa(runnable) + " to run, " + itoa(equivalent) + " provably equivalent, "
+           + itoa(duplicate) + " duplicate, " + itoa(invalid) + " did not compile");
+  // **Said rather than counted as killed.** Excluding these is what keeps a score honest: a duplicate
+  // is the same experiment twice and an equivalent mutant is one no test could ever kill.
+  core.log("  equivalent and duplicate mutants are excluded from a score, not counted as killed");
+  return 0;
+}
 
 /** Every `.wac` under `dir`, depth-first, skipping what is not source. */
 string[] wacFilesUnder(Cli cli, string dir, string[] into, i32 n) {
@@ -83,6 +163,7 @@ export struct Flags {
   string dir;
   string[] operators;
   i32 perShape;
+  bool triage;
   string problem;
 }
 
@@ -90,10 +171,12 @@ export Flags parseFlags(string[] args) {
   string dir = "";
   string[] ops = string[]("relational", "literal", "guard", "extreme");
   i32 perShape = 3;
+  bool triage = false;
   for (i32 i = 0; i < args.len(); i++) {
     string a = args[i];
+    if (a == "--triage") { triage = true; continue; }
     if (a == "--package") {
-      if (i + 1 >= args.len()) { return Flags("", ops, perShape, "--package wants a name after it"); }
+      if (i + 1 >= args.len()) { return Flags("", ops, perShape, triage, "--package wants a name after it"); }
       dir = "packages/" + args[i + 1];
       i = i + 1;
       continue;
@@ -106,16 +189,18 @@ export Flags parseFlags(string[] args) {
     if (a.len() > 12 && a.slice(0, 12) == "--operators=") {
       string list = a.slice(12, a.len());
       ops = splitOnComma(list);
-      if (ops.len() == 0) { return Flags("", ops, perShape, "--operators= wants at least one"); }
+      if (ops.len() == 0) { return Flags("", ops, perShape, triage, "--operators= wants at least one"); }
       continue;
     }
     if (a.len() > 2 && a.slice(0, 2) == "--") {
-      return Flags("", ops, perShape, "unknown flag " + a);
+      return Flags("", ops, perShape, triage, "unknown flag " + a);
     }
-    if (dir != "") { return Flags("", ops, perShape, "more than one directory: " + dir + " and " + a); }
+    if (dir != "") {
+      return Flags("", ops, perShape, triage, "more than one directory: " + dir + " and " + a);
+    }
     dir = a;
   }
-  return Flags(dir, ops, perShape, "");
+  return Flags(dir, ops, perShape, triage, "");
 }
 
 string[] splitOnComma(string s) {
@@ -177,6 +262,8 @@ export i32 main(Core core, Cli cli) {
       total = total + 1;
     }
   }
+
+  if (f2.triage) { return report(core, cli, dir, files, names, total, stats); }
 
   core.log(itoa(total) + " mutant(s) over " + itoa(files.len()) + " file(s) under " + dir);
   // **What sampling left out, said rather than hidden.** The literal operator emits three per repeated
