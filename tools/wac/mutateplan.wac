@@ -288,3 +288,23 @@ export RunPlan runPlanFor(Profile p, string[] locations, string[] homeNames, str
   // Cheapest first, because `--fail-fast` only pays when the killer runs early.
   return RunPlan(true, false, filter, byCost(exact, p));
 }
+
+/**
+ * Whether this filter is Deno's regex spelling, and so must **not** be handed to `wac test`.
+ *
+ * **The two `--filter` flags are not the same flag.** `filterFor` above builds `/^(?:a|b)$/`, which
+ * Deno reads as an anchored regex; `wac test --filter` matches a plain substring, so it looks for a
+ * test whose *name contains a slash and a caret* and finds none. The run then exits having selected
+ * nothing, and a mutant scored against a run of zero tests is a survivor — silently, and in the
+ * direction that flatters. `issues/system/0183`.
+ *
+ * The reference does not pass the filter on that path at all: selection there is by *entry*, because
+ * `runPlanFor` has already reduced the scope to the files holding the covering tests, which is most
+ * of the win and costs no name translation. `tools/wac/mutatenative.wac`'s `wacTestArgs` takes a bare
+ * export name for the same reason — the two spellings meet nowhere, and this is the function that
+ * says so out loud rather than leaving it to a comment in one of them.
+ */
+export bool isDenoFilter(string filter) {
+  return filter.len() >= 2 && filter.slice(0, 1) == "/"
+      && filter.slice(filter.len() - 1, filter.len()) == "/";
+}

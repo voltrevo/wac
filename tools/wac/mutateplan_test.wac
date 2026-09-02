@@ -5,8 +5,8 @@
 // them the mis-selection produced a *verdict* rather than a delay. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Profile, RunPlan, Selection, byCost, filterFor, linesOf, planFor, runPlanFor,
-         selectTests }
+import { Profile, RunPlan, Selection, byCost, filterFor, isDenoFilter, linesOf, planFor,
+         runPlanFor, selectTests }
        from "./mutateplan.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -202,5 +202,35 @@ export string test_the_two_kinds_of_widening_are_told_apart() {
   t.isTrue(!unknown.narrowed, "a line the profile does not know does not narrow either");
   t.isTrue(!unknown.notCovered,
            "and is not marked — the profile cannot say nothing reaches it, only that it cannot say");
+  return t.report();
+}
+
+/**
+ * **The two `--filter` flags are not the same flag**, and this is where the two ported halves are
+ * kept apart.
+ *
+ * `filterFor` builds Deno's anchored regex; `wacTestArgs` takes a bare export name because
+ * `wac test --filter` matches a substring. Handing the first to the second looks for a test whose
+ * name contains a slash and a caret, finds none, and the mutant is scored against a run of zero
+ * tests — a survivor, silently. `issues/system/0183`.
+ *
+ * The reference's answer is not to translate but to *not pass it*: on that path the scope has already
+ * been narrowed to the files holding the covering tests, which is most of the win.
+ */
+export string test_denos_filter_spelling_is_not_the_binarys() {
+  T t = T.create();
+  string deno = filterFor(string[]("test_one", "test_two"));
+  t.isTrue(isDenoFilter(deno), "what filterFor builds is the regex spelling: " + deno);
+  t.isTrue(!isDenoFilter("test_one"),
+           "and a bare export name, which is what `wac test --filter` wants, is not");
+  t.isTrue(!isDenoFilter(""), "nor is no filter at all");
+  t.isTrue(!isDenoFilter("/"), "and a lone slash is not a delimited pattern");
+
+  // The narrowed run is what makes not passing it affordable: the scope is already the files.
+  RunPlan r = runPlanFor(sample(), string[]("a.wac:10"), string[]("test_one", "test_two"),
+                         string[]("x_test.wac", "y_test.wac"), string[]("packages/whole"));
+  t.isTrue(isDenoFilter(r.filter), "a run plan carries the Deno spelling");
+  t.eqI32(r.dirs.len(), 2,
+          "and the files, which is how the binary path selects — by entry, not by filter");
   return t.report();
 }
