@@ -1,0 +1,104 @@
+// `deno.json`'s `exclude` and the runner's `--ignore` must say the same thing.
+//
+// **`--ignore` on the command line replaces `deno.json`'s `exclude` rather than adding to it**, so
+// the moment the runner names one path it owns the whole list. It named `site` and nothing else, and
+// the four remaining entries of the config file were unenforced in the pass that does the
+// discovering — for however long, because an exclusion that stops excluding produces extra files
+// rather than an error.
+//
+// What that cost, on 2026-09-02: `wac task mutate:run` stages a copy of the repository into
+// `.cache/mutate/run`, and the next gate type-checked the staged `.test.ts` files against the repo
+// root's configuration rather than their own. 44 `TS7006` errors in files nobody had edited, and a
+// suite summary that said *"the run itself died"* and pointed at machine load.
+//
+// This is the guard, and it is a guard on a *disagreement* rather than on a value: neither list is
+// authoritative, they simply have to match, and a test that pinned today's contents would go red
+// every time somebody legitimately added an exclusion.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { denoIgnoreRoots } from "../runTests.wac";
+
+/** The string entries of `deno.json`'s top-level `exclude` array. */
+string[] excludeOf(string text) {
+  i32 at = text.indexOf("\"exclude\"");
+  if (at < 0) { return string[0](fill: ""); }
+  string rest = text.slice(at, text.len());
+  i32 open = rest.indexOf("[");
+  i32 close = rest.indexOf("]");
+  if (open < 0 || close < 0 || close < open) { return string[0](fill: ""); }
+  string body = rest.slice(open + 1, close);
+
+  i32 n = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    if (body.slice(i, i + 1) == "\"") { n = n + 1; }
+  }
+  string[] out = string[n / 2](fill: "");
+  i32 kept = 0;
+  i32 from = -1;
+  for (i32 i = 0; i < body.len(); i++) {
+    if (body.slice(i, i + 1) != "\"") { continue; }
+    if (from < 0) { from = i + 1; continue; }
+    if (kept < out.len()) { out[kept] = body.slice(from, i); kept = kept + 1; }
+    from = -1;
+  }
+  return out;
+}
+
+/** Whether `path` is the ignored root or sits under it — `site` covers `site/dist`. */
+bool coveredBy(string root, string path) {
+  if (path == root) { return true; }
+  return path.len() > root.len() + 1 && path.slice(0, root.len() + 1) == root + "/";
+}
+
+bool covered(string[] roots, string path) {
+  for (i32 i = 0; i < roots.len(); i++) {
+    if (coveredBy(roots[i], path)) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Every path `deno.json` excludes is one the broad pass ignores.
+ *
+ * A prefix counts: `site` in the ignore list covers `site/src`, `site/node_modules` and `site/dist`,
+ * and restating those would be three more places to forget.
+ */
+export string test_every_configured_exclusion_is_ignored_by_the_pass(Core core, Cli cli) {
+  T t = T.create();
+  FileResult r = cli.readFile("deno.json").wait();
+  t.isTrue(r.ok, "deno.json is readable");
+  if (!r.ok) { return t.report(); }
+
+  string[] want = excludeOf(string.fromBytes(r.bytes));
+  t.isTrue(want.len() > 0,
+           "the exclude array was found and parsed — a guard that reads nothing passes for the "
+             + "wrong reason, and this one is a text scan rather than a parse");
+
+  string[] have = denoIgnoreRoots();
+  for (i32 i = 0; i < want.len(); i++) {
+    t.isTrue(covered(have, want[i]),
+             "deno.json excludes " + want[i] + ", so the runner's --ignore has to name it or a "
+               + "parent — `--ignore` replaces the config's exclude rather than adding to it");
+  }
+  return t.report();
+}
+
+/**
+ * `.cache` in particular, named rather than left to the loop.
+ *
+ * The loop above goes green if somebody deletes the entry from `deno.json`, which is the one repair
+ * that would look like a fix and reinstate the bug. A staged mutation tree under `.cache` is 29 MB
+ * of other people's `.test.ts` files, and the failure it produces names neither the tool that made
+ * it nor the directory it is in.
+ */
+export string test_the_cache_directory_is_ignored_by_both_walks() {
+  T t = T.create();
+  t.isTrue(covered(denoIgnoreRoots(), ".cache"),
+           "the Deno pass does not discover .cache — `wac task mutate:run` stages a copy of the "
+             + "repository there, and any interrupted sweep leaves one behind");
+  t.isTrue(covered(denoIgnoreRoots(), ".cache/mutate/run/packages/box/test/box.test.ts"),
+           "including the staged copies underneath it, which is the shape that actually broke a "
+             + "gate: 44 TS7006 errors in files nobody had edited");
+  return t.report();
+}

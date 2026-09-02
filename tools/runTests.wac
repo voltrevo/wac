@@ -328,6 +328,34 @@ void walkTs(Cli cli, string root, Names out) {
 string[] tsRoots() { return string[]("packages", "tools", "harness", "bootstrap"); }
 
 /**
+ * The trees the broad Deno pass must not discover — `deno.json`'s `exclude`, restated.
+ *
+ * **`--ignore` on the command line *replaces* `deno.json`'s `exclude`**, so naming any path here
+ * turns every entry of that list off. `site` was named and the rest were not, which meant four
+ * exclusions the config file states were unenforced in the pass that does the discovering — and
+ * nothing said so, because an exclusion that stops excluding shows up as extra files rather than as
+ * an error.
+ *
+ * `.cache` is the one that bit, on 2026-09-02. `wac task mutate:run` stages a copy of the repository
+ * into `.cache/mutate/run` so it can mutate sources without touching the checkout — 29 MB including
+ * every `.test.ts` in `packages/box` and `packages/platform`. The next gate type-checked the copies,
+ * against the repo root's `tsconfig` rather than the one they were written under, and produced 44
+ * `TS7006 implicitly has an 'any' type` errors in files nobody had edited. The suite reported
+ * *"nothing in the log looked like a failure, so no test reported anything — the run itself died"*
+ * and suggested a loaded machine.
+ *
+ * **Any interrupted mutation sweep arms this**, which is why the fix is here rather than in the tool
+ * that made the directory: `tools/mutate.ts` has staged into `.cache/mutate/<n>` since long before
+ * the wac port, and a run killed part-way through leaves one behind with no way to know.
+ *
+ * `skipDir` above carries the same list for the wac walk, and has `.cache` in it — so the two walks
+ * disagreed, and only one of them was wrong. `tools/wac/denoignore_test.wac` now holds them together.
+ */
+export string[] denoIgnoreRoots() {
+  return string[](".cache", "native/target", "site");
+}
+
+/**
  * The wac driver the Deno pass must not discover.
  *
  * `runTests.ts` names it for the same reason: it registers wac tests with Deno, and the lane below
@@ -1079,11 +1107,9 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     // so a runner that passed the environment and not the flag would hand over a worker count
     // nothing reads — which is what the first draft of this file did, and it looked like it worked.
     args.push("--parallel");
-    // **`--ignore` on the command line *replaces* `deno.json`'s `exclude`**, so `site` has to be
-    // named here or the website comes back into discovery and fails type-checking as vite-resolved
-    // TypeScript. `harness/wac/hostless.test.ts` registers wac tests the lane below runs itself.
     Names ignore = Names.create();
-    ignore.push("site");
+    string[] roots = denoIgnoreRoots();
+    for (i32 i = 0; i < roots.len(); i++) { ignore.push(roots[i]); }
     ignore.push(wacDriver());
     for (i32 i = 0; i < f.tsAlone.len(); i++) { ignore.push(f.tsAlone[i]); }
     for (i32 i = 0; i < f.tsHeavy.len(); i++) { ignore.push(f.tsHeavy[i]); }
