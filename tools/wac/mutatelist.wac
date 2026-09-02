@@ -1,0 +1,115 @@
+// What a mutation run *would* mutate, without mutating anything.
+//
+// The first of `tools/mutate.ts`'s modes to move: gather the files, generate the mutants, say what
+// they are. It runs nothing, stages nothing and compiles nothing, so it answers in a second where a
+// sweep is minutes — and the question it answers is the one worth asking before a sweep, which is
+// whether the operators are pointed at the code you think they are.
+//
+// **A selection nobody can look at is the failure this tool exists to detect, in the tool.** That is
+// `issues/system/0161`'s own account of `--explain-selection`: a mutant narrowed to tests that cannot
+// reach it is recorded as surviving if they pass and killed if they do not, and either way the number
+// moves without anything going red. Seeing the set is the cheap half of looking.
+//
+// This composes the ported modules and adds nothing of its own — `tools/wac/mutateoperators.wac`
+// generates, `isMutationTarget` decides what is code under test, and `short` names them.
+// `issues/system/0161` step 6.
+
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { GenStats, Mutant, generate, isMutationTarget } from "./mutateoperators.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** Every `.wac` under `dir`, depth-first, skipping what is not source. */
+string[] wacFilesUnder(Cli cli, string dir, string[] into, i32 n) {
+  string[] out = into;
+  i32 at = n;
+  string[]? listed = cli.readDir(dir).wait();
+  if (listed is null) { out[out.len() - 1] = itoa(at); return out; }
+  string[] names = listed!;
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    if (name == "" || name.slice(0, 1) == ".") { continue; }
+    string path = dir + "/" + name;
+    if (name.len() > 4 && name.slice(name.len() - 4, name.len()) == ".wac") {
+      if (at < out.len() - 1) { out[at] = path; at = at + 1; }
+      continue;
+    }
+    // A directory, or a file of another kind — `readDir` on the latter answers nothing, which is the
+    // same as an empty directory here and costs one call rather than a `stat` for every entry.
+    out = wacFilesUnder(cli, path, out, at);
+    at = intOf(out[out.len() - 1]);
+  }
+  out[out.len() - 1] = itoa(at);
+  return out;
+}
+
+i32 intOf(string s) {
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c < "0" || c > "9") { return v; }
+    v = v * 10 + (c.toBytes()[0] - 48);
+  }
+  return v;
+}
+
+/** The `.wac` files under `dir` that are code under test. */
+string[] targetsUnder(Cli cli, string dir) {
+  // The last slot carries the count as the walk recurses, which is what lets it stay a plain
+  // function rather than needing a growable array in the middle of a recursion.
+  string[] buf = string[8192](fill: "");
+  buf = wacFilesUnder(cli, dir, buf, 0);
+  i32 n = intOf(buf[buf.len() - 1]);
+  i32 kept = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (isMutationTarget(buf[i])) { kept = kept + 1; }
+  }
+  string[] out = string[kept](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (isMutationTarget(buf[i])) { out[at] = buf[i]; at = at + 1; }
+  }
+  return out;
+}
+
+/**
+ * `mutate list <dir>` — the mutants that would be generated under `dir`.
+ *
+ * The counts come before the names because the counts are what a reader checks first: a package with
+ * three mutants where you expected three hundred is pointing at the wrong tree, and that is visible
+ * without reading a line of the list.
+ */
+export i32 main(Core core, Cli cli) {
+  string dir = string.fromBytes(cli.arg(0).wait());
+  if (dir == "") {
+    core.log("usage: mutatelist <dir>   — the mutants that would be generated under <dir>");
+    return 1;
+  }
+
+  string[] files = targetsUnder(cli, dir);
+  if (files.len() == 0) {
+    core.log("no .wac files under " + dir + " that are code under test");
+    return 1;
+  }
+
+  GenStats stats = GenStats(0, 0, 0);
+  i32 total = 0;
+  string[] names = string[65536](fill: "");
+  for (i32 f = 0; f < files.len(); f++) {
+    FileResult r = cli.readFile(files[f]).wait();
+    if (!r.ok) { continue; }
+    Mutant[] got = generate(files[f], string.fromBytes(r.bytes),
+                            string[]("relational", "literal", "guard", "extreme"), stats, 3);
+    for (i32 i = 0; i < got.len(); i++) {
+      if (total < names.len()) { names[total] = got[i].name; }
+      total = total + 1;
+    }
+  }
+
+  core.log(itoa(total) + " mutant(s) over " + itoa(files.len()) + " file(s) under " + dir);
+  // **What sampling left out, said rather than hidden.** The literal operator emits three per repeated
+  // statement shape; a reader who does not know that reads the count as the whole population.
+  core.log("  literal: " + itoa(stats.literalSampled) + " sampled, "
+           + itoa(stats.literalSkipped) + " skipped across " + itoa(stats.shapes) + " shape(s)");
+  for (i32 i = 0; i < total && i < names.len(); i++) { core.log("  " + names[i]); }
+  return 0;
+}
