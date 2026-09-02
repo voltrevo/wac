@@ -79,7 +79,10 @@ export string test_a_profile_survives_the_round_trip() {
   string[] files = string[]("x_test.wac", "y_test.wac");
   i32[] cost = i32[](50, -1);
 
-  Decoded got = decodeProfile(encodeProfile(known, tests, files, cost));
+  string[] homeNames = string[]("test_one", "test_two", "test_three");
+  string[] homeFiles = string[]("x_test.wac", "x_test.wac", "y_test.wac");
+
+  Decoded got = decodeProfile(encodeProfile(known, tests, files, cost, homeNames, homeFiles));
   t.isTrue(got.ok, "it decoded");
   t.eqStr(show(got.known), show(known), "every line came back");
   t.eqStr(show(got.tests), show(tests),
@@ -87,6 +90,13 @@ export string test_a_profile_survives_the_round_trip() {
   t.eqStr(show(got.files), show(files), "and the test files");
   t.eqI32(got.cost[0], 50, "with their measured cost");
   t.eqI32(got.cost[1], -1, "and the unmeasured one still unmeasured, rather than zero");
+
+  // **The home map, which the encoding did not carry until 2026-09-02.** `runPlanFor` turns the
+  // names `selectTests` picked back into entries to run, and a hit that lost this hands it names it
+  // cannot place — so it narrows nothing, and the run costs what no profile costs while reporting
+  // that it profiled. A cache that silently stops caching the useful half.
+  t.eqStr(show(got.homeNames), show(homeNames), "every test's name came back");
+  t.eqStr(show(got.homeFiles), show(homeFiles), "paired with the file it lives in");
   return t.report();
 }
 
@@ -94,7 +104,8 @@ export string test_a_profile_survives_the_round_trip() {
 export string test_an_unhit_line_round_trips_as_unhit_rather_than_absent() {
   T t = T.create();
   Decoded got = decodeProfile(encodeProfile(string[]("a.wac:11"), string[](""),
-                                            string[0](fill: ""), i32[0](fill: 0)));
+                                            string[0](fill: ""), i32[0](fill: 0),
+                                            string[0](fill: ""), string[0](fill: "")));
   t.isTrue(got.ok, "it decoded");
   t.eqI32(got.known.len(), 1, "the line is still known");
   t.eqStr(got.tests[0], "", "and still reached by nothing — which is not the same as unknown");

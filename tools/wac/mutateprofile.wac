@@ -82,7 +82,8 @@ JsonValue num(i32 n) { return JsonValue.Number(n as f64, itoa(n).toBytes()); }
  * not an optimisation to drop: a profile names the same test on thousands of lines, and writing the
  * name each time turns tens of megabytes into hundreds.
  */
-export string encodeProfile(string[] known, string[] tests, string[] files, i32[] cost) {
+export string encodeProfile(string[] known, string[] tests, string[] files, i32[] cost,
+                            string[] homeNames, string[] homeFiles) {
   // The name table, in first-seen order so the encoding is a function of the input alone.
   string[] names = string[0](fill: "");
   i32 n = 0;
@@ -97,6 +98,19 @@ export string encodeProfile(string[] known, string[] tests, string[] files, i32[
       }
       if (!have && n < buf.len()) { buf[n] = each[j]; n = n + 1; }
     }
+  }
+  // **Home names go in the table too, including tests that reached nothing.** A test absent from
+  // `lines` is one no location selects, so leaving it out would cost nothing today — but the table
+  // is also what `homes` indexes into, and a partial table there is a test whose file cannot be
+  // recovered on a cache hit. That widens silently, which is the failure this whole section exists
+  // to prevent.
+  for (i32 i = 0; i < homeNames.len(); i++) {
+    if (homeNames[i] == "") { continue; }
+    bool have = false;
+    for (i32 k = 0; k < n; k++) {
+      if (buf[k] == homeNames[i]) { have = true; break; }
+    }
+    if (!have && n < buf.len()) { buf[n] = homeNames[i]; n = n + 1; }
   }
   names = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { names[i] = buf[i]; }
@@ -131,11 +145,33 @@ export string encodeProfile(string[] known, string[] tests, string[] files, i32[
     costArr.push(JsonValue.Array(pair));
   }
 
+  // **Which file each test lives in.** `runPlanFor` turns selected test names back into entries to
+  // run, and without this a cache hit hands it names it cannot place — so it narrows nothing and the
+  // run is as slow as no profile while reporting that it profiled. One entry per test rather than
+  // per line, so it costs almost nothing beside `lines`.
+  JsonArray homeArr = JsonArray.create();
+  for (i32 i = 0; i < homeNames.len() && i < homeFiles.len(); i++) {
+    i32 nameAt = -1;
+    for (i32 k = 0; k < names.len(); k++) {
+      if (names[k] == homeNames[i]) { nameAt = k; break; }
+    }
+    i32 fileAt = -1;
+    for (i32 k = 0; k < files.len(); k++) {
+      if (files[k] == homeFiles[i]) { fileAt = k; break; }
+    }
+    if (nameAt < 0 || fileAt < 0) { continue; }
+    JsonArray pair = JsonArray.create();
+    pair.push(num(nameAt));
+    pair.push(num(fileAt));
+    homeArr.push(JsonValue.Array(pair));
+  }
+
   JsonObject root = JsonObject.create();
   root.push("names".toBytes(), JsonValue.Array(nameArr));
   root.push("lines".toBytes(), JsonValue.Array(lineArr));
   root.push("testFiles".toBytes(), JsonValue.Array(fileArr));
   root.push("cost".toBytes(), JsonValue.Array(costArr));
+  root.push("homes".toBytes(), JsonValue.Array(homeArr));
   return string.fromBytes(stringify(JsonValue.Object(root)));
 }
 
@@ -146,11 +182,14 @@ export struct Decoded {
   string[] tests;
   string[] files;
   i32[] cost;
+  /** Which file each test lives in — see `encodeProfile`'s `homes`. */
+  string[] homeNames;
+  string[] homeFiles;
 }
 
 Decoded nothing() {
   return Decoded(false, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""),
-                 i32[0](fill: 0));
+                 i32[0](fill: 0), string[0](fill: ""), string[0](fill: ""));
 }
 
 export Decoded decodeProfile(string text) {
@@ -197,7 +236,25 @@ export Decoded decodeProfile(string text) {
       if (fileList[k] == file) { costList[k] = numberOf(pair.get(1)); break; }
     }
   }
-  return Decoded(true, known, tests, fileList, costList);
+  JsonArray homes = arrayAt(obj, "homes");
+  string[] homeNames = string[homes.len()](fill: "");
+  string[] homeFiles = string[homes.len()](fill: "");
+  i32 homeCount = 0;
+  for (i32 i = 0; i < homes.len(); i++) {
+    JsonArray pair = asArray(homes.get(i));
+    if (pair.len() < 2) { continue; }
+    i32 nameAt = numberOf(pair.get(0));
+    i32 fileAt = numberOf(pair.get(1));
+    if (nameAt < 0 || nameAt >= nameList.len()) { continue; }
+    if (fileAt < 0 || fileAt >= fileList.len()) { continue; }
+    homeNames[homeCount] = nameList[nameAt];
+    homeFiles[homeCount] = fileList[fileAt];
+    homeCount = homeCount + 1;
+  }
+  string[] hn = string[homeCount](fill: "");
+  string[] hf = string[homeCount](fill: "");
+  for (i32 i = 0; i < homeCount; i++) { hn[i] = homeNames[i]; hf[i] = homeFiles[i]; }
+  return Decoded(true, known, tests, fileList, costList, hn, hf);
 }
 
 JsonArray arrayAt(JsonObject o, string key) {
