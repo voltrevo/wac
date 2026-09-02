@@ -9,7 +9,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
-import { isTestFile, targetsUnder, testsUnder } from "./mutatefiles.wac";
+import { Flags, isTestFile, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** `_test.wac` is the suffix, and it is a suffix rather than a substring. */
@@ -58,5 +58,33 @@ export string test_the_two_walks_partition_the_package(Core core, Cli cli) {
               tests[i] + " is in both sets: mutating a test file generates mutants that break the "
                 + "very tests measuring them, and the run reads as a suite that catches everything");
   }
+  return t.report();
+}
+
+/**
+ * `--sample=N` and `--seed=S`, and what 0 means for each.
+ *
+ * **The seed's `0` is "pick one", so `--seed=0` has to be an error rather than a seed.** A caller
+ * asking for a reproducible draw and getting a fresh one every time would find out only by comparing
+ * two runs, which is exactly the comparison they were trying to make.
+ */
+export string test_the_sample_flags_say_what_zero_means() {
+  T t = T.create();
+  Flags f = parseFlags(string[]("--package", "rlp", "--sample=20", "--seed=7"));
+  t.eqStr(f.problem, "", "both parse");
+  t.eqI32(f.sample, 20, "twenty mutants");
+  t.eqI32(f.seed, 7, "from seed seven");
+
+  Flags none = parseFlags(string[]("--package", "rlp"));
+  t.eqI32(none.sample, 0, "no --sample means every mutant");
+  t.eqI32(none.seed, 0, "and no --seed means pick one and print it");
+
+  t.isTrue(parseFlags(string[]("--sample=0", "x")).problem != "",
+           "a sample of nothing is a mistake rather than a request for everything");
+  t.isTrue(parseFlags(string[]("--sample=abc", "x")).problem != "", "and so is a non-number");
+  t.isTrue(parseFlags(string[]("--seed=0", "x")).problem != "",
+           "and --seed=0 is refused, because 0 is how this says \"pick one\" — a caller asking for "
+             + "a reproducible draw and silently getting a fresh one would find out only by "
+             + "comparing two runs");
   return t.report();
 }

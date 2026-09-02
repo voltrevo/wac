@@ -200,6 +200,7 @@ wac task mutate:operators # ...plus generated ones (removed guards, gutted funct
 wac task mutate:diff     # ...only for .wac files changed against origin/master
 wac task mutate:list     # what a run would mutate, without running anything (wac)
 wac task mutate:run      # ...and actually run it: stage, mutate, test, score (wac)
+                          # both take --sample=N [--seed=S] for a stratified subset
 wac task bench           # gzip throughput
 wac task bench:json      # json throughput, by document shape
 wac task bench:json-lookup # json object lookup: scan vs hash index, and index build cost

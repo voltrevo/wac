@@ -110,6 +110,12 @@
   "mutate:operators": "deno run -A tools/mutate.ts --operators",
   // The wac side of `mutate`. `issues/system/0161` step 6.
   //
+  // `--sample=N [--seed=S]` draws a stratified subset — round-robin across files, so a small file is
+  // represented before a large one gets a second mutant. Both commands take it and both use the same
+  // draw, so `mutate:list --sample=N --seed=S` shows exactly what `mutate:run` with those flags will
+  // measure. `packages/bls` is 1356 mutants; a sample is the difference between a number you have and
+  // a sweep you keep meaning to run.
+  //
   // `mutate:list` says what a run *would* mutate, without running, staging or compiling anything.
   // `mutate:run` does it: stage a copy, apply each mutant, run the scope's tests, score what came
   // back. It runs the whole test directory per mutant, where `tools/mutate.ts` narrows to the tests

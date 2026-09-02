@@ -18,6 +18,8 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { Flags, parseFlags, targetsUnder } from "./mutatefiles.wac";
+import { fileCount, sampleMutants } from "./mutatesample.wac";
+import { Vec } from "core/vec.wac";
 import { GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
@@ -118,7 +120,8 @@ export i32 main(Core core, Cli cli) {
   }
   string dir = f.dir;
   if (dir == "") {
-    core.log("usage: mutatelist [--package <name>|<dir>] [--operators=a,b] [--no-sample]");
+    core.log("usage: mutatelist [--package <name>|<dir>] [--operators=a,b] [--no-sample]"
+             + " [--sample=N] [--seed=S] [--triage]");
     return 1;
   }
 
@@ -130,17 +133,29 @@ export i32 main(Core core, Cli cli) {
 
   Flags f2 = f;
   GenStats stats = GenStats(0, 0, 0);
-  i32 total = 0;
-  string[] names = string[65536](fill: "");
+  Vec<Mutant> population = Vec.create();
   for (i32 f = 0; f < files.len(); f++) {
     FileResult r = cli.readFile(files[f]).wait();
     if (!r.ok) { continue; }
     Mutant[] got = generate(files[f], string.fromBytes(r.bytes), f2.operators, stats, f2.perShape);
-    for (i32 i = 0; i < got.len(); i++) {
-      if (total < names.len()) { names[total] = got[i].name; }
-      total = total + 1;
-    }
+    for (i32 i = 0; i < got.len(); i++) { population.push(got[i]); }
   }
+
+  // **`--sample` here draws the same subset `mutaterun` would**, which is the whole point of the two
+  // sharing `parseFlags` and `sampleMutants`: a listing that showed a different set from the one the
+  // run measures would be worse than no listing. Given a seed, this *is* `--explain-selection`.
+  Mutant[] chosen = population.toArray();
+  if (f2.sample > 0 && f2.sample < chosen.len()) {
+    i32 before = chosen.len();
+    i32 seed = f2.seed != 0 ? f2.seed : (core.nowMillis().wait() as! i32);
+    chosen = sampleMutants(chosen, f2.sample, seed);
+    core.log("sampling " + itoa(chosen.len()) + " of " + itoa(before) + " mutant(s) across "
+             + itoa(fileCount(chosen)) + " file(s), seed " + itoa(seed));
+  }
+
+  i32 total = chosen.len();
+  string[] names = string[total](fill: "");
+  for (i32 i = 0; i < total; i++) { names[i] = chosen[i].name; }
 
   if (f2.triage) { return report(core, cli, dir, files, names, total, stats); }
 

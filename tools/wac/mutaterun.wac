@@ -54,6 +54,7 @@ import { Flags, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
 import { Profiled, buildProfile } from "./mutatecoverage.wac";
 import { RunPlan, linesOf, runPlanFor } from "./mutateplan.wac";
 import { WAC_CACHE_DIR, treeKeyOf } from "./mutateprofile.wac";
+import { fileCount, sampleMutants } from "./mutatesample.wac";
 import { Vec } from "core/vec.wac";
 import { Edit, GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
@@ -199,7 +200,7 @@ export i32 exitFor(i32 survivors, bool refused) {
 }
 
 /**
- * `mutaterun [--package <name>|<dir>] [--operators=a,b] [--no-sample]`.
+ * `mutaterun [--package <name>|<dir>] [--operators=a,b] [--no-sample] [--sample=N] [--seed=S]`.
  *
  * Exits 1 when anything survived, which is what makes it usable as a check rather than only as a
  * report, and 2 when the run could not be read at all — a staging failure or a baseline that was
@@ -213,7 +214,8 @@ export i32 main(Core core, Cli cli) {
   Flags f = parseFlags(args);
   if (f.problem != "") { core.log(f.problem); return 2; }
   if (f.dir == "") {
-    core.log("usage: mutaterun [--package <name>|<dir>] [--operators=a,b] [--no-sample]");
+    core.log("usage: mutaterun [--package <name>|<dir>] [--operators=a,b] [--no-sample]"
+             + " [--sample=N] [--seed=S]");
     return 2;
   }
 
@@ -251,7 +253,35 @@ export i32 main(Core core, Cli cli) {
     core.warn("Every mutant will run the whole of " + testDir + " — slower, and never wrong.");
   }
 
+  // **Every mutant is generated before any is run, because sampling is stratified by file.**
+  // `sampleMutants` round-robins across files so a small file is represented before a large one gets
+  // a second draw — which it can only do if it sees the whole population. Sampling per file would
+  // give each file the same count regardless of size, a different and worse rule.
   GenStats stats = GenStats(0, 0, 0);
+  Vec<string> texts = Vec.create();
+  Vec<Mutant> population = Vec.create();
+  for (i32 fi = 0; fi < files.len(); fi++) {
+    FileResult src = cli.readFile(files[fi]).wait();
+    if (!src.ok) { core.warn("cannot read " + files[fi]); texts.push(""); continue; }
+    string text = string.fromBytes(src.bytes);
+    texts.push(text);
+    Mutant[] got = generate(files[fi], text, f.operators, stats, f.perShape);
+    for (i32 i = 0; i < got.len(); i++) { population.push(got[i]); }
+  }
+
+  Mutant[] chosen = population.toArray();
+  if (f.sample > 0 && f.sample < chosen.len()) {
+    i32 seed = f.seed != 0 ? f.seed : (core.nowMillis().wait() as! i32);
+    i32 before = chosen.len();
+    chosen = sampleMutants(chosen, f.sample, seed);
+    // **The seed is printed because the draw is the answer's scope.** A surprising survivor from a
+    // sample is only useful if the same subset can be asked again, and a run that sampled without
+    // saying so reads as a run that measured everything.
+    core.log("sampling " + itoa(chosen.len()) + " of " + itoa(before) + " mutant(s) across "
+             + itoa(fileCount(chosen)) + " file(s), seed " + itoa(seed)
+             + " — pass --seed " + itoa(seed) + " to draw the same subset again");
+  }
+
   i32 killed = 0;
   i32 measured = 0;
   i32 invalid = 0;
@@ -271,11 +301,23 @@ export i32 main(Core core, Cli cli) {
   Fs fs = Fs.onHost(cli, 0);
 
   for (i32 fi = 0; fi < files.len(); fi++) {
-    FileResult src = cli.readFile(files[fi]).wait();
-    if (!src.ok) { core.warn("cannot read " + files[fi]); continue; }
-    string text = string.fromBytes(src.bytes);
+    string text = texts.get(fi);
+    if (text == "") { continue; }
     string staged = stage + "/" + files[fi];
-    Mutant[] generated = generate(files[fi], text, f.operators, stats, f.perShape);
+
+    // This file's share of the draw. Selecting from `chosen` rather than regenerating keeps the
+    // sample the one that was reported: regenerating would re-run the literal operator's own
+    // sampling and quietly draw a different set.
+    Vec<Mutant> mine = Vec.create();
+    for (i32 i = 0; i < chosen.len(); i++) {
+      if (chosen[i].edits.len() > 0 && chosen[i].edits[0].file == files[fi]) { mine.push(chosen[i]); }
+    }
+    Mutant[] generated = mine.toArray();
+    // **No mutants here means no control here.** A control proves the staging and test pipeline for
+    // the file being mutated; a file the draw skipped is not being mutated, so its control would be
+    // a test run that answers a question nobody asked. Sampling 12 of `bls`'s 1356 would otherwise
+    // have cost ten of them.
+    if (generated.len() == 0) { continue; }
 
     // **Triage before running, which is cheaper than it looks.** Compiling a mutant costs about a
     // sixteenth of running its scope's tests, and every mutant it excludes is a test run that does
@@ -338,7 +380,7 @@ export i32 main(Core core, Cli cli) {
       Outcome o = outcomeOf(false, Verdict[](runTests(cli, binary, stage, rp.dirs)), rp.notCovered);
       // Put the file back before the next mutant, or two mutations compose into a third nobody
       // generated and the name in the report describes one of them.
-      cli.writeFile(staged, src.bytes).wait();
+      cli.writeFile(staged, text.toBytes()).wait();
 
       if (o.noVerdict != "") {
         // **Named, not just counted.** A mutant in neither total is the one line of this report a
