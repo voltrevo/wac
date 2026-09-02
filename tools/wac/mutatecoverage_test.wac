@@ -1,0 +1,118 @@
+// Reading one coverage document, and the four ways it declines.
+//
+// **Declining is the whole content.** A partial profile does not fail; it says some lines are
+// unreached when they are merely unmeasured, and a mutant in them is then scored against tests that
+// never ran. Every refusal below is cheaper than the number it prevents.
+// `issues/system/0161` step 6.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { Share, WAC_LANE_GRANTS, shareFrom, shareOf } from "./mutatecoverage.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string good() {
+  return "{\"entry\":\"packages/x/test/wac/a_test.wac\","
+       + "\"skipped\":[],"
+       + "\"all\":[\"a.wac:1\",\"a.wac:2\"],"
+       + "\"tests\":{\"test_one\":[\"a.wac:1\"],\"test_two\":[\"a.wac:1\",\"a.wac:2\"]}}";
+}
+
+export string test_a_complete_profile_names_which_tests_reached_which_points() {
+  T t = T.create();
+  Share s = shareFrom(good(), "packages/x/test/wac/a_test.wac");
+  t.isTrue(s.ok, "it read — " + s.why);
+  t.eqI32(s.tests.len(), 2, "two tests");
+  t.eqStr(s.tests[0] + "=" + s.points[0], "test_one=a.wac:1", "each with the points it reached");
+  t.eqStr(s.tests[1] + "=" + s.points[1], "test_two=a.wac:1 a.wac:2", "and the second with two");
+  t.eqI32(s.all.len(), 2, "and every point the entry has, reached or not");
+  return t.report();
+}
+
+/** The entry may be named relative to a staged root, so a suffix match counts. */
+export string test_the_entry_matches_by_suffix_too() {
+  T t = T.create();
+  t.isTrue(shareFrom(good(), "test/wac/a_test.wac").ok, "a suffix on a path boundary is this entry");
+  t.isTrue(!shareFrom(good(), "other/a_test.wac").ok, "but a different path is not");
+  t.isTrue(!shareFrom(good(), "wac/a_test.wa").ok, "and a partial segment is not a suffix");
+  return t.report();
+}
+
+/**
+ * **A partial profile is refused, and a missing `skipped` is refused too.**
+ *
+ * A document without the key is one this cannot reason about, and reading it as "nothing was skipped"
+ * is exactly the assumption that turns a partial profile into a confident wrong answer.
+ */
+export string test_a_partial_profile_is_refused() {
+  T t = T.create();
+  string skipped = "{\"entry\":\"a_test.wac\",\"skipped\":[\"test_three\"],"
+                 + "\"tests\":{\"test_one\":[\"a.wac:1\"]}}";
+  Share s = shareFrom(skipped, "a_test.wac");
+  t.isTrue(!s.ok, "one skipped test makes the profile partial");
+  t.isTrue(s.why.indexOf("partial") >= 0, "and it says so: " + s.why);
+
+  string silent = "{\"entry\":\"a_test.wac\",\"tests\":{\"test_one\":[\"a.wac:1\"]}}";
+  Share q = shareFrom(silent, "a_test.wac");
+  t.isTrue(!q.ok, "a document that does not say what it skipped is refused rather than assumed");
+  t.isTrue(q.why.indexOf("does not say") >= 0, "and says which: " + q.why);
+
+  string empty = "{\"entry\":\"a_test.wac\",\"skipped\":[],\"tests\":{}}";
+  t.isTrue(!shareFrom(empty, "a_test.wac").ok, "and a run that reached no test is not a profile");
+  t.isTrue(!shareFrom("not json at all", "a_test.wac").ok, "nor is text that is not JSON");
+  return t.report();
+}
+
+/**
+ * The grants are the lane's, not a plausible subset.
+ *
+ * A test skipped for want of a grant contributes no coverage, and code only that test reaches then
+ * looks unreached. `issues/system/0176` is the day two lists disagreed.
+ */
+export string test_the_grants_are_the_lanes() {
+  T t = T.create();
+  string[] g = WAC_LANE_GRANTS();
+  t.eqI32(g.len(), 5, "five of them");
+  string all = "";
+  for (i32 i = 0; i < g.len(); i++) { all = all + g[i] + " "; }
+  t.isTrue(all.indexOf("--allow-read") >= 0 && all.indexOf("--allow-write") >= 0
+           && all.indexOf("--allow-run") >= 0 && all.indexOf("--allow-env") >= 0
+           && all.indexOf("--allow-net") >= 0,
+           "read, write, run, env and net — the set the wac lane passes: " + all);
+  return t.report();
+}
+
+/**
+ * A real coverage run, against a fixture of one test.
+ *
+ * The parsing above is the half that can be tested from a string; this is the half that says the
+ * binary is asked the right question and writes what this expects to read.
+ */
+export string test_a_real_run_produces_a_profile_this_can_read(Core core, Cli cli) {
+  T t = T.create();
+  string root = ".cache/mutatecoverage-fixture";
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.mkdir(root + "/test/wac", true).wait();
+  cli.writeFile(root + "/src.wac",
+                "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
+                  .toBytes()).wait();
+  cli.writeFile(root + "/test/wac/a_test.wac",
+                ("import { T } from \"../../../../packages/wactest/src/assert.wac\";\n"
+                 + "import { small } from \"../../src.wac\";\n"
+                 + "export string test_small_is_small() {\n"
+                 + "  T t = T.create();\n"
+                 + "  t.isTrue(small(1), \"one is small\");\n"
+                 + "  return t.report();\n"
+                 + "}\n").toBytes()).wait();
+
+  Share s = shareOf(core, cli, cli.cwd().wait() + "/native/v8/target/release/wac",
+                    cli.cwd().wait(), root + "/test/wac/a_test.wac",
+                    cli.cwd().wait() + "/" + root + "-prof");
+  t.isTrue(s.ok, "the run produced a complete profile — " + s.why);
+  if (!s.ok) { return t.report(); }
+  t.eqI32(s.tests.len(), 1, "one test");
+  t.eqStr(s.tests[0], "test_small_is_small", "named as the export is, with no translation");
+  t.isTrue(s.points[0] != "", "and it reached something: " + s.points[0]);
+
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + root + "-prof'"), u8[0]()).wait();
+  return t.report();
+}

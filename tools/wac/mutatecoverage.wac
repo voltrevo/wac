@@ -1,0 +1,154 @@
+// Profiling one `*_test.wac` with the binary — `wacShare` from `tools/mutate/profile.ts`.
+//
+// `wac test --coverage` writes a JSON document per entry naming which tests reached which points.
+// That is what `tools/wac/mutateplan.wac` selects against, and this is where it comes from.
+//
+// **A partial profile is refused rather than used.** If the run skipped anything — a test wanting a
+// grant it did not get, or a host oracle this cannot supply — then the lines that test reaches look
+// unreached, and a mutant in them is scored against tests that never ran. Declining costs a scope
+// that widens to everything; using it costs a number nobody can tell is wrong.
+//
+// **The names are the exports' own.** A package whose tests are wac files has no `.test.ts` wrapper,
+// so no translation is wanted — translating them is how a filter comes to match nothing and a mutant
+// is scored against a run of zero tests. `issues/system/0183`, `issues/system/0161` step 6.
+
+import { Cli, Core, Exec, FileResult } from "std/platform.wac";
+import { JsonArray, JsonObject, JsonValue } from "../../packages/json/src/value.wac";
+import { parse } from "../../packages/json/src/json.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/**
+ * The grants the suite's own wac lane passes.
+ *
+ * **One list, because two lists is how the first one aged.** A test skipped for want of a grant
+ * contributes no coverage, and code only that test reaches then looks unreached — so this has to be
+ * what the lane passes, not a plausible subset. `tools/mutate/grants.test.ts` fails if the two stop
+ * agreeing. `issues/system/0176`.
+ */
+export string[] WAC_LANE_GRANTS() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+/** What one entry's coverage came to. `ok` is false when the profile is partial or absent. */
+export struct Share {
+  bool ok;
+  string why;
+  /** Every point the entry has, whether or not a test reached it. */
+  string[] all;
+  /** Test names, and the points each reached, space-separated and parallel. */
+  string[] tests;
+  string[] points;
+}
+
+Share none(string why) {
+  return Share(false, why, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""));
+}
+
+/**
+ * Run `wac test --coverage` over `entry` in `work`, writing profiles to `profileDir`.
+ *
+ * The caller supplies the directory rather than this making one, for the reason `issues/system/0161`
+ * records about temp directories: no capability is needed for a path the caller can name, and a
+ * directory that survives the run is the one you can look at afterwards.
+ */
+export Share shareOf(Core core, Cli cli, string binary, string work, string entry,
+                     string profileDir) {
+  cli.mkdir(profileDir, true).wait();
+  string[] grants = WAC_LANE_GRANTS();
+  string[] args = string[3 + grants.len()](fill: "");
+  args[0] = "test";
+  args[1] = "--coverage";
+  for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+  args[2 + grants.len()] = entry;
+
+  Exec r = cli.execWithIn(binary, args, u8[0](),
+                          string[]("WAC_PROFILE=" + profileDir), false, false, work).wait();
+  if (!r.ran()) { return none("the binary did not run"); }
+
+  string[]? listed = cli.readDir(profileDir).wait();
+  if (listed is null) { return none("no profile directory after the run"); }
+  string[] names = listed!;
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    if (name.len() < 6 || name.slice(name.len() - 5, name.len()) != ".json") { continue; }
+    FileResult f = cli.readFile(profileDir + "/" + name).wait();
+    if (!f.ok) { continue; }
+    Share got = shareFrom(string.fromBytes(f.bytes), entry);
+    // The directory can hold profiles from other entries; the one that names this entry is ours.
+    if (got.ok || got.why != "not this entry") { return got; }
+  }
+  return none("no profile named " + entry);
+}
+
+/**
+ * One coverage document, as a `Share`. Exported so the parsing can be tested without a run.
+ *
+ * `entry` matches either exactly or as a suffix, because the document records the path the binary was
+ * given and the caller may have named it relative to a staged root.
+ */
+export Share shareFrom(string text, string entry) {
+  JsonValue? root = parse(text.toBytes());
+  if (root is null) { return none("not JSON"); }
+  JsonObject doc = match (root!) { case Object(o): o, else: JsonObject.create() };
+  if (doc.len() == 0) { return none("not a profile"); }
+
+  string named = stringAt(doc, "entry");
+  if (named != entry && !endsWithSlash(named, entry)) { return none("not this entry"); }
+
+  // **`skipped` missing is not the same as empty.** A document without the key is one this cannot
+  // reason about, and treating it as "nothing was skipped" is exactly the assumption that turns a
+  // partial profile into a confident wrong answer.
+  JsonValue? skipped = doc.get("skipped".toBytes());
+  if (skipped is null) { return none("the profile does not say what it skipped"); }
+  JsonArray skips = asArray(skipped!);
+  if (skips.len() > 0) {
+    return none("the run skipped " + itoa(skips.len()) + " test(s), so this profile is partial");
+  }
+
+  JsonValue? testsVal = doc.get("tests".toBytes());
+  JsonObject tests = testsVal is null
+    ? JsonObject.create()
+    : match (testsVal!) { case Object(o): o, else: JsonObject.create() };
+  if (tests.len() == 0) { return none("the run reached no test"); }
+
+  string[] names = string[tests.len()](fill: "");
+  string[] points = string[tests.len()](fill: "");
+  for (i32 i = 0; i < tests.len(); i++) {
+    names[i] = keyAt(tests, i);
+    points[i] = joinArray(asArray(valueAt(tests, i)));
+  }
+  JsonValue? allVal = doc.get("all".toBytes());
+  JsonArray all = allVal is null ? JsonArray.create() : asArray(allVal!);
+  string[] allPts = string[all.len()](fill: "");
+  for (i32 i = 0; i < all.len(); i++) { allPts[i] = textOf(all.get(i)); }
+  return Share(true, "", allPts, names, points);
+}
+
+/** Whether `named` is `entry` with a directory prefix — `a/b/c.wac` for `b/c.wac`. */
+bool endsWithSlash(string named, string entry) {
+  string want = "/" + entry;
+  return named.len() > want.len() && named.slice(named.len() - want.len(), named.len()) == want;
+}
+
+string stringAt(JsonObject o, string key) {
+  JsonValue? v = o.get(key.toBytes());
+  return v is null ? "" : textOf(v!);
+}
+
+JsonArray asArray(JsonValue v) {
+  return match (v) { case Array(a): a, else: JsonArray.create() };
+}
+
+string textOf(JsonValue v) {
+  return match (v) { case Str(b): string.fromBytes(b), else: "" };
+}
+
+string joinArray(JsonArray a) {
+  string out = "";
+  for (i32 i = 0; i < a.len(); i++) { out = out + (i == 0 ? "" : " ") + textOf(a.get(i)); }
+  return out;
+}
+
+string keyAt(JsonObject o, i32 i) { return string.fromBytes(o.at(i).key); }
+
+JsonValue valueAt(JsonObject o, i32 i) { return o.at(i).value; }
