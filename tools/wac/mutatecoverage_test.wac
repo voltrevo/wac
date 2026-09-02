@@ -158,7 +158,7 @@ export string test_a_coverage_point_is_a_file_and_a_line() {
 export string test_a_pass_with_nothing_to_profile_refuses(Core core, Cli cli) {
   T t = T.create();
   Profiled got = buildProfile(core, cli, "native/v8/target/release/wac", cli.cwd().wait(),
-                              string[0](fill: ""), ".cache/mutate-profile-wac");
+                              string[0](fill: ""), ".cache/mutatebuild-empty-prof", "", "");
   t.isFalse(got.ok, "an empty pass has nothing to narrow against");
   t.isTrue(got.why != "", "and says so rather than answering an empty profile silently");
   t.eqI32(got.p.known.len(), 0, "the profile it carries knows no points");
@@ -205,7 +205,8 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
 
   string cwd = cli.cwd().wait();
   Profiled got = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd,
-                              string[](root + "/test/wac/a_test.wac"), cwd + "/" + root + "-prof");
+                              string[](root + "/test/wac/a_test.wac"), cwd + "/" + root + "-prof",
+                              "", "");
 
   if (envOf(cli, marker()) != "") {
     t.isFalse(got.ok, "under the suite this refuses rather than re-entering it");
@@ -230,5 +231,77 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
   }
 
   cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + root + "-prof'"), u8[0]()).wait();
+  return t.report();
+}
+
+/**
+ * A second pass with the same key returns the profile the first one built, home map included.
+ *
+ * **The field worth asserting is `homeNames`.** `runPlanFor` turns the test names `selectTests` picked
+ * back into entries to run, and a hit that lost that map hands it names it cannot place — so it
+ * narrows nothing, and the run costs exactly what no profile costs while reporting that it profiled.
+ * The encoding did not carry it until this test existed, and no round-trip test would have caught
+ * that: an encoder and a test written against the encoder share the same blind spot.
+ *
+ * The second pass is given a binary that does not exist. A miss would try to spawn it and come back
+ * refused, so `ok` being true is proof the answer came from the cache rather than from a run —
+ * cheaper and far more direct than timing it.
+ */
+export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core core, Cli cli) {
+  T t = T.create();
+  if (envOf(cli, marker()) != "") {
+    // Under the suite a profile pass refuses outright, so there is no cache behaviour to observe.
+    // Asserting the refusal is the honest thing to check here rather than skipping.
+    Profiled nested = buildProfile(core, cli, "x", ".", string[0](fill: ""), ".", ".", "k");
+    t.isFalse(nested.ok, "under the suite this refuses before it reaches the cache at all");
+    return t.report();
+  }
+
+  string root = ".cache/mutatecache-fixture";
+  string cacheDir = root + "-cache";
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"),
+           u8[0]()).wait();
+  cli.mkdir(root + "/test/wac", true).wait();
+  cli.writeFile(root + "/src.wac",
+                "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
+                  .toBytes()).wait();
+  cli.writeFile(root + "/test/wac/a_test.wac",
+                ("import { T } from \"../../../../packages/wactest/src/assert.wac\";\n"
+                 + "import { small } from \"../../src.wac\";\n"
+                 + "export string test_small_is_small() {\n"
+                 + "  T t = T.create();\n"
+                 + "  t.isTrue(small(1), \"one is small\");\n"
+                 + "  return t.report();\n"
+                 + "}\n").toBytes()).wait();
+
+  string cwd = cli.cwd().wait();
+  string[] entries = string[](root + "/test/wac/a_test.wac");
+  Profiled first = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd, entries,
+                                cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
+  t.isTrue(first.ok, "the first pass profiled — " + first.why);
+
+  // No such binary: only the cache can answer this one.
+  Profiled second = buildProfile(core, cli, cwd + "/no/such/binary", cwd, entries,
+                                 cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
+  t.isTrue(second.ok,
+           "the second pass answered without running anything, which it can only do from the cache");
+  if (first.ok && second.ok) {
+    t.eqI32(second.p.known.len(), first.p.known.len(), "the same points came back");
+    t.isTrue(second.homeNames.len() > 0,
+             "and the home map survived the round trip — the field a hit would otherwise lose, "
+               + "turning every later mutant back into a whole-scope run");
+    t.eqStr(second.homeNames[0], first.homeNames[0], "naming the same test");
+    t.eqStr(second.homeFiles[0], first.homeFiles[0], "in the same file");
+  }
+
+  // A different key is a different tree, and must not hit.
+  Profiled other = buildProfile(core, cli, cwd + "/no/such/binary", cwd, entries,
+                                cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "bkey");
+  t.isFalse(other.ok,
+            "a key the cache has never seen misses, and the missing binary then fails the run — "
+              + "which is the canary that the two hits above were hits");
+
+  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"),
+           u8[0]()).wait();
   return t.report();
 }

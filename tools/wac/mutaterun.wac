@@ -6,11 +6,10 @@
 // what counts — and this is the loop around them.
 //
 // **The whole loop at a size where it can be watched.** `tools/mutate.ts` does this across every
-// package with caching, parallelism and per-mutant deadlines; the parts of that which are judgement
-// are ported and tested, and this is the mechanism. What it does not yet do — several mutants at once
-// (`jobsFor`), a deadline per mutant (`mutatedeadline.wac`), a cached profile across runs
-// (`mutateprofile.wac`) — is mechanism on top of this rather than different decisions, and each of
-// those modules is here waiting for a caller.
+// package with parallelism and per-mutant deadlines; the parts of that which are judgement are ported
+// and tested, and this is the mechanism. What it does not yet do — several mutants at once
+// (`jobsFor`), a deadline per mutant (`mutatedeadline.wac`) — is mechanism on top of this rather than
+// different decisions, and both modules are here waiting for a caller.
 //
 // **Every mutant is narrowed, and the report says how many actually were.** `buildProfile` runs each
 // test file under coverage once, and `runPlanFor` turns a mutant's lines into the entries that reach
@@ -27,10 +26,19 @@
 //
 // The profile costs one coverage run per *test file* and saves work per *mutant*, so it is a loss
 // until the mutants outnumber the test files several times over — three mutants against three test
-// files is the worst case, not a typical one. What makes it pay across runs is the cache in
-// `mutateprofile.wac`, which has no caller yet. Both scopes returned the same verdicts narrowed and
+// files is the worst case, not a typical one. Both scopes returned the same verdicts narrowed and
 // unnarrowed, which is the check that matters here: an unnarrowed run is the only oracle a narrowed
 // one has.
+//
+// **The cache is what makes it pay on a second run**, keyed by `keyFor` below on the test files and
+// their whole import graph:
+//
+//     packages/rlp --operators=guard   cold 16.3s   cached 1.1s   same verdicts both times
+//
+// The 15 seconds is the profile build and nothing else — the delta is one coverage run per test
+// file, which is exactly what a hit skips. Everything else in the run (staging, triage compiles,
+// the mutants themselves) happens either way. See `keyFor` for why the key cannot be narrower than
+// the whole graph.
 //
 // **`rp.filter` is deliberately never used.** `filterFor` builds Deno's anchored-regex spelling and
 // `wac test --filter` matches a plain substring, so handing it over selects nothing and scores the
@@ -45,6 +53,8 @@ import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { Flags, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
 import { Profiled, buildProfile } from "./mutatecoverage.wac";
 import { RunPlan, linesOf, runPlanFor } from "./mutateplan.wac";
+import { WAC_CACHE_DIR, treeKeyOf } from "./mutateprofile.wac";
+import { Vec } from "core/vec.wac";
 import { Edit, GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
@@ -119,6 +129,36 @@ export string[] locationsOf(string file, string source, Mutant m) {
     }
   }
   return out;
+}
+
+/**
+ * The key the profile is cached under: the test files, and every source they import.
+ *
+ * **The whole graph rather than the package's own files.** A test reaches through `core/`, `std/` and
+ * other packages, and a change in any of them can move which lines it touches — so a key over the
+ * scope alone would *hit* on a tree the profile no longer describes. That does not fail: it narrows a
+ * mutant away from the test that would have killed it, and reports a survivor that is not one.
+ *
+ * `""` when any test file's graph cannot be gathered, which turns the cache off rather than keying on
+ * a partial answer. `treeKeyOf` sorts internally, so the order these arrive in does not matter.
+ */
+string keyFor(Fs fs, Cli cli, string[] testFiles) {
+  Vec<string> paths = Vec.create();
+  Vec<string> texts = Vec.create();
+  for (i32 i = 0; i < testFiles.len(); i++) {
+    Sources src = gather(fs, cli, testFiles[i]);
+    if (src.why != "") { return ""; }
+    for (i32 j = 0; j < src.paths.len(); j++) {
+      bool have = false;
+      for (i32 k = 0; k < paths.len(); k++) {
+        if (paths.get(k) == src.paths[j]) { have = true; break; }
+      }
+      if (have) { continue; }
+      paths.push(src.paths[j]);
+      texts.push(src.texts[j]);
+    }
+  }
+  return treeKeyOf(testFiles, paths.toArray(), texts.toArray());
 }
 
 /**
@@ -201,8 +241,11 @@ export i32 main(Core core, Cli cli) {
   // code the baseline ran, or it names lines that no longer exist. A pass that refuses costs
   // narrowing and nothing else: `runPlanFor` widens every mutant to the whole scope, which is what
   // this did before the profile existed.
-  Profiled prof = buildProfile(core, cli, binary, stage, testsUnder(cli, testDir),
-                               root + "/.cache/mutate-profile-wac");
+  string[] testFiles = testsUnder(cli, testDir);
+  Profiled prof = buildProfile(core, cli, binary, stage, testFiles,
+                               root + "/.cache/mutate/profiles",
+                               root + "/" + WAC_CACHE_DIR(),
+                               keyFor(Fs.onHost(cli, 0), cli, testFiles));
   if (!prof.ok) {
     core.warn("not narrowing: " + prof.why);
     core.warn("Every mutant will run the whole of " + testDir + " — slower, and never wrong.");

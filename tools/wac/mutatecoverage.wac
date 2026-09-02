@@ -12,13 +12,15 @@
 // so no translation is wanted — translating them is how a filter comes to match nothing and a mutant
 // is scored against a run of zero tests. `issues/system/0183`, `issues/system/0161` step 6.
 
-import { Cli, Core, Exec, FileResult } from "std/platform.wac";
+import { Change, Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
 import { JsonArray, JsonObject, JsonValue } from "../../packages/json/src/value.wac";
 import { parse } from "../../packages/json/src/json.wac";
 import { Map } from "core/map.wac";
 import { hashString, stringEq } from "core/hash.wac";
 import { Vec } from "core/vec.wac";
 import { Profile } from "./mutateplan.wac";
+import { Decoded, KEEP, cachePath, decodeProfile, encodeProfile, isProfileFile, toEvict }
+  from "./mutateprofile.wac";
 import { refuseIfNested } from "./suitegate.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -241,12 +243,32 @@ string[] splitSpaces(string s) {
  * value `byCost` already reads as unmeasured.
  */
 export Profiled buildProfile(Core core, Cli cli, string binary, string work, string[] testFiles,
-                             string profileDir) {
+                             string profileDir, string cacheDir, string key) {
   if (refuseIfNested(core, cli, "mutate: building a coverage profile") != 0) {
     return Profiled(false,
                     "refused: a profile pass runs every test file, so it must not start from inside"
                     + " the suite — see wac-mono 0077",
                     emptyProfile(), string[0](fill: ""), string[0](fill: ""));
+  }
+
+  // **A hit is only safe if the key covers everything that could change what a test reaches.** A key
+  // over too little does not miss — it *hits*, on a tree the profile no longer describes, so a mutant
+  // is narrowed to tests that no longer reach it, survives, and is reported as a survivor that is
+  // not one. False survivals are the direction this tool treats as a wrong answer and the one a
+  // reader cannot spot-check, so `""` here means the caller could not compute a key and disables the
+  // cache rather than weakening it.
+  string cached = (key == "" || cacheDir == "") ? "" : cachePath(cacheDir, key);
+  if (cached != "") {
+    FileResult hit = cli.readFile(cached).wait();
+    if (hit.ok) {
+      Decoded d = decodeProfile(string.fromBytes(hit.bytes));
+      // A file that is not a profile is rebuilt over rather than treated as a failure: the cache is
+      // an optimisation, and a corrupt entry should cost time and nothing else.
+      if (d.ok && d.known.len() > 0) {
+        return Profiled(true, "", Profile(d.known, d.tests, d.files, d.cost),
+                        d.homeNames, d.homeFiles);
+      }
+    }
   }
 
   Map<string, i32> at = Map.create(hashString, stringEq);
@@ -312,5 +334,39 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
     core.warn("  " + itoa(malformed) + " coverage point(s) were not in the file:line shape "
               + "`selectTests` looks up, and were dropped");
   }
+  if (cached != "") {
+    cli.mkdir(cacheDir, true).wait();
+    Change wrote = cli.writeFile(cached,
+                                 encodeProfile(p.known, p.tests, p.files, p.cost,
+                                               homeNames.toArray(),
+                                               homeFiles.toArray()).toBytes()).wait();
+    if (!wrote.ok()) { core.warn("  could not cache the profile: " + wrote.message); }
+    else { evict(cli, cacheDir); }
+  }
   return Profiled(true, "", p, homeNames.toArray(), homeFiles.toArray());
+}
+
+/**
+ * Keep the `KEEP()` newest profiles in `dir` and remove the rest.
+ *
+ * Only the current tree's key can ever hit, so every older file is dead the moment a byte changes.
+ * Keeping a few rather than one buys the case that happens while working: edit, look, undo, look
+ * again. `toEvict` takes the times rather than reading them, so the rule is tested without a
+ * filesystem and this is only the part that has to touch one.
+ */
+void evict(Cli cli, string dir) {
+  string[]? listed = cli.readDir(dir).wait();
+  if (listed is null) { return; }
+  string[] names = listed!;
+  Vec<string> paths = Vec.create();
+  Vec<i64> when = Vec.create();
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!isProfileFile(names[i])) { continue; }
+    Stat st = cli.stat(dir + "/" + names[i]).wait();
+    if (!st.exists) { continue; }
+    paths.push(dir + "/" + names[i]);
+    when.push(st.modifiedMillis);
+  }
+  string[] gone = toEvict(paths.toArray(), when.toArray(), KEEP());
+  for (i32 i = 0; i < gone.len(); i++) { cli.remove(gone[i], false).wait(); }
 }
