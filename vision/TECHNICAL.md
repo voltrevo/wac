@@ -573,3 +573,35 @@ error: `parse` can fail with `Malformed`, which `load` does not return
 
 **Not yet.**
 
+---
+
+## `Ticket.any`'s losers keep running
+
+```wac
+async void example(Sys sys) {
+  Ticket<i32> a;
+  Ticket<i32> b;
+  Slot s;
+
+  Ticket<i32> win = Ticket.any([
+    add(s, a),
+    add(s, b),
+  ]);
+
+  a.resolve(1);
+  await win;
+  s.n;                  // 1
+
+  b.resolve(10);
+  await sys.drain();
+  s.n;                  // 11
+}
+
+async i32 add(Slot s, Ticket<i32> t) {
+  s.n += await t;
+  return s.n;
+}
+```
+
+**Not yet.**
+
