@@ -114,18 +114,18 @@ async i32 total(Sys sys) {
 ## Giving other work a turn
 
 ```wac
-async void tick(Sys sys, string name) {
-  for (i32 i = 0; i < 2; i++) {
-    sys.log(name);
-    await;
-  }
-}
-
 async i32 main(Sys sys) {
   tick(sys, "a");
   tick(sys, "b");
   await sys.drain();
   return 0;
+}
+
+async void tick(Sys sys, string name) {
+  for (i32 i = 0; i < 2; i++) {
+    sys.log(name);
+    await;
+  }
 }
 ```
 
