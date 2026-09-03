@@ -361,3 +361,128 @@ async i32 fileSize(Sys sys, string f) {
 
 **Not yet.**
 
+---
+
+## `coroutine` answers the machine and runs nothing
+
+```wac
+struct Slot {
+  i32 n;
+
+  async void tick(this) {
+    this.n += 1;
+    await;
+    this.n += 10;
+  }
+}
+
+void example() {
+  Slot s;
+  Coroutine<never, void> c = coroutine s.tick();
+
+  s.n;               // 0
+  c.step();          // Waiting
+  s.n;               // 1
+  c.step();          // Done
+  s.n;               // 11
+}
+```
+
+**Not yet.**
+
+---
+
+## `await;` suspends on a settled ticket
+
+```wac
+void example() {
+  Coroutine<never, void> c = coroutine tick();
+
+  match (c.step()) {
+    Waiting(t): { t.settled(); }     // true
+    Done(_):    { }
+  }
+  c.step();          // Done
+}
+
+async void tick() {
+  await;
+}
+```
+
+**Not yet.**
+
+---
+
+## A nested pause does not change the caller's type
+
+```wac
+void example() {
+  Coroutine<never, void> c = coroutine outer();
+
+  c.step();          // Waiting
+  c.step();          // Done
+}
+
+async void outer() {
+  await middle();
+}
+
+async void middle() {
+  await inner();
+}
+
+async void inner() {
+  await;
+}
+```
+
+**Not yet.**
+
+---
+
+## An async generator uses both variants
+
+```wac
+void example() {
+  Ticket<i32> t;
+  t.resolve(2);
+
+  Coroutine<i32, void> c = counter(t);
+
+  c.step();          // Yielded(1)
+  c.step();          // Waiting
+  c.step();          // Yielded(2)
+  c.step();          // Done
+}
+
+async gen<i32> void counter(Ticket<i32> t) {
+  yield 1;
+  yield await t;
+}
+```
+
+**Not yet.**
+
+---
+
+## An `await` is a boundary because it is written
+
+```wac
+void example() {
+  Ticket<i32> t;
+  t.resolve(21);
+
+  Coroutine<never, i32> c = coroutine doubled(t);
+
+  c.step();          // Waiting
+  c.step();          // Done(42)
+}
+
+async i32 doubled(Ticket<i32> t) {
+  return (await t) * 2;
+}
+```
+
+**Not yet.**
+
