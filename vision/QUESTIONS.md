@@ -40,13 +40,6 @@ hang. Every case found so far dissolves: a ticket holds its own coroutine, so wh
 ticket can always drive it, and a capability that gives up should settle with an error rather than
 vanish. Left open because the better error is worth having if a case turns up.
 
-## `await;` inside an async generator
-
-In a plain async function a bare await yields nothing, making it `Coroutine<void, R>`. In an async
-generator that already yields `string`, the same await forces `union<string, void>` on the yield
-slot and every consumer inherits a variant nobody asked for. Either a voluntary pause is a fourth
-step outcome, or `await;` is illegal there and you give up a turn by yielding a value.
-
 ## `for … in` over an async generator
 
 Stepping one can answer `Waiting`, which a synchronous loop has no way to handle. So either that

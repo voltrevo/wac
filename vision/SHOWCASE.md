@@ -183,7 +183,7 @@ i32 sum(Tree t) {
 }
 ```
 
-`for … in` steps a `Coroutine<T, void>`.
+`for … in` steps a `Generator<T, void>`.
 
 **Not yet.**
 
