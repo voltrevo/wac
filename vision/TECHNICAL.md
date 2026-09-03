@@ -486,3 +486,65 @@ async i32 doubled(Ticket<i32> t) {
 
 **Not yet.**
 
+---
+
+## `never` satisfies any type
+
+```wac
+i32 pick(bool b) {
+  if (b) { return 1; }
+  return spin();
+}
+
+never spin() {
+  while (true) { }
+}
+```
+
+**Not yet.**
+
+---
+
+## A `never` function cannot return
+
+```wac
+never spin(bool once) {
+  if (once) { return; }
+  while (true) { }
+}
+```
+
+```
+error: a `never` function cannot return
+```
+
+**Not yet.**
+
+---
+
+## Code after a `never` call is unreachable
+
+```wac
+i32 example() {
+  i32 x = spin();
+  return x;
+}
+```
+
+```
+warning: `x` is never bound — `spin()` does not return
+```
+
+```wac
+void example() {
+  spin();
+  more();
+}
+```
+
+```
+warning: `more()` is unreachable — `spin()` does not return
+```
+
+**Not yet.**
+
