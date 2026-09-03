@@ -95,6 +95,6 @@ elements disagree is the case that separates them.
 
 ## What example should capture a default type argument
 
-`enum Result<T, E = union>` is what makes `Result<T>` an ordinary generic rather than a special form,
-and it is the thing that lets `Result`'s current blessing expire.
+`enum Result<T, E = union>` is what makes `Result<T>` an ordinary generic rather than a special
+form, and it is the thing that lets `Result`'s current blessing expire.
 
