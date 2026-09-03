@@ -266,3 +266,98 @@ An unawaited call runs to its first suspension and hands its continuation to the
 
 **Not yet.**
 
+---
+
+## `schedule` applies to the end of its block
+
+```wac
+void example() {
+  Vec<Continuation> outer;
+  Vec<Continuation> inner;
+  schedule outer.push;
+
+  Slot s;
+  {
+    schedule inner.push;
+    s.tick();
+  }
+  s.tick();
+
+  inner.len();       // 1
+  outer.len();       // 1
+}
+```
+
+**Not yet.**
+
+---
+
+## A `Waiting` names the ticket its continuation is waiting on
+
+```wac
+async i32 doubled(Ticket<i32> t) {
+  return (await t) * 2;
+}
+
+void example() {
+  Vec<Continuation> pending;
+  schedule pending.push;
+
+  Ticket<i32> input;
+  Ticket<i32> r = doubled(input);
+
+  match (pending[0]) {
+    Ready { .. }: { }
+    Waiting { t, call }: {
+      t is input;          // true
+      input.resolve(10);
+      call();
+    }
+  }
+  r.value();               // 20
+}
+```
+
+**Not yet.**
+
+---
+
+## Calling a `Waiting` continuation before its ticket settles traps
+
+```wac
+void example() {
+  Vec<Continuation> pending;
+  schedule pending.push;
+
+  Ticket<i32> t;
+  doubled(t);
+
+  match (pending[0]) {
+    Ready { .. }:     { }
+    Waiting { call, .. }: { call(); }     // trap
+  }
+}
+```
+
+**Not yet.**
+
+---
+
+## `drain()` returns `Err` if it cannot finish draining
+
+```wac
+async i32 fileSize(Sys sys, string f) {
+  u8[] content = await sys.readFile(f);
+  return content.len();
+}
+
+void example(Sys sys) {
+  scheduler q;
+
+  fileSize(sys, "a.txt");     // q holds the read but cannot wait for it
+  q.drain();                  // Err(..)
+}
+```
+
+**Not yet.**
+
