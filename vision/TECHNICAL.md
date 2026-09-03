@@ -548,3 +548,28 @@ warning: `more()` is unreachable — `spin()` does not return
 
 **Not yet.**
 
+---
+
+## `try` requires the error to be in the set, not equal to it
+
+```wac
+async Result<Config, union<NotFound>> load(Sys sys) {
+  u8[] bytes = try await sys.readFile("config.json");
+  Config config = try parse(bytes);
+  return Result.Ok(config);
+}
+
+Result<Config, Malformed> parse(u8[] bytes) { … }
+```
+
+```
+error: `parse` can fail with `Malformed`, which `load` does not return
+  --> load.wac:3:20
+   |
+ 3 |   Config config = try parse(bytes);
+   |                   ^^^
+   = help: add it to the error set, or handle it here
+```
+
+**Not yet.**
+
