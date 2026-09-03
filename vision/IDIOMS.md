@@ -14,7 +14,7 @@ See [README.md](README.md) for the three tiers and why nothing checks them.
 
 ```wac
 /** The first element `p` accepts, or nothing. */
-T? find<T>(T[] xs, fn[bool(T)] p) {
+T? find<T>(T[] xs, fn<bool(T)> p) {
   for (T x in xs) {
     if (p(x)) {
       return x;
@@ -47,7 +47,7 @@ An import names a path from the project root. The same header works from any fil
 
 ```wac
 Vec<string> nonEmpty(string[] lines) {
-  Vec<string> out = Vec.create();
+  Vec<string> out;
   for (string line in lines) {
     if (line.len() > 0) {
       out.push(line);

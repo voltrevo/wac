@@ -13,13 +13,7 @@ See [README.md](README.md) for the three tiers and why nothing checks them.
 ## A server
 
 ```wac
-i32 main(Sys sys) {
-  run(sys);
-  sys.drain();
-  return 0;
-}
-
-async void run(Sys sys) {
+async i32 main(Sys sys) {
   auto listener = await sys.listen(8080);
   sys.log("listening on \{listener.port}");
 
@@ -167,7 +161,7 @@ enum Tree {
   Leaf(i32 value),
   Node(Tree left, Tree right)
 
-  Coroutine<i32, void> values(const this) {
+  gen<i32> void values(const this) {
     match (this) {
       Leaf(v): {
         yield v;
