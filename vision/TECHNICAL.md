@@ -234,3 +234,35 @@ error: this `default` is unreachable
 ```
 
 **Not yet.**
+
+---
+
+## An unawaited call hands its continuation to the current target
+
+```wac
+struct Slot {
+  i32 n;
+
+  async void tick(this) {
+    this.n += 1;
+    await;
+    this.n += 10;
+  }
+}
+
+void example() {
+  Vec<Continuation> pending;
+  schedule pending.push;
+
+  Slot s;
+  s.tick();
+
+  s.n;               // 1
+  pending.len();     // 1
+}
+```
+
+An unawaited call runs to its first suspension and hands its continuation to the current target.
+
+**Not yet.**
+
