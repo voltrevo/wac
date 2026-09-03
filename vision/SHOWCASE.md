@@ -160,19 +160,54 @@ holds.
 
 ---
 
+## Writing an iterator is writing a loop
+
+```wac
+enum Tree {
+  Leaf(i32 value),
+  Node(Tree left, Tree right)
+
+  Coroutine<i32, void> values(const this) {
+    match (this) {
+      Leaf(v): {
+        yield v;
+      }
+      Node(l, r): {
+        for (i32 v in l.values()) { yield v; }
+        for (i32 v in r.values()) { yield v; }
+      }
+    }
+  }
+}
+
+i32 sum(Tree t) {
+  i32 total = 0;
+  for (i32 v in t.values()) {
+    total += v;
+  }
+  return total;
+}
+```
+
+`for … in` steps a `Coroutine<T, void>`.
+
+**Not yet.**
+
+---
+
 ## A ticket is a value
 
 ```wac
 async void both(Sys sys) {
-  Pending<u8[]> a = sys.readFile("a.txt");
-  Pending<u8[]> b = sys.readFile("b.txt");
+  Ticket<u8[]> a = sys.readFile("a.txt");
+  Ticket<u8[]> b = sys.readFile("b.txt");
 
   u8[] first = await a;
   u8[] second = await b;
 }
 ```
 
-Making a `Pending` starts the work, and `await` waits for one already running, so both reads are in
+Making a `Ticket` starts the work, and `await` waits for one already running, so both reads are in
 flight before either is awaited. There is no parallel construct and nothing to join.
 
 **Not yet.**
