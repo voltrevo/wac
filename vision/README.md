@@ -42,14 +42,18 @@ the thing wanted.
 **`DECISIONS.md`** — small decisions already taken. One rule each, with enough of the reason that it
 can be revisited; a rule without its reason is one nobody can argue with.
 
+**`QUESTIONS.md`** — what is still open. Deliberately loose: no numbering, no fixed shape, nothing
+for a guard to walk.
+
 An example belongs to one tier at a time and moves between them freely. The line between the first
 two is worth showing rather than defining: a server, and an import written from the project root, are
 both the best spelling of what they do.
 
 The examples and the decisions have opposite lifecycles, and the difference is not an oversight. **An
 example is kept and marked `done` when it lands** — it is a picture of how the language reads, and
-that stays true afterwards. **A decisions entry is deleted once it is true** — it is a rule, and a
-rule written twice is a rule that drifts.
+that stays true afterwards. **A decisions entry is deleted once it reaches `spec/`** — the
+spec is the test, since an implementation can have a bug, and a rule written twice is a rule that
+drifts. **A question is deleted once it is answered**, and the answer has to land somewhere first.
 
 ## Nothing here is checked by anything
 

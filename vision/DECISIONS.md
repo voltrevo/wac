@@ -6,8 +6,9 @@ rule without its reason is one nobody can argue with.
 A decision is here because it is settled and small: too small to be worth arguing at length, and
 settled enough that the next person should follow it rather than re-open it.
 
-An entry is **deleted once it is true**, rather than marked done. A rule written twice is a rule that
-drifts, and the language itself is the better copy.
+An entry is **deleted once it reaches `spec/`**, rather than marked done. A rule written twice is a
+rule that drifts, and the spec is the better copy — an implementation can have a bug, so landing the
+code is not the test.
 
 See [README.md](README.md) for what this directory is and why nothing checks it.
 
