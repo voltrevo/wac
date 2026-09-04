@@ -17,7 +17,8 @@ because the language did.
 > because wac has no generics-free way to hold a list of structs without writing the container
 > again, and the ranges never need to be addressed as a group
 
-That reads like a language gap, and after seven wrong claims of exactly that kind this exercise
+That reads like a language gap, and after seven wrong claims of exactly that kind — eight now,
+since  was checked on 2026-09-04 — this exercise
 checked instead of assuming. **`Vec<Range>` compiles today** — three lines, measured. What the flat
 pair actually buys is not expressiveness but layout: a `Vec<Range>` boxes a struct per range, in the
 inner loop of a matcher. So it is a representation choice, a rewrite that tidied it would be slower,

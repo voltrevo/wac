@@ -3075,3 +3075,34 @@ So the environment is the one part of a grant that is neither a **category** nor
 *two dimensions* entry above has room for a third and does not have one — and unlike the value-side
 expressiveness that entry is about, this third dimension is something a host could enforce, which is
 the property that entry uses to separate what belongs on the wire from what does not.
+
+## *This exists because the language cannot* is a claim about causation, and it is right eleven times in seventeen
+
+The prose filter was pointed at the shipped tree and found five reversals in `std` and two more in
+`fs` and `sh`. Pointed at `vision/` instead, it asks a different question: **where does this directory
+claim that shipped code exists because of a language limitation, and is that why?**
+
+Seventeen such claims. `packages/regex`'s README already records the habit and the count — *"That
+reads like a language gap, and after seven wrong claims of exactly that kind this exercise checked
+instead of assuming"* — and checking is what it did: `Vec<Range>` compiles today, so the flat parallel
+arrays are a *layout* choice and the rewrite left them alone. Most of the seventeen have been through
+that.
+
+**One had not, and it is the eighth wrong one.** `@/packages/wactest` says five shipped files —
+`host.wac`, `built.wac`, `daemon.wac`, `repo.wac`, `childenv.wac`, 1,242 lines — *"are largely that
+workaround"* for a test being unable to hold a capability. Each of the five opens by saying what it
+is for, and only the capability part goes: `built.wac` is 599 lines of build cache with a freshness
+rule, `daemon.wac` is a readiness poll, `host.wac` is three machine facts that ten test files had
+copied verbatim. A freshness rule survives whoever is allowed to call it.
+
+**And one was checked and is right, which is worth saying because the failures are the memorable
+ones.** `@/packages/fmt` says `itoa64` exists twice *"because the language has no way to say this name
+is also available here"*. The shipped comment makes the causal link explicit: *"wac has no re-export —
+importing a symbol from a file that merely imports it is a compile error — **so** unifying them means
+editing the import line of all forty-odd wac test files."* No re-export is why the fix is a
+forty-file sweep rather than one line. The claim holds.
+
+**Eight of seventeen wrong is the number to sit with**, and it is not carelessness about eight things.
+A limitation is real, some code sits next to it, and *because* is the cheapest connective in English.
+The check is always available and always the same: the file usually says why it exists in its first
+paragraph, and the paragraph is not what a rewrite reads.
