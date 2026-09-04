@@ -206,6 +206,51 @@ that never return a secret, never mix one with a public value, and never declass
 tested only on its motivating example is untested**, and this is the cleanest instance of that in the
 directory.
 
+## Every example on every page is written against a `Sys` that `vision/std` does not define
+
+The projections — `Sys` split into `Files`, `Net`, `Proc`, `Env`, `Out`, `Clock`, `Random` — were
+invented during the packages exercise, argued from a count of the host's fifty capabilities and from
+`box`'s applets, and written into `vision/std/platform.wac`. That struct has **seven fields and no
+flat methods**: no `readFile`, no `log`, no `listen`.
+
+Every vetted page still writes the flat form. Counted over the ```wac fences:
+
+    SHOWCASE.md    7   sys.listen(8080), sys.readFile("a.txt"), sys.log(…), sys.spawn(…)
+    TECHNICAL.md   6   sys.readFile, sys.log, sys.warn
+    IDIOMS.md      3   sys.readFile, sys.log
+    QUESTIONS.md   1   sys.spawn
+    ─────────────────
+                  17   flat call sites on the agreed pages
+
+    vision/packages/server/src/main.wac   3   sys.net.listen, sys.out.log
+
+**So `sys.readFile("a.txt")` on the front page does not typecheck against the `Sys` in
+`vision/std`.** Seventeen examples against one file, and the one file is the one that claims to
+define the type.
+
+Nothing noticed because the two halves are never read together: the pages are agreed one entry at a
+time with the operator, `vision/std` was written alone in bulk, and `packages/README.md`'s own rule
+says the traffic is one-way — *"an entry on the pages may be cited here; nothing here is evidence for
+anything there."* That rule was written to stop unvetted spellings leaking upward. It also means an
+invention downstream can contradict the pages indefinitely and the direction of the rule is exactly
+why nobody looked.
+
+The decision is not which is right. It is:
+
+- **Adopt the projections on the pages** — 17 examples get one more word each, and the front page's
+  first line becomes `sys.net.listen(8080)`. The cost is that every example advertising *authority is
+  a value* gets longer at exactly the point it is making that argument.
+- **Keep `Sys` flat and make the projections optional views** — `sys.files` exists and `sys.readFile`
+  still works, which is a wider `Sys` rather than a narrower one, and gives up the structural
+  guarantee that a function handed `Out` cannot open a socket.
+- **Withdraw them.** They have one real consumer, `vision/packages/fs`, which found them worth
+  exactly one line — `Mount.onHost(Files)` where the shipped equivalent takes a `Cli` that can open a
+  socket.
+
+The second is the one that reads as a compromise and is not: the whole argument for the split is that
+`echo(sys.out, args)` **cannot** open a socket, and a `Sys` that still has `listen` on it hands the
+guarantee back the moment anyone passes `sys`.
+
 ## Ten constructs the vetted pages have and the grammar did not
 
 The entry below found three additions in `GRAMMAR.ebnf` that no agreed page mentions, and said the

@@ -57,6 +57,11 @@ export struct NotGranted { string what; }
  * registered, nothing runs it, and `drain` returns having found nothing to do. **This is the cost of
  * the grouping and it was not visible from the grouping.**
  */
+// **The pages do not use this shape.** All four vetted pages write `sys.readFile(…)`, `sys.log(…)`,
+// `sys.listen(…)` — seventeen call sites — and this struct has seven fields and no flat methods, so
+// none of those examples typechecks against it. The projections were invented here during the
+// packages exercise and never propagated upward; `../QUESTIONS.md` has the three ways out and why
+// the middle one is not the compromise it looks like.
 export struct Sys {
   Files files;
   Net net;
