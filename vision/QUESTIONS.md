@@ -152,6 +152,12 @@ The shipped wire format is a category and a root: `cli.spawn(src, args, GRANT_RE
 …)`, and `std/platform.wac` puts it well — *"A shell served over a socket can be given one directory
 and no network."* Two dimensions, and both of them are things a host can enforce.
 
+**And `vision/std`'s own `spawn` carries one of the two.** Measured 2026-09-04: `Proc.spawn` takes
+`Vec<Grant>` — the category — and the `dir` is gone with the three other parameters the arity
+comparison found missing. So the gap this entry is about has a third side nobody had looked at: the
+value is wider than the wire, the wire is wider than what vision proposes to send, and the package
+written to study the boundary states two dimensions while the signature it studies has one.
+
 The in-language value now has more than two. `vision/packages/fs`'s `Mount` is a struct of closures,
 so a `Files` can be a memory tree, a host subtree, a read-only wrapper, an overlay of one over
 another, or a fake a test built. `Mount.overlay(base, top)` is three lines there — and there is no
@@ -2890,11 +2896,8 @@ its child, which is the one failure this cannot make safe and the reason it is s
 assumed."* With no parameter there is nothing to state and the child waits for an answer that never
 comes.
 
-**And the `Vec<Grant>` drops a dimension.** `@/packages/sh/src/exec.wac` — the package written to
-study exactly this boundary — says the wire format has two: *"a category and a root, `GRANT_READ |
-GRANT_NET` plus a `dir`, which `std/platform.wac` sums up as 'a shell served over a socket can be
-given one directory and no network'"*. `Vec<Grant>` carries the category. So the study and the
-signature it studies disagree, in the same directory, about the thing the study is about.
+**And the `Vec<Grant>` drops a dimension**, which belongs to *the wire format has two dimensions*
+above rather than here and is recorded there.
 
 **Which is the general finding: a dropped parameter is invisible to three of the four audits.** A
 name still matches, a signature is still well-formed, the answer type is unchanged — only arity moves,
