@@ -3765,7 +3765,7 @@ sixty-one uses in a directory whose author had read the spec is the evidence.
 
 ## The best-argued paragraph in a file is a rule the type could have held
 
-Seven times now, the place a shipped package argues *hardest* has been the place a type would have
+Eight times now, the place a shipped package argues *hardest* has been the place a type would have
 said the same thing and needed no argument. It is consistent enough to be worth stating as a way of
 reading rather than as six findings.
 
@@ -3778,6 +3778,7 @@ reading rather than as six findings.
 | `tty` | "four things can happen at once … so this is a record rather than an enum" | one field plus a four-arm `Effect`; three of the four never co-occur |
 | `raster` | why `damagedPixels` exists — so the off-by-one does not live in the caller | one `Rect` convention, so there is no conversion to hide |
 | `bls` | that Montgomery form "must not leak", and that leaking it gives "an implementation that passes every internal consistency check and disagrees with every test vector" | `Fp` and `Canonical` as two types, at a measured 0.7% of a field multiply |
+| `git` | why the comparator skips two columns — "comparing the bytes after the two status columns", nine lines and a `for (i32 i = 3; …)` | `Vec<Entry>` sorted by `.path`, and no 3 |
 
 **The correlation is not a coincidence and it is not carelessness.** A paragraph gets written when
 the author can see a way to get it wrong and cannot stop the reader taking it. That is the same

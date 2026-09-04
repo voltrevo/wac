@@ -1,0 +1,126 @@
+// What a working tree differs from, as values rather than as porcelain lines.
+//
+// `packages/git/src/repo.wac` answers `Vec<string>` from both of its status functions — lines like
+// `" D src/a.wac"` and `"MM x"` and `"?? build/"`, which is `git status --porcelain`'s output
+// verbatim. Three things follow from the value being the *rendering*, and the third is a real
+// ambiguity in the shipped API.
+
+import { Vec } from "core";
+
+/**
+ * One column's worth of state.
+ *
+ * Porcelain's alphabet, as an enum. `Unmodified` is the space, which is the character the shipped
+ * code compares against — `if (x != " " || y != " ")` — and the reason it needs a name here is
+ * below.
+ */
+export enum Change {
+  Unmodified, Added, Modified, Deleted, Renamed, Copied, Untracked,
+
+  /** The porcelain character. Formatting, so it lives on the type and not in the walk. */
+  u8 code(const this) {
+    match (this) {
+      Unmodified: { return ' '; }  Added: { return 'A'; }   Modified: { return 'M'; }
+      Deleted: { return 'D'; }     Renamed: { return 'R'; } Copied: { return 'C'; }
+      Untracked: { return '?'; }
+    }
+  }
+}
+
+/**
+ * A path and both of porcelain's columns.
+ *
+ * The two are independent, which the shipped doc is explicit about: *"a file staged and then edited
+ * again is `MM`, which is the case that proves they are computed separately rather than one being
+ * derived from the other."* Two fields say that; two characters of a string say it to whoever
+ * remembers.
+ */
+export struct Entry {
+  /** The index against `HEAD`. */
+  Change staged;
+  /** The working tree against the index. */
+  Change worktree;
+  string path;
+}
+
+/**
+ * A path and **one** column — what `worktreeStatus` can actually answer.
+ *
+ * **This is the finding.** The shipped `worktreeStatus` returns the same `Vec<string>` as `statusOf`
+ * and fills only the second column, so every line it emits begins with a space: `" D " + e.path`.
+ * Its own doc says why the first is empty — *"Nothing here reads a commit's tree to fill the first
+ * in"* — and a caller holding the result cannot tell that space from the one `statusOf` writes for
+ * *unmodified*.
+ *
+ * So the same value means **nothing is staged** and **staging was not measured**, decided by which
+ * function produced it. A separate type is the whole fix: a `Vec<WorktreeChange>` cannot be passed
+ * where both columns are wanted, and nothing has to remember which call it came from.
+ */
+export struct WorktreeChange {
+  Change change;
+  string path;
+}
+
+/** The working tree against the index — the second column, and only that. */
+export Vec<WorktreeChange> worktreeStatus(const Repo r) { … }
+
+/**
+ * Both columns.
+ *
+ * `excludes` is the content of `core.excludesFile`, and the caller reads it rather than this — a
+ * decision the shipped doc argues and this keeps:
+ *
+ * > The value is usually `~/.gitignore_global`, and expanding that `~` needs `HOME` — which needs a
+ * > `Cli`, which a `Repo` does not carry and **should not start carrying to answer a question about
+ * > ignore rules**. So the program that knows about environments resolves the path and hands over
+ * > the bytes.
+ *
+ * That is the capability discipline this whole directory is about, arrived at independently and for
+ * the right reason. What it costs is the parameter's type: the shipped one is `u8[]`, and *"empty
+ * bytes mean the setting is unset, which is the common case"* — so the absence is a length rather
+ * than a value, in a parameter whose type says *bytes* and whose meaning is *the lowest-precedence
+ * ignore rules, or none*.
+ */
+export Vec<Entry> statusOf(const Repo r, Rules? excludes) { … }
+
+/** The lowest-precedence ignore rules, parsed. `null` at the call site is what unset looks like. */
+export struct Rules { … }
+
+/**
+ * `git status --porcelain`'s line for one entry.
+ *
+ * **Formatting, in one place, at the edge.** The shipped package assembles `x + y + " " + e.path` in
+ * the walk and then has to take it apart again to sort:
+ *
+ * > Whether `a`'s path sorts after `b`'s, **comparing the bytes after the two status columns**. git
+ * > orders its porcelain by path, and matching that is what lets a test diff the two outputs as text
+ * > instead of sorting both and comparing sets.
+ *
+ * — and the comparator starts at `for (i32 i = 3; i < n; i++)`. The `3` is the width of `XY `. It is
+ * correct, it is documented in nine lines, and it exists only because the value was rendered before
+ * it was sorted. A `Vec<Entry>` sorts by `.path` and there is no 3.
+ */
+export string porcelain(const Entry e) { … }
+
+struct Repo { … }
+
+// ## What could not be written
+//
+// **`Change` is seven cases and porcelain has more.** `U` for unmerged, and the index's stages 1, 2
+// and 3 — which the shipped code skips with a comment that is right: *"a path at stage 1, 2 or 3 is
+// three entries for one file, and reporting it once per side would say three things about one
+// path."* An `Unmerged` arm would need to carry *which* stages are present, so it is a payload
+// rather than a name, and nothing here needs it. Recorded because the enum reads complete and is
+// not.
+//
+// **Three absences the shipped doc names, and the type still cannot.** *"Three things it does not
+// report, each a real absence rather than a simplification"* — untracked files (needs the ignore
+// rules), a mode change (`Stat` has no mode, `issues/system/0132`), and staged changes. The first
+// and third are answered by `WorktreeChange` being a different type from `Entry`. **The second is
+// not**: a mode change is a fourth thing a file can differ by, orthogonal to both columns, and
+// git reports it inside the same two characters. So the type that would say *this dimension exists
+// and was not measured* is not `Change` at all — it is a per-entry set of dimensions, and neither
+// git's format nor this rewrite has one.
+//
+// **A path is a `string`**, which is `../../../QUESTIONS.md`'s entry, and this file is the fifth
+// package to build one with `+`: `r.workTree + "/" + e.path`, in the shipped walk.

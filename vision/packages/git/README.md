@@ -1,0 +1,84 @@
+# git — one slice rewritten
+
+Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does not compile,
+disposable.
+
+The real package is `packages/git`: 11,883 lines over 45 files — objects, packs, the index, refs,
+ignore rules and a working tree. **One slice**: `status`, which is `repo.wac`'s two status functions
+and their comparator.
+
+Picked by the same search as the last four — every mid-file doc comment of 150 words or more in the
+un-rewritten packages, sorted. `statusOf` at 300 words and `worktreeStatus` at 274 are the two
+longest that remained, and they are in the same file.
+
+---
+
+## Two functions, one return type, and one of them cannot fill half of it
+
+Both answer `Vec<string>` of `git status --porcelain` lines. `statusOf` fills both of porcelain's
+columns; `worktreeStatus` fills only the second, so every line it emits begins with a space —
+`out.push(" D " + e.path)`. Its own doc says why:
+
+> Porcelain's *first* column compares the index against `HEAD`; this is the second, the index against
+> the working tree. **Nothing here reads a commit's tree to fill the first in.**
+
+So a caller holding `" D foo"` cannot tell that space from the one `statusOf` writes for
+*unmodified*. **The same value means "nothing is staged" and "staging was not measured"**, decided
+by which function produced it and recorded nowhere in the value.
+
+Two types fix it and nothing else does: `Vec<WorktreeChange>` cannot be passed where both columns
+are wanted, and no one has to remember which call it came from.
+
+## A comparator that starts at byte 3
+
+Sorting the results means sorting formatted lines, so the comparator has to know the format:
+
+> Whether `a`'s path sorts after `b`'s, **comparing the bytes after the two status columns**. git
+> orders its porcelain by path, and matching that is what lets a test diff the two outputs as text
+> instead of sorting both and comparing sets — which would hide an ordering mistake rather than catch
+> one.
+
+and the loop is `for (i32 i = 3; i < n; i++)`. The `3` is the width of `XY `. It is correct, it has
+nine lines of doc, and it exists only because the value was rendered before it was sorted. A
+`Vec<Entry>` sorts by `.path`.
+
+Same shape as `tty`'s `glyph`/`columns` pair and `raster`'s three rectangle conventions — a width
+that is right and is only needed because a value became text early. The first of those to appear in
+a *comparator*, which is where it is hardest to see: the offset is not in the code that formats.
+
+## The capability decision is right, and its cost is in a type
+
+`statusOf` takes `u8[] excludes` — the content of `core.excludesFile` — and the caller reads the
+file. The reason is exactly this directory's subject:
+
+> expanding that `~` needs `HOME` — which needs a `Cli`, which a `Repo` does not carry and **should
+> not start carrying to answer a question about ignore rules**. So the program that knows about
+> environments resolves the path and hands over the bytes.
+
+Arrived at independently, and it is the argument `vision/std`'s projections make. Worth saying
+plainly because most of what this exercise finds is a decision to change: **this one is a decision to
+keep** — the eighth thing left alone, after `json`'s lazy object index, `Buf`'s field layout,
+`regex`'s flat class arrays, `bignum`'s limbs, `raster`'s pixel layout, `datetime`'s calendar and
+`zstd`'s fused table, and the first that is about a *capability* rather than a layout.
+
+What it costs is one type. `u8[]` with *"empty bytes mean the setting is unset, which is the common
+case"* puts the absence in a length; `Rules?` puts it in the value, and `null` at the call site is
+what unset looks like.
+
+## What could not be written
+
+**A mode change is a third dimension and neither git nor this can say so.** The shipped doc names
+three absences — untracked files, a mode change, staged changes — and calls each *"a real absence
+rather than a simplification"*. Two are answered by `WorktreeChange` being a different type from
+`Entry`. The third is not: an executable that lost its bit differs in a way orthogonal to both
+columns, git folds it into the same two characters, and `Stat` has no mode to read
+(`issues/system/0132`). The type that would say *this dimension exists and was not measured* is a
+per-entry set of dimensions, and neither the format nor this rewrite has one.
+
+**`Change` reads complete and is not.** Porcelain has `U` for unmerged, and the index has stages 1,
+2 and 3. The shipped code skips them, correctly — *"a path at stage 1, 2 or 3 is three entries for
+one file, and reporting it once per side would say three things about one path"* — and an `Unmerged`
+arm would have to carry *which* stages are present, so it is a payload rather than a name.
+
+**A path is a `string`**, and this is the fifth package to build one with `+`:
+`r.workTree + "/" + e.path`. Already promoted.
