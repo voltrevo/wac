@@ -50,7 +50,7 @@ export struct FakeSys : Sys {
   Map<string, u8[]> files;
   i64 now;
 
-  static FakeSys withFiles(Map<string, u8[]> files) { … }
+  FakeSys withFiles(Map<string, u8[]> files) { … }
 
   async Result<u8[], NotGranted> readFile(this, string path) {
     u8[]? got = this.files.get(path);

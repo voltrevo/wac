@@ -33,8 +33,10 @@ matches `Leaf(v):` and `Node(l, r):`; the `Continuation` entries matched `Ready 
 `Waiting { t, call }:`. Positional and named destructuring could both exist, but nothing says so and
 nothing says which is preferred. This file uses positional throughout.
 
-**`static` is used and undescribed.** `Vec.create` and `Queue.create` are constructors that are not
-`Vec(…)`, and the real `core` writes them the same way. No entry mentions the keyword.
+**`T[0]()` was wrong and the real `core` says why.** A *sized* array needs a default value for `T`,
+which an enum or a struct has not got; the array *literal* with no elements needs nothing, which is
+what makes an empty `Vec<Option<i32>>` possible at all. Six files here allocated with `T[0]()`
+before that comment was read. Not a language finding — a reading one.
 
 **A standalone `grow()` cannot be written**, which is a language fact rather than a taste. An array
 needs a value to fill new room with, a `T` at a non-defaultable type has none, and the only `T`

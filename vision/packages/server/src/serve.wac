@@ -65,8 +65,8 @@ export Served serve(u8[] input, i64 nowMillis) {
  */
 i32 statusFor(RequestFault why) {
   return match (why) {
-    TooLarge(wanted, limit): 413,
-    default:                 400,
+    TooLarge: 413,
+    default:  400,
   };
 }
 

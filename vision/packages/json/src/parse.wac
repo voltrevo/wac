@@ -44,8 +44,8 @@ export struct Parser {
   i32 at;
   i32 depth;
 
-  static Parser json(u8[] src)  { return Parser(src, false, 0, 0); }
-  static Parser json5(u8[] src) { return Parser(src, true, 0, 0); }
+  Parser json(u8[] src)  { return Parser(src, false, 0, 0); }
+  Parser json5(u8[] src) { return Parser(src, true, 0, 0); }
 
   /** A whole document: one value, then nothing but space. */
   Result<JsonValue, ParseError> document(this) {

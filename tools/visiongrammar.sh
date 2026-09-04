@@ -15,7 +15,9 @@
 #     types the stripped imports took away, and none of that is about grammar.
 #
 # `…` in a body is this repository's convention for *elided, see the original* and is not a proposed
-# construct; it lexes as an unexpected character and is filtered out by name.
+# construct. It is removed along with the imports, leaving `{ }`, because a lexical error is emitted
+# before every parse error whatever line it is on — so filtering it out of the *output* is not
+# enough, and one `…` anywhere in a file used to hide every grammar difference in it.
 #
 # **The first refusal per file is a lower bound and this cannot do better.** A parser stops at the
 # first thing it cannot read, so one run reports one construct per file and says nothing about what
@@ -38,8 +40,12 @@ trap 'rm -rf "$work"' EXIT
 raw=${1:-}
 
 for f in $(find vision -name '*.wac' | sort); do
-  # Blank rather than delete, so reported line numbers still match the real file.
-  sed 's/^import .*$//' "$f" > "$work/one.wac"
+  # Blank the imports rather than delete them, so reported line numbers still match the real file,
+  # and take out the `…` so `{ … }` becomes an empty body the lexer accepts. Both have to go before
+  # the parser is reached at all: an unresolved import aborts during resolution, and a lexical error
+  # is emitted *before every parse error regardless of line*, so one `…` anywhere in a file hides
+  # every grammar difference in it.
+  sed -e 's/^import .*$//' -e 's/…//g' "$f" > "$work/one.wac"
 
   out=$("$WAC" build "$work/one.wac" -o "$work/out.wasm" --allow-read 2>&1 || true)
 
@@ -53,7 +59,6 @@ for f in $(find vision -name '*.wac' | sort); do
   first=$(printf '%s\n' "$out" \
     | grep -E "^(error: unexpected token|error: expected)" -A 5 \
     | grep -E "expected .*, found|found '" \
-    | grep -v 'unexpected character' \
     | head -1 || true)
 
   if [ -n "$first" ]; then

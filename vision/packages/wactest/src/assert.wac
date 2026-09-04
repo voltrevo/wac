@@ -38,7 +38,7 @@ export struct T {
   Vec<Failure> kept;
   i32 total;
 
-  static T create() { return T(Vec<Failure>.create(), 0); }
+  T create() { return T(Vec<Failure>.create(), 0); }
 
   /**
    * Record a failure. Assertions funnel through here.
@@ -81,7 +81,7 @@ export struct T {
   T? okOr<V, E>(this, Result<V, E> r, string what) {
     return match (r) {
       Ok(v):  v,
-      Err(e): { this.fail(what, "Ok", "Err"); null },
+      Err(_): { this.fail(what, "Ok", "Err"); null },
     };
   }
 

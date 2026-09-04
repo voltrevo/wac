@@ -84,7 +84,7 @@ export struct JsonObject {
   /** Lookups served by a scan so far. Only counted while `index` is null. */
   i32 scans;
 
-  static JsonObject create() { return JsonObject(Vec<JsonMember>.create(), null, 0); }
+  JsonObject create() { return JsonObject(Vec<JsonMember>.create(), null, 0); }
 
   i32 len(const this) { return this.members.len(); }
 
@@ -125,4 +125,4 @@ export struct JsonObject {
 }
 
 /** A number with no source text behind it. */
-export JsonValue numberOf(f64 v) { return JsonValue.Number(v, u8[0]()); }
+export JsonValue numberOf(f64 v) { return JsonValue.Number(v, u8[]()); }

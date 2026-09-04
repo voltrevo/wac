@@ -33,9 +33,9 @@ export struct Url {
   u8[]? query;
   u8[]? fragment;
 
-  static Url create() {
-    return Url(u8[0](), u8[0](), u8[0](), null, null, Vec<u8[]>.create(),
-               u8[0](), false, null, null);
+  Url create() {
+    return Url(u8[](), u8[](), u8[](), null, null, Vec<u8[]>.create(),
+               u8[](), false, null, null);
   }
 
   /**

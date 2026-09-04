@@ -10,7 +10,7 @@ export struct Queue<T> {
   i32 head;
   i32 len;
 
-  static Queue<T> create() { return Queue<T>(T[0](), 0, 0); }
+  Queue<T> create() { return Queue<T>(T[](), 0, 0); }
 
   i32 len(const this) { return this.len; }
 

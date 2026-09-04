@@ -23,7 +23,7 @@ export struct NotText { i64 at; }
 export async gen<i32> Result<void, union<E, NotText>> scalars<E>(
   AsyncGenerator<u8[], Result<void, E>> src,
 ) {
-  u8[] held = u8[0]();
+  u8[] held = u8[]();
   i64 seen = 0;
 
   try await for (u8[] chunk in src) {
@@ -34,9 +34,9 @@ export async gen<i32> Result<void, union<E, NotText>> scalars<E>(
       // `decode` answers the scalar, or says which of the two ways it could not — a union rather
       // than a code drawn from the same i32 range the answer lives in. See the README.
       match (decode(input, at)) {
-        Scalar s:    { yield s.code; at += s.size; }
-        Truncated _: { break; }                            // hold the tail for the next chunk
-        Malformed _: { return Result.Err(NotText(seen + at)); }
+        Scalar s:  { yield s.code; at += s.size; }
+        Truncated: { break; }                              // hold the tail for the next chunk
+        Malformed: { return Result.Err(NotText(seen + at)); }
       }
     }
 
