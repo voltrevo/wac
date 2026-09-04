@@ -1,0 +1,64 @@
+// The FSE sequence decoder's fused table — **not redesigned, and the reason is the interesting one.**
+//
+// `packages/zstd/src/sequences.wac`'s `Fused` is the seventh thing this exercise has decided to
+// leave alone, and the first where the reason is that **the platform, not the language, is what
+// forces the shape.**
+//
+// ## What it does, and why it is right
+//
+// Its own account, and the numbers are in it:
+//
+// > Decoding one code used to be five loads … Three codes per sequence made thirteen loads to
+// > produce three numbers, and the sequence loop is over half of decode time. … one `info` word plus
+// > one baseline, indexed by state directly. Six loads per sequence rather than thirteen. This is
+// > what zstd's own decoder does.
+//
+// Fusing five arrays into two is a layout decision with a measured reason and a citation to the
+// reference implementation. Nothing here improves it.
+//
+// ## The half that is a workaround, and cannot stop being one
+//
+// `info` is three fields in an `i32`:
+//
+//     info[s] = (codeBits[c] << 24) | (t.nbBits[s] << 16) | t.newState[s];
+//
+// with the proof that they fit written in prose: *"extra bits reach 31 (offsets), state bit counts
+// reach the accuracy log of 9, and a next-state base is under 512."* Three widths, argued in a
+// comment, checked by nothing.
+//
+// The shape that says it is `struct Entry { u8 extraBits; u8 nbBits; u16 newState; }` and an
+// `Entry[]` — **and that is slower, not faster.** A WasmGC array of a struct type is an array of
+// *references*: one indirection per read, in the loop this file exists to take indirections out of.
+// The packing is not a workaround for a missing language feature. It is a workaround for a missing
+// **runtime** feature, and WasmGC has no third option — an array's elements are packed primitives
+// (`i8`, `i16`) or references, and never inline structs.
+//
+// So `@/packages/bls`'s trade does not apply here. There the wrapper cost one `struct.new` per
+// operation, bounded at 0.7% by numbers already measured; here it would cost one dereference per
+// *read*, three per sequence, thousands of sequences per block, in over half of decode time.
+//
+// ## What a language could still do, which is smaller and is not nothing
+//
+// It cannot make `Entry[]` fast. It can make the packing **checked**:
+//
+//     packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }   // lowers to one i32
+//
+// — a declaration that names the three fields, fixes their widths, and compiles every read to the
+// shift and mask the file writes by hand. The prose proof becomes the declaration; a fourth field
+// does not silently overflow into the third; and `info[s] >> 24` stops being a number a reader has
+// to check against a comment four screens up.
+//
+// This is **not** `issues/lang/0074`. That issue is about values with no identity *exploded into
+// locals* — its evidence is ChaCha20 at 4.7x and `packages/bls` at −64%, both from moving array
+// elements into registers, and its crux is *"the spec text has to say the compiler is required to
+// keep these in locals"*. An array of a hundred thousand entries cannot be in locals. Same want,
+// different lowering, and 0074's answer does not reach this case. `../../../QUESTIONS.md`.
+
+// Nothing is rewritten below. The file is here for the note above and for the shape of the entry it
+// argues about.
+
+/** Three fields in an `i32`, with the widths in a comment — see the header. */
+export struct Fused {
+  i32[] info;
+  i32[] base;
+}

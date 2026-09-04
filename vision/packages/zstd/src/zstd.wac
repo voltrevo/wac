@@ -1,0 +1,3 @@
+// The package, as one name. Nothing is rewritten — see `../README.md`.
+
+export { Fused } from "./sequences.wac";

@@ -3962,3 +3962,51 @@ Worth stating plainly because the argument cuts both ways and this directory has
 side of it for a week: everything above has been *distinguish your failures*, and here is the one
 family where a false negative on that advice is a security bug. The distinction that survives is
 narrower than the advice and wider than the current answer.
+
+## A record stored inline in an array, which `0074`'s answer does not reach
+
+`@/packages/zstd`'s FSE decoder packs three fields into an `i32` by hand —
+`(extraBits << 24) | (nbBits << 16) | newState` — with the proof that they fit written in prose:
+*"extra bits reach 31 (offsets), state bit counts reach the accuracy log of 9, and a next-state base
+is under 512."* Three widths, argued in a comment, checked by nothing.
+
+Everywhere else in this directory that is where a type appears. **Here the type is slower.** A
+WasmGC array of a struct is an array of *references*, so `Entry[]` is one indirection per read in a
+loop that exists to remove indirections — the file's own measurement is thirteen loads per sequence
+cut to six, in *"over half of decode time"*. An array's elements are packed primitives (`i8`, `i16`)
+or references, and never inline structs. There is no third option at the runtime, so the packing is
+a workaround for **WasmGC** rather than for wac.
+
+**And it is not `issues/lang/0074`**, which is the closest thing filed. That issue wants values with
+no identity *exploded into locals*, its evidence is ChaCha20 at 4.7x and `packages/bls` at −64% —
+both from moving array elements into registers — and its crux is stated as a lowering rule: *"the
+spec text has to say the compiler is required to keep these in locals."* An array of a hundred
+thousand entries cannot be in locals. Same want, different lowering, and 0074's answer does not
+reach this case.
+
+What is left is smaller than either and is worth having on its own:
+
+    packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }   // lowers to one i32
+
+A declaration that names the fields, fixes the widths, and compiles every read to the shift and mask
+somebody writes by hand today. It changes no representation and no performance — it is the same
+`i32` — and it moves a three-line proof out of a comment into something the compiler rejects when a
+fourth field is added.
+
+Two things make it a real question rather than an obvious yes:
+
+- **What is the arithmetic on one?** If `Entry` is an `i32` at run time, is `entry.newState + 1` an
+  `i32`, and does assigning 600 to a `u16` field trap, wrap or refuse? Every answer is defensible and
+  the file being served here wants *refuse at compile time where the value is constant*, which is a
+  third thing.
+- **How does it interact with `u8` not being a scalar?** `issues/lang/0336a` — a packed type is an
+  array element and not a local, parameter or field. A `packed struct` whose fields are `u8` and
+  `u16` is asking for exactly the thing that rule forbids, in the one position where the
+  representation makes it free. The two questions are the same question from opposite ends, and
+  answering either badly makes the other harder.
+
+**And the discriminator this produced is worth keeping separately**, because it decides where the
+rest of this directory's proposals apply. `@/packages/bls`'s field element is a wrapper costing one
+`struct.new` per *operation* — bounded at 0.7%. This is a wrapper costing one dereference per
+*access*. Same proposal, opposite answer, and the question to ask of any of them is which of the two
+it is.
