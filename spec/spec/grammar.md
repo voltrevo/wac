@@ -39,7 +39,11 @@ source         = STRING ;
 import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 
-func_decl      = [ "export" ] , type , IDENT , "(" , [ param_list ] , ")" , block ;
+func_decl      = [ "export" ] , [ "async" ] , type , IDENT , [ type_params ] ,
+                 "(" , [ param_list ] , ")" , block ;
+                 (* Type parameters make it a template, as they do for a struct; see
+                    generics.md. A letter no parameter mentions cannot be inferred and the
+                    call writes it — `zero<i32>()` [§wacc-written-type-args] *)
 
 (* A module-level constant. `init` must be a compile-time constant expression
    [see variables.md]; the grammar cannot express that restriction. *)
@@ -66,7 +70,9 @@ struct_member  = field_decl | method_decl ;
 
 field_decl     = [ "const" ] , type , IDENT , ";" ;
 
-method_decl    = [ "override" ] , type , IDENT , "(" , [ method_params ] , ")" , block ;
+method_decl    = [ "override" ] , type , IDENT , [ type_params ] ,
+                 "(" , [ method_params ] , ")" , block ;
+                 (* A method may declare letters the owner has not got [§wacc-method-type-args] *)
 
 enum_decl      = [ "export" ] , "enum" , IDENT , "{" , [ variant_list ] ,
                  { method_decl } , "}" ;   (* a method must take `this` [see enums.md] *)
@@ -178,7 +184,11 @@ primary_expr   = INT_LITERAL
                | CHAR_LITERAL
                | "true" | "false"
                | "null"
-               | IDENT , [ "." , IDENT ] , "(" , [ arg_list ] , ")"   (* function/static call *)
+               | IDENT , [ "." , IDENT ] , [ type_args ] , "(" , [ arg_list ] , ")"
+                                                       (* function/static call; the type
+                                                          arguments are the one place they
+                                                          appear in a call, and only where
+                                                          inference cannot reach them *)
                | IDENT                                                  (* variable *)
                | "(" , expr , ")"                                       (* grouping *)
                | match_expr                                              (* see above *)

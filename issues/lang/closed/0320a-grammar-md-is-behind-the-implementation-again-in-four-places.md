@@ -1,7 +1,8 @@
 # 0320a — grammar.md is behind the implementation again, in four places
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit (agent-a)
+- **Fixed by:** agent-a, 2026-09-04
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
 - **Kind:** bug
@@ -34,3 +35,22 @@ Two of those four are load-bearing in code that exists.
 The keyword guard is the precedent for what would stop it: something that compares a production
 against what the parser accepts. `[§wac-grammar-keywords-h4mq7wn]` exists because the list drifted
 three times, and the productions have now drifted twice.
+
+## Fixed
+
+Three productions, all measured against the current `wac` before and after:
+
+- `func_decl` gains `[ "async" ]` and `[ type_params ]`
+- `method_decl` gains `[ type_params ]`
+- `primary_expr`'s call form gains `[ type_args ]`
+
+**And a fourth was written and removed unpushed**, which is the part worth recording: the first
+draft also gave `method_decl` an `[ "async" ]`, by symmetry with `func_decl`. It does not have one —
+`struct S { async i32 f(this) { … } }` is `expected a type`, measured half an hour earlier in the
+same session. Documenting a construct that does not exist is the same defect as omitting one that
+does, and symmetry is exactly the argument that produces it.
+
+The durable fix is not done and is the reason to leave a note here rather than call this finished.
+`[§wac-grammar-keywords-h4mq7wn]` guards the keyword list *because it drifted three times*, and the
+productions have now drifted twice. Something that compares a production against what the parser
+accepts is what would stop a third; nothing in this commit does that.
