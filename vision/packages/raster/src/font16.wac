@@ -1,0 +1,29 @@
+// unscii-16 as a lookup, generated.
+//
+// **Not rewritten and elided rather than omitted.** `packages/raster/tools/genfont.ts` writes
+// `packages/raster/src/font16.wac` from a vendored `.hex` file — 3,240 glyphs, 13,932 words — so the
+// file is a generator's output and the interesting decisions are in the generator. The three
+// functions below are its whole surface and are what `surface.wac` imports.
+//
+// One thing in it is worth carrying across, because it is a fact about the host rather than about
+// the font. The shipped README:
+//
+// > **The glyph table is split across two constant arrays**, and that is not tidiness: V8 refuses
+// > `array.new_fixed` above 10,000 elements, and the font is 13,932 words. A single `const i32[]`
+// > does not compile — *"Requested length 13932 for array.new_fixed too large"* — which is worth
+// > knowing before writing any other large table in wac.
+//
+// So a source-level layout decision is made by an engine limit, and `glyphRow` below is the function
+// that hides it. Nothing in `spec/` mentions a ceiling on a constant array; a program that grows one
+// past 10,000 entries finds out from V8. `../../../QUESTIONS.md` has it as a question about where a
+// host limit belongs, since `--host wasmtime` may well not have this one and the split is in the
+// source either way.
+
+/** Where `cp` is in the table, or `-1`. See the note in `surface.wac` on the sentinel. */
+export i32 glyphIndex(i32 cp) { … }
+
+/** Row `row` of glyph `idx`, as a bit pattern `glyphWidth(idx)` bits wide. */
+export i32 glyphRow(i32 idx, i32 row) { … }
+
+/** 8, or 16 for the points unscii draws double. */
+export i32 glyphWidth(i32 idx) { … }

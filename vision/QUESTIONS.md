@@ -3498,3 +3498,70 @@ cannot be restarted. So:
 two properties an array has for free, found in two packages a day apart, both while replacing an
 array with something lazier. Whether `Generator<T, R>` should have either is the question; the honest
 framing is that this directory has been treating laziness as strictly better and it is a trade.
+
+## Where does a refinement of an integer live?
+
+`@/packages/raster` draws text from `i32[] cps`, so it accepts a surrogate and `0x110000`; both draw
+nothing, which is right for the font and wrong for the type. `@/packages/stream` named the type this
+wants when it found the same thing from the other end:
+
+> A *codepoint* can be a surrogate; a *scalar* cannot — that is what the word means in Unicode, and
+> it is why the shipped method has to check at run time what its name does not promise.
+
+`text(Slice<Scalar>)` is the signature. It is not written, because it would make a rasteriser depend
+on `@/packages/unicode` for a type and nothing else — which is the dependency the shipped file
+avoided by taking `i32[]`, and it was right to.
+
+So the question is not about Unicode. **`core` holds containers and protocols — `Vec`, `Map`,
+`Slice`, `Result`, `Ticket`, `Node` — and nothing in it is a refinement of a primitive.** A `Scalar`
+is an `i32` with a rule; so is a `Port`, a `Nibble`, a byte offset that must be word-aligned, and the
+`u8` this exercise has twice wished were a bounded shift count. Three packages have now wanted one
+and each declared its own or did without.
+
+Three shapes, and the interesting part is that they differ in what they cost the *user*, not the
+implementer:
+
+- **A struct with one field.** Writable today: `struct Scalar { i32 v; }` plus a checking
+  constructor. Costs an allocation per value and a `.v` at every use, which for a code point in an
+  inner loop is the reason nobody has done it.
+- **A named type with a validating conversion**, no box — what a newtype is in most languages and
+  what wac's nominal typing already almost gives, since two declarations of one shape are already
+  two types. What is missing is a way to say *this one is an `i32` at run time*.
+- **Nothing, and put the check at the boundary.** Which is what happens now, and the cost is that the
+  boundary is wherever somebody remembered.
+
+The second is the one worth pricing, and the reason it is a question rather than a proposal is that
+it interacts with everything: a newtype over `i32` needs rules for arithmetic, for casts, for
+`match`, and for whether `Slice<Scalar>` may alias an `i32[]` — which is the whole of why it would be
+useful here and the whole of why it is not free.
+
+## A host's ceiling decides a source file's layout, and no page mentions it
+
+`packages/raster`'s font table is split across two constant arrays, and its README says why:
+
+> V8 refuses `array.new_fixed` above 10,000 elements, and the font is 13,932 words. A single
+> `const i32[]` does not compile — *"Requested length 13932 for array.new_fixed too large"* — which
+> is worth knowing before writing any other large table in wac.
+
+Nothing in `spec/` mentions a ceiling on a constant array. `spec/spec/arrays.md` says a sized array's
+length *"may be any `i32`"* and the literal form has no stated limit, so a program that grows a table
+past ten thousand entries learns about it from V8, in a message about an instruction its author never
+wrote.
+
+**The split then stays in the source for every host.** `--host wasmtime` is the engine with no
+JavaScript in it and may well have no such limit, and `design/system/0001` D9 says that host exists
+precisely so that *"a wac program does not depend on one"*. Here a program's shape does, and the
+dependency is invisible — a reader of `font16.wac` sees two arrays and no reason.
+
+Three places the answer could go, and they are genuinely different:
+
+- **The spec states a floor** every host must meet, and a program that stays under it is portable.
+  That is what a language specification usually does with a limit and it means picking a number.
+- **The compiler splits large literals**, so the ceiling stops being the program's problem. Cheap,
+  invisible, and it makes one host's bug into every host's code generation.
+- **`docs/` records it as an engine fact**, which is where `docs/` already keeps *the engine features
+  a module needs*, and the program keeps the workaround.
+
+The reason it belongs here rather than as an issue is the middle option: whether the language is
+allowed to know about an engine's limit is a design question, and it is the same question
+`packages/wacc`'s lambda cap and the ladder's own rung limits keep raising in other forms.

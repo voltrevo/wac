@@ -1,0 +1,36 @@
+// A colour, unpacked once.
+//
+// The shipped `Surface` takes an `i32 rgba` and pulls it apart with the same four lines in `fill`
+// and in `glyph`:
+//
+//     i32 r = (rgba >> 24) & 0xFF;
+//     i32 g = (rgba >> 16) & 0xFF;
+//     i32 b = (rgba >> 8) & 0xFF;
+//     i32 a = rgba & 0xFF;
+//
+// and `at` puts one back together with the mirror of it. Three statements of one layout, which is
+// the shape `@/packages/tty` found in `glyph`/`columns` — except that here they do agree, and the
+// duplication is only duplication.
+//
+// **The packed literal is worth keeping.** `0x46D9C0FF` is how a person writes a colour and how
+// every other graphics API takes one, so `Rgba.hex` is the constructor a caller reaches for; the
+// four fields are what the drawing loops read.
+
+/** Red, green, blue, alpha, one byte each. */
+export const struct Rgba {
+  u8 r;
+  u8 g;
+  u8 b;
+  u8 a;
+
+  /** `0xRRGGBBAA`, which is how a caller writes one. */
+  Rgba hex(u32 v) {
+    return Rgba(((v >> 24) & 255) as@ u8, ((v >> 16) & 255) as@ u8,
+                ((v >> 8) & 255) as@ u8, (v & 255) as@ u8);
+  }
+
+  u32 packed(const this) {
+    return ((this.r as u32) << 24) | ((this.g as u32) << 16) | ((this.b as u32) << 8)
+         | (this.a as u32);
+  }
+}

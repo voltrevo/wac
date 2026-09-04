@@ -1,0 +1,65 @@
+// A rectangle, with one convention.
+//
+// **`packages/raster/src/surface.wac` has three**, in 229 lines:
+//
+//   * `fill(x, y, w, h)`, `rect(…)` and `region(…)` take an origin and a **size**;
+//   * `damage(x0, y0, x1, y1)` takes two corners with the right and bottom **exclusive**;
+//   * the `dx0, dy0, dx1, dy1` fields hold two corners with the right and bottom **inclusive**.
+//
+// So `damage` writes `this.dx1 = x1 - 1` on the way in and `damagedPixels` writes
+// `this.dx1 - this.dx0 + 1` on the way out, and the doc comment on the second one says what that
+// costs:
+//
+// > this and `dx0`/`dy0` are exactly `drawPixelsIn`'s arguments, so a frame is "draw, send the
+// > damage, `undamage()`" with no arithmetic in the caller — **which is where the off-by-one would
+// > otherwise live, because the reported rectangle is *inclusive* at the right and bottom and a
+// > blit's width is not.**
+//
+// That is a correct method written to keep a caller away from a conversion the module does twice
+// itself. One `Rect` removes the conversion rather than hiding it.
+
+/**
+ * An axis-aligned rectangle: an origin and a size, right and bottom exclusive.
+ *
+ * `const struct` because every operation answers a new one — a clip, a union, a translate — and a
+ * rectangle that can be edited in place is a rectangle two routines can disagree about.
+ */
+export const struct Rect {
+  i32 x;
+  i32 y;
+  i32 w;
+  i32 h;
+
+  Rect of(i32 x, i32 y, i32 w, i32 h) { return Rect(x, y, w < 0 ? 0 : w, h < 0 ? 0 : h); }
+
+  /** Two corners, right and bottom exclusive — the spelling `damage` took. */
+  Rect between(i32 x0, i32 y0, i32 x1, i32 y1) { return Rect.of(x0, y0, x1 - x0, y1 - y0); }
+
+  i32 right(const this)  { return this.x + this.w; }
+  i32 bottom(const this) { return this.y + this.h; }
+  bool isEmpty(const this) { return this.w <= 0 || this.h <= 0; }
+
+  /** The part of this inside `b`. Empty when they do not meet, which callers test rather than assume. */
+  Rect clipTo(const this, const Rect b) {
+    i32 x0 = this.x > b.x ? this.x : b.x;
+    i32 y0 = this.y > b.y ? this.y : b.y;
+    i32 x1 = this.right() < b.right() ? this.right() : b.right();
+    i32 y1 = this.bottom() < b.bottom() ? this.bottom() : b.bottom();
+    return Rect.between(x0, y0, x1, y1);
+  }
+
+  /** The smallest rectangle covering both. An empty operand answers the other. */
+  Rect cover(const this, const Rect b) {
+    if (this.isEmpty()) { return b; }
+    if (b.isEmpty()) { return this; }
+    i32 x0 = this.x < b.x ? this.x : b.x;
+    i32 y0 = this.y < b.y ? this.y : b.y;
+    i32 x1 = this.right() > b.right() ? this.right() : b.right();
+    i32 y1 = this.bottom() > b.bottom() ? this.bottom() : b.bottom();
+    return Rect.between(x0, y0, x1, y1);
+  }
+
+  bool holds(const this, i32 px, i32 py) {
+    return px >= this.x && py >= this.y && px < this.right() && py < this.bottom();
+  }
+}

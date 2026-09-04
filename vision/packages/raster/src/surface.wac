@@ -1,0 +1,243 @@
+// A pixel buffer, and the three things a desktop draws into one.
+//
+// `design/system/0004` step 2. The window manager and the terminal are built on a DOM today and the
+// stack `design/system/0001` is aiming at has none, so the same shapes have to be drawable into a
+// buffer a framebuffer, a canvas or `drawPixels` can take.
+//
+// The layout is unchanged and is not a candidate for changing: `pixels` is `u8[]`, four bytes a
+// pixel, R G B A, row-major with no padding, because that is what `Page.drawPixels` already takes
+// and a `Pixel` struct would be 307,200 heap objects for a 640x480 surface. The original says so and
+// is right.
+//
+// What changes is the three rectangle conventions, the packed colour, and one sentinel.
+
+import { Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+import { Rect } from "./geom.wac";
+import { Rgba } from "./colour.wac";
+import { glyphIndex, glyphRow, glyphWidth } from "./font16.wac";
+
+/** The cell unscii-16 draws in. A wide glyph is two cells across, and `glyphWidth` says which. */
+export const i32 CELL_W = 8;
+export const i32 CELL_H = 16;
+/** Bytes per pixel: R, G, B, A. */
+export const i32 STRIDE = 4;
+
+/**
+ * Pixels and the region of them a host has not seen.
+ *
+ * The damage rectangle is here rather than in the caller because every routine already knows what it
+ * touched, and a caller that recomputes it will get it wrong — `0004`'s D1.
+ *
+ * **`Rect?` where the original has four `i32` fields and a convention.** `create` sets
+ * `(0, 0, -1, -1)`, `damaged()` reads `dx0 <= dx1 && dy0 <= dy1`, and `undamage()` writes the
+ * sentinel back. So *nothing has been drawn* is spelled as a rectangle whose corners are the wrong
+ * way round, and the predicate that says so is a method. `null` is the same information with no
+ * arithmetic in it.
+ *
+ * This file has **three** of that shape and replaces two: the damage sentinel here, `at`'s zero
+ * below, and `glyphIndex`'s `-1`, which is generated code and stays. Three in 229 lines is the
+ * highest density this exercise has found, and the reason is worth naming — every one of them is a
+ * *coordinate or a colour*, where the value has no spare room by construction, so the absent case
+ * had nowhere to go but into the range.
+ */
+export struct Surface {
+  i32 width;
+  i32 height;
+  u8[] pixels;
+  Rect? damage;
+
+  /** A surface of `w` by `h`, transparent black, with nothing damaged yet. */
+  Surface create(i32 w, i32 h) {
+    i32 cw = w < 0 ? 0 : w;
+    i32 ch = h < 0 ? 0 : h;
+    return Surface(cw, ch, u8[cw * ch * STRIDE](), null);
+  }
+
+  /** The whole surface, as a rectangle — what everything clips against. */
+  Rect bounds(const this) { return Rect.of(0, 0, this.width, this.height); }
+
+  /** Forget what changed: a host has taken the pixels and the next frame starts clean. */
+  void undamage(this) { this.damage = null; }
+
+  /** Widen the damage to cover `r`, which is what every routine here does when it draws. */
+  void widen(this, const Rect r) {
+    if (r.isEmpty()) { return; }
+    this.damage = this.damage is null ? r : this.damage!.cover(r);
+  }
+
+  /**
+   * The colour at a pixel, or nothing outside the surface.
+   *
+   * **`Rgba?`, because the original's answer is ambiguous by construction.** It answers a packed
+   * `i32` and its doc says *"Outside the surface answers 0"* — and `0x00000000` is transparent
+   * black, which is exactly what `create` fills the surface with. So on a fresh surface every pixel
+   * inside it and every point outside it answer the same thing, and the one caller that cares about
+   * the difference is a hit test, which is what `hit.wac` in that package does.
+   */
+  Rgba? at(const this, i32 x, i32 y) {
+    if (!this.bounds().holds(x, y)) { return null; }
+    i32 i = (y * this.width + x) * STRIDE;
+    return Rgba(this.pixels[i], this.pixels[i + 1], this.pixels[i + 2], this.pixels[i + 3]);
+  }
+
+  /**
+   * Fill a rectangle, clipped to the surface.
+   *
+   * **Opaque, not blended.** A window frame and a terminal's background are opaque, and alpha
+   * blending is a decision about a compositor that does not exist yet — writing the alpha through
+   * keeps the buffer honest about what was asked for rather than inventing a rule.
+   *
+   * Clipping is not optional: a desktop draws windows that overlap the edges by construction, so a
+   * blit that trusted its arguments would trap on the first drag. `clipTo` is on the rectangle,
+   * before the loop, because the per-pixel form is the one that costs.
+   */
+  void fill(this, const Rect r, const Rgba c) {
+    Rect it = r.clipTo(this.bounds());
+    if (it.isEmpty()) { return; }
+    for (i32 py = it.y; py < it.bottom(); py++) {
+      i32 row = py * this.width * STRIDE;
+      for (i32 px = it.x; px < it.right(); px++) {
+        this.put(row + px * STRIDE, c);
+      }
+    }
+    this.widen(it);
+  }
+
+  /**
+   * A one-pixel outline, which is four fills and not a special case.
+   *
+   * Worth its own name because a window frame is what this package exists to draw, and a caller
+   * writing four `fill` calls gets the corners wrong in one of the two obvious ways.
+   */
+  void outline(this, const Rect r, const Rgba c) {
+    if (r.isEmpty()) { return; }
+    this.fill(Rect.of(r.x, r.y, r.w, 1), c);
+    this.fill(Rect.of(r.x, r.bottom() - 1, r.w, 1), c);
+    this.fill(Rect.of(r.x, r.y + 1, 1, r.h - 2), c);
+    this.fill(Rect.of(r.right() - 1, r.y + 1, 1, r.h - 2), c);
+  }
+
+  /**
+   * Draw one code point, and answer how far to advance.
+   *
+   * The advance is the *glyph's* width — 8, or 16 for the points unscii draws double — so a caller
+   * laying out a line adds what it is told rather than assuming a cell. A code point the font does
+   * not have draws nothing and advances one cell, leaving a hole rather than shifting the line.
+   *
+   * Only the set bits are written: text is drawn *over* a background that is already there, and a
+   * glyph that filled its cell would erase the pixel either side of a descender.
+   */
+  i32 glyph(this, i32 cp, i32 x, i32 y, const Rgba c) {
+    i32 idx = glyphIndex(cp);
+    if (idx < 0) { return CELL_W; }
+    i32 w = glyphWidth(idx);
+    for (i32 row = 0; row < CELL_H; row++) {
+      i32 py = y + row;
+      if (py < 0 || py >= this.height) { continue; }
+      i32 bits = glyphRow(idx, row);
+      if (bits == 0) { continue; }
+      i32 base = py * this.width * STRIDE;
+      for (i32 col = 0; col < w; col++) {
+        if (((bits >> (w - 1 - col)) & 1) == 0) { continue; }
+        i32 px = x + col;
+        if (px < 0 || px >= this.width) { continue; }
+        this.put(base + px * STRIDE, c);
+      }
+    }
+    this.widen(Rect.of(x, y, w, CELL_H).clipTo(this.bounds()));
+    return w;
+  }
+
+  /**
+   * Draw a line of text, and answer where it ended.
+   *
+   * Code points, not bytes: a font is indexed by code point and a UTF-8 reader in a rasteriser is
+   * the wrong layer. See the note at the foot of this file on what the element type should be.
+   */
+  i32 text(this, i32[] cps, i32 x, i32 y, const Rgba c) {
+    i32 at = x;
+    for (i32 cp in cps) { at = at + this.glyph(cp, at, y, c); }
+    return at;
+  }
+
+  /**
+   * The pixels of a rectangle, **with the rectangle they came from**.
+   *
+   * The original answers a bare `u8[]` and clips, so the array's dimensions are neither in the value
+   * nor equal to what was asked for. Its doc tells the caller how to recover them: *"the answer is
+   * the size of the clipped rectangle: a caller that asks for a region hanging off the edge gets
+   * what exists, and pairs it with the clipped origin that `damage` reported."*
+   *
+   * That is a caller reconstructing, from a second source, the thing this function already computed.
+   * A `Tile` is the pair.
+   */
+  Tile region(const this, const Rect r) {
+    Rect it = r.clipTo(this.bounds());
+    if (it.isEmpty()) { return Tile(it, Bytes.empty()); }
+    Buf out = Buf.create();
+    for (i32 py = it.y; py < it.bottom(); py++) {
+      i32 row = py * this.width * STRIDE;
+      for (i32 px = it.x; px < it.right(); px++) {
+        i32 i = row + px * STRIDE;
+        for (i32 k = 0; k < STRIDE; k++) { out.push(this.pixels[i + k]); }
+      }
+    }
+    return Tile(it, out.bytes());
+  }
+
+  /**
+   * What a host has not seen, and where it goes — or nothing.
+   *
+   * A frame is `draw; Tile? t = s.damaged(); if (t !is null) { send(t!); s.undamage(); }`, and the
+   * arithmetic the original's comment worries about does not exist: `Tile.at` is the rectangle, in
+   * the same convention as every other rectangle here, so a host reads the origin and the size out
+   * of the value instead of recovering them from four fields with the corners the other way round.
+   */
+  Tile? damaged(const this) {
+    if (this.damage is null) { return null; }
+    return this.region(this.damage!);
+  }
+
+  void put(this, i32 i, const Rgba c) {
+    this.pixels[i] = c.r;
+    this.pixels[i + 1] = c.g;
+    this.pixels[i + 2] = c.b;
+    this.pixels[i + 3] = c.a;
+  }
+}
+
+/** A block of pixels and the rectangle of the surface they were taken from. */
+export struct Tile {
+  Rect at;
+  Bytes pixels;
+}
+
+// ## What could not be written
+//
+// **A code point is an `i32` here and `@/packages/unicode` has a `Scalar`.** `text(i32[] cps, …)`
+// takes anything an `i32` can hold, including a surrogate and `0x110000`, and answers by drawing
+// nothing — `glyphIndex` returns `-1`, which `glyph` reads as *advance a cell*. So an invalid code
+// point and an unmapped one are the same outcome, which is right for the font and wrong for the
+// type: only one of the two is a value the caller should have been able to construct.
+//
+// `@/packages/stream`'s rewrite found the same thing from the other end and named the type —
+// *"a `codepoint` can be a surrogate; a `scalar` cannot — that is what the word means in Unicode"* —
+// and `text(Slice<Scalar>)` is what this wants. It is not written because it would make
+// `@/packages/raster` depend on `@/packages/unicode` for a type and nothing else, which is the
+// dependency the shipped file avoided by taking `i32[]`. **The type that would fix it is one layer
+// too high**, and the general question — where a type that several packages need but none owns
+// should live — is the one `core` exists to answer and has answered for `Bytes` and not for this.
+//
+// **`glyphIndex` answers `-1`.** `i32?` says it, and the font table is generated code
+// (`tools/genfont.ts`), so changing it changes a generator rather than a file. Left as it is because
+// the generated half is not rewritten here, and noted so the list is honest: this file replaced four
+// sentinels and lives with the fifth.
+//
+// **A `Tile` cannot say its own row width without its `Rect`**, which is fine, and the reason it is
+// worth a line is that `Bytes` cannot say it at all. A `Tile` is a two-dimensional view over a
+// one-dimensional one, and the second dimension is carried beside it by agreement. Every image type
+// in every language has this and solves it with a stride field; what makes it a question here is
+// that `Slice<T>` already carries `len`, so the thing that would carry `stride` exists and is one
+// field short — the same observation `@/packages/ens/src/answer.wac` makes about a fixed-length
+// address, arrived at from a different direction on the same day.
