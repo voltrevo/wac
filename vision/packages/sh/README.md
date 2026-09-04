@@ -12,7 +12,7 @@ already said.
 ## Why this path
 
 It is the only place in the tree where authority is **handed on** rather than held. Ten packages
-have taken a `Sys` and used it; none has given a narrower one to somebody else, which is the half of
+have taken a capability and used it; none has given a narrower one to somebody else, which is the half of
 *no ambient capabilities* that has not been exercised.
 
 ## What the platform already does, which is right
@@ -27,11 +27,11 @@ saying plainly, because *authority narrows* is a `SHOWCASE.md` entry and it read
 
 ## The finding: a capability cannot cross a spawn
 
-Within one instance, authority being a value does real work — a function handed a narrower `Sys`
+Within one instance, authority being a value does real work — a function handed fewer capabilities
 cannot reach past it, and that is the type rather than a host check.
 
 **Across a spawn it cannot be a value at all.** `std/platform.wac` again: *"A spawned child is a
-separate instance with its own memory."* A reference does not cross an instance boundary, so a `Sys`
+separate instance with its own memory."* A reference does not cross an instance boundary, so a capability
 cannot be handed to a child. What crosses is a *description* of one.
 
 So the bitfield is not a compromise anybody made. It is the **serialised form of a capability**, and

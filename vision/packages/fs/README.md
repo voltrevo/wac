@@ -12,7 +12,7 @@ written out — [`src/mount.wac`](src/mount.wac), which is the whole argument, a
 ## Why this one, and it is not the reason I expected
 
 `fs` is the only consumer the `Files` projection in [`../../std/platform.wac`](../../std/platform.wac)
-has ever had. Splitting `Sys` into seven groups was argued from a count of the host's fifty
+has ever had. Splitting the host into seven groups was argued from a count of its fifty
 capabilities and from `box`'s applets, and never once written against. A filesystem is the case that
 should pay for it, so that was the plan.
 

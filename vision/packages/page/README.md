@@ -10,8 +10,8 @@ Two files. [`src/counter.wac`](src/counter.wac) is `packages/platform/example/co
 
 ## Why this one
 
-Every subject before it is a command-line program, and `vision/std`'s eight projections have no
-document in them. So a vision program cannot be interactive — in a system whose `design/system/0001`
+Every subject before it is a command-line program, and `vision/std`'s eight projections had no
+document in them. So a vision program could not be interactive — in a system whose `design/system/0001`
 treats the browser as a host rather than a demo, and whose launcher hands `Page` to an exported
 `page` the way it hands `Cli` to `main`.
 
@@ -123,7 +123,7 @@ that does not exist rather than one being broken.
 `<p @"class name"="x">` renders markup no parser reads back. Checkable at the JSX, checked nowhere.
 
 **Whether `Page` is one projection or several.** Twelve members covering markup, events, pixels, file
-picking and downloads is wider than `Files`, and the argument that split `Sys` into groups would
+picking and downloads is wider than `Files`, and the argument that split the host into groups would
 split this too — `drawPixels` and `nextFile` have about as much to do with `setText` as `connect` has
 with `readFile`. Against that, they are all one grant: a program that may show a document may show
 pixels in it. Same question as *why seven*, one level down, and the same answer is not obviously

@@ -83,9 +83,9 @@ spawned child; here, authority cannot be subdivided *within* a module. One under
 
 **It can stop the code reaching it, and `std` now says how.** The host's 50 capabilities fall into
 five groups — file 14, net 9, process 8, env 4, io 3 — so `vision/std/platform.wac` makes the groups
-values: `Sys` is the whole grant and `sys.out` is a narrower one that reaches standard output and
-nothing else. A projection has no way back, so `echo(sys.out, args)` **cannot** open a socket
-however it is written.
+values, and a function takes the ones it needs: `echo(Out out, Args a)` reaches standard output and
+nothing else. A projection has no way back — no field on `Out` answers anything wider — so an
+applet handed one **cannot** open a socket however it is written.
 
 The counts above are what that is worth here: **17 applets would take `Out` and nothing else**, and
 58 would never see the network. `Out` is exactly the projection this package needs and exactly the
