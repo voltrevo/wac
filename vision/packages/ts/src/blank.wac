@@ -1,0 +1,63 @@
+// A buffer you can only blank — the type that holds `design/system/0009` D1.
+//
+// > type syntax is replaced with **spaces**, never deleted, so every line and column of the output
+// > matches the input and a stack trace from the result points at the TypeScript that produced it.
+// > Newlines inside an erased range survive for the same reason — a multi-line type annotation must
+// > not shorten the file.
+//
+// That is a property of every write in `packages/ts/src/strip.wac`, held by every write being
+// careful, and checked at the end by a differential against `ts.transpileModule` over 22 files. It
+// is a good check and it is a check: the property is re-established per call site and nothing states
+// it.
+//
+// Here it is the type. `Blanked` starts as a copy of the source and the only mutation is `blank`,
+// which cannot change the length and cannot touch a newline. **A stripper that erased a range by
+// deleting it would not compile**, because there is no operation for it.
+
+import { Bytes } from "core";
+
+/**
+ * The output, which is the input with spans blanked.
+ *
+ * No constructor from bytes and no `push`. The only way to get one is `Blanked.of(src)`, and the
+ * only way to change one is `blank`.
+ */
+export struct Blanked {
+  Bytes src;
+  Bytes out;
+
+  Blanked of(Bytes src) { … }
+
+  /**
+   * Replace `[from, to)` with spaces, keeping every `\n`.
+   *
+   * The newline rule is here rather than at each caller, which is the whole of the change: in the
+   * shipped file the loop that writes spaces is written once and the *decision* that it must skip
+   * newlines is a comment above it. A second stripper — the bundler, which
+   * `packages/ts/README.md` lists as step 4 and not yet written — would write the loop again.
+   */
+  void blank(this, i32 from, i32 to) { … }
+
+  /** What came out. Same length as the source, always. */
+  Bytes bytes(const this) { return this.out; }
+}
+
+// ## What could not be written
+//
+// **Nothing stops `blank(0, src.len())`.** The type refuses to shorten the file and does not refuse
+// to erase the program. That is the correct boundary — a stripper *does* blank arbitrary spans, and
+// which spans are types is the whole difficulty — but it is worth being precise about what has been
+// bought: the invariant D1 states, and not the one a reader might assume from the name.
+//
+// **`from` and `to` are two `i32`s and could be crossed.** A `Span` would pair them, and
+// `@/packages/raster`'s `Rect` and `@/packages/ssz`'s `Chunk` are the same request at other shapes:
+// a value type where two scalars must agree. This is the fourth in the directory, and the first
+// where the two scalars are *offsets into a buffer the receiver also holds*, so the check
+// `from <= to && to <= src.len()` is one the receiver can make and no caller can be wrong about
+// alone.
+//
+// **A `Bytes` that is a copy, per stripper.** `Blanked.of` copies the source so `src` stays readable
+// while `out` is written. For a 924-line stripper over a 22-file host that is nothing; for the
+// bundler, which concatenates modules, it is a copy per module and the type gives no way to say
+// *these two share a source*. The shipped code has the same copy and no type to hang the question
+// on, which is why this is a finding rather than a regression.

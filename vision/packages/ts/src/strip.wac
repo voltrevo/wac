@@ -1,0 +1,121 @@
+// Erasing TypeScript's types, and the reason a source-to-source transform is allowed here.
+//
+// **This directory ruled one out today.** `@/packages/wacc/src/desugar.wac` lowers `try`, and
+// `../../../TECHNICAL.md` concluded from the nesting that
+//
+// > a source-to-source desugarer is the wrong target. Its output for that function is unreadable,
+// > and unreadable output is not a minor cost for a tool whose purpose is to let people run the
+// > proposal — every diagnostic, every line number and every stack frame would point into it.
+//
+// `packages/ts` is a source-to-source transform whose diagnostics, line numbers and stack frames
+// point at the **input**, and it holds that property over 22 real files byte-for-byte against
+// `ts.transpileModule`. So the conclusion above is right and its reason is not the one it gives.
+//
+// The difference is one word: **this transform only removes.** Erasure can preserve every line and
+// column because the output is the input with spans blanked — `./blank.wac` makes that the type. A
+// desugaring *adds*, and there is no arrangement of added text that leaves the surrounding columns
+// where they were. A source map is the standard answer and it is a second artefact that every
+// downstream tool has to consult, which is a different cost rather than a smaller one.
+//
+// **So the rule is: source-to-source is viable exactly when the transform is length-preserving**, and
+// erasure is the only interesting transform that is. Neither page says it, and the two files that
+// prove both halves were written on the same day.
+
+import { Result, Bytes, Vec } from "core";
+import { Blanked } from "./blank.wac";
+import { Token, Kind } from "./token.wac";
+import { StripFault, At, EmitsRuntimeValue, NothingToLeave, ParameterProperty } from "./fault.wac";
+
+/**
+ * The JavaScript, or the first construct that cannot become JavaScript.
+ *
+ * `Result` where the shipped `Stripped` is a struct of four fields with *"empty when `error` is
+ * set"* in a comment.
+ */
+export Result<Bytes, StripFault> strip(Bytes src, Vec<Token> tokens) {
+  Blanked out = Blanked.of(src);
+  Ctx ctx = Ctx.file();
+  for (i32 i = 0; i < tokens.len(); i++) {
+    Token t = tokens.get(i);
+    // The four refusals, before anything is blanked. `declare`, `enum` and `namespace` are
+    // identifiers at the start of a declaration; a parameter property is a modifier inside one.
+    try refuseIfUnerasable(src, tokens, i, ctx);
+    i = try step(out, ctx, src, tokens, i);
+  }
+  return Ok(out.bytes());
+}
+
+/**
+ * One open bracket, and what a `:` inside it would mean.
+ *
+ * Kept from the shipped `Ctx`, including the part that is the good idea: *"`pendingTernary` is the
+ * count of `?` seen at this depth that have not been matched by a `:`. It is a count rather than a
+ * flag because conditionals nest — `a ? b ? c : d : e` — and a flag would close the outer one on the
+ * inner one's colon."*
+ *
+ * What changes is `bracket`, which the shipped struct holds as *"`(`, `[`, `{`, or 0 for the file
+ * itself"* — an `i32` that is a character code three times and a sentinel once. Four cases, one of
+ * which is not a character, is an enum.
+ */
+struct Ctx {
+  Vec<Frame> frames;
+
+  Ctx file() { … }
+
+  /** What a `:` at the current depth means. The question the whole file exists to answer. */
+  ColonMeans colon(const this) { … }
+}
+
+struct Frame { Bracket in; i32 pendingTernary; }
+
+/** `(`, `[`, `{`, or the file. */
+enum Bracket { Paren, Square, Brace, File }
+
+/**
+ * The four things `:` is spelled as, which the README lists and the code decides one `if` at a time.
+ *
+ * Making it a return type rather than a chain of conditions is the only structural change to the
+ * hard part of this package. The decision procedure is unchanged and is the shipped one: bracket
+ * depth separates an annotation from an object key, and a pending `?` at the same depth separates it
+ * from a conditional.
+ */
+enum ColonMeans { TypeAnnotation, ObjectKey, Conditional, Label }
+
+/** Blank one construct if it is a type, and answer the index after it. */
+Result<i32, StripFault> step(Blanked out, Ctx ctx, Bytes src, Vec<Token> tokens, i32 i) { … }
+
+Result<void, StripFault> refuseIfUnerasable(Bytes src, Vec<Token> tokens, i32 i, Ctx ctx) { … }
+
+// ## 1. The eight defects the differential found were all one shape
+//
+// `packages/ts/README.md`, on the check against `ts.transpileModule`:
+//
+// > The differential found eight defects that the hand-written cases did not, and every one was two
+// > constructs spelled identically with only context to separate them — `import { a as b }` against
+// > a cast, `(a ? f(x) : c)` against a return type, `f(x as T)` against `(x as T)`. Three were the
+// > *same* shape: after a type-level operator — `=>`, `|`, or a second `as` — what follows is more
+// > type, and reading it as code left an object type behind as a statement.
+//
+// **Three of eight were one rule stated three times**, which is the tell `../../../QUESTIONS.md`
+// already has as *an exception hides the rule it broke*: when a rule has a list of locally-reasonable
+// special cases, ask what they share. Here they share *after a type-level operator, what follows is
+// more type* — which is a state, not three conditions, and `ColonMeans` above is half of the same
+// idea. A `Reading { Code, Type }` state would be the other half and would have made the three one.
+//
+// That is a language finding only in the weak sense — it is an argument for a state machine, which
+// is not a proposal — but it is a strong argument for the *differential*: the hand-written cases had
+// been read by somebody who believed the rule was three rules, so they could not find that it was
+// one.
+//
+// ## 2. What could not be written
+//
+// **`step` answers the next index and the language cannot say it is greater than `i`.** A stripper
+// that returned `i` loops forever, and this is the one function in the file where that is possible.
+// The shipped code has the same hazard as `i = end; continue;` in a loop it also controls. Neither
+// form is checkable; a generator — `gen<Blanked>` yielding after each construct — would move the
+// advance into the language's own loop, and is a real alternative rather than a wish.
+//
+// **The `Ctx` is threaded and could be forgotten.** Every helper takes it and any one of them could
+// push a frame and not pop it, which is what makes bracket-depth bugs the class this package fears
+// most. `defer { ctx.pop(); }` is what the code wants and `defer` is one of the four constructs whose
+// meaning is open — the third file in this directory to be blocked on the same answer.

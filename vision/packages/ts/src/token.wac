@@ -1,0 +1,80 @@
+// A token, as a value — where the package has a quintuple in a flat `i32[]` and seven accessors.
+//
+// `packages/ts/src/lex.wac`:
+//
+//     export i32 tokenStride() { return 5; }
+//     export struct Lexed { i32[] tokens; string error; i32 errorAt; }
+//     export i32 kindAt(Lexed l, i32 i) { return l.tokens[i * tokenStride()]; }
+//     export i32 lenAt(Lexed l, i32 i)  { return l.tokens[i * tokenStride() + 2]; }
+//
+// — plus `startAt`, `lineAt`, `colAt`, `textAt` and `tokenCount`, and seven `k*()` functions
+// returning the kind constants. **Third flat table in the tree** after `@/packages/abi`'s descriptor
+// and `@/packages/ssz`'s, and the first of the three with no stated reason: `ssz` says it is for a
+// JS boundary that has since gone, `abi` says nothing, and this says nothing either — but this one
+// never crossed a boundary at all, since `packages/ts` is a wac program whose only consumer is
+// another wac program.
+//
+// So the flat form is a habit by the third occurrence. That is the observation worth keeping; the
+// enum below is the same change made twice already.
+
+import { Vec, Bytes } from "core";
+
+/**
+ * What shape a token is — never which keyword it is.
+ *
+ * `lex.wac`'s own note, kept because it is the design and not an implementation detail: *"A stripper
+ * needs to know what shape a token is, never which keyword it is — keywords are identifiers here,
+ * and the consumer compares their text when it cares."*
+ */
+export enum Kind {
+  /** Always the last token. */
+  Eof,
+  /** An identifier, a keyword, or a private name (`#x`). */
+  Ident,
+  /** Numeric, including bigint and separators. */
+  Num,
+  /** Single- or double-quoted. */
+  Str,
+  /** A whole template literal, `${…}` and any nesting included. */
+  Template,
+  /** A regular expression literal with its flags. */
+  Regex,
+  /** Anything else: operators, brackets, `;`, `,`, `=>`, `...`. */
+  Punct
+}
+
+/**
+ * One token.
+ *
+ * `line` and `col` are carried rather than derived, as the shipped quintuple carries them — a
+ * stripper reports positions and recomputing them from `start` means a scan per diagnostic.
+ */
+export const struct Token {
+  Kind kind;
+  i32 start;
+  i32 len;
+  i32 line;
+  i32 col;
+
+  /** The bytes this token spans. A method, where `textAt(l, i)` is a free function taking both. */
+  Bytes textIn(const this, Bytes src) { … }
+
+  /** Whether this token is exactly `s`. The comparison the design says a consumer makes. */
+  bool isWord(const this, Bytes src, string s) { … }
+}
+
+// ## What could not be written
+//
+// **`Token` is five fields and four are `i32`.** `start`, `len`, `line` and `col` are mutually
+// swappable and a swap type-checks — `@/packages/wacc/src/ast.wac`'s whole argument, arriving at a
+// struct rather than at an enum payload, where it is *less* bad because a struct literal names its
+// fields. Construction is safe here and `Token(k, a, b, c, d)` positionally is not, and the language
+// permits both.
+//
+// **A `Vec<Token>` is 5× the words of the quintuple array and nothing here measures it.** The
+// shipped form is a flat `i32[]` and this is a vector of five-field objects, which under wasm GC is
+// a header and a reference per token. For a 22-file host that is irrelevant; for the bundler over a
+// real dependency graph it might not be, and `../../bench/` has one benchmark in it, single-host,
+// measuring something else. **The rewrite that replaces a flat array with objects is the one case in
+// this directory where the shipped form might be right for the reason the shipped form usually is
+// not**, and nothing here can tell.

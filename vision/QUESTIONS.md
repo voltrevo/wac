@@ -4556,3 +4556,48 @@ The narrow version of the question, which is answerable: **is there anywhere to 
 transcription of §6, check it line by line"?** A spec tag would do it — `spec/` already has
 `[§wac-…]` markers pointing the other way, from code to the language definition, and this is the same
 mechanism pointed at somebody else's document.
+
+## Source-to-source is viable exactly when the transform only removes
+
+`TECHNICAL.md` ruled out a source-to-source desugarer for `try`, and the reason it gave is not the
+one that decides it:
+
+> a source-to-source desugarer is the wrong target. Its output for that function is unreadable, and
+> unreadable output is not a minor cost for a tool whose purpose is to let people run the proposal —
+> every diagnostic, every line number and every stack frame would point into it.
+
+**`packages/ts` is a source-to-source transform that does not have that problem**, and it holds the
+property over 22 real files byte-identically against `ts.transpileModule` —
+`design/system/0009` D1:
+
+> type syntax is replaced with **spaces**, never deleted, so every line and column of the output
+> matches the input and a stack trace from the result points at the TypeScript that produced it.
+
+The difference is one word. **Erasure only removes**, so the output is the input with spans blanked
+and every position survives — which is also why newlines inside an erased range are kept. A
+desugaring **adds**, and there is no arrangement of added text that leaves the surrounding columns
+where they were.
+
+So the rule is not *source-to-source is unreadable*. It is:
+
+- **length-preserving → source-to-source is fine**, and the diagnostics need nothing;
+- **not length-preserving → a source map**, which is a second artefact every downstream tool has to
+  consult. A different cost, not a smaller one, and the reason to prefer a pass over an AST is that
+  a pass needs no artefact rather than that its output would be ugly.
+
+The conclusion stands and its argument changes, which matters because the argument is what gets
+reused. *Unreadable output* would also rule out the erasure this repository already depends on for
+every capability call — `packages/ts` produces the bridge — and it does not.
+
+### And the property is worth being a type
+
+D1 holds today because every write in a 924-line file is careful, and it is checked at the end by the
+differential. `@/packages/ts/src/blank.wac` makes it structural: a buffer whose only mutation is
+`blank(from, to)`, which cannot change the length and cannot touch a `\n`. A stripper that erased by
+deleting would not compile. The bundler — step 4 of `design/system/0009`, unwritten in both trees —
+would inherit the rule instead of re-deriving it.
+
+That is the small version of a question this directory keeps meeting from the other side: **a design
+decision written in a doc and held by discipline, where a type could hold it.** Every instance so far
+has been found by writing the consumer. This one was found by reading two files written the same day
+that contradicted each other.

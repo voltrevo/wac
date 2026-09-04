@@ -1,0 +1,52 @@
+// The refusals — four kinds, where the package has one `string` and two `i32`s.
+//
+// `design/system/0009` D4: *"a construct this cannot read is an error naming it and its position.
+// Never a guess, never a silent pass-through."* The decision is right and the shipped shape carries
+// it as prose:
+//
+//     export struct Stripped { u8[] out; string error; i32 line; i32 col; }
+//     export struct Lexed    { i32[] tokens; string error; i32 errorAt; }
+//
+// Both hold *"empty when `error` is set"* as a comment, in one package, twice. Each is a `Result`
+// whose two halves were written as one struct because there was no other way to answer either
+// — and the messages are good English that no caller can act on: an editor integration wanting to
+// underline the `enum` keyword has a string beginning with a backtick.
+
+/** A position in the source. Two `i32`s that must come from the same token, so: one value. */
+export struct At { i32 line; i32 col; }
+
+/**
+ * `enum` and `namespace` — *"it emits a runtime object"*.
+ *
+ * One variant for the two, because the reason is the same one and the shipped messages are the same
+ * sentence with the keyword changed. `what` is the keyword, so a caller still reports which.
+ */
+export struct EmitsRuntimeValue { string what; At at; }
+
+/** `declare` — *"it has no JavaScript to leave behind"*. A different reason, so a different arm. */
+export struct NothingToLeave { At at; }
+
+/**
+ * `constructor(private x)` — *"it declares a field as well as a parameter"*.
+ *
+ * The fourth refusal, and the only one that is not a keyword at the start of a declaration: it is a
+ * modifier on a parameter, so a caller cannot find it by grepping. That asymmetry is why the
+ * position matters more here than in the other three.
+ */
+export struct ParameterProperty { At at; }
+
+/** The lexer's own: a token it could not close. */
+export struct Unterminated { string what; i32 offset; }
+
+export union<Unterminated> LexFault;
+export union<EmitsRuntimeValue, NothingToLeave, ParameterProperty, LexFault> StripFault;
+
+// ## The nested union is on purpose and it is the case the flattening question is about
+//
+// `StripFault` contains `LexFault`, so `Err(is LexFault):` is one arm for *"it is not valid
+// JavaScript, never mind the types"* — the grouping `../../../TECHNICAL.md` says nesting preserves,
+// and the members are disjoint, so it is the good case.
+//
+// `@/packages/box/src/upper.wac` has the bad one: a stacked transform whose error set contains the
+// same member at two depths. Both are in this directory now, which is what makes the question
+// answerable — and neither is a corner case.
