@@ -750,13 +750,20 @@ guide, because a file is blocked by everything it uses and reported by one.
 | `u8` as a local, parameter, field or cast | 19 | **yes**, and not free — `i32` loses the truncation |
 | `try` | 17 | **yes** — a temp and a `match`, local |
 | unqualified `Ok(x)` / `Err(e)` | 14 | **yes** — qualify; measured, `Res.Ok(3)` on a generic enum checks clean and runs |
-| `for … in` **over a generator** | 17 | no — the loop is the generator |
-| re-export | 20 | **no** — `issues/lang/0073`, and it is the single biggest blocker |
-| `union<…>` in a type | 15 | no |
-| a named `union` declaration | 11 | no |
-| a method with no body | 10 | no |
-| `gen` / `yield` | 8 | no |
-| `coroutine` | 1 | no |
+| `for … in` **over a generator** | 17 | **yes, since** — `TECHNICAL.md`'s `try for` entry, measured |
+| re-export | 20 | no target, and it blocks only barrels — see below |
+| `union<…>` in a type | 15 | **yes, since** — an enum of one-field variants, measured |
+| a named `union` declaration | 11 | **yes, since** — the same entry |
+| `gen` / `yield` | 8 | **yes, since** — a struct with a resume tag, measured |
+| a default type argument | 3 | not lowered |
+| `never` as a type argument | 2 | an enum with that arm deleted; not written out |
+| `coroutine` | 1 | not lowered |
+
+**A row went from that table rather than being answered: "a method with no body", counted at ten.**
+It was a regex matching `return f(…);` — a return whose expression is a call, ending in `);`. With
+the keyword filter the count is **zero**: `core/ticket.wac` says `settled` and `advance` *"**were**
+bodyless methods here"* and they are funcref fields now, so the construct left this directory and
+the eight-construct table above still lists it. One of the eight is not used.
 
 **So: 25 files use nothing new, 17 are blocked only by constructs with a target, and 60 need the
 language.** Forty-two of 102 reachable, and the ceiling is set by re-export and by generators.
@@ -795,6 +802,26 @@ use a generator, a union, or a method with no body — and those are the three f
 directory exists to argue for, so a desugarer would compile the half of the corpus that is *least*
 about the proposal. Worth knowing before starting, and it is the argument for spending the next
 effort on `union` rather than on a rewriter.
+
+### Where the costing ended, three ticks later
+
+Every construct on that table now has a written, measured lowering except four, and those four are
+`coroutine` (1 file), a default type argument (3), `never` (2, and it is *"the enum with that arm
+deleted"*), and re-export (20, all barrels). `TECHNICAL.md` carries the three lowerings — `union`,
+`gen`/`yield`, and `try` / `try for` — each with a target that compiles and runs.
+
+**So the answer to the brief's suggestion has inverted completely.** The question was whether a
+desugarer is easy enough to be worth writing without waiting; the measurements say the *desugarings*
+are the easy part and every one of them needs the same thing the recogniser does not give:
+
+> `try` needs the statement it sits in, because a `match` arm cannot introduce a name into its
+> enclosing scope. `for … in` needs the loop body. `union`'s injection needs the type of the slot.
+> `gen` needs every local that outlives a suspension.
+
+None is a token substitution, and **a tree is the whole of the remaining work.** That is what
+*"actually implementing a parser"* means, and it is now a better-supported recommendation than it
+was when it was a suggestion: the thing to build is a parser, and the passes that hang off it are
+each a page of `TECHNICAL.md` that has already been run.
 
 ### And `union` turned out to be a desugaring too
 

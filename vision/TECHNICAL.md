@@ -1109,3 +1109,62 @@ What still declines in that plan declines here too: an `await` — or a `yield` 
 the loop's own return — and the target for it is a `while` over `Step<T>` inside an `async` body
 whose `Err` arm returns. Each part is above; nothing has written the combination out, and it is the
 loop head in eleven files here.
+
+## `try` and `try for` lower to a `match` with an early return — **the targets run**
+
+The last two entries lowered `union` and `gen`/`yield`. This is the third piece, and with it
+`try await for` — the loop head in eleven files here — has no part left unaccounted for.
+
+**`T x = try e;`**, in a function answering `Result<U, F>`:
+
+```wac
+i32 x = 0;
+match (step(a)) {
+  case Err(e): { return Res.Err(e); }
+  case Ok(v):  { x = v; }
+}
+```
+
+`probe() = 10` on the happy path and `probeBad() = -9` on the failing one — the `Err` propagated
+through two chained steps. Zero parse and zero type errors.
+
+The declaration has to be split from the binding, because a `match` arm is a block and cannot
+introduce a name into its enclosing scope. That is the whole cost of the transform, and it is why
+`try` is not a token rewrite: it needs to know the statement it sits in.
+
+**`try for (T x in src) { … }`** over a generator answering `Result<void, E>`:
+
+```wac
+while (true) {
+  match (nextOf(s)) {
+    case Yielded(x): { sum = sum + x; }
+    case Done(r): {
+      match (r) { case Err(e): { return Res2.Err(e); } case Ok(_): { } }
+      break;
+    }
+  }
+}
+```
+
+`probe() = 3` over a source yielding 1 and 2, `probeBad() = -5` when the same source ends with
+`Err`. Zero errors on both.
+
+### `try await for` is these three and nothing else
+
+| part | established by |
+|---|---|
+| the `while` over a two-arm `Step`, `Done(Err)` returning and `Done(Ok)` breaking | the program above |
+| `try`'s propagation | the program above it |
+| an `await` in the loop **body** | `packages/wacc/test/wac/asyncplan_test.wac` — `ok suspends=1 hoist=3` |
+
+Nothing in the combination is new. What the three-word head buys is that the reader does not write
+fourteen lines of it per loop, and what it costs an implementation is a tree — every one of the
+three needs the enclosing statement, and none is a token substitution.
+
+### The `Step` the loop matches has two arms and the type has three
+
+`core/coroutine.wac` declares `Step<W, Y, R>` with `Waiting`, `Yielded` and `Done`, and an
+`AsyncGenerator`'s `nextStep` answers `Ticket<Step<never, Y, R>>` — *"a slot typed `never` removes
+its arm"*. The target above is a two-arm enum, so the lowering of `Step<never, Y, R>` is *the enum
+with the `never` arm deleted*, which is a fourth transform and is the one place `never` earns its
+keep rather than being a type nobody can construct. Two files use `never`; both are that.
