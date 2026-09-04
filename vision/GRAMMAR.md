@@ -167,11 +167,11 @@ cannot tell you which**, and that is what running them is for.
 `vision/GRAMMAR.ebnf` is the same additions as productions, patched over `spec/spec/grammar.md`, and
 `tools/specparse.ts` runs the result:
 
-    deno run --allow-read tools/specparse.ts vision      # 44/44 files parse
+    deno run --allow-read tools/specparse.ts vision      # 52/52 files parse
 
 **That is a different kind of claim from anything else on this page.** Everything above was derived
 by *subtraction* — what today's parser refuses, minus what a desugarer accounts for — so it is a list
-of absences and cannot say whether the list is complete. A grammar that **accepts** all forty-four
+of absences and cannot say whether the list is complete. A grammar that **accepts** all fifty-two
 files says the additions are sufficient, which no amount of refusal-reporting can.
 
 It is not a compiler and does not pretend to be: a recogniser answers *does this parse* and nothing
@@ -371,8 +371,15 @@ than it is written about.
 Executable now, and worth more than the counts above. Both grammars were run over `spec/cases` —
 323 programs, each the smallest thing that shows one rule:
 
-    spec grammar     316/323 parse      (the 7 are cases written to be refused)
-    vision grammar   269/323 parse
+    deno run --allow-read tools/specparse.ts --no-vision spec/cases    316/323 parse
+    deno run --allow-read tools/specparse.ts --vision    spec/cases    269/323 parse
+
+(the 7 the spec grammar refuses are cases written to be refused, and vision refuses all 7 too)
+
+**The two flags are what make this measurement askable**, and until 2026-09-04 it was not: the delta
+was applied when `vision` appeared among the roots, so *which grammar* and *which files* were one
+switch, and asking for the vision grammar dragged vision's own files into the corpus. Which grammar
+to run and what to run it over are two questions.
 
 **Forty-seven cases that today's language accepts, vision refuses. All forty-seven contain `fn[`.**
 Not most of them — all of them, checked by grep over the list. Lambdas, funcref tables, bound method
@@ -381,7 +388,7 @@ its own type arguments`: they are refused because a funcref slot is written with
 in the file, and for no other reason.
 
 So the answer to *is this the same language with more in it* is: **it is, apart from one bracket.**
-Everything else the delta adds is additive — 22 rules replaced and one extended, and not one of them
+Everything else the delta adds is additive — 45 rules replaced and two extended, and not one of them
 takes anything away. That is a much smaller claim than the rename table looks like and a much easier
 one to act on: the migration is a mechanical sweep of 444 sites, and the day after it, every one of
 these 323 cases parses under both.
@@ -389,6 +396,18 @@ these 323 cases parses under both.
 Worth saying because nothing else could have said it. A grep tells you how many lines mention a
 spelling; running both grammars over the same corpus tells you which *programs* stop being programs,
 and it turned out to be one cause with no second.
+
+**Re-measured 2026-09-04, after the delta had roughly doubled, and every number above is unchanged.**
+When these three lines were first written the patch was 22 rules replaced and one extended; it is now
+45 and two, having absorbed page-only constructs, four control-flow forms, and the withdrawal of
+bodyless methods. 316, 269, 47, and *all* 47 containing `fn[` — none of them moved. Twenty-three more
+productions and the corpus cannot tell.
+
+That is the additivity claim measured rather than asserted. The paragraph above says the delta takes
+nothing away; the way to be wrong about that is to add a rule that shadows one of the spec's, and a
+replaced rule is precisely a rule that shadows one of the spec's. Forty-five of them do, and the only
+program in 323 that any of them stopped accepting is a program that was already refused for its
+brackets.
 
 **And only one row is a grammar change at all.** `fn[T(…)]` → `fn<T(…)>` is the single rename the
 parser can see: `tools/specparse.ts` with `GRAMMAR.ebnf` refuses `fn[void()] cb;` and accepts the

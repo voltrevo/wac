@@ -658,8 +658,18 @@ function walk(dir: string, out: string[]): void {
 }
 
 function main(argv: string[]): number {
-  const roots = argv.length > 0 ? argv : ["packages"];
-  const delta = roots.includes("vision") ? "vision/GRAMMAR.ebnf" : "";
+  // Which grammar to run and which files to run it over are two questions, and until 2026-09-04 one
+  // answered both: the delta was applied when `vision` was among the roots. That makes the
+  // interesting measurement unaskable — *which of `spec/cases` does vision refuse* needs the vision
+  // grammar over files that are not vision's, and asking for it dragged vision's own 52 files into
+  // the corpus. `--vision` and `--no-vision` say it directly; naming a `vision` root still implies
+  // the delta, since a file written in the proposed syntax has no other grammar that fits.
+  const flags = argv.filter((a) => a.startsWith("--"));
+  const roots = argv.filter((a) => !a.startsWith("--"));
+  if (roots.length === 0) roots.push("packages");
+  const wantsVision = flags.includes("--vision") ||
+    (!flags.includes("--no-vision") && roots.includes("vision"));
+  const delta = wantsVision ? "vision/GRAMMAR.ebnf" : "";
 
   const grammarText = Deno.readTextFileSync(GRAMMAR);
   const keywords = keywordsFromFence(grammarText);
