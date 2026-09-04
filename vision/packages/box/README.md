@@ -25,6 +25,22 @@ That is not carelessness and the uniformity is why: a dispatcher calls all 63 th
 every applet's signature is the widest applet's signature. The breadth is a property of the dispatch,
 not of any program in it.
 
+**And it is wider than `Fs`.** Counting the methods each applet calls on what it was handed:
+
+| what it calls | applets |
+|---|---:|
+| only output — `cli.write`, `core.warn` | **17** |
+| a filesystem method directly | 37 |
+| **a network method** | **5** |
+
+Every applet mentions `cli`, which is why an earlier count of *"never mentions it"* returned zero:
+`cli.write` **is** how a program prints. So `yes` and `echo` are handed `Cli` — which carries
+`connect`, `listen`, `accept` and `bindDatagram` — in order to reach standard output. **58 of 63
+never call a network method and all 63 hold the capability that has one.**
+
+(37 is a floor: an applet that passes `fs` to a helper in `lib/` is not counted, since the call is in
+the helper. The network figure does not have that problem, as nothing in `lib/` opens a socket.)
+
 ## The dispatcher already says the rest
 
 `box.wac`, before anything else:
@@ -48,8 +64,13 @@ spawned child; here, authority cannot be subdivided *within* a module. One under
 **It can stop the code reaching it, and `std` now says how.** The host's 50 capabilities fall into
 five groups — file 14, net 9, process 8, env 4, io 3 — so `vision/std/platform.wac` makes the groups
 values: `Sys` is the whole grant and `sys.out` is a narrower one that reaches standard output and
-nothing else. A projection has no way back, so `echo(sys.out, args)` **cannot** open a file however
-it is written, and the ten applets that never mention `fs` stop being handed one.
+nothing else. A projection has no way back, so `echo(sys.out, args)` **cannot** open a socket
+however it is written.
+
+The counts above are what that is worth here: **17 applets would take `Out` and nothing else**, and
+58 would never see the network. `Out` is exactly the projection this package needs and exactly the
+one the current split does not have — `Cli` bundles printing with connecting, so there is no way to
+hand over the first without the second.
 
 That is the language half. The dispatch table is the other, and it is uniform only because it holds
 function pointers; a closure would not have to be:
