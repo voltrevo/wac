@@ -1,0 +1,79 @@
+// Thirty-two bytes out of a hash — and the question of where that type lives.
+//
+// Written because three packages named a file in this one that nobody had written:
+// `@/packages/tls/src/keyschedule.wac` names three, `@/packages/ssz/src/chunk.wac` names
+// `sha256.wac`, and `@/packages/tor/src/onionaddr.wac` names `keccak.wac`. The rewrite of this
+// package had covered `secret.wac` and stopped, because that is where the language question was.
+//
+// Writing the digests found a second one, and it is about ownership rather than about a type.
+//
+// ## Four packages have each declared their own 32 bytes
+//
+//   * `@/packages/ssz/src/chunk.wac` — `Chunk`, because SSZ is defined over 32-byte chunks;
+//   * `@/packages/ens/src/answer.wac` — `EthAddress`, twenty rather than thirty-two, same shape;
+//   * `@/packages/bls/src/fp.wac` — `Fp`, a field element of fixed width held as `u32[] limbs`;
+//   * `@/packages/mpt` — a node hash, which is `keccak256` of the node and is a `Bytes`.
+//
+// Each is a struct wrapping a `Bytes` whose length was checked once, and each has the same footnote
+// asking for `Slice<u8, 32>`. That is one language request, filed once, and it is **not** what this
+// file is about.
+//
+// ## The question this file is about: is a digest a chunk?
+//
+// `Chunk.of` checks a length. `sha256` answers 32 bytes and cannot do otherwise, so
+// `@/packages/ssz` had to write
+//
+//     Chunk unchecked(Bytes b) { … }
+//
+// with a comment saying *this declares the check away, once, in the one place where the fact is
+// known*. If `sha256` answered a `Digest32` the check would not need declaring away — and `Chunk`
+// still could not simply **be** `Digest32`, because most chunks are not digests. A chunk is a
+// unit of merkleization; a leaf chunk is padded user data and has never been hashed.
+//
+// So they are two types with one representation, one of which is produced by the other, and the
+// conversion cannot fail. Three positions, and this file takes the first:
+//
+//   1. **Two types and an infallible conversion.** `Chunk.ofDigest(d)` takes a `Digest32` and needs
+//      no `Result`, beside `Chunk.of(Bytes)` which does. Honest, and it is one more member on a type
+//      that already has four.
+//   2. **One type in `core`.** `Slice<u8, 32>` if it existed, and then neither package declares
+//      anything — at the cost of `Chunk` and `Digest32` and `EthAddress`'s twenty being the same
+//      type again, which is the check they were introduced to get.
+//   3. **`Digest32` in `core` and every other one on top of it.** Wrong on its face: a digest is not
+//      more fundamental than a chunk, it is just the one that happens to be produced by a function
+//      everybody calls.
+//
+// The reason the first is right *here* is that the conversion is where the meaning changes — *these
+// bytes are now a leaf* — and a named conversion is the only place to write that down.
+
+import { Bytes } from "core";
+
+/**
+ * The output of a 256-bit hash.
+ *
+ * No constructor from bytes. The only way to get one is to hash something, which is the whole of
+ * what the type is for: a value that is 32 bytes because of where it came from rather than because
+ * somebody checked.
+ */
+export const struct Digest32 {
+  Bytes bytes;
+
+  /** Two digests, compared. `Slice` has no `eq` and this is the type that most wants one. */
+  bool eq(const this, Digest32 other) { … }
+}
+
+// ## What could not be written
+//
+// **`Digest32` is constructible by anyone in the same file, and there is no way to say otherwise.**
+// `Digest32(someBytes)` is a struct construction and nothing marks the field private, so the
+// no-constructor rule above is a convention held by this file being short. wac has no visibility
+// inside a module — `export` is the only control and it is per declaration — so *a type only its own
+// file may build* is not expressible. `../../../QUESTIONS.md`.
+//
+// That matters more here than in most places, because the guarantee is the point: a `Digest32` is
+// trustworthy only if every one of them came out of a hash.
+//
+// **A 512-bit digest would be a second type, and then a third.** `sha512` answers 64 bytes and
+// `Digest64` is the same file again with one number changed. `Digest<N>` is what a length in a type
+// gives, which is the request four packages have already made — so this is a fifth voice for it
+// rather than a new question, and the file says so once instead of restating the ask.

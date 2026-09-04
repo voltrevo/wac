@@ -1,0 +1,19 @@
+// HMAC-SHA256 — and the one place a `secret` has to stop being one.
+//
+// Named by `@/packages/tls/src/keyschedule.wac`, which is the file this package's rewrite was written
+// for: *"eleven functions that hand a secret to each other, and that is the thing nothing had
+// tried."*
+
+import { Bytes } from "core";
+import { Digest32 } from "./digest.wac";
+
+/**
+ * `HMAC-SHA256(key, data)`.
+ *
+ * `key` is `secret` and the answer is not, which is the boundary the qualifier exists to mark: a MAC
+ * over a known message is not itself a secret, and a caller compares it against one that arrived on
+ * the wire. `@/packages/crypto/src/secret.wac`'s note about `secret` having no return position is
+ * exactly this signature — the qualifier can say *do not leak this argument* and cannot say *this
+ * result is derived from it*, so the declassification here is silent.
+ */
+export Digest32 hmacSha256(secret Bytes key, Bytes data) { … }

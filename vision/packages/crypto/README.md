@@ -1,11 +1,17 @@
-# crypto — one proposal, not a rewrite
+# crypto — one proposal, and the four files three other packages had already imported
 
 Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does not compile,
 disposable.
 
-The real package is `packages/crypto`: 6,532 lines. **None of it is rewritten.** The algorithms are
-the algorithms, and a redesign of AES would be a different AES. What is here is one language
-proposal the package makes a case for, and the case against it.
+The real package is `packages/crypto`: 6,532 lines. **Almost none of it is rewritten.** The
+algorithms are the algorithms, and a redesign of AES would be a different AES. What is here is one
+language proposal the package makes a case for, the case against it — and, added later, the four
+signatures that three other packages had already written imports for.
+
+- [`src/secret.wac`](src/secret.wac) — the proposal
+- [`src/digest.wac`](src/digest.wac) — 32 bytes out of a hash, and where that type should live
+- [`src/sha256.wac`](src/sha256.wac), [`src/keccak.wac`](src/keccak.wac),
+  [`src/hmac.wac`](src/hmac.wac), [`src/hkdf.wac`](src/hkdf.wac) — the surface, bodies elided
 
 ---
 
@@ -84,7 +90,65 @@ does afterwards, and it records what happened rather than how long it took, so `
 is invisible to it. A qualifier is blind to both as well, and to a third — it cannot see a leak in a
 routine that was never marked `secret` in the first place.
 
+## Four files that existed as imports before they existed as files
+
+`@/packages/tls/src/keyschedule.wac` imported `sha256.wac`, `hkdf.wac` and `hmac.wac`;
+`@/packages/ssz/src/chunk.wac` imported `sha256.wac`; `@/packages/tor/src/onionaddr.wac` imported
+`keccak.wac`. Five references to four files nobody had written, from three packages, over three days
+— **the name-resolution check counted them and nothing else did.** That is what got them written, and
+what they found is not about hashing.
+
+### Giving the hash a return type deleted a wrapper in a package that owns neither end
+
+`@/packages/ssz/src/chunk.wac` had:
+
+```wac
+Chunk unchecked(Bytes b) { … }   // "declares the check away, once, in the one place where the
+                                 //  fact is known: sha256 answers 32 bytes"
+```
+
+`sha256` answers a `Digest32` now, so the wrapper, its comment and the declaring-away are gone, and
+`Chunk.ofDigest(Digest32)` is infallible beside a `Chunk.of(Bytes)` that answers a `Result`. **Three
+lines of prose replaced by one word in a signature**, in a package that owned neither the hash nor
+the type it was converting to. Second time in two days that a question could only be answered from
+one level down — [`@/packages/lightclient`](../lightclient/) was the first.
+
+### And a digest is not a chunk, which is the part that is not obvious
+
+`Chunk` could not simply *be* `Digest32`: most chunks are not digests, since a leaf chunk is padded
+user data that has never been hashed. So they are two types with one representation, one produced by
+the other, and the conversion cannot fail. Three positions —
+
+1. **two types and an infallible conversion**, which is what [`src/digest.wac`](src/digest.wac) takes,
+   because the conversion is where the meaning changes and a named conversion is the only place to
+   write *these bytes are now a leaf*;
+2. **one type in `core`** — `Slice<u8, 32>` if it existed — at the cost of `Chunk`, `Digest32` and
+   `EthAddress`'s twenty becoming one type again, which is the check they were introduced to get;
+3. **`Digest32` in `core` and the rest on top**, which is wrong on its face: a digest is not more
+   fundamental than a chunk, it is the one that happens to come out of a function everybody calls.
+
 ## What could not be written
+
+**A type only its own file may build.** `Digest32`'s guarantee is that every one came out of a hash,
+and it is held by this package being short: `Digest32(someBytes)` is an ordinary struct construction
+and nothing marks the field private. wac has no visibility inside a module — `export` is the only
+control and it is per declaration — so *constructible here and nowhere else* is not expressible. It
+matters more here than in most places, because the guarantee **is** the type.
+
+**`Digest64` would be this file with one number changed.** `sha512` answers 64 bytes. `Digest<N>` is
+what a length in a type gives, which four packages have already asked for from four directions — so
+this is a fifth voice for one request rather than a new one, and it is said once here instead of
+restated.
+
+**`hkdfExtract` takes two `secret`s and answers a value that is one, and the language cannot say
+so.** `secret` has no return position — [`src/secret.wac`](src/secret.wac)'s own note — so the
+eleven functions of `@/packages/tls/src/keyschedule.wac` re-declare it on the way in, every time.
+`hmacSha256` is the opposite case in the same file: its answer genuinely stops being secret, and the
+declassification is just as silent. **The qualifier cannot distinguish the two ends it exists to
+mark**, which is the sharpest version of that proposal's own gap and is now visible in two signatures
+rather than argued from one.
+
+
 
 **`leaks(…) { … }` is invented and unshaped.** It needs to be a block whose contents are exempt, to
 carry a reason that a build can print, and to be countable. Whether it is a statement form, an

@@ -1,0 +1,19 @@
+// Keccak-f[1600], and the two things built on it that this tree uses.
+//
+// Named by `@/packages/tor/src/onionaddr.wac` before it existed. The two are **not** the same
+// function and the difference has cost real programs real money: Ethereum's `keccak256` is the
+// original submission's padding and SHA-3's is `0x06`, so `sha3_256` and `keccak256` of the same
+// input differ in every byte.
+//
+// The shipped `packages/crypto/src/keccak.wac` exports both and says so. This keeps that and makes
+// the distinction a *name* rather than a comment, which it already was — the finding here is that
+// it was already right.
+
+import { Bytes } from "core";
+import { Digest32 } from "./digest.wac";
+
+/** Ethereum's, with the original padding. `@/packages/mpt` and `@/packages/abi`. */
+export Digest32 keccak256(Bytes data) { … }
+
+/** FIPS 202's, with `0x06`. `@/packages/tor`'s onion address checksum. */
+export Digest32 sha3_256(Bytes data) { … }

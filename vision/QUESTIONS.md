@@ -4798,3 +4798,42 @@ Three ways to notice, and none exists:
   `Buf` — and the file does not say whether that was weighed.
 - **Nothing asks a package who declined it.** A caller that imports one export of a five-export file
   is the cheapest possible signal, and it is greppable.
+
+## A type only its own file may build
+
+`@/packages/crypto/src/digest.wac` declares
+
+```wac
+export const struct Digest32 { Bytes bytes; }
+```
+
+with no constructor from bytes, on purpose: **a `Digest32` is 32 bytes because of where it came from
+rather than because somebody checked**, and that is the entire value of the type. `sha256` returns
+one; nothing else should be able to make one.
+
+Nothing enforces it. `Digest32(someBytes)` is an ordinary struct construction, and wac has no
+visibility inside a module — `export` is the only control and it is per declaration, so a type can be
+private to a *file* or public to everyone, and a type that is public with a constructor that is not
+cannot be written.
+
+The guarantee is therefore held by the file being short and by nobody trying. Which is the same
+arrangement as every *"this is checked once, in the one place where the fact is known"* comment in
+this directory, and it is the one place where the comment is load-bearing rather than explanatory: a
+`Chunk.ofDigest(d)` that skips a length check is only sound if every `Digest32` really came out of a
+hash.
+
+### Three shapes, and the cheap one may be enough
+
+- **A private field.** `struct Digest32 { private Bytes bytes; }` and the construction is refused
+  outside the file. Smallest change, and it introduces a second visibility axis to a language that
+  has exactly one.
+- **A private constructor**, which is the same thing said about the operation rather than the field,
+  and reads better where a type has several fields of which one is the invariant.
+- **Nothing, and say so.** The convention *a type with no public constructor is built by its own
+  file* costs a comment and is what the directory does today. It is also what
+  `@/packages/ssz`'s `Chunk.of` does **not** rely on, since it checks — so the question is really
+  whether a type may be trusted enough to skip a check, and the answer today is no, and the checks
+  are written.
+
+The measurement that would settle it: how many *"checked once"* comments in `packages/` guard a value
+that some other file could construct directly. That is greppable and nobody has counted it.

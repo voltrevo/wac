@@ -1,0 +1,26 @@
+// HKDF, RFC 5869 — extract and expand, which TLS 1.3 uses as its whole key schedule.
+//
+// Named by `@/packages/tls/src/keyschedule.wac`. Two functions, and the split is the RFC's: extract
+// turns a shared secret of any entropy into a fixed-width pseudorandom key, expand turns that into
+// as much keying material as a caller asks for.
+
+import { Bytes } from "core";
+import { Digest32 } from "./digest.wac";
+
+/**
+ * `HKDF-Extract(salt, ikm)`.
+ *
+ * Both arguments are `secret` and so is the answer — which the language cannot say, since `secret`
+ * has no return position. The eleven functions of `@/packages/tls/src/keyschedule.wac` hand this
+ * result to each other and every one of them re-declares it `secret` on the way in.
+ */
+export Digest32 hkdfExtract(secret Bytes salt, secret Bytes ikm) { … }
+
+/**
+ * `HKDF-Expand(prk, info, length)`.
+ *
+ * Answers `Bytes` rather than a `Digest32`, because `length` is the caller's — this is the one
+ * function in the package whose output width is not fixed, and it is why `Digest32` is a type for
+ * *digests* rather than for *thirty-two bytes*.
+ */
+export Bytes hkdfExpand(secret Bytes prk, Bytes info, i32 length) { … }

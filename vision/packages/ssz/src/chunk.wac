@@ -8,11 +8,11 @@
 // Two types, and neither is an invention: they are the two nouns the specification already uses.
 
 import { Result, Bytes } from "core";
-// Spelled as the file rather than through the barrel, because `@/packages/crypto`'s rewrite covers
-// `secret.wac` and nothing else — `@/packages/tls/src/keyschedule.wac` names the same three
-// unwritten files, and `../../../wac.json5` lists this exact path as one that *"exists in"* the
-// shipped tree. Second package to want a digest from a package that has not got one.
+// Named before it existed. This file, `@/packages/tls/src/keyschedule.wac` and
+// `@/packages/tor/src/onionaddr.wac` each imported a file `@/packages/crypto` had not written, and
+// the third one is what got them written — see `@/packages/crypto/src/digest.wac`.
 import { sha256 } from "@/packages/crypto/src/sha256.wac";
+import { Digest32 } from "@/packages/crypto/src/digest.wac";
 
 /** How many bytes a chunk is. Not configurable, and never was. */
 export const i32 CHUNK = 32;
@@ -36,8 +36,27 @@ export const struct Chunk {
   /** The all-zero chunk, which SSZ needs more often than any other constant. */
   Chunk zero() { … }
 
-  /** `sha256(a ‖ b)`. The join is a `Buf`, because a `Slice` is a view and cannot concatenate. */
+  /**
+   * `sha256(a ‖ b)`. The join is a `Buf`, because a `Slice` is a view and cannot concatenate.
+   *
+   * No length check and none declared away: `sha256` answers a `Digest32`, so `ofDigest` is
+   * infallible by construction rather than by comment.
+   */
   Chunk hashWith(const this, Chunk right) { … }
+
+  /**
+   * A chunk that is a digest.
+   *
+   * **Infallible, where `of` answers a `Result`** — and the pair is the argument. A `Digest32` is 32
+   * bytes because of where it came from; a `Bytes` is 32 bytes because somebody looked. Two
+   * constructors, two return types, and the difference between them is the whole of what a digest
+   * type buys.
+   *
+   * It is a conversion rather than an identity because **most chunks are not digests**: a leaf chunk
+   * is padded user data that has never been hashed. `@/packages/crypto/src/digest.wac` has the three
+   * positions and why this one.
+   */
+  Chunk ofDigest(Digest32 d) { … }
 
   bool eq(const this, Chunk other) { … }
 }
@@ -45,22 +64,12 @@ export const struct Chunk {
 /** Only from `Chunk.of`, and the length that was offered. */
 export struct WrongLength { i32 got; }
 
-/**
- * `sha256` answers `Bytes` and this is where the value type stops.
- *
- * **The same shape as the capability boundary, one layer in.** `@/packages/raster/src/frame.wac`
- * found that a `Tile` is destructured into scalars at the one call that crosses to a host, because
- * marshalling is per scalar. Here nothing crosses to a host — `sha256` is wac calling wac — and the
- * value type stops anyway, because `@/packages/crypto`'s digest answers the type *it* is defined
- * over. Neither package is wrong. The width of a `Bytes` is not in its type, so any function
- * answering one is a place a chunk becomes a maybe-chunk, and the only remedy is to re-check at the
- * boundary or to declare the check away.
- *
- * This declares it away, once, in the one place where the fact is known: sha256 answers 32 bytes.
- * That is a comment where `Slice<u8, 32>` would be a type, which is
- * `../../../QUESTIONS.md`'s entry on a length that lives in the value rather than the type.
- */
-Chunk unchecked(Bytes b) { … }
+// **This file had an `unchecked(Bytes)` here and it is gone**, which is the smallest complete
+// example of the point the directory keeps making. It existed because `sha256` answered `Bytes`, so
+// a value that could only be 32 bytes arrived at a constructor that had to check; its comment said
+// *"this declares the check away, once, in the one place where the fact is known"*. Giving the hash
+// a return type deleted the wrapper, the comment and the declaring-away — three lines of prose
+// replaced by one word in a signature, in the package that did not own either end of it.
 
 /**
  * A generalized index: the position of a node in a binary Merkle tree, as one number.

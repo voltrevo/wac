@@ -1,0 +1,26 @@
+// SHA-256, as the one function everything else in this directory calls.
+//
+// Named by `@/packages/ssz/src/chunk.wac` and `@/packages/tls/src/keyschedule.wac` before it
+// existed, which is how it came to be written. The implementation is `packages/crypto/src/sha256.wac`
+// and is not interesting here: it is a compression function and a message schedule and says the same
+// thing in every language.
+
+import { Bytes } from "core";
+import { Digest32 } from "./digest.wac";
+
+/**
+ * The digest of `data`.
+ *
+ * **Answers a `Digest32` rather than `Bytes`**, which is the whole of the rewrite. The shipped one
+ * answers `u8[]`, so `@/packages/ssz` has an `unchecked` wrapper whose comment is *"this declares
+ * the check away, once, in the one place where the fact is known"* — a length check on a value that
+ * cannot have another length. See `./digest.wac` for why this is not simply `Chunk`.
+ */
+export Digest32 sha256(Bytes data) { … }
+
+/** Streaming, for a caller that does not hold the whole message. */
+export struct Sha256 {
+  Sha256 create() { … }
+  void write(this, Bytes part) { … }
+  Digest32 finish(this) { … }
+}

@@ -78,9 +78,16 @@ construction; the rest are variants of `ProofFault`.
 ## What could not be written
 
 **A length in a type.** `Chunk` is a struct wrapping a `Bytes` whose length was checked once. If a
-slice could carry its length in its type — `Slice<u8, 32>` — `Chunk` would be a typedef, `Chunk.of`
-would be a cast the compiler checks, and `sha256` answering 32 bytes would be a fact rather than a
-comment saying so above an unchecked constructor.
+slice could carry its length in its type — `Slice<u8, 32>` — `Chunk` would be a typedef and
+`Chunk.of` would be a cast the compiler checks.
+
+*(Half of this was fixed the same day and from the other end.* This file had an
+`unchecked(Bytes) -> Chunk` whose comment declared the length check away because `sha256` answered
+`u8[]`. [`@/packages/crypto/src/digest.wac`](../crypto/src/digest.wac) was written afterwards and
+`sha256` answers a `Digest32`, so the wrapper, its comment and the declaring-away are gone and
+`Chunk.ofDigest` is infallible beside a `Chunk.of` that is not. **Three lines of prose replaced by
+one word in a signature, in a package that owned neither end of it** — which is the argument for
+rewriting a stack rather than a package, arriving for the second time in two days.*)
 
 `@/packages/ens/src/answer.wac` asks for the same thing in the same words — *"`Bytes` carries no
 length in its type — so `Address`, `Bytes32` and a `contenthash` are one type as far as anything can
