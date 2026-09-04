@@ -1,0 +1,13 @@
+// The package, as one name.
+//
+// Three functions and two types, where the shipped package exports **fifteen names across three
+// files**: three `encode`s, an `encodeUpper`, three `decode`s, a `decoded`, three `digitValue`s at
+// two different arities, and four `ALPHABET_*` constants holding two distinct values between them.
+// The reduction is not tidying — it is what happens when the base stops being a file and becomes a
+// value.
+
+export { Alphabet, Padding } from "./alphabet.wac";
+export { encode, decode, withoutSpace } from "./rfc4648.wac";
+export {
+  CodecFault, NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail,
+} from "./fault.wac";

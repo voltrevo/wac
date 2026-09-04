@@ -1,0 +1,92 @@
+// The six alphabets of RFC 4648, as one type — and the collision that made it worth doing.
+//
+// `packages/codec` is three files, one per base, and two of them declare a constant with the same
+// name and the same value for different things:
+//
+//     base64.wac:15  export i32 ALPHABET_STANDARD() { return 0; }   // A-Za-z0-9+/
+//     base32.wac:15  export i32 ALPHABET_STANDARD() { return 0; }   // A-Z2-7
+//     base64.wac:17  export i32 ALPHABET_URL()      { return 1; }   // A-Za-z0-9-_
+//     base32.wac:17  export i32 ALPHABET_HEX()      { return 1; }   // 0-9A-V
+//
+// So `base64.encode(data, base32.ALPHABET_HEX(), false)` type-checks, and produces base64url. The two
+// closed sets are `i32`, they overlap exactly, and the compiler has nothing to say. A caller who
+// imports both files — which `@/packages/url` and `@/packages/http` both would — has four names in
+// scope holding two distinct values between them.
+//
+// That is `../../../QUESTIONS.md`'s *closed set spelled as a string or an integer* with the sharpest
+// version of the consequence: not a value outside the set, but a value **inside a different set**.
+
+import { Bytes } from "core";
+
+/**
+ * An alphabet, and with it the base.
+ *
+ * The base is not a separate argument because it is not a separate fact: there is no such thing as
+ * base32 with a base64 alphabet, and the shipped package has three `encode`s to enforce by
+ * separation what one enum enforces by construction.
+ */
+export enum Alphabet {
+  /** §8, lowercase. The only base16 the shipped `hex.wac` calls `encode`. */
+  Base16Lower,
+  /** §8 proper — RFC 4648's base16 is uppercase, and `hex.wac` spells it `encodeUpper`. */
+  Base16Upper,
+  /** §6, `A-Z2-7`. */
+  Base32,
+  /** §7, `0-9A-V` — extended hex, which sorts in the same order as the data. */
+  Base32Hex,
+  /** §4, `A-Za-z0-9+/`. */
+  Base64,
+  /** §5, `A-Za-z0-9-_`. */
+  Base64Url,
+
+  /** 4, 5 or 6. The whole of what distinguishes the three bases. */
+  i32 bits(const this) {
+    match (this) {
+      Base16Lower: { return 4; }
+      Base16Upper: { return 4; }
+      Base32:      { return 5; }
+      Base32Hex:   { return 5; }
+      Base64:      { return 6; }
+      Base64Url:   { return 6; }
+    }
+  }
+
+  /**
+   * How many digits a full group is: `lcm(8, bits) / bits` — 2, 8 and 4.
+   *
+   * **This is where generalising costs something**, and `packages/codec/src/base32.wac` said so first
+   * about its own numbers: *"Those numbers are not a pattern anyone remembers, so they are a table
+   * rather than arithmetic: `PAD_FOR` and `DIGITS_FOR`, indexed by the number of leftover bytes."*
+   *
+   * That is a good reason and it is an argument against this method. §6 of the RFC states the
+   * padding for each leftover count in a table a reader can check line by line; a formula is right
+   * or wrong all at once. See the note at the foot of `./rfc4648.wac` — the two forms disagree about
+   * what a reviewer can do, and nothing in this directory has that trade-off written down.
+   */
+  i32 groupDigits(const this) { … }
+
+  /** The digit for a value in `0 .. 2^bits`. */
+  u8 digit(const this, i32 v) { … }
+
+  /**
+   * The value of a digit, or nothing.
+   *
+   * `T?` rather than `-1`, which the shipped `digitValue` uses — and it is exported from all three
+   * files with two different arities, `digitValue(i32 c)` in `hex.wac` and `base64.wac` and
+   * `digitValue(i32 c, i32 alphabet)` in `base32.wac`. Three exports, one meaning, no relation.
+   */
+  i32? value(const this, u8 c) { … }
+}
+
+/**
+ * Whether the encoding is padded to a whole group.
+ *
+ * **A named pair, because the shipped call site is `encode(data, ALPHABET_URL(), false)`** and the
+ * `false` is unreadable at the call. `../../../QUESTIONS.md` has the entry about a closed set spelled
+ * as an integer; a `bool` parameter is the two-element case of it, and the README's own example is
+ * the evidence — it is the line a reader meets first and the one that says least.
+ *
+ * Base16 has no short group, so `Padded` and `Unpadded` mean the same thing there. That is a fact
+ * about base16 rather than a hole: `groupDigits() == 2` and a byte is two digits.
+ */
+export enum Padding { Padded, Unpadded }

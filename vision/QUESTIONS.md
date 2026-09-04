@@ -4041,6 +4041,7 @@ Two packages give it up, each by spelling a closed set as something open:
 |---|---|---|---|
 | `packages/wac`'s `forCommand` | the twelve commands | `string cmd`, an `if` chain | **returns every grant** |
 | `packages/abi`'s descriptor | the nine ABI types | `i32[]` in prefix order | reads past the end of the array |
+| `packages/codec`'s alphabets | six, in two sets of two | four `i32` constants | **selects the other set's member** |
 
 (`packages/rlp` looks like a third and is not: its four node forms *partition* the 256 tag values, so
 there is no missing case to have. Worth the parenthesis because the shape is identical from outside
@@ -4067,6 +4068,30 @@ Two directions, and the first is not a feature:
 - **Something that notices.** A lint for an `if`/`else if` chain comparing one variable against three
   or more string literals — which is a dispatch over a closed set written open, every time. Cheap to
   detect and, unlike most lints, it points at a place where the language has a better answer already.
+
+### The third one is worse than a missing case, and it took two files to see
+
+Added 2026-09-04 from the `@/packages/codec` rewrite. Two of that package's three files declare:
+
+    base64.wac:15  export i32 ALPHABET_STANDARD() { return 0; }   // A-Za-z0-9+/
+    base32.wac:15  export i32 ALPHABET_STANDARD() { return 0; }   // A-Z2-7
+    base64.wac:17  export i32 ALPHABET_URL()      { return 1; }   // A-Za-z0-9-_
+    base32.wac:17  export i32 ALPHABET_HEX()      { return 1; }   // 0-9A-V
+
+Two closed sets, the same type, the same two values, the same first name. So
+`base64.encode(data, base32.ALPHABET_HEX(), false)` type-checks and produces base64url — and a caller
+importing both, which `@/packages/url` and `@/packages/http` both would, has four names in scope
+holding two values between them.
+
+**Every other case in this entry is a value from outside the set. This is a value from inside a
+different one**, which no default arm and no bounds check can catch, because nothing is out of range
+and nothing is missing. It is only visible from a file that imports both, and the package is arranged
+so that nothing does.
+
+The remedy is the same and the pressure is different: the first two cases are a text or a tag
+arriving at an edge, and this one never leaves the program. So *parse at the edge* would not have
+prevented it — what would is the observation that **two files declaring the same constant name are
+declaring the same set or they are not**, and nothing anywhere asks which.
 
 The reason this belongs here rather than in an issue: **the cost is not uniform, and that is the
 design question.** `forCommand`'s default hands out ambient authority; `abi`'s reads past an array
@@ -4498,3 +4523,36 @@ place bytes arrive from outside instead of being re-derived in every function th
 What has to be decided is whether that is one feature or two, because a *sized* slice and a slice
 whose size is a type parameter are different amounts of work — and every one of the three cases above
 wants only the first.
+
+## A table rather than arithmetic is a bet on which document the code is checked against
+
+`packages/codec/src/base32.wac` states its reason for a design choice, which is rare enough to be
+worth the entry on its own:
+
+> Five bytes become eight digits, so a short final group can be 1, 2, 3 or 4 bytes and pads to
+> 6, 4, 3 or 1 `=` respectively. Those numbers are not a pattern anyone remembers, so they are a
+> table rather than arithmetic: `PAD_FOR` and `DIGITS_FOR`, indexed by the number of leftover bytes.
+
+**RFC 4648 §6 states those four numbers in a table.** So the code is four lines a reviewer reads
+beside four lines of the RFC, and a transcription error is visible without understanding anything.
+
+The `@/packages/codec` rewrite makes the three bases one algorithm parameterised by bits-per-digit,
+and the four numbers become `lcm(8, bits) / bits` and a subtraction. That is one implementation
+instead of three, 365 lines instead of a formula's dozen — and **a formula agrees with the RFC or
+does not, all at once.** A reviewer can no longer check it by reading; they can only test it.
+
+Neither is a spelling of the other and neither is wrong. What decides it is *which document the code
+is answerable to* — a specification with a table wants a table, and a specification with a
+construction wants the construction. Nothing in a signature, a type or a test carries that fact, so
+it is re-argued per file by whoever is writing.
+
+Worth having here rather than as a note in one package because the bet recurs. Every *"a table
+rather than arithmetic"* in this repository is the same one, and the two halves of the choice are
+usually made by different people a year apart: the person writing against the RFC picks the table,
+and the person unifying three copies picks the formula, and the second one is not told what the first
+one was optimising for. The comment above is the only place in the tree where they were.
+
+The narrow version of the question, which is answerable: **is there anywhere to record "this is a
+transcription of §6, check it line by line"?** A spec tag would do it — `spec/` already has
+`[§wac-…]` markers pointing the other way, from code to the language definition, and this is the same
+mechanism pointed at somebody else's document.

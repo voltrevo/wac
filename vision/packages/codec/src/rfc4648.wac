@@ -1,0 +1,88 @@
+// One RFC, one algorithm — where the package has three of each.
+//
+// RFC 4648 defines base16, base32 and base64 as the same construction at three widths: take the
+// input as a bit stream, cut it into `bits`-wide digits, pad the last group. `packages/codec` writes
+// that three times, 365 lines, and the three copies differ in the alphabet, the group size and
+// nothing else.
+//
+// This is the whole package.
+
+import { Result, Bytes, Vec } from "core";
+import { Alphabet, Padding } from "./alphabet.wac";
+import { CodecFault, NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail }
+  from "./fault.wac";
+
+/**
+ * Bytes to text.
+ *
+ * No `Result`: every byte sequence has an encoding, which is the difference between this and
+ * `decode` and is the reason the shipped `encode` answers `u8[]` and the shipped `decode` answers
+ * `u8[]?`. Keeping the asymmetry is the point — a codec where one direction can fail and the other
+ * cannot should say so in the two signatures.
+ */
+export Bytes encode(Bytes data, Alphabet a, Padding pad) { … }
+
+/**
+ * Text to bytes, or the first reason it is not text this alphabet produced.
+ *
+ * **Strict, on all five counts, which is the shipped package's decision and its best one.** The
+ * README's argument for the fifth is the one worth carrying over verbatim: without the unused-bits
+ * check, *"`QQ==`, `QR==`, `QS==` and thirteen more all decode to `A` — so a signature over the text
+ * says nothing about the bytes, and two systems can disagree about whether two messages are the
+ * same. It costs one comparison."*
+ *
+ * What changes is that a caller can now tell the five apart, which matters most for exactly that
+ * one: a `NonZeroTail` means somebody produced this text with a lenient encoder, and a `NotADigit`
+ * means it is not base64 at all. The shipped `null` conflates *this is malformed* with *this is not
+ * even the right format*, and those lead to different next steps.
+ */
+export Result<Bytes, CodecFault> decode(Bytes text, Alphabet a) { … }
+
+/**
+ * Whitespace is not skipped, and this is how a caller who wants it says so.
+ *
+ * The shipped README: *"'Ignore whitespace' is a decision the caller should make explicitly rather
+ * than one a decoder makes for everybody, and a caller who wants it can strip before calling."*
+ * Right, and then no caller has anywhere to get the stripping from, so each writes it. One function,
+ * exported, so the decision stays the caller's and the loop is written once.
+ */
+export Bytes withoutSpace(Bytes text) { … }
+
+// ## 1. Generalising the three replaced a table with a formula, and that is a real loss
+//
+// `packages/codec/src/base32.wac` has `PAD_FOR` and `DIGITS_FOR` indexed by the number of leftover
+// bytes, and says why:
+//
+// > Five bytes become eight digits, so a short final group can be 1, 2, 3 or 4 bytes and pads to
+// > 6, 4, 3 or 1 `=` respectively. Those numbers are not a pattern anyone remembers, so they are a
+// > table rather than arithmetic.
+//
+// **RFC 4648 §6 states those four numbers in a table.** A reader checks the code against the RFC by
+// reading four lines beside four lines. `Alphabet.groupDigits()` computes them, and a formula agrees
+// with the RFC or does not, all at once — which is fine for a test suite and not the same thing for
+// a reviewer. The shipped decision optimises for the check a person can perform; this one optimises
+// for there being one implementation instead of three.
+//
+// Both are right and they are not reconcilable by choosing a nicer spelling. It is worth
+// `../../../QUESTIONS.md` because the trade-off recurs — every *"a table rather than arithmetic"*
+// in this repository is the same bet — and because the deciding fact is which document the code is
+// checked against, which nothing in a signature can carry.
+//
+// ## 2. What could not be written
+//
+// **`Alphabet.digit(v)` takes an `i32` in `0 .. 2^bits` and nothing says so.** The bound depends on
+// the receiver, so it is not a type any parameter could have. The shipped code has the same hole and
+// hides it better, because a per-base function has a per-base range that a reader can see. This is
+// the cost of the generalisation showing up in a second place, and it is
+// *where does a refinement of an integer live?* again.
+//
+// **`Padding` means nothing at base16 and the type cannot say it.** `Padded` and `Unpadded` produce
+// identical output for `Base16Lower`, because a byte is exactly two digits. Nothing rejects the
+// argument, nothing warns, and a reader has to know. A per-base signature — which is what the
+// shipped package has — gets this right by construction and pays for it three times over.
+//
+// **The alphabet is a closed set of six and the RFC has five sections.** `Base16Lower` and
+// `Base16Upper` are one section, §8, which defines base16 as uppercase; the lowercase variant exists
+// because `hex.wac`'s `encode` is lowercase and its `encodeUpper` is the RFC's. So the enum encodes
+// *what the package does* rather than *what the RFC says*, in the one place the two disagree, and
+// naming them for the RFC would have hidden a real behaviour.

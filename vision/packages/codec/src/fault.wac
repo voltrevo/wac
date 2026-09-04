@@ -1,0 +1,36 @@
+// The five ways a decode is refused.
+//
+// `packages/codec` answers `u8[]?` from all three decoders and the README lists **four counts** on
+// which it refuses — strictly, and deliberately, against a platform that does not:
+//
+// > - **A group of one digit.** … - **Padding that does not fit.** … - **Unpadded input at an
+// >   impossible length.** … - **Non-zero unused bits.**
+//
+// Four documented refusals, one `null`. The README then explains at length why the fourth matters —
+// *"the one that makes an encoding a function rather than a relation"*, without which a signature
+// over the text says nothing about the bytes — and a caller cannot tell it from the other three.
+//
+// The fifth here is the one the README does not list because it is obvious: a character that is not
+// a digit at all. It is the common case and the shipped decoder answers the same `null` for it.
+
+/** A character that is not in this alphabet. */
+export struct NotADigit { i32 at; u8 got; }
+
+/** A final group of one digit: fewer bits than a byte, so it encodes nothing. */
+export struct ShortGroup { i32 at; }
+
+/** `=` somewhere other than the end, or the wrong number of them. */
+export struct BadPadding { i32 at; }
+
+/** Unpadded input whose length is not one a whole number of bytes can produce. */
+export struct ImpossibleLength { i32 len; }
+
+/**
+ * The bits the last digit contributes past the last byte are not zero.
+ *
+ * `QQ==` decodes to `A`; `QR==` does not decode, because `R`'s surplus four bits are not zero. This
+ * is the refusal the README argues hardest for and the one a lenient decoder drops.
+ */
+export struct NonZeroTail { i32 at; i32 bits; }
+
+export union<NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail> CodecFault;
