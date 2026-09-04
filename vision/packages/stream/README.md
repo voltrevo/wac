@@ -44,6 +44,38 @@ thing this code can be wrong about. No caller writes `E`; it comes from the argu
 **`passthrough` has no body.** Copying a stream to itself is `src`. What it was really doing was
 counting bytes and distinguishing a broken input from a short one, so it is `count` now.
 
+## `try await for` checked against the lowering
+
+The third proposal read against the machinery, after the two import ones and `Slice`, and the first
+that came out stronger.
+
+**A suspension inside a loop already lowers.** `packages/wacc/src/asyncplan.wac` is explicit that it
+is designed for: *"an `await` inside a loop needs the loop's back edge as a state"*, and *"with loops
+it cannot: a suspension inside a loop …"*. Measured too — an `async` function awaiting a capability
+inside a `for` body builds today. So `try await for` needs no new lowering, only a desugaring.
+
+**And the planner constrains what that desugaring can be.** It refuses `await` in an `if` condition,
+a `while` condition, a `for` initialiser, condition or update, and nested inside a larger expression.
+Stepping a generator is conceptually the loop's *condition*, which is exactly the refused position —
+so the shape has to be
+
+```wac
+while (true) {
+  Step s = await src.nextStep();     // in the body, because a condition may not suspend
+  if (s is Done) { break; }
+  u8[] chunk = s.value;
+  …
+}
+```
+
+**The loop variable joins the hoist list**, for the reason the planner already writes about the
+induction variable: *"leaving it a plain local would reset it on resume — the loop would run its
+first iteration for ever."* `chunk` is read after a suspension in exactly the same way.
+
+So the cost is a desugaring and one more name in an existing hoist, against machinery that was built
+for this. What is genuinely new in `try await for` is the **generator**, not the loop — and the
+three keywords are still three keywords.
+
 ## What could not be written
 
 **`for … in` has no failing form.** *Writing an iterator is writing a loop* says `for … in` steps
