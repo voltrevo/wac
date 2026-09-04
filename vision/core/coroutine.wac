@@ -1,0 +1,53 @@
+// A function that can stop in the middle, and the three ways one is spelled.
+//
+// There is one machine underneath. `gen`, `async` and `async gen` differ only in which of its three
+// slots are inhabited, and `never` in a slot removes the arm that carried it — so a generator's
+// `step` has no `Waiting` case at all, rather than one that cannot happen.
+
+import { Ticket, TicketBase } from "core/ticket.wac";
+
+/**
+ * What one step of a machine answered.
+ *
+ * A slot typed `never` removes its arm: `Step<never, i32, void>` is `Yielded | Done`, and a match
+ * over it is exhaustive with two arms rather than three-with-a-dead-one.
+ */
+export enum Step<W, Y, R> {
+  Waiting(W wanted),
+  Yielded(Y value),
+  Done(R result)
+}
+
+/**
+ * The machine. `W` is what it can block on, `Y` what it can yield, `R` what it ends with.
+ *
+ * The `coroutine` operator lowers any of the three spellings to one of these, and applying it to
+ * something already lowered is a compile error rather than a no-op — the operator is a change of
+ * representation and there is nothing for a second one to do.
+ */
+export struct Coroutine<W, Y, R> {
+  /** Run to the next boundary. Stepping a finished machine is a no-op that answers `Done` again. */
+  Step<W, Y, R> step(this);
+}
+
+/** `gen<Y> R f(…)`. Blocks on nothing, so it has no `Waiting`. */
+export struct Generator<Y, R> : Coroutine<never, Y, R> { }
+
+/**
+ * `async gen<Y> R f(…)`. Yields, and can also block.
+ *
+ * Its `step` is the async-ness written out: it answers a ticket for the next `Yielded | Done`,
+ * rather than answering a third kind of thing. Everything async in the language is *wrapped in a
+ * ticket* and this is no exception.
+ */
+export struct AsyncGenerator<Y, R> : Coroutine<TicketBase, Y, R> {
+  Ticket<Step<never, Y, R>> nextStep(this);
+}
+
+/**
+ * `async R f(…)`, which is an `AsyncGenerator` that never yields.
+ *
+ * There is no type here because there does not need to be one. An async function's *call* answers
+ * `Ticket<R>`, which is the thing a caller wants; the machine underneath is reachable with the
+ * `coroutine` operator for the rare code that drives one by hand.
+ */

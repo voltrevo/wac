@@ -36,7 +36,11 @@ like the thing it proposes rather than carry its own scaffolding in every header
 corresponding real package is always at the same path with `vision/` taken off the front.
 
 Where a rewrite needs something from `core` or `std` that does not exist yet, it is written into
-`vision/packages/core/` — only the parts a package actually reaches for.
+[`../core/`](../core/) or `../std/` — mirroring the real layout, where both sit at the repository
+root and are imported as `core/vec.wac` and `std/platform.wac` rather than by path.
+
+`../wac.json5` is what makes `@/` resolve to `vision/`. It is empty, which is a valid manifest —
+its presence is the whole question `@/` asks.
 
 ## These are redesigns, not translations
 
@@ -59,6 +63,7 @@ in ten lines. Each package's README ends with that list, and the real ones becom
 
 ---
 
-| package | written | against |
+| what | written | against |
 |---|---|---|
+| [core](../core/) | 2026-09-04 | tickets, coroutines, `union`, nested `T?` |
 | [stream](stream/) | 2026-09-04 | coroutines, `union`, nested `T?`, `try` |

@@ -1,0 +1,57 @@
+// A growable array.
+//
+// `pop` and `last` answer `T?` rather than trapping, because unlike `a[i]` the caller usually does
+// not already know there is one. `?` nests, so both are honest at a nullable `T`: `Vec<Node?>.pop()`
+// answers `Node??`, where the outer absence is *the vec was empty* and the inner is *the element
+// was null*. Nothing flattens them and there is no `Option` — see `vision/TECHNICAL.md`.
+
+export struct Vec<T> {
+  T[] data;
+  i32 len;
+
+  static Vec<T> create() { return Vec<T>(T[0](), 0); }
+
+  i32 len(const this) { return this.len; }
+
+  /**
+   * Grow if needed, then append.
+   *
+   * Growing is inside `push` and not beside it because an array needs a value to fill the new room
+   * with, a `T` at a non-defaultable type has none, and the value being pushed is the one `T` that
+   * is always to hand at exactly the moment growth is needed. A standalone `grow()` cannot be
+   * written at all.
+   */
+  void push(this, T v) {
+    if (this.len == this.data.len()) {
+      i32 want = this.data.len() == 0 ? 8 : this.data.len() * 2;
+      T[] bigger = T[want](fill: v);
+      for (i32 i = 0; i < this.len; i++) { bigger[i] = this.data[i]; }
+      this.data = bigger;
+    }
+    this.data[this.len] = v;
+    this.len += 1;
+  }
+
+  /**
+   * The last element, removed.
+   *
+   * The slot keeps its reference until a later `push` overwrites it, because a `T[]` at a
+   * non-nullable `T` has no null to store — see `vision/QUESTIONS.md`, *How should a `Vec` drop its
+   * reference to a popped element?*. Bounded by the high-water mark, but one popped root holds a
+   * whole graph.
+   */
+  T? pop(this) {
+    if (this.len == 0) { return null; }
+    this.len -= 1;
+    return this.data[this.len];
+  }
+
+  T? last(const this) {
+    return this.len == 0 ? null : this.data[this.len - 1];
+  }
+
+  /** Every element in order. Writing an iterator is writing a loop. */
+  gen<T> void items(const this) {
+    for (i32 i = 0; i < this.len; i++) { yield this.data[i]; }
+  }
+}

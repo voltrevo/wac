@@ -1,0 +1,124 @@
+// A ticket is a value. Something else will settle it; until then you may hold it, pass it on, put
+// it in an array, or wait for it. Nothing about it is a scheduler's business, which is why there is
+// no scheduler here.
+//
+// `wait` is ordinary code in this file rather than an intrinsic. That is the load-bearing claim:
+// if it can be written here, a fake `Sys` can add a kind of ticket without `core` being edited.
+
+import { Result } from "core/result.wac";
+import { Queue } from "core/queue.wac";
+
+/** Waiting on something that is waiting on you. */
+export struct Circular { }
+
+/** Nothing can advance it and nobody else is going to try. */
+export struct Stuck { }
+
+/**
+ * A ticket with its value type rubbed out.
+ *
+ * What survives the erasure is *driving*: a continuation carries one of these and steps it without
+ * knowing or caring what it will answer. Both methods are overridden per kind of ticket — a host
+ * read, a coroutine, a fake — and neither has a body here.
+ */
+export struct TicketBase {
+  /** Whether the value is in. */
+  bool settled(const this);
+
+  /**
+   * Do some work towards settling. `block` says whether to wait on the world rather than only poll
+   * it. Answers whether anything moved, which is what lets a driver tell *not yet* from *never*.
+   */
+  bool advance(this, bool block);
+}
+
+/** A ticket for a `T`. */
+export struct Ticket<T> : TicketBase {
+  /** Set while this ticket's own `wait` is on the stack, so re-entering it is detectable. */
+  bool inWait;
+
+  /** The value. Calling this before `settled()` traps. */
+  T value(const this);
+
+  /**
+   * Drive it to completion here, on this stack, and answer the value.
+   *
+   * This is what a *sync* caller does. Under `await` the caller's own driver does the same job, so
+   * `await` answers a `T` where this answers a `Result` — the difference is that here there is
+   * nobody else left to ask.
+   */
+  Result<T, union<Circular, Stuck>> wait(this) {
+    if (this.inWait) { return Result.Err(Circular()); }
+    this.inWait = true;
+    defer { this.inWait = false; }
+
+    while (!this.settled()) {
+      if (this.advance(false)) { continue; }   // anything ready, without waiting on the world
+      if (this.advance(true))  { continue; }   // ...then wait on the world
+      return Result.Err(Stuck());              // twice, and nothing moved
+    }
+    return Result.Ok(this.value());
+  }
+}
+
+/**
+ * A machine that is not being awaited, and the ticket it is waiting on if it is waiting on one.
+ *
+ * `t` being null is the whole of the distinction that used to be two enum arms: a continuation
+ * that can run now, and one that cannot yet. `await c.t` covers both, since a null ticket is one
+ * step boundary and no waiting.
+ *
+ * Calling `call` before `t` has settled traps. It is not checked at the type level because the
+ * check would have to be *this ticket, now*, which no type can say.
+ */
+export struct Continuation {
+  TicketBase? t;
+  fn<void()> call;
+}
+
+/** A ticket over several, settling when they all have. */
+struct AllOf<T> : Ticket<T[]> {
+  Ticket<T>[] parts;
+
+  bool settled(const this) {
+    for (Ticket<T> p in this.parts) { if (!p.settled()) { return false; } }
+    return true;
+  }
+
+  bool advance(this, bool block) {
+    for (Ticket<T> p in this.parts) { if (p.advance(block)) { return true; } }
+    return false;
+  }
+
+  T[] value(const this) {
+    T[] out = T[this.parts.len()](fill: this.parts[0].value());
+    for (i32 i = 0; i < this.parts.len(); i++) { out[i] = this.parts[i].value(); }
+    return out;
+  }
+}
+
+/** The same, settling when any one has. Only `settled` differs. */
+struct AnyOf<T> : Ticket<T> {
+  Ticket<T>[] parts;
+
+  bool settled(const this) {
+    for (Ticket<T> p in this.parts) { if (p.settled()) { return true; } }
+    return false;
+  }
+
+  bool advance(this, bool block) {
+    for (Ticket<T> p in this.parts) { if (p.advance(block)) { return true; } }
+    return false;
+  }
+
+  T value(const this) {
+    for (Ticket<T> p in this.parts) { if (p.settled()) { return p.value(); } }
+    trap("AnyOf.value before settled");
+  }
+}
+
+/** Answers when every one of them has. The losers of an `any` are not cancelled; there is no such thing. */
+export Ticket<T[]> all<T>(Ticket<T>[] parts) { return AllOf<T>(parts); }
+
+/** Answers with the first to settle. The others keep going as ordinary unawaited work. */
+export Ticket<T> any<T>(Ticket<T>[] parts) { return AnyOf<T>(parts); }

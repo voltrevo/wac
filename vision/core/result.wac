@@ -1,0 +1,40 @@
+// The one sum for a call that can fail.
+//
+// Ordinary library code. The compiler knows nothing about `Result`, which is the point: the
+// specialness it has today can expire. Two general features carry it — a **default type argument**,
+// so `Result<T>` is an ordinary generic rather than a special form, and **`union` as a type left to
+// inference**, so the error set is whatever the body passes on.
+//
+// `try` splits on the two variants. Its legality rule is membership rather than equality: a callee
+// failing with `E1` may be `try`d in a function returning `E` when `E1 ⊆ E`, which is what lets two
+// modules that have never heard of each other compose their error types with no wrapper.
+
+export enum Result<T, E = union> {
+  Ok(T),
+  Err(E)
+
+  bool isOk(const this)  { return this is Ok; }
+  bool isErr(const this) { return this is Err; }
+
+  /** The value, or `alt`. For a caller that has a sensible answer to the failure. */
+  T or(const this, T alt) {
+    return match (this) {
+      Ok(v):  v,
+      Err(e): alt,
+    };
+  }
+
+  /**
+   * The value, or a trap naming `why`.
+   *
+   * Deliberately awkward to type and deliberately here anyway: a program that genuinely cannot
+   * continue should say so at the line where it found out, rather than widening its own error set
+   * to carry something it will never handle. The string is what the trap prints.
+   */
+  T orTrap(const this, string why) {
+    return match (this) {
+      Ok(v):  v,
+      Err(e): trap(why),
+    };
+  }
+}

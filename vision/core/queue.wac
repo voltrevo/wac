@@ -1,0 +1,38 @@
+// A queue: push at the back, pop from the front.
+//
+// It exists separately from `Vec` because a loop that both consumes and grows is common enough to
+// deserve the operation rather than the index arithmetic — `Sys.drain` is the one that asked for it.
+// `pop` answers `T?` for the same reason `Vec.pop` does: the caller usually does not already know
+// there is one.
+
+export struct Queue<T> {
+  T[] data;
+  i32 head;
+  i32 len;
+
+  static Queue<T> create() { return Queue<T>(T[0](), 0, 0); }
+
+  i32 len(const this) { return this.len; }
+
+  /** Grown with the value being pushed, for the reason `Vec.push` gives. */
+  void push(this, T v) {
+    if (this.len == this.data.len()) {
+      i32 want = this.data.len() == 0 ? 8 : this.data.len() * 2;
+      T[] bigger = T[want](fill: v);
+      for (i32 i = 0; i < this.len; i++) { bigger[i] = this.data[(this.head + i) % this.data.len()]; }
+      this.data = bigger;
+      this.head = 0;
+    }
+    this.data[(this.head + this.len) % this.data.len()] = v;
+    this.len += 1;
+  }
+
+  /** The oldest element, removed. Its slot keeps the reference — see `Vec.pop`. */
+  T? pop(this) {
+    if (this.len == 0) { return null; }
+    T v = this.data[this.head];
+    this.head = (this.head + 1) % this.data.len();
+    this.len -= 1;
+    return v;
+  }
+}

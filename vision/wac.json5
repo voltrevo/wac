@@ -1,0 +1,14 @@
+// This makes `vision/` a project, so `@/packages/bytes/src/buf.wac` in a file under here resolves
+// to `vision/packages/bytes/src/buf.wac` rather than being a compile error.
+//
+// `@/` is the root of the project containing the *importing file* — the nearest directory at or
+// above it holding a `wac.json5` — so a file in `vision/` never reaches out of `vision/`, and the
+// code reads as though this directory were the repository. The corresponding real thing is always
+// at the same path with `vision/` taken off the front.
+//
+// Empty is a valid manifest and this one is empty on purpose: its presence is the whole question
+// `@/` asks, and nothing reads its contents to answer. The repository root has no manifest, which
+// is why nothing outside `vision/` writes `@/` today.
+//
+// See `vision/packages/README.md`. Nothing in here compiles.
+{}
