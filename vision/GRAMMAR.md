@@ -448,7 +448,7 @@ its own type arguments`: they are refused because a funcref slot is written with
 in the file, and for no other reason.
 
 So the answer to *is this the same language with more in it* is: **it is, apart from one bracket.**
-Everything else the delta adds is additive — 45 rules replaced and two extended, and not one of them
+Everything else the delta adds is additive — 37 rules replaced and two extended, and not one of them
 takes anything away. That is a much smaller claim than the rename table looks like and a much easier
 one to act on: the migration is a mechanical sweep of 378 sites, and the day after it, every one of
 these 323 cases parses under both.
@@ -518,9 +518,18 @@ What it does mean either way: `wac task grammar:parse` — `specparse.ts package
 in one process — cannot finish on a machine in this state, and there is no sign that it is not
 finishing other than the absence of a last line.
 
+**The delta was eight rules smaller than it said, until 2026-09-04.** It grew in three appended
+sections — the original from the rewrites, then *six more from the vetted pages*, then *four more on
+the second round* — and each later section **restated** rules an earlier one had already replaced, so
+that it could change them again. The loader takes the last definition, so eight were dead text, and
+the dead one was the copy carrying the comment that explained the construct: a reader looking up
+`match_arm` found the superseded form first. Merged, and `tools/ebnfaudit.ts` — which has had a
+*two rules with one name* check the whole time and had never been pointed at this file — now reports
+none. 47 entries became 39, under 38 names, with 564 productions and 57/57 unchanged.
+
 **Re-measured 2026-09-04, after the delta had roughly doubled, and every number above is unchanged.**
 When these three lines were first written the patch was 22 rules replaced and one extended; it is now
-45 and two, having absorbed page-only constructs, four control-flow forms, and the withdrawal of
+37 and two, having absorbed page-only constructs, four control-flow forms, and the withdrawal of
 bodyless methods. 316, 269, 47, and *all* 47 containing `fn[` — none of them moved. Twenty-three more
 productions and the corpus cannot tell.
 

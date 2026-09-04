@@ -59,15 +59,15 @@ struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ type_params ]
 
    `gen<T>` before the return type stays: it says the function is a coroutine that yields `T` and
    answers the type after it. *)
-method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , IDENT , [ type_params ] ,
+method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
                  "(" , [ method_params ] , ")" , block ;
-func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , IDENT , [ type_params ] ,
+func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
                  "(" , [ param_list ] , ")" , block ;
 gen_yield      = "gen" , "<" , type , ">" ;
 
 (* `secret`, from `crypto/src/secret.wac`. A qualifier beside `const`, because that is what it is
    modelled on — a flag per name in the checker's scope table. *)
-param          = [ "const" ] , [ "secret" ] , type , IDENT ;
+param          = [ "const" ] , [ "secret" ] , type , name ;
 
 (* ── Statements ──────────────────────────────────────────────────────────────────────────────── *)
 
@@ -115,10 +115,9 @@ for_head       = type , IDENT , "in" , expr
 (* An arm without `case`. The spec's `match_arm` and `match_value_arm` require it; vision drops it
    and `DECISIONS.md` renames `else:` to `default:`. Both spellings are here on purpose — the tree
    still writes `else:` and this file is meant to parse the tree as it is, not as it should be. *)
-match_arm      = [ "case" ] , IDENT , [ "(" , [ binding_list ] , ")" ] , ":" , { statement }
+match_arm      = [ "case" ] , IDENT , [ arm_payload ] , ":" , { statement }
                | ( "else" | "default" ) , ":" , { statement } ;
-match_value_arm = ( [ "case" ] , IDENT , [ "(" , [ binding_list ] , ")" ] | "else" | "default" ) ,
-                 ":" , expr ;
+match_value_arm = ( [ "case" ] , IDENT , [ arm_payload ] | "else" | "default" ) , ":" , arm_value ;
 
 (* ── Expressions and types ───────────────────────────────────────────────────────────────────── *)
 
@@ -128,7 +127,7 @@ match_value_arm = ( [ "case" ] , IDENT , [ "(" , [ binding_list ] , ")" ] | "els
    `try a + b` mean `try (a + b)`, which reads as though the addition could fail. *)
 unary_expr     = ( "-" | "!" | "~" ) , unary_expr
                | ( "++" | "--" ) , unary_expr
-               | "await" , unary_expr
+               | "await" , [ unary_expr ]
                | "try" , unary_expr
                | postfix_expr ;
 
@@ -182,19 +181,14 @@ primary_expr  += "trap" , [ expr ] ;
 verbatim_name  = "@" , STRING ;
 name           = IDENT | verbatim_name ;
 
-param          = [ "const" ] , [ "secret" ] , type , name ;
-func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
-                 "(" , [ param_list ] , ")" , block ;
-method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
-                 "(" , [ method_params ] , ")" , block ;
 
 (* A quoted tag, and a hyphenated attribute. `<"my-widget" data-size="8" />` is why both exist: a
    custom element's name is not an identifier and neither is a data attribute's. *)
 jsx_element    = "<" , jsx_tag , { jsx_attr } ,
                  ( "/" , ">" | ">" , { jsx_child } , "<" , "/" , jsx_tag , ">" ) ;
-jsx_tag        = IDENT | STRING ;
+jsx_tag        = IDENT | STRING | verbatim_name ;
 jsx_attr       = jsx_attr_name , "=" , ( STRING | "{" , expr , "}" ) ;
-jsx_attr_name  = IDENT , { "-" , IDENT } | verbatim_name ;
+jsx_attr_name  = IDENT , { "-" , IDENT } | verbatim_name | keyword_as_name ;
 
 (* `auto`, on `SHOWCASE.md`, `IDIOMS.md` and `QUESTIONS.md` — the construct with the widest presence
    on the vetted pages and no presence at all in the grammar until now. `QUESTIONS.md` already has an
@@ -226,21 +220,9 @@ binding        = IDENT | "is" , type ;
    behaviour of a parser and the reason a single pass is a lower bound. Ten in total, from pages that
    nothing had ever read. *)
 
-(* A **bare `await`** — five fences in `TECHNICAL.md`, and the operator asked for it directly while
-   `Sys.drain` was being worked out: *"I think the ready case needs a bare await."* A suspension
-   point with no operand, where `await c.t` with a null ticket is the same thing written long. *)
-unary_expr     = ( "-" | "!" | "~" ) , unary_expr
-               | ( "++" | "--" ) , unary_expr
-               | "await" , [ unary_expr ]
-               | "try" , unary_expr
-               | postfix_expr ;
-
 (* A **brace pattern**: `Ok { v }:` binds by field name and `Err { .. }:` ignores the rest. The
    parenthesised form binds by position, so these are two pattern languages and only one of them was
    written down. *)
-match_arm      = [ "case" ] , IDENT , [ arm_payload ] , ":" , { statement }
-               | ( "else" | "default" ) , ":" , { statement } ;
-match_value_arm = ( [ "case" ] , IDENT , [ arm_payload ] | "else" | "default" ) , ":" , arm_value ;
 arm_payload    = "(" , [ binding_list ] , ")" | "{" , field_pattern , "}" ;
 field_pattern  = ".." | IDENT , { "," , IDENT } , [ "," , ".." ] , [ "," ] ;
 
@@ -254,6 +236,4 @@ arm_value      = expr | "continue" | "break" | "return" , [ expr ] ;
    in `TECHNICAL.md`'s own three-way comparison, and `for={…}` is the attribute the `@"for"` entry
    exists for — the parameter needs quoting and the attribute does not, which is the whole point and
    is why `jsx_attr_name` has to admit a keyword. *)
-jsx_tag        = IDENT | STRING | verbatim_name ;
-jsx_attr_name  = IDENT , { "-" , IDENT } | verbatim_name | keyword_as_name ;
 keyword_as_name = "for" | "if" | "is" | "as" | "in" | "match" | "return" | "const" | "this" ;

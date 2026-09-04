@@ -143,10 +143,13 @@ function main(argv: string[]): number {
     console.log(`no rules in ${which} — is it a grammar?`);
     return 2;
   }
+  // Two `name += …` entries **compose** — the loader folds each into the base as another
+  // alternative — so repeating a name with `+=` is the notation working rather than a collision.
+  // A second `name = …` silently replaces the first, and that is the one to report.
   const seen = new Set<string>();
   const dup: string[] = [];
   for (const r of all) {
-    if (seen.has(r.name)) dup.push(r.name);
+    if (seen.has(r.name) && !r.add) dup.push(r.name);
     seen.add(r.name);
   }
 
