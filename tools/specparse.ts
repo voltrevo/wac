@@ -473,7 +473,23 @@ function main(argv: string[]): number {
   const bad: string[] = [];
   const slow: string[] = [];
   const gaveUp: string[] = [];
+
+  /**
+   * Progress, on stderr, written synchronously.
+   *
+   * `console.log` to a redirected stdout is buffered, so a run that takes minutes produces an empty
+   * file and looks identical to a run that is stuck. Two whole-tree attempts were killed on that
+   * evidence before the third one showed it had been working the whole time. A long job that cannot
+   * say where it is will be killed by somebody eventually, and the cheapest fix is one unbuffered
+   * write per file.
+   */
+  const enc = new TextEncoder();
+  const note = (s: string) => { Deno.stderr.writeSync(enc.encode(s + "\n")); };
+
+  let seen = 0;
   for (const f of files) {
+    seen++;
+    if (seen % 25 === 0) note(`  … ${seen}/${files.length} — ${f}`);
     const src = Deno.readTextFileSync(f);
     const { toks, error } = lex(src, keywords);
     if (error) { bad.push(`${f}: lex: ${error}`); continue; }
@@ -486,13 +502,13 @@ function main(argv: string[]): number {
       if (r === "budget") {
         const s = `${f}:${chunk[0]?.line ?? 0}: ${chunk.length} tokens, gave up after ${(ms / 1000).toFixed(0)}s`;
         gaveUp.push(s);
-        console.log(`  budget  ${s}`);
+        note(`  budget  ${s}`);
         continue;
       }
       if (ms > 2000) {
         const s = `${f}:${chunk[0]?.line ?? 0}: ${chunk.length} tokens, ${(ms / 1000).toFixed(1)}s`;
         slow.push(s);
-        console.log(`  slow  ${s}`);
+        note(`  slow  ${s}`);
       }
       if (r === "ok") continue;
       const t = chunk[r] ?? chunk[chunk.length - 1];

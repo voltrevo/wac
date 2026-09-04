@@ -1,0 +1,62 @@
+// Whether a consensus is one a relay may act on, and why not when it is not.
+//
+// **The only place in 16,291 lines of `packages/tor` where a failure carries a reason**, and the
+// shape it had to take to do so is the argument this package is here to make.
+//
+// The shipped type, `packages/tor/src/consensus.wac`:
+//
+//     export struct Verdict {
+//       bool ok;
+//       i32 goodSignatures;
+//       i32 needed;
+//       /** Empty when the document is current; otherwise why it is not. */
+//       string stale;
+//     }
+//
+// Four fields, and which two mean anything depends on which failure happened. The caller in
+// `relayd.wac` has to know that and says so in a ternary:
+//
+//     string why = v.stale != "" ? v.stale
+//                                : itoa(v.goodSignatures) + " good signature(s), " +
+//                                  itoa(v.needed) + " needed";
+//
+// **That is a sum type written by hand.** `stale != ""` is the tag, the two `i32`s are one variant's
+// payload and the string is the other's, and nothing checks that a reader looks at the right pair.
+// A third reason would be a third field and a longer ternary, and a caller that forgot the new
+// branch would print a signature count for a document that was never about signatures.
+
+import { Result, union } from "core";
+
+/** The document is correctly signed and too old to act on. `until` is when it stopped being current. */
+export struct Stale { string what; i64 until; }
+
+/** Signed, current, and by too few of the authorities a client trusts. */
+export struct NotEnough { i32 good; i32 needed; }
+
+/** Not signed by anything that verifies against an identity a client hardcodes. */
+export struct Unsigned { string fingerprint; }
+
+export union<Stale, NotEnough, Unsigned> Invalid;
+
+/**
+ * The same information, and the compiler holds the correspondence.
+ *
+ * `Ok` carries nothing: a verdict that passed has nothing more to say, and the `goodSignatures`
+ * count on the shipped struct is only ever read on the failing path. That is worth noticing on its
+ * own — a field that is meaningless in the success case is a payload in the wrong place.
+ */
+export Result<void, Invalid> verify(u8[] consensus, AuthorityCert[] certs, i64 now) { … }
+
+/**
+ * The caller's ternary, as a match.
+ *
+ * Every arm names which failure it is describing, so a fourth member of `Invalid` makes this fail to
+ * compile rather than fall through to a message about signatures.
+ */
+export string say(string what, Invalid why) {
+  return match (why) {
+    Stale(w, until):     "the " + w + " expired at " + i64toa(until),
+    NotEnough(g, n):     itoa(g) + " good signature(s), " + itoa(n) + " needed",
+    Unsigned(fp):        "the " + what + " is not signed by " + fp,
+  };
+}

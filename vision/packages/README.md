@@ -66,9 +66,9 @@ language has no spelling for, a rule that turns out to be unusable at scale, a h
 in ten lines. Each package's README ends with that list, and the real ones become entries in
 `../QUESTIONS.md`.
 
-## What fifteen of them found, which no one of them could
+## What sixteen of them found, which no one of them could
 
-Six things recur, and none is in any single package's list.
+Seven things recur, and none is in any single package's list.
 
 **The constructs ran out at nine.** Packages one to nine each wanted something the language has no
 spelling for. Packages ten to fifteen wanted nothing new — every construct `regex`, `crypto`, `sh`,
@@ -91,6 +91,18 @@ public `len` field and one-byte `reserve`, and `regex`'s flat class arrays — w
 has no generics-free way to hold a list of structs"* and which turns out to be a layout choice, since
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
+
+**Sixty-four failure paths in the largest package answer one bit each, and one of them carries a
+reason.** `tor` is 16,291 lines and was counted rather than rewritten. Thirteen result types are
+`bool ok` plus payload; 64 refusals collapse into them — eleven of them in one 47-line function
+that a *relay* uses to refuse an EXTEND2, where a truncated payload and a duplicated identity are
+different facts about the peer. The single exception, `Verdict`, is a sum type written by hand: a
+boolean, two integers, a string, and a ternary at the call site testing `stale != ""` as the tag.
+Somebody needed two reasons kept apart and built one out of an emptiness test.
+
+**But nobody has complained**, and that is the half worth keeping beside it. `gzip` has a filed
+issue about exactly this loss and `tor` has none, so the measurement supports the *demand* and not
+the *harm*. Every other finding here is one or the other and this is the first that separates them.
 
 **A proposed type can be declined, and the fifteenth package is the first to do it.** `gzip`'s
 window meets `Slice<T>` in the one loop where it loses: a DEFLATE match is 3 to 258 bytes and mostly
@@ -269,3 +281,4 @@ not against it.
 | [box](box/) | 2026-09-04 | 63 signatures measured; where per-function authority stops |
 | [wacpkg](wacpkg/) | 2026-09-04 | the two import proposals, against the resolver |
 | [gzip](gzip/) | 2026-09-04 | `try` against a closed issue that priced it; a view type declined on a number |
+| [tor](tor/) | 2026-09-04 | 16,291 lines counted, not rewritten; 64 failure paths into 13 bits |
