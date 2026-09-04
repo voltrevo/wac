@@ -170,6 +170,10 @@ cast_expr      = unary_expr , { ( "as" | "as!" | "as~" | "as@" ) , type } ;
 
 unary_expr     = ( "-" | "!" | "~" ) , unary_expr
                | ( "++" | "--" ) , unary_expr                    (* prefix incr/decr: lvalue operand, evaluates to the new value *)
+               | "await" , unary_expr                            (* design/lang/0014: tighter than any binary
+                                                                    operator, looser than postfix — so
+                                                                    `await f(x)` awaits the call and
+                                                                    `await n + 1` is `(await n) + 1` *)
                | postfix_expr ;
 
 postfix_expr   = primary_expr , { postfix_op } ;

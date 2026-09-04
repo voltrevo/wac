@@ -1,4 +1,5 @@
-// The keyword list in the spec is the keyword list the lexer has.
+// The keyword list in the spec is the keyword list the lexer has, and every word in it is used by
+// a production.
 //
 //     wac test --allow-read packages/wacc/test/wac/speckeywords_test.wac
 //
@@ -28,6 +29,19 @@
 // depends on `keywordKind` continuing to spell its words in character literals; if that stops
 // being true the extraction finds nothing, which is why the count is asserted as a floor rather
 // than trusted.
+//
+// ## And a third relation, which is not about the lexer at all
+//
+// A word can be a keyword in both the fence and the lexer and still be used by **no rule**. That is
+// not a lexer bug and neither pass above can see it: the fence and the lexer agree, and
+// `specproductions_test.wac` works from a list of samples, so it knows nothing about a construct
+// nobody wrote a probe for.
+//
+// `await` was in exactly that state — in the fence, in `keywordKind`, in `parse.wac`, and in no
+// production, since async landed. It was found by reading the fence against the rules by hand,
+// which is not a mechanism, so the third test is that reading. It is exhaustive over the fence,
+// which is what the sample list is not, and it needs no exception list: all thirty-three words are
+// used by a rule.
 //
 // ## The three the extraction cannot see
 //
@@ -131,6 +145,80 @@ i32 lexerKeywords(string src, string[] out) {
     if (word != "" && !has(out, n, word) && n < out.len()) { out[n] = word; n = n + 1; }
   }
   return n;
+}
+
+/**
+ * Every `​```ebnf` block in `text`, with EBNF comments removed.
+ *
+ * The comments have to go. `unary_expr`'s `await` branch carries a `(* … *)` explaining that it
+ * binds looser than postfix, and half the file's prose names keywords it does not use — so a
+ * keyword mentioned only in a comment would satisfy the check below while no rule mentioned it,
+ * which is exactly the state `await` was in.
+ */
+string ebnfRules(string text) {
+  string out = "";
+  string rest = text;
+  while (true) {
+    i32 open = rest.indexOf("```ebnf");
+    if (open < 0) { break; }
+    string body = rest.slice(open + 7, rest.len());
+    i32 close = body.indexOf("```");
+    if (close < 0) { break; }
+    out = out + body.slice(0, close);
+    rest = body.slice(close + 3, body.len());
+  }
+
+  string stripped = "";
+  i32 depth = 0;
+  for (i32 i = 0; i < out.len(); i++) {
+    if (out.slice(i, i + 2) == "(*") { depth = depth + 1; }
+    if (depth == 0) { stripped = stripped + out.slice(i, i + 1); }
+    if (out.slice(i, i + 2) == "*)" && depth > 0) { depth = depth - 1; }
+  }
+  return stripped;
+}
+
+/**
+ * A keyword the fence lists that no production uses.
+ *
+ * The third relation this file checks, after the two about the lexer, and the one that has caught
+ * something: **`await` was in the fence and in no rule at all** — the only one of the thirty-three
+ * in that state, and it had been since async landed. Nothing else could see it. The productions
+ * pass in `specproductions_test.wac` works from a list of samples, so it knows nothing about a
+ * construct nobody added a probe for; the two passes above compare the fence with the *lexer*,
+ * which has `await` and is perfectly happy.
+ *
+ * It is the cheapest possible instrument for that gap and it is exhaustive over the fence, which
+ * the sample list is not. What it cannot see is the other direction — a production using a word
+ * that is not a keyword — which is `speckeywords`'s first pass one level down.
+ *
+ * There is no exception list, and that is worth stating: all thirty-three are used by a rule, so a
+ * word that is not is a finding rather than a category.
+ */
+export string test_every_keyword_in_the_fence_is_used_by_a_production(Core core, Cli cli) {
+  T t = T.create();
+
+  string grammar = read(cli, "spec/spec/grammar.md");
+  string[] spec = string[64](fill: "");
+  i32 nSpec = specKeywords(grammar, spec);
+  t.isTrue(nSpec >= 28, "grammar.md's keyword fence gave " + itoa(nSpec) + " words, expected 28+");
+
+  string rules = ebnfRules(grammar);
+  // A floor for the same reason the fence has one: an extractor that found nothing would report
+  // every keyword missing, which reads as thirty-three findings rather than as a broken reader.
+  t.isTrue(rules.len() > 3000,
+    "the ebnf blocks came to " + itoa(rules.len()) + " bytes with comments stripped, expected 3000+");
+  if (nSpec == 0 || rules.len() < 3000) { return t.report(); }
+
+  for (i32 i = 0; i < nSpec; i++) {
+    t.isTrue(
+      rules.indexOf("\"" + spec[i] + "\"") >= 0,
+      "`" + spec[i] + "` is in grammar.md's keyword fence and no production mentions it — either a "
+        + "rule is missing, as `unary_expr`'s was for `await`, or the word is not a keyword",
+    );
+  }
+
+  return t.report();
 }
 
 export string test_the_spec_keyword_fence_is_the_lexers_keyword_set(Core core, Cli cli) {

@@ -77,6 +77,13 @@ const Probe[] PROBES = Probe[](
         "struct S { i32 n; async i32 f(this) { return this.n; } }", true),
   Probe("written type arguments at a call", "primary_expr", "type_args",
         "T zero<T>() { return 0; }\nexport i32 f() { return zero<i32>(); }", true),
+  // `await` was a keyword with no production at all — the only one of the thirty-one in the fence
+  // that no rule mentioned, found by reading the keyword list against the rules rather than by
+  // anything here. Its home is `unary_expr`, which `parse.wac` settles: the `await` branch recurses
+  // into `parseUnary`, so it binds tighter than any binary operator and looser than postfix.
+  Probe("await on an expression", "unary_expr", "\"await\"",
+        "struct P { i32 v; }\nasync i32 g(P p) { return p.v; }\n"
+          + "export async i32 f(P p) { return await g(p); }", true),
 
   // The other direction. Each of these is refused today, so its production must stay silent about
   // it — and each is a construct somebody has a reason to reach for, which is what makes the row
