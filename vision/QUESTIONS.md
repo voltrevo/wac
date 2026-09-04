@@ -2341,8 +2341,41 @@ projections deep, has been argued for nine days against wac and against the ship
 never once against the three programs that would have to run it — and the two things that fell out of
 half an hour of reading suggest that is where the next ones are.
 
-The concrete version, which is answerable: **what does each host have to do to hand a program nine
-projections instead of two?** For the Rust pair, read a longer parameter list and construct more
-types — nothing structural. For the JavaScript one, stop inferring. And for all three, the question
-`@/packages/sh/src/exec.wac` raises from the other side: none of this crosses a spawn, where a
-capability is a bitfield and not a value.
+### Costed, and the answer is different for each of the three
+
+Asked the concrete version — *what does each host have to do to hand a program nine projections
+instead of two?* — and read them. The paragraph this replaces guessed *"nothing structural for the
+Rust pair"* and was wrong about one of them.
+
+**`native/src` (wasmtime) reads the parameter list to check it against two literal strings.**
+
+    let world_arity = if !sig.params.is_empty()
+        && sig.params.len() <= 2
+        && sig.params[0] == "Core"
+        && (sig.params.len() == 1 || sig.params[1] == "Cli")
+
+Anything else is `cannot call {name}({params})`. So *reading the parameter list* is true and
+describes a two-name special case rather than a mechanism: `main(Net, Out, Clock, Tasks)` is refused
+by name, and `lm.world` is a `Vec<Val>` consumed with `.take(world_arity)` — positional. Nine
+projections need a name→constructor table where there is an `if`, a keyed world where there is a
+vector, and the arity cap gone.
+
+**`packages/platform/host` (JavaScript) does not read it at all.** `worldFor` returns `[Core]` or
+`[Core, Cli]` by which classes the module contains, spread positionally into `main`. Its own comment
+says the Rust hosts read the list and *"here the absent class is the same signal"* — true at two
+capabilities, false at nine in both directions: a helper naming `Files` earns one `main` never asked
+for, and `main(Out out, Files files)` gets `worldFor`'s order rather than its own.
+
+**`native/v8/src` already generalises, and it is the one nobody would have guessed.** Its binding is
+a `(owner, field) → Cap` table — **fifty arms, forty-two under `Cli` and eight under `Core`** — so a
+capability is *already* looked up by type name and field name. Nine projections are fifty arms whose
+owner string changes and some whose field name does. Mechanical, tedious, and structurally free.
+
+So the cost is **one rewrite, one table edit, and one design that already fits**, which is not what
+any of the three looked like from inside wac. The general shape is worth more than the numbers: the
+host that reasons about capabilities *by name* absorbs a regrouping, and the two that hardcode the
+grouping — one in an `if`, one in a class-presence check — do not.
+
+And the thing none of the three does: **nothing crosses a spawn.** `@/packages/sh/src/exec.wac` has
+that from the other side, where a capability is a bitfield rather than a value, and no amount of
+host work changes it.
