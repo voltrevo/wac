@@ -514,6 +514,40 @@ export struct Quit    { }
 
 export union<Click, Typed, Changed, Key, Pointer, Dropped, Quit> Event;
 
+/**
+ * What a path is — three fields where the shipped one has eight, and two of the five missing make
+ * members of *this file* meaningless.
+ *
+ * Found 2026-09-04 by the signature diff, after it had already found `Out.write` and the seven
+ * synchronous capabilities. The shipped `Stat` is `exists`, `isFile`, `isDir`, `size`,
+ * `modifiedMillis`, `isSymlink`, `isExecutable`, `fault`.
+ *
+ * **`isSymlink` is the one that makes `linkStat` pointless.** `Files.linkStat` was added a week ago,
+ * from the audit that found the projection *"short by two of the fourteen"* — and the shipped
+ * `isSymlink`'s doc is exactly why the pair exists:
+ *
+ * > **Always false from `stat`**, which follows links and therefore describes what one leads to.
+ * > `linkStat` is the one that answers this. Both exist because both questions are real: `find`
+ * > wants to know whether to descend into what a name leads to, and `tar` wants to know whether the
+ * > name is a link before it stores anything.
+ *
+ * Two members answering the same three fields is two members answering the same question. The audit
+ * restored the *call* and not the thing it is for.
+ *
+ * **`isExecutable` is the same mistake with `setExecutable`**, added the same week: a program can set
+ * the bit and cannot read it. Its shipped doc is *"one bit, not a mode … it is what distinguishes
+ * git's `100644` from its `100755`"*, with `issues/system/0132` for the commit that recorded every
+ * blob as `100644` because nothing could tell.
+ *
+ * **And `exists` is a question about the `Result`, not a missing field.** `Files.stat` answers
+ * `Ticket<Result<Stat, NotGranted>>`, and `NotGranted` means *the grant did not include this* — not
+ * *there is no such file*. So absence has nowhere to go: it is not an `Err` this can name and there
+ * is no `exists` to say it with. That is the same hole `Files.open` and `In.stream` have, arriving in
+ * a third place, and it is why `../QUESTIONS.md` files it as one question rather than three.
+ *
+ * `isFile` is the smaller of the five: with only `isDir`, a device or a socket is *not a directory*
+ * and nothing more. `fault` is deliberately gone — that is what the `Result` replaced.
+ */
 export struct Stat { i64 size; bool isDir; i64 modified; }
 
 /**

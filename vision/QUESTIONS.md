@@ -2716,3 +2716,42 @@ synchronous but *fill-in-place* against the shipped *allocate-and-return*. That 
 arriving in a capability — a caller who owns the buffer avoids the allocation — and it is exactly the
 change `core/slice.wac` exists to enable. It is also the only member here whose new signature cannot
 express what the old one did: `randomBytes(n)` with no buffer to hand is now two lines.
+
+## Two members added by an audit answer a type that cannot express what they are for
+
+`Stat` here is three fields — `size`, `isDir`, `modified`. The shipped one is eight: `exists`,
+`isFile`, `isDir`, `size`, `modifiedMillis`, `isSymlink`, `isExecutable`, `fault`. Found by the
+signature diff, which had already turned up `Out.write`'s missing `bool` and seven capabilities that
+quietly became synchronous — the same check, one type further along.
+
+**Two of the five missing make members of `vision/std` itself meaningless**, and both members were
+added *by the audits that this document records as successes*.
+
+`Files.linkStat` came from the projections audit — *"the `Files` projection was missing two of the
+fourteen"*. What `linkStat` is **for** is `isSymlink`, and the shipped doc says so:
+
+> **Always false from `stat`**, which follows links and therefore describes what one leads to.
+> `linkStat` is the one that answers this. Both exist because both questions are real: `find` wants
+> to know whether to descend into what a name leads to, and `tar` wants to know whether the name is a
+> link before it stores anything.
+
+Two members answering three fields answer the same question. The audit restored the **call** and not
+the thing it is for.
+
+`Files.setExecutable` came from the host-capability diff. `Stat` has no `isExecutable`, so a program
+can set the bit and cannot read it — and the shipped field's doc is the reason it matters:
+*"one bit, not a mode … it is what distinguishes git's `100644` from its `100755`"*, with
+`issues/system/0132` naming the commit that recorded every blob as `100644` because nothing could
+tell.
+
+**Which is the finding rather than the two fields.** An audit that compares *what a capability can be
+asked* is not an audit of *what it can answer*, and both of these passed the first and fail the
+second. That is the third form of the same mistake this document has now recorded: comparing names
+missed signatures, comparing signatures missed return **types**, and each was a cheaper check
+standing in for a dearer one.
+
+**And `exists` is not a missing field but a question about the `Result`.** `Files.stat` answers
+`Ticket<Result<Stat, NotGranted>>`; `NotGranted` means *the grant did not include this*, not *there
+is no such file*. Absence has nowhere to go — not an `Err` this can name, and no `exists` to say it
+with. Same hole as `Files.open` and `In.stream`, in a third place, which is why it belongs to the
+entry about a capability answering only its own failure rather than here.
