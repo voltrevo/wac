@@ -459,6 +459,42 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
+## Three type names are declared twice, and `union` is the reason it matters
+
+107 type names across `vision/`, three declared in more than one file:
+
+    BadMethod    gzip/src/fault.wac  (i32 cm — a DEFLATE compression method)
+                 http/src/fault.wac  (empty — an HTTP verb)
+    Truncated    gzip/src/fault.wac  (string field)
+                 unicode/src/utf8.wac  (empty)
+    Fault        fs/src/fault.wac    union<NotGranted, NotFound, Denied, …>
+                 gzip/src/fault.wac  union<SourceFailed, Corrupt>
+
+Nominal typing makes these distinct types, and imports are per-file, so nothing is *broken*. What is
+awkward is that the whole point of `union` here is composition — `http`'s `ResponseFault` is
+`union<RequestFault, BadStatus>`, an error set built over another module's.
+
+**A program that reads a gzipped file over HTTP has three `Fault`s and two `BadMethod`s in scope.**
+`import { Fault as FsFault }` handles the naming; it does not handle the membership. `try`'s rule is
+that a callee failing with `E1` may be `try`d in a function returning `E` when `E1 ⊆ E`, and subset
+is over *types*. Two same-named members from two modules are two members, so the composed set has
+both and a `match` over it has arms whose names collide at the point of writing them.
+
+So the convention this exercise fell into — **each package names its union `Fault`** — is exactly
+wrong for the feature the unions exist for, and it took nineteen packages to notice because no two of
+them have ever been imported together.
+
+Three ways out, and the middle one is what most languages do without saying so:
+
+- **Name unions after their subject**: `FsFault`, `InflateFault`, `RequestFault`. `http` already does
+  this and is the only one that does, which is suggestive.
+- **Let a match arm be qualified** — `case gzip.Truncated:` — which is a language change and the one
+  that scales, and which nothing in `vision/` has asked for.
+- **Say error member types are global by convention** and make packages pick distinct names, which is
+  a rule nobody can enforce and which fails the first time two packages both have a `NotFound`.
+
+The second is the only one that survives a tree this size, and it is not on any page.
+
 ## Which byte type a capability speaks, now that the widening is one-directional
 
 The funcref rewrite made every capability's signature explicit, and the first thing that showed is

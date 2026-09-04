@@ -132,6 +132,15 @@ everything else"*. One is an ordinary optional field; the other means the caller
 document's shape. The package where missing-versus-null is most famous had a two-level answer and
 wrote one level.
 
+**Every package named its error union `Fault`, which is exactly wrong for the feature unions exist
+for.** Three type names are declared twice across the nineteen — `Fault` in `fs` and `gzip`,
+`BadMethod` in `gzip` and `http`, `Truncated` in `gzip` and `unicode`. Nominal typing keeps them
+distinct and imports are per-file, so nothing breaks; what breaks is *composition*. `union`'s whole
+argument is that `http`'s `ResponseFault` is `union<RequestFault, BadStatus>`, an error set built
+over another module's — and a program reading a gzipped file over HTTP has three `Fault`s in scope
+and no way to write a `match` naming members from two of them. `http` is the only package that named
+its union after its subject, and it is the only one that composes.
+
 **A primitive with one consumer is a primitive nobody has composed.** `schedule` had exactly one —
 `Sys.drain` — and `wactest`'s `isolate.wac` is the second. The first breaks the second: `drain` says
 `schedule this.pending.push` and then drains `this.pending`, so inside a scope that has already
