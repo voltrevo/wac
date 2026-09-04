@@ -346,6 +346,36 @@ export struct Proc {
    * A shell spawns to *get* something, so a `Child` with no read is a capability for programs whose
    * output nobody wants. `@/packages/sh/src/pipeline.wac` avoids noticing because it runs its stages
    * with `Proc.run`, in this instance, and never spawns one.
+   *
+   * ## Three of six parameters, and two of the three were added to fix something
+   *
+   * Found 2026-09-04 by comparing arity across every paired member — the cheap pre-filter for the
+   * semantics pass, after it found `Net.listen`'s missing bind address the same way. The shipped
+   * signature is `spawn(u8[] wasm, u8[][] argv, i32 grants, string cwd, i32 inherit, bool serveFs)`.
+   * This takes the first three, with the grant bitfield as a `Vec<Grant>`.
+   *
+   * **`cwd` was added because a shell was broken without it.**
+   *
+   * > `cwd` is where the child's relative paths resolve from … A shell has an opinion: without this,
+   * > `cd sub; prog f` looked in the wrong place, because a spawned program inherited the *host's*
+   * > directory rather than the shell's. `pushChild` took a directory from the start for exactly
+   * > this reason and `spawn` did not.
+   *
+   * **`inherit` was widened nine days before this was written.** *"`inherit` says which of the
+   * child's standard streams are this program's own rather than queues … **It was two bools until
+   * 2026-08-29**, and `INHERIT_OUT` is the one that was missing."* A shell needs `INHERIT_NONE` so a
+   * child fed from a pipeline gets exactly the bytes its parent chose.
+   *
+   * **And `serveFs` is a promise rather than a grant**, which is why dropping it is not the same as
+   * narrowing: *"A parent that passes true and then does not serve parks its child, which is the one
+   * failure this cannot make safe and the reason it is stated rather than assumed."* With no
+   * parameter there is nothing to state, and the child waits for an answer that is never coming.
+   *
+   * **The `Vec<Grant>` drops a dimension too.** `@/packages/sh/src/exec.wac` says the wire format has
+   * two — *"a category and a root, `GRANT_READ | GRANT_NET` plus a `dir`, which `std/platform.wac`
+   * sums up as 'a shell served over a socket can be given one directory and no network'"* — and this
+   * carries only the category. So the package that exists to study the grant boundary documents two
+   * dimensions while the signature it studies has one.
    */
   fn<Ticket<Result<Child, NotGranted>>(Bytes, Vec<Bytes>, Vec<Grant>)>  spawn;
   fn<i32()>                                                             exitCode;

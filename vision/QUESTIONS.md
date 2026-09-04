@@ -2862,3 +2862,45 @@ capability *is* — its name, its shape, the type it answers — and all three p
 parameter fewer is not a missing member, not a changed return, not an unrepresentable outcome. Only
 reading the sentence next to the shipped one finds it, and the sentence exists because somebody
 already made this mistake once.
+
+## Arity is the cheap pre-filter for the semantics pass, and it finds `spawn` at three of six
+
+Reading prose on both sides is the pass that cannot be mechanised, but choosing *where* to read can
+be. Comparing the parameter count of every paired member — 23 pairs, one script — leaves four
+disagreements, and three are the deliberate value-for-handle rewrite: `Socket.send` and `Socket.recv`
+lose the shipped `i32` handle because a `Socket` is a value with the handle inside.
+
+The fourth is **`Proc.spawn`, which takes three of six.** Shipped:
+`spawn(u8[] wasm, u8[][] argv, i32 grants, string cwd, i32 inherit, bool serveFs)`. Vision keeps the
+first three, with the bitfield as a `Vec<Grant>`.
+
+**Two of the three dropped were added to fix something, and the docs say what.**
+
+> `cwd` is where the child's relative paths resolve from … A shell has an opinion: without this,
+> `cd sub; prog f` looked in the wrong place, because a spawned program inherited the *host's*
+> directory rather than the shell's. `pushChild` took a directory from the start for exactly this
+> reason and `spawn` did not.
+
+> `inherit` says which of the child's standard streams are this program's own rather than queues …
+> **It was two bools until 2026-08-29**, and `INHERIT_OUT` is the one that was missing.
+
+Nine days before the rewrite dropped it. And `serveFs` is not a grant at all but a promise, which is
+why removing it is worse than narrowing: *"A parent that passes true and then does not serve parks
+its child, which is the one failure this cannot make safe and the reason it is stated rather than
+assumed."* With no parameter there is nothing to state and the child waits for an answer that never
+comes.
+
+**And the `Vec<Grant>` drops a dimension.** `@/packages/sh/src/exec.wac` — the package written to
+study exactly this boundary — says the wire format has two: *"a category and a root, `GRANT_READ |
+GRANT_NET` plus a `dir`, which `std/platform.wac` sums up as 'a shell served over a socket can be
+given one directory and no network'"*. `Vec<Grant>` carries the category. So the study and the
+signature it studies disagree, in the same directory, about the thing the study is about.
+
+**Which is the general finding: a dropped parameter is invisible to three of the four audits.** A
+name still matches, a signature is still well-formed, the answer type is unchanged — only arity moves,
+and only prose says whether the movement was a simplification or a deletion. Two of the four
+deltas here are the first and two are the second, and nothing but reading tells them apart.
+
+Not fixed, unlike `Net.listen`. That one restored a parameter whose absence had a stated history of
+harm; these three need a decision about what `spawn` is *for* in a design where a capability is a
+value and a spawn is the one place it cannot be — and `@/packages/sh` is where that decision belongs.
