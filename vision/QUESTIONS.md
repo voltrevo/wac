@@ -297,3 +297,25 @@ unknown member** is the tempting answer and is the one that silently narrows wit
 Same boundary as `design/lang/0015` from the other side — that asks what a *type* may cross into a
 module loaded at runtime, this asks what an *authority* may. Both answers are "not a reference".
 
+## Where per-function authority stops
+
+Two packages met the same fact from opposite sides and neither page says it.
+
+`sh`: a capability cannot cross **into** a spawned child, because a child is a separate instance and
+a reference does not cross an instance boundary.
+
+`box`: authority cannot be subdivided **within** a module. Its 63 applets all take
+`(Core, Cli, Fs, Args)` — measured, not one varying — and 10 of them never mention `fs` outside that
+signature. `box.wac` says why and does not hide it: *"A multicall binary weakens the permission
+story … `box`'s grants are the union of what its applets need, so running `box echo` carries the
+filesystem and network access `box cp` and `box get` would want."*
+
+So: **authority is per-instance, and per-function authority stops at the module edge.** Inside, a
+signature is a real constraint; outside, it is a request to a host. Both `SHOWCASE.md` entries about
+authority are about the inside, and a reader has no way to learn where the inside ends.
+
+The in-language half that *is* available: a dispatch table of closures rather than function
+pointers, so `echo`'s entry captures no `Fs` and the applet cannot reach one. It does not narrow the
+grant — `bin/` is the build-time answer to that, and already exists — but it stops 10 of 63 reaching
+what they were handed.
+
