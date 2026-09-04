@@ -10,5 +10,13 @@
 // `@/` asks, and nothing reads its contents to answer. The repository root has no manifest, which
 // is why nothing outside `vision/` writes `@/` today.
 //
+// **And seventeen imports in twelve files disagree with the paragraph above**, measured 2026-09-04.
+// They name files the rewrites chose not to write — `./stringify.wac`, `@/packages/crypto/src/
+// sha256.wac` — every one of which exists in `packages/` at the same path with `vision/` taken off
+// the front. So the code assumes an *overlay*: resolve here, fall through to the repository if
+// absent. That is not what this manifest says and it is not something the resolver can express.
+// `../QUESTIONS.md` has the two ways out and why the second is a language question rather than a
+// tidy-up.
+//
 // See `vision/packages/README.md`. Nothing in here compiles.
 {}

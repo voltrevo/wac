@@ -1639,3 +1639,52 @@ place to put it.
 
 So this is not really about `Page`. It is that `Sys` was introduced to hold projections and quietly
 took on a second job, and the first program that could not be handed one is where that shows.
+
+## `wac.json5` says `vision/` is self-contained and seventeen imports say it is not
+
+`vision/wac.json5` is empty and its comment is the whole design:
+
+> `@/` is the root of the project containing the *importing file* … so a file in `vision/` never
+> reaches out of `vision/`, and the code reads as though this directory were the repository. The
+> corresponding real thing is always at the same path with `vision/` taken off the front.
+
+Checked on 2026-09-04 by resolving every import specifier in the 53 rewritten files. **Seventeen, in
+twelve files, name something that is not in `vision/`:**
+
+    @/packages/crypto/src/{sha256,hkdf,hmac}.wac      tls/keyschedule
+    @/packages/box/src/lib/args.wac                   box/cat, box/echo
+    ./stringify.wac ./atof.wac ./huffman.wac ./crc32.wac ./routes.wac ./host.wac
+    ./percent.wac ./response.wac ./headers.wac ×2 ./case.wac ./printable.wac
+
+Against eleven `@/` imports that do resolve inside `vision/`, so it is not that the mechanism is
+unused — it is used, and a third of the time it names nothing.
+
+**All fifteen distinct targets exist in `packages/`**, at exactly the path with `vision/` taken off
+the front. So this is a *convention* rather than seventeen mistakes: an import may name a file the
+rewrite chose not to write, meaning *unchanged, take the original*. Every README says which files it
+wrote and why the rest are absent — `json`'s *"`stringify.wac` is not rewritten because nothing in it
+changes"* — and none of them says the imports still point at them.
+
+**The convention contradicts the manifest**, which is why it is worth an entry rather than a
+correction. Either
+
+- `vision/` is a project and these imports are broken. Fixing them means writing fifteen files whose
+  READMEs argue at length for not writing them, which is a real cost for no finding.
+- or `vision/` is an **overlay**: `@/x` resolves in `vision/` if something is there and falls through
+  to the repository root if not. That is what every one of the seventeen already assumes, it makes
+  *"the corresponding real thing is at the same path with `vision/` taken off the front"* a
+  resolution rule instead of a remark, and it is the thing the manifest's comment explicitly rules
+  out.
+
+The second is also a real question about the language, not only about this directory: a project that
+layers over another is how a fork, a patch set, or a vendored dependency with local changes wants to
+work, and `packages/wacc/src/path.wac` resolves by path arithmetic with no filesystem, so *fall
+through if absent* is not something the resolver can currently express. `@/packages/wacpkg`'s
+README already found that the entry-point proposal lands in the same place, on `Res`'s `mapFrom`/
+`mapSpec`/`mapTo` — which is the reader's answer to a question the resolver cannot ask.
+
+**The second unstated convention in this directory**, and it is the same shape as the first: `{ … }`
+for a body nobody wrote, which a lexer special case strips, and now an import for a file nobody
+wrote, which nothing checks at all. Both are load-bearing, both are invisible to every tool, and both
+were followed perfectly by hand — the seventeen contain no typos, which is luck rather than a
+property.
