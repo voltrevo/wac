@@ -20,10 +20,16 @@
 //   specification for a *parser* builds one that rejects working code.
 // - **In the production and not the parser** — rarer and worse in a different way, because a
 //   documented construct that does not exist cannot be discovered by using it: the program simply
-//   fails and the reader believes their own mistake. This half is not hypothetical. While fixing
-//   `0320a` I gave `method_decl` an `[ "async" ]` by symmetry with `func_decl`, and there is no such
-//   thing — measured half an hour earlier in the same session. It was caught by re-reading, which is
-//   not a mechanism.
+//   fails and the reader believes their own mistake. This half is not hypothetical either. While
+//   fixing `0320a` I *removed* `method_decl`'s `[ "async" ]`, having measured a method with one as
+//   `expected a type` — through a seed three commits behind the sources, which does not fail, it
+//   answers as of a few commits ago. This test's first run put it back.
+//
+// The negative rows carry the second direction: a construct the parser refuses, and the token its
+// production must therefore not mention. Two of the three are things something in the tree actively
+// wants — `for … in` is `issues/lang/open/0322a` and `default:` for a match arm is what
+// `vision/DECISIONS.md` renames `else:` to — which is the situation the direction exists for. A
+// wanted construct is exactly the one somebody writes into the grammar before the parser has it.
 //
 // ## What this can and cannot see
 //
@@ -71,6 +77,18 @@ const Probe[] PROBES = Probe[](
         "struct S { i32 n; async i32 f(this) { return this.n; } }", true),
   Probe("written type arguments at a call", "primary_expr", "type_args",
         "T zero<T>() { return 0; }\nexport i32 f() { return zero<i32>(); }", true),
+
+  // The other direction. Each of these is refused today, so its production must stay silent about
+  // it — and each is a construct somebody has a reason to reach for, which is what makes the row
+  // worth having rather than a list of things nobody would write.
+  Probe("iterating with `for … in`", "for_stmt", "\"in\"",
+        "export i32 f() { i32 s = 0; i32[] xs = i32[](1); for (i32 x in xs) { s = s + x; } return s; }",
+        false),
+  Probe("`default:` as a match arm", "match_arm", "\"default\"",
+        "enum E { A, B }\nexport i32 f(E e) { i32 r = 0; match (e) { case A: { r = 1; } default: { r = 2; } } return r; }",
+        false),
+  Probe("a `static` method", "method_decl", "\"static\"",
+        "struct S { i32 n; static i32 z() { return 0; } }", false),
 );
 
 string read(Cli cli, string path) {
@@ -81,17 +99,28 @@ string read(Cli cli, string path) {
 /**
  * The text of one production: from the line that opens it to the `;` that ends it.
  *
- * A production may wrap — `func_decl` does — so this cannot be one line, and it stops at the first
- * `;` rather than at a blank line because the EBNF comment that follows some of them contains
- * neither.
+ * A production may wrap — `func_decl` does — so this cannot be one line, and it ends at a `;`
+ * rather than at a blank line because the EBNF comment that follows some of them contains neither.
+ *
+ * **Outside quotes**, which is the whole of the difficulty. `for_stmt` has two `";"` *tokens* in it
+ * and stopping at the first character would have returned a fifth of the production. Truncation is
+ * dangerous in one direction only, and it is the direction the negative rows use: a production cut
+ * short does not mention anything, so a `parses: false` row would pass by having read almost none
+ * of the text it was asserting about.
  */
 string production(string grammar, string name) {
   i32 at = grammar.indexOf("\n" + name + " ");
   if (at < 0) { at = grammar.indexOf("\n" + name + "="); }
   if (at < 0) { return ""; }
   string rest = grammar.slice(at + 1, grammar.len());
-  i32 end = rest.indexOf(";");
-  return end < 0 ? "" : rest.slice(0, end + 1);
+
+  bool quoted = false;
+  for (i32 i = 0; i < rest.len(); i++) {
+    string c = rest[i];
+    if (c == "\"") { quoted = !quoted; continue; }
+    if (c == ";" && !quoted) { return rest.slice(0, i + 1); }
+  }
+  return "";
 }
 
 export string test_every_construct_somebody_was_wrong_about_stays_checked(Core core, Cli cli) {
@@ -100,6 +129,12 @@ export string test_every_construct_somebody_was_wrong_about_stays_checked(Core c
   string grammar = read(cli, "spec/spec/grammar.md");
   t.isTrue(grammar.len() > 4000, "spec/spec/grammar.md read as " + itoa(grammar.len()) + " bytes");
   if (grammar.len() == 0) { return t.report(); }
+
+  // The extractor, on the production that would catch it stopping at a quoted `;`. `for_update` is
+  // past two of them, so a reader that did would return neither it nor the closing `block ;`.
+  string forStmt = production(grammar, "for_stmt");
+  t.isTrue(forStmt.indexOf("for_update") >= 0 && forStmt.indexOf("block ;") >= 0,
+    "the production reader stopped early — `for_stmt` came back as `" + forStmt + "`");
 
   string dir = scratch(cli, "specproductions");
   cli.remove(dir, true).wait();
