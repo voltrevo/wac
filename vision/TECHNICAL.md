@@ -147,7 +147,20 @@ error: a non-const reference cannot be taken from a const one
 
 `table` hands back the real `Vec`. Reading it is allowed and writing to it is not.
 
-**Not yet.**
+**Done, except the message.** Both halves are current behaviour, measured: reading through a `const`
+accessor checks clean and writing through it is refused. `issues/lang/closed/0060` — *a value
+returned from a `const this` method stays const* — is what implemented it.
+
+The caret above is **not** what the compiler says. Today it is
+
+```
+   |                                                     ^
+   = help: take a copy, or declare the destination `const` too
+```
+
+and that help is wrong at this site — there is no destination — which is
+`issues/lang/open/0316a`, filed from this entry's own example. So the entry is a picture of the
+diagnostic it should have, and it was marked *Not yet* as though the rule were unimplemented.
 
 ---
 
