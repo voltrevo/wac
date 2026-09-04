@@ -1,4 +1,9 @@
 // The package, as one name.
 
 export { T, Report, Failure } from "./assert.wac";
-export { FakeFiles, FakeClock, checkRefused } from "./test.wac";
+// `fakeFiles` and `fakeClock`, lowercase, because they are **functions** — `test.wac`'s own note is
+// *"a fake is the same struct, not a subclass"*, so `struct FakeFiles : Files` became a function that
+// builds a `Files` with two funcrefs replaced. The barrel kept the old names for a day. Same shape as
+// `core/core.wac`'s stale `all`/`any`: a rewrite that changes what a thing *is* leaves the list of
+// names behind it untouched, and only a name-level check notices.
+export { fakeFiles, fakeClock, checkRefused } from "./test.wac";

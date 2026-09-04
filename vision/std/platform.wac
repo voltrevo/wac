@@ -573,6 +573,40 @@ export union<PeerGone, Failed> WriteStopped;
  * `In` beside `Out`, or rename `Out` to `Io` and put all three there? `../QUESTIONS.md` has it as a
  * question, because it is the grouping principle that needs settling and not this type.
  */
+/**
+ * The two bits of a terminal's line discipline: whether it collects a line, and whether it draws it.
+ *
+ * **Here rather than in `@/packages/tty`, and it was there until 2026-09-04.** The discipline
+ * declared it, because that is where it was first needed — `Line` holds one and `sshd` swaps it. But
+ * `Mode` is not a property of a line editor. It is a property of the terminal, and the capability
+ * that has to accept one is `In`, which is *below* every package. So a `Mode` declared in
+ * `@/packages/tty` is a value `std` cannot name, and `In.setMode` could not be written at all.
+ *
+ * That is why nothing in the tree can ask for a mode. `@/packages/tty`'s README states the symptom —
+ * *"`Line.cbreak()` and `Line.noEcho()` appear **nowhere** outside `packages/tty` itself"*, so
+ * **the missing capability shows up as a missing program** — and this is the cause: not that nobody
+ * wrote the call, but that the type was one layer too high for the call to be declarable.
+ *
+ * `ISIG` is deliberately absent. `cbreak` is not `raw`: `^C` stays a signal, and a program that
+ * wants it as a byte is asking for something this pair cannot say.
+ */
+export const struct Mode {
+  /** `ICANON`: collect a line before delivering it, or deliver each byte as it arrives. */
+  bool canonical;
+  /** `ECHO`: draw what is typed. **Off does not stop the editing** — that is `canonical`. */
+  bool echo;
+
+  /** A terminal as it comes. */
+  Mode canonicalEcho() { return Mode(true, true); }
+  /** `ICANON` without `ECHO`: a password prompt, where editing happens and is not drawn. */
+  Mode password()      { return Mode(true, false); }
+  /** Neither: a byte at a time, for a pager or an editor. */
+  Mode cbreak()        { return Mode(false, false); }
+}
+
+/** Standard input is not a terminal, so there is no mode to set. A pipe, a file, a socket. */
+export struct NotATerminal { }
+
 export struct In {
   /**
    * **A stream, since 2026-09-04, and the third answer to a question that had two.**
@@ -601,6 +635,23 @@ export struct In {
    * to live on a generator.
    */
   fn<AsyncGenerator<Bytes, Result<void, NotGranted>>()> stream;
+
+  /**
+   * Put the terminal into `want`, answering **the mode it was in**.
+   *
+   * Answering the previous mode rather than nothing is the whole of it: restoring is the caller's
+   * job, and guessing *canonical with echo* is wrong for anyone who was in a password prompt.
+   * `@/packages/tty`'s `Line.setMode` already works this way and its note says why — *"a program
+   * that takes a terminal into cbreak has to hand it back the way it found it"*.
+   *
+   * **Synchronous, alone among the members here.** Every other capability answers a `Ticket`; this
+   * answers a `Result` directly, because `@/packages/box/src/more.wac` writes
+   * `Mode was = try in.setMode(Mode.cbreak());` and a `try` on a ticket is two constructs at once.
+   * Whether that is a real distinction — a `tcsetattr` is a syscall like any other — or whether this
+   * member is simply where the ticket convention was inconvenient, is not settled here.
+   * `../QUESTIONS.md`.
+   */
+  fn<Result<Mode, NotATerminal>(Mode)> setMode;
 }
 
 /** Time is a capability because reading it is a fact about the machine, not about the program. */

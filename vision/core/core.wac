@@ -23,6 +23,11 @@ export { Vec } from "./vec.wac";
 export { Map } from "./map.wac";
 export { Queue } from "./queue.wac";
 export { Slice, Bytes } from "./slice.wac";
-export { Ticket, TicketBase, Continuation, Circular, Stuck, all, any } from "./ticket.wac";
+// `all` and `any` are **not** here, and were until the funcref rewrite: they are statics on
+// `Ticket` now — `Ticket.all(parts)` — so re-exporting the bare names would name nothing. Caught by
+// the name-level import check and by nothing else, which is the point of having one: **moving a free
+// function onto a type as a static silently breaks a barrel's export list**, and a file-level check
+// sees an import of a file that still exists.
+export { Ticket, TicketBase, Continuation, Circular, Stuck } from "./ticket.wac";
 export { Coroutine, Generator, AsyncGenerator, Step } from "./coroutine.wac";
 export { Node, Attr } from "./jsx.wac";

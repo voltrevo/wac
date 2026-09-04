@@ -8,6 +8,7 @@
 // Read the README beside this file first; it is where the two findings are argued.
 
 import { Bytes } from "core";
+import { Mode } from "std";
 import { Buf } from "@/packages/bytes";
 import { glyph, columns, rubOut, crlf } from "./render.wac";
 
@@ -129,19 +130,18 @@ export struct Typed {
  * three settings is what has been measured. The original is right that `cbreak` is not `raw`:
  * `stty raw` also clears `ISIG`, which would make `^C` an ordinary byte, and it is not one here.
  */
-export const struct Mode {
-  /** `ICANON`: collect a line before delivering it, or deliver each byte as it arrives. */
-  bool canonical;
-  /** `ECHO`: draw what is typed. **Off does not stop the editing** — that is `canonical`. */
-  bool echo;
-
-  /** A terminal as it comes. */
-  Mode canonicalEcho() { return Mode(true, true); }
-  /** `ICANON` without `ECHO`: a password prompt, where editing still happens and is not drawn. */
-  Mode password()      { return Mode(true, false); }
-  /** Neither: a byte at a time, for a pager or an editor. Not `raw` — `ISIG` stays set. */
-  Mode cbreak()        { return Mode(false, false); }
-}
+/*
+ * **`Mode` is declared in `std/platform.wac` and this file no longer owns it**, since 2026-09-04.
+ *
+ * It was here, and the paragraph above is why that looked right: the discipline is what a mode
+ * *does*. But the paragraph also names the gap — *"the missing half is one capability call"* — and
+ * that call is `In.setMode(Mode)`, on a capability that sits **below** every package. A `Mode`
+ * declared here is a type `std` cannot name, so the capability could not be declared at all.
+ *
+ * So the cause of *nothing can select a mode* was not that nobody wrote the call. It was that the
+ * value was one layer too high for the call to be writable, and the layer it was in is the one that
+ * needed it first. `../../../QUESTIONS.md`.
+ */
 
 /**
  * The line being typed, and the rules for editing it.

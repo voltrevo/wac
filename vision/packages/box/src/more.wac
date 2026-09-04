@@ -80,6 +80,18 @@ Bytes prompt() { … }
 // sharing is not merely between two programs: it is between two *capabilities held by one program*,
 // which is the case a per-capability grant cannot express at all.
 //
+// **Half of this moved on 2026-09-04 and the half that moved was not the half above.** `Mode` was
+// declared in `@/packages/tty` and is in `std/platform.wac` now, with `In.setMode` beside it — so
+// this file compiles as written, where before it imported two names from `"std"` that `"std"` did
+// not have. The reason it did not have them is the finding: a `Mode` declared in a *package* is a
+// type the capability layer cannot name, so the call could not be declared at all. **Nothing could
+// select a mode because the value was one layer too high**, not because nobody wrote the call.
+//
+// What is still open is exactly the paragraph above: `setMode` is on `In` and the mode is the
+// terminal's, so `in.setMode(cbreak)` still silently makes every `out.write` containing a `\n`
+// wrong. Moving the type fixed *declarability*. It did not fix *ownership*, and the two were easy to
+// mistake for one thing.
+//
 // ## 2. What could not be written
 //
 // **`defer { _ = in.setMode(was); }` returns from inside a loop**, which is one of the four

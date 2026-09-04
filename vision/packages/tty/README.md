@@ -89,6 +89,30 @@ each. It is also the first **synchronous** generator in this directory: every ot
 `gen` is not a coroutine-over-IO feature — [../../QUESTIONS.md](../../QUESTIONS.md) frames stepping
 in terms of awaiting throughout, and this wants the stepping without the awaiting.
 
+## The reason nothing can select a mode, found from the other end
+
+This README's strongest claim is that the missing capability shows up as a **missing program** —
+`Line.cbreak()` and `Line.noEcho()` appear nowhere outside this package, and `@/packages/box` has
+sixty-four applets and no pager. Writing that pager,
+[`@/packages/box/src/more.wac`](../box/src/more.wac), found the cause, and it is one line of layering
+rather than an oversight.
+
+`Mode` was declared **here**. The missing call is `In.setMode(Mode)`, and `In` is a capability in
+`std`, below every package — so a `Mode` declared in a package is a type the capability layer cannot
+name, and the member could not be declared at all. Nobody had failed to write the call; the call was
+not writable.
+
+`Mode` is in [`vision/std/platform.wac`](../../std/platform.wac) now, this file imports it, and the
+barrel does not re-export it — a package re-exporting a capability type would give callers two names
+for it and hide which layer owns it. The general rule, in `../../QUESTIONS.md`: **a value that
+appears in a capability's signature must be declared at or below the capability layer, whatever layer
+first needed it.**
+
+What that did *not* fix is ownership: `setMode` is on `In` and a mode belongs to the terminal that
+`In` and `Out` are both views onto, so `in.setMode(cbreak)` still makes every `out.write` containing
+a `\n` wrong. Declarability and ownership were easy to mistake for one thing, and only the first was
+invisible.
+
 ## What could not be written
 
 **`Buf` cannot drop a byte off the end, and the shipped file pays `O(n²)` for it.**

@@ -4837,3 +4837,49 @@ hash.
 
 The measurement that would settle it: how many *"checked once"* comments in `packages/` guard a value
 that some other file could construct directly. That is greppable and nobody has counted it.
+
+## A value one layer too high makes the capability that needs it undeclarable
+
+`@/packages/tty`'s README states a symptom and calls it the clearest evidence the exercise has found:
+
+> **What is missing is anything that *selects* one.** `sshd` constructs `Line.create()` and never
+> changes it, the browser terminal likewise, and there is no `stty` for a program to ask with. So an
+> editor still cannot have a keystroke at a time — not because the discipline cannot do it, but
+> **because nothing can say so.**
+
+Measured: `Line.cbreak()` and `Line.noEcho()` appear nowhere outside `packages/tty` itself. **The
+missing capability shows up as a missing program** — `@/packages/box` has sixty-four applets and no
+pager.
+
+The cause turned out to be one line of layering. `Mode` — two bools, `canonical` and `echo` — was
+declared in `@/packages/tty`, because the line discipline is what a mode *does* and that is where it
+was first needed. The call that was missing is `In.setMode(Mode)`, and `In` is a capability in `std`,
+**below every package**. So a `Mode` declared in a package is a type the capability layer cannot
+name, and the member could not be declared at all.
+
+Nobody had failed to write the call. The call was not writable, and nothing said so — the file that
+needed it imported two names from `"std"` that `"std"` did not have, and a file-level import check
+sees `"std"` and is satisfied.
+
+### Which is a rule, and the rule is not "put shared types in `core`"
+
+The type is not shared between *packages*; it is shared between a package and a **capability**. What
+decides where it goes is which layer has to *name it in a signature*, and that is always the lowest
+one — so:
+
+**a value that appears in a capability's signature must be declared at or below the capability layer,
+whatever layer first needed it.**
+
+That is checkable. `vision/std` declares 62 capability members; the types in their signatures are
+`string`, integers, `Bytes`, and types `std` itself declares — with `Page.render(Node)` the single
+exception, which `std/platform.wac` flags itself. Nothing enforces it and nothing would have to: a
+package type in a `std` signature is an import from a package into `std`, which is a cycle.
+
+### And it is a different fault from the one it looks like
+
+`Mode` moving fixed **declarability**. It did not fix **ownership**, and the two are easy to
+conflate: `setMode` is on `In`, and the mode is a property of the *terminal* that `In` and `Out` are
+both views onto, so `in.setMode(cbreak)` still silently makes every `out.write` containing a `\n`
+wrong. That is the ambient-mode entry, still open, and the reason to keep the two apart is that the
+first was invisible — a symptom that reads as *nobody wrote it* — while the second was written down
+in three files before anybody moved anything.

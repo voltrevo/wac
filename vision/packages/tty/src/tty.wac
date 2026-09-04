@@ -5,4 +5,6 @@
 // halves of the pair that disagreed about DEL now live together, with `columns` derived from
 // `glyph`, and a barrel that exported them separately would invite the next caller to pick one.
 
-export { Line, Typed, Effect, Sig, Mode } from "./line.wac";
+// `Mode` is **not** re-exported. It lives in `std` now — see `./line.wac` — and a package
+// re-exporting a capability type would give callers two names for it and hide which layer owns it.
+export { Line, Typed, Effect, Sig } from "./line.wac";
