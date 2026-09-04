@@ -66,11 +66,21 @@ two grants, and this is what having two grants is *for*.
 
 ## What could not be written
 
-**A `where` clause, or whatever replaces it.** `wantErr<V, E, W>(…) where W in E` asserts that a
-call failed with a particular error, and it is only worth having if asking for an error the callee
-cannot produce is a compile error rather than a test that can never pass. `union` membership is
-already the rule `try` uses; nothing says how a signature states it as a constraint. This is the
-first thing in six packages that wants a bound on a type parameter at all.
+**A `where` clause was wanted here and the language has already decided against one.**
+`spec/spec/generics.md` has a section called *No constraints*: *"There is no `T: Default` and there
+are no traits. Instead, a template is checked **twice**: once at its definition with the type
+parameters treated as opaque, and again at each instantiation against the substituted types."*
+
+Which answers it. `wantErr<V, E, W>` needs no `where W in E`, because the instantiation-time pass
+*is* the bound: a `W` outside `E` makes the substituted body fail to check, and a call that could
+never have succeeded does not compile. Asking for the constraint would be asking for a second
+mechanism for something already decided.
+
+The cost is the one `issues/lang/0315a` names for the same reason, discussing `const T`: the error
+lands **inside the instantiated body rather than at the call**. For a test helper that is the wrong
+end — the person who wrote `t.wantErr(r, NotFound(), …)` gets a diagnostic in `assert.wac`. That is
+a diagnostic-quality problem rather than a design one, and it is the usual complaint about
+template-instantiation errors.
 
 **A `Result` unwrapped into a nullable, in one expression.** `okOr` wants to record a failure *and*
 answer `null`, which needs a block that ends in a value — `{ this.fail(…); null }`. Nothing on the

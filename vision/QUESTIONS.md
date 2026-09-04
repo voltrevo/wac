@@ -195,15 +195,6 @@ once accepting has stopped — and the accept loop suspends on the listener, whi
 queue too. A connection arriving during the drain is scheduled onto a queue being emptied. Whether
 that is fine, or a program that never exits, is not decidable from anything written down.
 
-## A bound on a type parameter
-
-`vision/packages/wactest` writes `wantErr<V, E, W>(this, Result<V, E> r, …) where W in E` — assert
-that a call failed with a particular error — and it is only worth having if asking for an error the
-callee cannot produce is a compile error rather than a test that can never pass. Membership in a
-union is already the rule `try` uses; nothing says how a signature *states* it. Six packages in,
-this is the first thing that wanted a constraint on a type parameter at all, which is either a sign
-the language does not need them or a sign that testing is where they start.
-
 ## A block that ends in a value
 
 `wactest`'s `okOr` records a failure and answers `null` from one match arm: `Err(e): { this.fail(…);
