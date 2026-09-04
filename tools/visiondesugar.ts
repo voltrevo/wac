@@ -32,25 +32,38 @@ const RULES: [RegExp, string][] = [
   // `defer { … }` is a block with a keyword in front of it.
   [/\bdefer\s*\{/g, "if (true) {"],
   // A loop head over a generator, failing or not. Rewritten before `try` is stripped.
-  [/\b(?:try )?(?:await )?for \([^;]*\bin\b.*\)(\s*\{)/g, "for (i32 _i = 0; _i < 1; _i++)$1"],
+  // Lazy: a greedy `.*\)` runs to the *last* `)` on the line, so a body like
+  // `{ if (!p.settled()) { … } }` had its own brace eaten and an extra one left behind.
+  [/\b(?:try )?(?:await )?for \([^;\n]*?\bin\b.*?\)(\s*\{)/g, "for (i32 _i = 0; _i < 1; _i++)$1"],
   // Inheriting from a generic instantiation: today's parent is a bare IDENT.
   [/^(\s*(?:export )?struct \w+(?:<[^>]*>)? : )(\w+)<[^{]*>(\s*\{)/gm, "$1$2$3"],
   // `try` in statement and expression position.
   [/\btry\s+/g, ""],
   // `T??` — the parser takes one `?`.
   [/\?\?/g, "?"],
-  // A match arm: no `case`, and `default` where today writes `else`.
+  // A match arm: no `case`, `default` where today writes `else`, a nested pattern, and a binding
+  // with no parentheses. The last two are separate constructs — measured: `case Ok(A(v)):` is
+  // `expected ')', found '('` and `case A x:` is `expected ':', found 'x'`.
   [/^(\s*)default:/gm, "$1else:"],
+  [/^(\s*)([A-Z]\w*)\([A-Z]\w*\(([^)]*)\)\):/gm, "$1case $2($3):"],
+  [/^(\s*)([A-Z]\w*) (\w+):(\s)/gm, "$1case $2($3):$4"],
   [/^(\s*)([A-Z]\w*)(\([^)]*\))?:(\s)/gm, "$1case $2$3:$4"],
   // A method declared with no body. The parameter list may itself contain brackets — `fn[void()]`
   // — so this counts to the end of the line rather than to the first `)`.
   // Every one of them takes `this` — they are interface methods — and requiring that is what keeps
   // the rule off an ordinary call statement like `out.pushAll(one);`, which has no space before the
   // name and which an earlier version of this rule turned into `out.pushAll(one) { }`.
-  [/^(\s*)([\w<>\[\]?,]+(?: [\w<>\[\]?,]+)* \w+\((?:const )?this.*\));$/gm, "$1$2 { }"],
+  // `this` has to be the whole first parameter. Requiring the delimiter is what keeps this off
+  // `return Slice(this.of, this.from + lo, hi - lo);`, which an earlier version turned into a
+  // method declaration because it saw `(this`.
+  // `[^;\n]` and not `[^;]`: a negated class matches a newline in JS whatever the `s` flag says, so
+  // the earlier version ran from a method's opening line into the statement below it and turned
+  // `this.reserve();` into `this.reserve() { }`.
+  [/^(\s*)([\w<>\[\]?,]+(?: [\w<>\[\]?,]+)* \w+\((?:const )?this(?=[,)])[^;\n]*\));$/gm, "$1$2 { }"],
   // `yield` has no statement form today. `yield x;` keeps the expression so a bad one still shows.
-  [/^(\s*)yield\s+(.*);$/gm, "$1$2;"],
-  [/^(\s*)yield;$/gm, ""],
+  // Not anchored to the line: `{ yield out.take(); }` is a one-line body, and anchoring missed it.
+  [/\byield\s+([^;\n]*);/g, "$1;"],
+  [/\byield;/g, ""],
   // An enum variant whose payload is a bare type: today every payload is a named parameter.
   [/^(\s*)([A-Z]\w*)\(([\w<>\[\]?]+)\)(,?)$/gm, "$1$2($3 _p)$4"],
 ];
@@ -75,7 +88,10 @@ function funcrefs(s: string): string {
 
 /** `src` with every known addition rewritten, plus the two things the other passes also remove. */
 export function desugar(src: string): string {
-  let out = funcrefs(src.replace(/^import .*$/gm, "").replaceAll("…", ""));
+  // An import may span lines, so this is not `^import .*$`.
+  let out = funcrefs(
+    src.replace(/^import [^;]*;/gms, "").replaceAll("…", ""),
+  );
   for (const [re, to] of RULES) out = out.replace(re, to);
   return out;
 }

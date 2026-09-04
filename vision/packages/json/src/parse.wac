@@ -128,7 +128,7 @@ export struct Parser {
   u8? peek(const this) { return this.at < this.src.len() ? this.src.get(this.at) : null; }
 
   bool eat(this, u8 b) {
-    if (this.peek() is null || this.peek()! != b) { return false; }
+    if ((this.peek() is null) || this.peek()! != b) { return false; }
     this.at += 1;
     return true;
   }

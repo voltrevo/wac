@@ -154,33 +154,44 @@ The pattern in all seven is one habit: asserting what the language does from mem
 rather than compiling three lines. The rate matters more than any single correction — seven in a tree of
 nine packages is not a run of bad luck.
 
-## Three more, found by desugaring rather than by refusal
+## Five more, found by desugaring rather than by refusal
 
-The table above is a **lower bound** and this is what fixed that.
+The table above is a **lower bound**, and this is what fixed that.
 `tools/visiondesugar.ts` rewrites each of the nine into the nearest thing today's parser accepts and
-parses again — so whatever is *still* refused is a construct nobody has written down. That is the
+parses again, so whatever is *still* refused is a construct nobody has written down. That is the
 class both other passes are structurally blind to: one reports rejections and cannot see past the
 first, the other checks a fixed list and cannot see a new entry.
 
-| construct | example | why it was invisible |
+| construct | measured | why it was invisible |
 |---|---|---|
-| `yield` as a statement | `yield s.code;` | every file hit `gen<…>` in the signature first |
-| an unnamed variant payload | `Ok(T),` — today's `variant` takes a `param_list`, so payloads are named | `enum Result<T, E = union>` stopped it a line earlier |
-| **inheriting from a generic instantiation** | `struct AllOf<T> : Ticket<T[]>` — `struct_decl`'s parent is a bare `IDENT` | five files, each stopped by something above it |
+| `yield` as a statement | — | every file hit `gen<…>` in the signature first |
+| an unnamed variant payload | `Ok(T),` where `variant` takes a `param_list` | `E = union>` stopped the file a line earlier |
+| **a generic parent** | `struct Kid : Base<i32>` → `expected '{', found '<'` | five files, each stopped by something above it |
+| a nested pattern | `case Ok(A(v)):` → `expected ')', found '('` | the arm rule could not span nested parentheses |
+| an arm binding without parentheses | `case A x:` → `expected ':', found 'x'` | it follows a `union`, which stops the file first |
 
-The third is the one that matters. It is used five times — `AllOf`, `AnyOf`, `Generator`,
-`AsyncGenerator`, and `SysTicket` in the notes — and the whole ticket and coroutine design rests on
-it. `struct Kid : Base<i32> { }` is `expected '{', found '<'` today, measured. Nothing had reported
-it because every file that uses it stops at an `async`, a `gen<…>` or a default type argument first.
+**The generic parent is the one that matters.** It is used five times — `AllOf`, `AnyOf`,
+`Generator`, `AsyncGenerator`, and `SysTicket` in the notes — and the whole ticket and coroutine
+design rests on it. Nothing had reported it because every file that uses it stops at an `async`, a
+`gen<…>` or a default type argument first.
 
-## What the pass has left
+## Where the pass converges
 
-Twelve files are still refused and they are **not** twelve more constructs. Three are known and
-filed — `trap` as an expression, a block that ends in a value, and `secret` on a parameter, which is
-this exercise's own invention. Two look real and want checking the way the three above were: a match
-arm that binds by type (`Scalar s:`) and a nested pattern (`Err(NotGranted(what)):`). The rest are
-most likely the desugaring being crude, and saying so is the point — an instrument that reports
-twelve and means five is worth less than one that says which five.
+Three files are still refused and all three are accounted for: `trap` as an **expression**
+(`core/result.wac`), a block that ends in a value (`wactest/assert.wac`), and the `secret` parameter
+qualifier (`crypto/src/secret.wac`), which is this exercise's own proposal rather than a gap. Both of
+the first two are already in [QUESTIONS.md](QUESTIONS.md).
+
+So the tree contains **nine constructs, plus five, plus three known** — and nothing else. That is a
+completeness claim the first pass could not make at all.
+
+## It also found errors of mine that are not constructs
+
+`is` binds looser than `&&` and `||` — `is_expr` sits above `or_expr` in the grammar — so
+`a is not null && b` is `expected ')', found '&&'` and needs parentheses. Two files wrote the
+unparenthesised form, and vision proposes no change to precedence, so they were simply wrong. A
+sixth class, after the seven claimed-missing and the one claimed-present: **code that is wrong under
+today's rules in a place vision is not changing.** Nothing else would have caught those.
 
 ## What it cannot see
 

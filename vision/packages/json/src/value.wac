@@ -97,7 +97,7 @@ export struct JsonObject {
   void push(this, u8[] key, JsonValue v) {
     this.members.push(JsonMember(key, v));
     // Kept current if it exists, so it cannot go stale. Never created here.
-    if (this.index is not null && this.index!.get(key) is null) {
+    if ((this.index is not null) && (this.index!.get(key) is null)) {
       this.index!.put(key, this.members.len() - 1);
     }
   }
