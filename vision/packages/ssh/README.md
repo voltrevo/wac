@@ -51,6 +51,35 @@ top is private. That is the torn image, gone, and it falls out of the compositio
 enforced anywhere. `0309b`'s three listed options each give something up; this one gives up
 *merge*, and says so.
 
+## A veto spelled as an ordered pair of `if`s
+
+[`src/knownhosts.wac`](src/knownhosts.wac) was added after sweeping the tree for the shape
+[`@/packages/tor/src/pathsel.wac`](../tor/src/pathsel.wac) warns about — `if (A && B)` followed by
+`if (A)`, where swapping them changes the answer. Eight sites, four load-bearing, and **this is the
+one nothing says anything about.**
+
+```wac
+bool negated = file[p] == 0x21;                      // '!'
+bool hit = … globMatches(file, s, stop, wanted);
+if (hit && negated) { return false; }                // an explicit veto
+if (hit) { any = true; }
+```
+
+A `known_hosts` host field is a comma-separated pattern list where `!pattern` vetoes. Swap those two
+lines and a negated pattern sets `any = true`, the veto never fires, and `!badhost.example.com` is
+silently ignored — a host the file explicitly refuses is accepted. `pathsel` carries a warning about
+its equivalent; this carries `// an explicit veto` and nothing about order.
+
+**The fix is not the same as `pathsel`'s**, which is what makes it worth writing. There the four
+cases are a *classification*, and an enum removes the ordering because a `match` has no first arm.
+Here they are a *precedence* accumulated over a list, and what removes it is a fold with an absorbing
+element: `Vetoed` absorbs, `Matched` beats `Silent`, `Silent` is the identity. Associative and
+commutative, so the loop can run in any order and the answer is the same — **the hazard does not
+become checkable, it stops existing.**
+
+`../../QUESTIONS.md` has the sweep and the other two, which are not hazards at all: an IPv6 zero-run
+latch and `</` tested before `<` are both cases where the ordering *is* the algorithm.
+
 ## What could not be written
 
 **Anything else in the package.** The session loop, the channel, the pty and the line discipline are

@@ -142,7 +142,7 @@ argument — `this.fail<JsonValue>(Reason.Eof)`, as `Vec<T> empty<T>()` is calle
 half that was never syntax.** `core` used a bodyless method to mean *must be overridden*; this file
 needs *written out in the original, not repeated here*, and uses `{ … }` because the SHOWCASE entries
 do. The bodyless form is gone with the abstract-method design it existed for, so only `{ … }` is
-left, in 75 of the 152 rewritten files (the tool's 154 includes `bench/`'s two, which are written in
+left, in 76 of the 153 rewritten files (the tool's 155 includes `bench/`'s two, which are written in
 today's language and have real bodies).
 
 It is not a construct and never was. `tools/specparse.ts` strips the `…` so `{ … }` lexes as an empty

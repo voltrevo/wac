@@ -1,0 +1,104 @@
+// Matching a `known_hosts` pattern list — a veto rule, spelled as an ordered pair of `if`s.
+//
+// Found by sweeping for the shape `@/packages/tor/src/pathsel.wac` warned about: an `if (A && B)`
+// followed by an `if (A)`, where swapping them changes the answer. Eight sites in the tree, four of
+// them load-bearing, and two of the four have a consequence nobody would notice. This is the second.
+//
+// `packages/ssh/src/knownhosts.wac`:
+//
+//     bool negated = file[p] == 0x21;                      // '!'
+//     bool hit = … globMatches(file, s, stop, wanted);
+//     if (hit && negated) { return false; }                // an explicit veto
+//     if (hit) { any = true; }
+//
+// A `known_hosts` host field is a comma-separated pattern list where `!pattern` **vetoes**. Swap
+// those two lines and a negated pattern sets `any = true`, the veto never fires, and
+// `!badhost.example.com` is silently ignored — a host the file explicitly refuses is accepted.
+
+import { Vec, Bytes } from "core";
+
+/**
+ * What one pattern in the list said about the host being looked up.
+ *
+ * Three outcomes where the shipped code has two booleans and an early return.
+ */
+export enum Say { Vetoed, Matched, Silent }
+
+/**
+ * Combining two patterns' verdicts, and the point is that it does not care which came first.
+ *
+ * `Vetoed` absorbs, `Matched` beats `Silent`, `Silent` is the identity. That is an associative,
+ * commutative fold with an absorbing element — so the loop can run in any order, in parallel, or
+ * split across two files, and the answer is the same. **The ordering hazard does not become
+ * checkable; it stops existing.**
+ *
+ * Which is a different fix from `@/packages/tor/src/pathsel.wac`'s, and the difference is the
+ * finding. There the four cases are a *classification* of two booleans, and an enum removes the
+ * ordering because a `match` has no first arm. Here the cases are a *precedence*, accumulated over a
+ * list, and what removes the ordering is that the combination absorbs. Two shapes, two fixes, and
+ * neither is *be careful about the order of your `if`s*.
+ */
+Say combine(Say a, Say b) {
+  match (a) {
+    Vetoed:  { return Vetoed; }
+    Matched: { return b is Vetoed ? Vetoed : Matched; }
+    Silent:  { return b; }
+  }
+}
+
+/** Whether this pattern list accepts `wanted`. */
+export bool accepts(Bytes patterns, Bytes wanted) {
+  Say verdict = Silent;
+  for (Bytes pat in split(patterns, ',')) {
+    verdict = combine(verdict, sayOf(pat, wanted));
+  }
+  return verdict is Matched;
+}
+
+/** One pattern's verdict. `!` vetoes; `|` is a hashed entry; anything else is a glob. */
+Say sayOf(Bytes pat, Bytes wanted) { … }
+
+gen<Bytes> void split(Bytes b, u8 sep) { … }
+
+// ## 1. Eight ordered chains, four load-bearing, and two shapes among them
+//
+// The sweep looked for `if (A && B)` followed by `if (A)` or `if (B)` inside one run of statements —
+// the shape where a later test is implied by an earlier one, so the earlier one has to come first.
+// Eight sites in `packages/` and `tools/`, hand-checked:
+//
+//   * **`@/packages/tor/src/pathsel.wac`** — four states of two flags. Load-bearing, and the file
+//     says so: giving a Guard+Exit relay the guard-only weight *"is how exit capacity leaks into
+//     the guard position"*. **An enum removes it.**
+//   * **`@/packages/ssh/src/knownhosts.wac`** — this file. Load-bearing, security-relevant, and
+//     nothing says so. **An absorbing fold removes it.**
+//   * `packages/url/src/host.wac` — a latch over an IPv6 zero-run: `if (ignoreZero && piece == 0)
+//     continue;` before `if (ignoreZero) ignoreZero = false;`. Load-bearing, and the ordering **is**
+//     the state machine; there is nothing to remove.
+//   * `packages/wacc/src/parse.wac` — `</` tested before `<`. Load-bearing, and it is longest-match
+//     first, which is what a lexer *is*.
+//   * The other four are benign: swapping them changes nothing, because the first branch returns an
+//     error the second would reach anyway, or the conditions are disjoint in practice.
+//
+// So of four real orderings, **two have a type that removes them and two are the rule itself.** That
+// is the same split `../../../QUESTIONS.md` found for list order — *canonical* orders belong to the
+// callee and *preserved* ones to the caller — arriving at control flow: an ordering that encodes a
+// **classification** or a **precedence** is a type waiting to happen, and one that encodes a
+// **state machine** or a **longest match** is the algorithm.
+//
+// A reviewer's question, which is what the list-order entry also reduced to: **is this order a rule
+// about the data, or a rule about the search?** The first is removable and the second is not.
+//
+// ## 2. What could not be written
+//
+// **`combine` is associative and nothing says so.** The whole argument above is that the fold does
+// not care about order, which is a property of a function that no signature carries — the same
+// absence as `@/packages/box`'s *the order refines the key*, and the same answer: a library type
+// could bundle the operation with its identity, and nothing can check the law.
+//
+// **A pattern list is a `Bytes` split on commas at the point of use.** `known_hosts` fields are
+// comma-separated and the shipped code walks the bytes with two cursors rather than splitting,
+// deliberately: splitting allocates per line of a file that is read on every connection. So this
+// file's `split` generator is the readable version and the shipped loop is the one that runs, and
+// **the difference is a generator that yields views rather than copies** — which `core/slice.wac`
+// makes possible and which nothing in the shipped tree does, because `Buf` had no `Slice` when it
+// was written.

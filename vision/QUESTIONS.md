@@ -5632,3 +5632,47 @@ a memory, which is the failure this directory has now recorded four times in one
 
 Not done here for 127 entries. Doing it retroactively would mean deciding 109 verdicts in one pass,
 which is the kind of bulk judgement that produces the numbers this entry is about.
+
+## An ordering between `if`s: eight in the tree, four load-bearing, two shapes among them
+
+`packages/tor/src/pathsel.wac` warns about its own control flow:
+
+> The order of those four tests matters. A relay with both flags must take the "both" weight —
+> checking Guard first and returning would give a Guard+Exit relay the guard-only weight, which is
+> how exit capacity leaks into the guard position.
+
+Swept for the shape — `if (A && B)` followed by `if (A)` or `if (B)` in one run of statements, where
+a later test is implied by an earlier one. **Eight sites in `packages/` and `tools/`, hand-checked,
+four of them load-bearing:**
+
+| | what the order encodes | removable |
+|---|---|---|
+| `tor/src/pathsel.wac` | a **classification** — four states of two flags | yes, by an enum |
+| `ssh/src/knownhosts.wac` | a **precedence** — `!pattern` vetoes a match | yes, by an absorbing fold |
+| `url/src/host.wac` | a **latch** — the IPv6 zero-run state machine | no |
+| `wacc/src/parse.wac` | **longest match** — `</` before `<` | no |
+
+The other four are benign: the first branch returns an error the second would reach anyway, or the
+conditions are disjoint in practice.
+
+**`knownhosts.wac` is the one nothing says anything about**, and it is security-relevant. A
+`known_hosts` host field is a comma-separated pattern list where `!pattern` vetoes; the code is
+`if (hit && negated) { return false; } if (hit) { any = true; }`. Swap them and a negated pattern
+sets `any` and the veto never fires, so a host the file explicitly refuses is accepted. `pathsel`
+carries a warning; this carries the comment `// an explicit veto` and nothing about order.
+
+### Two shapes, two fixes, and neither is *be careful*
+
+- A **classification** becomes an enum, and a `match` has no first arm — so there is no wrong order
+  to put the arms in.
+- A **precedence** becomes a fold with an absorbing element: `Vetoed` absorbs, `Matched` beats
+  `Silent`, `Silent` is the identity. Associative and commutative, so the loop can run in any order
+  and the answer is the same. **The hazard does not become checkable; it stops existing.**
+
+And two that are not hazards at all: a latch *is* a state machine and longest-match-first *is* what a
+lexer does. In both the ordering is the algorithm, and removing it would mean writing a different
+one.
+
+So the reviewer's question is the same one the list-order entry reduced to, at control flow instead
+of data: **is this order a rule about the data, or a rule about the search?** The first is removable
+and the second is not. Two of the four here are the first kind, and only one of those two says so.
