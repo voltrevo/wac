@@ -229,11 +229,17 @@ It also settles something the entry does not mention: `"\{0.1 + 0.2}"` becomes
 and not what someone writing `"total: \{amount}"` expects — and *no formatting language* means
 there is no other spelling for them. That may be the intent; it has not been said.
 
-## A slice type
+## A slice type — invented, in `core/slice.wac`
 
-`atofSpan(u8[] src, i32 start, i32 end)`, and `packages/bytes` has a `slice` that copies. Every
-parser in this rewrite — `json`, `http`, `url`, `fmt` — passes `(bytes, lo, hi)` triples instead,
-which is four packages and so a pattern rather than a habit. Nothing on the pages proposes a slice
-type, and the three-argument form is what a caller gets wrong: `json`'s and `http`'s helpers take
-them in different orders.
+Taken rather than left open, on the licence to invent. Two arguments that must travel together and
+must not be swapped is a struct: `atofSpan(u8[] src, i32 start, i32 end)` in `fmt`,
+`isValidTarget(s, lo, hi)` in `http`, `slice(query, at, eq)` in `server`, and `packages/bytes`'s
+`slice` copies — so the alternative to the triple is an allocation per token.
 
+What is decided in the file and wants review: a `T[]` widens to a `Slice<T>` implicitly, the same
+widening as `T` to `T?`; indexing and narrowing both trap, since the bounds come from a scan the
+caller just did; and `Slice.get` checks against the *view's* length rather than the array's, because
+reading past the view into the array is precisely the bug a triple makes easy.
+
+`url/query.wac` uses it and now allocates nothing to parse a query — a request with forty parameters
+of which a handler reads two pays for two.

@@ -1,0 +1,71 @@
+// A view of part of an array.
+//
+// **Invented here**, not agreed. Seven rewritten packages pass `(bytes, lo, hi)` triples around —
+// `atofSpan(u8[] src, i32 start, i32 end)`, `slice(query, at, eq)`, `isValidTarget(s, lo, hi)` — and
+// `packages/bytes`'s `slice` copies, so the alternative to the triple is an allocation per token.
+// A parser that allocates per token is a parser that allocates per byte of input.
+//
+// Two arguments that must travel together and must not be swapped is a struct. That is all this is.
+//
+// ## The rules, and why each is the one it is
+//
+// **A `T[]` widens to a `Slice<T>` implicitly.** The same widening as `T` to `T?`: safe, unchecked,
+// and one direction only. A function should be able to say it reads a run of bytes without every
+// caller writing a conversion, and an array is a slice of the whole of itself.
+//
+// **Indexing traps.** `s[i]` is `a[i]` with an offset, and the caller of either usually knows the
+// index is good — the rule `Vec.pop` is on the other side of.
+//
+// **`slice` traps too**, for the same reason: the bounds come from a scan the caller just did.
+//
+// **A slice does not own.** It keeps its array alive and nothing more; there is no copy anywhere in
+// this file, which is the whole point. Writing through a non-const slice writes through to the
+// array, and a `const` one cannot write — deep const already says so and needs no help here.
+
+export struct Slice<T> {
+  T[] of;
+  i32 from;
+  i32 len;
+
+  /** The whole array, which is what the implicit widening produces. */
+  Slice<T> all(T[] a) { return Slice<T>(a, 0, a.len()); }
+
+  i32 len(const this) { return this.len; }
+
+  T get(const this, i32 i) {
+    // Not `this.of[this.from + i]` alone: an `i` past `len` would read the array beyond the view
+    // and answer a byte that is not in this slice. That is the bug a triple makes easy and a type
+    // is supposed to remove, so the bound is checked here rather than inherited.
+    if (i < 0 || i >= this.len) { trap("Slice.get out of range"); }
+    return this.of[this.from + i];
+  }
+
+  void set(this, i32 i, T v) {
+    if (i < 0 || i >= this.len) { trap("Slice.set out of range"); }
+    this.of[this.from + i] = v;
+  }
+
+  /** A narrower view of the same array. No copy. */
+  Slice<T> slice(const this, i32 lo, i32 hi) {
+    if (lo < 0 || hi > this.len || lo > hi) { trap("Slice.slice out of range"); }
+    return Slice<T>(this.of, this.from + lo, hi - lo);
+  }
+
+  Slice<T> from(const this, i32 lo) { return this.slice(lo, this.len); }
+
+  gen<T> void items(const this) {
+    for (i32 i = 0; i < this.len; i++) { yield this.of[this.from + i]; }
+  }
+
+  /** The copy, when a caller actually wants to keep the bytes past the array's life. */
+  T[] toArray(const this) { … }
+}
+
+/**
+ * Byte slices are common enough to deserve the short name.
+ *
+ * Same form as `vision/packages/http/src/fault.wac`'s `export union<A, B> RequestFault;` — one way
+ * to give a type a name, whether the type is a union or an instantiation. Whether such a name is a
+ * distinct type or an alias is the same question for both, which is an argument for the one form.
+ */
+export Slice<u8> Bytes;

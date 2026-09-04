@@ -75,9 +75,14 @@ are here because they are written in the tree, not because anything found them:
 - `try await for (u8[] chunk in src) { … }` — three packages, and no part of it exists
 - `schedule this.pending.push;` — `std/platform`, past the `async` refusal
 - `defer { conn.close(); }` — `server/main` and `core/ticket`
-- `const i64 MAX_BODY = 1 << 20;` at module scope — three packages
-- `T??` and `null as Node?` — `url/query.wac`, where a parameter is absent, present with no
-  value, or present with a value, and the standard keeps the last two apart
+- `const i64 MAX_BODY = 1 << 20;` at module scope — four packages
+- `export union<A, B> Fault;` and `export Slice<u8> Bytes;` — one form for naming a type, whether it
+  is a union or an instantiation
+- `export { itoa } from "./itoa.wac";` — re-export, which `wac-mono 0072` is already open about
+- `T??` and `null as T?` — `url/query.wac`, where a parameter is absent, present with no value, or
+  present with a value, and the standard keeps the last two apart. Its `get` returns
+  `p.value is null ? (null as u8[]?) : formDecode(p.value!)`, which is the middle state written in
+  the position it is actually wanted: an arm of a ternary
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
 

@@ -13,6 +13,7 @@ deleted when nothing does.
 | `coroutine.wac` | one machine, three spellings; `never` removes an arm rather than deadening it |
 | `vec.wac` | `pop` answers `T?` |
 | `queue.wac` | new — `Sys.drain` wanted one |
+| `slice.wac` | new, and invented — a view of part of an array, so a parser can stop copying |
 
 **`option.wac` is not here and will not be.** The real `core` has one; `T?` nests, so
 `Option<Option<T>>` has nothing left to do that `T??` does not.

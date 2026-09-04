@@ -70,7 +70,11 @@ which makes it a different kind of finding from the rest: not something this exe
 something it can say is worth fixing at the language level rather than with a mechanical edit
 waiting for a quiet moment.
 
-**A span is still three arguments.** `atofSpan(u8[] src, i32 start, i32 end)`, and `packages/bytes`
-has a `slice` function that copies. Nothing on the pages proposes a slice *type*, and every parser
-in this rewrite — `json`, `http`, `url`, `fmt` — passes `(bytes, lo, hi)` triples around instead.
-Four packages is enough to say it is a pattern rather than a habit.
+**A span was three arguments, and now there is a type for it.** `atofSpan(u8[] src, i32 start,
+i32 end)` in the original, `isValidTarget(s, lo, hi)` in `http`, `slice(query, at, eq)` in `server` —
+and `packages/bytes`'s `slice` copies, so the alternative to the triple is an allocation per token.
+
+`vision/core/slice.wac` is the answer and it is **invented rather than agreed**: two arguments that
+must travel together and must not be swapped is a struct. `url/query.wac` uses it, and the effect is
+larger than tidiness — parsing a query now allocates nothing at all, and a request with forty
+parameters of which a handler reads two pays for two.
