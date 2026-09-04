@@ -222,6 +222,31 @@ Related and also unstated: **whether the target nests.** The pages say *"the sco
 reads like a stack and does not say so. An implementation with a single current target that restores
 to the default would satisfy that sentence and break every nested use.
 
+### A third ending, added 2026-09-04, and it is not the same question
+
+A trap unwinds. Returning unwinds. **An abandoned generator does neither** — `cat big | head -1`
+leaves `cat`'s machine suspended mid-body, and nothing happens to it at all. There is no event to
+hook, which is what makes it different from the two above rather than a third instance of them: a
+trap at least *arrives* somewhere, and this is the absence of an arrival.
+
+Three things a scope-scoped side effect has to survive, then, and they are not one rule:
+
+    a trap          unwinds through the scope        — is a `defer` reached?
+    a return        unwinds through the scope        — is a `defer` before a loop reached from inside it?
+    abandonment     nothing reaches the scope        — is anything reached?
+
+Only the third has *no mechanism available*: whatever answers it has to be something the runtime does
+when it notices nobody holds the machine, which is a collector's question and not a control-flow one.
+That is why `@/packages/std`'s four producing capabilities have no `close` and its one consumer does
+— the entry below has the count — and why the interim answer there may have to be a method rather
+than a rule.
+
+**And a fourth thing, from `@/packages/box/src/tee.wac`: what `defer` does with a call that
+suspends.** `defer closeAll(sinks);` where `closeAll` is `async` registers a cleanup that cannot
+finish synchronously, at a point where the function is already leaving. Whose continuation is it, and
+what drains it? Nothing says, and the applet that most wants `defer` is the one that shows this is
+two unanswered questions wearing one keyword.
+
 ## `secret` has no return position, no field position and no release
 
 `vision/packages/tls` is the first consumer the proposal has ever had — its two uses are both inside
