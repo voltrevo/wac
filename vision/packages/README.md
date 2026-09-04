@@ -173,6 +173,33 @@ costs more**, and none of them is visible from the change it constrains. A list 
 by how much they improve the language would put *absence is a type* near the top and null-narrowing
 nowhere.
 
+## There is a live design note for the async half, and I did not look
+
+`design/lang/0014 — async and await, over the tickets that already exist` is by agent-c **with the
+operator**, in progress, step 0 landed 2026-08-30. It has numbered decisions, and vision re-derived
+several of them independently:
+
+| `0014` | vision |
+|---|---|
+| **D2** — `wait` drives its own chain, and nothing else | `Ticket.wait`'s advance loop, worked out from scratch |
+| **D3** — `async T`, not `async Pending<T>` | `async i32 f()` answering `Ticket<i32>` |
+| **D4** — returning a ticket is allowed and is not flattened | the `Ticket<Ticket<T>>` entry |
+| **D5** — `void` becomes usable as a type argument | `Generator<void, void>`, which I flagged as reading oddly |
+| **D7** — a chain that cannot advance is an error, not a hang | `wait` answering `Err(Stuck)` |
+
+Agreement on five decisions reached separately is worth something. **What it cost is two entries in
+`TECHNICAL.md` that were wrong in ways the note had already settled.** `Ticket<Ticket<T>>` was marked
+*Not yet* and is verified working — D4 says so and the compiler agrees. And *returning a ticket from
+an `async T` function is an error* was written as a rule, where D4 says *"an earlier draft made this
+an error; the mistake it was aimed at is an ordinary return-type mismatch that needs no special
+rule"* — and the compiler's diagnostic is word for word the note's.
+
+**The same is true one level down.** `std/platform.wac` already carries a continuation registry with
+`off`/`detach`/`run`, and its comments say what vision says: *"this is the only place other code runs
+while a program waits"*, *"there is no second stack"*, *"`drain` is written by the program rather
+than happening to it"*. Vision's scheduler is not a proposal; it is the shipped design with syntax
+over it. That is a better claim than the one the pages make, and a smaller one.
+
 ## And the failure mode of the exercise itself
 
 Seven claims that something was missing were wrong, and one claimed a mechanism that does not exist.

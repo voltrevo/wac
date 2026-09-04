@@ -536,7 +536,16 @@ error: `total` returns `i32`, and `size(sys, "a.txt")` is a `Ticket<i32>`
 the two spellings are not interchangeable and dropping the `await` is not a shortcut. JavaScript
 adopts, which is why `Promise<Promise<T>>` cannot be built there.
 
-**Not yet.**
+**Done** — and it is not a rule. `design/lang/0014` D4 says so outright: *"an earlier draft made this
+an error; the mistake it was aimed at […] is an ordinary return-type mismatch that needs no special
+rule."* The compiler already answers, word for word with the note:
+
+```
+error: expected i32, found Pending<FileResult>
+  = help: `await` it for the FileResult, or declare `async Pending<FileResult>` to hand the ticket on
+```
+
+This entry was written as though the refusal needed inventing. It needed nothing.
 
 ---
 
@@ -556,7 +565,9 @@ arriving. A caller that only wants to know it was sent awaits once and keeps the
 drops it. Adoption would merge the two events into one and there would be no way to ask about the
 first.
 
-**Not yet.**
+**Done.** `async Pending<FileResult> later(Cli cli) { return cli.readFile("x"); }` checks clean and
+its caller holds a `Pending<Pending<FileResult>>` — measured. `design/lang/0014` D4 decided it and
+records it as *"verified to compile and run today"*.
 
 ---
 
