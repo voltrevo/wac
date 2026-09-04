@@ -248,6 +248,22 @@ members flattening into it, which set semantics imply and nothing states.
 is a distinct type or an alias decides the related question about a union as a match arm — which
 this package also wants, for the one place that turns a fault into a message.
 
+**And there is a third part nobody has written down: how one dispatches.** An enum has a tag, and
+`spec/spec/enums.md`'s *How it compiles* says what that buys — *"`match` compiles to a comparison
+chain on the tag, then one downcast in the selected arm"*, and, of the alternative, *"the
+alternative is a `ref.test` per arm, and an integer comparison is cheaper than a type test."* A union
+has no tag by construction: its members are unrelated structs that were not declared together, which
+is the whole reason `union<RequestFault, BadStatus>` can compose and an enum cannot. So the spec has
+already priced the mechanism a union needs, and priced it as the more expensive one.
+
+Two things follow that the naming question does not reach. **The cost is real and small** — the same
+file measures a 20-variant tag chain at 2.5 ns and a payload-less construction at 0.9 ns over an
+integer, issues 0030 and 0031 — so this is a few nanoseconds an arm, not a reason to choose. **And
+the tag is load-bearing for something else**: the spec says it *"is also why exhaustiveness is
+checkable at all"*, which for a union is still true by a different route, since the members are
+listed at the declaration — but it is true for a different reason, and that reason is what a
+`union` as a match arm would have to rest on.
+
 ## Whether `drain` can terminate while the accept loop is one of the things it is draining
 
 `vision/packages/server`'s `main` accepts in a loop and calls `handle(sys, conn)` without awaiting,
