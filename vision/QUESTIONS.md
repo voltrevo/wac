@@ -2198,7 +2198,33 @@ correction. Either
 The second is also a real question about the language, not only about this directory: a project that
 layers over another is how a fork, a patch set, or a vendored dependency with local changes wants to
 work, and `packages/wacc/src/path.wac` resolves by path arithmetic with no filesystem, so *fall
-through if absent* is not something the resolver can currently express. `@/packages/wacpkg`'s
+through if absent* is not something the resolver can currently express.
+
+### Corrected 2026-09-04 by writing the resolver: it needs no language change
+
+`@/packages/wacpkg/src/resolve.wac` is the resolver as this directory would have it, and writing it
+showed the sentence above to be half wrong.
+
+**An overlay is not a manifest key**, and that half stands: a key would mean *if absent, look over
+there*, and absence is a filesystem question the resolver cannot ask.
+
+**But the reader can ask it.** `Res` already carries `mapFrom`/`mapSpec`/`mapTo` and `resolveVia`
+consults them *first*, with the reason written at the line: *"A mapping first, because only the
+reader could have resolved one."* That is how a **git dependency** works — something with a
+filesystem and a lockfile looks it up and hands the resolver an answer. An overlay is the same fact:
+try `vision/<path>`, fall back to `<path>`, emit a mapping. Seventeen mappings for this directory,
+computed by something that already walks the files in order to read them.
+
+So three proposals — a package entry point, a git dependency, and an overlay — are **one mechanism,
+and the mechanism exists**. None of them needs a change to `path.wac`, which is the file all three
+were assumed to be about. `../packages/wacpkg/README.md` had already reached that conclusion for the
+entry point and said why it had been missed: *"it was written without looking."*
+
+What remains is smaller and is a real choice: **is the fallback the reader's policy or something a
+project declares?** As a policy it is one flag on whatever drives the compiler and no language
+surface at all. As a declaration it is a manifest field the *reader* honours — `{ overlay: ".." }` —
+which is still not the resolver reading a manifest, and is how a fork or a vendored dependency would
+want to say it once rather than per invocation. `@/packages/wacpkg`'s
 README already found that the entry-point proposal lands in the same place, on `Res`'s `mapFrom`/
 `mapSpec`/`mapTo` — which is the reader's answer to a question the resolver cannot ask.
 

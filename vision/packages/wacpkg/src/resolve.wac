@@ -1,0 +1,133 @@
+// Resolving a specifier to a key — and the one mechanism that answers three separate proposals.
+//
+// `../README.md` was written without any code in it, because the two import proposals it checks are
+// about the *resolver* and the resolver is `packages/wacc/src/path.wac`, which this directory does
+// not rewrite. This file exists because a third question arrived on the same day and turns out to
+// have the same answer.
+//
+// ## The three
+//
+//   1. **A package entry point.** `@/packages/http` rather than `@/packages/http/src/http.wac`.
+//   2. **A git dependency.** Already solved, and the way it is solved is the point.
+//   3. **An overlay.** `vision/`'s seventeen imports name twelve files that are not in `vision/` and
+//      are in `packages/` at the same path — `../../../wac.json5` and `../../../QUESTIONS.md`.
+//
+// The first and third look like manifest fields and the resolver cannot read a manifest. It cannot
+// read anything: `resolveFromAt(fromPath, spec, root, base)` is four strings in and one out, and
+// `Res.empty()` is documented as *"what every caller without a filesystem passes"*.
+//
+// **The second is already a mapping the reader computes**, and `resolveVia` checks mappings first,
+// with the reason at the line: *"A mapping first, because only the reader could have resolved one."*
+// A git dependency is looked up in a lockfile by something that has a filesystem and handed to the
+// resolver as an answer.
+//
+// So all three are the same shape. The reader knows the layout; the resolver does arithmetic.
+
+import { Vec } from "core";
+
+/**
+ * One thing the reader worked out that arithmetic could not.
+ *
+ * **A value, where the shipped `Res` has three parallel arrays** — `mapFrom`, `mapSpec`, `mapTo`,
+ * keyed by position. That is the shape `@/packages/webrtc` found five of in one struct, and the
+ * argument is the same: entry `i` of three arrays is one fact, and every site that adds or removes
+ * one has to touch all three in the same order.
+ *
+ * Three is where it is cheapest to fix and easiest to leave.
+ */
+export struct Mapping {
+  /** The importing file's key. */
+  string from;
+  /** The specifier as written. */
+  string spec;
+  /** The key it resolves to. */
+  string to;
+}
+
+/**
+ * What the reader knows.
+ *
+ * `roots` and `base` are unchanged from the shipped `Res`; the mappings are one list.
+ */
+export struct Known {
+  Vec<string> roots;
+  Vec<Mapping> mappings;
+  /** The directory every relative key is measured from. Empty for a caller with no filesystem. */
+  string base;
+
+  /** Nothing known — every caller without a filesystem. */
+  Known empty() { … }
+
+  /** The key for `spec` written in `from`, or nothing if arithmetic has to do it. */
+  string? mapped(const this, string from, string spec) { … }
+}
+
+/**
+ * `spec`, as written in `from`, resolved to a key.
+ *
+ * A mapping first, then arithmetic. Unchanged in behaviour from `resolveFromAt`; what changes is
+ * that the three cases above are *visibly* one case.
+ */
+export string resolve(Known known, string from, string spec) {
+  string? m = known.mapped(from, spec);
+  if (m !is null) { return m!; }
+  return arithmetic(from, spec, known.base);
+}
+
+/** `.` and `..` collapsed, `@/` against a root. String arithmetic, no filesystem. */
+string arithmetic(string from, string spec, string base) { … }
+
+// ## 1. The overlay needs no language change, and this file is how I found that out
+//
+// `../../../QUESTIONS.md` says of `vision/`'s seventeen out-of-directory imports that an overlay
+// *"is not something the resolver can express"*, and that entry was written before this file. It is
+// half right and the half that is wrong matters.
+//
+// **An overlay is not a manifest key** — that part stands. A key would have to mean *if absent, look
+// over there*, and absence is a filesystem question the resolver cannot ask.
+//
+// **But the reader can ask it**, and handing the answer over is exactly what `Mapping` is for. An
+// overlay is: for each import, try `vision/<path>`; if it is not there, use `<path>`; emit a
+// mapping. Seventeen mappings for this directory, computed by something that already walks the
+// files to read them. No new concept, no manifest field, and the same mechanism a git dependency
+// uses — which is the argument, because a git dependency is a *file somewhere else that this
+// specifier means*, and so is an overlay.
+//
+// What is left of the question is smaller and sharper: **should the fallback be the reader's policy
+// or something a project can declare?** As a policy it is one flag on whatever drives the compiler
+// and no language surface at all. As a declaration it is a manifest field the *reader* honours —
+// `{ overlay: ".." }` — which is still not the resolver reading a manifest, and is how a fork or a
+// vendored dependency with local changes would want to say it once rather than per invocation.
+//
+// I recorded the opposite this morning. Writing the resolver is what showed it, which is the same
+// lesson as the last four entries and is getting hard to miss.
+//
+// ## 2. And the entry point is the same mapping, which `../README.md` already worked out
+//
+// > The proposal should say "a mapping" rather than "a convention", and it did not, because it was
+// > written without looking.
+//
+// Three proposals, one mechanism, and the mechanism exists. What none of the three needs is a change
+// to `path.wac`, which is the file everyone assumed they were about.
+//
+// ## 3. What could not be written
+//
+// **`Known.mapped` is a linear scan and the shipped one is too.** Three parallel arrays or one list
+// of structs, the lookup is *walk until `from` and `spec` both match*. A `Map<string, string>` keyed
+// on the pair needs a composite key, and `../../../DECISIONS.md` says references are comparable but
+// not hashable — so the key is a concatenation with a separator, and a separator is a character that
+// cannot appear in a path. There is no such character. This is the third package to want a
+// **two-part map key** and the first where the parts are both arbitrary strings.
+//
+// **Nothing distinguishes *no mapping* from *mapped to nothing*.** `mapped` answers `string?` and
+// the shipped one answers `""`, which is the sentinel-in-the-value's-own-range shape again — an
+// empty key is not a real key, so it works, and it works for the same accidental reason every one of
+// those does. `string?` is right and it makes `resolve` a null check rather than a comparison
+// against a value that means two things.
+//
+// **A mapping is keyed by the importing file, so a file that is reached two ways needs two.** The
+// shipped `resolveFromAt`'s whole reason for collapsing `.` and `..` is that *"the same file reached
+// two ways would otherwise be two entries in `paths`, and every type it declares would exist
+// twice"* — and a mapping's `from` is a key, so it inherits that and nothing states it. For an
+// overlay it does not bite, since the mapping is per *specifier occurrence*. For a git dependency
+// resolved once and reused by many files, it means one dependency is N mappings.

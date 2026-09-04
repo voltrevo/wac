@@ -2,7 +2,11 @@
 
 Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, disposable.
 
-**Nothing is rewritten.** This exercise invented two things about imports — a package entry point, so
+**One file, added later.** [`src/resolve.wac`](src/resolve.wac) is the resolver as this directory
+would have it, written when a *third* import question arrived and turned out to have the same answer
+as the two below.
+
+This exercise invented two things about imports — a package entry point, so
 a file writes `@/packages/http` rather than `@/packages/http/src/request.wac`, and re-export, so a
 barrel can exist at all. Both are in [../README.md](../README.md)'s proposals table with a cost
 beside them. Neither had been checked against the code that would have to implement it.
@@ -60,7 +64,59 @@ whichever file the reader was importing from.
 Nothing is withdrawn. One is re-aimed — the entry point is a reader-computed mapping, not a
 convention — and the two stop being one proposal. The costs already listed stand.
 
+## Three proposals, one mechanism, and the mechanism already exists
+
+A third question arrived on 2026-09-04: `vision/`'s own imports. Seventeen of them name twelve files
+that are not in `vision/` and are in `packages/` at the same path — an **overlay**, and
+`../../QUESTIONS.md` said flatly that it *"is not something the resolver can express"*.
+
+Writing [`src/resolve.wac`](src/resolve.wac) showed that to be half wrong, and the half that is wrong
+is the half this README had already found for the entry point.
+
+- **An overlay is not a manifest key.** A key would mean *if absent, look over there*, and absence is
+  a filesystem question the resolver cannot ask. That part stands.
+- **But the reader can ask it**, and handing the answer over is what `mapFrom`/`mapSpec`/`mapTo` are
+  for. Try `vision/<path>`, fall back to `<path>`, emit a mapping. Seventeen mappings, computed by
+  something that already walks the files to read them.
+
+Which is **exactly how a git dependency works** — a lockfile lookup by something with a filesystem,
+handed to the resolver as an answer — and exactly what this README concluded a package entry point
+should be. So the three are one shape:
+
+| proposal | what it looked like | what it is |
+|---|---|---|
+| package entry point | a manifest field the resolver reads | a mapping the reader computes |
+| git dependency | — | a mapping the reader computes (already) |
+| overlay | a resolver feature that cannot exist | a mapping the reader computes |
+
+**None of the three needs a change to `path.wac`**, which is the file all three were assumed to be
+about. What remains of the overlay question is a real choice and a small one: is the fallback the
+reader's *policy* — one flag, no language surface — or something a project *declares*, `{ overlay:
+".." }`, which is still the reader honouring it rather than the resolver reading it.
+
 ## What could not be written
+
+**A two-part map key.** `mapped(from, spec)` is a linear scan, in the shipped resolver and here. A
+`Map<string, string>` needs the pair as one key, which means concatenation with a separator, which
+means a character that cannot appear in a path — and there is none. `../../DECISIONS.md`'s *references
+are comparable but not hashable* is the rule underneath. Third package to want this and the first
+where both parts are arbitrary strings.
+
+**A `Mapping` is one value where the resolver has three parallel arrays.** `mapFrom`, `mapSpec`,
+`mapTo`, keyed by position — the shape [`@/packages/webrtc`](../webrtc/) found five of in one struct,
+at the size where it is cheapest to fix and easiest to leave.
+
+**`mapped` answering `""` for *no mapping*.** A sentinel drawn from the value's own range, working
+because an empty key is not a real key — the same accidental reason every instance of that shape
+works. `string?` makes it a null check instead.
+
+**A mapping is keyed by the importing file, so a file reached two ways needs two.** `resolveFromAt`
+collapses `.` and `..` precisely because *"the same file reached two ways would otherwise be two
+entries in `paths`"*, and a mapping's `from` is one of those keys, so it inherits the rule and
+nothing states it. Harmless for an overlay, which is per specifier occurrence; for a git dependency
+resolved once and used by many files, one dependency is N mappings.
+
+
 
 **Nothing.** This is the first entry here whose finding is entirely about the existing
 implementation, and that is the shape the exercise has been converging on since about the tenth
