@@ -123,3 +123,13 @@ operator answers `T?`. That is the one place flattening earns its keep, and wac 
 `??` today — so the question is whether adding one means giving it an explicit flatten, or not
 adding it.
 
+## `for … in` over a generator that can fail
+
+`for … in` steps a `Generator<T, void>`, so a generator whose return is a `Result` has no loop.
+Dropping the return would be the convenience `README.md` refuses — right in the common case,
+silently wrong in the rest. `vision/packages/stream` writes `try for (u8[] chunk in src) { … }` at
+every loop in the package, which is the strongest evidence available that something has to exist
+here. What
+`try` means when the loop is inside a generator also needs saying: it propagates the source's `Err`
+as *this* generator's return rather than as a yield.
+

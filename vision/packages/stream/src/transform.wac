@@ -1,0 +1,49 @@
+// Streaming transforms, written as ordinary loops.
+//
+// A transform takes a stream and is a stream. That is the whole interface: there is no `read`
+// callback to pull with, no `write` callback to push to, and no boolean coming back from `write` to
+// say whether to keep going. A consumer that stops stepping *is* the backpressure, and it applies
+// all the way up the chain without anybody implementing it.
+//
+// The chunk-boundary problem lives in `scalars.wac` and nowhere else.
+
+import { scalars, NotText } from "./scalars.wac";
+import { toUpper } from "@/packages/unicode/src/case.wac";
+import { Buf } from "@/packages/bytes/src/buf.wac";
+
+/** Bytes accumulated before a chunk is handed on. Small enough to stay interactive. */
+const i32 CHUNK = 4096;
+
+/**
+ * Uppercase UTF-8 text, simple mapping.
+ *
+ * The chunk boundary does not appear. Neither does the tail that used to be carried across it, nor
+ * the flag saying whether the loop was still going, nor the second flag saying whether it stopped
+ * because the input broke.
+ */
+export async gen<u8[]> Result<void, union<E, NotText>> upperCase<E>(
+  AsyncGenerator<u8[], Result<void, E>> src,
+) {
+  Buf out = Buf.create();
+
+  try for (i32 c in scalars(src)) {
+    out.pushScalar(toUpper(c));
+    if (out.len() >= CHUNK) { yield out.take(); }
+  }
+
+  if (out.len() > 0) { yield out.take(); }
+  return Result.Ok();
+}
+
+/**
+ * How many bytes went past, or why they stopped.
+ *
+ * This is what is left of `passthrough`. Copying a stream to itself is `src`, so the transform that
+ * used to exist to prove the plumbing worked has no body to write — what it was really doing was
+ * counting, and reporting a broken input as something other than a smaller total.
+ */
+export async Result<i64, E> count<E>(AsyncGenerator<u8[], Result<void, E>> src) {
+  i64 total = 0;
+  try for (u8[] chunk in src) { total += chunk.len(); }
+  return Result.Ok(total);
+}

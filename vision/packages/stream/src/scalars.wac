@@ -1,0 +1,51 @@
+// Bytes to scalars, once, for everybody.
+//
+// The interesting part of any streaming transform is what happens when a *unit* straddles a chunk
+// boundary — a UTF-8 scalar is up to four bytes, so a chunk can end halfway through one. In the
+// real package every transform carries its own `held` tail and re-solves that; here it is solved
+// exactly once, and a transform downstream of this never sees a chunk at all.
+//
+// That is the whole redesign. `for (i32 c in scalars(src))` cannot straddle anything, because a
+// scalar is not divisible.
+
+import { Scalar, decode } from "@/packages/unicode/src/utf8.wac";
+
+/** A byte that is not part of any well-formed scalar, and where the stream had got to. */
+export struct NotText { i64 at; }
+
+/**
+ * The scalars of a byte stream, in order.
+ *
+ * `E` is whatever the source fails with — a socket's failure, a file's, a fake's — and it passes
+ * through untouched. This function has never heard of it and does not need to: the error set it
+ * answers with is the source's, plus the one thing it can go wrong about itself.
+ */
+export async gen<i32> Result<void, union<E, NotText>> scalars<E>(
+  AsyncGenerator<u8[], Result<void, E>> src,
+) {
+  u8[] held = u8[0]();
+  i64 seen = 0;
+
+  try for (u8[] chunk in src) {
+    u8[] input = held.len() == 0 ? chunk : held + chunk;
+    i32 at = 0;
+
+    while (at < input.len()) {
+      // `decode` answers the scalar, or says which of the two ways it could not — a union rather
+      // than a code drawn from the same i32 range the answer lives in. See the README.
+      match (decode(input, at)) {
+        Scalar s:    { yield s.code; at += s.size; }
+        Truncated _: { break; }                            // hold the tail for the next chunk
+        Malformed _: { return Result.Err(NotText(seen + at)); }
+      }
+    }
+
+    held = input.slice(at);
+    seen += at;
+  }
+
+  // A held tail at end of input is a scalar that never finished, which is the same fault as a
+  // malformed one — it is only the timing that differs.
+  if (held.len() > 0) { return Result.Err(NotText(seen)); }
+  return Result.Ok();
+}
