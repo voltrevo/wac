@@ -2429,3 +2429,50 @@ a table, and which has to live somewhere a program can be checked against.
 Neither is written. `design/system/0001` D9 keeps the wasmtime host because it is *the only host that
 tests the claim that a wac program does not depend on one* — and that claim already has an exception
 the size of a browser, stated once, in a doc comment on the capability it applies to.
+
+## A missing capability is a value in four places and a trap in forty-six, and both are argued
+
+Set out to write the table the entry above asks for — *which host supplies what* — and found the
+question is malformed, for a reason worth more than the table.
+
+The two Rust hosts' capability sets are **identical**: fifty `(owner, field)` pairs each, `Cli` 42 and
+`Core` 8, nothing in one absent from the other. So there is no host-by-host set to tabulate. What
+varies is what happens when a program asks for something the host has not built, and the tree answers
+that **two different ways, in two comments that contradict each other.**
+
+`native/v8/src/main.rs`, mapping four capabilities rather than leaving them to the default:
+
+> Mapped rather than left to `Cap::Unsupported`, which *throws*: **a capability a host does not have
+> must be a value the caller reads**, or `LoadedModule.unavailable()` can never be observed and every
+> portable program dies on the ask instead of taking its other route.
+
+`native/src/main.rs`, defending the default:
+
+> The whole of D6 in one arm: **a runtime that answered zero here would make every program that used
+> the capability wrong in a way nothing could see.**
+
+Both are right, about different capabilities. `load` has a natural *unavailable* answer a caller can
+branch on; `readFile` does not, and a zero-length file is not the same as no filesystem. So the rule
+is honoured by hand four times — `load`, `call`, `unload`, `validated` — and the other forty-six
+throw.
+
+**Which is the answer to the profile question, arriving from underneath.** Portability is dynamic
+where a missing capability is a value, and static where it traps. The tree is dynamic four times and
+static forty-six, and nothing says which a new capability should be.
+
+`vision/std` makes that harder in the way the projections make everything harder: **a projection
+cannot be partly there.** `Page` either is a parameter or is not. Under a flat `Cli` a host could hand
+over a struct whose `drawPixels` throws and whose `readFile` works, and a program could ask; under
+nine values a host that lacks `Page` cannot hand one over at all, and *"take your other route"* has
+nowhere to be written. That is strictly better for the forty-six and strictly worse for the four.
+
+So the honest form of *which host supplies what* is not a table of sets. It is:
+
+- **the fifty are the same everywhere** — the two Rust hosts agree exactly, and the question does not
+  arise for them;
+- **`Page`'s twelve are the browser's alone**, which is the profile finding above;
+- and **what a host does about a capability it lacks is unspecified**, decided per capability by
+  whoever added it, with two comments in two files giving opposite reasons.
+
+The third is the one to settle, and it is not a vision question — it is `design/system/0001` D6's,
+which the second comment cites and the first one contradicts.
