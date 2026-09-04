@@ -123,9 +123,11 @@ refusal.
 
 Which leaves `try await for (Socket conn in l.accepted())`: three keywords on one head, each saying
 something real, and heavy enough that it is worth asking whether one of them can be implied without
-becoming the thing being refused. `try` on a loop also needs its meaning stated when the loop is
-inside a generator — it propagates the source's `Err` as *this* generator's return rather than as a
-yield.
+becoming the thing being refused.
+
+This entry is about the **head**. What `try` on that head means when the loop is *inside* a generator
+is a separate and much larger question — two levels of failure crossing for one fault — and is the
+`try` inside a generator entry below rather than a sentence here.
 
 ## Whether `wait` caches what it is waiting on
 
@@ -542,7 +544,7 @@ body cannot be written at all.
 raster test. So it is cheap to take, and the 99.4% prose rate is the most extreme in the table by a
 distance, which is what happens when a reserved word is also an ordinary English one.
 
-## One capability says *end* with a sum and another with a sentinel
+## A sentinel drawn from the value's own range, in three places
 
 `vision/std` has both shapes, twelve lines apart:
 
@@ -565,6 +567,30 @@ is a fault that has given up on being matched.
 So: does `Read` become `Data(Bytes) | End | Failed(NotGranted)`, and does `Socket.recv` change with
 it? That is one decision covering both capabilities, and it is smaller than it looks because `Read`
 has exactly two users.
+
+**And there is a third instance, which is why the heading names the pattern rather than the pair.**
+`packages/unicode`'s `decode` answers a struct whose `code` field otherwise holds a code point, with
+`-2` meaning *truncated* and any other negative meaning *malformed* — found while writing
+`vision/packages/stream`, whose `scalars` is written against `union<Scalar, Truncated, Malformed>`
+instead. It sat in that package's own list of what could not be written, unpromoted, because it reads
+as a `unicode` defect rather than as this question.
+
+It is not, and the difference matters twice.
+
+**`decode` is not a capability**, so the fix the two above share — *make the capability answer a sum*
+— has no motivating pressure here. If the answer to this question is *a sum, always*, then it is an
+idiom that ordinary code has to follow and belongs on a page, not a decision about two fields in
+`vision/std`. Framed as a capability question it cannot reach the majority of the code that has the
+problem.
+
+**And `decode` is the instance that shows the shape at its worst**, because the sentinel is not one
+value but a *subrange*: every negative is reserved, one of them specifically, and the type says none
+of it. `In.read`'s empty array is at least a value a reader can enumerate. A reserved subrange cannot
+be documented in the signature at all, and a caller who forgets the sign test gets a code point that
+is merely very wrong rather than obviously absent.
+
+Three instances found in three different packages, none of them looking for it, is also the argument
+that there will be more.
 
 ## Three type names are declared twice, and `union` is the reason it matters
 
@@ -1290,3 +1316,35 @@ own message tells the caller what to do, which is `drain()` — and a trap canno
 Against that: a caller who could have called `drain` and did not has a bug, and the trap says so at
 the moment it happens rather than handing back a value that has to be checked.
 
+
+## A wac program cannot enumerate a module's exports, and the runner has to
+
+`vision/packages/wactest` proposes that a test declaring `fn test_x(Sys sys)` be told apart from one
+declaring `fn test_x()` by its *type*, so the runner grants a capability only to the tests that asked
+for one. Checked against the boundary, the answer splits, and the split is the finding.
+
+**A wac program cannot.** `Cli.load` hands back a handle and `Cli.call` is
+`fn[CallResult(i32, string, i32)]` — a handle, a name, and one `i32`, answering a status, a message
+and an `i32`. One fixed calling convention, and nothing crossing it carries a signature. So a program
+can discover *whether* a name exists, by calling it and reading the status, and can learn nothing
+whatever about its shape.
+
+**The host can, and already does.** `spec/cli/wac.md`: *"Named exports are called after `main`, each
+with its trap caught"* — and `wac test` calls `export string test_x()`, which is not `Cli.call`'s
+shape at all. The host has the module's export section; reading a signature out of it is what
+`bindgen` does at build time.
+
+So the proposal stands and its cost moves, which is the part worth an entry here rather than a note
+in that package. `wactest`'s whole rewrite was about pulling host-side workarounds back into the
+language — `host.wac`, `built.wac` and `daemon.wac` mostly stop existing — and **this one thing
+cannot come back across.** A test runner written in wac can run tests and cannot decide what to hand
+them.
+
+The question is whether that is a permanent property of the boundary or a missing capability. `Cli`
+is the only route a wac program has to another module, and it was shaped for *invoking* rather than
+for *reflecting*; an export table is data the host already holds and could hand over. Against that:
+a capability that answers "what functions does this module have, and of what types" is a reflection
+API, and every other capability in `vision/std` answers a question about the world rather than about
+a program's own shape. Nothing else in the proposal wants one, and one consumer is a weak case for
+a whole new kind of capability — but the consumer is the test runner, which is the program that most
+has to know what it is calling.

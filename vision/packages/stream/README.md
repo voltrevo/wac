@@ -126,6 +126,12 @@ answer and it is written down nowhere.
 against a `union<Scalar, Truncated, Malformed>` instead. That is a change to `packages/unicode`,
 so the rewrite of one package immediately wanted a second.
 
+It read as a `unicode` defect and sat here as one. It is the third instance of a shape `vision/std`
+has twice — `In.read` says *end* with an empty array where `Socket.recv` says it with a sum — and the
+one that shows it is not a question about capabilities: `decode` is ordinary code, and its sentinel
+is a whole reserved *subrange* rather than one value. Promoted to
+[../../QUESTIONS.md](../../QUESTIONS.md).
+
 **Two spellings used here are not on the pages.** `held + chunk` for array concatenation, and
 `Buf.pushScalar`, which is only a method somebody has to write.
 

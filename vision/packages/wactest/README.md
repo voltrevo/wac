@@ -137,3 +137,8 @@ the export's type is **host work**, not something the test harness can do in wac
 constraint on a package whose whole rewrite was about pushing host-side workarounds back into the
 language. `host.wac`, `built.wac` and `daemon.wac` would lose most of their reason to exist and this
 one thing would stay on the far side.
+
+Promoted to [../../QUESTIONS.md](../../QUESTIONS.md), because it is a property of `Cli` rather than
+of this package: `Cli.call`'s one fixed calling convention is the only route a wac program has to
+another module, and the open question is whether reflecting on an export table is a capability the
+boundary is missing or a line it is right to hold.
