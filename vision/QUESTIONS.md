@@ -107,12 +107,18 @@ where `while (Continuation c = this.pending.pop())` would be one of each. Whethe
 nullable-specific form, a `match` in a condition, or something in the `if let` family is open — as
 is whether it reaches `for`, and whether it binds an enum variant as well as a non-null.
 
-## How a generic container releases a popped `T`
+## How should a `Vec` drop its reference to a popped element?
 
-`Vec<T>.pop` decrements a length and leaves the reference in the slot, so a popped element is
-retained until something overwrites it. Nothing the body can write clears it: a `T[]` at a
-non-nullable `T` has no null to store, and `Point[10]()` constructs ten distinct `Point()`s rather
-than ten absences. Holding `T?[]` instead would fix it and is free for a reference `T`, since a
-`ref null` array is the same array — but it boxes every element of a `Vec<i32>`, which is the one
-case that cannot afford it.
+`pop` decrements a length and leaves the reference in the slot, so the element stays reachable until
+a later `push` overwrites it. Nothing the body can write clears it: a `T[]` at a non-nullable `T`
+has no null to store, and `Point[10]()` builds ten distinct `Point()`s rather than ten absences. The
+queue `Sys.drain` pops from has the same hole, which is where it turned up.
 
+Holding `T?[]` instead is free for a reference `T`, since a `ref null` array is the same array, and
+boxes every element of a `Vec<i32>` — the one case that cannot wear it. An array operation meaning
+*put this slot back to nothing*, and doing nothing where the element type has no null to write,
+would cost nothing anywhere; it needs the generic body to be able to say it without knowing which
+case it is in.
+
+The retention is bounded by the vec's high-water mark rather than growing, which sizes the problem
+without excusing it: one popped root can hold a whole graph.
