@@ -35,6 +35,14 @@ own, which is the other half of the same property — a built-in that the filesy
 is not a built-in.
 
 The root is what `"core"` names, and its files are named the way any other file is.
+
+**The root is a module, not the union of the tree.** It holds `Read`, `Node` and `Attr` — the types
+the language itself refers to, for a capability's answer and for JSX — and nothing else.
+`Vec`, `Result`, `Option`, `Map` and `hashBytes` are reached only by their files, as
+`core/vec.wac` and the rest. Measured: `import { Vec } from "core";` is an error and
+`import { Read } from "core";` is not. Worth saying because *the root of the tree* reads as though
+importing from `"core"` reached everything in it.
+
 `[§wac-core-unquoted-3nqk7vd]` **Every specifier is a quoted path, `core` included.** A bare word
 after `from` is an error: `core` is told to write `from "core"`, and anything else reports
 `unknown module 'x'`.
