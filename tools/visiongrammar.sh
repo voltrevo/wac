@@ -76,6 +76,43 @@ done
 # This is a list of spellings already known to be wrong, not a parser. It cannot find a *new* kind
 # of mistake, which is the honest limit of it — the general instrument for that is reading
 # `spec/spec/grammar.md`, and `vision/GRAMMAR.md` says so.
+# ── Constructs nobody has accounted for ──────────────────────────────────────────────────────────
+#
+# The pass above is a lower bound: a parser stops at the first thing it cannot read, so one file
+# reports one construct and says nothing about what is behind it. `tools/visiondesugar.ts` rewrites
+# every construct `vision/GRAMMAR.md` lists into the nearest thing today's parser accepts, so what
+# is *still* refused is something nobody has written down — the class both other passes are blind
+# to, since one reports rejections and the other checks a fixed list.
+#
+# It found three that way, all invisible before: `yield`, an enum variant with an unnamed payload,
+# and inheriting from a generic instantiation — the last used five times and load-bearing for the
+# whole ticket design.
+echo
+echo "-- constructs not in GRAMMAR.md --"
+# Captured rather than piped: `set -o pipefail` makes a pipeline carry the *build's* non-zero exit
+# even when the `grep` after it matched, so `wac build … | grep -q` reads as "no error found" for
+# exactly the input that has one.
+deno run --allow-read tools/visiondesugar.ts --canary > "$work/canary.wac" 2>/dev/null || true
+canary=$("$WAC" build "$work/canary.wac" -o "$work/canary.wasm" --allow-read 2>&1 || true)
+if printf '%s' "$canary" | grep -q '^error'; then
+  left=0
+  for f in $(find vision -name '*.wac' | sort); do
+    deno run --allow-read tools/visiondesugar.ts "$f" > "$work/d.wac" 2>/dev/null || continue
+    msg=$("$WAC" build "$work/d.wac" -o "$work/d.wasm" --allow-read 2>&1 \
+      | grep -E "^error: (unexpected|expected)" -A 4 | grep -E "expected '|found '" | head -1 || true)
+    if [ -n "$msg" ]; then
+      left=$((left + 1))
+      printf '  %-40s %s\n' "$f" "$(echo "$msg" | sed 's/^ *| *//')"
+    fi
+  done
+  [ "$left" = 0 ] && echo "  none"
+else
+  # The desugaring must be able to fail. A `sed` version of it once reported every file as
+  # accounted for while not running at all, because a failed rewrite produces an empty file and an
+  # empty `.wac` compiles clean.
+  echo "  SKIPPED — the canary parsed, so this pass cannot be trusted"
+fi
+
 echo
 echo "-- spellings that parse and are still wrong --"
 stale=0

@@ -154,6 +154,34 @@ The pattern in all seven is one habit: asserting what the language does from mem
 rather than compiling three lines. The rate matters more than any single correction — seven in a tree of
 nine packages is not a run of bad luck.
 
+## Three more, found by desugaring rather than by refusal
+
+The table above is a **lower bound** and this is what fixed that.
+`tools/visiondesugar.ts` rewrites each of the nine into the nearest thing today's parser accepts and
+parses again — so whatever is *still* refused is a construct nobody has written down. That is the
+class both other passes are structurally blind to: one reports rejections and cannot see past the
+first, the other checks a fixed list and cannot see a new entry.
+
+| construct | example | why it was invisible |
+|---|---|---|
+| `yield` as a statement | `yield s.code;` | every file hit `gen<…>` in the signature first |
+| an unnamed variant payload | `Ok(T),` — today's `variant` takes a `param_list`, so payloads are named | `enum Result<T, E = union>` stopped it a line earlier |
+| **inheriting from a generic instantiation** | `struct AllOf<T> : Ticket<T[]>` — `struct_decl`'s parent is a bare `IDENT` | five files, each stopped by something above it |
+
+The third is the one that matters. It is used five times — `AllOf`, `AnyOf`, `Generator`,
+`AsyncGenerator`, and `SysTicket` in the notes — and the whole ticket and coroutine design rests on
+it. `struct Kid : Base<i32> { }` is `expected '{', found '<'` today, measured. Nothing had reported
+it because every file that uses it stops at an `async`, a `gen<…>` or a default type argument first.
+
+## What the pass has left
+
+Twelve files are still refused and they are **not** twelve more constructs. Three are known and
+filed — `trap` as an expression, a block that ends in a value, and `secret` on a parameter, which is
+this exercise's own invention. Two look real and want checking the way the three above were: a match
+arm that binds by type (`Scalar s:`) and a nested pattern (`Err(NotGranted(what)):`). The rest are
+most likely the desugaring being crude, and saying so is the point — an instrument that reports
+twelve and means five is worth less than one that says which five.
+
 ## What it cannot see
 
 It finds where vision is **ahead** of today's parser. It is blind to where vision code is **behind a
