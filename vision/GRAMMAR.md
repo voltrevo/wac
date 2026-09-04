@@ -362,12 +362,18 @@ detail. `grep` is the raw count, *in code* is what a migration actually has to e
 | `default:` | `else:` | 624 | 623 | 102 |
 | `T?` everywhere | `Option<T>` alongside it | 102 | **48** | 17 |
 
-**The `fn[` row was 444 and is 378, and the 66 are not the tree changing.** The earlier count stripped
-comments and not strings, and this repository is the one place where that is a large error rather
-than a rounding one: `packages/wacc/src/coretext.wac` is the whole of `std/` and `core/` embedded in
-the compiler **as text**, 3,343 lines of it, and it alone holds 157 occurrences of `fn[` inside string
-literals. Across the tree, strings hide 455 of the 833 `fn[` that survive comment-stripping — more
-than half the count, and more than every other row put together.
+**The `fn[` row was 444 and is 378, and I cannot say what the 66 were.** The earlier figure was taken
+the way this one is — comments and string literals stripped — and no variant tried here reproduces
+it: stripping `"""` blocks or not makes no difference, every other row lands within a few percent of
+its old value, and the raw grep is identical at 1,091 in both. So the two disagree and only one of
+them has a second opinion. Said plainly rather than smoothed over, since a table of numbers with no
+method attached is how the first one got here.
+
+What *is* measured is how much of the raw count is prose and text, and why this row is the extreme
+one. `packages/wacc/src/coretext.wac` is the whole of `std/` and `core/` embedded in the compiler
+**as text**, 3,343 lines, holding 157 occurrences of `fn[` inside string literals. Across the tree,
+strings hide 455 of the 833 that survive comment-stripping — more than half, and more than every
+other row put together.
 
     row          after comments   after strings   hidden by strings
     fn[                     833             378                 455
