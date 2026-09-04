@@ -1,0 +1,69 @@
+// The tree JSX builds — in `core` for the reason the shipped file gives, and unchanged in shape.
+//
+// `core/jsx.wac`: *"It is here rather than in a package because the compiler emits the constructor
+// calls: a tree built in one repository and a renderer in another must name one type or nothing
+// composes, and no author chose the name to be able to fix it."* That argument does not depend on
+// anything vision proposes, so this file is the shipped one with two changes and a note about a
+// third that was not made.
+//
+// **`Fragment` stays a variant** rather than an element with an empty tag, for the reason the
+// shipped comment gives and which is a good statement of what an enum buys: *"a renderer is told —
+// `match` is exhaustive, and a walk written before fragments existed stops compiling with the arm it
+// is missing named. An empty tag would have rendered as `<>` in every renderer that had not heard of
+// them."* `@/packages/page/src/render.wac` is that renderer and it has all three arms because it had
+// to.
+//
+// ## Not a union, and this is the case that decides it cleanly
+//
+// `../IDIOMS.md`'s test is whether the members stand alone and whether the family wants methods.
+// `packages/json`'s README worked through the same question for `JsonValue` and kept the enum; this
+// is the easier instance of it. A `Text` is not a string — it is *a string in the position of a
+// child*, and `Node.Text(s)` is the spelling `spec/spec/jsx.md` requires precisely so that a string
+// child says what it is. A member that means nothing outside the family is an enum's member.
+//
+// ## What did change
+//
+// **`Bytes` and `Slice` are not used here**, deliberately, and it is worth saying why since almost
+// everything else in `vision/core` took them. A `Node` is built by the *compiler*, from source, and
+// then walked once — there is no subrange of a document, nobody slices a child list, and the
+// allocation is one per element either way. `../bench/slicecost.wac` measures the case where a slice
+// pays and this is not it.
+//
+// **The attribute value is a `string` and should probably not be.** See below.
+
+/** One attribute. */
+export struct Attr {
+  string name;
+  string value;
+}
+
+/** A node. */
+export enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids)
+}
+
+// ## What could not be written
+//
+// **An attribute whose value is not a string.** `<input size="24">` and `<div hidden>` and
+// `<p data-n={n}>` are three different things in HTML and one type here, so a renderer cannot tell
+// *the empty string* from *no value*, and `hidden=""` is what a boolean attribute becomes. The
+// shipped `Attr` has the same two fields and the same hole; naming it needs `string?` at least, and
+// a real answer is a small union — `Text(string) | Flag | Number(i64)` — which is a change to what
+// the *compiler* constructs and so is not this file's to make.
+//
+// **A verbatim name is indistinguishable from an ordinary one by the time it gets here.**
+// `@"for"` exists so a keyword can be an attribute, and it lands as `Attr("for", …)` — correct, and
+// it means `Attr` accepts any string at all, including `"class name"`, which renders markup no
+// parser reads back. The tag is a literal in the source, so this is checkable at the JSX and is
+// checked nowhere. `@/packages/page`'s README has it as an open item on the rendering side; it is
+// really this type's, because a validating renderer can only refuse at run time what the type let
+// somebody write.
+//
+// **Whether a void element is a third variant.** `render` has to know that `<input>` takes no
+// closing tag, so it carries a list of fourteen tag names — a renderer knowing something about HTML
+// that the tree does not. `Void(string tag, Attr[] attrs)` would move it here and make
+// `<input>{x}</input>` unconstructable, which is the version the compiler could enforce. Against it:
+// `core` would then know HTML, and this type is deliberately about *markup* rather than about one
+// vocabulary of it — `Element("my-widget", …)` is legal and should be.

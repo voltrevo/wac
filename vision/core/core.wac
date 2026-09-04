@@ -25,3 +25,4 @@ export { Queue } from "./queue.wac";
 export { Slice, Bytes } from "./slice.wac";
 export { Ticket, TicketBase, Continuation, Circular, Stuck, all, any } from "./ticket.wac";
 export { Coroutine, Generator, AsyncGenerator, Step } from "./coroutine.wac";
+export { Node, Attr } from "./jsx.wac";

@@ -26,7 +26,13 @@
 // place — it was that neither consumer had been written. This file is one of them; wiring
 // `@/packages/server` to it is the other and is not done here.
 
-import { Node, Attr, Element, Text, Fragment } from "core";
+// `Element`, `Text` and `Fragment` are **not** imported. They are variants of `Node`, and a match
+// arm names them bare — `[§enum-is-qualified-8jkq4wp]` says `s is Shape.Circle` and `s is Circle`
+// mean the same thing. Importing them was the first version of this line, and the mistake
+// `spec/spec/jsx.md` pre-empts by writing exactly `import { Attr, Node } from "core";`. Caught by a
+// check that resolves every name imported from `core` and `std` against what those actually export,
+// which is a thing a recogniser cannot do and nothing else was doing.
+import { Node, Attr } from "core";
 import { Buf } from "@/packages/bytes";
 
 /**
