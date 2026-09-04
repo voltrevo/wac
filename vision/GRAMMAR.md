@@ -730,6 +730,53 @@ the first was being quoted at the top of this page.
 None of the three is a syntax question, so none can be answered by `GRAMMAR.ebnf` and none belongs
 in the table above. They are in `QUESTIONS.md`.
 
+## Costing a desugarer, since the brief keeps suggesting one
+
+*"Consider actually implementing a parser for the new syntax — it may be easy enough to be valuable
+without waiting."* The recogniser above is one answer and it does not run anything. The other answer
+is a **desugarer**: rewrite the additions into today's wac so some of this directory compiles. This
+section is what that would cost, measured 2026-09-04, so the suggestion stops being deferred.
+
+**Baseline.** Under the spec's own grammar, with the delta off, `23 of 104` files parse. The first
+divergence is `{` in twenty of them — the barrels — and the histogram of first divergences is a poor
+guide, because a file is blocked by everything it uses and reported by one.
+
+**Per construct, over 102 files** (`bench/` excluded, it is today's language by declaration):
+
+| construct | files | a mechanical target in today's wac? |
+|---|---:|---|
+| a match arm without `case` | 25 | **yes** — prepend `case`, purely token-level |
+| `for … in` **over an array** | ≤16 | **yes** — a counted loop |
+| `u8` as a local, parameter, field or cast | 19 | **yes**, and not free — `i32` loses the truncation |
+| `try` | 17 | **yes** — a temp and a `match`, local |
+| unqualified `Ok(x)` / `Err(e)` | 14 | **yes** — qualify; measured, `Res.Ok(3)` on a generic enum checks clean and runs |
+| `for … in` **over a generator** | 17 | no — the loop is the generator |
+| re-export | 20 | **no** — `issues/lang/0073`, and it is the single biggest blocker |
+| `union<…>` in a type | 15 | no |
+| a named `union` declaration | 11 | no |
+| a method with no body | 10 | no |
+| `gen` / `yield` | 8 | no |
+| `coroutine` | 1 | no |
+
+**So: 25 files use nothing new, 17 are blocked only by constructs with a target, and 60 need the
+language.** Forty-two of 102 reachable, and the ceiling is set by re-export and by generators.
+
+Two things the measurement changed about the plan, both worth having:
+
+- **`for … in` reads as sugar and mostly is not here.** Of 42 uses, **26 are over a generator** — 18
+  through `Vec.items()`, 8 through a call, 11 of them `await for`. `core/vec.wac` decided that a
+  `Vec` is iterated through a generator and recorded it; the consequence is that the construct that
+  looks most like a loop rewrite is, in this corpus, mostly a coroutine.
+- **The expensive part is already built.** `tools/specparse.ts --tokens` is a working wac tokeniser —
+  interpolation and JSX included — so a token-level rewriter needs no lexer. What it needs and does
+  not have is a *tree*: `specparse` is a recogniser and says so, *"it answers does this parse and
+  nothing else"*, so `try` and `for … in` — which need expression and block bounds — want either an
+  Earley forest extracted from it or a small recursive-descent pass over the tokens.
+
+**The honest recommendation is that a desugarer is worth writing after re-export, not before.** Half
+of what it cannot reach is one missing feature that is already an open issue, and clearing that
+raises the reachable count more than any transform on the list.
+
 **And its first hits were all false**, which is worth recording because a clean run had never been
 tested. `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])]
 write)` three times, and the pass asked for all three to be rewritten as `fn<…>` — which would
