@@ -331,9 +331,14 @@ scheduling.
 
 ---
 
-## A `Waiting` names the ticket its continuation is waiting on
+## A continuation is a ticket and a call
 
 ```wac
+struct Continuation {
+  TicketBase? t;
+  fn<void()> call;
+}
+
 void example() {
   Vec<Continuation> pending;
   schedule pending.push;
@@ -341,14 +346,10 @@ void example() {
   Ticket<i32> input;
   Ticket<i32> r = doubled(input);
 
-  match (pending[0]) {
-    Ready { .. }: { }
-    Waiting { t, call }: {
-      t is input;          // true
-      input.resolve(10);
-      call();
-    }
-  }
+  pending[0].t is input;   // true
+  input.resolve(10);
+  pending[0].call();
+
   r.value();               // 20
 }
 
@@ -371,10 +372,7 @@ void example() {
   Ticket<i32> t;
   doubled(t);
 
-  match (pending[0]) {
-    Ready { .. }:     { }
-    Waiting { call, .. }: { call(); }     // trap
-  }
+  pending[0].call();       // trap: `t` has not settled
 }
 ```
 
@@ -392,10 +390,9 @@ struct Sys {
     schedule this.pending.push;
 
     while (this.pending.len() > 0) {
-      match (this.pending.pop()!) {
-        Ready { call }:      { await;   call(); }
-        Waiting { t, call }: { await t; call(); }
-      }
+      Continuation c = this.pending.pop()!;
+      await c.t;
+      c.call();
     }
   }
 }
@@ -406,13 +403,13 @@ struct Sys {
 it starts, and what it starts is simply further along the same queue. Its own `await` hands drain's
 continuation to the target above it, and the target is back in force when drain is resumed.
 
-`await` in both arms is what makes drain yield rather than monopolise, between each continuation and
-the next, exactly as the work it is draining does. A queue rather than a `Vec` because the loop both
-consumes from the front and grows at the back, and because a continuation is dropped as soon as it
-has run.
+`await c.t` is the whole of the dispatch. A null ticket is the bare `await` — one step boundary
+and no waiting — so a ready continuation and a blocked one take the same two lines, and drain
+yields between each and the next rather than monopolising.
 
-`t` is a `TicketBase`, so one `await` serves every kind of ticket, a fake `Sys`'s included, and
-answers nothing — which is all drain wants.
+`t` is a `TicketBase?`, so one `await` serves every kind of ticket, a fake `Sys`'s included, and
+answers nothing, which is all drain wants. A queue rather than a `Vec` because the loop consumes at
+one end and grows at the other.
 
 **Not yet.**
 

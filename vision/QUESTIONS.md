@@ -48,14 +48,6 @@ Stepping one can answer `Waiting`, which a synchronous loop has no way to handle
 loop is legal only inside an async function, or iterating an async generator is a different
 construct.
 
-## Whether `Continuation.Ready` survives
-
-Every async suspension is on a ticket now, so an async machine only ever hands over `Waiting`, and
-`Ready` is left describing a generator that has yielded. It could collapse into `Waiting` on a
-settled ticket — one fewer variant, one code path in every scheduler — at the cost of saying
-plainly what a settled `Waiting` only implies. `Sys.drain`'s two arms are already the same code
-differing only in what is awaited, which is the collapse written out by hand.
-
 ## Whether `wait` caches what it is waiting on
 
 `advance(false)` steps a blocked machine to learn it is still blocked, and `advance(true)` steps it
