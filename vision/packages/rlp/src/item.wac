@@ -1,0 +1,89 @@
+// RLP's whole data model: a byte string, or a list of items.
+//
+// There are no integers, no maps, no types and no field names. A number is the shortest big-endian
+// byte string that spells it, and what a list's members mean is the caller's business. Everything
+// else in this package is length prefixes.
+
+import { Bytes, Vec } from "core";
+import { Buf } from "@/packages/bytes";
+
+/**
+ * An item.
+ *
+ * The original notes that the recursion works *"because an array is a reference — `List(Item[])`
+ * holds a pointer to a block of items rather than embedding them, so the type is finite"*. A
+ * `Vec<Item>` is a struct holding that same array, so the argument carries over unchanged; what it
+ * buys is the decoder, which grows its list by doubling by hand today.
+ */
+export enum Item {
+  /**
+   * **Named `Str`, and it wants to be called `Bytes`.**
+   *
+   * RLP's two kinds are a *byte string* and a *list*, so the shipped enum is `Bytes(u8[] value)` and
+   * reads exactly right. Here the payload is `core`'s `Bytes`, and `Bytes(Bytes value)` makes
+   * `Bytes(x)` mean two things in one file — the variant and the type. Second collision of this kind
+   * in two packages, after `@/packages/tty`'s `Effect.Delivered`, which wanted to be `Line` and could
+   * not be because the struct beside it is.
+   *
+   * The two are not the same problem, and this one is worse. `tty`'s is local: both names are that
+   * package's and either could move. This one is between a package's natural vocabulary and a name
+   * `core` exports to everybody — so every package that holds bytes and wants to say so has the
+   * collision, and `core` wins by being unmoveable. `../../../QUESTIONS.md`.
+   */
+  Str(Bytes value),
+  List(Vec<Item> items),
+
+  /**
+   * The bytes, or nothing when this is a list.
+   *
+   * **The shipped `bytesOf` traps for a list, and its doc is the best argument in the package**:
+   *
+   * > It used to answer the empty string for a list … `packages/mpt` had seven call sites that did
+   * > not know, and each of them turned a list where the format requires a byte string into a
+   * > *plausible* value. A list-valued leaf read as a present empty value, a list-valued branch
+   * > terminal read as absence, a list-valued account balance read as zero — all from data committed
+   * > to a trie, where the whole point of the exercise is that malformed input cannot change what a
+   * > proof means.
+   *
+   * That is right about the empty string and it puts the trap in the wrong place. A `Bytes?` moves
+   * the assertion to whoever is making it: a caller that knows writes `it.asBytes()!` and traps on
+   * its own line, and a caller that does not writes a `match` or an `if`. The shipped shape makes
+   * the *callee* trap on the caller's behalf, so the stack says `bytesOf` in both cases and the
+   * "check `isList` first" discipline is not visible at the site that skipped it.
+   */
+  Bytes? asBytes(const this) {
+    match (this) {
+      Str(v):  { return v; }
+      List(_): { return null; }
+    }
+  }
+
+  /** The members, or nothing when this is a byte string. See `asBytes` for why it is a `T?`. */
+  Vec<Item>? asList(const this) {
+    match (this) {
+      Str(_):   { return null; }
+      List(xs): { return xs; }
+    }
+  }
+
+  bool isList(const this) { return this is List; }
+}
+
+/**
+ * The minimal big-endian encoding of a non-negative integer — RLP's only way to spell a number.
+ *
+ * **`u64`, where the original takes an `i64` and traps on a negative.** RLP has no negative numbers,
+ * so the trap is guarding against a value the type should not have admitted. Third instance in this
+ * exercise, after `@/packages/tty`'s shift-shaped `bits` and `@/packages/bignum`'s `shl(i32)`, and
+ * the cheapest of the three to fix: one letter.
+ */
+export Bytes fromU64(u64 v) {
+  if (v == 0) { return Bytes.empty(); }   // zero is the empty string, not a zero byte
+  u8[] be = u8[8]();
+  i32 n = 0;
+  u64 x = v;
+  while (x > 0) { be[n] = (x & 255) as@ u8; n++; x = x / 256; }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < n; i++) { out.push(be[n - 1 - i]); }
+  return out.bytes();
+}

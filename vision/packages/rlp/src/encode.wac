@@ -1,0 +1,136 @@
+// Writing canonical RLP. There is only one encoding of a value, so there is nothing to decide.
+//
+// The whole file is a `Buf` where the original is three nested copy loops, and that is the only
+// change: `encode` cannot fail, so none of the shapes this exercise usually finds are here.
+
+import { Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+import { Item } from "./item.wac";
+
+/** `item`, encoded. The only encoding of it, since RLP is canonical. */
+export Bytes encode(const Item item) {
+  Buf out = Buf.create();
+  write(out, item);
+  return out.bytes();
+}
+
+/**
+ * `item`, appended to `out`.
+ *
+ * **A list's prefix depends on the encoded length of everything in it**, so a list has to know its
+ * payload before it can write its header. The original solves that by encoding every member into its
+ * own array first — `u8[][] parts` — summing the lengths, allocating the exact result, and copying
+ * the header and then every part into it with two nested loops. Its comment argues for the shape:
+ * *"Concatenating once at the end rather than growing a buffer per member keeps this O(n) in the
+ * number of bytes rather than in the number of members squared."*
+ *
+ * What that buys is knowing the payload length before writing the header. This file gets the same
+ * thing by measuring instead: `sizeOf` walks the subtree and answers how long its encoding will be,
+ * the header goes down, and the members follow into one shared `Buf`. No intermediate arrays.
+ *
+ * **Neither is O(n), and that is the finding rather than a preference.** The original copies every
+ * byte once per level of nesting, because each list concatenates what its children already built.
+ * This one walks every node once per *ancestor*, because `write` on a list asks `sizeOf` of each
+ * member and `write` on that member asks again of its own. Both are O(n·d) in the depth of the tree.
+ * The original trades allocations for walks; this one trades walks for allocations; there is no third
+ * option, because a length-prefixed nested format needs the length of a thing it has not written yet.
+ *
+ * The third option is **back-patching** — write the header's space, write the payload, go back and
+ * fill it in — which is what every serialiser in a language with a mutable buffer does, and it is
+ * genuinely O(n). See the note at the foot of this file for why `Buf` cannot, and for the part of it
+ * that is harder than it looks.
+ */
+void write(Buf out, const Item item) {
+  match (item) {
+    Str(v):   { header(out, v.len(), 0x80, 0xB7, v.len() == 1 && v.get(0) < 0x80); out.pushAll(v); }
+    List(xs): {
+      i32 total = 0;
+      for (Item x in xs.items()) { total = total + sizeOf(x); }
+      header(out, total, 0xC0, 0xF7, false);
+      for (Item x in xs.items()) { write(out, x); }
+    }
+  }
+}
+
+/**
+ * How many bytes `item` will encode to.
+ *
+ * The second walk, and the reason the encoder needs no intermediate arrays. It is the encoder's own
+ * rules with the bytes left out, which is a real duplication: a change to `write` that does not
+ * change this one produces a header that disagrees with what follows it, silently, and the only
+ * thing that would catch it is the round trip.
+ *
+ * `@/packages/tty` had the same pair — `glyph` and `columns`, one derivable from the other — and
+ * this one is not derivable, because deriving it is doing the encoding. So it is a genuine second
+ * statement of the format, and the honest mitigation is that `packages/rlp`'s tests compare against
+ * Ethereum's published bytes rather than against a round trip. Worth stating rather than hiding:
+ * the shipped shape does not have this problem, and pays an allocation per member for it.
+ */
+i32 sizeOf(const Item item) {
+  match (item) {
+    Str(v): {
+      if (v.len() == 1 && v.get(0) < 0x80) { return 1; }
+      return headerLen(v.len()) + v.len();
+    }
+    List(xs): {
+      i32 total = 0;
+      for (Item x in xs.items()) { total = total + sizeOf(x); }
+      return headerLen(total) + total;
+    }
+  }
+}
+
+/**
+ * The length prefix for a payload of `len` bytes.
+ *
+ * `short` is the base for a length that fits in the prefix itself (0x80 for a string, 0xC0 for a
+ * list); `long` is the base for the form that carries the length as bytes. One function serves both,
+ * because the only difference between a string and a list in RLP is 0x40.
+ *
+ * `bare` is the single-byte case — not an optimisation but the canonical form, since `0x81 0x05` is
+ * invalid input rather than a second spelling of `5`.
+ */
+void header(Buf out, i32 len, i32 short, i32 long, bool bare) {
+  if (bare) { return; }
+  if (len <= 55) { out.push((short + len) as@ u8); return; }
+  // Minimal big-endian length: no leading zero, because a decoder must reject one.
+  u8[] be = u8[4]();
+  i32 n = 0;
+  i32 x = len;
+  while (x > 0) { be[n] = (x & 0xFF) as@ u8; n++; x = x / 256; }
+  out.push((long + n) as@ u8);
+  for (i32 i = 0; i < n; i++) { out.push(be[n - 1 - i]); }
+}
+
+/** How long `header` will be. The one place `sizeOf` and `write` have to agree. */
+i32 headerLen(i32 len) {
+  if (len <= 55) { return 1; }
+  i32 n = 0;
+  i32 x = len;
+  while (x > 0) { n++; x = x / 256; }
+  return 1 + n;
+}
+
+// ## What could not be written
+//
+// **`Buf` cannot be written to twice, and every length-prefixed format wants to.** Both encoders
+// above pay O(n·d) to avoid it. Back-patching is the O(n) answer and needs two things a `Buf` has
+// not got: a way to reserve space and a way to write into what was already written.
+//
+// The first is easy and the second is the interesting one, because a `Buf` handing out a position
+// that stays valid across a `push` is a promise it currently refuses to make — `bytes()`'s own doc
+// says the view *"is invalidated by the next `push` that grows"*. An index is not; the array moves
+// and the index does not care. So `i32 mark = out.hole(n)` and `out.patch(mark, bytes)` are
+// writable, and they are the shape a serialiser wants.
+//
+// **And RLP does not quite fit even that**, which is worth saying because it is the thing that
+// stopped this being a clean proposal. A hole needs a size, and RLP's header is 1 to 9 bytes
+// depending on the payload length — so the size of the hole is the thing that is not known yet. Two
+// ways out, neither free: reserve the maximum and shuffle down by the difference at the end (one
+// copy of the payload, which is the cost being avoided), or reserve one byte and accept that a
+// payload over 55 bytes needs the shuffle anyway. A format whose prefix is fixed-width — `ssz`,
+// protobuf's fixed variants — takes the clean version, and RLP is the one that does not.
+//
+// The other two consumers are not about holes and are recorded together in `issues/system/0333a`:
+// `@/packages/box`'s `trset.wac` splices pad bytes into the middle, and `@/packages/url` prepends by
+// rebuilding. Four shapes wanted, one available, and the one available is *append*.

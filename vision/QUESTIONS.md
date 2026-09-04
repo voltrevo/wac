@@ -3382,3 +3382,64 @@ justification, and the entry above on starting a generator early all reason abou
 this file needs `for (Typed t in line.feedAll(bytes))`, a plain loop over a plain generator, which
 `Slice.items()` in `core` also already is. **Two of the three uses in this directory are synchronous
 and every page describes the third.**
+
+## A package cannot name a variant after a type `core` exports
+
+`@/packages/rlp`'s data model is two things: a byte string and a list. The shipped enum is
+
+    export enum Item { Bytes(u8[] value), List(Item[] items) }
+
+and it reads exactly right, because *byte string* is what RLP calls it. Here the payload is `core`'s
+`Bytes`, so `Bytes(Bytes value)` would make `Bytes(x)` mean the variant in one position and the type
+in another, inside one file. The arm is called `Str` instead, which is worse in every way except
+that it compiles.
+
+This is the second collision of the kind in two packages. `@/packages/tty`'s `Effect` wanted an arm
+called `Line` and could not have it, because the struct beside it is `Line`. **The two are not the
+same problem and the second one is the harder half.**
+
+- `tty`'s is local. Both names belong to that package, either could move, and a reader who hits it
+  can see both declarations at once.
+- `rlp`'s is between a package's own vocabulary and a name `core` exports to **everybody**. `core`
+  wins by being unmoveable, and every package that holds bytes and wants to say so has the same
+  collision waiting. `Bytes`, `Vec`, `Map`, `Queue`, `Slice`, `Result`, `Ticket`, `Step`, `Node`,
+  `Attr` — ten names that no package may use for a variant, a struct or a function, listed nowhere.
+
+What makes it a language question rather than a naming convention is that **a variant is not
+referred to the way a type is.** `Item.Str(x)` is unambiguous and nobody writes it: the whole point
+of the bare-variant form, which every file in this directory uses, is that the enum is implied by the
+slot. So the collision is a consequence of a convenience, and the fix — requiring the enum name when
+a variant collides — is the sort of rule that is invisible until it fires and confusing when it does.
+
+The narrower question, which may be the whole of it: **is a variant name in the same namespace as a
+type name, and should it be?** `spec/spec/enums.md` does not say, and `issues/lang/closed/0095` — *a
+struct named like a variant resolves to the enum* — is the same question answered for one direction
+by fixing a resolver rather than by stating a rule.
+
+## A length-prefixed nested format cannot be encoded in one pass
+
+`@/packages/rlp`'s encoder has to know the length of a list's payload before it can write the list's
+header. There are exactly two ways to do that without back-patching, and the package has now used
+both:
+
+- **the shipped one** encodes every member into its own array, sums, allocates the exact result, and
+  copies everything in — so each byte is copied once per level of nesting;
+- **this one** measures with a `sizeOf` walk and writes into a single `Buf` — so each node is walked
+  once per ancestor.
+
+Both are O(n·d). Neither is a mistake and neither is better; they trade allocations for walks. The
+O(n) answer is back-patching, and a `Buf` cannot be written to twice.
+
+**The reservable hole is writable and RLP does not fit it.** `i32 mark = out.hole(n)` and
+`out.patch(mark, bytes)` are ordinary methods — an index survives a reallocation where the `bytes()`
+view does not, which that method's own doc already admits — and they are what a serialiser wants. But
+a hole needs a *size*, and RLP's header is 1 to 9 bytes depending on the length of the payload it is
+measuring. The unknown is the size of the hole itself.
+
+So the question is not *should `Buf` be able to insert* — it should not, since every insert is O(n)
+and the type would stop being a promise about cost. It is: **what does a writer for a format whose
+prefix width depends on its payload look like?** A fixed-width prefix (`ssz`, protobuf's fixed
+variants) takes the clean version and RLP is the case that does not, which makes it the one worth
+designing against. The fallbacks are reserve-the-maximum-and-shuffle, and reserve-one-and-shuffle-if
+-it-grows, and both put back exactly the copy being avoided — for the *outermost* list only, which
+may be the answer: one copy of the whole payload instead of d.

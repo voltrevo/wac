@@ -1,0 +1,14 @@
+// The package, as one name.
+//
+// The seven `RlpFault` members are exported individually as well as through the union, because
+// matching one by type — `Err(is LeadingZero):` — needs the name in scope at the call site. That is
+// the same list `@/packages/gzip`'s barrel would need and is the argument for a named-union import
+// form: a caller that wants *"tell me it was not canonical, I do not care which rule"* has to name
+// all six of them or fall back to a wildcard, and `union<…>` already knows the list.
+
+export { Item, fromU64 } from "./item.wac";
+export { decode } from "./decode.wac";
+export { encode } from "./encode.wac";
+export {
+  RlpFault, Truncated, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing,
+} from "./fault.wac";
