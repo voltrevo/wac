@@ -26,6 +26,14 @@
   "map": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/map.wac",
   "site:map": "deno run --allow-read --allow-write site/tools/syncMap.ts",
 
+  // **The spec's grammar, run rather than read.** `grammar` audits the EBNF itself — undefined
+  // names, left recursion, a repetition that cannot terminate — and is instant. `grammar:parse`
+  // parses the tree with it, which takes minutes and is why neither is in the suite: the file has
+  // been behind the parser four times and each was found by a person until this existed.
+  "grammar": "deno run --allow-read tools/ebnfaudit.ts",
+  "grammar:parse": "deno run --allow-read tools/specparse.ts packages core std",
+  "grammar:vision": "deno run --allow-read tools/specparse.ts vision",
+
   // **Building `wac`, and there is one way to do it.** `./bootstrap.sh` starts from the ladder
   // every time and iterates to a fixed point before it hands anything over, so a reseed and a
   // first build are the same operation and `seed:bootstrap` has nothing left to mean. `--host`

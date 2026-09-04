@@ -279,7 +279,13 @@ interface Item { prod: Prod; dot: number; origin: number }
  * Horspool problem — which the `while (grew)` below is. Without it a rule whose body is entirely
  * optional silently fails, and the grammar has several: `[ param_list ]`, `[ arg_list ]`.
  */
-function earley(prods: Prod[], toks: Token[], start: string, terminals: Set<string>): number | "ok" {
+function earley(
+  prods: Prod[],
+  toks: Token[],
+  start: string,
+  terminals: Set<string>,
+  budgetMs = 20_000,
+): number | "ok" | "budget" {
   const byLhs = new Map<string, Prod[]>();
   for (const p of prods) {
     const l = byLhs.get(p.lhs);
@@ -302,7 +308,14 @@ function earley(prods: Prod[], toks: Token[], start: string, terminals: Set<stri
   for (const p of byLhs.get(start) ?? []) add(0, { prod: p, dot: 0, origin: 0 });
 
   let furthest = 0;
+  // **A deadline, because the cost is in the ambiguity and not in the length.** An 18,000-token
+  // font table finishes in under three seconds; something far shorter can not finish at all, and a
+  // recogniser that hangs reports nothing about the file it hung on. Giving up and saying so is a
+  // result — it names a construct this grammar is ambiguous enough about to be unparseable, which
+  // is worth knowing and is invisible if the run is simply killed.
+  const deadline = performance.now() + budgetMs;
   for (let i = 0; i <= toks.length; i++) {
+    if (performance.now() > deadline) return "budget";
     let grew = true;
     while (grew) {
       grew = false;
@@ -459,6 +472,7 @@ function main(argv: string[]): number {
   let ok = 0;
   const bad: string[] = [];
   const slow: string[] = [];
+  const gaveUp: string[] = [];
   for (const f of files) {
     const src = Deno.readTextFileSync(f);
     const { toks, error } = lex(src, keywords);
@@ -469,6 +483,12 @@ function main(argv: string[]): number {
       const t0 = performance.now();
       const r = earley(prods, chunk, "program", terminals);
       const ms = performance.now() - t0;
+      if (r === "budget") {
+        const s = `${f}:${chunk[0]?.line ?? 0}: ${chunk.length} tokens, gave up after ${(ms / 1000).toFixed(0)}s`;
+        gaveUp.push(s);
+        console.log(`  budget  ${s}`);
+        continue;
+      }
       if (ms > 2000) {
         const s = `${f}:${chunk[0]?.line ?? 0}: ${chunk.length} tokens, ${(ms / 1000).toFixed(1)}s`;
         slow.push(s);
@@ -485,8 +505,12 @@ function main(argv: string[]): number {
 
   console.log(`\n${ok}/${files.length} files parse`);
   if (slow.length > 0) {
-    console.log(`\n-- over five seconds --`);
+    console.log(`\n-- over two seconds --`);
     for (const s of slow) console.log(`  ${s}`);
+  }
+  if (gaveUp.length > 0) {
+    console.log(`\n-- not answered within the budget --`);
+    for (const s of gaveUp) console.log(`  ${s}`);
   }
   if (bad.length > 0) {
     console.log(`\n-- refused --`);
