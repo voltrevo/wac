@@ -3,7 +3,11 @@
 // The original is 69 lines and builds its document by concatenating eight string literals. wac has
 // JSX; the example does not use it, and neither does any other page in the tree.
 
-import { Sys, Page, Event, Click, Typed, Quit } from "std";
+// `Out` rather than `Sys`, which is the twenty-second file to do that and the reason the bundle is
+// nearly unused: this page needs one capability and there is no reason to hand it eight. The entry
+// point signature the launcher fixes is `page(Core, Cli, Page)`, so what a `page` *receives* is not
+// this function's to choose — but what it passes on is.
+import { Out, Page, Event, Click, Typed, Quit } from "std";
 import { Node } from "@/packages/page";
 import { itoa } from "@/packages/fmt";
 
@@ -41,7 +45,7 @@ Node document(i32 n) {
  * — five string comparisons against literals that also appear as `id` attributes above, with
  * nothing relating the two. A typo in either place is a button that stops working.
  */
-export async i32 page(Sys sys, Page ui) {
+export async i32 page(Out out, Page ui) {
   await ui.title("counter");
   await ui.render(document(0));
   await ui.on("button", "click");
@@ -55,7 +59,7 @@ export async i32 page(Sys sys, Page ui) {
       }
       Click(id): {
         if (id == "quit") {
-          sys.out.log("counted to \{n}");
+          out.log("counted to \{n}");
           return 0;
         }
         if (id == "up")    { n = n + 1; }

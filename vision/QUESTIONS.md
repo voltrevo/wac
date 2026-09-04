@@ -1918,6 +1918,20 @@ not rebuild itself because *two* capabilities each made a scheduler. Whatever re
 to keep one queue reachable from everything, and *"the parameters are the grant"* has no obvious
 place to put it.
 
+**Measured 2026-09-04, and the code has already answered most of it.** Across the 59 rewritten files,
+**two** functions take a `Sys` and **sixteen** take a projection directly — `Out` ten times, `Files`
+seven, `In` four. The two are `page` and `main`, the entry points, which take one because the
+launcher hands one over.
+
+And of those two, `counter.wac` took a `Sys` to reach `sys.out.log` and now takes an `Out`. So
+**exactly one function in fifty-nine files needs a `Sys`, and it needs it for `drain`.** That is not
+an argument for a bundle of nine projections; it is an argument that the scheduler wants a home and
+took the nearest one.
+
+Which reframes the three answers above. *No bundle at all* is not the radical option — it is what
+the code does everywhere except at one call to `drain`, and it arrived by writing rather than by
+deciding. The question left is narrow and answerable: **where does the queue live if not on `Sys`?**
+
 So this is not really about `Page`. It is that `Sys` was introduced to hold projections and quietly
 took on a second job, and the first program that could not be handed one is where that shows.
 
