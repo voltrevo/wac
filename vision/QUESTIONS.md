@@ -98,5 +98,5 @@ form, and it is the thing that lets `Result`'s current blessing expire.
 `i32 main(Sys sys)` and `async i32 main(Sys sys)` both appear, and a posix-style small integer exit
 code is assumed throughout. Whether `std` should assume it is open. A sync `main` that drives its
 own work holds a `Result` and has nowhere to put it, so it either matches on it to pick an exit code
-or discards it. `Result<i32> main` would answer that and is ugly, and nothing else has been proposed.
+or discards it. `Result<i32> main` would answer that and is ugly; nothing else has been proposed.
 
