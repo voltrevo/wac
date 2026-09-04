@@ -1,63 +1,66 @@
-// Bytes through, unchanged — and the first code written against `In`.
+// Bytes through, unchanged — and the file that has now driven three versions of `In`.
 //
 // The shipped `cat` is `i32 cat(Core core, Cli cli, Fs fs, Args a)`. Here it is
 // `cat(Out out, In in, Files files, Args a)`: no clock, no randomness, no sockets, no spawning. That
 // is four capabilities becoming four *narrower* capabilities rather than four becoming two, which is
 // the honest version of the projection argument for an applet that genuinely reads files.
 //
-// ## And writing it found `In` and `Socket` disagreeing about how a read ends
+// ## Three versions of the same complaint, and only the third one fixed anything
 //
-// `Socket.recv` answers a `Read`:
+// **First**, this found `In` and `Socket` disagreeing about how a read ends. `Socket.recv` answered a
+// `Read` sum — `Data`, `End`, `Failed` — and `In.read` answered `Ticket<u8[]>`, whose only way to say
+// *end* was an empty array. A sentinel drawn from the value's own range, the third instance of a
+// shape `unicode`'s `decode` and `Socket` had already shown between them. The fix looked obvious:
+// give `In` a `Read` too.
 //
-//     export enum Read { Data(u8[] bytes), End, Failed(string why) }
+// **Second**, `Files.open` arrived. The audit of all 62 host capabilities found the shipped
+// `openInput`/`readChunk`/`closeFeed` had no projection at all, so a file was read whole — the
+// entire contents in memory, in the one command whose job is arbitrarily large input. With
+// `Files.open` answering an `AsyncGenerator<Bytes, …>` the file half became a `try await for` and
+// buffers nothing. And that made this file *worse*: two loops for one behaviour, one over a
+// generator and one testing a sentinel, in the program that exists to treat the two alike.
 //
-// `In.read` answers `Ticket<u8[]>`, and the only way it can say *end* is an empty array — a sentinel
-// drawn from the value's own range, which is the thing `@/packages/stream`'s README already caught
-// once in `decode`. Two capabilities in one file, one with a sum and one with a sentinel, and the
-// difference is that `Socket` was written from a design and `In` was added to fill a hole.
+// **Third**, `In` became a stream, and the sentinel did not get a better spelling — it stopped
+// existing. Below there is one `copy`, one call site per source, and `-` on the command line is an
+// operand like any other. The version of this file that had `pump` and a `for` loop is gone rather
+// than fixed, which is what a redesign is supposed to look like.
 //
-// It matters here rather than in the abstract: a `read` that answers zero bytes is *end* for a file
-// and *not yet* for a pipe, and this loop cannot tell them apart. The shipped `readStdin` has the
-// same shape and the same problem, so this is not a regression — but `Read` exists, twelve lines
-// away, and is what a capability that can end should answer. `../../../QUESTIONS.md`.
-//
-// ## And `Files.open` made it worse in the useful way, 2026-09-04
-//
-// This read whole files: `match (await files.read(path))`, the entire contents in memory, which is
-// wrong for the one command in the box whose whole job is arbitrarily large input. It read that way
-// because `Files` had no streaming member — the audit of all 62 host capabilities found the shipped
-// `openInput`/`readChunk`/`closeFeed` had no projection at all — and `Files.open` now answers an
-// `AsyncGenerator<Bytes, …>`. The file half is a `try await for` over it and buffers nothing.
-//
-// **Which leaves `cat` with two loops for one job, and that is the sharper complaint.** A file is a
-// stream and standard input is a `Ticket<u8[]>` with an empty array for *end*, so:
-//
-//     try await for (Bytes chunk in source) { out.write(chunk); }      // a file
-//     while (true) { u8[] c = await in.read(); if (c.len() == 0) …  }  // stdin
-//
-// Two shapes, one behaviour, in the program that exists to treat them alike — and `cat -`, which
-// interleaves them, cannot be written as one loop at all.
-//
-// So the question is not only *how* a capability says end. `In` is not a stream, in a system that
-// now has streams: if it answered `AsyncGenerator<Bytes, …>` the two halves above are one function
-// and the sentinel stops existing rather than being fixed. The sum-versus-sentinel entry is the
-// smaller version of that.
+// **So the question was never how a capability says *end*.** It was that `In` was not a stream in a
+// system that has them, and *sum versus sentinel* was a question about how to spell something that
+// should not have been there. Worth writing down because both earlier answers were reasonable and
+// both were arguing inside the wrong frame.
 
-import { Result, Bytes } from "core";
-import { Out, In, Files, Read, NotGranted } from "std";
+import { Result, Bytes, AsyncGenerator } from "core";
+import { Out, In, Files, NotGranted } from "std";
 import { Args } from "@/packages/box/src/lib/args.wac";
 
+/**
+ * Every operand, and `-` for standard input.
+ *
+ * `-` is not special here beyond choosing a source, which is the whole of what the third version
+ * bought: the two sources have one type, so `cat a - b` interleaves a file, a pipe and a file
+ * through the same loop, and nothing in the body knows which is which.
+ *
+ * With no operands it is exactly `cat -`, so that case is a default rather than a branch.
+ */
 export async i32 cat(Out out, In in, Files files, Args a) {
-  if (a.operands.len() == 0) { return await pump(out, in); }
+  // No operands is `cat -`, and this line is a branch only because there is no way to write the
+  // one-element collection that would make it a default. See below.
+  if (a.operands.len() == 0) {
+    await copy(out, in.stream());
+    return 0;
+  }
 
   i32 status = 0;
-  for (string path in a.operands) {
-    match (files.open(path)) {
-      Ok(source): {
-        try await for (Bytes chunk in source) { out.write(chunk); }
-      }
+  for (string name in a.operands) {
+    if (name == "-") {
+      await copy(out, in.stream());
+      continue;
+    }
+    match (files.open(name)) {
+      Ok(source): { await copy(out, source); }
       Err(_): {
-        out.writeErr("cat: \{path}: cannot read\n".toBytes());
+        out.writeErr("cat: \{name}: cannot read\n".toBytes());
         status = 1;
       }
     }
@@ -65,17 +68,42 @@ export async i32 cat(Out out, In in, Files files, Args a) {
   return status;
 }
 
-/**
- * Standard input to standard output, a chunk at a time.
- *
- * **The empty read is the end**, which is `In`'s only way to say so and is the thing the header is
- * about. Written as the loop it has to be rather than the loop it should be, so the shape of the
- * complaint is visible: with `Read` this is a `match` with three arms and no sentinel.
- */
-async i32 pump(Out out, In in) {
-  while (true) {
-    u8[] chunk = await in.read();
-    if (chunk.len() == 0) { return 0; }
-    out.write(chunk);
-  }
+/** One source to standard output. */
+async void copy(Out out, AsyncGenerator<Bytes, Result<void, NotGranted>> source) {
+  try await for (Bytes chunk in source) { out.write(chunk); }
 }
+
+// ## What could not be written
+//
+// **`copy` swallows the source's failure and there is nowhere to put it.** `try await for`
+// propagates the generator's `Err` as *this* function's return, and `copy` returns `void`, so a read
+// that fails halfway through a file is indistinguishable from one that ended. Making it
+// `async Result<void, NotGranted>` is correct and moves the problem: the caller then has a
+// per-operand failure to report, which is right, and `cat` already reports one for *cannot open*.
+// Two failures for one operand, and the shipped `cat` has the same two and prints the same sentence
+// for both, so this is not a regression — it is the thing a `Result` would let this file say for the
+// first time and the reason it is not written is that `NotGranted` is the wrong type for *the pipe
+// broke*. Which is the entry below.
+//
+// **The generator's failure type is `Result<void, NotGranted>` for both sources and should not be.**
+// A file's read can fail because the grant was refused, and so can standard input's — but a file can
+// also be a directory, be removed underneath, or hit a device error, and a pipe can be closed by the
+// other end. `Fault` in `@/packages/fs` is the union that exists for exactly this and `std` cannot
+// use it, because `std` is below the packages. So the capability answers the one failure it can
+// name from where it sits, and the interesting failures have no arm.
+//
+// **The empty-operands case is a branch and wants to be a default**, and this is where the **list
+// literal** finally gets a case. The line wants to be
+//
+//     Vec<string> names = a.operands.len() == 0 ? ["-"] : a.operands;
+//
+// after which `-` is an operand like any other and the body has one shape for all three of *a file*,
+// *a pipe*, and *no arguments at all*. What stops it is that there is no way to build a one-element
+// collection: `Vec` has `create()` and `push`, so it takes two statements and a name, and a
+// `Vec.of(T)` helper cannot be written usefully because **there are no variadics** — `of` would need
+// one overload per arity, which is the argument for a literal restated as a library.
+//
+// So `["-"]` is a real case for a construct that had none, and it is a small one: what it buys here
+// is deleting a four-line branch. Worth recording as *found by writing something* rather than as an
+// argument, because the construct has been in `../../../GRAMMAR.ebnf` for nine days on the strength
+// of appearing on a page, and this is the first line anywhere that wanted it.

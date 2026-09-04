@@ -333,23 +333,32 @@ export struct Out {
  */
 export struct In {
   /**
-   * **This answers `Ticket<u8[]>` and should answer `Ticket<Read>`.**
+   * **A stream, since 2026-09-04, and the third answer to a question that had two.**
    *
-   * `Socket.recv` twelve lines down answers a `Read` — `Data`, `End`, `Failed` — and this can only
-   * say *end* with an empty array, a sentinel drawn from the value's own range. Two capabilities in
-   * one file, one with a sum and one with a sentinel, and the difference is that `Socket` was
-   * written from a design and this was added to fill a hole.
+   * This was `fn<Ticket<u8[]>()> read` — a sentinel drawn from the value's own range, since the only
+   * way it could say *end* was an empty array, while `Socket.recv` twelve lines down answers a
+   * `Read` sum. The obvious fix was to give this a `Read` too. What changed the answer was
+   * `Files.open` arriving: once a file is an `AsyncGenerator<Bytes, …>` and standard input is a
+   * ticket-and-a-sentinel, `@/packages/box`'s `cat` has **two loops for one behaviour**, and `cat -`
+   * cannot be written as one loop at all.
    *
-   * `@/packages/box/src/cat.wac` is where it bites: a read of zero bytes is *end* for a file and
-   * *not yet* for a pipe, and its pump cannot tell them apart. The shipped `readStdin` is
-   * `fn[Pending<u8[]>()]` and has the same problem, so this is not a regression — it is a hole
-   * copied without noticing there was a better answer already in the file.
+   * So the question was never how *end* is said. It was that `In` was not a stream in a system that
+   * has them. As one, the sentinel does not get a better spelling — it stops existing, because a
+   * generator ending is the loop ending.
    *
-   * Left as it is for one more reading rather than changed, because `Read`'s `Failed(string why)`
-   * is a `string` where every other failure here is a `NotGranted`, and picking between them is the
-   * question in `../QUESTIONS.md` about where a fault's message lives.
+   * **What it costs, and this is the part worth keeping.** `Read` distinguishes `Failed(string why)`
+   * from `End`; a generator's return type has to carry the same thing, and here it is
+   * `Result<void, NotGranted>` — so a failure to *read* standard input has no shape at all, and a
+   * refused grant and a broken pipe arrive as the same value. `Read`'s `string why` was wrong for a
+   * different reason (every other failure here is a `NotGranted`), and neither of the two is right.
+   * `../QUESTIONS.md`.
+   *
+   * `Socket.recv` is now the odd one out. Its `Read` sum is a generator step written by hand, and
+   * `Listener.accepted` beside it already answers a generator; making it `recv()` → a stream is the
+   * same move again and is not made here, because a socket is bidirectional and `send` has nowhere
+   * to live on a generator.
    */
-  fn<Ticket<u8[]>()> read;
+  fn<AsyncGenerator<Bytes, Result<void, NotGranted>>()> stream;
 }
 
 /** Time is a capability because reading it is a fact about the machine, not about the program. */

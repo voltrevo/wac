@@ -622,6 +622,37 @@ Which leaves three answers rather than two, and the third is the largest: give `
 sum, or give them a stream, or leave them and accept that a capability's *end* is spelled three ways
 depending on when it was written.
 
+**Written, 2026-09-04, and the third one is right.** `In.read` is now
+`In.stream()` answering `AsyncGenerator<Bytes, Result<void, NotGranted>>`, and `cat` was rewritten
+against it rather than patched. The `pump` function is gone; there is one `copy`, and `-` on the
+command line is an operand like any other, so `cat a - b` interleaves a file, a pipe and a file
+through one loop with nothing in the body knowing which is which. **The sentinel did not get a
+better spelling. It stopped existing**, because a generator ending is the loop ending.
+
+So the question was never how a capability says *end*, and both earlier answers were arguing inside
+the wrong frame. That is worth keeping separately from the fix: *sum versus sentinel* was a
+well-formed question with a defensible answer on each side, and it was a question about how to spell
+something that should not have been there.
+
+**Two things it costs**, and neither is fixed.
+
+`Read` could say `Failed(string why)`. A generator's return type has to carry the same information
+and here it is `Result<void, NotGranted>`, so a refused grant and a broken pipe arrive as the same
+value — and a file's read failing because it is a directory, or was removed underneath, has no arm
+either. `@/packages/fs`'s `Fault` is the union that exists for this and `std` cannot use it, because
+`std` is below the packages. So the capability answers the one failure it can name from where it
+sits. `Read`'s `string why` was wrong for a different reason and neither of the two is right.
+
+And `copy` returns `void`, so it swallows the source's failure: `try await for` propagates the
+generator's `Err` as *this* function's return, and there is nowhere for it to go. Making it
+`async Result<void, NotGranted>` is correct and gives `cat` two failures per operand — *cannot open*
+and *stopped reading* — which the shipped `cat` also has and prints one sentence for.
+
+**`Socket.recv` is now the odd one out**, and the move is not obviously available. Its `Read` is a
+generator step written by hand and `Listener.accepted` beside it already answers a generator, so
+`recv()` → a stream is the same rewrite again — except a socket is bidirectional and `send` has
+nowhere to live on a generator.
+
 ## Three type names are declared twice, and `union` is the reason it matters
 
 107 type names across `vision/`, three declared in more than one file:
@@ -750,9 +781,17 @@ first page anywhere in `vision/` — `<label @"for"="echo">`, where `for` is a k
 attribute that makes a label clickable, so the escape is the only way to write the line at all, and
 `data-role="echo"`, which is ordinary HTML.
 
-**That leaves three, and the reason they are still empty is the same reason all six were.** A
-**quoted tag** wants a custom element and a **list literal** wants a collection built in one
-expression, and no subject was chosen to want either.
+**That leaves two, and a list literal got its first case on 2026-09-04 by somebody writing a line
+that wanted it.** `@/packages/box`'s `cat` treats `-` as an operand, so with no operands at all it
+wants `Vec<string> names = a.operands.len() == 0 ? ["-"] : a.operands;` — after which a file, a pipe
+and no-arguments are one shape. What stops it is that there is no way to build a one-element
+collection: `Vec` has `create()` and `push`, which is two statements and a name, and a `Vec.of(T)`
+helper cannot be written usefully because **there are no variadics** — `of` would need one overload
+per arity, which is the argument for a literal restated as a library. The line is a four-line branch
+instead. A small case, and the first one, after nine days of the construct being in the grammar on
+the strength of appearing on a page.
+
+A **quoted tag** wants a custom element and no subject has had one.
 
 **`auto` was the one to worry about and it turns out to have no case here.** Every local declaration
 with an initialiser in the 56 files was measured: **78 of them, and the longest type is nineteen
