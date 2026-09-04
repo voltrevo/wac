@@ -274,9 +274,10 @@ maintenance rule this file has: **a rule may only exist for a construct that is 
 
 ## Where the pass converges
 
-Two files are still refused and both are accounted for: `trap` as an **expression**
+Two files were still refused and both were accounted for: `trap` as an **expression**
 (`core/result.wac`), and the `secret` parameter qualifier (`crypto/src/secret.wac`), which is this
-exercise's own proposal rather than a gap.
+exercise's own proposal rather than a gap. **Both are productions in `GRAMMAR.ebnf` now**, which is
+what "accounted for" came to mean: not a note in a table, a rule that parses the file.
 
 It was three. `wactest/assert.wac` wanted a block that ends in a value and no longer does — a method
 that records a failure and returns `null` needs no new construct, and the pass reporting one file
