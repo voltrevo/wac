@@ -36,6 +36,31 @@ testing:
 - **A test cannot ask for anything**, so one that needs a file cannot be written in wac and lives
   host-side. `host.wac`, `built.wac`, `daemon.wac`, `repo.wac` and `childenv.wac` are largely that
   workaround.
+
+**That last sentence is wrong and the five files say so, checked 2026-09-04.** They are 1,242 lines
+and each opens by explaining what it is *for*, and only one of the five reasons is *a test cannot
+hold a capability*:
+
+    built.wac    599   a build cache with a freshness rule — `wac run` compiles per invocation, and
+                       `packages/git` went 36.5s to 12.7s by building once
+    daemon.wac   237   start a server, poll until the port answers, stop it — the polling and the
+                       log-based readiness check are the content
+    host.wac     163   where the binary is, who "we" are, where it is safe to write — "ten test files
+                       had answered them with the same twenty lines copied verbatim"
+    childenv.wac 124   shell quoting, and `unset` being asymmetric with `set`
+    repo.wac     119   `git ls-files`, once, for the nineteen guards that all start the same way
+
+Every one of them **needs a capability**, and that part does go: a test that can take a `Proc` and a
+`Net` does not need a host to start a daemon for it. But the *work* is not the capability. A
+freshness rule, a readiness poll, shell quoting and a `git ls-files` wrapper are domain logic that
+survives whoever is allowed to call it, and `built.wac` — half the total — has nothing to do with
+authority at all.
+
+**Which is a caution about how this whole exercise reads a package.** *These files exist because of a
+limitation* was inferred from the limitation being real and the files being adjacent to it. Reading
+their opening paragraphs takes five minutes and contradicts it. It is the same mistake as three of
+the reversals `../../QUESTIONS.md` records — a rewrite whose input is a set of declarations — arriving
+here as a claim about *why code exists* rather than about what a signature says.
 - **A test cannot be async**, because there is nowhere for a ticket to go.
 - **The name is the contract.** `test` as a prefix is a convention nothing checks, and
   `harness/testRegistrars.ts` exists to keep two lists of spellings in step. They went out of step
@@ -184,7 +209,9 @@ there is what `bindgen` already does at build time.
 So the proposal stands and its cost moves. Telling a pure test from one wanting a capability by reading
 the export's type is **host work**, not something the test harness can do in wac — which is a real
 constraint on a package whose whole rewrite was about pushing host-side workarounds back into the
-language. `host.wac`, `built.wac` and `daemon.wac` would lose most of their reason to exist and this
+language. `host.wac`, `built.wac` and `daemon.wac` would lose *the capability half* of their reason
+to exist — see the correction above, which is that the other half is a build cache, a readiness poll
+and a machine-facts helper, none of which a signature changes — and this
 one thing would stay on the far side.
 
 Promoted to [../../QUESTIONS.md](../../QUESTIONS.md), because it is a property of `Cli` rather than
