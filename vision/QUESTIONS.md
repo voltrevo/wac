@@ -1541,3 +1541,48 @@ The open question is what to do with it, and there are two answers. Either the p
 they are **what somebody has needed**, in which case the honest thing is to say so on the page and
 stop treating each gap as a discovery. `vision/std`'s header claims the first by implication, since
 it argues from a count of the host. Nothing has ever checked the claim.
+
+## Three capability groups are paired calls over hidden state, and none survives being a value
+
+Found by the whole-host audit above, once the missing capabilities were looked at together rather
+than one at a time. Three groups in `std/platform.wac` have the same shape:
+
+    openInput(path)                        readChunk()            closeFeed(i32)
+    openOutput(path)   outputError()                              closeFeed(i32)
+    pushChild(args, stdin, cwd, capture)                          popChild() -> Captured
+
+In each, a call establishes something, later calls act on *the* something, and a final call ends it.
+There is no value in between. The consequences are written into the host's own comments:
+
+- **A `popChild` with nothing pushed** answers *"two empty arrays rather than failing: the caller has
+  nothing to clean up, and there is no state to corrupt"* — which is what you have to say when
+  nothing can tell an unpaired call from a paired one.
+- **`outputError()` reads a failure back afterwards**, as a separate capability, so a write's success
+  and the reason it failed are two calls apart.
+- **`closeFeed(i32)` takes an integer** that neither `openInput` nor `openOutput` mentions.
+- **One at a time.** There is *the* input and *the* output for the whole program, so two files cannot
+  be read at once by any means.
+
+**The projection answer is the same in all three and it is not a rename.** `Files.open` answers a
+generator, `Files.create` answers a `Sink` with `write` and `close` on it, `Proc.run` answers a
+`Captured`. The state moves into a value the caller holds, the pairing becomes the lifetime of that
+value, and *the* input stops existing. Nesting comes free, because calls nest.
+
+**Why this is a question and not just a fix.** Three instances is enough to ask whether the pattern
+is the host's mistake or the boundary's constraint. The argument that it is a constraint: the host
+side is JavaScript or Rust, a capability is a funcref taking scalars and arrays, and *a handle is an
+`i32`* is the only thing that crosses — so `openInput` returning nothing and `closeFeed` taking an
+`i32` is what the boundary can express. `Socket` and `Child` are the counter-argument: both are
+values with an `i32` handle inside, and both work.
+
+So the question is why `Socket` got a value and the input stream did not. If the answer is *nobody
+needed two at once*, that is the projections finding again in a third form: **the shape was chosen by
+the first consumer and the first consumer only ever wanted one.** If the answer is that a `Feed`
+value costs something a `Socket` does not, nothing says what.
+
+**And one thing genuinely does not survive the move.** `Proc.run` here takes no grants, because the
+shipped `pushChild` is explicitly *not* isolation — *"the child is the same instance with the same
+authority; it can still open any file the parent could. A real boundary is `spawn`."* So the
+projection has `spawn(cmd, args, grants)` beside `run(args, stdin, cwd)`, and the second is the one
+whose name suggests it takes grants and cannot. Written out rather than smoothed, because *this runs
+something with your authority* is the honest signature and there is no way to say it in a type.

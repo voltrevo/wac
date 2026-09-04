@@ -198,6 +198,18 @@ export struct Files {
    */
   fn<Result<AsyncGenerator<Bytes, Result<void, NotGranted>>, NotGranted>(string)>  open;
   fn<Result<Sink,                                            NotGranted>(string)>  create;
+
+  /**
+   * Permissions. `chmod` and `setExecutable` are the host's, and they were in `Cli` rather than in
+   * anything file-shaped, which is why a projection derived by resource missed them.
+   *
+   * Two capabilities for one thing, and the second is the first with a fixed argument —
+   * `setExecutable(path, on)` is `chmod` with the three execute bits. Kept as two because the host
+   * has two and a rewrite that merged them would be claiming credit the language is not owed; that
+   * it is a bad pair is a note rather than a change.
+   */
+  fn<Ticket<Result<void, NotGranted>>(string, i32)>   chmod;
+  fn<Ticket<Result<void, NotGranted>>(string, bool)>  setExecutable;
 }
 
 /**
@@ -243,7 +255,35 @@ export struct Net {
 export struct Proc {
   fn<Ticket<Result<Child, NotGranted>>(Bytes, Vec<Bytes>, Vec<Grant>)>  spawn;
   fn<i32()>                                                             exitCode;
+
+  /**
+   * Run something *in this instance* — the host's `pushChild`/`popChild`, as one call.
+   *
+   * The audit of all 62 host capabilities on 2026-09-04 found nine process capabilities behind these
+   * two. This is the one that is a design change rather than an addition, and it is the **second
+   * paired-call protocol over hidden state** the audit turned up:
+   *
+   *     pushChild(args, stdin, cwd, capture)   … run something …   popChild() -> Captured
+   *
+   * A stack in the host, with the caller responsible for pairing the calls, and a `popChild` with
+   * nothing pushed answering *"two empty arrays rather than failing"* because there is no value that
+   * could have said the pairing was wrong. The other two are `openInput`/`readChunk`/`closeFeed` and
+   * `openOutput`/`outputError`/`closeFeed` — see `Files.open` above, which is the same rewrite.
+   *
+   * Handing the child context back as a value makes the nesting the language's — a `run` inside a
+   * `run` nests because calls nest — and there is no unpaired state for a caller to leave behind.
+   *
+   * **It is not isolation and the shipped comment is clear that it is not:** the child is the same
+   * instance with the same authority, and *"a real boundary is `spawn`, which is a separate worker
+   * with its own grants"*. So the `Vec<Grant>` that `spawn` takes has no counterpart here, which is
+   * the honest shape and reads as a hole in it. `../QUESTIONS.md` has why that is worth stating
+   * rather than papering over.
+   */
+  fn<Ticket<Captured>(Vec<Bytes>, Bytes, string)>  run;
 }
+
+/** What something run in this instance said. */
+export struct Captured { Bytes out; Bytes err; i32 status; }
 
 /** Read-only, and the reason `arg` is not on `Sys`: argv is known before the program starts. */
 export struct Env {
