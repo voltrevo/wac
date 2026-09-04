@@ -135,5 +135,28 @@ is a whole reserved *subrange* rather than one value. Promoted to
 **Two spellings used here are not on the pages.** `held + chunk` for array concatenation, and
 `Buf.pushScalar`, which is only a method somebody has to write.
 
+**That last clause is wrong in an interesting direction, found 2026-09-04.** The shipped equivalent
+exists — `Buf.pushCodepoint` — and it is not trivial:
+
+> **Anything that is not a Unicode scalar becomes U+FFFD**: negative, above U+10FFFF, or in the
+> surrogate range D800..DFFF, which UTF-8 cannot encode at all. **It used to encode them anyway** —
+> `0x110000` produced a five-byte-shaped sequence and a surrogate produced the CESU-8 form that
+> strict decoders reject — so a `Buf` could end up holding bytes that are not text.
+
+Three classes of invalid input, a replacement rule, and a bug that had to be fixed before the rule
+existed. *"Only a method somebody has to write"* is the same dismissal `@/packages/page` made about a
+renderer and was wrong about for the same reason.
+
+**And the name this file reached for is the better one, which is the finding.** A *codepoint* can be
+a surrogate; a *scalar* cannot — that is what the word means in Unicode, and it is why the shipped
+method has to check at run time what its name does not promise. `@/packages/unicode` here declares a
+`Scalar` type, and `scalars()` above yields only that arm of `union<Scalar, Truncated, Malformed>`.
+So `pushScalar(Scalar)` **cannot be handed a surrogate**, and the replacement rule that took a bug to
+discover becomes unreachable rather than enforced.
+
+That is one of the few places in this directory where the proposal deletes a runtime check instead of
+losing one — and it happened by accident, because a file naming a method it never wrote happened to
+name it after the type that makes the check unnecessary.
+
 (`const i32 CHUNK = 4096;` was listed here too, and it was wrong: `spec/spec/grammar.md` has
 `const_decl` in `program`, and it compiles today.)
