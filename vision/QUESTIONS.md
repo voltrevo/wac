@@ -459,6 +459,53 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
+## `coroutine f()` and `f()` disagree about when the body starts
+
+`vision/core/coroutine.wac` says the operator *"lowers any of the three spellings to one of these"* —
+one machine, three ways to write the function. `TECHNICAL.md`'s example pins what `coroutine` does,
+and it does it well:
+
+```wac
+Slot s;
+Coroutine<TicketBase, never, void> c = coroutine s.tick();
+
+s.n;               // 0      ← nothing has run
+c.step();          // Waiting
+s.n;               // 1
+```
+
+**Nothing runs at creation.** Now the shipped behaviour of the other spelling, measured:
+
+```wac
+async void bump(Core core, Cell c) { c.n = c.n + 1; await core.monotonicNanos(); c.n = c.n + 10; }
+…
+Pending<void> p = bump(core, c);
+// after the call, before any drain: n = 1
+// after drain:                      n = 11
+```
+
+**Calling an `async` function runs the body eagerly to the first `await`.** So the two ways of
+obtaining the machine differ observably at the moment you obtain it, and the sentence claiming they
+are one lowering is the thing that has to give.
+
+It may well be that they *should* differ — a machine you intend to step by hand is exactly the case
+where you want to choose when it starts, and a `Ticket` you intend to `await` is the case where you
+want the work begun. That is a good answer and it is not the one written down; what is written down
+is that there is one machine and three spellings.
+
+Two things follow if they do differ:
+
+- **Converting between them changes behaviour.** `await f()` has already run the body's prefix;
+  `coroutine f()` then stepping has not. A refactor from one to the other is not neutral, and nothing
+  warns.
+- **Argument evaluation needs its own sentence.** `coroutine f(g())` — is `g()` called at creation or
+  at the first step? Every language with this shape answers *eagerly*, including the `s` in
+  `coroutine s.tick()`, and the example is consistent with that without testing it.
+
+**And `TECHNICAL.md`'s examples are doing the work of a specification here**, for the third time —
+`never`, the bare `await`, and now this. That is an argument for reading them as one, which is what
+parsing the fences turned them into.
+
 ## `never` is a type with non-trivial semantics, asserted in one doc comment
 
 `vision/core/coroutine.wac` line 12:

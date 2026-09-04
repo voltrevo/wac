@@ -30,6 +30,14 @@ export enum Step<W, Y, R> {
  * The `coroutine` operator lowers any of the three spellings to one of these, and applying it to
  * something already lowered is a compile error rather than a no-op — the operator is a change of
  * representation and there is nothing for a second one to do.
+ *
+ * **"One machine, three spellings" is not quite true and the difference is observable.**
+ * `TECHNICAL.md`'s example shows `coroutine s.tick()` running *nothing* — `s.n` is still 0 — and a
+ * shipped `async` call runs the body eagerly to its first `await`, measured: `n = 1` before any
+ * drain. So obtaining the machine by calling and obtaining it by `coroutine` differ at the moment
+ * of obtaining it. They arguably *should*, since a machine you step by hand is the case where you
+ * choose when it starts — but then this sentence is wrong rather than incomplete.
+ * `../QUESTIONS.md`.
  */
 export struct Coroutine<W, Y, R> {
   /**
