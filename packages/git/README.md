@@ -105,7 +105,7 @@ worse than one that says which:
   answers `Thin` with the base names a pack is missing, `completeThin` reads those out of a repository —
   loose or packed — and `completePack` appends them, which is what `git index-pack --fix-thin` does. It
   works by appending because a delta's base only has to be *somewhere* in the pack, which is also why it
-  needs no callback: wac has no closures. Measured against the command that adjudicates it, twice:
+  needs no callback at all. Measured against the command that adjudicates it, twice:
   `git index-pack` refuses the thin pack with `unresolved delta` and accepts the completed one. What is
   `example/gitpull.wac` is the program that sends `have`s and repairs what comes back — `gitpull request`
   writes the want/have request, `gitpull apply` completes the reply against the local store, writes the

@@ -126,8 +126,10 @@ export struct Shell {
    * `Fs.inMemory()` with `mountMemory("/")` is a session sealed off from it. The mount table decides per
    * path, so `/host` can be real while everything else is not — design/0001 D1 and D3, wac-mono 0067.
    *
-   * No closures in wac, so this cannot be a facade of funcrefs over a hidden filesystem; it has to be
-   * something the shell carries. That constraint produced the better shape, which is the mount table.
+   * This is not a facade of funcrefs over a hidden filesystem; it is something the shell carries, and
+   * the mount table is the better shape for it. (The reason given here was "no closures in wac", true
+   * until 2026-08-16 and not since — `issues/system/0327a` is the open decision about whether
+   * `packages/fs` follows the language.)
    */
   Fs fs;
   Map<string, string> vars;
@@ -4755,10 +4757,11 @@ string expandText(Shell sh, string text) {
 /**
  * Evaluate `$((…))` against the shell's variables.
  *
- * `arith.wac` takes its lookup as a funcref so it needs to know nothing about a shell — and a
- * funcref cannot reach one, since wac has no closures. The bridge is that the text is expanded
- * *first*, so `$x` is already substituted, and the remaining bare names are resolved through a
- * lookup bound to this call.
+ * `arith.wac` takes its lookup as a funcref so it needs to know nothing about a shell. The bridge is
+ * that the text is expanded *first*, so `$x` is already substituted, and the remaining bare names are
+ * resolved through a lookup bound to this call. (This said a funcref "cannot reach one, since wac has
+ * no closures" — a lambda has captured since 2026-08-16, and expanding first is still the right
+ * order, because it is what makes the two stages agree about what a name is.)
  */
 string expandArith(Shell sh, string text) {
   Arith state = Arith(u8[0](), 0, false, "", 0, 0);

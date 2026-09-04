@@ -18,7 +18,10 @@
 //
 // **Reading a directory is the caller's half, and this is the other one.** Answering "is there a
 // `wac.json5` here" is I/O, and the compiler's resolver does none so that it can run in a browser.
-// wac has no closures, so a predicate cannot be passed in either. So the split is by *data*: this
+// A predicate could be passed in — lambdas capture, since 2026-08-16 — and it would put a
+// capability inside the resolver, which is the one thing this must not have. (This said "wac has no
+// closures, so a predicate cannot be passed in either", which was the reason until it wasn't.) So
+// the split is by *data*: this
 // says which directories to look in and in what order, and the caller — which already holds a
 // capability, because it read the source file — looks. The interesting part of D7 is the order and
 // where it stops, and both of those are here where they can be tested with no host at all.

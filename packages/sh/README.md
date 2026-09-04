@@ -722,8 +722,11 @@ what a shell script looks like anyway.
 
 `wac task coverage:sh` drives about 380 scripts through the lexer, parser and executor
 with the capabilities faked inside wac — `test/wac/probe.wac` builds a `Core` and a `Cli` out of
-pure functions, since wac has no mutable module-level state and a funcref cannot close over
-anything. A fixed answer per path is enough to reach both sides of every branch that asks.
+pure functions, since wac has no mutable module-level state. A fixed answer per path is enough to
+reach both sides of every branch that asks, so nothing there has wanted state. (The second reason
+given was "a funcref cannot close over anything", which a bare funcref still cannot and a lambda has
+been able to since 2026-08-16 — `spec/cases/0193` fakes a capability with one. So a fake that
+*accumulates* is writable now, and this suite has not needed one.)
 
 **It stands at 97.2%**, not the 100% the rest of this repo holds to, and the shape of what is left
 is worth stating rather than leaving as a number.

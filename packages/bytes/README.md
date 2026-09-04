@@ -115,9 +115,12 @@ it: the streaming transforms in `gzip` and `stream` take their source as a funcr
 hands `cli.readChunk` to them directly, so a capability world and two pure algorithm packages all
 had to name one type — and `bytes` was the only package below all of them.
 
-That reasoning still holds and now points somewhere else. wac has no closures, so two declarations
-of `Read` can never be converted into each other, and a funcref signature names it by *type* — which
-means one identity everywhere or no interoperation at all. So `Read` is in `core`, the module the
+That reasoning still holds and now points somewhere else. wac has **nominal** types, so two
+declarations of `Read` can never be converted into each other, and a funcref signature names it by
+*type* — which means one identity everywhere or no interoperation at all. (This said *"wac has no
+closures"*, which stopped being true on 2026-08-16 and was never the premise: the conclusion is
+about naming, not capture. `issues/system/0327a` corrected the same sentence in `spec/tour.wac`
+§16 and `spec/spec/imports.md` and did not reach this copy.) So `Read` is in `core`, the module the
 compiler ships. (This was argued from a second repo for the capability layer, which is
 [not happening](../../issues/system/closed/0092-the-capability-layer-should-be-its-own-repo.md); the
 identity argument is the one that never needed it.)

@@ -640,9 +640,11 @@ export u8[] writePack(i32[] kinds, Vec<u8[]> contents) {
  *
  * This is what `git index-pack --fix-thin` does, and appending is the reason it works without anything
  * resembling a callback: a delta's base only has to be *somewhere in the pack*, not before it, so bases
- * added at the end resolve exactly as bases in the middle do. **wac has no closures**, so a resolver
- * handed in was never an option — and this is the better shape anyway, because the completed pack is a
- * file git accepts rather than a value only this library understands.
+ * added at the end resolve exactly as bases in the middle do, so a resolver handed in buys nothing —
+ * and appending is the better shape anyway, because the completed pack is a file git accepts rather
+ * than a value only this library understands. (This said **wac has no closures**, so a resolver "was
+ * never an option". Lambdas landed 2026-08-16 and capture by reference; the option exists and is
+ * still not wanted.)
  *
  * The old trailer goes: it covered the old bytes. The count in the header grows by what was added.
  */

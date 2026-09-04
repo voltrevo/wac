@@ -35,8 +35,13 @@ after that, which is the failure a *Why* section has: it is written the day the 
 The obvious design is an abstract filesystem with a memory implementation and a host implementation. wac
 will not do it: `override` is a source-level check and **dispatch is static**, so a `Circle` held in a
 `Shape` variable answers `Shape.name()`. A base-typed `Fs` would always run the base's bodies. The
-language's own idiom for varying behaviour is a funcref plus explicit state — `Shell.external` is one —
-and a funcref cannot capture a filesystem, because there are no closures.
+language's own idiom for varying behaviour is a funcref plus explicit state — `Shell.external` is one.
+
+**The paragraph used to end "and a funcref cannot capture a filesystem, because there are no
+closures", and that expired on 2026-08-16.** A lambda captures by reference, so a mount built as a
+struct of funcrefs over its backing is writable; `issues/system/0327a` corrected the identical
+sentence in `src/fs.wac` and holds the open decision about whether the design follows. Static
+dispatch, the first half, is still true.
 
 So there is one concrete `Fs` holding a mount table, and the branch is written by hand. The tour says to
 do exactly that, and it turned out to be the shape the design wanted anyway: a **host mount** is how

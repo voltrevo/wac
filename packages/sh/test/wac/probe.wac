@@ -5,8 +5,11 @@
 // lexer, parser and executor with one call and no capability plumbing on the TypeScript side.
 //
 // **The fake capabilities are pure functions**, because wac has no mutable module-level state and
-// a funcref cannot close over anything. That is not the limitation it sounds like: a fixed answer
-// per path reaches both sides of every branch that asks. `readFile` succeeds for two names and
+// nothing here has wanted a fake that accumulates. That is not the limitation it sounds like: a
+// fixed answer per path reaches both sides of every branch that asks. (This also said "a funcref
+// cannot close over anything" — a bare funcref still cannot, and a lambda has captured since
+// 2026-08-16: `spec/cases/0193` fakes a capability with one, so an accumulating fake is available
+// the day a test wants it.) `readFile` succeeds for two names and
 // fails for everything else, `writeFile` succeeds for one and fails otherwise, `readDir` answers
 // for one directory and not for others — which is all coverage needs, and all a test of the
 // *shell* should depend on anyway.
@@ -202,9 +205,9 @@ Pending<Change> fakeOpenInput(string path) {
 /**
  * A `Read`, always `End` — this fake filesystem has nothing to stream.
  *
- * The answer is built by a top-level resolver because a funcref cannot close over anything, which is
- * the constraint this whole file is shaped by. `End` rather than `Data(empty)`: an empty `Data` is
- * not a state the type admits.
+ * The answer is built by a top-level resolver, which is the shape this whole file keeps — see the
+ * header for why it is a choice rather than a constraint now. `End` rather than `Data(empty)`: an
+ * empty `Data` is not a state the type admits.
  */
 Read fakeReadChunk() { return Read.End; }
 /** A `Change` now, like the other four that change something — wac-mono 0070. */

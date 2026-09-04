@@ -485,7 +485,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   };
 
   // The current streaming input. One at a time rather than a handle per file, because the
-  // wac side has no closures to carry a handle in — see the note in platform.wac.
+  // wac side has nowhere to carry a handle in a bare funcref — see the note in platform.wac, which
+  // no longer says "no closures": lambdas capture, and the shape here predates them.
   let source: Deno.FsFile | null = null;   // null means standard input
   let sink: Deno.FsFile | null = null;     // null means standard output
   /**

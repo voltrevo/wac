@@ -128,8 +128,10 @@ written half the answer. Removing a failure mode is worth more than the twenty c
 and in a young codebase those call sites are a schedule rather than an objection.
 
 `Read` is not declared here. `gzipStream(cli.readChunk, cli.write)` hands the capability straight to
-a transform — wac has no closures, so no adapter can sit between them, and `gzip` has no business
-depending on a capability world. It used to live in `packages/bytes`, the lowest package in the
+a transform — wac has **nominal** types, so no adapter can sit between them without naming a third
+type both ends agree on, and `gzip` has no business depending on a capability world. (This said
+"wac has no closures", which expired 2026-08-16 and was the weaker of the two reasons anyway; a
+lambda adapter is writable and still would not fix the naming.) It used to live in `packages/bytes`, the lowest package in the
 tree; it is now in `core`, the module the compiler ships, which is the same argument carried one
 step further: two declarations of `Read` can never be converted into each other, and a funcref
 signature names it by type, so it has to be the one declaration everybody gets. The stronger version

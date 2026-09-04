@@ -8,6 +8,12 @@
 // nowhere to put what it collected. So the host holds the child's world instead, for as long as
 // the child is running.
 //
+// **That sentence was true when it was written and is not now**, which is the whole point of
+// `insideValue.wac` beside this file: lambdas landed 2026-08-16 and capture by reference, so the
+// substitute `Cli` it says is impossible is written there and produces byte-identical output. It is
+// left standing rather than corrected because `insideValue.wac` quotes it. Whether `Cli.capture`
+// should survive the change is `issues/system/0327a`.
+//
 // The "child" here is `shout`, an ordinary function in this file. That is the point worth seeing:
 // it reads `cli.readStdin()`, writes `cli.write(...)`, complains with `core.warn(...)` and opens a
 // file by a relative path — all the things a program does, none of them written for this — and it

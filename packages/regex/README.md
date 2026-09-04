@@ -33,8 +33,11 @@ finding — see below.
 
 ## Shape
 
-**A flat program and an explicit stack, because there are no closures.** The textbook matcher is
-recursive with a continuation for "the rest of the pattern"; wac cannot spell one. So a pattern
+**A flat program and an explicit stack.** The textbook matcher is recursive with a continuation for
+"the rest of the pattern", allocating a closure per node of the pattern. (This said *"because there
+are no closures … wac cannot spell one"*; lambdas landed 2026-08-16 and capture by reference, so it
+is spellable and costs an allocation per node in the inner loop. The premise expired; the choice
+did not.) So a pattern
 compiles to an instruction array — three `i32` each, opcode and two operands — and matching is a
 loop with its own backtracking stack. That is not a workaround: it is the shape that needs
 nothing the language does not have, and it made the capture-undo log natural rather than awkward.
