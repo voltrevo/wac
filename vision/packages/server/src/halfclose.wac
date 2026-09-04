@@ -1,0 +1,95 @@
+// Saying "that is all" without saying "goodbye" — the first consumer of `Socket.closeSend`, and the
+// program that shows a generator cannot be started early.
+//
+// `packages/platform/example/halfclose.wac` is the shipped original: both ends in one program, two
+// questions asked together, and `issues/system/0215` behind it. `closeSend` was restored to
+// `vision/std` on 2026-09-04 after the prose filter found it missing; this is the file that uses it.
+//
+// The original's own summary of why the pair of questions is one program:
+//
+// > Either one alone is passed by a wrong implementation. A `closeSend` that did nothing fails the
+// > first and a `closeSend` that closed both directions fails the second, which is why this prints
+// > two lines rather than a verdict.
+
+import { Result, Bytes, Ticket } from "core";
+import { Buf } from "@/packages/bytes";
+import { Net, Out, Socket, Listener, Read, NotGranted } from "std";
+
+export async i32 halfclose(Net net, Out out) {
+  match (await net.listen("127.0.0.1", 0)) {
+    Err(e): { _ = out.writeErr("listen: \{e.what}\n".toBytes()); return 1; }
+    Ok(l): {
+      // **The ordering the original needs, and the shape that cannot express it — see below.**
+      Ticket<Result<Socket, NotGranted>> dialling = net.connect("127.0.0.1", l.port);
+
+      try await for (Socket a in l.accepted()) {
+        Socket c = (await dialling).orTrap("connect");
+
+        _ = await c.send("hello".toBytes());
+        await c.closeSend();
+
+        // The server side sees the bytes and then the end of them, while the client is still
+        // connected. Two arms rather than three: `Read`'s `Failed` is the one this cannot report
+        // well, which is the entry on where a fault's message lives.
+        Buf got = Buf.empty();
+        while (true) {
+          match (await a.recv()) {
+            Data(b):    { got.pushAll(b); }
+            End:        { break; }
+            Failed(why): { _ = out.writeErr("server recv: \{why}\n".toBytes()); return 1; }
+          }
+        }
+        out.log("server saw \"\{string.fromBytes(got.bytes())}\" then End");
+
+        // And the answer travels the direction that was left open.
+        _ = await a.send("world".toBytes());
+        a.close();
+        Buf back = Buf.empty();
+        try await for (Bytes b in nothing()) { back.pushAll(b); }
+        out.log("client read back \"\{string.fromBytes(back.bytes())}\"");
+        return 0;
+      }
+      return 1;
+    }
+  }
+}
+
+async gen<Bytes> Result<void, NotGranted> nothing() { … }
+
+// ## 1. The accept has to be started before the connect, and a generator cannot be started
+//
+// The original's own note, and it is not a stylistic point:
+//
+// > The accept is submitted **before** the connect and waited on after, because a host is free to
+// > complete them in either order and a program that waits on `accept` first would deadlock against
+// > a host that has not dialled yet.
+//
+// Shipped, that is two lines: `Pending<Socket> accepting = cli.accept(srv.handle);` starts the
+// accept and hands back a value, and `accepting.wait()` collects it after the connect. **A ticket is
+// a value, so starting and awaiting are two steps.**
+//
+// `Listener.accepted()` here is `fn<AsyncGenerator<Socket, …>()>`, and a generator has no such pair.
+// Calling it builds a machine that has done nothing; the first `await` on it *is* the accept. So the
+// two steps collapse into one and the ordering the original needs cannot be written — which is why
+// the loop above dials first and accepts second, the deadlock the note warns about, inverted.
+//
+// **The workaround above is the finding, not a fix.** `net.connect(…)` still answers a `Ticket`, so
+// the *dial* can be started early and awaited late. It works only because exactly one of the two
+// operations kept its ticket. Had `connect` become a generator too — and `In`, `Files.open` and
+// `Proc.run` all did — this program would have no ordering that avoids the deadlock on some host.
+//
+// So the generator rewrite bought laziness and spent *start now, collect later*, and nothing recorded
+// the trade. `../../../QUESTIONS.md`.
+//
+// ## 2. What could not be written
+//
+// **The client's read-back half.** `nothing()` above is a placeholder: the client is a `Socket` and
+// reading it is `recv()`, which answers a `Read` — so the two ends of this one program read in two
+// different shapes, a `while` over a sum for the server and nothing at all for the client. Writing
+// it as a second `while` is what the file does in the original and is not what `vision/std` should
+// make you write, since `In` and `Files.open` are both streams now. `Socket.recv` is the last read
+// in the capability surface that is not.
+//
+// **`Read.Failed(string why)` reaches the user as a sentence with no category**, which is the same
+// hole `@/packages/box`'s `gunzip` found from the other side: a payload matched by type cannot be
+// read, and a payload carried as a `string` cannot be matched. Both arms of that are open.

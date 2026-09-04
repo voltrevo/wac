@@ -3222,3 +3222,43 @@ blockquote under a named path, which is unambiguous and greppable; the inline on
 are not. Making the inline form carry its source is a convention rather than a tool, and this
 document is the wrong place to declare one — but the count is worth having: **73 inline quotations,
 and the only mechanical thing that can be said about them is that nothing can be said mechanically.**
+
+## A generator cannot be started early, and one program in the tree needs exactly that
+
+`Socket.closeSend` was restored on 2026-09-04 after the prose filter found it missing. Writing its
+first consumer — `@/packages/server/src/halfclose.wac`, the vision form of
+`packages/platform/example/halfclose.wac` — found something the restoration did not.
+
+The shipped example's own note:
+
+> The accept is submitted **before** the connect and waited on after, because a host is free to
+> complete them in either order and a program that waits on `accept` first would deadlock against a
+> host that has not dialled yet.
+
+Shipped, that is two lines. `Pending<Socket> accepting = cli.accept(srv.handle);` **starts** the
+accept and hands back a value; `accepting.wait()` collects it after the connect has been dialled. A
+ticket is a value, so starting and awaiting are separate acts.
+
+**`Listener.accepted()` is a generator and has no such pair.** Calling it builds a machine that has
+done nothing, and the first `await` on it *is* the accept. The two acts collapse into one, so the
+ordering the note requires cannot be written — the loop has to dial first and accept second, which is
+the deadlock the note warns about with the operands swapped.
+
+**What makes it writable at all is that exactly one of the two kept its ticket.** `Net.connect` still
+answers `Ticket<Result<Socket, NotGranted>>`, so the *dial* can be started early and collected late,
+and the file does that. `In.stream`, `Files.open` and `Proc.run` all became generators this week; had
+`connect` gone with them there would be no ordering of this program that is safe on every host.
+
+**So the generator rewrite bought laziness and spent *start now, collect later*, and nothing recorded
+the trade.** Both are real: laziness is what makes `cat big | head -1` stop after one chunk, and
+start-now-collect-later is what makes two operations overlap without a scheduler. A ticket has the
+second and not the first; a generator has the first and not the second. `Ticket.all` and `Ticket.any`
+exist precisely to combine tickets that were started early — and there is no `all` for generators,
+because there is nothing to hold before the first step.
+
+The question is whether a generator can have both. `coroutine f()` hands back an unstarted machine,
+which is the opposite of what is wanted; something like *step it once and hold the result* is the
+shape, and it is `Ticket<Step<…>>` — which is what `AsyncGenerator.nextStep` already answers. So the
+pieces are present and the ergonomics are not: the file that wants this writes
+`try await for (Socket a in l.accepted())` and would have to abandon the loop form entirely to hold a
+step.
