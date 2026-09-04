@@ -59,6 +59,40 @@ import { Proc, NotGranted } from "std";
  * There is deliberately nothing for standard input and output. A child always has those; they are
  * how a parent talks to it at all, and they reach nothing the parent did not hand over.
  */
+/**
+ * The categories — and **`Env` and `Run` are not independent, which this enum asserts they are**.
+ *
+ * Found 2026-09-04 in a comment on `packages/wactest/src/childenv.wac`, of all places:
+ * *"`issues/system/0198` is the half that is still open: inheritance is an authority nobody
+ * declared."* `std/platform.wac` states the mechanism at `execWithIn`'s `clearEnv` parameter:
+ *
+ * > False — what `Cli.exec` passes — *adds* `env` to everything this process holds, and that
+ * > inheritance is an authority nobody declared: **a program refused `--allow-env` can still read
+ * > `HOME` by running `printenv`, so `--allow-run` confers `--allow-env`.**
+ *
+ * So the shipped design has one grant conferring another, by default, and knows it: `clearEnv` is
+ * the fix, *"not the default **yet**, and the reason is a count rather than a doubt: 342 call sites"*.
+ * An open issue against a live default, with the sweep sized.
+ *
+ * **In `vision` it is worse than a default, because there is no parameter.** `Proc.spawn` is
+ * `(Bytes wasm, Vec<Bytes> argv, Vec<Grant> want)` — no environment, so a child cannot be given one
+ * and cannot be denied one. Whatever the host does is what happens, which is the definition of
+ * ambient, in the one call that creates a program. Listing `Env` beside `Run` then claims a
+ * separation the signature cannot deliver.
+ *
+ * This is the exercise's central claim meeting a filed issue against it. *No ambient capabilities* is
+ * enforced within an instance — a function without a `Files` cannot read — and at the instance
+ * boundary the environment crosses because nobody said it should not. `@/packages/box`'s finding was
+ * that authority is per-instance and the language's per-function narrowing stops at the module edge;
+ * this is the same edge from the other side, and here the leak has a name and a number.
+ *
+ * The fix is one more parameter and the question is what shape. `clearEnv`'s bool plus an
+ * `NAME=value` list is the shipped answer and its own doc says what it still cannot do: *"Removing a
+ * named variable is still not expressible … a caller who wants everything except one name has to
+ * name what stays, and nothing here can enumerate the environment."* Which makes the environment the
+ * one part of a grant that is neither a category nor a root — `../../../QUESTIONS.md`'s *two
+ * dimensions* entry has room for a third and does not have one.
+ */
 export enum Grant {
   Read,       // readFile, stat, readDir, openInput on a path
   Write,      // writeFile, mkdir, remove, rename, openOutput to a path

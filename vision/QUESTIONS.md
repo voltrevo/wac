@@ -3021,3 +3021,45 @@ its favour: `readOnly` is three lines, `empty` is a value, a third backing costs
 all *per-path* operations. `readDir` is the one operation that is inherently *about the set of
 mounts*, and it is the one a design of independent closures has no place to put. A tag is a bad
 answer to "what backs this path" and the only available answer to "what is mounted below here".
+
+## `Run` confers `Env`, the tree knows, and `vision`'s spawn cannot say otherwise
+
+The prose filter, run over the twenty rewritten packages, found this in a comment on a *test helper*
+— `packages/wactest/src/childenv.wac`:
+
+> `issues/system/0198` is the half that is still open: **inheritance is an authority nobody
+> declared**, and the day `Cli.exec` clears by default, the callers here that *want* the host's
+> environment are the ones that will have to say so.
+
+`std/platform.wac` states the mechanism, at `execWithIn`'s `clearEnv` parameter:
+
+> False — what `Cli.exec` passes — *adds* `env` to everything this process holds, and that
+> inheritance is an authority nobody declared: **a program refused `--allow-env` can still read
+> `HOME` by running `printenv`, so `--allow-run` confers `--allow-env`.**
+
+One grant conferring another, by default, in a system whose first line is *authority is a value*. The
+fix exists and is not the default: *"not the default **yet**, and the reason is a count rather than a
+doubt: 342 call sites … Flipping the default is that sweep, not this parameter."*
+
+**And `vision` made it worse by removing the parameter.** `Proc.spawn` is
+`(Bytes wasm, Vec<Bytes> argv, Vec<Grant> want)`. No environment — a child cannot be given one and
+cannot be denied one, so whatever the host does is what happens. In the shipped design this is a
+default that a caller can override; here it is not expressible. And `@/packages/sh`'s `Grant` lists
+`Env` beside `Run` as separate categories, which claims a separation the signature cannot deliver.
+
+**Which is the exercise's central claim meeting a filed issue against it.** *No ambient capabilities*
+holds inside an instance: a function handed no `Files` cannot read. At the instance boundary the
+environment crosses because nobody said it should not. `@/packages/box` found the same edge from the
+other side — authority is per-instance and per-function narrowing stops at the module edge — and this
+is that edge with a leak that has a number.
+
+**The shape of the fix is the open part**, and the shipped doc says what its own answer cannot do:
+
+> **Removing a named variable is still not expressible**, and `clearEnv` is not it: a caller who
+> wants everything *except* one name has to name what stays, and nothing here can enumerate the
+> environment — `Cli.env` answers one name at a time.
+
+So the environment is the one part of a grant that is neither a **category** nor a **root**. The
+*two dimensions* entry above has room for a third and does not have one — and unlike the value-side
+expressiveness that entry is about, this third dimension is something a host could enforce, which is
+the property that entry uses to separate what belongs on the wire from what does not.
